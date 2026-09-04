@@ -36,6 +36,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 
 /**
  * Unit coverage for {@link NativeHandoffService}'s decision logic: which native targets it hands to a
@@ -49,6 +51,8 @@ import static org.mockito.Mockito.when;
  */
 class NativeHandoffServiceTest {
 
+    private AssetRepository assetRepository;
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private PostPublishTargetRepository targetRepository;
     private ActiveConnectionResolver connectionResolver;
     private ActionInvocationService actionInvocationService;
@@ -64,6 +68,8 @@ class NativeHandoffServiceTest {
     @BeforeEach
     void setUp() {
         targetRepository = mock(PostPublishTargetRepository.class);
+        assetRepository = mock(AssetRepository.class);
+        targetAssetRepository = mock(PostPublishTargetAssetRepository.class);
         connectionResolver = mock(ActiveConnectionResolver.class);
         actionInvocationService = mock(ActionInvocationService.class);
         publishOutcomeService = mock(PublishOutcomeService.class);
@@ -92,7 +98,9 @@ class NativeHandoffServiceTest {
 
     private NativeHandoffService newService(boolean enabled) {
         NativeHandoffService s = new NativeHandoffService(
-                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled);
+                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService,
+                new PublishInputBuilder(new PublishTargetMediaResolver(assetRepository, targetAssetRepository)),
+                enabled);
         s.entityManager = entityManager;
         s.self = s;
         return s;

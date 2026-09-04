@@ -38,6 +38,15 @@ export interface TikTokConsentTarget {
   options: TikTokPublishOptionValues
   /** Why this target isn't postable yet (see tiktokOptionsProblem); null when it is. */
   problem: string | null
+  /**
+   * The copy that will actually go out to this account — its own override, or the Post's caption. The
+   * creator has to consent to the words that publish, not to a different field that happens to be near
+   * them; before per-target content this preview showed the Post's *title* while its *description* was
+   * what TikTok received.
+   */
+  caption?: string | null
+  /** The ids of the media that will actually go out here, in order. */
+  assetIds?: string[]
 }
 
 export interface TikTokPreviewAsset {
@@ -157,8 +166,6 @@ function optionsSummary(options: TikTokPublishOptionValues): string {
 interface TikTokConsentStepProps {
   targets: TikTokConsentTarget[]
   assets: TikTokPreviewAsset[]
-  /** The Post's own words, shown with the media so the preview is the whole thing being consented to. */
-  caption?: string
   /**
    * The three that make consent persistent. Supply all of them and the step reads and writes the
    * creator's consent through the API — which is what makes it survive a reload and, far more
@@ -187,7 +194,6 @@ export function TikTokConsentStep(props: TikTokConsentStepProps) {
 function TikTokConsentStepBody({
   targets,
   assets,
-  caption,
   projectId,
   workItemId,
   token,
@@ -216,6 +222,8 @@ function TikTokConsentStepBody({
   // What the creator is being asked to consent to. When it changes — an account swapped, a privacy
   // level edited, a different cut uploaded — the server's answer changes with it, so re-read rather
   // than keeping a stale "yes" on screen.
+  // The targets carry their own caption and media, so serialising them covers everything the creator
+  // was shown; the Post's asset ids stay in for an inheriting destination, whose media lives there.
   const subject = JSON.stringify([targets, assets.map((asset) => asset.id)])
 
   useEffect(() => {
@@ -267,65 +275,80 @@ function TikTokConsentStepBody({
       </CardHeader>
 
       <div className="space-y-4 p-4">
-        <ul className="space-y-2">
-          {targets.map((target) => (
-            <li
-              key={target.connectionId}
-              className="rounded-md border border-border bg-surface-raised px-3 py-2.5"
-            >
-              <span className="flex items-center gap-2">
-                <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="text-xs text-muted-foreground">You are posting to</span>
-                <span className="truncate text-sm font-semibold text-foreground">
-                  {destinationName(target)}
-                </span>
-              </span>
-              <span className="mt-1 block text-xs text-muted-foreground">
-                {optionsSummary(target.options)}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <ul className="space-y-3">
+          {targets.map((target) => {
+            // What this account actually receives: its own selection, or the Post's whole set when it
+            // inherits. Rendering the Post's set for a destination that chose a subset would ask the
+            // creator to consent to media that never goes there.
+            const targetAssets = target.assetIds
+              ? target.assetIds
+                  .map((id) => assets.find((asset) => asset.id === id))
+                  .filter((asset): asset is TikTokPreviewAsset => Boolean(asset))
+              : assets
+            return (
+              <li
+                key={target.connectionId}
+                className="overflow-hidden rounded-md border border-border bg-surface-raised"
+              >
+                <div className="px-3 py-2.5">
+                  <span className="flex items-center gap-2">
+                    <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="text-xs text-muted-foreground">You are posting to</span>
+                    <span className="truncate text-sm font-semibold text-foreground">
+                      {destinationName(target)}
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {optionsSummary(target.options)}
+                  </span>
+                </div>
 
-        <div className="overflow-hidden rounded-md border border-border">
-          {assets.length === 0 ? (
-            <p className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
-              <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
-              No media has been uploaded yet — TikTok needs the video before this post can go out.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {assets.map((asset) => (
-                <li key={asset.id}>
-                  {asset.previewUrl ? (
-                    isVideoContentType(asset.contentType) ? (
-                      <video
-                        controls
-                        src={asset.previewUrl}
-                        className="block max-h-80 w-full bg-surface-3"
-                        aria-label={asset.label || 'TikTok video'}
-                      />
-                    ) : (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={asset.previewUrl}
-                        alt={asset.label || 'TikTok post media'}
-                        className="block max-h-80 w-full bg-surface-3 object-contain"
-                      />
-                    )
+                <div className="border-t border-border">
+                  {targetAssets.length === 0 ? (
+                    <p className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
+                      <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
+                      No media has been chosen for this account — TikTok needs it before this post can
+                      go out.
+                    </p>
                   ) : (
-                    <p className="px-3 py-4 text-sm text-muted-foreground">
-                      {asset.label} is still uploading — no preview yet.
+                    <ul className="divide-y divide-border">
+                      {targetAssets.map((asset) => (
+                        <li key={asset.id}>
+                          {asset.previewUrl ? (
+                            isVideoContentType(asset.contentType) ? (
+                              <video
+                                controls
+                                src={asset.previewUrl}
+                                className="block max-h-80 w-full bg-surface-3"
+                                aria-label={asset.label || 'TikTok video'}
+                              />
+                            ) : (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={asset.previewUrl}
+                                alt={asset.label || 'TikTok post media'}
+                                className="block max-h-80 w-full bg-surface-3 object-contain"
+                              />
+                            )
+                          ) : (
+                            <p className="px-3 py-4 text-sm text-muted-foreground">
+                              {asset.label} is still uploading — no preview yet.
+                            </p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {target.caption && (
+                    <p className="border-t border-border px-3 py-2 text-sm text-foreground">
+                      {target.caption}
                     </p>
                   )}
-                </li>
-              ))}
-            </ul>
-          )}
-          {caption && (
-            <p className="border-t border-border px-3 py-2 text-sm text-foreground">{caption}</p>
-          )}
-        </div>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
 
         <label className="flex items-start gap-2.5">
           <input

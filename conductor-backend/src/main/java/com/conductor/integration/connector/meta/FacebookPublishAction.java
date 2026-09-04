@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -76,11 +77,14 @@ class FacebookPublishAction {
         String message = MetaActions.string(input, "message");
         String link = MetaActions.string(input, "link");
 
-        PublishMedia media;
+        List<PublishMedia> media;
         String explicitVideoUrl = MetaActions.string(input, "video_url");
         String explicitImageUrl = MetaActions.string(input, "image_url");
         try {
-            media = MetaActions.resolveMedia(mediaResolver, input, explicitImageUrl, explicitVideoUrl);
+            media = MetaActions.resolveMediaList(mediaResolver, input, explicitImageUrl, explicitVideoUrl)
+                    .stream()
+                    .filter(item -> item.url() != null && !item.url().isBlank())
+                    .toList();
         } catch (RuntimeException e) {
             // Media resolution is local (asset lookup + signing); a failure here is this post's own
             // problem and will not fix itself on a retry.
@@ -90,7 +94,7 @@ class FacebookPublishAction {
         }
 
         boolean hasText = (message != null && !message.isBlank()) || (link != null && !link.isBlank());
-        if (media == null && !hasText) {
+        if (media.isEmpty() && !hasText) {
             return ActionResult.error("publish_facebook_post needs a message, a link, or media on the Work Item");
         }
 
@@ -158,20 +162,36 @@ class FacebookPublishAction {
         return ActionResult.ok(output);
     }
 
-    private MetaGraphClient.PublishedPost dispatch(String pageId, String token, PublishMedia media,
+    /**
+     * Picks the post shape from what this destination selected: a video, a single photo, several photos, or
+     * text alone. The gate has already refused the combinations Facebook cannot express (more than one
+     * video, or a video mixed with photos), so the first video here is the whole post.
+     */
+    private MetaGraphClient.PublishedPost dispatch(String pageId, String token, List<PublishMedia> media,
                                                    String message, String link, String title,
                                                    Long scheduledPublishTime) {
-        if (media != null && media.isVideo()) {
-            if (media.gcsPath() == null) {
+        PublishMedia video = media.stream().filter(PublishMedia::isVideo).findFirst().orElse(null);
+        if (video != null) {
+            if (video.gcsPath() == null) {
                 // A caller-supplied hosted URL has no bytes here to chunk; Meta fetches it itself.
-                return graphClient.publishVideoFromUrl(pageId, token, media.url(), message, title,
+                return graphClient.publishVideoFromUrl(pageId, token, video.url(), message, title,
                         scheduledPublishTime);
             }
-            byte[] content = mediaResolver.download(media);
+            byte[] content = mediaResolver.download(video);
             return graphClient.publishVideo(pageId, token, content, message, title, scheduledPublishTime);
         }
-        if (media != null) {
-            return graphClient.publishPhoto(pageId, token, media.url(), message, scheduledPublishTime);
+        if (media.size() == 1) {
+            return graphClient.publishPhoto(pageId, token, media.get(0).url(), message, scheduledPublishTime);
+        }
+        if (media.size() > 1) {
+            // A multi-photo post is a feed story with the photos attached, so each one is uploaded
+            // unpublished first and the feed post ties them together. The /photos edge cannot express it:
+            // it makes one post per photo.
+            List<String> photoIds = media.stream()
+                    .map(photo -> graphClient.uploadUnpublishedPhoto(pageId, token, photo.url()))
+                    .toList();
+            return graphClient.publishFeedPostWithAttachedMedia(pageId, token, message, photoIds,
+                    scheduledPublishTime);
         }
         return graphClient.publishFeedPost(pageId, token, message, link, scheduledPublishTime);
     }

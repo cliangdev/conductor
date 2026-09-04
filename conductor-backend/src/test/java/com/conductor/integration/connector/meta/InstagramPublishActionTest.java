@@ -20,6 +20,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -85,7 +86,7 @@ class InstagramPublishActionTest {
 
         Call create = call(HttpMethod.POST, "/ig-1/media");
         // Minted inside this invocation — the caller supplied no media parameter at all.
-        assertThat(create.param("image_url")).isEqualTo("https://signed.example/minted-1.jpg");
+        assertThat(create.param("image_url")).isEqualTo("https://signed.example/minted-1-assets/proj/wi-1/hero.jpg");
         assertThat(create.param("caption")).isEqualTo("Launch day #acme");
         assertThat(create.bearerToken()).isEqualTo("page-token");
         assertThat(mediaResolver.resolveCalls).isEqualTo(1);
@@ -238,6 +239,114 @@ class InstagramPublishActionTest {
                         new MetaGraphClient.PublishingLimitConfig(100, 86400)))));
     }
 
+    // --- Carousels: two or more items become child containers under one CAROUSEL parent ---
+
+    @Test
+    void carousel_createsOneChildPerItemThenOneParentAndPublishesOnce() {
+        mediaResolver.media = List.of(image(), image(), image());
+        quotaAvailable(4);
+        AtomicInteger containers = new AtomicInteger();
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse(
+                call.param("children") != null ? "carousel-parent" : "child-" + containers.incrementAndGet()));
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-9"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-9",
+                "https://www.instagram.com/p/CAROUSEL/"));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "Three ways", "work_item_id", "wi-1", "target_id", "target-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        List<Call> containerCalls = calls.stream()
+                .filter(c -> c.method() == HttpMethod.POST && c.uri().getPath().endsWith("/ig-1/media"))
+                .toList();
+        // Three children plus the parent.
+        assertThat(containerCalls).hasSize(4);
+        assertThat(containerCalls.subList(0, 3)).allSatisfy(call -> {
+            assertThat(call.param("is_carousel_item")).isEqualTo("true");
+            // The caption belongs to the carousel; Instagram ignores one set on a child.
+            assertThat(call.param("caption")).isNull();
+        });
+        Call parent = containerCalls.get(3);
+        assertThat(parent.param("media_type")).isEqualTo("CAROUSEL");
+        assertThat(parent.param("children")).isEqualTo("child-1,child-2,child-3");
+        assertThat(parent.param("caption")).isEqualTo("Three ways");
+        // One publish, of the parent — never one per child.
+        assertThat(calls.stream().filter(c -> c.uri().getPath().endsWith("/media_publish"))).hasSize(1);
+        assertThat(result.output()).containsEntry("permalink", "https://www.instagram.com/p/CAROUSEL/");
+    }
+
+    @Test
+    void carousel_publishesItsItemsInTheOrderTheDestinationChose() {
+        mediaResolver.media = List.of(
+                new PublishMedia("https://signed.example/b.jpg", "assets/b.jpg", "image/jpeg", 1L),
+                new PublishMedia("https://signed.example/a.jpg", "assets/a.jpg", "image/jpeg", 1L));
+        quotaAvailable(4);
+        List<String> imageUrls = new ArrayList<>();
+        onPost("/ig-1/media", call -> {
+            if (call.param("children") != null) {
+                return new MetaGraphClient.ContainerResponse("carousel-parent");
+            }
+            imageUrls.add(call.param("image_url"));
+            return new MetaGraphClient.ContainerResponse("child-" + imageUrls.size());
+        });
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-9"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-9", null));
+
+        connector.invoke("publish_instagram_media",
+                Map.of("caption", "Ordered", "work_item_id", "wi-1", "target_id", "target-1",
+                        "asset_ids", List.of("b", "a")), CTX);
+
+        // Instagram crops the whole carousel to its first item, so the order is content, not presentation.
+        assertThat(imageUrls).containsExactly("https://signed.example/minted-1-assets/b.jpg",
+                "https://signed.example/minted-1-assets/a.jpg");
+    }
+
+    @Test
+    void carousel_awaitsEveryVideoChildBeforeBuildingTheParent() {
+        mediaResolver.media = List.of(video(), image());
+        quotaAvailable(4);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse(
+                call.param("children") != null ? "carousel-parent"
+                        : call.param("video_url") != null ? "video-child" : "image-child"));
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-9"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-9", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "Mixed", "work_item_id", "wi-1", "target_id", "target-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        // A video child is VIDEO, never REELS: a Reel cannot be an item in a carousel.
+        Call videoChild = calls.stream()
+                .filter(c -> c.method() == HttpMethod.POST && "VIDEO".equals(c.param("media_type")))
+                .findFirst().orElseThrow();
+        assertThat(videoChild.param("is_carousel_item")).isEqualTo("true");
+        // The video child and the parent are both polled before the publish.
+        assertThat(calls.stream().filter(c -> c.uri().toString().contains("status_code"))).hasSizeGreaterThan(1);
+    }
+
+    @Test
+    void carousel_refusesMoreThanTenItemsWithoutCallingTheGraph() {
+        mediaResolver.media = new ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            mediaResolver.media.add(image());
+        }
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "Too many", "work_item_id", "wi-1", "target_id", "target-1"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("at most 10");
+        assertThat(calls).isEmpty();
+    }
+
+    private static PublishMedia video() {
+        return new PublishMedia("https://signed.example/clip.mp4", "assets/proj/wi-1/clip.mp4",
+                "video/mp4", 4096L);
+    }
+
     private static PublishMedia image() {
         return new PublishMedia("https://signed.example/hero.jpg", "assets/proj/wi-1/hero.jpg",
                 "image/jpeg", 2048L);
@@ -300,15 +409,17 @@ class InstagramPublishActionTest {
     /** Mints a fresh URL per resolve, so a test can prove Meta got one created during the invocation. */
     private static final class StubMediaResolver implements MetaConnector.PublishMediaResolver {
 
-        private List<PublishMedia> media = List.of();
+        private List<PublishMedia> media = new ArrayList<>();
         private int resolveCalls;
 
         @Override
         public List<PublishMedia> resolve(String workItemId) {
             resolveCalls++;
+            // A fresh URL per item per resolve: the invocation number proves the URL was minted now, and
+            // the item's own gcsPath keeps two items in one carousel distinguishable.
             return media.stream()
                     .map(item -> item.isVideo() ? item : new PublishMedia(
-                            "https://signed.example/minted-" + resolveCalls + ".jpg",
+                            "https://signed.example/minted-" + resolveCalls + "-" + item.gcsPath(),
                             item.gcsPath(), item.contentType(), item.sizeBytes()))
                     .toList();
         }

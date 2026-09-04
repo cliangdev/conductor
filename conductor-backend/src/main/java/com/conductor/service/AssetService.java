@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -59,6 +60,27 @@ public class AssetService {
 
     public static final String UPLOAD_STATUS_PENDING = "PENDING";
     public static final String UPLOAD_STATUS_UPLOADED = "UPLOADED";
+
+    /**
+     * The order a Post's media goes out in when a target has not chosen its own: upload order, with id as
+     * the tie-break so it is total and stable. Shared by everything that has to agree on "the Post's media
+     * set" — the resolver, the approval gate, the bundle hash and each platform publisher — because a
+     * carousel published in a different order than the one that was approved is a different post.
+     */
+    public static final Comparator<Asset> PUBLISH_ORDER =
+            Comparator.comparing(Asset::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(Asset::getId, Comparator.nullsLast(Comparator.naturalOrder()));
+
+    /**
+     * Whether this Asset is a file whose bytes actually landed. The publishable-media predicate: a
+     * {@code link} asset has no bytes to send and a {@code PENDING} upload may never arrive, so both are
+     * excluded everywhere media is resolved or validated.
+     */
+    public static boolean isUploadedFile(Asset asset) {
+        return asset != null
+                && KIND_FILE.equals(asset.getKind())
+                && UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus());
+    }
 
     static final String GCS_PREFIX = "marketing-assets";
     private static final int UPLOAD_URL_EXPIRY_MINUTES = 60;

@@ -25,6 +25,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 
 /**
  * MKT-1 — the posting consent TikTok's audit turns on, as a persisted record of <em>what</em> was
@@ -43,6 +44,7 @@ class PublishConsentServiceTest {
     private static final String PROJECT = "project-1";
     private static final String WORK_ITEM = "post-1";
 
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private PublishConsentRepository consentRepository;
     private PostPublishTargetRepository targetRepository;
     private AssetRepository assetRepository;
@@ -63,8 +65,9 @@ class PublishConsentServiceTest {
         assetRepository = mock(AssetRepository.class);
         workItemRepository = mock(WorkItemRepository.class);
         projectSecurityService = mock(ProjectSecurityService.class);
-        service = new PublishConsentService(consentRepository, targetRepository, assetRepository,
-                workItemRepository, projectSecurityService);
+        targetAssetRepository = mock(PostPublishTargetAssetRepository.class);
+        service = new PublishConsentService(consentRepository, targetRepository, targetAssetRepository,
+                assetRepository, workItemRepository, projectSecurityService);
 
         creator = user("user-1", "Ada Creator");
         when(projectSecurityService.isProjectMember(PROJECT, "user-1")).thenReturn(true);

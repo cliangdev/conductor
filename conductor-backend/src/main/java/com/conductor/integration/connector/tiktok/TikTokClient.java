@@ -58,10 +58,31 @@ public class TikTokClient {
      */
     static final String SOURCE_FILE_UPLOAD = "FILE_UPLOAD";
 
+    /**
+     * The only source a <b>photo</b> post can declare: TikTok's content-init endpoint has no chunked upload
+     * for images, so a photo post must hand over URLs and let TikTok fetch them.
+     *
+     * <p>That makes the domain-verification requirement described above a hard prerequisite for photo posts
+     * specifically — the bucket's public host has to be registered as a verified URL prefix in the TikTok
+     * developer portal, or every photo post fails with {@code url_ownership_unverified}. Video posts are
+     * unaffected: they still upload their bytes.
+     */
+    static final String SOURCE_PULL_FROM_URL = "PULL_FROM_URL";
+
+    static final String CONTENT_INIT_PATH = "/post/publish/content/init/";
+    static final String MEDIA_TYPE_PHOTO = "PHOTO";
+    static final String POST_MODE_DIRECT_POST = "DIRECT_POST";
+
+    /** TikTok's error code when the media host has not been verified for this app. */
+    public static final String ERROR_URL_OWNERSHIP_UNVERIFIED = "url_ownership_unverified";
+
     /** Smallest chunk TikTok accepts for a multi-chunk upload: 5 MB. */
     public static final long MIN_CHUNK_BYTES = 5L * 1024 * 1024;
     /** Largest chunk TikTok accepts: 64 MB. */
     public static final long MAX_CHUNK_BYTES = 64L * 1024 * 1024;
+    /** Most images TikTok accepts in one photo post. */
+    public static final int MAX_PHOTOS = 35;
+
     /** Most chunks TikTok accepts for one upload. */
     public static final int MAX_CHUNK_COUNT = 1000;
     /** TikTok's video file ceiling: 4 GB. */
@@ -147,6 +168,14 @@ public class TikTokClient {
     public record VideoPostInfo(String title, String privacyLevel, boolean disableComment,
                                 boolean disableDuet, boolean disableStitch,
                                 boolean brandContentToggle, boolean brandOrganicToggle) {}
+
+    /**
+     * A photo post's settings. Two text fields rather than one — TikTok caps the title at 90 characters and
+     * the description at 4000 — and no duet/stitch toggles, which are video-only concepts.
+     */
+    public record PhotoPostInfo(String title, String description, String privacyLevel,
+                                boolean disableComment, boolean brandContentToggle,
+                                boolean brandOrganicToggle) {}
 
     /**
      * How one file is cut up for {@link #SOURCE_FILE_UPLOAD}. TikTok's rule is not "ceil": the chunk
@@ -258,6 +287,39 @@ public class TikTokClient {
             throw new TikTokApiException("TikTok video init returned no publish_id/upload_url", null, false);
         }
         return new UploadSession(body.data().publishId(), body.data().uploadUrl());
+    }
+
+    /**
+     * Opens (and, being DIRECT_POST, immediately queues) a photo post: up to 35 images TikTok fetches
+     * itself, with the first as the cover.
+     *
+     * <p>Unlike a video post there is nothing to upload afterwards — the returned {@code publish_id} goes
+     * straight to {@link #fetchPublishStatus}. A photo post also carries <b>two</b> pieces of text where a
+     * video carries one: a short {@code title} and a longer {@code description}.
+     */
+    public String initPhotoPost(String accessToken, PhotoPostInfo postInfo, List<String> photoUrls) {
+        if (photoUrls == null || photoUrls.isEmpty()) {
+            throw new TikTokApiException("A TikTok photo post needs at least one image", null, false);
+        }
+        PhotoInitRequest request = new PhotoInitRequest(
+                new PhotoPostInfoPayload(postInfo.title(), postInfo.description(), postInfo.privacyLevel(),
+                        postInfo.disableComment(), postInfo.brandContentToggle(),
+                        postInfo.brandOrganicToggle()),
+                new PhotoSourceInfoPayload(SOURCE_PULL_FROM_URL, 0, List.copyOf(photoUrls)),
+                POST_MODE_DIRECT_POST,
+                MEDIA_TYPE_PHOTO);
+
+        ResponseEntity<VideoInitResponse> response = exchangeClassifying("photo init", () ->
+                restTemplate.exchange(URI.create(API_BASE + CONTENT_INIT_PATH), HttpMethod.POST,
+                        new HttpEntity<>(request, jsonHeaders(accessToken)), VideoInitResponse.class));
+
+        VideoInitResponse body = response.getBody();
+        requireOk("photo init", body != null ? body.error() : null);
+        if (body == null || body.data() == null
+                || body.data().publishId() == null || body.data().publishId().isBlank()) {
+            throw new TikTokApiException("TikTok photo init returned no publish_id", null, false);
+        }
+        return body.data().publishId();
     }
 
     /**
@@ -387,6 +449,22 @@ public class TikTokClient {
                              @JsonProperty("video_size") long videoSize,
                              @JsonProperty("chunk_size") long chunkSize,
                              @JsonProperty("total_chunk_count") int totalChunkCount) {}
+
+    record PhotoInitRequest(@JsonProperty("post_info") PhotoPostInfoPayload postInfo,
+                            @JsonProperty("source_info") PhotoSourceInfoPayload sourceInfo,
+                            @JsonProperty("post_mode") String postMode,
+                            @JsonProperty("media_type") String mediaType) {}
+
+    record PhotoPostInfoPayload(@JsonProperty("title") String title,
+                                @JsonProperty("description") String description,
+                                @JsonProperty("privacy_level") String privacyLevel,
+                                @JsonProperty("disable_comment") boolean disableComment,
+                                @JsonProperty("brand_content_toggle") boolean brandContentToggle,
+                                @JsonProperty("brand_organic_toggle") boolean brandOrganicToggle) {}
+
+    record PhotoSourceInfoPayload(@JsonProperty("source") String source,
+                                  @JsonProperty("photo_cover_index") int photoCoverIndex,
+                                  @JsonProperty("photo_images") List<String> photoImages) {}
 
     record StatusFetchRequest(@JsonProperty("publish_id") String publishId) {}
 

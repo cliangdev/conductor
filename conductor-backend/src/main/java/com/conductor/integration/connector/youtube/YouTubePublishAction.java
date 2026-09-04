@@ -26,6 +26,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -253,19 +254,45 @@ public class YouTubePublishAction {
             if (workItemId == null) {
                 return null;
             }
+            // The destination's own selection wins when it has one: the approval gate validated exactly one
+            // video for this target, and picking the Post's oldest instead would upload a different file
+            // than the one that was approved. asset_id/asset_ref remain for direct tool callers.
+            List<String> selected = stringList(input, "asset_ids");
             String assetRef = firstNonBlank(stringValue(input, "asset_id"), stringValue(input, "asset_ref"));
-            Asset asset = assetRepository.findAllByWorkItemId(workItemId).stream()
+            List<Asset> videos = assetRepository.findAllByWorkItemId(workItemId).stream()
                     .filter(AssetMediaLocator::isUploadedVideo)
                     .filter(a -> assetRef == null || assetRef.equals(a.getId()) || assetRef.equals(a.getRef()))
-                    .min(Comparator.comparing(Asset::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
-                            .thenComparing(Asset::getId, Comparator.nullsLast(Comparator.naturalOrder())))
-                    .orElse(null);
+                    .toList();
+            Asset asset = selected.stream()
+                    .flatMap(id -> videos.stream().filter(a -> id.equals(a.getId())))
+                    .findFirst()
+                    .orElseGet(() -> videos.stream()
+                            .min(Comparator.comparing(Asset::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                                    .thenComparing(Asset::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                            .orElse(null));
             if (asset == null) {
                 return null;
             }
             String signedUrl = storageService.generateSignedUrl(asset.getGcsPath(), MEDIA_URL_EXPIRY_MINUTES);
             return new RangeReadMediaSource(restTemplate, signedUrl, asset.getSizeBytes(),
                     AssetUploadPolicy.normalizeContentType(asset.getContentType()));
+        }
+
+        /** A list-of-strings input parameter, tolerating the single-string form and dropping blanks. */
+        private static List<String> stringList(Map<String, Object> input, String key) {
+            Object value = input == null ? null : input.get(key);
+            if (value instanceof String single) {
+                return single.isBlank() ? List.of() : List.of(single.trim());
+            }
+            if (value instanceof java.util.Collection<?> collection) {
+                return collection.stream()
+                        .filter(java.util.Objects::nonNull)
+                        .map(Object::toString)
+                        .map(String::trim)
+                        .filter(text -> !text.isBlank())
+                        .toList();
+            }
+            return List.of();
         }
 
         private static boolean isUploadedVideo(Asset asset) {

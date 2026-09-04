@@ -23,6 +23,8 @@ function target(overrides: Partial<TikTokConsentTarget> = {}): TikTokConsentTarg
     creatorNickname: 'acme_official',
     options: options(),
     problem: null,
+    // The copy that will actually go out to this account, which is what consent is about.
+    caption: 'Acme launches the thing',
     ...overrides,
   }
 }
@@ -47,7 +49,6 @@ function renderStep(props: Partial<React.ComponentProps<typeof TikTokConsentStep
     <TikTokConsentStep
       targets={[target()]}
       assets={[IMAGE]}
-      caption="Acme launches the thing"
       consented={false}
       onConsentChange={onConsentChange}
       {...props}
@@ -117,6 +118,25 @@ describe('TikTokConsentStep', () => {
     expect(screen.getByAltText('Launch teaser')).toHaveAttribute('src', IMAGE.previewUrl)
     expect(screen.getByLabelText('Launch cut')).toHaveAttribute('src', VIDEO.previewUrl)
     expect(screen.getByText('Acme launches the thing')).toBeInTheDocument()
+  })
+
+  it('previews only the media that goes to this account, not the whole Post', () => {
+    renderStep({
+      assets: [IMAGE, VIDEO],
+      // This destination publishes the video alone; the image goes somewhere else.
+      targets: [target({ assetIds: [VIDEO.id], caption: 'The TikTok cut' })],
+    })
+
+    expect(screen.getByLabelText('Launch cut')).toBeInTheDocument()
+    expect(screen.queryByAltText('Launch teaser')).not.toBeInTheDocument()
+    expect(screen.getByText('The TikTok cut')).toBeInTheDocument()
+  })
+
+  it('previews the whole Post when this account inherits it', () => {
+    renderStep({ assets: [IMAGE, VIDEO], targets: [target()] })
+
+    expect(screen.getByAltText('Launch teaser')).toBeInTheDocument()
+    expect(screen.getByLabelText('Launch cut')).toBeInTheDocument()
   })
 
   it('says so rather than showing an empty frame when nothing has been uploaded', () => {
@@ -280,7 +300,6 @@ describe('TikTokConsentStep (persisted)', () => {
       <TikTokConsentStep
         targets={[target()]}
         assets={[IMAGE]}
-        caption="Acme launches the thing"
         projectId={PROJECT}
         workItemId={WORK_ITEM}
         token="jwt"

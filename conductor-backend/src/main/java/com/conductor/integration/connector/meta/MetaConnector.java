@@ -20,6 +20,7 @@ import org.springframework.web.client.HttpClientErrorException;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -406,6 +407,18 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
         /** This Work Item's uploaded media, in upload order, each with a freshly signed read URL. */
         List<PublishMedia> resolve(String workItemId);
 
+        /**
+         * Exactly {@code assetIds}, in that order — what one destination chose to publish. Falls back to
+         * {@link #resolve(String)} when the list is empty, which is how an inheriting target reaches the
+         * Post's whole set.
+         *
+         * <p>Order is preserved because the caller's order is the post's order: Instagram crops every
+         * carousel item to the first one's aspect ratio.
+         */
+        default List<PublishMedia> resolve(String workItemId, List<String> assetIds) {
+            return resolve(workItemId);
+        }
+
         /** The raw bytes behind a resolved item, for the upload paths that send content instead of a URL. */
         default byte[] download(PublishMedia media) {
             throw new IllegalStateException("This Meta connection cannot read media bytes for upload");
@@ -436,16 +449,27 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
 
         @Override
         public List<PublishMedia> resolve(String workItemId) {
+            return resolve(workItemId, List.of());
+        }
+
+        @Override
+        public List<PublishMedia> resolve(String workItemId, List<String> assetIds) {
             if (workItemId == null || workItemId.isBlank()) {
                 return List.of();
             }
-            return assetRepository.findAllByWorkItemId(workItemId).stream()
-                    .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
-                    .filter(asset -> AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus()))
+            List<Asset> publishable = assetRepository.findAllByWorkItemId(workItemId).stream()
+                    .filter(AssetService::isUploadedFile)
                     .filter(asset -> asset.getGcsPath() != null && !asset.getGcsPath().isBlank())
-                    .sorted(Comparator.comparing(Asset::getCreatedAt,
-                                    Comparator.nullsLast(Comparator.naturalOrder()))
-                            .thenComparing(Asset::getId))
+                    .sorted(AssetService.PUBLISH_ORDER)
+                    .toList();
+            if (assetIds != null && !assetIds.isEmpty()) {
+                // The caller's order, not upload order: this is the destination's chosen sequence, and
+                // Instagram crops the whole carousel to whatever comes first.
+                Map<String, Asset> byId = new LinkedHashMap<>();
+                publishable.forEach(asset -> byId.put(asset.getId(), asset));
+                publishable = assetIds.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
+            }
+            return publishable.stream()
                     .map(asset -> new PublishMedia(
                             storageService.generateSignedUrl(asset.getGcsPath(), MEDIA_URL_EXPIRY_MINUTES),
                             asset.getGcsPath(), asset.getContentType(), asset.getSizeBytes()))
@@ -498,19 +522,52 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
          */
         static PublishMedia resolveMedia(PublishMediaResolver resolver, Map<String, Object> input,
                                          String explicitImageUrl, String explicitVideoUrl) {
-            if (explicitVideoUrl != null) {
-                return new PublishMedia(explicitVideoUrl, null, "video/*", null);
-            }
-            if (explicitImageUrl != null) {
-                return new PublishMedia(explicitImageUrl, null, "image/*", null);
-            }
-            List<PublishMedia> media = resolver.resolve(string(input, "work_item_id"));
+            List<PublishMedia> media = resolveMediaList(resolver, input, explicitImageUrl, explicitVideoUrl);
             if (media.isEmpty()) {
                 return null;
             }
             return media.stream().filter(PublishMedia::isVideo).findFirst()
                     .orElseGet(() -> media.stream().filter(PublishMedia::isImage).findFirst()
                             .orElse(media.get(0)));
+        }
+
+        /**
+         * Everything this invocation publishes, in order: an explicitly supplied URL when the caller named
+         * one, otherwise this destination's chosen assets ({@code asset_ids}) with their read URLs minted
+         * <b>now</b>, inside the invocation.
+         *
+         * <p>This is the list the multi-item posts are built from — an Instagram carousel, a Facebook photo
+         * set. {@link #resolveMedia} remains for the single-item paths, and collapses this to one.
+         */
+        static List<PublishMedia> resolveMediaList(PublishMediaResolver resolver, Map<String, Object> input,
+                                                   String explicitImageUrl, String explicitVideoUrl) {
+            if (explicitVideoUrl != null) {
+                return List.of(new PublishMedia(explicitVideoUrl, null, "video/*", null));
+            }
+            if (explicitImageUrl != null) {
+                return List.of(new PublishMedia(explicitImageUrl, null, "image/*", null));
+            }
+            return resolver.resolve(string(input, "work_item_id"), stringList(input, "asset_ids"));
+        }
+
+        /** A list-of-strings input parameter, tolerating the single-string form and dropping blanks. */
+        static List<String> stringList(Map<String, Object> input, String key) {
+            Object value = input == null ? null : input.get(key);
+            if (value == null) {
+                return List.of();
+            }
+            if (value instanceof String single) {
+                return single.isBlank() ? List.of() : List.of(single.trim());
+            }
+            if (value instanceof Collection<?> collection) {
+                return collection.stream()
+                        .filter(java.util.Objects::nonNull)
+                        .map(Object::toString)
+                        .filter(text -> !text.isBlank())
+                        .map(String::trim)
+                        .toList();
+            }
+            return List.of();
         }
 
         /**

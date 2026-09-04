@@ -12,6 +12,9 @@ import com.conductor.integration.connector.tiktok.TikTokClient.VideoPostInfo;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
+import com.conductor.service.AssetService;
+import com.conductor.service.AssetUploadPolicy;
+import com.conductor.service.StorageService;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.cloud.ReadChannel;
@@ -91,6 +94,21 @@ public class TikTokPublishAction {
     static final String INPUT_ASSET_ID = "asset_id";
     static final String INPUT_TITLE = "title";
     static final String INPUT_PRIVACY_LEVEL = "privacy_level";
+    /** The destination's ordered media selection, as the dispatcher supplies it. */
+    static final String INPUT_ASSET_IDS = "asset_ids";
+    /** A photo post's long text, where a video post has only a title. */
+    static final String INPUT_DESCRIPTION = "description";
+    /** A photo post's short title, kept apart from the video path's {@code title}. */
+    static final String INPUT_HEADLINE = "headline";
+
+    /** TikTok cuts a photo post's title at 90 characters. */
+    static final int MAX_PHOTO_TITLE_CHARS = 90;
+
+    /**
+     * Signed-read lifetime for a photo post's images. TikTok fetches them during the init call, so this
+     * only has to outlive that one request with room for a slow fetch.
+     */
+    private static final int PHOTO_URL_EXPIRY_MINUTES = 60;
 
     static final String OUTPUT_POST_ID = "post_id";
     static final String OUTPUT_PERMALINK = "permalink";
@@ -110,6 +128,8 @@ public class TikTokPublishAction {
     private final ActionInvocationService actionInvocationService;
     private final ObjectMapper objectMapper;
     private final VideoRangeReader rangeReader;
+    /** Signs read URLs for a photo post, which TikTok fetches rather than receiving as bytes. */
+    private final StorageService storageService;
 
     /**
      * Opens a stream over exactly one byte range of a stored object. The seam that keeps this class off
@@ -131,21 +151,24 @@ public class TikTokPublishAction {
                                @Lazy ActionInvocationService actionInvocationService,
                                ObjectMapper objectMapper,
                                Storage storage,
+                               StorageService storageService,
                                @Value("${gcp.storage.bucket-name}") String bucketName) {
         this(new TikTokClient(), assetRepository, targetRepository, actionInvocationService, objectMapper,
-                gcsRangeReader(storage, bucketName));
+                gcsRangeReader(storage, bucketName), storageService);
     }
 
     TikTokPublishAction(TikTokClient client, AssetRepository assetRepository,
                         PostPublishTargetRepository targetRepository,
                         ActionInvocationService actionInvocationService,
-                        ObjectMapper objectMapper, VideoRangeReader rangeReader) {
+                        ObjectMapper objectMapper, VideoRangeReader rangeReader,
+                        StorageService storageService) {
         this.client = client;
         this.assetRepository = assetRepository;
         this.targetRepository = targetRepository;
         this.actionInvocationService = actionInvocationService;
         this.objectMapper = objectMapper;
         this.rangeReader = rangeReader;
+        this.storageService = storageService;
     }
 
     /**
@@ -174,11 +197,38 @@ public class TikTokPublishAction {
 
     /**
      * Resume state for one logical publish. Serialised into the invocation's checkpoint after every
-     * accepted chunk; {@code nextChunkIndex} is the only field that moves.
+     * accepted chunk; for a video, {@code nextChunkIndex} is the only field that moves.
+     *
+     * <p>{@code mode} distinguishes the two kinds of post. It is absent from every checkpoint written
+     * before photo posts existed, and Jackson leaves it null there, which {@link #isPhotoPost()} reads as
+     * a video — so an upload in flight across the deploy resumes exactly as it would have.
+     *
+     * <p>A photo checkpoint carries no upload url, size or chunk plan: there is nothing to upload. It
+     * exists only to remember the {@code publish_id}, so a retry polls the post TikTok already has rather
+     * than creating a second one.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record UploadCheckpoint(String assetId, String publishId, String uploadUrl,
-                            long videoSize, long chunkSize, int totalChunkCount, int nextChunkIndex) {}
+                            long videoSize, long chunkSize, int totalChunkCount, int nextChunkIndex,
+                            String mode, List<String> assetIds) {
+
+        static final String MODE_PHOTO = "PHOTO";
+
+        /** The video form, which is every field but the two added for photo posts. */
+        UploadCheckpoint(String assetId, String publishId, String uploadUrl, long videoSize, long chunkSize,
+                         int totalChunkCount, int nextChunkIndex) {
+            this(assetId, publishId, uploadUrl, videoSize, chunkSize, totalChunkCount, nextChunkIndex,
+                    null, null);
+        }
+
+        static UploadCheckpoint forPhotoPost(String publishId, List<String> assetIds) {
+            return new UploadCheckpoint(null, publishId, null, 0, 0, 0, 0, MODE_PHOTO, assetIds);
+        }
+
+        boolean isPhotoPost() {
+            return MODE_PHOTO.equals(mode);
+        }
+    }
 
     /**
      * Publishes one video. Never throws for a failure TikTok has already judged permanent; throws for
@@ -208,6 +258,13 @@ public class TikTokPublishAction {
             throw new PermanentPublishException("TikTok publishing does not accept video_url: that would "
                     + "need PULL_FROM_URL, which requires verified ownership of the source domain. "
                     + "Attach the video to the Post instead.");
+        }
+
+        // A destination that selected images publishes a photo post; anything else is the video path.
+        // The approval gate has already refused a mix, so this is a clean either/or.
+        List<Asset> photos = resolvePhotos(input);
+        if (!photos.isEmpty()) {
+            return publishPhotoPost(accessToken, input, ctx, photos);
         }
 
         ResolvedVideo video = resolveVideo(input);
@@ -321,7 +378,142 @@ public class TikTokPublishAction {
         return "https://www.tiktok.com/@" + username + "/video/" + status.postId();
     }
 
+    /**
+     * Publishes a photo post. There are no bytes to send — TikTok fetches the images from signed URLs — so
+     * this is one call and then the same status poll a video ends with.
+     *
+     * <p>The checkpoint records the {@code publish_id} the moment TikTok returns one. Without it a retry
+     * after a transient status-poll failure would init a second post, and the creator would find the same
+     * photos published twice.
+     */
+    private ActionResult publishPhotoPost(String accessToken, Map<String, Object> input,
+                                          ConnectionContext ctx, List<Asset> photos) {
+        String idempotencyKey = resolveIdempotencyKey(input);
+        UploadCheckpoint existing = readCheckpoint(idempotencyKey);
+        String publishId = existing != null && existing.publishId() != null && existing.isPhotoPost()
+                ? existing.publishId()
+                : null;
+
+        if (publishId == null) {
+            List<String> urls = photos.stream()
+                    .map(photo -> signedUrl(photo))
+                    .toList();
+            try {
+                publishId = client.initPhotoPost(accessToken, buildPhotoPostInfo(input, ctx), urls);
+            } catch (TikTokApiException e) {
+                if (TikTokClient.ERROR_URL_OWNERSHIP_UNVERIFIED.equalsIgnoreCase(e.code())) {
+                    // Permanent, and not the creator's fault: photo posts are PULL_FROM_URL only, so this
+                    // app has to have the media host registered as a verified URL prefix. Retrying cannot
+                    // help, and the message has to name the one thing that does.
+                    throw new PermanentPublishException("TikTok will not fetch this Post's images because "
+                            + "the media host is not a verified URL prefix for this TikTok app. Add the "
+                            + "storage host under URL properties in the TikTok developer portal, then retry. "
+                            + "(Video posts are unaffected — they upload their bytes.)");
+                }
+                throw e;
+            }
+            saveCheckpoint(idempotencyKey, UploadCheckpoint.forPhotoPost(publishId,
+                    photos.stream().map(Asset::getId).toList()));
+            log.info("TikTok photo post {} opened with {} images", publishId, photos.size());
+        } else {
+            log.info("TikTok photo post {} resuming: already opened, polling for its outcome", publishId);
+        }
+
+        PublishStatus status = awaitPublish(accessToken, publishId);
+        return ActionResult.ok(publishOutput(publishId, status, ctx));
+    }
+
+    /** A read URL for one image, minted now — TikTok fetches it during the init call. */
+    private String signedUrl(Asset photo) {
+        String url = storageService.generateSignedUrl(photo.getGcsPath(), PHOTO_URL_EXPIRY_MINUTES);
+        if (url == null || url.isBlank()) {
+            throw new PermanentPublishException("Could not sign a read URL for image " + photo.getId());
+        }
+        return url;
+    }
+
+    private TikTokClient.PhotoPostInfo buildPhotoPostInfo(Map<String, Object> input, ConnectionContext ctx) {
+        String privacyLevel = text(input.get(INPUT_PRIVACY_LEVEL));
+        if (privacyLevel == null) {
+            privacyLevel = DEFAULT_PRIVACY_LEVEL;
+        }
+        requireAllowedPrivacyLevel(privacyLevel, ctx);
+        // A photo post carries a short title and a long description where a video carries one caption. The
+        // dispatcher supplies both: "headline" is the Post's title, "description" its caption.
+        String title = truncate(firstNonBlank(text(input.get(INPUT_HEADLINE)), text(input.get(INPUT_TITLE))),
+                MAX_PHOTO_TITLE_CHARS);
+        String description = firstNonBlank(text(input.get(INPUT_DESCRIPTION)), text(input.get(INPUT_TITLE)));
+        return new TikTokClient.PhotoPostInfo(title, description, privacyLevel,
+                flag(input.get("disable_comment")), flag(input.get("brand_content_toggle")),
+                flag(input.get("brand_organic_toggle")));
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return first != null && !first.isBlank() ? first : second;
+    }
+
+    /** TikTok cuts an over-long photo title itself; doing it here keeps the post from being rejected. */
+    private static String truncate(String value, int max) {
+        if (value == null || value.length() <= max) {
+            return value;
+        }
+        return value.substring(0, max);
+    }
+
     // ---- media resolution ----
+
+    /**
+     * The images this destination chose, in order — empty when it selected a video (or nothing), which
+     * sends the caller down the video path.
+     *
+     * <p>Only an explicit {@code asset_ids} selection can produce a photo post. Inheriting the Post's whole
+     * media set does too when that set is all images, which is exactly what the dispatcher passes.
+     */
+    private List<Asset> resolvePhotos(Map<String, Object> input) {
+        List<String> assetIds = stringList(input.get(INPUT_ASSET_IDS));
+        if (assetIds.isEmpty()) {
+            return List.of();
+        }
+        String workItemId = text(input.get(INPUT_WORK_ITEM_ID));
+        if (workItemId == null) {
+            return List.of();
+        }
+        Map<String, Asset> byId = new LinkedHashMap<>();
+        assetRepository.findAllByWorkItemId(workItemId).forEach(asset -> byId.put(asset.getId(), asset));
+        List<Asset> selected = assetIds.stream().map(byId::get).filter(Objects::nonNull).toList();
+        if (selected.isEmpty() || selected.stream().anyMatch(TikTokPublishAction::isUploadedVideo)) {
+            return List.of();
+        }
+        List<Asset> photos = selected.stream().filter(TikTokPublishAction::isUploadedImage).toList();
+        if (photos.size() != selected.size()) {
+            throw new PermanentPublishException(
+                    "Every file in a TikTok photo post must be an uploaded image");
+        }
+        if (photos.size() > TikTokClient.MAX_PHOTOS) {
+            throw new PermanentPublishException("A TikTok photo post holds at most "
+                    + TikTokClient.MAX_PHOTOS + " images; this destination selected " + photos.size());
+        }
+        return photos;
+    }
+
+    private static boolean isUploadedImage(Asset asset) {
+        String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+        return AssetService.isUploadedFile(asset)
+                && asset.getGcsPath() != null && !asset.getGcsPath().isBlank()
+                && contentType != null && contentType.startsWith("image/");
+    }
+
+    private static List<String> stringList(Object value) {
+        if (value instanceof String single) {
+            return single.isBlank() ? List.of() : List.of(single.trim());
+        }
+        if (value instanceof Collection<?> collection) {
+            return collection.stream().filter(Objects::nonNull).map(Object::toString)
+                    .map(String::trim).filter(text -> !text.isBlank()).toList();
+        }
+        return List.of();
+    }
+
 
     /**
      * Finds the video to publish. The scheduler's payload carries handles, not media parameters, so this
@@ -474,6 +666,23 @@ public class TikTokPublishAction {
             return null;
         }
         return checkpoint;
+    }
+
+    /** The stored checkpoint as written, with no chunk-plan validation — the photo path has no plan. */
+    private UploadCheckpoint readCheckpoint(String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return null;
+        }
+        Optional<String> stored = actionInvocationService.readCheckpoint(idempotencyKey);
+        if (stored.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(stored.get(), UploadCheckpoint.class);
+        } catch (Exception e) {
+            log.warn("Unreadable TikTok checkpoint for {}; starting over: {}", idempotencyKey, e.toString());
+            return null;
+        }
     }
 
     private void saveCheckpoint(String idempotencyKey, UploadCheckpoint checkpoint) {

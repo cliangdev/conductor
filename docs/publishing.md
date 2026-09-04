@@ -25,7 +25,8 @@ enforced. Passing it requires:
 - at least one **publish target** selected,
 - at least one uploaded media file,
 - a fire time at least **10 minutes** out, with an IANA timezone,
-- media that each selected platform will actually accept (`MediaTargetValidator`),
+- media on **every** target, which each selected platform will actually accept and can publish as one
+  post (`MediaTargetValidator`),
 - for an API TikTok target: a privacy level, and the creator's recorded consent.
 
 ## Content freezes when it goes for review
@@ -133,6 +134,50 @@ unscheduling stands a flagged target back down to `PENDING`.
 > Run with `-Dconductor.post-publish.enabled=true` to exercise them on a laptop; the `local` profile's
 > connectors are stubs, so nothing reaches a real platform.
 
+## Per-target caption and media
+
+A Post has one caption and one set of uploaded media, and by default every destination publishes all of
+it. That default is a real behaviour, not just an initial value: an **inheriting** destination keeps
+following the Post as files are added and removed.
+
+Any destination can be given its own instead. On the Post, *Publishing to* → **Customize for this
+destination** opens a caption box and an ordered picker over the Post's own files; over MCP the same
+thing is `captionOverride` and `assetIds` on `set_publish_targets`. Both are optional, and leaving them
+out is what inherits.
+
+Two rules follow from that, and they are the ones people trip over:
+
+- **Order is content.** Instagram crops every carousel item to the first item's aspect ratio and TikTok
+  takes a photo post's cover from the first image, so re-ordering a selection changes the post — and,
+  like any other bundle edit, sends an approved Post back for review.
+- **Selecting is set-replace, everywhere.** `set_publish_targets` sends the complete selection, so a
+  target re-sent without `captionOverride` or `assetIds` has them cleared. The UI re-sends every
+  destination's content on every save for exactly this reason.
+
+A destination that chose files which were later deleted is **not** the same as one that never chose:
+it has no media, and the approval gate says so rather than quietly publishing the whole Post there.
+Deleting media is only possible before review, so this can never rewrite an approved bundle.
+
+## What each platform accepts
+
+Checked at the approval gate, per target, against that target's own media — so a PNG uploaded for
+Facebook no longer blocks the Post because Instagram is also selected.
+
+| Platform | Media | Copy |
+|---|---|---|
+| **Instagram** | 1 item, or a carousel of 2–10 (images and video may mix). Feed images must be JPEG, aspect 4:5 to 1.91:1 | caption ≤ 2200 characters |
+| **Facebook** | 1 video, **or** any number of photos; never both. Video ≤ 1.5 GB | message effectively uncapped |
+| **TikTok** | 1 video (≤ 4 GB, within the creator's own duration cap), **or** 1–35 images. Never both, and photo-post images must be **JPEG or WEBP** — PNG is refused here and nowhere else | video caption ≤ 2200; photo post: title ≤ 90 (cut, with a warning), description ≤ 4000 |
+| **YouTube** | exactly 1 video, no images | title ≤ 100 characters; description ≤ 5000 **bytes** of UTF-8 |
+
+A carousel of mixed aspect ratios is a warning, not a refusal: Instagram will publish it, cropping every
+item to the first one's shape, which may well be what was wanted.
+
+> **TikTok photo posts need one piece of setup.** TikTok has no chunked upload for images, so a photo
+> post hands over URLs for TikTok to fetch — which requires the storage host to be registered as a
+> verified URL prefix for the app in the TikTok developer portal. Without it every photo post fails with
+> a message naming this; video posts are unaffected, since they upload their bytes.
+
 ## Outcomes
 
 A Post's single status cannot describe a partial send, so every target keeps its own row. A Post that
@@ -171,6 +216,8 @@ Issues channel — so it is simply silent until a Publishing channel exists.
 - `service/PublishOutcomeService` — outcome recording, the Post-level roll-up, retry, manual completion
 - `service/PostScheduleValidator`, `MediaTargetValidator`, `PublishOptionsValidator` — the approval gate
 - `service/PublishBundleHasher`, `PublishBundleGuard` — binding an approval to what was approved
+- `service/PublishTargetMediaResolver` — the one answer to "what does this target actually publish?"
+- `service/PublishInputBuilder` — the payload both dispatchers hand a platform action
 
 See [`workflows.md`](workflows.md) for the Workflow YAML and statechart format, and
 [`integrations-adding-a-connector.md`](integrations-adding-a-connector.md) for connecting an account.

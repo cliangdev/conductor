@@ -18,11 +18,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.Set;
 
 /**
  * Enforces every per-platform media rule at the approval gate of a <em>publishing</em> Workflow (COND-23),
@@ -103,19 +106,38 @@ public class MediaTargetValidator {
             "youtube", "YouTube",
             "tiktok", "TikTok");
 
+    /** Instagram publishes 1 item, or a carousel of 2 to 10. */
+    public static final int INSTAGRAM_MAX_CAROUSEL_ITEMS = 10;
+    /** TikTok photo posts carry up to 35 images. */
+    public static final int TIKTOK_MAX_PHOTOS = 35;
+    /** TikTok photo posts accept JPEG and WEBP only — notably not PNG. */
+    private static final Set<String> TIKTOK_PHOTO_TYPES = Set.of("image/jpeg", "image/webp");
+
+    /** Caption ceilings, in characters, where the platform enforces one. */
+    public static final int INSTAGRAM_MAX_CAPTION_CHARS = 2200;
+    public static final int TIKTOK_MAX_CAPTION_CHARS = 2200;
+    public static final int TIKTOK_MAX_PHOTO_DESCRIPTION_CHARS = 4000;
+    public static final int TIKTOK_MAX_PHOTO_TITLE_CHARS = 90;
+    public static final int YOUTUBE_MAX_TITLE_CHARS = 100;
+    /** YouTube's description ceiling is 5000 *bytes* of UTF-8, not characters. */
+    public static final int YOUTUBE_MAX_DESCRIPTION_BYTES = 5000;
+
     private final AssetRepository assetRepository;
     private final PostPublishTargetRepository postPublishTargetRepository;
     private final ConnectionRepository connectionRepository;
     private final ObjectMapper objectMapper;
+    private final PublishTargetMediaResolver mediaResolver;
 
     public MediaTargetValidator(AssetRepository assetRepository,
                                 PostPublishTargetRepository postPublishTargetRepository,
                                 ConnectionRepository connectionRepository,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                PublishTargetMediaResolver mediaResolver) {
         this.assetRepository = assetRepository;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
         this.objectMapper = objectMapper;
+        this.mediaResolver = mediaResolver;
     }
 
     /** Advisory findings from a validation that did not block. Safe to ignore. */
@@ -152,20 +174,26 @@ public class MediaTargetValidator {
             // PostScheduleValidator owns "you must pick a target"; there is nothing here to check against.
             return Result.CLEAN;
         }
-        List<Asset> media = assetRepository.findAllByWorkItemId(workItem.getId()).stream()
-                .filter(MediaTargetValidator::isUploadedFile)
-                .toList();
-        if (media.isEmpty()) {
-            // PostScheduleValidator owns "you must upload media".
-            return Result.CLEAN;
-        }
+        // Per target, not per Post: two destinations on the same Post routinely publish different files
+        // now, so a rule has to be checked against what its own target will actually send.
+        Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
+                mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
 
         List<String> problems = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         for (PostPublishTarget target : targets) {
+            List<Asset> media = mediaByTarget
+                    .getOrDefault(target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE).assets();
+            if (media.isEmpty()) {
+                // PostScheduleValidator owns "this target has no media", and says which kind of nothing
+                // it is; checking file rules against an empty list here would add nothing but noise.
+                continue;
+            }
             for (Asset asset : media) {
                 inspect(target, asset, problems, warnings);
             }
+            inspectComposition(target, media, problems, warnings);
+            inspectCopy(target, workItem, media, problems, warnings);
         }
         if (!problems.isEmpty()) {
             throw new UnprocessableEntityException(
@@ -212,6 +240,159 @@ public class MediaTargetValidator {
             case "youtube" -> inspectYouTube(target, asset, warnings);
             default -> { }
         }
+    }
+
+    /**
+     * What this target's media adds up to as one post, as opposed to whether each file is individually
+     * acceptable. Every platform here publishes a different <em>shape</em>: Instagram takes one item or a
+     * carousel of two to ten, Facebook one video or any number of photos, TikTok one video or up to 35
+     * photos and never a mix, YouTube exactly one video. A set that breaks the shape fails at the platform
+     * with an opaque error at fire time, long after the reviewer has gone, so it is refused here.
+     */
+    private void inspectComposition(PostPublishTarget target, List<Asset> media, List<String> problems,
+                                    List<String> warnings) {
+        String platform = normalizedPlatform(target);
+        long videos = media.stream().filter(MediaTargetValidator::isVideo).count();
+        long images = media.stream().filter(MediaTargetValidator::isImage).count();
+        String where = describe(target);
+        switch (platform) {
+            case "instagram" -> {
+                if (media.size() > INSTAGRAM_MAX_CAROUSEL_ITEMS) {
+                    problems.add(where + " has " + media.size() + " files — an Instagram carousel holds at "
+                            + "most " + INSTAGRAM_MAX_CAROUSEL_ITEMS + "; drop some for this destination");
+                } else if (media.size() > 1) {
+                    warnCarouselAspects(media, where, warnings);
+                }
+            }
+            case "facebook" -> {
+                if (videos > 1) {
+                    problems.add(where + " has " + videos + " videos — a Facebook post carries one video; "
+                            + "publish the rest as their own Posts");
+                } else if (videos == 1 && images > 0) {
+                    problems.add(where + " mixes a video with " + images + " image(s) — a Facebook post is "
+                            + "either one video or a set of photos, not both");
+                }
+            }
+            case "tiktok" -> inspectTikTokComposition(target, media, videos, images, where, problems);
+            case "youtube" -> {
+                if (images > 0) {
+                    problems.add(where + " has " + images + " image(s) — YouTube publishes video only; "
+                            + "select the video for this destination");
+                } else if (videos > 1) {
+                    problems.add(where + " has " + videos + " videos — a YouTube upload is one video; "
+                            + "select which one goes here");
+                }
+            }
+            default -> { }
+        }
+    }
+
+    /**
+     * TikTok's two post types, which cannot be combined: a video post (exactly one video) or a photo post
+     * (up to 35 images, JPEG or WEBP — PNG is rejected outright, unlike everywhere else in this class where
+     * PNG is fine).
+     */
+    private void inspectTikTokComposition(PostPublishTarget target, List<Asset> media, long videos,
+                                          long images, String where, List<String> problems) {
+        if (videos > 0 && images > 0) {
+            problems.add(where + " mixes video and images — a TikTok post is either one video or a photo "
+                    + "post, never both");
+            return;
+        }
+        if (videos > 1) {
+            problems.add(where + " has " + videos + " videos — a TikTok post carries one");
+            return;
+        }
+        if (images > TIKTOK_MAX_PHOTOS) {
+            problems.add(where + " has " + images + " images — a TikTok photo post holds at most "
+                    + TIKTOK_MAX_PHOTOS);
+            return;
+        }
+        for (Asset asset : media) {
+            if (!isImage(asset)) {
+                continue;
+            }
+            String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+            if (!TIKTOK_PHOTO_TYPES.contains(contentType)) {
+                problems.add(describe(target, asset) + " is " + contentType
+                        + " — a TikTok photo post accepts JPEG or WEBP only; re-export it as a JPEG");
+            }
+        }
+    }
+
+    /**
+     * Instagram crops every carousel item to the <b>first</b> item's aspect ratio, so a carousel of mixed
+     * shapes silently loses parts of the later ones. Advisory rather than blocking: the post publishes and
+     * may well be what the author wanted, but they should know before a reviewer approves it.
+     */
+    private void warnCarouselAspects(List<Asset> media, String where, List<String> warnings) {
+        OptionalDouble first = MediaMetadata.of(media.get(0)).aspectRatio();
+        if (first.isEmpty()) {
+            return;
+        }
+        double reference = first.getAsDouble();
+        boolean mixed = media.stream().skip(1)
+                .map(MediaMetadata::of)
+                .map(MediaMetadata::aspectRatio)
+                .filter(OptionalDouble::isPresent)
+                .anyMatch(aspect -> Math.abs(aspect.getAsDouble() - reference) > ASPECT_EPSILON);
+        if (mixed) {
+            warnings.add(where + " is a carousel of mixed aspect ratios — Instagram crops every item to the "
+                    + "first one's shape (" + formatAspect(reference) + ":1)");
+        }
+    }
+
+    /**
+     * The copy that will actually go out here, against the platform's own ceilings. Read through the
+     * resolver so an overridden caption is checked and an inherited one is checked once per destination —
+     * the same text can be fine for Facebook and too long for Instagram.
+     */
+    private void inspectCopy(PostPublishTarget target, WorkItem post, List<Asset> media,
+                             List<String> problems, List<String> warnings) {
+        String caption = mediaResolver.effectiveCaption(target, post);
+        String title = post.getTitle();
+        String where = describe(target);
+        switch (normalizedPlatform(target)) {
+            case "instagram" -> refuseIfLonger(caption, INSTAGRAM_MAX_CAPTION_CHARS, where, "caption",
+                    problems);
+            case "tiktok" -> {
+                boolean photoPost = media.stream().noneMatch(MediaTargetValidator::isVideo);
+                if (photoPost) {
+                    refuseIfLonger(caption, TIKTOK_MAX_PHOTO_DESCRIPTION_CHARS, where, "description",
+                            problems);
+                    if (title != null && title.length() > TIKTOK_MAX_PHOTO_TITLE_CHARS) {
+                        warnings.add(where + " has a " + title.length() + "-character title — TikTok cuts a "
+                                + "photo post's title to " + TIKTOK_MAX_PHOTO_TITLE_CHARS);
+                    }
+                } else {
+                    refuseIfLonger(caption, TIKTOK_MAX_CAPTION_CHARS, where, "caption", problems);
+                }
+            }
+            case "youtube" -> {
+                if (title != null && title.length() > YOUTUBE_MAX_TITLE_CHARS) {
+                    problems.add(where + " has a " + title.length() + "-character title — YouTube allows "
+                            + YOUTUBE_MAX_TITLE_CHARS + "; shorten the Post's title");
+                }
+                int bytes = caption == null ? 0 : caption.getBytes(StandardCharsets.UTF_8).length;
+                if (bytes > YOUTUBE_MAX_DESCRIPTION_BYTES) {
+                    problems.add(where + " has a " + bytes + "-byte description — YouTube allows "
+                            + YOUTUBE_MAX_DESCRIPTION_BYTES + " bytes (emoji and accents cost several each)");
+                }
+            }
+            default -> { }
+        }
+    }
+
+    private static void refuseIfLonger(String caption, int max, String where, String noun,
+                                       List<String> problems) {
+        if (caption != null && caption.length() > max) {
+            problems.add(where + " has a " + caption.length() + "-character " + noun + " — the platform "
+                    + "allows " + max + "; shorten it for this destination");
+        }
+    }
+
+    private static String normalizedPlatform(PostPublishTarget target) {
+        return target.getPlatform() == null ? "" : target.getPlatform().trim().toLowerCase(Locale.ROOT);
     }
 
     private void inspectInstagram(PostPublishTarget target, Asset asset, List<String> problems) {
@@ -344,6 +525,11 @@ public class MediaTargetValidator {
         return platformLabel(target) + ": media '" + mediaLabel(asset) + "'";
     }
 
+    /** The destination alone, for a problem about the set rather than about one file in it. */
+    private String describe(PostPublishTarget target) {
+        return platformLabel(target);
+    }
+
     private String platformLabel(PostPublishTarget target) {
         String platform = target.getPlatform() == null
                 ? "" : target.getPlatform().trim().toLowerCase(Locale.ROOT);
@@ -367,10 +553,6 @@ public class MediaTargetValidator {
         return String.format(Locale.ROOT, "%.2f GB", bytes / (double) (1024L * 1024 * 1024));
     }
 
-    private static boolean isUploadedFile(Asset asset) {
-        return AssetService.KIND_FILE.equals(asset.getKind())
-                && AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus());
-    }
 
     private static boolean isImage(Asset asset) {
         String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());

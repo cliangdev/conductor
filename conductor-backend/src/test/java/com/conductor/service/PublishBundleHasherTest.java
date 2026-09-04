@@ -4,6 +4,7 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.WorkItem;
 import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ class PublishBundleHasherTest {
     private static final String ITEM_ID = "item-1";
 
     private PostPublishTargetRepository targetRepository;
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private AssetRepository assetRepository;
     private PublishBundleHasher hasher;
 
@@ -33,7 +35,8 @@ class PublishBundleHasherTest {
     void setUp() {
         targetRepository = Mockito.mock(PostPublishTargetRepository.class);
         assetRepository = Mockito.mock(AssetRepository.class);
-        hasher = new PublishBundleHasher(targetRepository, assetRepository);
+        targetAssetRepository = Mockito.mock(PostPublishTargetAssetRepository.class);
+        hasher = new PublishBundleHasher(targetRepository, targetAssetRepository, assetRepository);
     }
 
     // [auto] The bundle hash is reproducible and order-independent

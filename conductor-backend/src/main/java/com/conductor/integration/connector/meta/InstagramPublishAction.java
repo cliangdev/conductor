@@ -9,7 +9,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.client.HttpClientErrorException;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -30,6 +32,18 @@ import java.util.Map;
  * <b>before</b> the container. Exhaustion is reported as {@link ActionResult#error} — PERMANENT for this
  * attempt, because the retry budget is minutes and the quota window is hours; a human reschedules.
  *
+ * <h2>Carousels</h2>
+ * Two or more items become a carousel: one container per item with {@code is_carousel_item=true}, then a
+ * {@code CAROUSEL} parent naming them in order. The caption belongs to the parent — Instagram ignores one
+ * set on a child — and the order is the destination's chosen order, which matters because Instagram crops
+ * every item to the first one's aspect ratio.
+ *
+ * <p><b>Known gap: children are not checkpointed.</b> A transient failure partway through creating them
+ * re-creates the ones already made on the retry, leaving the first batch to expire unused after ~24 hours.
+ * That is wasteful but not incorrect — an unpublished container is inert, and the invocation's idempotency
+ * key still guarantees at most one {@code media_publish}. Worth fixing if carousels of videos become common,
+ * since those are the slow ones.
+ *
  * <h2>Failure classification</h2>
  * Same contract as {@link FacebookPublishAction}: 4xx (except {@code 429}) → {@link ActionResult#error}
  * (permanent, dead-lettered); 5xx and network errors propagate as thrown exceptions (transient, retried).
@@ -43,6 +57,10 @@ class InstagramPublishAction {
     private static final String MEDIA_TYPE_IMAGE = "IMAGE";
     private static final String MEDIA_TYPE_VIDEO = "VIDEO";
     private static final String MEDIA_TYPE_REELS = "REELS";
+    private static final String MEDIA_TYPE_CAROUSEL = "CAROUSEL";
+
+    /** Instagram publishes a carousel of 2 to 10 items; the approval gate refuses more long before here. */
+    static final int MAX_CAROUSEL_ITEMS = 10;
 
     /** How long to wait between container status polls. Package-private so tests don't sleep. */
     long pollIntervalMillis = 5_000L;
@@ -79,22 +97,28 @@ class InstagramPublishAction {
             return ActionResult.error("Meta connection has no Page access token; reconnect the Page");
         }
 
-        PublishMedia media;
+        List<PublishMedia> media;
         String explicitImageUrl = MetaActions.string(input, "image_url");
         String explicitVideoUrl = MetaActions.string(input, "video_url");
         try {
-            media = MetaActions.resolveMedia(mediaResolver, input, explicitImageUrl, explicitVideoUrl);
+            media = MetaActions.resolveMediaList(mediaResolver, input, explicitImageUrl, explicitVideoUrl)
+                    .stream()
+                    .filter(item -> item.url() != null && !item.url().isBlank())
+                    .toList();
         } catch (RuntimeException e) {
             log.warn("Could not resolve Instagram media for work item {}: {}",
                     MetaActions.string(input, "work_item_id"), e.getMessage());
             return ActionResult.error("Could not resolve media for this post: " + e.getMessage());
         }
-        if (media == null || media.url() == null || media.url().isBlank()) {
+        if (media.isEmpty()) {
             return ActionResult.error("publish_instagram_media needs an image or video — Instagram has no text-only post");
         }
+        if (media.size() > MAX_CAROUSEL_ITEMS) {
+            return ActionResult.error("An Instagram carousel holds at most " + MAX_CAROUSEL_ITEMS
+                    + " items; this post selected " + media.size());
+        }
 
-        String mediaType = mediaType(MetaActions.string(input, "media_type"), media);
-
+        String caption = MetaActions.string(input, "caption");
         try {
             MetaGraphClient.PublishingLimit limit = graphClient.readContentPublishingLimit(igUserId, token);
             if (limit.exhausted()) {
@@ -104,10 +128,39 @@ class InstagramPublishAction {
                         + "after the rolling 24-hour window clears.");
             }
 
-            String containerId = graphClient.createMediaContainer(igUserId, token,
-                    containerParams(mediaType, media, MetaActions.string(input, "caption")));
-
-            if (!MEDIA_TYPE_IMAGE.equals(mediaType)) {
+            Map<String, Object> output = new LinkedHashMap<>();
+            String containerId;
+            if (media.size() == 1) {
+                PublishMedia only = media.get(0);
+                String mediaType = mediaType(MetaActions.string(input, "media_type"), only);
+                containerId = graphClient.createMediaContainer(igUserId, token,
+                        containerParams(mediaType, only, caption));
+                if (!MEDIA_TYPE_IMAGE.equals(mediaType)) {
+                    ActionResult stuck = awaitContainer(containerId, token);
+                    if (stuck != null) {
+                        return stuck;
+                    }
+                }
+            } else {
+                List<String> childIds = new ArrayList<>();
+                for (PublishMedia item : media) {
+                    // Children carry no caption — the caption belongs to the carousel, and Instagram
+                    // ignores one set on a child.
+                    String childId = graphClient.createMediaContainer(igUserId, token,
+                            carouselItemParams(item));
+                    childIds.add(childId);
+                    if (item.isVideo()) {
+                        ActionResult stuck = awaitContainer(childId, token);
+                        if (stuck != null) {
+                            return stuck;
+                        }
+                    }
+                }
+                output.put("children_creation_ids", childIds);
+                containerId = graphClient.createMediaContainer(igUserId, token,
+                        carouselParams(childIds, caption));
+                // The parent is a container like any other and is not instantly publishable, even though
+                // every child already finished: Instagram assembles the carousel itself.
                 ActionResult stuck = awaitContainer(containerId, token);
                 if (stuck != null) {
                     return stuck;
@@ -116,7 +169,6 @@ class InstagramPublishAction {
 
             String mediaId = graphClient.publishMediaContainer(igUserId, token, containerId);
 
-            Map<String, Object> output = new LinkedHashMap<>();
             output.put("media_id", mediaId);
             output.put("creation_id", containerId);
             String permalink = permalinkFor(mediaId, token);
@@ -168,6 +220,34 @@ class InstagramPublishAction {
             log.debug("Could not read permalink for Instagram media {}: {}", mediaId, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * One carousel child. {@code is_carousel_item=true} is what makes Instagram hold the container for a
+     * parent instead of treating it as a post of its own; a video child is {@code VIDEO} and never
+     * {@code REELS}, because a Reel cannot be an item in a carousel.
+     */
+    private static Map<String, String> carouselItemParams(PublishMedia media) {
+        Map<String, String> params = new LinkedHashMap<>();
+        if (media.isVideo()) {
+            params.put("video_url", media.url());
+            params.put("media_type", MEDIA_TYPE_VIDEO);
+        } else {
+            params.put("image_url", media.url());
+        }
+        params.put("is_carousel_item", "true");
+        return params;
+    }
+
+    /** The carousel itself: the children in order, and the caption the whole post carries. */
+    private static Map<String, String> carouselParams(List<String> childIds, String caption) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("media_type", MEDIA_TYPE_CAROUSEL);
+        params.put("children", String.join(",", childIds));
+        if (caption != null && !caption.isBlank()) {
+            params.put("caption", caption);
+        }
+        return params;
     }
 
     private static Map<String, String> containerParams(String mediaType, PublishMedia media, String caption) {

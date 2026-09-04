@@ -305,6 +305,86 @@ describe('set_publish_targets chooses destinations and per-target options', () =
     expect(result['targets']).toEqual(stored)
   })
 
+  it('sends a per-target caption and its ordered media selection verbatim', async () => {
+    mocked(apiPut).mockResolvedValue([])
+
+    await setPublishTargets(
+      {
+        issueId: 'w1',
+        targets: [
+          {
+            platform: 'instagram',
+            connectionId: 'c9',
+            captionOverride: 'Square crop for the grid',
+            assetIds: ['asset-b', 'asset-a'],
+          },
+        ],
+      },
+      config
+    )
+
+    expect(apiPut).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets',
+      {
+        targets: [
+          {
+            platform: 'instagram',
+            connectionId: 'c9',
+            captionOverride: 'Square crop for the grid',
+            // Order is content: Instagram crops the carousel to whichever item comes first.
+            assetIds: ['asset-b', 'asset-a'],
+          },
+        ],
+      },
+      config
+    )
+  })
+
+  it('omits caption and media entirely when the caller did not set them', async () => {
+    mocked(apiPut).mockResolvedValue([])
+
+    await setPublishTargets(
+      { issueId: 'w1', targets: [{ platform: 'facebook', connectionId: 'c9' }] },
+      config
+    )
+
+    // Sent as absent rather than as explicit nulls, so the server reads "inherit the Post's" from the
+    // same shape a client that predates per-target content would send.
+    const body = mocked(apiPut).mock.calls[0]![1] as { targets: Record<string, unknown>[] }
+    expect(body.targets[0]).not.toHaveProperty('captionOverride')
+    expect(body.targets[0]).not.toHaveProperty('assetIds')
+  })
+
+  it('exposes what each destination will actually publish on the read-back', async () => {
+    mocked(apiGet)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 't1',
+          platform: 'instagram',
+          assetIds: ['asset-b'],
+          effectiveAssetIds: ['asset-b'],
+          effectiveCaption: 'Square crop for the grid',
+        },
+        {
+          id: 't2',
+          platform: 'facebook',
+          // Null assetIds with a non-empty effective list is the inherit case, and the pair is what
+          // tells "chose these" apart from "happens to match the Post right now".
+          assetIds: null,
+          effectiveAssetIds: ['asset-a', 'asset-b'],
+          effectiveCaption: 'The shared caption',
+        },
+      ])
+
+    const result = await listPublishTargets({ issueId: 'w1' }, config)
+
+    expect(result['selected']).toEqual([
+      expect.objectContaining({ effectiveAssetIds: ['asset-b'] }),
+      expect.objectContaining({ assetIds: null, effectiveAssetIds: ['asset-a', 'asset-b'] }),
+    ])
+  })
+
   it('clears the selection with an empty array', async () => {
     mocked(apiPut).mockResolvedValue([])
     await setPublishTargets({ issueId: 'w1', targets: [] }, config)

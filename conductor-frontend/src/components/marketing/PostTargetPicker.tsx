@@ -25,9 +25,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
+import {
+  INHERITED_CONTENT,
+  TargetContentEditor,
+  type TargetContent,
+} from './TargetContentEditor'
 import { cn } from '@/lib/utils'
 import { statusMeta } from '@/lib/workflows'
-import { isApprovedOrLater, isUnderReviewOrLater } from '@/components/workitems/MediaUploadPanel'
+import {
+  isApprovedOrLater,
+  isUnderReviewOrLater,
+  type MediaAsset,
+} from '@/components/workitems/MediaUploadPanel'
 import {
   EMPTY_TIKTOK_OPTIONS,
   TikTokPublishOptions,
@@ -81,6 +90,13 @@ export interface SelectedPublishTarget {
   platformPostId?: string | null
   /** Per-target publish options, currently TikTok-only. Partial — an older row carries nothing. */
   publishOptions?: Partial<TikTokPublishOptionValues> | null
+  /** This destination's own copy, or null when it uses the Post's caption. */
+  captionOverride?: string | null
+  /** Its own ordered media, or null when it inherits the Post's whole set. */
+  assetIds?: string[] | null
+  /** What will actually go out here, whichever of the two above applies. */
+  effectiveAssetIds?: string[]
+  effectiveCaption?: string | null
 }
 
 /** What a selection sends back. `publishOptions` rides along only where the platform has any. */
@@ -89,6 +105,8 @@ interface PublishTargetSelectionPayload {
   /** Omitted (null) selects the platform's manual destination. */
   connectionId: string | null
   publishOptions?: TikTokPublishOptionValues
+  captionOverride?: string | null
+  assetIds?: string[]
 }
 
 /** Render order, so the groups don't reshuffle as connections come and go. */
@@ -148,6 +166,32 @@ function seedTikTokOptions(
   return seeded
 }
 
+/**
+ * The per-target caption and media carried by a set of persisted targets. Same trap as the TikTok
+ * options above: a save sends the complete selection, so anything not seeded back from the server would
+ * be cleared by the next unrelated edit.
+ */
+function seedContent(
+  targets: SelectedPublishTarget[],
+  fallback: Record<string, TargetContent> = {}
+): Record<string, TargetContent> {
+  const seeded: Record<string, TargetContent> = {}
+  for (const target of targets) {
+    const key = targetKey(target.platform, target.connectionId)
+    const stored: TargetContent = {
+      captionOverride: target.captionOverride ?? null,
+      assetIds: target.assetIds ?? null,
+    }
+    const known = target.captionOverride !== undefined || target.assetIds !== undefined
+    seeded[key] = known ? stored : (fallback[key] ?? INHERITED_CONTENT)
+  }
+  return seeded
+}
+
+function isInherited(content: TargetContent | undefined): boolean {
+  return !content || (content.captionOverride === null && content.assetIds === null)
+}
+
 interface PostTargetPickerProps {
   projectId: string
   workItemId: string
@@ -163,6 +207,10 @@ interface PostTargetPickerProps {
    * the picker publishes what it knows instead of owning that surface.
    */
   onTikTokChange?: (targets: TikTokConsentTarget[]) => void
+  /** The Post's uploaded media, so a destination can choose which of it to publish. */
+  assets?: MediaAsset[]
+  /** The Post's caption, shown as what a destination falls back to. */
+  caption?: string | null
 }
 
 export function PostTargetPicker({
@@ -173,9 +221,15 @@ export function PostTargetPicker({
   workflowView,
   onChanged,
   onTikTokChange,
+  assets = [],
+  caption = null,
 }: PostTargetPickerProps) {
   const [options, setOptions] = useState<PublishTargetOption[]>([])
   const [selected, setSelected] = useState<SelectedPublishTarget[]>([])
+  // Per-target caption and media, held beside `selected` for the same reason the TikTok options are:
+  // it is the thing being edited, and an edit that fails to save must not linger.
+  const [contentByKey, setContentByKey] = useState<Record<string, TargetContent>>({})
+  const [customizing, setCustomizing] = useState<Set<string>>(new Set())
   // Per-target TikTok options, keyed the same way a target is. Kept beside `selected` rather than
   // inside it because it is the thing being edited, and an edit that fails to save must not linger.
   const [optionsByKey, setOptionsByKey] = useState<Record<string, TikTokPublishOptionValues>>({})
@@ -201,6 +255,13 @@ export function PostTargetPicker({
         setOptions(available)
         setSelected(current)
         setOptionsByKey(seedTikTokOptions(current))
+        const content = seedContent(current)
+        setContentByKey(content)
+        // Any destination that already differs from the Post opens with its editor showing, so a
+        // customisation is never invisible until somebody thinks to look for it.
+        setCustomizing(
+          new Set(Object.entries(content).filter(([, c]) => !isInherited(c)).map(([key]) => key))
+        )
         setLoadError(null)
       })
       .catch((err) => {
@@ -251,7 +312,25 @@ export function PostTargetPicker({
   )
 
   const save = useCallback(
-    async (nextKeys: Set<string>, nextOptions: Record<string, TikTokPublishOptionValues>) => {
+    async (
+      nextKeys: Set<string>,
+      nextOptions: Record<string, TikTokPublishOptionValues>,
+      nextContent: Record<string, TargetContent> = contentByKey
+    ) => {
+      // Every selected target's caption and media go out on every save, because this endpoint is a
+      // set-replace: a target sent without them would have its customisation cleared by an edit to a
+      // different target entirely.
+      // Inheriting is expressed by leaving the field out, not by sending null: the server reads both
+      // the same way, and an omitted field keeps an uncustomised target's payload byte-identical to
+      // what a client that predates per-target content would send.
+      const contentFor = (o: PublishTargetOption): Partial<PublishTargetSelectionPayload> => {
+        const content = nextContent[targetKey(o.platform, o.connectionId)]
+        if (!content) return {}
+        return {
+          ...(content.captionOverride === null ? {} : { captionOverride: content.captionOverride }),
+          ...(content.assetIds === null ? {} : { assetIds: content.assetIds }),
+        }
+      }
       // Only ever send targets the project can still publish to; an orphan would be refused.
       const payload: PublishTargetSelectionPayload[] = options
         .filter((o) => nextKeys.has(targetKey(o.platform, o.connectionId)))
@@ -266,8 +345,9 @@ export function PostTargetPicker({
                 connectionId: o.connectionId,
                 publishOptions:
                   nextOptions[targetKey(o.platform, o.connectionId)] ?? EMPTY_TIKTOK_OPTIONS,
+                ...contentFor(o),
               }
-            : { platform: o.platform, connectionId: o.connectionId }
+            : { platform: o.platform, connectionId: o.connectionId, ...contentFor(o) }
         )
       setSaving(true)
       try {
@@ -281,6 +361,7 @@ export function PostTargetPicker({
         // to what is on the server. The server's echo wins where it has one, so a value it clamps
         // shows as clamped rather than as what was typed.
         setOptionsByKey({ ...nextOptions, ...seedTikTokOptions(updated, nextOptions) })
+        setContentByKey({ ...nextContent, ...seedContent(updated, nextContent) })
         onChanged?.(updated)
       } catch (err) {
         toastError(apiErrorMessage(err, 'Could not update publishing accounts'))
@@ -288,7 +369,7 @@ export function PostTargetPicker({
         setSaving(false)
       }
     },
-    [options, projectId, workItemId, token, onChanged]
+    [options, projectId, workItemId, token, onChanged, contentByKey]
   )
 
   const toggle = useCallback(
@@ -312,6 +393,27 @@ export function PostTargetPicker({
     [selectedKeys, optionsByKey, save]
   )
 
+  /** Opens or closes one destination's editor. Purely local — nothing is saved by looking. */
+  const toggleCustomizing = useCallback((option: PublishTargetOption) => {
+    const key = targetKey(option.platform, option.connectionId)
+    setCustomizing((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const changeContent = useCallback(
+    (option: PublishTargetOption, next: TargetContent) => {
+      const key = targetKey(option.platform, option.connectionId)
+      const nextContent = { ...contentByKey, [key]: next }
+      setContentByKey(nextContent)
+      void save(selectedKeys, optionsByKey, nextContent)
+    },
+    [contentByKey, selectedKeys, optionsByKey, save]
+  )
+
   /** Every selected TikTok destination, with the options it carries and why it isn't postable yet. */
   const tiktokTargets = useMemo<TikTokConsentTarget[]>(
     () =>
@@ -326,16 +428,23 @@ export function PostTargetPicker({
             selectedKeys.has(targetKey(o.platform, o.connectionId))
         )
         .map((o) => {
-          const values = optionsByKey[targetKey(o.platform, o.connectionId)] ?? EMPTY_TIKTOK_OPTIONS
+          const key = targetKey(o.platform, o.connectionId)
+          const values = optionsByKey[key] ?? EMPTY_TIKTOK_OPTIONS
+          const content = contentByKey[key] ?? INHERITED_CONTENT
           return {
             connectionId: o.connectionId ?? '',
             label: o.label,
             creatorNickname: o.creatorNickname ?? null,
             options: values,
             problem: tiktokOptionsProblem(values),
+            // What will actually go out to this account, so the creator consents to the post rather
+            // than to the Post. Undefined assetIds means it inherits, which the preview reads as
+            // "all of the Post's media".
+            caption: content.captionOverride ?? caption,
+            ...(content.assetIds === null ? {} : { assetIds: content.assetIds }),
           }
         }),
-    [options, selectedKeys, optionsByKey]
+    [options, selectedKeys, optionsByKey, contentByKey, caption]
   )
 
   useEffect(() => {
@@ -426,8 +535,18 @@ export function PostTargetPicker({
                       optionsByKey[targetKey(option.platform, option.connectionId)] ??
                       EMPTY_TIKTOK_OPTIONS
                     }
+                    assets={assets}
+                    postCaption={caption}
+                    content={
+                      contentByKey[targetKey(option.platform, option.connectionId)] ??
+                      INHERITED_CONTENT
+                    }
+                    customizing={customizing.has(targetKey(option.platform, option.connectionId))}
+                    frozen={frozen}
                     onToggle={() => toggle(option)}
                     onTikTokOptionsChange={(next) => changeTikTokOptions(option, next)}
+                    onCustomizeToggle={() => toggleCustomizing(option)}
+                    onContentChange={(next) => changeContent(option, next)}
                   />
                 ))}
               </div>
@@ -446,8 +565,18 @@ interface TargetRowProps {
   unavailable: boolean
   saving: boolean
   tiktokOptions: TikTokPublishOptionValues
+  /** The Post's media and caption, which this destination may override. */
+  assets: MediaAsset[]
+  postCaption: string | null
+  content: TargetContent
+  /** Whether the per-destination editor is open. */
+  customizing: boolean
+  /** Editing is refused past the review gate, so the controls are disabled rather than 400ing. */
+  frozen: boolean
   onToggle: () => void
   onTikTokOptionsChange: (next: TikTokPublishOptionValues) => void
+  onCustomizeToggle: () => void
+  onContentChange: (next: TargetContent) => void
 }
 
 function TargetRow({
@@ -456,8 +585,15 @@ function TargetRow({
   unavailable,
   saving,
   tiktokOptions,
+  assets,
+  postCaption,
+  content,
+  customizing,
+  frozen,
   onToggle,
   onTikTokOptionsChange,
+  onCustomizeToggle,
+  onContentChange,
 }: TargetRowProps) {
   const unhealthy = isUnhealthy(option)
   // An unhealthy account can't be added — its credentials no longer work — but one already on the
@@ -479,6 +615,7 @@ function TargetRow({
   // lane the creator sets all of them in TikTok's own composer.
   const showTikTokOptions =
     option.platform === 'tiktok' && checked && !unavailable && !isManual(option)
+  const customized = content.captionOverride !== null || content.assetIds !== null
 
   return (
     <div>
@@ -524,6 +661,28 @@ function TargetRow({
           disabled={saving}
           onChange={onTikTokOptionsChange}
         />
+      )}
+      {checked && !unavailable && (
+        <div className="px-4 pb-3">
+          <button
+            type="button"
+            // Outside the <label>, like the TikTok options: a click here must not also un-pick the
+            // destination it belongs to.
+            className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline"
+            onClick={onCustomizeToggle}
+          >
+            {customized ? 'Customized for this destination' : 'Customize for this destination'}
+          </button>
+          {customizing && (
+            <TargetContentEditor
+              assets={assets}
+              postCaption={postCaption}
+              value={content}
+              disabled={saving || frozen}
+              onChange={onContentChange}
+            />
+          )}
+        </div>
       )}
     </div>
   )
