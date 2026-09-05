@@ -10,6 +10,9 @@ import com.conductor.repository.WorkflowSecretRepository;
 import com.conductor.generated.model.WorkflowCreateRequest;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidator;
+import com.conductor.workflow.model.TriggersSpec;
+import com.conductor.workflow.model.WorkflowSpec;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +42,7 @@ class WorkflowServiceTest {
     @Mock private WorkflowTriggerService workflowTriggerService;
     @Mock private WorkItemRepository workItemRepository;
     @Mock private RuntimeTargetService runtimeTargetService;
+    @Mock private WorkflowYamlParser yamlParser;
 
     private WorkflowService service;
 
@@ -45,7 +50,7 @@ class WorkflowServiceTest {
     void setUp() {
         service = new WorkflowService(workflowRepository, projectRepository, projectSecurityService,
                 validator, secretRepository, workflowTriggerService, workItemRepository,
-                runtimeTargetService, new ObjectMapper());
+                runtimeTargetService, new ObjectMapper(), yamlParser);
     }
 
     @Test
@@ -341,5 +346,28 @@ class WorkflowServiceTest {
         Project p = new Project();
         p.setId(id);
         return p;
+    }
+
+    // ---- allowsManualDispatch ----
+
+    @Test
+    void allowsManualDispatch_nullYaml_defaultsToTrue() {
+        assertThat(service.allowsManualDispatch(null)).isTrue();
+    }
+
+    @Test
+    void allowsManualDispatch_unparsableYaml_defaultsToTrue() {
+        when(yamlParser.parse("bad yaml")).thenThrow(new com.conductor.workflow.model.WorkflowYamlException("bad"));
+
+        assertThat(service.allowsManualDispatch("bad yaml")).isTrue();
+    }
+
+    @Test
+    void allowsManualDispatch_delegatesToParsedTriggersSpec() {
+        TriggersSpec triggers = new TriggersSpec(null, null, List.of(), List.of(), false, Map.of());
+        WorkflowSpec spec = new WorkflowSpec("wf", triggers, null, Map.of(), Map.of());
+        when(yamlParser.parse("on: {}")).thenReturn(spec);
+
+        assertThat(service.allowsManualDispatch("on: {}")).isFalse();
     }
 }

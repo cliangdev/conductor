@@ -2,7 +2,14 @@ package com.conductor.controller;
 
 import com.conductor.entity.Connection;
 import com.conductor.entity.WebhookEvent;
+import com.conductor.integration.ConnectionContext;
+import com.conductor.integration.ConnectorMetadata;
+import com.conductor.integration.ConnectorCategory;
 import com.conductor.integration.ConnectorRegistry;
+import com.conductor.integration.ConnectorSpec;
+import com.conductor.integration.InboundEvent;
+import com.conductor.integration.WebhookConnector;
+import com.conductor.integration.WebhookVerification;
 import com.conductor.integration.connector.github.GitHubConnector;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.WebhookEventRepository;
@@ -14,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 
@@ -103,7 +111,7 @@ class WebhookReceiverControllerTest {
         when(eventRepository.findByConnectionIdAndDeliveryId("conn-1", "d1")).thenReturn(Optional.empty());
         when(eventRepository.save(any(WebhookEvent.class))).thenAnswer(i -> i.getArgument(0));
 
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d1", body, true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d1", body, true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(eventRepository).save(any(WebhookEvent.class));
@@ -115,7 +123,7 @@ class WebhookReceiverControllerTest {
         registerGitHub();
         String body = "{\"installation\":{\"id\":42}}";
 
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d2", body, false));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d2", body, false));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(401);
         verify(dispatchService, never()).dispatch(any());
@@ -126,7 +134,7 @@ class WebhookReceiverControllerTest {
     void appLevel_ping_returns200_withoutRouting() throws Exception {
         registerGitHub();
         // No installation id → route() returns null and lifecycle does not consume → accept-and-ignore.
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("ping", null, "{\"zen\":\"hi\"}", true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("ping", null, "{\"zen\":\"hi\"}", true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(dispatchService, never()).dispatch(any());
@@ -136,7 +144,7 @@ class WebhookReceiverControllerTest {
     @Test
     void appLevel_unparseableBody_returns200_withoutRouting() throws Exception {
         registerGitHub();
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d0", "not json", true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d0", "not json", true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(dispatchService, never()).dispatch(any());
@@ -152,7 +160,7 @@ class WebhookReceiverControllerTest {
         when(eventRepository.findByConnectionIdAndDeliveryId(any(), eq("d5"))).thenReturn(Optional.empty());
         when(eventRepository.save(any(WebhookEvent.class))).thenAnswer(i -> i.getArgument(0));
 
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d5", body, true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d5", body, true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(eventRepository, times(3)).save(any(WebhookEvent.class));
@@ -174,7 +182,7 @@ class WebhookReceiverControllerTest {
         when(eventRepository.findByConnectionIdAndDeliveryId("conn-1", "d6"))
                 .thenReturn(Optional.of(new WebhookEvent()));
 
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d6", body, true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d6", body, true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(eventRepository, never()).save(any());
@@ -194,7 +202,7 @@ class WebhookReceiverControllerTest {
         when(eventRepository.findByConnectionIdAndDeliveryId("conn-2", "d7")).thenReturn(Optional.empty());
         when(eventRepository.save(any(WebhookEvent.class))).thenAnswer(i -> i.getArgument(0));
 
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d7", body, true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d7", body, true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(eventRepository, times(1)).save(any(WebhookEvent.class));
@@ -208,7 +216,7 @@ class WebhookReceiverControllerTest {
         when(connectionRepository.findByConnectorIdAndConfigValue("github", "installationId", "42"))
                 .thenReturn(List.of(conn("conn-1")));
 
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("installation", "d3", body, true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("installation", "d3", body, true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(connectionService).delete("conn-1");
@@ -224,7 +232,7 @@ class WebhookReceiverControllerTest {
         when(connectionRepository.findByConnectorIdAndConfigValue("github", "installationId", "99"))
                 .thenReturn(List.of());
 
-        ResponseEntity<Void> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d4", body, true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("github", appRequest("pull_request", "d4", body, true));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(dispatchService, never()).dispatch(any());
@@ -234,7 +242,7 @@ class WebhookReceiverControllerTest {
     @Test
     void unknownConnector_returns404() throws Exception {
         when(connectorRegistry.findWebhook("nope")).thenReturn(Optional.empty());
-        ResponseEntity<Void> resp = controller.receiveAppLevel("nope", appRequest("ping", null, "{}", true));
+        ResponseEntity<String> resp = controller.receiveAppLevel("nope", appRequest("ping", null, "{}", true));
         assertThat(resp.getStatusCode().value()).isEqualTo(404);
     }
 
@@ -246,9 +254,101 @@ class WebhookReceiverControllerTest {
         req.setContent("{}".getBytes(StandardCharsets.UTF_8));
         req.addHeader("X-GitHub-Event", "pull_request");
 
-        ResponseEntity<Void> resp = controller.receiveWebhook("github", "conn-x", req);
+        ResponseEntity<String> resp = controller.receiveWebhook("github", "conn-x", req);
 
         assertThat(resp.getStatusCode().value()).isEqualTo(404);
         verify(dispatchService, never()).dispatch(any());
+    }
+
+    // ---- synchronousResponse (Phase 7) ----
+
+    /** Minimal per-connection fake so these tests can control {@code synchronousResponse()} directly --
+     *  {@code verify()} always succeeds, no real signature scheme involved. */
+    private static class FakeSyncConnector implements WebhookConnector {
+        private final Optional<WebhookSyncResponse> syncResponse;
+
+        FakeSyncConnector(Optional<WebhookSyncResponse> syncResponse) {
+            this.syncResponse = syncResponse;
+        }
+
+        @Override public String getId() { return "fake-sync"; }
+
+        @Override public ConnectorMetadata getMetadata() {
+            return new ConnectorMetadata("fake-sync", "Fake Sync", ConnectorCategory.COMMUNICATION, "test", null);
+        }
+
+        @Override public ConnectorSpec getSpec() { return ConnectorSpec.apiKey(false, List.of()); }
+
+        @Override public WebhookVerification verify(byte[] rawBody, HttpHeaders headers, ConnectionContext ctx) {
+            return WebhookVerification.ok();
+        }
+
+        @Override public String extractDeliveryId(HttpHeaders headers, byte[] rawBody) { return "d-sync"; }
+
+        @Override public String extractEventType(HttpHeaders headers, byte[] rawBody) { return "fake.event"; }
+
+        @Override
+        public Optional<WebhookSyncResponse> synchronousResponse(byte[] rawBody, HttpHeaders headers, ConnectionContext ctx) {
+            return syncResponse;
+        }
+
+        @Override public void handleEvent(InboundEvent event, ConnectionContext ctx) { }
+    }
+
+    private MockHttpServletRequest perConnectionRequest(String body) {
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/v1/webhooks/fake-sync/conn-1");
+        req.setContent(body.getBytes(StandardCharsets.UTF_8));
+        return req;
+    }
+
+    private void registerFakeSyncConnector(Optional<WebhookConnector.WebhookSyncResponse> syncResponse) {
+        FakeSyncConnector connector = new FakeSyncConnector(syncResponse);
+        when(connectorRegistry.findWebhook("fake-sync")).thenReturn(Optional.of(connector));
+        Connection c = conn("conn-1");
+        c.setConnectorId("fake-sync");
+        when(connectionService.getById("conn-1", "fake-sync")).thenReturn(Optional.of(c));
+        when(connectionService.toContext(c)).thenReturn(
+                new ConnectionContext(null, "fake-sync", "conn-1", null, null, null, java.util.Map.of(), null));
+    }
+
+    @Test
+    void syncResponse_absent_behavesExactlyLikeBeforeEmpty200() throws Exception {
+        registerFakeSyncConnector(Optional.empty());
+        when(eventRepository.findByConnectionIdAndDeliveryId("conn-1", "d-sync")).thenReturn(Optional.empty());
+        when(eventRepository.save(any(WebhookEvent.class))).thenAnswer(i -> i.getArgument(0));
+
+        ResponseEntity<String> resp = controller.receiveWebhook("fake-sync", "conn-1", perConnectionRequest("{}"));
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        assertThat(resp.getBody()).isNull();
+        verify(eventRepository).save(any(WebhookEvent.class));
+        verify(dispatchService).dispatch(any(WebhookEvent.class));
+    }
+
+    @Test
+    void syncResponse_consumedTrue_returnsBodyAndSkipsPersistAndDispatch() throws Exception {
+        registerFakeSyncConnector(Optional.of(new WebhookConnector.WebhookSyncResponse("{\"type\":1}", true)));
+
+        ResponseEntity<String> resp = controller.receiveWebhook("fake-sync", "conn-1", perConnectionRequest("{}"));
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        assertThat(resp.getBody()).isEqualTo("{\"type\":1}");
+        assertThat(resp.getHeaders().getContentType()).isEqualTo(org.springframework.http.MediaType.APPLICATION_JSON);
+        verify(eventRepository, never()).save(any());
+        verify(dispatchService, never()).dispatch(any());
+    }
+
+    @Test
+    void syncResponse_consumedFalse_returnsBodyAndStillPersistsAndDispatches() throws Exception {
+        registerFakeSyncConnector(Optional.of(new WebhookConnector.WebhookSyncResponse("{\"type\":5}", false)));
+        when(eventRepository.findByConnectionIdAndDeliveryId("conn-1", "d-sync")).thenReturn(Optional.empty());
+        when(eventRepository.save(any(WebhookEvent.class))).thenAnswer(i -> i.getArgument(0));
+
+        ResponseEntity<String> resp = controller.receiveWebhook("fake-sync", "conn-1", perConnectionRequest("{}"));
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        assertThat(resp.getBody()).isEqualTo("{\"type\":5}");
+        verify(eventRepository).save(any(WebhookEvent.class));
+        verify(dispatchService).dispatch(any(WebhookEvent.class));
     }
 }

@@ -230,6 +230,48 @@ class WorkItemServiceTest {
                 .isInstanceOf(ForbiddenException.class);
     }
 
+    // --- ProjectActor overload (V125: machine-attributed Work Items, e.g. coordinator:create_work_item) ---
+
+    @Test
+    void createWorkItemWithMachineActorSkipsMembershipCheckAndPersistsLabelAttribution() {
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(workItemRepository.findMaxSequenceNumberByProjectId("proj-1")).thenReturn(0);
+        when(workItemWorkflowService.initialStatus("proj-1", "ENGINEERING")).thenReturn("DRAFT");
+        when(workItemRepository.save(any(WorkItem.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ProjectActor actor = ProjectActor.agent("Agent (ceo)");
+        WorkItem created = workItemService.createWorkItem("proj-1", "PRD", "Agent-made PRD", null, null, actor);
+
+        assertThat(created.getCreatedBy()).isNull();
+        assertThat(created.getCreatedByLabel()).isEqualTo("Agent (ceo)");
+        // A machine actor is never a project_members row -- verifying it never asks is the point.
+        verify(projectSecurityService, never()).isProjectMember(any(), any());
+    }
+
+    @Test
+    void createWorkItemWithHumanActorOverloadStillEnforcesMembership() {
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
+
+        ProjectActor actor = ProjectActor.of(caller);
+
+        assertThatThrownBy(() -> workItemService.createWorkItem("proj-1", "PRD", "title", null, null, actor))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void createWorkItemWithHumanActorOverloadPersistsUserAttributionNotLabel() {
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(workItemRepository.findMaxSequenceNumberByProjectId("proj-1")).thenReturn(0);
+        when(workItemWorkflowService.initialStatus("proj-1", "ENGINEERING")).thenReturn("DRAFT");
+        when(workItemRepository.save(any(WorkItem.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        WorkItem created = workItemService.createWorkItem("proj-1", "PRD", "Human PRD", null, null, ProjectActor.of(caller));
+
+        assertThat(created.getCreatedBy()).isEqualTo(caller);
+        assertThat(created.getCreatedByLabel()).isNull();
+    }
+
     @Test
     void listIssuesFiltersByType() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
@@ -559,5 +601,89 @@ class WorkItemServiceTest {
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("CLOSED");
         verify(signalBus, never()).publish(any());
+    }
+
+    // --- resolveByReference (id-or-displayId lookup for a human or machine caller, e.g.
+    // coordinator:get_work_item) ---
+
+    @Test
+    void resolveByReferenceFindsByRawId() {
+        when(workItemRepository.findByIdWithProjectAndAssignee("issue-1")).thenReturn(Optional.of(testIssue));
+
+        WorkItem result = workItemService.resolveByReference("proj-1", "issue-1", ProjectActor.agent("agent:a1"));
+
+        assertThat(result).isEqualTo(testIssue);
+        // A machine actor has no project_members row to check.
+        verify(projectSecurityService, never()).isProjectMember(any(), any());
+    }
+
+    @Test
+    void resolveByReferenceFallsBackToDisplayIdSequenceLookupOnRawIdMiss() {
+        when(workItemRepository.findByIdWithProjectAndAssignee("TEST-1")).thenReturn(Optional.empty());
+        when(workItemRepository.findByProjectIdAndSequenceNumber("proj-1", 1)).thenReturn(Optional.of(testIssue));
+
+        WorkItem result = workItemService.resolveByReference("proj-1", "TEST-1", ProjectActor.agent("agent:a1"));
+
+        assertThat(result).isEqualTo(testIssue);
+    }
+
+    @Test
+    void resolveByReferenceThrowsWhenRefIsNeitherARawIdNorAParsableDisplayId() {
+        when(workItemRepository.findByIdWithProjectAndAssignee("nope")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> workItemService.resolveByReference("proj-1", "nope", ProjectActor.agent("agent:a1")))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void resolveByReferenceTreatsAnotherProjectsItemAsNotFound() {
+        Project other = new Project();
+        other.setId("other-proj");
+        other.setKey("OTH");
+        WorkItem otherProjectItem = new WorkItem();
+        otherProjectItem.setId("issue-1");
+        otherProjectItem.setProject(other);
+        when(workItemRepository.findByIdWithProjectAndAssignee("issue-1")).thenReturn(Optional.of(otherProjectItem));
+        when(workItemRepository.findByProjectIdAndSequenceNumber(any(), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() ->
+                workItemService.resolveByReference("proj-1", "issue-1", ProjectActor.agent("agent:a1")))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void resolveByReferenceWithHumanActorEnforcesReadAccess() {
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
+
+        assertThatThrownBy(() ->
+                workItemService.resolveByReference("proj-1", "issue-1", ProjectActor.of(caller)))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    // --- listWorkItemsForAgent (query-level-capped list for a machine caller, e.g.
+    // coordinator:list_work_items) ---
+
+    @Test
+    void listWorkItemsForAgentDelegatesToTheLimitedQuery() {
+        when(workItemRepository.findByProjectFilteredLimited("proj-1", "PRD", "DRAFT", "ENGINEERING", 10))
+                .thenReturn(List.of(testIssue));
+
+        List<WorkItem> results = workItemService.listWorkItemsForAgent(
+                "proj-1", "PRD", "DRAFT", "ENGINEERING", 10);
+
+        assertThat(results).containsExactly(testIssue);
+        // No membership check for a machine caller -- same as resolveByReference's short-circuit.
+        verify(projectSecurityService, never()).isProjectMember(any(), any());
+    }
+
+    @Test
+    void listWorkItemsForAgentTreatsBlankFiltersAsAbsent() {
+        when(workItemRepository.findByProjectFilteredLimited("proj-1", null, null, null, 50))
+                .thenReturn(List.of(testIssue));
+
+        List<WorkItem> results = workItemService.listWorkItemsForAgent("proj-1", "", "  ", "", 50);
+
+        assertThat(results).containsExactly(testIssue);
     }
 }

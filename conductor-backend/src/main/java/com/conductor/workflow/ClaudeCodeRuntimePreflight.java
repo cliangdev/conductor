@@ -4,6 +4,7 @@ import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.verification.Check;
 import com.conductor.verification.CheckStatus;
+import com.conductor.verification.ProviderPreflight;
 import com.google.api.gax.rpc.NotFoundException;
 import com.google.api.gax.rpc.PermissionDeniedException;
 import com.google.cloud.run.v2.JobName;
@@ -35,9 +36,14 @@ import java.util.Optional;
  * runtime target exactly the way a real {@code claude-code} step would, and the two can never drift.
  * {@link RuntimeTargetNotReadyException} from that call (blank builtin, or a designated target that
  * isn't ACTIVE) becomes the {@code runtime-config} fail check rather than propagating.
+ *
+ * <p>Implements {@link ProviderPreflight} directly (rather than via {@code
+ * com.conductor.service.ApiKeyProviderPreflight}'s resolve-decrypt-delegate skeleton): {@code claude-code}
+ * is deliberately probeable with no credential row at all — see {@code subscription-token} above — which
+ * that skeleton's "no key stored is always a fail" shortcut can't express.
  */
 @Component
-public class ClaudeCodeRuntimePreflight {
+public class ClaudeCodeRuntimePreflight implements ProviderPreflight {
 
     private static final String PROVIDER = "claude-code";
 
@@ -53,6 +59,12 @@ public class ClaudeCodeRuntimePreflight {
         this.cloudRunClientFactory = cloudRunClientFactory;
     }
 
+    @Override
+    public String provider() {
+        return PROVIDER;
+    }
+
+    @Override
     public List<Check> check(String projectId) {
         List<Check> checks = new ArrayList<>();
 

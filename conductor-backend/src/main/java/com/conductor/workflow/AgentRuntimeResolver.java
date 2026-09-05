@@ -16,8 +16,8 @@ import org.springframework.stereotype.Component;
  *       (Claude Code OAuth token) wins over an {@code api} credential when both are present, since the
  *       subscription runtime gets the full Claude Code tool-calling loop rather than just the
  *       single-model ReAct loop;</li>
- *   <li>else fail with a message naming both credential options, so the step's error is actionable
- *       without digging through docs.</li>
+ *   <li>else fail with a message naming the credential option(s) actually available to this agent's
+ *       provider, so the step's error is actionable without digging through docs.</li>
  * </ol>
  */
 @Component
@@ -55,10 +55,21 @@ public class AgentRuntimeResolver {
         if (credentialService.hasCredential(projectId, agent.provider())) {
             return RUNTIME_API;
         }
-        throw new AgentRuntimeUnresolvedException(
-                "No runtime available for agent '" + agent.slug() + "': configure either a Claude Code "
-                        + "(subscription) credential (Integrations → Google Cloud) to run it on the "
-                        + "claude-code runtime, or a '" + agent.provider() + "' API key (Settings → Agents) "
-                        + "to run it on the api runtime.");
+        throw new AgentRuntimeUnresolvedException(unresolvedMessage(agent));
+    }
+
+    /**
+     * The claude-code (subscription) runtime is only ever a real option for a claude-provider agent —
+     * offering it for any other provider would be wrong, since the container always runs Claude and
+     * {@link #resolve} above never auto-detects it for a non-claude provider. So a claude agent's
+     * message names both credential options; every other provider's message names only its own API key.
+     */
+    private String unresolvedMessage(AgentExecutionService.AgentDefinition agent) {
+        if ("claude".equals(agent.provider())) {
+            return "No runtime available for agent '" + agent.slug() + "': configure a Claude Code "
+                    + "(subscription) credential or a 'claude' API key under Settings → AI Providers.";
+        }
+        return "No runtime available for agent '" + agent.slug() + "': configure a '" + agent.provider()
+                + "' API key under Settings → AI Providers.";
     }
 }

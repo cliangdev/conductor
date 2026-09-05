@@ -1,14 +1,18 @@
 package com.conductor.workflow;
 
+import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
+import com.conductor.entity.WorkflowStepRun;
 import com.conductor.exception.BusinessException;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
+import com.conductor.repository.WorkflowStepRunRepository;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -37,10 +41,37 @@ public class WorkflowRunQueryService {
 
     private final WorkflowRunRepository runRepository;
     private final WorkflowJobRunRepository jobRunRepository;
+    private final WorkflowStepRunRepository stepRunRepository;
 
-    public WorkflowRunQueryService(WorkflowRunRepository runRepository, WorkflowJobRunRepository jobRunRepository) {
+    public WorkflowRunQueryService(WorkflowRunRepository runRepository, WorkflowJobRunRepository jobRunRepository,
+                                   WorkflowStepRunRepository stepRunRepository) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
+        this.stepRunRepository = stepRunRepository;
+    }
+
+    /** One {@link WorkflowJobRun} paired with its {@link WorkflowStepRun}s, already fetched in
+     *  deterministic execution order. Entities, not a DTO -- {@code WorkflowController#getWorkflowRun}
+     *  maps this into a detailed DTO (log, outputJson, failure explanation/remediation) and the
+     *  coordinator's {@code get_workflow_run} tool maps it into a compact model-facing summary
+     *  (stepName/status/errorReason only); the two callers' output shapes genuinely differ, so only the
+     *  fetch pattern -- {@code findByRunId} then a per-job steps lookup -- is shared here. */
+    public record JobRunWithSteps(WorkflowJobRun jobRun, List<WorkflowStepRun> steps) {}
+
+    /**
+     * Fetches every job run for {@code runId} alongside its steps in one call, replacing the identical
+     * {@code findByRunId} → per-job {@code findByJobRunIdOrderByStartedAtAscIdAsc} loop that used to live
+     * separately in both {@code WorkflowController#getWorkflowRun} and the coordinator's
+     * {@code get_workflow_run} tool.
+     */
+    public List<JobRunWithSteps> findJobRunsWithSteps(String runId) {
+        List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
+        List<JobRunWithSteps> result = new ArrayList<>(jobRuns.size());
+        for (WorkflowJobRun jobRun : jobRuns) {
+            List<WorkflowStepRun> steps = stepRunRepository.findByJobRunIdOrderByStartedAtAscIdAsc(jobRun.getId());
+            result.add(new JobRunWithSteps(jobRun, steps));
+        }
+        return result;
     }
 
     /**
