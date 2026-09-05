@@ -360,7 +360,7 @@ class YouTubeConnectorTest {
 
         assertThat(spec.description()).isNotBlank();
         assertThat(spec.actions()).extracting(ActionSpec::id)
-                .containsExactlyInAnyOrder("publish_video", "unpublish_video", "get_video_status");
+                .containsExactlyInAnyOrder("publish_video", "unpublish_video", "get_video_status", "get_video_statistics");
 
         ActionSpec publish = actionSpec(spec, "publish_video");
         assertThat(publish.description()).isNotBlank();
@@ -389,7 +389,7 @@ class YouTubeConnectorTest {
         List<ActionDescriptor> actions = connector.getActions();
 
         assertThat(actions).extracting(ActionDescriptor::id)
-                .containsExactlyInAnyOrder("publish_video", "unpublish_video", "get_video_status");
+                .containsExactlyInAnyOrder("publish_video", "unpublish_video", "get_video_status", "get_video_statistics");
         assertThat(actions).allSatisfy(a -> assertThat(a.inputKeys()).isNotEmpty());
     }
 

@@ -4,6 +4,7 @@ import com.conductor.entity.PublishLane;
 import com.conductor.service.publish.PublishPlatform.ConfirmAction;
 import com.conductor.service.publish.PublishPlatform.CopySource;
 import com.conductor.service.publish.PublishPlatform.Gate;
+import com.conductor.service.publish.PublishPlatform.MetricsAction;
 import com.conductor.service.publish.PublishPlatform.PublishAction;
 import com.conductor.service.publish.PublishPlatform.RevokeAction;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -50,6 +51,7 @@ public class PublishPlatformRegistry {
                             "post_id", "scheduled_publish_time"),
                     new RevokeAction("delete_facebook_post", "post_id", Map.of(), List.of()),
                     new ConfirmAction("get_facebook_post", "post_id", "post_id", PlatformLiveness::facebookIsLive),
+                    new MetricsAction("get_facebook_post_metrics", 50),
                     Map.of(),
                     PublishPlatform.DEFAULT_MIN_LEAD, FACEBOOK_MAX_LEAD,
                     Set.of()),
@@ -58,6 +60,7 @@ public class PublishPlatformRegistry {
                     new PublishAction("publish_instagram_media", "caption", Map.of(), Map.of(),
                             "media_id", null),
                     null, null,
+                    new MetricsAction("get_instagram_media_metrics", 50),
                     Map.of(),
                     APP_MANAGED_MIN_LEAD, null,
                     Set.of()),
@@ -68,6 +71,7 @@ public class PublishPlatformRegistry {
                     new RevokeAction("unpublish_video", "video_id", Map.of("privacy_status", "private"),
                             List.of("publish_at")),
                     new ConfirmAction("get_video_status", "video_id", "video_id", PlatformLiveness::youtubeIsLive),
+                    new MetricsAction("get_video_statistics", 50),
                     Map.of(),
                     Duration.ZERO, null,
                     Set.of()),
@@ -77,6 +81,7 @@ public class PublishPlatformRegistry {
                             Map.of("description", CopySource.CAPTION, "headline", CopySource.TITLE),
                             Map.of(), "post_id", null),
                     null, null,
+                    new MetricsAction("query_video_metrics", 20),
                     tiktokOptionParams(),
                     APP_MANAGED_MIN_LEAD, null,
                     EnumSet.of(Gate.PRIVACY_LEVEL, Gate.CREATOR_CONSENT, Gate.CREATOR_DURATION_CAP)));

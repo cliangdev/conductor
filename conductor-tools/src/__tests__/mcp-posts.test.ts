@@ -22,7 +22,7 @@ vi.mock('../lib/mp4-probe.js', () => ({
 }))
 
 import { apiGet, apiPost, apiPatch, apiPut } from '../mcp/api.js'
-import { createPost, getPostStatus, submitPost, listPosts, submitReview, nextQuarterHour } from '../mcp/tools/posts.js'
+import { createPost, getPostStatus, submitPost, listPosts, submitReview, nextQuarterHour, getPostAnalytics, listTopPosts } from '../mcp/tools/posts.js'
 
 const config: Config = {
   apiKey: 'k',
@@ -294,3 +294,36 @@ describe('nextQuarterHour', () => {
     expect(nextQuarterHour(new Date('2026-09-04T12:46:00Z')).toISOString()).toBe('2026-09-04T13:00:00.000Z')
   })
 })
+
+describe('analytics', () => {
+  it('get_post_analytics returns the per-destination series and says when nothing has been read yet', async () => {
+    serve({
+      '/api/v2/projects/proj-1/work-items/w1/publish-metrics': {
+        workItemId: 'w1',
+        targets: [{ targetId: 't1', platform: 'facebook', latest: { views: 150, likes: 12 }, series: [{ views: 100 }, { views: 150 }] }],
+        totals: { views: 150, likes: 12 },
+      },
+      '/api/v2/projects/proj-1/work-items/w2/publish-metrics': { workItemId: 'w2', targets: [], totals: null },
+    })
+    const read = await getPostAnalytics({ postId: 'w1' }, config)
+    expect((read['totals'] as Record<string, unknown>)['views']).toBe(150)
+    expect(read['targets']).toHaveLength(1)
+    expect(read['note']).toBeUndefined()
+
+    const empty = await getPostAnalytics({ postId: 'w2', since: '2026-09-01T00:00:00Z' }, config)
+    expect(String(empty['note'])).toContain('No snapshot yet')
+    expect(mocked(apiGet).mock.calls.some((c) => String(c[0]).includes('since=2026-09-01'))).toBe(true)
+  })
+
+  it('list_top_posts passes the ranking filters through', async () => {
+    serve({ '/api/v2/projects/proj-1/publish-metrics/top-posts': [{ targetId: 't1', platform: 'instagram', metric: 'likes', value: 40 }] })
+    const result = await listTopPosts({ metric: 'likes', platform: 'instagram', limit: 5 }, config)
+    expect(result['metric']).toBe('likes')
+    expect(result['posts']).toHaveLength(1)
+    const url = String(mocked(apiGet).mock.calls[0]![0])
+    expect(url).toContain('metric=likes')
+    expect(url).toContain('platform=instagram')
+    expect(url).toContain('limit=5')
+  })
+})
+

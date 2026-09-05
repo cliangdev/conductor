@@ -74,6 +74,8 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
     private static final String ACTION_DELETE_FACEBOOK = "delete_facebook_post";
     private static final String ACTION_GET_FACEBOOK = "get_facebook_post";
     private static final String ACTION_PUBLISH_INSTAGRAM = "publish_instagram_media";
+    private static final String ACTION_FACEBOOK_METRICS = "get_facebook_post_metrics";
+    private static final String ACTION_INSTAGRAM_METRICS = "get_instagram_media_metrics";
 
     /**
      * Base of every permalink this connector reports. {@code .invalid} is reserved by RFC 2606 and is
@@ -258,6 +260,7 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
             case ACTION_DELETE_FACEBOOK -> deleteFacebook(safeInput);
             case ACTION_GET_FACEBOOK -> getFacebook(safeInput);
             case ACTION_PUBLISH_INSTAGRAM -> publishInstagram(ctx);
+            case ACTION_FACEBOOK_METRICS, ACTION_INSTAGRAM_METRICS -> LocalMetrics.answer(safeInput);
             // A returned error is PERMANENT per the ActionConnector contract, so a misrouted invocation
             // dead-letters locally exactly as it would in production.
             default -> ActionResult.error("Unknown Meta action: " + actionId);

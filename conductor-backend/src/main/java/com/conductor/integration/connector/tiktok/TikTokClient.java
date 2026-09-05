@@ -1,5 +1,7 @@
 package com.conductor.integration.connector.tiktok;
 
+import java.util.Map;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.integration.ConnectorHttp;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -344,6 +346,52 @@ public class TikTokClient {
     }
 
     /** Reads where a publish has got to. Terminal states are {@code PUBLISH_COMPLETE} and {@code FAILED}. */
+    /** A video's public counters; {@code unavailable} when TikTok no longer returns it. */
+    public record VideoMetrics(String id, Long views, Long likes, Long comments, Long shares, boolean unavailable) {}
+
+    /**
+     * The counters of up to twenty videos in one call — {@code POST /v2/video/query/}. Needs the
+     * {@code video.list} scope, which connections made before it was requested do not carry; those answer
+     * with a scope error the caller reports as setup required.
+     */
+    public List<VideoMetrics> queryVideoMetrics(String accessToken, List<String> videoIds) {
+        if (videoIds == null || videoIds.isEmpty()) {
+            return List.of();
+        }
+        URI uri = URI.create(API_BASE + "/video/query/?fields=id,view_count,like_count,comment_count,share_count");
+        Map<String, Object> body = Map.of("filters", Map.of("video_ids", videoIds));
+        ResponseEntity<JsonNode> response = exchangeClassifying("video query", () ->
+                restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(body, jsonHeaders(accessToken)),
+                        JsonNode.class));
+        JsonNode root = response.getBody();
+        JsonNode error = root == null ? null : root.get("error");
+        if (error != null && error.hasNonNull("code") && !"ok".equals(error.path("code").asText())) {
+            throw new TikTokApiException("TikTok video query failed: " + error.path("message").asText(),
+                    error.path("code").asText(), false);
+        }
+        Map<String, JsonNode> byId = new java.util.HashMap<>();
+        JsonNode videos = root == null ? null : root.path("data").path("videos");
+        if (videos != null && videos.isArray()) {
+            videos.forEach(v -> byId.put(v.path("id").asText(), v));
+        }
+        List<VideoMetrics> result = new java.util.ArrayList<>();
+        for (String id : videoIds) {
+            JsonNode v = byId.get(id);
+            if (v == null) {
+                result.add(new VideoMetrics(id, null, null, null, null, true));
+                continue;
+            }
+            result.add(new VideoMetrics(id, longOrNull(v, "view_count"), longOrNull(v, "like_count"),
+                    longOrNull(v, "comment_count"), longOrNull(v, "share_count"), false));
+        }
+        return result;
+    }
+
+    private static Long longOrNull(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        return value.isNumber() ? value.asLong() : null;
+    }
+
     public PublishStatus fetchPublishStatus(String accessToken, String publishId) {
         ResponseEntity<PublishStatusResponse> response = exchangeClassifying("status fetch", () ->
                 restTemplate.exchange(URI.create(API_BASE + STATUS_FETCH_PATH), HttpMethod.POST,

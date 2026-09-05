@@ -675,6 +675,20 @@
         "postId",
         "verdict"
       ]
+    },
+    {
+      "name": "get_post_analytics",
+      "description": "Views, likes, comments and shares per destination of a Post, as the platform reports them, with snapshots over time.",
+      "category": "marketing",
+      "requiredParams": [
+        "postId"
+      ]
+    },
+    {
+      "name": "list_top_posts",
+      "description": "The project's best-performing published destinations ranked by one metric.",
+      "category": "marketing",
+      "requiredParams": []
     }
   ]
 }

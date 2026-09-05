@@ -549,6 +549,40 @@ function normalizeVerdict(raw: string): string {
   throw new Error(`verdict must be "approve" or "request_changes", not "${raw}".`)
 }
 
+/** What happened to a Post after it went out: each destination's counters, as the feeds read them back. */
+export async function getPostAnalytics(
+  params: { postId: string; since?: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  const query = params.since ? `?since=${encodeURIComponent(params.since)}` : ''
+  const metrics = await apiGet<Record<string, unknown>>(`${workItemBase(config, params.postId)}/publish-metrics${query}`, config)
+  const targets = (metrics['targets'] as Array<Record<string, unknown>> | undefined) ?? []
+  return {
+    postId: params.postId,
+    totals: metrics['totals'] ?? null,
+    targets,
+    note:
+      targets.length === 0
+        ? 'No snapshot yet. The post_metrics feed reads counters every six hours after a destination publishes.'
+        : undefined,
+  }
+}
+
+/** The project's best-performing destinations by one metric — views by default. */
+export async function listTopPosts(
+  params: { metric?: string; platform?: string; since?: string; limit?: number },
+  config: Config
+): Promise<Record<string, unknown>> {
+  const query = new URLSearchParams()
+  if (params.metric) query.set('metric', params.metric)
+  if (params.platform) query.set('platform', params.platform)
+  if (params.since) query.set('since', params.since)
+  if (params.limit) query.set('limit', String(params.limit))
+  const qs = query.toString()
+  const rows = await apiGet<unknown[]>(`${V2_PROJECT(config)}/publish-metrics/top-posts${qs ? `?${qs}` : ''}`, config)
+  return { metric: params.metric ?? 'views', posts: rows }
+}
+
 /** Every Asset on a Work Item — the ids set_publish_targets.assetIds wants. */
 export async function listAssets(params: { issueId: string }, config: Config): Promise<Record<string, unknown>> {
   const assets = await apiGet<Array<Record<string, unknown>>>(`${workItemBase(config, params.issueId)}/assets`, config)

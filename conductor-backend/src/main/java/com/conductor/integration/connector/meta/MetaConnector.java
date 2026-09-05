@@ -339,6 +339,8 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
             case FacebookPublishAction.ACTION_DELETE -> facebookPublisher.delete(safeInput, ctx);
             case FacebookPublishAction.ACTION_GET -> facebookPublisher.get(safeInput, ctx);
             case InstagramPublishAction.ACTION_PUBLISH -> instagramPublisher.publish(safeInput, ctx);
+            case FacebookPublishAction.ACTION_METRICS -> facebookPublisher.metrics(safeInput, ctx);
+            case InstagramPublishAction.ACTION_METRICS -> instagramPublisher.metrics(safeInput, ctx);
             // A returned error is PERMANENT per the ActionConnector contract, so a misrouted invocation
             // dead-letters instead of retrying an action that will never exist.
             default -> ActionResult.error("Unknown Meta action: " + actionId);

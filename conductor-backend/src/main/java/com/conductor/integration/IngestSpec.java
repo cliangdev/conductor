@@ -42,15 +42,26 @@ public record IngestSpec(
         @JsonProperty("window") IngestWindowSpec window,
         @JsonProperty("suggestedDisposition") String suggestedDisposition,
         @JsonProperty("suggestedDomain") String suggestedDomain,
-        @JsonProperty("digest") DigestSpec digest) {
+        @JsonProperty("digest") DigestSpec digest,
+        @JsonProperty("sink") IngestSink sink,
+        @JsonProperty("quota") IngestQuotaSpec quota) {
 
     public IngestSpec {
         if (mode == null) mode = IngestMode.SNAPSHOT;
+        if (sink == null) sink = IngestSink.KNOWLEDGE;
         if (defaultIntervalMinutes == null) defaultIntervalMinutes = 1440;
         if (mode == IngestMode.WINDOW && window == null) {
             throw new IllegalArgumentException(
                     "ingest '" + id + "': mode WINDOW requires a window block");
         }
+    }
+
+    /** The pre-sink shape: everything lands in the Knowledge Center and no quota is declared. */
+    public IngestSpec(String id, String label, String description, IngestMode mode, String projectOperation,
+                      String sourceType, Integer defaultIntervalMinutes, IngestWindowSpec window,
+                      String suggestedDisposition, String suggestedDomain, DigestSpec digest) {
+        this(id, label, description, mode, projectOperation, sourceType, defaultIntervalMinutes, window,
+                suggestedDisposition, suggestedDomain, digest, null, null);
     }
 
     /** True iff this feed declares a {@link DigestSpec} — a metric feed narrated by the (later) digest pipeline. */

@@ -32,6 +32,8 @@ tags:
     description: Area-scoped asset library across every Workflow in an Area
   - name: publish-targets
     description: Publishable social accounts a project can select on a Post
+  - name: publish-metrics
+    description: What happened to published destinations after they went out — the post_metrics feeds' snapshots and the project ranking.
   - name: publish-outcomes
     description: Per-target publish outcomes on a Post, and retrying the ones that failed
 
@@ -1901,6 +1903,130 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/publish-metrics:
+    get:
+      tags:
+        - publish-metrics
+      summary: What happened to a Work Item's published destinations
+      description: >-
+        The performance snapshots the connection's `post_metrics` feed has filed for each destination of
+        this Work Item — views, likes, comments, shares where the platform reports them — as a series per
+        destination plus the sum of the latest snapshots. Empty until the feed has pulled at least once
+        after the Post published (every six hours by default).
+      operationId: getWorkItemPublishMetrics
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Only snapshots observed at or after this instant.
+      responses:
+        "200":
+          description: The Work Item's metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishMetricsResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/publish-metrics/top-posts:
+    get:
+      tags:
+        - publish-metrics
+      summary: The project's best-performing published destinations
+      description: >-
+        Every destination's latest snapshot, ranked by one metric. One row per destination, so a Post
+        that went to two accounts can appear twice.
+      operationId: listTopPosts
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+          description: views (default), likes, comments, shares, saves, reach or impressions.
+        - name: platform
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Only destinations whose latest snapshot is at or after this instant.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Rows to return (default 20).
+      responses:
+        "200":
+          description: The ranking
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TopPostEntry"
+        "400":
+          description: Unknown metric
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/work-items/{workItemId}/publish-preflight:
     get:
       tags:
@@ -3282,6 +3408,132 @@ components:
             `disableComment` on TikTok), in the order the platform's publish action declares them. Empty
             for a platform with no per-target options. A key outside this list is dropped at dispatch, so
             a client should read this rather than guess from the platform name.
+
+    PublishMetricSnapshot:
+      type: object
+      description: One reading of a destination's counters. A null counter is one the platform does not report.
+      required:
+        - observedAt
+        - unavailable
+      properties:
+        observedAt:
+          type: string
+          format: date-time
+        views:
+          type: integer
+          format: int64
+          nullable: true
+        likes:
+          type: integer
+          format: int64
+          nullable: true
+        comments:
+          type: integer
+          format: int64
+          nullable: true
+        shares:
+          type: integer
+          format: int64
+          nullable: true
+        saves:
+          type: integer
+          format: int64
+          nullable: true
+        reach:
+          type: integer
+          format: int64
+          nullable: true
+        impressions:
+          type: integer
+          format: int64
+          nullable: true
+        watchTimeSeconds:
+          type: integer
+          format: int64
+          nullable: true
+        unavailable:
+          type: boolean
+          description: The platform no longer returns this post (deleted there, or the account lost it).
+
+    PublishMetricsTarget:
+      type: object
+      required:
+        - targetId
+        - platform
+        - latest
+        - series
+      properties:
+        targetId:
+          type: string
+        platform:
+          type: string
+        accountLabel:
+          type: string
+          nullable: true
+        permalink:
+          type: string
+          nullable: true
+        latest:
+          $ref: "#/components/schemas/PublishMetricSnapshot"
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishMetricSnapshot"
+
+    PublishMetricsResponse:
+      type: object
+      required:
+        - workItemId
+        - targets
+      properties:
+        workItemId:
+          type: string
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishMetricsTarget"
+        totals:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/PublishMetricSnapshot"
+          description: The sum of every available destination's latest snapshot; null when nothing has been read yet.
+
+    TopPostEntry:
+      type: object
+      required:
+        - workItemId
+        - targetId
+        - platform
+        - metric
+        - value
+        - observedAt
+      properties:
+        workItemId:
+          type: string
+        displayId:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        targetId:
+          type: string
+        platform:
+          type: string
+        accountLabel:
+          type: string
+          nullable: true
+        permalink:
+          type: string
+          nullable: true
+        metric:
+          type: string
+        value:
+          type: integer
+          format: int64
+        observedAt:
+          type: string
+          format: date-time
 
     PublishPreflightResponse:
       type: object

@@ -13,7 +13,12 @@
         "work_item_id": "Work Item whose uploaded media assets this post publishes (optional)",
         "target_id": "Post publish target this invocation fulfils (optional; carried for correlation only)"
       },
-      "outputKeys": ["post_id", "permalink", "scheduled", "scheduled_publish_time"]
+      "outputKeys": [
+        "post_id",
+        "permalink",
+        "scheduled",
+        "scheduled_publish_time"
+      ]
     },
     {
       "id": "delete_facebook_post",
@@ -21,7 +26,10 @@
       "params": {
         "post_id": "Platform id of the post to delete (required)"
       },
-      "outputKeys": ["post_id", "deleted"]
+      "outputKeys": [
+        "post_id",
+        "deleted"
+      ]
     },
     {
       "id": "get_facebook_post",
@@ -29,7 +37,12 @@
       "params": {
         "post_id": "Platform id of the post to read (required)"
       },
-      "outputKeys": ["post_id", "is_published", "permalink", "scheduled_publish_time"]
+      "outputKeys": [
+        "post_id",
+        "is_published",
+        "permalink",
+        "scheduled_publish_time"
+      ]
     },
     {
       "id": "publish_instagram_media",
@@ -42,7 +55,45 @@
         "work_item_id": "Work Item whose uploaded media assets this post publishes (optional)",
         "target_id": "Post publish target this invocation fulfils (optional; carried for correlation only)"
       },
-      "outputKeys": ["media_id", "permalink", "creation_id"]
+      "outputKeys": [
+        "media_id",
+        "permalink",
+        "creation_id"
+      ]
+    },
+    {
+      "id": "get_facebook_post_metrics",
+      "description": "Read the like, comment and share counts of up to 50 Facebook Page posts in one call; an id Graph no longer resolves comes back as unavailable",
+      "params": {
+        "post_ids": "Platform ids of the posts to read (required, list, at most 50)"
+      },
+      "outputKeys": [
+        "metrics"
+      ]
+    },
+    {
+      "id": "get_instagram_media_metrics",
+      "description": "Read the like and comment counts of up to 50 Instagram media in one call; an id Graph no longer resolves comes back as unavailable",
+      "params": {
+        "post_ids": "Platform ids of the media to read (required, list, at most 50)"
+      },
+      "outputKeys": [
+        "metrics"
+      ]
+    }
+  ],
+  "ingest": [
+    {
+      "id": "post_metrics",
+      "label": "Post performance",
+      "description": "Views, likes, comments and shares for every post published through this account, read back on a cadence and kept per post",
+      "mode": "SNAPSHOT",
+      "sink": "POST_METRICS",
+      "defaultIntervalMinutes": 360,
+      "quota": {
+        "maxCallsPerPull": 10,
+        "maxPostAgeDays": 90
+      }
     }
   ]
 }

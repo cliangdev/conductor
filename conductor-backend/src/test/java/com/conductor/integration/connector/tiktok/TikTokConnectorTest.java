@@ -65,7 +65,7 @@ class TikTokConnectorTest {
         assertThat(consentUrl).doesNotContain("access_type").doesNotContain("prompt=");
 
         assertThat(connector.oauthScopes())
-                .containsExactlyInAnyOrder("user.info.basic", "video.publish", "video.upload");
+                .containsExactlyInAnyOrder("user.info.basic", "video.publish", "video.upload", "video.list");
         for (String scope : connector.oauthScopes()) {
             assertThat(consentUrl).contains(scope);
         }
@@ -83,7 +83,7 @@ class TikTokConnectorTest {
     void scopeDelimiter_isAComma_notRfc6749sSpace() {
         assertThat(connector.scopeDelimiter()).isEqualTo(",");
         assertThat(String.join(connector.scopeDelimiter(), connector.oauthScopes()))
-                .isEqualTo("user.info.basic,video.publish,video.upload");
+                .isEqualTo("user.info.basic,video.publish,video.upload,video.list");
     }
 
     @Test
@@ -179,7 +179,7 @@ class TikTokConnectorTest {
         IntegrationToolSpec spec = connector.getToolSpec();
 
         assertThat(spec.description()).isNotBlank();
-        assertThat(spec.actions()).extracting(ActionSpec::id).containsExactly("publish_video");
+        assertThat(spec.actions()).extracting(ActionSpec::id).containsExactly("publish_video", "query_video_metrics");
 
         ActionSpec publish = spec.actions().get(0);
         assertThat(publish.params()).containsKeys("asset_id", "title", "privacy_level");
@@ -191,7 +191,7 @@ class TikTokConnectorTest {
     void getActions_derivesPublishVideoFromToolSpec() {
         List<ActionDescriptor> actions = connector.getActions();
 
-        assertThat(actions).extracting(ActionDescriptor::id).containsExactly("publish_video");
+        assertThat(actions).extracting(ActionDescriptor::id).containsExactly("publish_video", "query_video_metrics");
         assertThat(actions.get(0).inputKeys()).contains("asset_id", "title", "privacy_level");
     }
 

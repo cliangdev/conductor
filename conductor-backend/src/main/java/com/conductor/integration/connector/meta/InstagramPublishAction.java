@@ -53,6 +53,35 @@ class InstagramPublishAction {
     private static final Logger log = LoggerFactory.getLogger(InstagramPublishAction.class);
 
     static final String ACTION_PUBLISH = "publish_instagram_media";
+    static final String ACTION_METRICS = "get_instagram_media_metrics";
+
+    /** Like and comment counts for a batch of media — the {@code post_metrics} feed's read; see the Facebook twin. */
+    ActionResult metrics(Map<String, Object> input, ConnectionContext ctx) {
+        List<String> mediaIds = MetaConnector.MetaActions.stringList(input, "post_ids");
+        if (mediaIds.isEmpty()) {
+            return ActionResult.error(ACTION_METRICS + " requires 'post_ids'");
+        }
+        String token = MetaConnector.MetaActions.tokenOrNull(ctx);
+        if (token == null) {
+            return ActionResult.error("Meta connection has no access token; reconnect the account");
+        }
+        List<MetaGraphClient.PostMetrics> read;
+        try {
+            read = graphClient.readMediaMetrics(mediaIds, token);
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            return MetaConnector.MetaActions.permanentOrRethrow(e, "Instagram could not read media metrics");
+        }
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (MetaGraphClient.PostMetrics m : read) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("post_id", m.id());
+            row.put("unavailable", m.unavailable());
+            if (m.likes() != null) row.put("likes", m.likes());
+            if (m.comments() != null) row.put("comments", m.comments());
+            rows.add(row);
+        }
+        return ActionResult.ok(Map.of("metrics", rows));
+    }
 
     private static final String MEDIA_TYPE_IMAGE = "IMAGE";
     private static final String MEDIA_TYPE_VIDEO = "VIDEO";

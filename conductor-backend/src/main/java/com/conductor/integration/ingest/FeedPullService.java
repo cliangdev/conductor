@@ -5,6 +5,8 @@ import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorHealth;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.IngestBatch;
+import com.conductor.integration.IngestSink;
+import com.conductor.service.publish.PostMetricsFeedPuller;
 import com.conductor.integration.IngestItem;
 import com.conductor.integration.IngestMode;
 import com.conductor.integration.IngestRequest;
@@ -50,8 +52,23 @@ public class FeedPullService {
     private final SnapshotIngestAdapter snapshotIngestAdapter;
     private final DigestSink digestSink;
     private final MetricsDigestService metricsDigestService;
+    private PostMetricsFeedPuller postMetricsFeedPuller;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FeedPullService(ConnectorFeedRepository feedRepository,
+                           ConnectionService connectionService,
+                           ConnectorRegistry connectorRegistry,
+                           SnapshotIngestAdapter snapshotIngestAdapter,
+                           DigestSink digestSink,
+                           MetricsDigestService metricsDigestService,
+                           PostMetricsFeedPuller postMetricsFeedPuller) {
+        this(feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink,
+                metricsDigestService);
+        this.postMetricsFeedPuller = postMetricsFeedPuller;
+    }
+
+    /** Without a post-metrics sink: every feed lands in the Knowledge Center, as before. */
+    FeedPullService(ConnectorFeedRepository feedRepository,
                            ConnectionService connectionService,
                            ConnectorRegistry connectorRegistry,
                            SnapshotIngestAdapter snapshotIngestAdapter,
@@ -90,9 +107,19 @@ public class FeedPullService {
                 : null;
         IngestRequest request = new IngestRequest(feed.getIngestId(), window, feed.getCursorState(), DEFAULT_MAX_ITEMS);
 
-        IngestBatch batch = connectorRegistry.findIngest(feed.getConnectorId())
-                .map(ingestConnector -> ingestConnector.pull(ctx, request))
-                .orElseGet(() -> snapshotIngestAdapter.pull(ctx, spec, request));
+        // A post-metrics feed writes its own rows and answers with no items; see PostMetricsFeedPuller.
+        IngestBatch batch;
+        if (spec.sink() == IngestSink.POST_METRICS) {
+            if (postMetricsFeedPuller == null) {
+                batch = IngestBatch.setupRequired("This deployment has no post-metrics sink");
+            } else {
+                batch = postMetricsFeedPuller.pull(feed, spec, conn, request);
+            }
+        } else {
+            batch = connectorRegistry.findIngest(feed.getConnectorId())
+                    .map(ingestConnector -> ingestConnector.pull(ctx, request))
+                    .orElseGet(() -> snapshotIngestAdapter.pull(ctx, spec, request));
+        }
 
         return recordOutcome(feed, spec, window, batch);
     }

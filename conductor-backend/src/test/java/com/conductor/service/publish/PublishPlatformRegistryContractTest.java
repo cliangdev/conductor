@@ -69,6 +69,9 @@ class PublishPlatformRegistryContractTest {
             if (platform.confirm() != null) {
                 assertThat(declared).as(platform.id() + " confirm").contains(platform.confirm().actionId());
             }
+            if (platform.metrics() != null) {
+                assertThat(declared).as(platform.id() + " metrics").contains(platform.metrics().actionId());
+            }
             assertThat(platform.isNative()).as(platform.id() + " native platforms carry revoke and confirm")
                     .isEqualTo(platform.revoke() != null && platform.confirm() != null);
         }

@@ -59,6 +59,8 @@ import {
   listPosts,
   submitReview,
   listAssets,
+  getPostAnalytics,
+  listTopPosts,
   type CreatePostParams,
 } from './tools/posts.js'
 import {
@@ -990,6 +992,31 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_post_analytics',
+    description: 'What happened to a Post after it went out: views, likes, comments and shares per destination as the platform reports them, with the series of snapshots and the totals. Empty until the connection\'s post_metrics feed has read the counters (every six hours after publishing).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        postId: { type: 'string', description: 'The Post\'s Work Item ID' },
+        since: { type: 'string', description: 'ISO-8601; only snapshots observed at or after this (optional)' },
+      },
+      required: ['postId'],
+    },
+  },
+  {
+    name: 'list_top_posts',
+    description: 'The project\'s best-performing published destinations ranked by one metric (views by default; likes, comments, shares, saves, reach, impressions), each with its Post, account and permalink.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        metric: { type: 'string', description: 'views (default), likes, comments, shares, saves, reach or impressions' },
+        platform: { type: 'string', description: 'Only destinations on this platform (optional)' },
+        since: { type: 'string', description: 'ISO-8601; only destinations read at or after this (optional)' },
+        limit: { type: 'number', description: 'Rows, up to 100 (default 20)' },
+      },
+    },
+  },
+  {
     name: 'submit_review',
     description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned reviewer holding the REVIEWER role. "approve" on a reviewed Workflow schedules the Post in the same request (autoTransition says how far it got); "request_changes" sends it back to its author. Does not record TikTok consent — a human (the creator) does that in the Conductor UI.',
     inputSchema: {
@@ -1670,6 +1697,24 @@ export async function runMcpServer(): Promise<void> {
                 since: params['since'] as string | undefined,
                 until: params['until'] as string | undefined,
                 platform: params['platform'] as string | undefined,
+                limit: params['limit'] as number | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'get_post_analytics': {
+          return successResponse(
+            await getPostAnalytics({ postId: params['postId'] as string, since: params['since'] as string | undefined }, config)
+          )
+        }
+        case 'list_top_posts': {
+          return successResponse(
+            await listTopPosts(
+              {
+                metric: params['metric'] as string | undefined,
+                platform: params['platform'] as string | undefined,
+                since: params['since'] as string | undefined,
                 limit: params['limit'] as number | undefined,
               },
               config

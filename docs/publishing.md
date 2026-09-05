@@ -241,6 +241,27 @@ Each success records a typed **link Asset** on the Post whose `ref` is the perma
 puts the live link on the calendar chip and the list row (`externalLinks` on the Work Item response) —
 deliberately generic, so an Issue's `github_pr` gets the same treatment.
 
+## What happened afterwards
+
+Each publishing connector declares a `post_metrics` **connector feed** (`ingest[]` in its tool spec, with
+`sink: POST_METRICS`). Connect an account and the feed is provisioned for it like any other feed, shows up
+on the Integrations page's Feeds panel with the same health and backoff, and every six hours reads the
+counters of that connection's published destinations — views, likes, comments and shares where the
+platform reports them — filing one `post_publish_target_metric` row per destination per period. Posts are
+read newest first, at most ten platform calls per pull (fifty ids a call on Meta and YouTube, twenty on
+TikTok), and only posts that fired in the last ninety days; a post the platform no longer returns is
+recorded as unavailable rather than failing the pull. Every call carries a period-scoped idempotency key,
+so a retried pull replays the stored answer instead of spending the budget twice.
+
+Read it back with `GET …/work-items/{id}/publish-metrics` (a series per destination plus the latest
+totals) and `GET /projects/{id}/publish-metrics/top-posts?metric=views` (every destination's latest
+snapshot, ranked); over MCP, `get_post_analytics` and `list_top_posts`.
+
+Two things to know: TikTok's read needs the `video.list` scope, so a TikTok account connected before this
+feed existed reports *setup required* until the creator reconnects it; and Instagram's views, reach and
+saves live behind the insights edge, whose availability varies by media type, so only likes and comments
+are read there today.
+
 ## Getting told about it
 
 Publishing rides the same notification system everything else does, with its own channel so a marketing

@@ -37,6 +37,8 @@ import java.util.function.Function;
  * @param publish        how a post goes out
  * @param revoke         how a natively scheduled post is taken back, or null off the NATIVE lane
  * @param confirm        how a natively scheduled post is asked whether it went live, or null off that lane
+ * @param metrics        how a published post's performance is read back, or null when the connector has no
+ *                       read action for it
  * @param optionParams   the target's {@code publish_options} keys (the API's camelCase) mapped to the
  *                       parameter the connector's tool spec declares; a whitelist, so an unknown key is dropped
  * @param minLead        the earliest a fire time may be from "now" for an automated destination here
@@ -52,6 +54,7 @@ public record PublishPlatform(String id,
                               PublishAction publish,
                               RevokeAction revoke,
                               ConfirmAction confirm,
+                              MetricsAction metrics,
                               Map<String, String> optionParams,
                               Duration minLead,
                               Duration maxLead,
@@ -130,6 +133,15 @@ public record PublishPlatform(String id,
                                 String postIdParam,
                                 String postIdOutputKey,
                                 Function<Map<String, Object>, Boolean> liveness) {}
+
+    /**
+     * How a published post's numbers are read back.
+     *
+     * @param actionId the connector's read action; takes {@code post_ids} (a list) and answers with
+     *                 {@code metrics}, one entry per id
+     * @param maxBatch how many ids one call may carry — the platform's own batch limit
+     */
+    public record MetricsAction(String actionId, int maxBatch) {}
 
     /**
      * How far from "now" a platform will accept a scheduled post. A {@code null} {@link #maxLead} means the

@@ -16,7 +16,34 @@
         "brand_content_toggle": "Disclosure flag: the post is a paid partnership / branded content (optional, default false)",
         "brand_organic_toggle": "Disclosure flag: the post promotes the creator's own business (optional, default false)"
       },
-      "outputKeys": ["post_id", "permalink"]
+      "outputKeys": [
+        "post_id",
+        "permalink"
+      ]
+    },
+    {
+      "id": "query_video_metrics",
+      "description": "Read the view, like, comment and share counts of up to 20 videos in one video.query call; needs the video.list scope",
+      "params": {
+        "post_ids": "Video ids to read (required, list, at most 20)"
+      },
+      "outputKeys": [
+        "metrics"
+      ]
+    }
+  ],
+  "ingest": [
+    {
+      "id": "post_metrics",
+      "label": "Post performance",
+      "description": "Views, likes, comments and shares for every post published through this account, read back on a cadence and kept per post",
+      "mode": "SNAPSHOT",
+      "sink": "POST_METRICS",
+      "defaultIntervalMinutes": 360,
+      "quota": {
+        "maxCallsPerPull": 10,
+        "maxPostAgeDays": 90
+      }
     }
   ]
 }

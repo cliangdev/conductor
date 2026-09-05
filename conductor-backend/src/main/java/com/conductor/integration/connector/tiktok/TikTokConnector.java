@@ -67,6 +67,7 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
     static final String CONFIG_MAX_VIDEO_DURATION_SEC = "maxVideoPostDurationSec";
 
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
+    private static final String ACTION_QUERY_VIDEO_METRICS = "query_video_metrics";
 
     /**
      * How long the framework waits for a {@code publish_video} call. A 4 GB video cut into 10 MB chunks
@@ -131,7 +132,9 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
 
     @Override
     public List<String> oauthScopes() {
-        return List.of("user.info.basic", "video.publish", "video.upload");
+        // video.list is what the post_metrics feed reads counters with; a connection made before it was
+        // requested answers that read with a scope error until the creator reconnects.
+        return List.of("user.info.basic", "video.publish", "video.upload", "video.list");
     }
 
     @Override
@@ -253,6 +256,9 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
 
     @Override
     public ActionResult invoke(String actionId, Map<String, Object> input, ConnectionContext ctx) {
+        if (ACTION_QUERY_VIDEO_METRICS.equals(actionId)) {
+            return queryVideoMetrics(input, ctx);
+        }
         // A returned error is PERMANENT per the ActionConnector contract, so an unknown action
         // dead-letters instead of burning retries on something that will never resolve.
         if (!ACTION_PUBLISH_VIDEO.equals(actionId)) {
@@ -262,5 +268,50 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
             return ActionResult.error("TikTok publishing is not available on this deployment");
         }
         return publishAction.publish(input, ctx);
+    }
+
+    /**
+     * The public counters of a batch of videos — the {@code post_metrics} feed's read. A scope error is
+     * returned as a permanent error naming the fix (reconnect), so the feed reports setup required rather
+     * than retrying a read that cannot succeed until a human acts.
+     */
+    private ActionResult queryVideoMetrics(Map<String, Object> input, ConnectionContext ctx) {
+        if (ctx == null || ctx.accessToken() == null || ctx.accessToken().isBlank()) {
+            return ActionResult.error("This TikTok connection has no access token; reconnect the account");
+        }
+        Object raw = input == null ? null : input.get("post_ids");
+        List<String> ids = new java.util.ArrayList<>();
+        if (raw instanceof java.util.Collection<?> items) {
+            items.forEach(item -> {
+                if (item != null && !String.valueOf(item).isBlank()) {
+                    ids.add(String.valueOf(item).trim());
+                }
+            });
+        }
+        if (ids.isEmpty()) {
+            return ActionResult.error(ACTION_QUERY_VIDEO_METRICS + " requires 'post_ids'");
+        }
+        List<TikTokClient.VideoMetrics> read;
+        try {
+            read = client.queryVideoMetrics(ctx.accessToken(), ids);
+        } catch (TikTokClient.TikTokApiException e) {
+            if (e.isTransient()) {
+                throw e;
+            }
+            return ActionResult.error("TikTok refused the metrics read (" + e.code() + "): " + e.getMessage()
+                    + " — if this names a scope, reconnect the account to grant video.list");
+        }
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (TikTokClient.VideoMetrics m : read) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("post_id", m.id());
+            row.put("unavailable", m.unavailable());
+            if (m.views() != null) row.put("views", m.views());
+            if (m.likes() != null) row.put("likes", m.likes());
+            if (m.comments() != null) row.put("comments", m.comments());
+            if (m.shares() != null) row.put("shares", m.shares());
+            rows.add(row);
+        }
+        return ActionResult.ok(Map.of("metrics", rows));
     }
 }
