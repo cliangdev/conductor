@@ -1,5 +1,7 @@
 package com.conductor.workflow.lifecycle;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.networknt.schema.Error;
@@ -19,6 +21,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -48,10 +51,13 @@ public class WorkflowDefinitionValidator {
     private final Schema schema;
     private final SkillRegistry skillRegistry;
     private final SystemTriggerRegistry systemTriggerRegistry;
+    private final PublishPlatformRegistry publishPlatformRegistry;
 
-    public WorkflowDefinitionValidator(SkillRegistry skillRegistry, SystemTriggerRegistry systemTriggerRegistry) {
+    public WorkflowDefinitionValidator(SkillRegistry skillRegistry, SystemTriggerRegistry systemTriggerRegistry,
+                                       PublishPlatformRegistry publishPlatformRegistry) {
         this.skillRegistry = skillRegistry;
         this.systemTriggerRegistry = systemTriggerRegistry;
+        this.publishPlatformRegistry = publishPlatformRegistry;
         this.schema = loadSchema();
     }
 
@@ -142,6 +148,8 @@ public class WorkflowDefinitionValidator {
             errors.add(gated + " review-gated transitions, exceeds the cap of " + MAX_REVIEW_GATED_TRANSITIONS);
         }
 
+        validatePublishesFrom(sc, statusIds, errors);
+
         // Every skill Step references a bindable skill id. Load the project's bindable set once (a single
         // query), lazily — statecharts with no skill steps issue no query at all.
         Set<String> bindableSkills = null;
@@ -165,6 +173,42 @@ public class WorkflowDefinitionValidator {
         if (errors.isEmpty()) {
             validateReachability(sc, errors);
             validateNoStatusChangedCycle(sc, errors);
+        }
+    }
+
+    /**
+     * A Workflow that publishes — one whose {@code asset_types} names a platform — has to say which status
+     * its Posts wait in for their fire time, because that is the status the pollers dispatch from and the
+     * entry the publish validators guard. {@code publishes_from} says so explicitly; a chart that predates
+     * the field is accepted when it has a status literally named {@code SCHEDULED}, which is what every
+     * pinned MARKETING snapshot has. Either way the status must exist, must not be terminal (a Post waits
+     * there, it does not end there) and must lead to a terminal status (publishing is how a Post finishes).
+     */
+    private void validatePublishesFrom(Statechart sc, Set<String> statusIds, List<String> errors) {
+        Optional<String> declared = sc.publishesFrom();
+        if (declared.isPresent() && !statusIds.contains(declared.get())) {
+            errors.add("publishes_from references unknown status: " + declared.get());
+            return;
+        }
+        Optional<String> scheduled = PublishingWorkflow.scheduledStatus(sc);
+        if (scheduled.isEmpty()) {
+            if (publishPlatformRegistry.declaresPublishing(sc)) {
+                errors.add("a Workflow whose asset_types name a publishable platform must declare"
+                        + " publishes_from: the status its items wait in for their fire time");
+            }
+            return;
+        }
+        String status = scheduled.get();
+        if (sc.isTerminal(status)) {
+            errors.add("publishes_from status '" + status + "' is terminal; an item must be able to wait there");
+            return;
+        }
+        boolean reachesTerminal = sc.transitionsFrom(status).stream()
+                .map(StatechartTransition::to)
+                .anyMatch(sc::isTerminal);
+        if (declared.isPresent() && !reachesTerminal) {
+            errors.add("publishes_from status '" + status + "' has no transition to a terminal status,"
+                    + " so a published item could never finish");
         }
     }
 

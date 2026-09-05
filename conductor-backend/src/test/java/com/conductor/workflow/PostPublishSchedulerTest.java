@@ -1,5 +1,8 @@
 package com.conductor.workflow;
 
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
+import com.conductor.service.publish.PublishingWorkflow;
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.signal.SignalTypes;
 import com.conductor.signal.Signal;
 import com.conductor.notification.ChannelGroup;
@@ -102,9 +105,11 @@ class PostPublishSchedulerTest {
     }
 
     private PostPublishScheduler newScheduler(boolean enabled) {
+        PublishPlatformRegistry registry = new PublishPlatformRegistry();
         PostPublishScheduler s = new PostPublishScheduler(
+                registry, new PublishingWorkflow(registry, mock(WorkflowDefinitionResolver.class)),
                 targetRepository, connectionResolver, actionInvocationService, publishOutcomeService,
-                new PublishInputBuilder(new PublishTargetMediaResolver(assetRepository, targetAssetRepository)),
+                new PublishInputBuilder(registry, new PublishTargetMediaResolver(assetRepository, targetAssetRepository)),
                 enabled, signalBus);
         s.entityManager = entityManager;
         s.self = s;

@@ -1,5 +1,6 @@
 package com.conductor.workflow.lifecycle;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.ProjectSkill;
 import com.conductor.repository.ProjectSkillRepository;
 import com.conductor.workflow.WorkflowValidationResult;
@@ -22,7 +23,8 @@ class WorkflowDefinitionValidatorTest {
     // No project-registered skills — only the built-in registry is bindable, so the unknown-skill case still fails.
     private final ProjectSkillRepository projectSkillRepository = mock(ProjectSkillRepository.class);
     private final WorkflowDefinitionValidator validator =
-            new WorkflowDefinitionValidator(new SkillRegistry(mapper, projectSkillRepository), new SystemTriggerRegistry(mapper));
+            new WorkflowDefinitionValidator(new SkillRegistry(mapper, projectSkillRepository), new SystemTriggerRegistry(mapper),
+                    new PublishPlatformRegistry());
 
     private JsonNode json(String s) throws Exception {
         return mapper.readTree(s);
@@ -63,6 +65,70 @@ class WorkflowDefinitionValidatorTest {
 
     @Test
     void miniDefinitionIsValid() throws Exception {
+        assertThat(validator.validate(PROJECT_ID, json(MINI)).getErrors()).isEmpty();
+    }
+
+    // --- publishes_from: the status a publishing Workflow dispatches from ---
+
+    private static final String PUBLISHING = """
+            {
+              "schemaVersion": 1, "id": "PUB", "area": "PUB", "version": 1, "state": "DRAFT",
+              "noun": "Post", "default_view": "calendar", "types": ["POST"],
+              "asset_types": ["instagram_post"],
+              "publishes_from": "QUEUED",
+              "statuses": [
+                {"id": "DRAFT", "category": "open", "initial": true},
+                {"id": "QUEUED", "category": "in_progress"},
+                {"id": "LIVE", "category": "terminal", "terminal": true}
+              ],
+              "transitions": [
+                {"from": "DRAFT", "to": "QUEUED", "label": "Queue"},
+                {"from": "QUEUED", "to": "LIVE", "label": "Live"}
+              ]
+            }
+            """;
+
+    @Test
+    void marketingAndAutopilotExamplesAreValid() throws Exception {
+        for (String example : new String[] {"marketing", "marketing-autopilot"}) {
+            try (InputStream in = getClass().getResourceAsStream("/schema/examples/" + example + ".workflow.json")) {
+                assertThat(validator.validate(PROJECT_ID, mapper.readTree(in)).getErrors()).as(example).isEmpty();
+            }
+        }
+    }
+
+    @Test
+    void publishingWorkflowMayDeclareItsScheduledStatus() throws Exception {
+        assertThat(validator.validate(PROJECT_ID, json(PUBLISHING)).getErrors()).isEmpty();
+    }
+
+    @Test
+    void publishingWorkflowWithNeitherMarkerNorScheduledStatusIsRejected() throws Exception {
+        String bad = PUBLISHING.replace("\"publishes_from\": \"QUEUED\",", "");
+        assertThat(validator.validate(PROJECT_ID, json(bad)).getErrors())
+                .anyMatch(e -> e.contains("must declare publishes_from"));
+    }
+
+    @Test
+    void publishingWorkflowWithALegacyScheduledStatusNeedsNoMarker() throws Exception {
+        String legacy = PUBLISHING.replace("\"publishes_from\": \"QUEUED\",", "").replace("QUEUED", "SCHEDULED");
+        assertThat(validator.validate(PROJECT_ID, json(legacy)).getErrors()).isEmpty();
+    }
+
+    @Test
+    void publishesFromMustNameAnExistingNonTerminalStatusThatReachesATerminalOne() throws Exception {
+        assertThat(validator.validate(PROJECT_ID, json(PUBLISHING.replace("\"publishes_from\": \"QUEUED\"", "\"publishes_from\": \"NOPE\""))).getErrors())
+                .anyMatch(e -> e.contains("publishes_from references unknown status: NOPE"));
+        assertThat(validator.validate(PROJECT_ID, json(PUBLISHING.replace("\"publishes_from\": \"QUEUED\"", "\"publishes_from\": \"LIVE\""))).getErrors())
+                .anyMatch(e -> e.contains("is terminal"));
+        String deadEnd = PUBLISHING.replace("{\"from\": \"QUEUED\", \"to\": \"LIVE\", \"label\": \"Live\"}",
+                "{\"from\": \"QUEUED\", \"to\": \"DRAFT\", \"label\": \"Back\"}, {\"from\": \"DRAFT\", \"to\": \"LIVE\", \"label\": \"Skip\"}");
+        assertThat(validator.validate(PROJECT_ID, json(deadEnd)).getErrors())
+                .anyMatch(e -> e.contains("no transition to a terminal status"));
+    }
+
+    @Test
+    void nonPublishingWorkflowNeedsNoScheduledStatus() throws Exception {
         assertThat(validator.validate(PROJECT_ID, json(MINI)).getErrors()).isEmpty();
     }
 

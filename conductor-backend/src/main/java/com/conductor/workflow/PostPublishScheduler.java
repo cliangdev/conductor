@@ -18,6 +18,9 @@ import com.conductor.service.ActionInvocationService;
 import com.conductor.service.ActiveConnectionResolver;
 import com.conductor.service.PublishInputBuilder;
 import com.conductor.service.PublishOutcomeService;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
@@ -33,10 +36,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -101,47 +102,7 @@ public class PostPublishScheduler {
      * heuristic {@code PostScheduleValidator} documents), replace the single use of this constant in
      * {@link #ownerIsScheduled} with a read of that field; nothing else here changes.
      */
-    static final String SCHEDULED_STATUS = "SCHEDULED";
-
-    /** The publish action a platform goes out through, and the parameter its copy travels in. */
-    record PublishAction(String actionId, String captionParam) {}
-
-    /**
-     * Platform to publish action, keyed by the {@code post_publish_target.platform} vocabulary and valued
-     * from the connectors' own shipped tool specs ({@code meta.json}, {@code youtube.json},
-     * {@code tiktok.json}).
-     */
-    static final Map<String, PublishAction> PUBLISH_ACTIONS = Map.of(
-            "facebook", new PublishAction("publish_facebook_post", "message"),
-            "instagram", new PublishAction("publish_instagram_media", "caption"),
-            "youtube", new PublishAction("publish_video", "description"),
-            "tiktok", new PublishAction("publish_video", "title"));
-
-    /**
-     * How a target's stored {@code publish_options} bag becomes action input, per platform: the row's own
-     * option key on the left, the parameter the connector's shipped tool spec declares on the right (TIK-1).
-     *
-     * <p>The bag is stored in the API's camelCase vocabulary and the actions take snake_case, so the
-     * translation has to live somewhere; here is the only place that knows both. It is a whitelist rather
-     * than a blind copy: an unrecognised key is dropped, so a client cannot smuggle an arbitrary parameter
-     * into a connector call by putting it in the options bag.
-     *
-     * <p>Only TikTok has options today. Instagram's and YouTube's go in the same shape, and nothing else in
-     * this class changes when they do.
-     */
-    static final Map<String, Map<String, String>> PUBLISH_OPTION_PARAMS = Map.of(
-            "tiktok", tiktokOptionParams());
-
-    private static Map<String, String> tiktokOptionParams() {
-        Map<String, String> params = new LinkedHashMap<>();
-        params.put("privacyLevel", "privacy_level");
-        params.put("disableComment", "disable_comment");
-        params.put("disableDuet", "disable_duet");
-        params.put("disableStitch", "disable_stitch");
-        params.put("brandContentToggle", "brand_content_toggle");
-        params.put("brandOrganicToggle", "brand_organic_toggle");
-        return Collections.unmodifiableMap(params);
-    }
+    static final String SCHEDULED_STATUS = PublishingWorkflow.LEGACY_SCHEDULED_STATUS;
 
     /** Reads the options bag off the row. Static, so the constructor's signature is untouched. */
     private static final ObjectMapper OPTIONS_MAPPER = new ObjectMapper();
@@ -190,6 +151,8 @@ public class PostPublishScheduler {
      */
     Runnable beforeClaimUpdate = () -> { };
 
+    private final PublishPlatformRegistry platformRegistry;
+    private final PublishingWorkflow publishingWorkflow;
     private final PostPublishTargetRepository targetRepository;
     private final ActiveConnectionResolver connectionResolver;
     private final ActionInvocationService actionInvocationService;
@@ -212,13 +175,17 @@ public class PostPublishScheduler {
     @Lazy
     PostPublishScheduler self;
 
-    public PostPublishScheduler(PostPublishTargetRepository targetRepository,
+    public PostPublishScheduler(PublishPlatformRegistry platformRegistry,
+                                PublishingWorkflow publishingWorkflow,
+                                PostPublishTargetRepository targetRepository,
                                 ActiveConnectionResolver connectionResolver,
                                 ActionInvocationService actionInvocationService,
                                 PublishOutcomeService publishOutcomeService,
                                 PublishInputBuilder publishInputBuilder,
                                 @Value("${conductor.post-publish.enabled:true}") boolean enabled,
                                 SignalBus signalBus) {
+        this.platformRegistry = platformRegistry;
+        this.publishingWorkflow = publishingWorkflow;
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
@@ -391,14 +358,15 @@ public class PostPublishScheduler {
         }
 
         WorkItem post = target.getWorkItem();
-        if (!ownerIsScheduled(post)) {
+        if (!publishingWorkflow.isInScheduledStatus(post)) {
             log.debug("Post publish target {} skipped: its post is in status {}, not {}",
-                    targetId, post == null ? "(none)" : post.getCurrentStatus(), SCHEDULED_STATUS);
+                    targetId, post == null ? "(none)" : post.getCurrentStatus(),
+                    publishingWorkflow.scheduledStatusOf(post));
             return null;
         }
 
-        PublishAction action = publishActionFor(target.getPlatform());
-        if (action == null) {
+        PublishPlatform platform = platformRegistry.find(target.getPlatform()).orElse(null);
+        if (platform == null) {
             log.warn("Post publish target {} names platform '{}', which has no publish action; skipping",
                     targetId, target.getPlatform());
             return null;
@@ -413,7 +381,7 @@ public class PostPublishScheduler {
         }
 
         PublishDispatch dispatch = new PublishDispatch(targetId, post.getId(), target.getPlatform(),
-                connection.get(), action.actionId(), buildInput(target, post, action),
+                connection.get(), platform.publish().actionId(), buildInput(target, post, platform),
                 target.getIdempotencyKey());
 
         beforeClaimUpdate.run();
@@ -435,31 +403,23 @@ public class PostPublishScheduler {
         return dispatch;
     }
 
-    private boolean ownerIsScheduled(WorkItem post) {
-        return post != null && SCHEDULED_STATUS.equals(post.getCurrentStatus());
-    }
-
-    private PublishAction publishActionFor(String platform) {
-        if (platform == null) {
-            return null;
-        }
-        return PUBLISH_ACTIONS.get(platform.trim().toLowerCase(Locale.ROOT));
-    }
-
     /**
      * The publish payload: the copy that goes out, this target's own publish options, and the two handles
      * the platform executor resolves this post's media from. Media parameters themselves
      * ({@code image_url}, {@code asset_ref}, {@code asset_id}) are the per-platform publisher's to fill in —
      * this poller's job ends at dispatching the right action, on the right connection, exactly once.
      */
-    private Map<String, Object> buildInput(PostPublishTarget target, WorkItem post, PublishAction action) {
-        Map<String, Object> input = publishInputBuilder.build(target, post, action.captionParam());
-        input.putAll(publishOptions(target));
+    private Map<String, Object> buildInput(PostPublishTarget target, WorkItem post, PublishPlatform platform) {
+        Map<String, Object> input = publishInputBuilder.build(target, post, platform.publish().captionParam());
+        input.putAll(publishOptions(target, platform));
         return input;
     }
 
     /**
-     * This target's chosen publish options, under the parameter names its connector's tool spec declares.
+     * This target's chosen publish options, under the parameter names its connector's tool spec declares
+     * ({@link PublishPlatform#optionParams()}). The bag is stored in the API's camelCase vocabulary and the
+     * actions take snake_case; the platform's map is a whitelist rather than a blind copy, so an
+     * unrecognised key is dropped and a client cannot smuggle an arbitrary parameter into a connector call.
      *
      * <p>Nothing is invented here: an option the human did not choose is simply absent, and the connector's
      * own default applies. That is deliberate even for TikTok's {@code privacy_level}, whose absence is the
@@ -467,11 +427,10 @@ public class PostPublishScheduler {
      * one, so by the time a row is due it has been chosen. Manufacturing a value here would put the guess
      * back, one layer down.
      */
-    private Map<String, Object> publishOptions(PostPublishTarget target) {
-        Map<String, String> params = PUBLISH_OPTION_PARAMS.get(
-                target.getPlatform() == null ? "" : target.getPlatform().trim().toLowerCase(Locale.ROOT));
+    private Map<String, Object> publishOptions(PostPublishTarget target, PublishPlatform platform) {
+        Map<String, String> params = platform.optionParams();
         String json = target.getPublishOptions();
-        if (params == null || json == null || json.isBlank()) {
+        if (params.isEmpty() || json == null || json.isBlank()) {
             return Map.of();
         }
         JsonNode options;

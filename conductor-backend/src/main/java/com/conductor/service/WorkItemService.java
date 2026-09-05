@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
@@ -63,6 +65,7 @@ public class WorkItemService {
     private final NativeHandoffService nativeHandoffService;
     private final PublishBundleGuard publishBundleGuard;
     private final PublishTargetService publishTargetService;
+    private final PublishPlatformRegistry platformRegistry;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -77,7 +80,9 @@ public class WorkItemService {
             NativeHandoffService nativeHandoffService,
             PublishBundleGuard publishBundleGuard,
             PublishTargetService publishTargetService,
-                           AssetRepository assetRepository) {
+            AssetRepository assetRepository,
+            PublishPlatformRegistry platformRegistry) {
+        this.platformRegistry = platformRegistry;
         this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
@@ -217,12 +222,12 @@ public class WorkItemService {
         if (status != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
             workItemWorkflowService.validateTransition(projectId, workItem, status);
+            String scheduledStatus = scheduledStatusFor(projectId, workItem);
             // Leaving the scheduled status revokes any native-lane handoff FIRST, inside this transaction:
             // a Facebook/YouTube post already handed to the platform would otherwise still go live after an
             // unschedule, edit-revert or delete. A failed revocation throws, so the status change never
             // commits and we never strand a live scheduled post.
-            if (NativeHandoffService.SCHEDULED_STATUS.equals(previousStatus)
-                    && !NativeHandoffService.SCHEDULED_STATUS.equals(status)) {
+            if (scheduledStatus.equals(previousStatus) && !scheduledStatus.equals(status)) {
                 nativeHandoffService.unschedule(workItem);
             }
             workItem.setCurrentStatus(status);
@@ -234,17 +239,8 @@ public class WorkItemService {
         bundleRevert.ifPresent(revert ->
                 publishStatusChanged(projectId, workItem, revert.fromStatus(), revert.toStatus(), null));
 
-        // A target's fireTime is copied from the Post when the target is selected, so a Post rescheduled
-        // after its targets were chosen would otherwise fire at the old time — the schedulers read fireTime
-        // off the row, never off the Work Item. Re-stamp before any handoff reads it.
-        if (statusChanged && NativeHandoffService.SCHEDULED_STATUS.equals(workItem.getCurrentStatus())) {
-            publishTargetService.restampFireTimes(workItem);
-        }
-
-        // Entering the scheduled status hands off native-lane targets whose fire time is inside the
-        // platform window; far-future ones stay PENDING for NativeHandoffService's deferred sweep.
-        if (statusChanged && NativeHandoffService.SCHEDULED_STATUS.equals(workItem.getCurrentStatus())) {
-            nativeHandoffService.handoffForPost(workItem);
+        if (statusChanged) {
+            applyScheduledEntry(projectId, workItem);
         }
 
         if (statusChanged) {
@@ -449,20 +445,47 @@ public class WorkItemService {
      * publishes an identically-enriched event per cascade hop rather than duplicating the enrichment.
      */
     /**
-     * Whether this Workflow treats publishing as a concept, by the one rule the whole pipeline uses: it
-     * declares an asset type named for a publishable platform. Kept identical to
-     * {@code PostScheduleValidator.declaresPublishTargets} — the validators gate on it, and notification
-     * routing reads it, so the two must agree about what a publishing Workflow is.
+     * The status this item's Workflow publishes from, by its own definition — the legacy {@code SCHEDULED}
+     * when the definition cannot be resolved, so a status change is never refused over a lookup failure.
      */
-    private static boolean declaresPublishTargets(Statechart statechart) {
-        return statechart.assetTypes().stream()
-                .filter(java.util.Objects::nonNull)
-                .anyMatch(assetType -> {
-                    String normalized = assetType.trim().toLowerCase(java.util.Locale.ROOT);
-                    int separator = normalized.indexOf('_');
-                    String head = separator < 0 ? normalized : normalized.substring(0, separator);
-                    return PostScheduleValidator.PUBLISH_PLATFORMS.contains(head);
-                });
+    private String scheduledStatusFor(String projectId, WorkItem workItem) {
+        Statechart statechart;
+        try {
+            statechart = workItemWorkflowService.resolveFor(projectId, workItem);
+        } catch (RuntimeException e) {
+            statechart = null;
+        }
+        return statechart == null ? PublishingWorkflow.LEGACY_SCHEDULED_STATUS
+                : PublishingWorkflow.scheduledStatus(statechart).orElse(PublishingWorkflow.LEGACY_SCHEDULED_STATUS);
+    }
+
+    /**
+     * What entering the scheduled status does, beyond the status itself. A target's fireTime is copied from
+     * the Post when the target is selected, so a Post rescheduled after its targets were chosen would
+     * otherwise fire at the old time — the schedulers read fireTime off the row, never off the Work Item —
+     * so it is re-stamped before any hand-off reads it. Then native-lane targets whose fire time is inside
+     * the platform window are handed off; far-future ones stay PENDING for the deferred sweep.
+     *
+     * <p>Public and separate from {@link #patchWorkItem} so a system-triggered transition into the
+     * scheduled status ({@code LifecycleTriggerDispatcher}) gets exactly the same side effects a human
+     * "Schedule" click does.
+     */
+    public void applyScheduledEntry(String projectId, WorkItem workItem) {
+        if (!scheduledStatusFor(projectId, workItem).equals(workItem.getCurrentStatus())) {
+            return;
+        }
+        publishTargetService.restampFireTimes(workItem);
+        nativeHandoffService.handoffForPost(workItem);
+    }
+
+    /**
+     * Whether this Workflow treats publishing as a concept, by the one rule the whole pipeline uses: it
+     * declares an asset type named for a publishable platform ({@link PublishPlatformRegistry#declaresPublishing}).
+     * The validators gate on the same call, and notification routing reads this, so the two agree about
+     * what a publishing Workflow is by construction.
+     */
+    private boolean declaresPublishTargets(Statechart statechart) {
+        return platformRegistry.declaresPublishing(statechart);
     }
 
     public void publishStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,

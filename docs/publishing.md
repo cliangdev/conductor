@@ -19,15 +19,45 @@ DRAFT ──► IN_REVIEW ──► APPROVED ──► SCHEDULED ──► PUBLI
                               (unschedule / retry)
 ```
 
-`IN_REVIEW → APPROVED` is the only review-gated edge, and it is where every publishing rule is
-enforced. Passing it requires:
+`IN_REVIEW → APPROVED` is the review-gated edge. Every publishing rule is enforced there **and on every
+edge into the scheduled status** (`APPROVED → SCHEDULED`, `FAILED → SCHEDULED`): a Post approved with
+time to spare and scheduled once its fire time had crept inside the floor used to enter Scheduled
+unvalidated and then sit forever, because the native hand-off refused it. Edges *out of* Scheduled
+("Unschedule") are never gated, so a human can always pull a post back. Passing a gate edge requires:
 
 - at least one **publish target** selected,
 - at least one uploaded media file,
-- a fire time at least **10 minutes** out, with an IANA timezone,
+- a fire time far enough out for every selected destination, with an IANA timezone — the floor is the
+  longest lead any of them needs (Facebook's native scheduler wants **10 minutes**, an app-managed
+  Instagram or TikTok destination one minute, YouTube and a manual destination only "in the future"),
+  and ten minutes while no destination is selected yet,
 - media on **every** target, which each selected platform will actually accept and can publish as one
   post (`MediaTargetValidator`),
 - for an API TikTok target: a privacy level, and the creator's recorded consent.
+
+**Ask before you move.** `GET …/work-items/{id}/publish-preflight` runs the same validators without
+transitioning and returns every blocker and warning with a stable `code`, the next gate move, whether a
+review currently satisfies the gate, whether the creator's consent stands, and `earliestFireTime` — "as
+soon as possible" for the current destinations, which a client sets as `scheduledFor` rather than
+guessing a lead. The 422 a refused transition throws is the same list, so what a client shows beforehand
+and what the transition says cannot disagree.
+
+### Which status is "scheduled"
+
+A publishing Workflow names the status its Posts wait in with `publishes_from` (MARKETING:
+`"publishes_from": "SCHEDULED"`). The pollers dispatch from it, the validators guard every entry into it,
+and everything from it onward is frozen. A snapshot pinned before the field existed falls back to a status
+literally named `SCHEDULED`, so existing Posts keep dispatching. Publishing a definition whose
+`asset_types` name a platform but that has neither is refused.
+
+### A lifecycle with no review gate
+
+`schema/examples/marketing-autopilot.workflow.json` is MARKETING with the review removed:
+`DRAFT → SCHEDULED → PUBLISHED | FAILED`, `FAILED → SCHEDULED` to retry, `SCHEDULED → DRAFT` to pull a post
+back. Because the schedule edge is a gate, it is validated exactly as MARKETING's approval is; because the
+scheduled region freezes content, a scheduled Post refuses edits and names "unscheduled" as the way out
+rather than a reviewer's send-back. Import it with `create_workflow` for a project whose agent is trusted
+to publish without a human in the loop. It is not seeded by default.
 
 ## Content freezes when it goes for review
 
@@ -209,8 +239,23 @@ project has not configured one**, so adding this took nothing away from a projec
 notifications. A manual-publish alert has no fallback — there is nothing sensible to say about it in an
 Issues channel — so it is simply silent until a Publishing channel exists.
 
+## Adding a platform
+
+Every platform the pipeline can target is one `PublishPlatform` value in
+`service/publish/PublishPlatformRegistry`: its id (the `post_publish_target.platform` vocabulary), label,
+connector, asset type, manual label, lane, publish/revoke/confirm action ids, the `publishOptions` keys it
+accepts, its minimum and maximum lead times, and which extra approval rules it trips. The validators, both
+dispatch pollers, the confirmation poller, the outcome service and the target picker all read from it, and
+`GET /publish-targets` reports each option's `optionKeys` from it so a client never guesses.
+
+To add one: append a `PublishPlatform` to the registry, add its action ids to the connector's tool spec,
+add its asset type to `marketing.workflow.json` and its id to the OpenAPI `platform` enums, then give
+`MediaTargetValidator` its media rules. `PublishPlatformRegistryContractTest` fails until the spec, the
+example Workflow and the enums agree with the registry.
+
 ## Where things live
 
+- `service/publish/PublishPlatformRegistry` — the one table of platforms; everything below reads it
 - `workflow/PostPublishScheduler` — the APP_MANAGED dispatch poller and the MANUAL flagging pass
 - `service/NativeHandoffService` — hand-off, confirmation and revocation for the NATIVE lane
 - `service/PublishOutcomeService` — outcome recording, the Post-level roll-up, retry, manual completion

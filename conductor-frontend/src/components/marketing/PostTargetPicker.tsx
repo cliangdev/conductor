@@ -75,6 +75,8 @@ export interface PublishTargetOption {
   privacyLevelOptions?: string[] | null
   /** The handle the creator would recognise, for the consent step's "you are posting to @…". */
   creatorNickname?: string | null
+  /** The `publishOptions` keys a target on this platform accepts, from the server's platform registry. */
+  optionKeys?: string[]
 }
 
 /** One destination actually selected on this Post (a persisted post_publish_target row). */

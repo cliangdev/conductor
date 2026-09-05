@@ -15,6 +15,8 @@ import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import java.time.OffsetDateTime;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -131,22 +133,6 @@ public class PublishTargetService {
     /** Stands in for the absent connection id of a {@link PublishLane#MANUAL} target, in keys and labels. */
     static final String MANUAL_KEY = "manual";
 
-    /**
-     * The platforms a manual destination is offered for: every platform the pipeline knows,
-     * unconditionally. Unlike the automated options these are derived from nothing and can never be
-     * absent, which is the entire point — the lane has to work where there is no connection to derive
-     * anything from.
-     */
-    private static final List<String> MANUAL_PLATFORMS =
-            List.of(PLATFORM_FACEBOOK, PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE, PLATFORM_TIKTOK);
-
-    /** How a manual destination names itself in a picker. */
-    private static final Map<String, String> MANUAL_LABELS = Map.of(
-            PLATFORM_FACEBOOK, "Facebook (manual)",
-            PLATFORM_INSTAGRAM, "Instagram (manual)",
-            PLATFORM_YOUTUBE, "YouTube (manual)",
-            PLATFORM_TIKTOK, "TikTok (manual)");
-
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
@@ -165,6 +151,11 @@ public class PublishTargetService {
      *                            has no name, and a consent notice that names the wrong thing is worse
      *                            than one that names nothing
      */
+    /**
+     * @param optionKeys the {@code publishOptions} keys this platform's targets accept — the
+     *                   {@link PublishPlatform#optionParams()} whitelist, so a client can discover what a
+     *                   target may carry rather than guessing from a platform name
+     */
     public record TargetOption(String platform,
                                String connectorId,
                                String connectionId,
@@ -173,7 +164,8 @@ public class PublishTargetService {
                                String healthStatus,
                                String healthMessage,
                                List<String> privacyLevelOptions,
-                               String creatorNickname) {
+                               String creatorNickname,
+                               List<String> optionKeys) {
 
         String key() {
             return selectionKey(platform, connectionId);
@@ -208,6 +200,7 @@ public class PublishTargetService {
         }
     }
 
+    private final PublishPlatformRegistry platformRegistry;
     private final ConnectionRepository connectionRepository;
     private final PostPublishTargetRepository targetRepository;
     private final PostPublishTargetAssetRepository targetAssetRepository;
@@ -217,7 +210,8 @@ public class PublishTargetService {
     private final PublishBundleGuard publishBundleGuard;
     private final PublishTargetMediaResolver mediaResolver;
 
-    public PublishTargetService(ConnectionRepository connectionRepository,
+    public PublishTargetService(PublishPlatformRegistry platformRegistry,
+                                ConnectionRepository connectionRepository,
                                 PostPublishTargetRepository targetRepository,
                                 PostPublishTargetAssetRepository targetAssetRepository,
                                 AssetRepository assetRepository,
@@ -225,6 +219,7 @@ public class PublishTargetService {
                                 ProjectSecurityService projectSecurityService,
                                 PublishBundleGuard publishBundleGuard,
                                 PublishTargetMediaResolver mediaResolver) {
+        this.platformRegistry = platformRegistry;
         this.connectionRepository = connectionRepository;
         this.targetRepository = targetRepository;
         this.targetAssetRepository = targetAssetRepository;
@@ -621,50 +616,56 @@ public class PublishTargetService {
                 continue;
             }
             String pageName = stringValue(config, CONFIG_PAGE_NAME);
-            options.add(option(connection, PLATFORM_FACEBOOK, PublishLane.NATIVE,
+            options.add(option(connection, platformRegistry.require(PLATFORM_FACEBOOK),
                     pageName != null ? pageName : stringValue(config, CONFIG_PAGE_ID)));
 
             if (stringValue(config, CONFIG_IG_ACCOUNT_ID) != null) {
                 String username = stringValue(config, CONFIG_IG_USERNAME);
-                options.add(option(connection, PLATFORM_INSTAGRAM, PublishLane.APP_MANAGED,
+                options.add(option(connection, platformRegistry.require(PLATFORM_INSTAGRAM),
                         username != null ? "@" + username : stringValue(config, CONFIG_IG_ACCOUNT_ID)));
             }
         }
         for (Connection connection : activeConnections(projectId, CONNECTOR_YOUTUBE)) {
             Map<String, Object> config = parseConfig(connection.getConfigJson());
             String title = stringValue(config, CONFIG_CHANNEL_TITLE);
-            options.add(option(connection, PLATFORM_YOUTUBE, PublishLane.NATIVE,
+            options.add(option(connection, platformRegistry.require(PLATFORM_YOUTUBE),
                     title != null ? title : stringValue(config, CONFIG_CHANNEL_ID)));
         }
         for (Connection connection : activeConnections(projectId, CONNECTOR_TIKTOK)) {
             Map<String, Object> config = parseConfig(connection.getConfigJson());
             String nickname = stringValue(config, CONFIG_CREATOR_NICKNAME);
-            options.add(option(connection, PLATFORM_TIKTOK, PublishLane.APP_MANAGED,
+            options.add(option(connection, platformRegistry.require(PLATFORM_TIKTOK),
                     nickname != null ? nickname : stringValue(config, CONFIG_CREATOR_USERNAME),
                     stringListValue(config, PublishOptionsValidator.CONFIG_PRIVACY_LEVEL_OPTIONS),
                     nickname));
         }
-        // Manual destinations last, and always. Offering them even to a fully connected project is
-        // deliberate rather than a fallback: a post that has to go out through a personal account, a
-        // Story, or any surface a platform API does not reach still belongs on the calendar, under the
-        // same review gate, with everything else.
-        for (String platform : MANUAL_PLATFORMS) {
-            options.add(new TargetOption(platform, null, null, MANUAL_LABELS.get(platform),
-                    PublishLane.MANUAL, null, null, null, null));
+        // Manual destinations last, and always, one per platform the pipeline knows. Offering them even to
+        // a fully connected project is deliberate rather than a fallback: a post that has to go out
+        // through a personal account, a Story, or any surface a platform API does not reach still belongs
+        // on the calendar, under the same review gate, with everything else. Unlike the automated options
+        // these are derived from nothing and can never be absent — the lane has to work where there is no
+        // connection to derive anything from.
+        for (PublishPlatform platform : platformRegistry.all()) {
+            options.add(new TargetOption(platform.id(), null, null, platform.manualLabel(),
+                    PublishLane.MANUAL, null, null, null, null, optionKeys(platform)));
         }
         return List.copyOf(options);
     }
 
-    private static TargetOption option(Connection connection, String platform, PublishLane lane, String label) {
-        return option(connection, platform, lane, label, null, null);
+    private static TargetOption option(Connection connection, PublishPlatform platform, String label) {
+        return option(connection, platform, label, null, null);
     }
 
-    private static TargetOption option(Connection connection, String platform, PublishLane lane, String label,
+    private static TargetOption option(Connection connection, PublishPlatform platform, String label,
                                        List<String> privacyLevelOptions, String creatorNickname) {
-        return new TargetOption(platform, connection.getConnectorId(), connection.getId(),
+        return new TargetOption(platform.id(), connection.getConnectorId(), connection.getId(),
                 label != null ? label : fallbackLabel(connection),
-                lane, connection.getHealthStatus(), connection.getHealthMessage(),
-                privacyLevelOptions, creatorNickname);
+                platform.automatedLane(), connection.getHealthStatus(), connection.getHealthMessage(),
+                privacyLevelOptions, creatorNickname, optionKeys(platform));
+    }
+
+    private static List<String> optionKeys(PublishPlatform platform) {
+        return List.copyOf(platform.optionParams().keySet());
     }
 
     /** Never leave a row unlabelled: an account with no name still has to be pickable. */

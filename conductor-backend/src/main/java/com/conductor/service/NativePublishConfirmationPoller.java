@@ -7,6 +7,8 @@ import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
@@ -24,8 +26,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.function.Function;
 
 /**
  * The other half of the {@link PublishLane#NATIVE} lane (COND-23 T6.4): noticing that a post the platform
@@ -78,35 +78,15 @@ public class NativePublishConfirmationPoller {
 
     private static final Logger log = LoggerFactory.getLogger(NativePublishConfirmationPoller.class);
 
-    /**
-     * How one native platform is asked whether a post went live: the read action's id (declared by the
-     * connectors themselves — {@code get_facebook_post} on {@code meta}, {@code get_video_status} on
-     * {@code youtube}), the parameter the stored platform post id travels in, the key the platform reports
-     * that id back under, and how its answer is read as "live yet?".
+    /*
+     * How each native platform is asked whether a post went live — the read action's id, the parameter the
+     * stored platform post id travels in, the key it is reported back under, and how the answer is read as
+     * "live yet?" — is the platform's PublishPlatform.ConfirmAction in the registry; the readers themselves
+     * are PlatformLiveness.
      */
-    record ConfirmationAction(String actionId,
-                              String postIdParam,
-                              String postIdOutputKey,
-                              Function<Map<String, Object>, Boolean> liveness) {}
-
-    /** Keyed by the {@code post_publish_target.platform} vocabulary — only the two native platforms. */
-    static final Map<String, ConfirmationAction> CONFIRMATION_ACTIONS = Map.of(
-            "facebook", new ConfirmationAction("get_facebook_post", "post_id", "post_id",
-                    NativePublishConfirmationPoller::facebookIsLive),
-            "youtube", new ConfirmationAction("get_video_status", "video_id", "video_id",
-                    NativePublishConfirmationPoller::youtubeIsLive));
 
     /** The output key every action reports a post's public URL under. */
     private static final String PERMALINK_OUTPUT_KEY = "permalink";
-
-    /** YouTube privacy states that mean the video is out in the world. */
-    private static final Set<String> YOUTUBE_LIVE_PRIVACY = Set.of("public", "unlisted");
-
-    /** Free-text statuses that mean "it published", for a platform that answers in words rather than a flag. */
-    private static final Set<String> LIVE_STATUSES = Set.of("published", "live");
-
-    /** ...and the ones that mean "not yet". */
-    private static final Set<String> PENDING_STATUSES = Set.of("scheduled", "draft", "pending", "processing");
 
     /**
      * The due finder. Not on {@link PostPublishTargetRepository} because this is the only caller and the
@@ -147,6 +127,7 @@ public class NativePublishConfirmationPoller {
      */
     int maxConfirmationAttempts = 20;
 
+    private final PublishPlatformRegistry platformRegistry;
     private final PostPublishTargetRepository targetRepository;
     private final ActiveConnectionResolver connectionResolver;
     private final ActionInvocationService actionInvocationService;
@@ -166,12 +147,14 @@ public class NativePublishConfirmationPoller {
     @Lazy
     NativePublishConfirmationPoller self;
 
-    public NativePublishConfirmationPoller(PostPublishTargetRepository targetRepository,
+    public NativePublishConfirmationPoller(PublishPlatformRegistry platformRegistry,
+                                           PostPublishTargetRepository targetRepository,
                                            ActiveConnectionResolver connectionResolver,
                                            ActionInvocationService actionInvocationService,
                                            PublishOutcomeService publishOutcomeService,
                                            @Value("${conductor.native-publish-confirmation.enabled:true}")
                                            boolean enabled) {
+        this.platformRegistry = platformRegistry;
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
@@ -218,7 +201,7 @@ public class NativePublishConfirmationPoller {
 
     /** Everything one check needs, read while the claim transaction was still open. */
     record ConfirmationAttempt(String targetId, String postId, String platform, Connection connection,
-                               ConfirmationAction action, String platformPostId, String idempotencyKey,
+                               PublishPlatform.ConfirmAction action, String platformPostId, String idempotencyKey,
                                int attempt) {}
 
     private void confirmTarget(String targetId, OffsetDateTime now) {
@@ -292,7 +275,8 @@ public class NativePublishConfirmationPoller {
         }
 
         String platform = normalizedPlatform(target.getPlatform());
-        ConfirmationAction action = platform == null ? null : CONFIRMATION_ACTIONS.get(platform);
+        PublishPlatform.ConfirmAction action = platformRegistry.find(platform)
+                .map(PublishPlatform::confirm).orElse(null);
         if (action == null) {
             log.warn("Post publish target {} names platform '{}', which has no confirmation action; skipping",
                     targetId, target.getPlatform());
@@ -345,60 +329,6 @@ public class NativePublishConfirmationPoller {
      */
     private String confirmationKey(String targetIdempotencyKey, int attempt) {
         return "confirm:" + targetIdempotencyKey + ":" + attempt;
-    }
-
-    /**
-     * Facebook's own vocabulary: a scheduled Page post reports {@code is_published=false} until it fires.
-     * A platform that answers in words instead is read from {@code status}. Anything unrecognised returns
-     * {@code null} — "we cannot tell" — which is deliberately not "published": a target is only ever moved
-     * to PUBLISHED on a positive signal.
-     */
-    private static Boolean facebookIsLive(Map<String, Object> output) {
-        Boolean published = booleanValue(output, "is_published");
-        if (published == null) {
-            published = booleanValue(output, "published");
-        }
-        return published != null ? published : statusIsLive(output);
-    }
-
-    /**
-     * YouTube's: a handed-off upload sits {@code private} with a {@code publish_at}, and the video is out
-     * once its privacy status is {@code public} or {@code unlisted}.
-     */
-    private static Boolean youtubeIsLive(Map<String, Object> output) {
-        String privacy = stringValue(output, "privacy_status");
-        if (privacy != null) {
-            return YOUTUBE_LIVE_PRIVACY.contains(privacy.toLowerCase(Locale.ROOT));
-        }
-        return statusIsLive(output);
-    }
-
-    private static Boolean statusIsLive(Map<String, Object> output) {
-        String status = stringValue(output, "status");
-        if (status == null) {
-            return null;
-        }
-        String normalized = status.toLowerCase(Locale.ROOT);
-        if (LIVE_STATUSES.contains(normalized)) {
-            return Boolean.TRUE;
-        }
-        return PENDING_STATUSES.contains(normalized) ? Boolean.FALSE : null;
-    }
-
-    private static Boolean booleanValue(Map<String, Object> output, String key) {
-        Object value = output.get(key);
-        if (value instanceof Boolean bool) {
-            return bool;
-        }
-        if (value instanceof String text) {
-            if ("true".equalsIgnoreCase(text)) {
-                return Boolean.TRUE;
-            }
-            if ("false".equalsIgnoreCase(text)) {
-                return Boolean.FALSE;
-            }
-        }
-        return null;
     }
 
     private static String stringValue(Map<String, Object> output, String key) {

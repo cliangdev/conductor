@@ -10,6 +10,7 @@ import com.conductor.service.view.AvailableTransitionsView;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
+import com.conductor.service.publish.PublishGateEvaluator;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.lifecycle.SystemTriggerRegistry;
@@ -52,9 +53,7 @@ public class WorkItemWorkflowService {
     private final WorkflowDefinitionResolver resolver;
     private final SystemTriggerRegistry systemTriggerRegistry;
     private final PublishBundleHasher publishBundleHasher;
-    private final PostScheduleValidator postScheduleValidator;
-    private final MediaTargetValidator mediaTargetValidator;
-    private final PublishOptionsValidator publishOptionsValidator;
+    private final PublishGateEvaluator publishGateEvaluator;
 
     public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
@@ -63,9 +62,7 @@ public class WorkItemWorkflowService {
                                    WorkflowDefinitionResolver resolver,
                                    SystemTriggerRegistry systemTriggerRegistry,
                                    PublishBundleHasher publishBundleHasher,
-                                   PostScheduleValidator postScheduleValidator,
-                                   MediaTargetValidator mediaTargetValidator,
-                                   PublishOptionsValidator publishOptionsValidator) {
+                                   PublishGateEvaluator publishGateEvaluator) {
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
@@ -73,9 +70,7 @@ public class WorkItemWorkflowService {
         this.resolver = resolver;
         this.systemTriggerRegistry = systemTriggerRegistry;
         this.publishBundleHasher = publishBundleHasher;
-        this.postScheduleValidator = postScheduleValidator;
-        this.mediaTargetValidator = mediaTargetValidator;
-        this.publishOptionsValidator = publishOptionsValidator;
+        this.publishGateEvaluator = publishGateEvaluator;
     }
 
     /** The Workflow's initial status id (e.g. {@code DRAFT}), used to stamp a freshly created Work Item. */
@@ -132,20 +127,12 @@ public class WorkItemWorkflowService {
             throw new UnprocessableEntityException(
                     "Transition to " + newStatus + " requires an approved review");
         }
-        // Publishing workflows additionally require a complete, schedulable publish bundle before approval
-        // (fire time + timezone, at least one target, at least one uploaded asset, 10-minute floor). The
-        // validator is a no-op for every transition it does not apply to, so calling it unconditionally is
-        // safe — see PostScheduleValidator for the definition-driven rule that decides when it applies.
-        postScheduleValidator.validateForTransition(workItem, statechart, newStatus);
-        // Publishing workflows additionally reject media any selected target would refuse, so a per-platform
-        // format failure surfaces here and never at fire time. Also a no-op for every transition it does not
-        // apply to. The returned Result carries advisory-only warnings (e.g. "YouTube will treat this as a
-        // Short"); the validator logs them itself, so discarding the value here never changes the outcome.
-        mediaTargetValidator.validateForTransition(workItem, statechart, newStatus);
-        // Publishing workflows additionally require every per-target publish option to have been chosen and
-        // to be one the platform will accept — a TikTok target with no privacy level would publish visible
-        // only to its creator. Also a no-op for every transition it does not apply to.
-        publishOptionsValidator.validateForTransition(workItem, statechart, newStatus);
+        // Publishing workflows additionally require a complete, schedulable publish bundle on their gate
+        // edges (fire time + timezone, at least one target, media every destination accepts, every publish
+        // option chosen, the creator's consent). The evaluator is a no-op for every transition it does not
+        // apply to, so calling it unconditionally is safe — see PublishingWorkflow.isGateEdge for the
+        // definition-driven rule that decides when it applies.
+        publishGateEvaluator.enforce(workItem, statechart, newStatus);
     }
 
     /**
@@ -229,7 +216,7 @@ public class WorkItemWorkflowService {
      * with no publish targets (every ENGINEERING item, and every review written before V129) takes the
      * original path and nothing else, so its gating is byte-for-byte what it was.
      */
-    private boolean isReviewSatisfied(String projectId, WorkItem workItem, StatechartTransition transition) {
+    public boolean isReviewSatisfied(String projectId, WorkItem workItem, StatechartTransition transition) {
         if (!hasApprovedReview(projectId, workItem, transition)) {
             return false;
         }

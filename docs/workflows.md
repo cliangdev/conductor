@@ -1611,6 +1611,11 @@ a backend change:
    `list_workflows({kind:"LIFECYCLE"})`), and `get_available_transitions` → `transition_work_item` walk it. No
    per-domain tools.
 
+A lifecycle whose `asset_types` name a publishable platform gets the publishing pipeline, and must say which
+status its items wait in for their fire time (`publishes_from`) — see
+[`publishing.md`](publishing.md#which-status-is-scheduled). Two shipped examples: `MARKETING` (review-gated)
+and `MARKETING_AUTOPILOT` (no review gate; the schedule edge is validated instead).
+
 ### Binding a skill to a transition (custom skills)
 
 A transition can run a Claude Code skill (`steps: [{kind: "skill", skill: "<id>"}]`) — the analogue of

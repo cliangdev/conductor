@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
@@ -72,7 +73,7 @@ class PublishTargetServiceTest {
         publishBundleGuard = mock(PublishBundleGuard.class);
         targetAssetRepository = mock(PostPublishTargetAssetRepository.class);
         assetRepository = mock(AssetRepository.class);
-        service = new PublishTargetService(connectionRepository, targetRepository, targetAssetRepository,
+        service = new PublishTargetService(new PublishPlatformRegistry(), connectionRepository, targetRepository, targetAssetRepository,
                 assetRepository, workItemRepository, projectSecurityService, publishBundleGuard,
                 new PublishTargetMediaResolver(assetRepository, targetAssetRepository));
 

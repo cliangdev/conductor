@@ -1896,6 +1896,53 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/publish-preflight:
+    get:
+      tags:
+        - publish-targets
+      summary: What is stopping this Work Item from publishing
+      description: >-
+        The approval gate's verdict without attempting a transition: every blocker and warning the same
+        validators would raise, the next gate move, whether a review currently satisfies the gate and
+        whether the creator's consent stands. Read it before submitting, after every edit, or to explain a
+        422. `earliestFireTime` is "as soon as possible" for the current destinations — set `scheduledFor`
+        to it rather than guessing a lead time. On a Workflow that does not publish, `publishing` is false
+        and everything else is empty.
+      operationId: getWorkItemPublishPreflight
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The gate's current verdict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishPreflightResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/work-items/{workItemId}/publish-targets:
     get:
       tags:
@@ -3193,6 +3240,134 @@ components:
             TikTok's audit requirement is that the creator sees which account a post is going to, so
             this is the account's own name rather than the connection's label. Null for every
             non-TikTok platform, and null when the connection never cached it. (TIK-3.)
+        optionKeys:
+          type: array
+          items:
+            type: string
+          description: >-
+            The `publishOptions` keys a target on this platform accepts (e.g. `privacyLevel`,
+            `disableComment` on TikTok), in the order the platform's publish action declares them. Empty
+            for a platform with no per-target options. A key outside this list is dropped at dispatch, so
+            a client should read this rather than guess from the platform name.
+
+    PublishPreflightResponse:
+      type: object
+      description: The approval gate's verdict on a Work Item, read without attempting a transition.
+      required:
+        - publishing
+        - ready
+        - blockers
+        - warnings
+        - consent
+        - review
+      properties:
+        publishing:
+          type: boolean
+          description: Whether the Work Item's Workflow publishes at all. False means nothing else applies.
+        ready:
+          type: boolean
+          description: True when no blocker stands — the next gate transition would be accepted by the validators.
+        blockers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishPreflightFinding"
+          description: >-
+            What the gate would refuse the item for, in the order a 422 lists them. Empty when ready.
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishPreflightFinding"
+          description: Advisories a platform will act on without refusing (a Short, a cropped carousel).
+        nextTransition:
+          $ref: "#/components/schemas/PublishPreflightTransition"
+        consent:
+          $ref: "#/components/schemas/PublishPreflightConsent"
+        review:
+          $ref: "#/components/schemas/PublishPreflightReview"
+        earliestFireTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            The soonest `scheduledFor` the current destinations accept — "as soon as possible". Now plus the
+            longest lead any selected platform demands (ten minutes for Facebook's native scheduler, a
+            minute for an app-managed destination, nothing for a manual one). Null off a publishing Workflow.
+
+    PublishPreflightFinding:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: >-
+            Stable, machine-readable rule name — NO_FIRE_TIME, NO_TIMEZONE, UNKNOWN_TIMEZONE,
+            FIRE_TIME_TOO_SOON, NO_TARGETS, NO_MEDIA, TARGET_MEDIA_MISSING, MEDIA_FORMAT, MEDIA_COMPOSITION,
+            COPY_TOO_LONG, PUBLISH_OPTIONS, CONSENT_NEVER_GIVEN, CONSENT_SUPERSEDED; warnings carry
+            MEDIA_ADVISORY. Messages may be reworded; codes may not.
+        message:
+          type: string
+          description: The human sentence, exactly as a refused transition's 422 would carry it.
+        targetId:
+          type: string
+          nullable: true
+          description: The publish target the finding is about, or null for a Post-level finding.
+
+    PublishPreflightTransition:
+      type: object
+      description: >-
+        The first gate edge out of the current status — the move a ready item takes next. Absent when the
+        current status has no gate edge out of it (already scheduled, or published).
+      required:
+        - to
+        - requiresReview
+      properties:
+        to:
+          type: string
+        label:
+          type: string
+          nullable: true
+        requiresReview:
+          type: boolean
+
+    PublishPreflightConsent:
+      type: object
+      required:
+        - required
+        - verdict
+      properties:
+        required:
+          type: boolean
+          description: Whether a selected destination needs the creator's recorded consent.
+        verdict:
+          type: string
+          enum:
+            - NOT_REQUIRED
+            - VALID
+            - NEVER_GIVEN
+            - SUPERSEDED
+
+    PublishPreflightReview:
+      type: object
+      required:
+        - gated
+        - assignedReviewers
+        - satisfied
+      properties:
+        gated:
+          type: boolean
+          description: Whether the Workflow has a review gate at all. A Workflow without one publishes on schedule entry.
+        assignedReviewers:
+          type: integer
+          description: How many reviewers are assigned to this item. Zero on a gated Workflow means nobody has been asked.
+        satisfied:
+          type: boolean
+          description: Whether an approval currently opens the gate — bound to the open review round and the bundle as it stands.
+        reviewerRole:
+          type: string
+          nullable: true
+          description: The project role the gate asks its approval from, or null when any approval satisfies it.
 
     PublishTargetResponse:
       type: object

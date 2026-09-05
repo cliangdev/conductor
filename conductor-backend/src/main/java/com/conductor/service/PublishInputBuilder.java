@@ -3,11 +3,12 @@ package com.conductor.service;
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.WorkItem;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -30,9 +31,11 @@ public class PublishInputBuilder {
     /** Media parameter every platform publisher reads its ordered selection from. */
     public static final String INPUT_ASSET_IDS = "asset_ids";
 
+    private final PublishPlatformRegistry platformRegistry;
     private final PublishTargetMediaResolver mediaResolver;
 
-    public PublishInputBuilder(PublishTargetMediaResolver mediaResolver) {
+    public PublishInputBuilder(PublishPlatformRegistry platformRegistry, PublishTargetMediaResolver mediaResolver) {
+        this.platformRegistry = platformRegistry;
         this.mediaResolver = mediaResolver;
     }
 
@@ -54,24 +57,20 @@ public class PublishInputBuilder {
         List<Asset> media = mediaResolver.effectiveMedia(target).assets();
         input.put(INPUT_ASSET_IDS, media.stream().map(Asset::getId).toList());
 
-        // TikTok is the one platform whose two post types name their text differently: a video post has a
-        // single title, a photo post has both a title and a longer description. Supplying both here lets the
-        // action pick without having to reach back for the Work Item.
-        if ("tiktok".equals(normalizedPlatform(target))) {
-            if (caption != null) {
-                input.put("description", caption);
-            }
-            if (post.getTitle() != null) {
-                input.put("headline", post.getTitle());
-            }
-        }
+        // A platform may name the same copy under more parameters than one. TikTok is the case in point: a
+        // video post has a single title, a photo post has both a title and a longer description, so it
+        // declares `description` and `headline` as aliases and the action picks without having to reach
+        // back for the Work Item.
+        platformRegistry.find(target.getPlatform()).ifPresent(platform ->
+                platform.publish().copyAliases().forEach((param, source) -> {
+                    String value = source == PublishPlatform.CopySource.TITLE ? post.getTitle() : caption;
+                    if (value != null) {
+                        input.put(param, value);
+                    }
+                }));
 
         input.put("work_item_id", post.getId());
         input.put("target_id", target.getId());
         return input;
-    }
-
-    private static String normalizedPlatform(PostPublishTarget target) {
-        return target.getPlatform() == null ? "" : target.getPlatform().trim().toLowerCase(Locale.ROOT);
     }
 }

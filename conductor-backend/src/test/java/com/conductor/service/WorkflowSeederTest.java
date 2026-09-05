@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowDefinitionVersion;
@@ -103,11 +104,27 @@ class WorkflowSeederTest {
     void marketingDefinitionPassesLifecycleValidation() throws Exception {
         WorkflowDefinitionValidator validator = new WorkflowDefinitionValidator(
                 new SkillRegistry(mapper, mock(ProjectSkillRepository.class)),
-                new SystemTriggerRegistry(mapper));
+                new SystemTriggerRegistry(mapper), new PublishPlatformRegistry());
 
         WorkflowValidationResult result = validator.validate("proj-1", resource("/schema/examples/marketing.workflow.json"));
 
         assertThat(result.getErrors()).isEmpty();
+    }
+
+    @Test
+    void autopilotExampleIsAValidGatelessPublishingLifecycle() throws Exception {
+        WorkflowDefinitionValidator validator = new WorkflowDefinitionValidator(
+                new SkillRegistry(mapper, mock(ProjectSkillRepository.class)),
+                new SystemTriggerRegistry(mapper), new PublishPlatformRegistry());
+
+        JsonNode definition = resource("/schema/examples/marketing-autopilot.workflow.json");
+        assertThat(validator.validate("proj-1", definition).getErrors()).isEmpty();
+
+        Statechart autopilot = Statechart.parse(definition);
+        assertThat(autopilot.publishesFrom()).contains("SCHEDULED");
+        assertThat(autopilot.transitions()).noneMatch(StatechartTransition::requiresReview);
+        assertThat(autopilot.transition("DRAFT", "SCHEDULED")).isPresent();
+        assertThat(autopilot.assetTypes()).isEqualTo(marketingStatechart().assetTypes());
     }
 
     @Test

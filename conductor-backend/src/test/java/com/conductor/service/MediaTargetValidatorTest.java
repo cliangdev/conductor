@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
@@ -78,7 +79,7 @@ class MediaTargetValidatorTest {
         targetAssetRepository = Mockito.mock(PostPublishTargetAssetRepository.class);
         // A real resolver over the same mocked repositories: every existing test stubs the Work Item's
         // assets, and with no per-target selection stored those are exactly what each target inherits.
-        validator = new MediaTargetValidator(assetRepository, postPublishTargetRepository,
+        validator = new MediaTargetValidator(new PublishPlatformRegistry(), assetRepository, postPublishTargetRepository,
                 connectionRepository, new ObjectMapper(),
                 new PublishTargetMediaResolver(assetRepository, targetAssetRepository));
         marketing = statechart("/schema/examples/marketing.workflow.json");
@@ -426,8 +427,18 @@ class MediaTargetValidatorTest {
         assertThatCode(() -> validator.validateForTransition(
                 workItem("MARKETING", "DRAFT"), marketing, "IN_REVIEW")).doesNotThrowAnyException();
         assertThatCode(() -> validator.validateForTransition(
-                workItem("MARKETING", "APPROVED"), marketing, "SCHEDULED")).doesNotThrowAnyException();
+                workItem("MARKETING", "IN_REVIEW"), marketing, "CHANGES_REQUESTED")).doesNotThrowAnyException();
         verifyNoInteractions(assetRepository, postPublishTargetRepository, connectionRepository);
+    }
+
+    @Test
+    void schedulingIsAGateEdgeToo() {
+        WorkItem post = workItem("MARKETING", "APPROVED");
+        selectionsByTarget.clear();
+        org.mockito.Mockito.when(postPublishTargetRepository.findAllByWorkItemId(post.getId())).thenReturn(List.of());
+
+        assertThatCode(() -> validator.validateForTransition(post, marketing, "SCHEDULED")).doesNotThrowAnyException();
+        org.mockito.Mockito.verify(postPublishTargetRepository).findAllByWorkItemId(post.getId());
     }
 
     @Test

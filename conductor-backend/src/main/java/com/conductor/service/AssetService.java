@@ -375,7 +375,7 @@ public class AssetService {
      */
     private void guardFileAssetMutable(String projectId, WorkItem workItem) {
         Statechart statechart = resolveStatechart(projectId, workItem);
-        if (!AssetUploadPolicy.isUnderReviewOrLater(statechart, workItem.getCurrentStatus())) {
+        if (!AssetUploadPolicy.isFrozen(statechart, workItem.getCurrentStatus())) {
             return;
         }
         String noun = statechart.noun();

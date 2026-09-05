@@ -8,6 +8,7 @@
   "default_view": "calendar",
   "types": ["POST"],
   "asset_types": ["facebook_post", "instagram_post", "youtube_video", "tiktok_post"],
+  "publishes_from": "SCHEDULED",
   "metric": null,
   "statuses": [
     { "id": "DRAFT", "label": "Draft", "category": "open", "initial": true },

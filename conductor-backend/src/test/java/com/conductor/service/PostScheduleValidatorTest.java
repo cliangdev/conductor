@@ -1,5 +1,8 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishFinding;
+import com.conductor.entity.PublishLane;
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.Project;
@@ -53,7 +56,7 @@ class PostScheduleValidatorTest {
         assetRepository = Mockito.mock(AssetRepository.class);
         postPublishTargetRepository = Mockito.mock(PostPublishTargetRepository.class);
         targetAssetRepository = Mockito.mock(PostPublishTargetAssetRepository.class);
-        validator = new PostScheduleValidator(assetRepository, postPublishTargetRepository,
+        validator = new PostScheduleValidator(new PublishPlatformRegistry(), assetRepository, postPublishTargetRepository,
                 new PublishTargetMediaResolver(assetRepository, targetAssetRepository),
                 Clock.fixed(NOW.toInstant(), ZoneOffset.UTC));
         marketing = statechart("/schema/examples/marketing.workflow.json");
@@ -231,17 +234,82 @@ class PostScheduleValidatorTest {
         assertThatCode(() -> approve(post)).doesNotThrowAnyException();
     }
 
+    // --- the floor is the longest lead any selected destination needs ---
+
     @Test
-    void appliesTheSameFloorRegardlessOfPlatform() {
+    void theFloorIsTheLongestLeadAmongTheSelectedDestinations() {
         WorkItem post = postInReview();
         post.setScheduledFor(NOW.plusMinutes(9));
         givenUploadedMedia();
         when(postPublishTargetRepository.findAllByWorkItemId(WORK_ITEM_ID))
                 .thenReturn(List.of(target("youtube"), target("tiktok")));
 
+        // YouTube needs no notice and TikTok a minute, so nine minutes is plenty.
+        assertThatCode(() -> approve(post)).doesNotThrowAnyException();
+
+        PostPublishTarget facebook = target("facebook");
+        facebook.setPlatformAccountLabel("Acme Page");
+        when(postPublishTargetRepository.findAllByWorkItemId(WORK_ITEM_ID))
+                .thenReturn(List.of(target("tiktok"), facebook));
+
+        // Add a Facebook Page and its native scheduler's ten minutes become the Post's floor, by name.
+        assertThatThrownBy(() -> approve(post))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("less than 10 minutes in the future")
+                .hasMessageContaining("facebook (Acme Page) needs at least 10 minutes' notice");
+    }
+
+    @Test
+    void anAppManagedDestinationNeedsOnlyTheNextPollerTick() {
+        WorkItem post = postInReview();
+        givenUploadedMedia();
+        when(postPublishTargetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(target("instagram")));
+
+        post.setScheduledFor(NOW.plusSeconds(30));
+        assertThatThrownBy(() -> approve(post))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("less than 1 minute in the future");
+
+        post.setScheduledFor(NOW.plusMinutes(2));
+        assertThatCode(() -> approve(post)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aManualDestinationNeedsOnlyAFutureFireTime() {
+        WorkItem post = postInReview();
+        givenUploadedMedia();
+        PostPublishTarget manual = target("facebook");
+        manual.setLane(PublishLane.MANUAL);
+        when(postPublishTargetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(manual));
+
+        post.setScheduledFor(NOW.plusSeconds(5));
+        assertThatCode(() -> approve(post)).doesNotThrowAnyException();
+
+        post.setScheduledFor(NOW.minusSeconds(5));
+        assertThatThrownBy(() -> approve(post))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("is not in the future");
+    }
+
+    @Test
+    void anUnknownPlatformKeepsTheDefaultFloor() {
+        WorkItem post = postInReview();
+        post.setScheduledFor(NOW.plusMinutes(9));
+        givenUploadedMedia();
+        when(postPublishTargetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(target("mastodon")));
+
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("less than 10 minutes in the future");
+    }
+
+    @Test
+    void earliestFireTimeIsNowPlusTheFloor() {
+        assertThat(validator.earliestFireTime(List.of())).isEqualTo(NOW.plusMinutes(10).plusSeconds(1));
+        assertThat(validator.earliestFireTime(List.of(target("instagram")))).isEqualTo(NOW.plusMinutes(1).plusSeconds(1));
+        assertThat(validator.earliestFireTime(List.of(target("youtube")))).isEqualTo(NOW.plusSeconds(1));
+        assertThat(validator.earliestFireTime(List.of(target("instagram"), target("facebook"))))
+                .isEqualTo(NOW.plusMinutes(10).plusSeconds(1));
     }
 
     // --- the happy path ---
@@ -303,10 +371,56 @@ class PostScheduleValidatorTest {
         assertThatCode(() -> validator.validateForTransition(
                 workItem("MARKETING", "IN_REVIEW"), marketing, "CHANGES_REQUESTED"))
                 .doesNotThrowAnyException();
-        assertThatCode(() -> validator.validateForTransition(
-                workItem("MARKETING", "APPROVED"), marketing, "SCHEDULED"))
-                .doesNotThrowAnyException();
         verifyNoInteractions(assetRepository, postPublishTargetRepository);
+    }
+
+    // --- entering the scheduled status is a gate too ---
+
+    @Test
+    void schedulingAnApprovedPostRevalidatesItsFireTime() {
+        // Approved with time to spare, then scheduled once the fire time had crept inside the floor: the
+        // native hand-off would refuse it and the row would sit PENDING forever. Refuse the move instead.
+        WorkItem post = workItem("MARKETING", "APPROVED");
+        post.setScheduledFor(NOW.plusMinutes(3));
+        post.setScheduleTimezone("Europe/London");
+        givenTargets(1);
+        givenUploadedMedia();
+
+        assertThatThrownBy(() -> validator.validateForTransition(post, marketing, "SCHEDULED"))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Cannot move Post to SCHEDULED")
+                .hasMessageContaining("less than 10 minutes in the future");
+    }
+
+    @Test
+    void aGatelessLifecycleIsValidatedOnItsScheduleEdge() {
+        Statechart autopilot = statechart("/schema/examples/marketing-autopilot.workflow.json");
+        WorkItem post = workItem("MARKETING_AUTOPILOT", "DRAFT");
+        givenNoTargets();
+        givenAssets();
+
+        assertThatThrownBy(() -> validator.validateForTransition(post, autopilot, "SCHEDULED"))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("no fire time is set")
+                .hasMessageContaining("no publish target is selected")
+                .hasMessageContaining("no uploaded media file is attached");
+        assertThatCode(() -> validator.validateForTransition(
+                workItem("MARKETING_AUTOPILOT", "SCHEDULED"), autopilot, "DRAFT")).doesNotThrowAnyException();
+    }
+
+    // --- inspect: the same findings, with codes, at any status ---
+
+    @Test
+    void inspectReportsEveryProblemWithAStableCode() {
+        WorkItem post = workItem("MARKETING", "DRAFT");
+        post.setScheduleTimezone("Mars/Olympus");
+        givenNoTargets();
+        givenAssets();
+
+        assertThat(validator.inspect(post)).extracting(PublishFinding::code)
+                .containsExactly(PostScheduleValidator.NO_FIRE_TIME, PostScheduleValidator.UNKNOWN_TIMEZONE,
+                        PostScheduleValidator.NO_TARGETS, PostScheduleValidator.NO_MEDIA);
+        assertThat(validator.inspect(post)).allMatch(PublishFinding::blocks);
     }
 
     @Test
