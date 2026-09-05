@@ -33,6 +33,30 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
                                       @Param("workflow") String workflow,
                                       @Param("tag") String tag);
 
+    /**
+     * Same filters as {@link #findByProjectFiltered}, capped at the query level via a native {@code
+     * LIMIT} rather than fetched-then-truncated in application code -- backs the coordinator's
+     * {@code list_work_items} tool, mirroring {@code ProjectDocRepository#searchByProjectIdAndQuery}'s
+     * query-level limit for the same reason (an agent's already-clamped cap should bound what the DB
+     * returns, not just what's kept after). Native rather than JPQL because standard JPQL has no
+     * {@code LIMIT} clause. Ordered by sequence number descending so a capped result favors the most
+     * recently created items over whatever order an unindexed scan would otherwise return.
+     */
+    @Query(value = """
+            SELECT * FROM work_items
+            WHERE project_id = :projectId
+              AND (:type IS NULL OR item_type = :type)
+              AND (:status IS NULL OR current_status = :status)
+              AND (:workflow IS NULL OR workflow = :workflow)
+            ORDER BY sequence_number DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<WorkItem> findByProjectFilteredLimited(@Param("projectId") String projectId,
+                                      @Param("type") String type,
+                                      @Param("status") String status,
+                                      @Param("workflow") String workflow,
+                                      @Param("limit") int limit);
+
     @Query("SELECT COALESCE(MAX(i.sequenceNumber), 0) FROM WorkItem i WHERE i.project.id = :projectId")
     Integer findMaxSequenceNumberByProjectId(@Param("projectId") String projectId);
 

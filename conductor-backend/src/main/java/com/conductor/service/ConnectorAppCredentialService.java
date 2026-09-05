@@ -246,10 +246,10 @@ public class ConnectorAppCredentialService {
      * The stored secret, opened with this row's own DEK.
      *
      * <p>A row with no {@code kms_key_reference} was written before this table joined the envelope
-     * (Flyway V132 encrypted it under the single deployment-wide workflow-secrets key). Its ciphertext
+     * (Flyway V137 encrypted it under the single deployment-wide workflow-secrets key). Its ciphertext
      * is not openable here, and the envelope would answer with null rather than an error — which for a
      * client secret means silently sending an OAuth provider the wrong credentials. So this refuses,
-     * and names the one thing that fixes it. Only a developer database can hold such a row: V132 has
+     * and names the one thing that fixes it. Only a developer database can hold such a row: V137 has
      * never shipped.
      */
     private String decryptClientSecret(ConnectorAppCredential row) {

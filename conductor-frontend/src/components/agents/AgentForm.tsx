@@ -5,14 +5,18 @@ import { useRouter } from 'next/navigation'
 import {
   listAgentProviders,
   listAgentTools,
+  listProviderModels,
   type Agent,
   type AgentProviderInfo,
   type AvailableAgentTool,
   type CreateAgentBody,
+  type ProviderModelInfo,
 } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
+import { providerDisplayName } from '@/lib/providers'
 import { isReservedTag } from '@/lib/tags'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { AgentAvatarPicker, randomAvatar } from '@/components/agents/AgentAvatarPicker'
 
 const INPUT = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring'
@@ -39,6 +43,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   const router = useRouter()
 
   const [providers, setProviders] = useState<AgentProviderInfo[]>([])
+  const [models, setModels] = useState<ProviderModelInfo[]>([])
   const [tools, setTools] = useState<AvailableAgentTool[]>([])
   const [toolsLoaded, setToolsLoaded] = useState(false)
 
@@ -53,6 +58,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   const [maxToolTurns, setMaxToolTurns] = useState(initial?.config?.maxToolTurns?.toString() ?? '')
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set(initial?.toolIds ?? []))
   const [state, setState] = useState<'DRAFT' | 'ACTIVE'>(initial?.state ?? 'DRAFT')
+  const [addressable, setAddressable] = useState(initial?.addressable ?? false)
   const [nameError, setNameError] = useState<string | null>(null)
   const [tagError, setTagError] = useState<string | null>(null)
   // New agent: seed a random pair client-side so what's shown is what gets submitted (the server
@@ -77,10 +83,35 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, accessToken])
 
-  const defaultModel = useMemo(
-    () => providers.find((p) => p.id === provider)?.defaultModel ?? null,
+  useEffect(() => {
+    if (!accessToken || !projectId || !provider) return
+    let cancelled = false
+    // Clear immediately so a provider switch never shows the previous provider's model ids (and,
+    // via defaultModelIsLive below, its copy) while the new fetch is in flight.
+    setModels([])
+    // Suggestions only — the Model field stays free text, so a fetch failure or empty discovery
+    // list must never block the form or surface an error toast, just fall back silently.
+    listProviderModels(projectId, provider, accessToken)
+      .then((res) => {
+        if (!cancelled) setModels(res.models)
+      })
+      .catch(() => {
+        if (!cancelled) setModels([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, accessToken, provider])
+
+  const selectedProviderInfo = useMemo(
+    () => providers.find((p) => p.id === provider) ?? null,
     [providers, provider],
   )
+  const defaultModel = selectedProviderInfo?.defaultModel ?? null
+  // Whether leaving the field blank resolves to the newest discovered model (true, e.g. OpenAI) or
+  // a fixed pinned constant (false, e.g. Claude) — drives the copy below. Never infer this from
+  // whether discovery returned suggestions; a live provider can still return an empty list.
+  const defaultModelIsLive = selectedProviderInfo?.defaultModelIsLive ?? false
 
   const toolsBySource = useMemo(() => {
     const groups: Record<string, AvailableAgentTool[]> = {}
@@ -116,6 +147,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
       temperature: numOrUndef(temperature) ?? null,
       maxTokens: numOrUndef(maxTokens) ?? null,
       maxToolTurns: numOrUndef(maxToolTurns) ?? null,
+      addressable,
     }
 
     onSubmit({
@@ -196,7 +228,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
           >
             {providers.length === 0 && <option value="">Loading…</option>}
             {providers.map((p) => (
-              <option key={p.id} value={p.id}>{p.id.charAt(0).toUpperCase() + p.id.slice(1)}</option>
+              <option key={p.id} value={p.id}>{providerDisplayName(p.id)}</option>
             ))}
           </select>
         </div>
@@ -207,9 +239,24 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
             className={INPUT}
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder={defaultModel ? `${defaultModel} (default)` : 'Provider default'}
+            placeholder={
+              // Live resolution has no single "the default" id to show — naming one would overclaim.
+              defaultModelIsLive ? 'Latest supported model' : defaultModel ? `${defaultModel} (default)` : 'Provider default'
+            }
+            list={models.length > 0 ? 'agent-model-options' : undefined}
           />
-          <p className="text-xs text-muted-foreground mt-1">Leave blank to use the provider default.</p>
+          {models.length > 0 && (
+            <datalist id="agent-model-options">
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.latest ? `${m.id} (latest)` : m.id}</option>
+              ))}
+            </datalist>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            {defaultModelIsLive
+              ? "Leave blank to use the provider's latest supported model."
+              : 'Leave blank to use the provider default.'}
+          </p>
         </div>
       </div>
 
@@ -332,6 +379,17 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
           <option value="ACTIVE">Active</option>
         </select>
         <p className="text-xs text-muted-foreground mt-1">Only Active agents can be invoked by workflows.</p>
+      </div>
+
+      {/* Addressable */}
+      <div className="flex items-center justify-between rounded-md border border-border p-3">
+        <div>
+          <p className="text-sm font-medium text-foreground">Addressable</p>
+          <p className="text-xs text-muted-foreground">
+            Lets a human talk to this agent directly by name in a conversation (e.g. Discord&apos;s /ask).
+          </p>
+        </div>
+        <Switch checked={addressable} onCheckedChange={setAddressable} aria-label="Addressable" />
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

@@ -1,5 +1,7 @@
 package com.conductor.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -22,6 +24,13 @@ import java.util.UUID;
 @Entity
 @Table(name = "agents")
 public class Agent {
+
+    // Plain Jackson round-trip (no Spring ObjectMapper bean) -- mirrors the precedent in
+    // integration.ingest.digest.MetricsBaseline. configJson keys otherwise stay opaque here and are
+    // parsed where they're consumed (see com.conductor.agent.run.AgentExecutionService#parseConfig);
+    // isAddressable() is the one exception, since entity-level addressability is checked broadly
+    // (conversation routing, tool dispatch) rather than only inside the run loop.
+    private static final ObjectMapper CONFIG_MAPPER = new ObjectMapper();
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -150,4 +159,21 @@ public class Agent {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    /**
+     * True iff {@code configJson} declares {@code "addressable": true} -- an agent that can be talked
+     * to directly (e.g. via a {@code Conversation}) rather than only invoked through a workflow run.
+     * Malformed/absent {@code configJson} is treated as {@code false}.
+     */
+    public boolean isAddressable() {
+        if (configJson == null || configJson.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode node = CONFIG_MAPPER.readTree(configJson);
+            return node.path("addressable").asBoolean(false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
 }

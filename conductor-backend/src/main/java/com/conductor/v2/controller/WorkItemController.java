@@ -144,26 +144,30 @@ public class WorkItemController implements WorkItemsApi {
     }
 
     /** Map a {@link WorkItem} entity to the v2 response, with no external links resolved. */
-    private static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount) {
+    static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount) {
         return toResponse(item, unresolvedCommentCount, List.of());
     }
 
-    /** Map a {@link WorkItem} entity to the v2 response, surfacing the bound Workflow slug (absent in v1). */
-    private static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount,
-                                               List<Asset> externalLinks) {
+    /** Map a {@link WorkItem} entity to the v2 response, surfacing the bound Workflow slug (absent in v1).
+     *  Package-private (not {@code private}) so {@code WorkItemControllerTest} can unit test the
+     *  null-createdBy/createdByLabel fallback without a Spring context. */
+    static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount,
+                                       List<Asset> externalLinks) {
         String displayId = item.getProject().getKey() + "-" + item.getSequenceNumber();
         WorkItemAssignee assignee = null;
         if (item.getAssignee() != null) {
             User a = item.getAssignee();
             assignee = new WorkItemAssignee(a.getId(), a.getName()).avatarUrl(a.getAvatarUrl());
         }
+        // createdBy is null for a machine-authored item (e.g. via coordinator:create_work_item) --
+        // createdByLabel carries its identity instead. See the V125 migration / WorkItem#createdByLabel.
         return new WorkItemResponse(
                 item.getId(),
                 item.getProject().getId(),
                 item.getType(),
                 item.getTitle(),
                 item.getCurrentStatus(),
-                item.getCreatedBy().getId(),
+                item.getCreatedBy() != null ? item.getCreatedBy().getId() : null,
                 item.getCreatedAt(),
                 item.getUpdatedAt(),
                 item.getSequenceNumber(),
@@ -172,6 +176,7 @@ public class WorkItemController implements WorkItemsApi {
                 .workflow(item.getWorkflow())
                 .unresolvedCommentCount((int) unresolvedCommentCount)
                 .assignee(assignee)
+                .createdByLabel(item.getCreatedByLabel())
                 .scheduledFor(item.getScheduledFor())
                 .scheduleTimezone(item.getScheduleTimezone())
                 .tags(List.copyOf(item.getTags()))

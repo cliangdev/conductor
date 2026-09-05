@@ -87,6 +87,7 @@ Configurable from the frontend at **Manage → Ingest cadence** (`knowledge/mana
 | MCP `submit_knowledge_source` | caller-supplied | Same endpoint, called from Claude Code or a workflow's `claude-code` step. |
 | Completed Work Item (`KnowledgeSignalSink`) | `conductor.work_item.completed` | A `SignalSubscriber` at `SignalDispatchOrder.KNOWLEDGE` on the `conductor.work_item.status_changed` signal. Submits **once per Work Item**, when it reaches a **terminal** status *and* actually produced something — see [the significance gate](#curation) below. The payload is the whole item (description, document bodies, comments, assets, review verdicts), not just the status pair. Fail-soft: its own try/catch, so an ingestion failure never blocks notification delivery or trigger evaluation. |
 | GitHub `pr_merged` adapter (`GitHubConnector`) | `github.pr_merged` | On a merged PR webhook, submits it as a source regardless of whether it references a Conductor Work Item — this is about the codebase, not one issue. |
+| Memory promotion (`MemoryConsolidationService`) | `conductor.memory.promoted` | When the nightly [agent memory](memory.md) consolidation pass judges a raw candidate a stable, org-relevant fact or decision (importance ≥ 8), it submits the resulting durable memory here — the same inbox any other source lands in, from which the librarian may (or may not) file it into a page. See [Memory vs. Knowledge](memory.md#memory-vs-knowledge). |
 
 ---
 

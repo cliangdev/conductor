@@ -9,6 +9,7 @@ import {
   BellIcon,
   BookOpenIcon,
   BotIcon,
+  BrainIcon,
   GitBranchIcon,
   KeyIcon,
   LibraryIcon,
@@ -45,6 +46,7 @@ export function visibleNavEntries(entries: StaticNavEntry[], can: (capability: C
 export const WORKSPACE_NAV: StaticNavEntry[] = [
   { key: 'docs', label: 'Docs', icon: BookOpenIcon, path: (id) => `/app/projects/${id}/docs` },
   { key: 'knowledge', label: 'Knowledge', icon: LibraryIcon, path: (id) => `/app/projects/${id}/knowledge` },
+  { key: 'memory', label: 'Memory', icon: BrainIcon, path: (id) => `/app/projects/${id}/memory` },
 ]
 
 export const AUTOMATION_NAV: StaticNavEntry[] = [

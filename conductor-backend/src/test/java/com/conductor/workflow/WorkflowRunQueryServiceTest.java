@@ -38,10 +38,11 @@ class WorkflowRunQueryServiceTest {
 
     @Mock WorkflowRunRepository runRepository;
     @Mock WorkflowJobRunRepository jobRunRepository;
+    @Mock com.conductor.repository.WorkflowStepRunRepository stepRunRepository;
     @Mock Pageable pageable;
 
     private WorkflowRunQueryService newService() {
-        return new WorkflowRunQueryService(runRepository, jobRunRepository);
+        return new WorkflowRunQueryService(runRepository, jobRunRepository, stepRunRepository);
     }
 
     private WorkflowRun runWithStatus(String id, WorkflowRunStatus status) {
@@ -157,5 +158,37 @@ class WorkflowRunQueryServiceTest {
 
         assertThat(reasons).isEmpty();
         verify(jobRunRepository, never()).findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(any(), any());
+    }
+
+    // ---- findJobRunsWithSteps ----
+
+    @Test
+    void findJobRunsWithSteps_pairsEachJobRunWithItsOwnOrderedSteps() {
+        WorkflowRunQueryService svc = newService();
+        com.conductor.entity.WorkflowJobRun jobRun = new com.conductor.entity.WorkflowJobRun();
+        jobRun.setId("job-1");
+        jobRun.setJobId("build");
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        com.conductor.entity.WorkflowStepRun step = new com.conductor.entity.WorkflowStepRun();
+        step.setStepName("compile");
+        when(stepRunRepository.findByJobRunIdOrderByStartedAtAscIdAsc("job-1")).thenReturn(List.of(step));
+
+        List<WorkflowRunQueryService.JobRunWithSteps> result = svc.findJobRunsWithSteps("run-1");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).jobRun()).isSameAs(jobRun);
+        assertThat(result.get(0).steps()).containsExactly(step);
+    }
+
+    @Test
+    void findJobRunsWithSteps_noJobs_returnsEmptyListWithoutQueryingSteps() {
+        WorkflowRunQueryService svc = newService();
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of());
+
+        List<WorkflowRunQueryService.JobRunWithSteps> result = svc.findJobRunsWithSteps("run-1");
+
+        assertThat(result).isEmpty();
+        verify(stepRunRepository, never()).findByJobRunIdOrderByStartedAtAscIdAsc(any());
     }
 }

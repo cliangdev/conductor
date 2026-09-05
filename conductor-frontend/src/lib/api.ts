@@ -532,6 +532,10 @@ export interface AgentConfig {
   temperature?: number | null
   maxTokens?: number | null
   maxToolTurns?: number | null
+  /** True when a human can talk to this agent directly in a conversation (Discord's /ask, the
+   *  conversation REST API) by name or slug -- opt-in per agent. Mirrored read-only at
+   *  `Agent.addressable` for display. */
+  addressable?: boolean | null
 }
 
 export interface Agent {
@@ -556,6 +560,9 @@ export interface Agent {
    *  project member. Deleting one is allowed — it is recreated the next time the owning feature
    *  self-heals. */
   isDefault: boolean
+  /** True when a human can talk to this agent directly in a conversation (Discord's /ask, the
+   *  conversation REST API) by name or slug -- opt-in per agent via config.addressable. */
+  addressable: boolean
   /** Free-text grouping tag (e.g. "engineering"); "default"/"system" are reserved server-side. */
   tag?: string | null
   createdAt: string
@@ -595,6 +602,9 @@ export interface AvailableAgentTool {
 export interface AgentProviderInfo {
   id: string
   defaultModel?: string | null
+  /** True when leaving `model` blank resolves to the newest discovered model at run time (e.g.
+   *  OpenAI); false when it resolves to the fixed `defaultModel` (e.g. Claude's pinned constant). */
+  defaultModelIsLive: boolean
 }
 
 export interface ProviderVerificationSummary {
@@ -653,6 +663,25 @@ export function listAgentTools(projectId: string, token: string): Promise<Availa
 
 export function listAgentProviders(projectId: string, token: string): Promise<AgentProviderInfo[]> {
   return apiGet<AgentProviderInfo[]>(`/api/v1/projects/${projectId}/agents/providers`, token)
+}
+
+export interface ProviderModelInfo {
+  id: string
+  latest: boolean
+}
+
+/** Models the provider currently supports, for the Model field's combobox suggestions. Empty when
+ *  no credential is stored for `provider` or the provider does no discovery — callers should fall
+ *  back to free text, not treat an empty list as an error. */
+export function listProviderModels(
+  projectId: string,
+  provider: string,
+  token: string,
+): Promise<{ models: ProviderModelInfo[] }> {
+  return apiGet<{ models: ProviderModelInfo[] }>(
+    `/api/v1/projects/${projectId}/agents/providers/${encodeURIComponent(provider)}/models`,
+    token,
+  )
 }
 
 /**

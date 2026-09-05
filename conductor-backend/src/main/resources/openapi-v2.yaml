@@ -2389,6 +2389,13 @@ components:
           description: The bound Workflow definition id (slug, e.g. ENGINEERING).
         createdBy:
           type: string
+          nullable: true
+          description: >-
+            Creating user's id. Null when a machine actor (e.g. an addressable agent) created this
+            item — createdByLabel carries its identity instead. Exactly one of the two is set.
+        createdByLabel:
+          type: string
+          description: Machine actor's display label (e.g. "Agent (ceo)"), set only when createdBy is null.
         createdAt:
           type: string
           format: date-time

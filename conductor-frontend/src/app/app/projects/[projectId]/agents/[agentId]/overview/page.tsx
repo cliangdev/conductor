@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ActivityIcon, ArrowRightIcon } from 'lucide-react'
 import { useAgent } from '@/contexts/AgentContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { providerDisplayName } from '@/lib/providers'
 import { listWorkflows } from '@/lib/workflows'
 
 // Matches KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME on the backend — the only knowledge
@@ -75,7 +76,7 @@ export default function AgentOverviewPage() {
   return (
     <div className="space-y-6">
       <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4 border rounded-lg p-4">
-        <Field label="Provider">{agent.provider}</Field>
+        <Field label="Provider">{providerDisplayName(agent.provider)}</Field>
         <Field label="Model">{agent.model ?? <span className="text-muted-foreground">Provider default</span>}</Field>
         <Field label="Tools">{agent.toolIds.length}</Field>
         <Field label="Slug"><span className="font-mono text-xs">{agent.slug}</span></Field>

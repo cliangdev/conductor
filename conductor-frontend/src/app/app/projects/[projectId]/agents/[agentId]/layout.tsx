@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumb, type Crumb } from '@/components/layout/PageHead
 import { Badge } from '@/components/ui/badge'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
+import { AddressableBadge } from '@/components/agents/AddressableBadge'
 import { AgentAvatar } from '@/components/agents/AgentAvatar'
 import { AgentProvider, useAgent } from '@/contexts/AgentContext'
 import { useCan } from '@/contexts/PermissionsContext'
@@ -41,6 +42,7 @@ function AgentDetailHeader() {
             {agent.state === 'ACTIVE' ? 'Active' : 'Draft'}
           </Badge>
           {agent.isDefault && <DefaultAgentBadge />}
+          {agent.addressable && <AddressableBadge />}
         </div>
       }
       description={agent.description ?? undefined}
