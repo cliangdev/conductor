@@ -19,6 +19,7 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
+import { PublishReadinessCard } from '@/components/marketing/PublishReadinessCard'
 import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
 import { PublishOutcomePanel } from '@/components/marketing/PublishOutcomePanel'
 import {
@@ -211,6 +212,9 @@ export function WorkItemDetailView({
   const [issue, setIssue] = useState<DetailIssue | null>(null)
   const [documents, setDocuments] = useState<DetailDocument[]>([])
   const [assets, setAssets] = useState<MediaAsset[]>([])
+  // Bumped on every bundle-affecting change so the readiness card re-asks the server. The card reads a
+  // derived answer (the gate's verdict), so it cannot know from props alone when that answer moved.
+  const [preflightVersion, setPreflightVersion] = useState(0)
   // TIK-2. TikTok's Content Sharing Guidelines require the creator to see the content and the
   // account nickname it posts to, and to consent, before anything is uploaded — so consent is held
   // here, beside the media the preview is built from, and published as a gate the status control
@@ -321,6 +325,7 @@ export function WorkItemDetailView({
         accessToken
       )
       setAssets(data)
+      setPreflightVersion((v) => v + 1)
     } catch {
       // Non-fatal — the assets list simply renders nothing.
     }
@@ -340,6 +345,7 @@ export function WorkItemDetailView({
       // Non-fatal — a stale chip corrects itself on the next load.
     }
     await fetchReviews()
+    setPreflightVersion((v) => v + 1)
   }, [accessToken, projectId, issueId, fetchReviews])
 
   useEffect(() => {
@@ -908,6 +914,24 @@ export function WorkItemDetailView({
                   workflowView={workflowView}
                   assets={assets}
                   onUploaded={fetchAssets}
+                />
+              )}
+              {/* "What is still in the way?" — the gate's own answer, read from the server, with the one
+                  move that is next. Above the picker because it is the first thing an author looks for
+                  after any edit, and it names which panel below needs attention. */}
+              {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
+                <PublishReadinessCard
+                  projectId={projectId}
+                  workItemId={issueId}
+                  token={accessToken!}
+                  status={issue.status}
+                  userRole={userRole}
+                  workflowView={workflowView}
+                  refreshKey={preflightVersion}
+                  onStatusChanged={(s) => {
+                    setIssue((prev) => (prev ? { ...prev, status: s } : prev))
+                    void refreshIssueStatus()
+                  }}
                 />
               )}
               {/* Where the Post goes. Sits with the creative for the same reason: the accounts are part
