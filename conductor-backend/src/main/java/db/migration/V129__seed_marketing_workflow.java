@@ -23,7 +23,7 @@ import java.sql.Statement;
  * drift. Idempotent via {@code WHERE NOT EXISTS} guards, so re-running on a rolling deploy, or running
  * against a database with zero projects, inserts nothing.
  */
-public class V124__seed_marketing_workflow extends BaseJavaMigration {
+public class V129__seed_marketing_workflow extends BaseJavaMigration {
 
     private static final String MARKETING_RESOURCE = "/schema/examples/marketing.workflow.json";
 

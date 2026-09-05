@@ -94,20 +94,51 @@ public class WorkItemService {
     }
 
     /**
-     * Canonical create-Work-Item business logic, returning the persisted entity. The v2 controller maps the
-     * entity to its response DTO. Takes plain fields so the service stays decoupled from any generated DTO.
+     * Canonical create-Work-Item business logic for a human caller, returning the persisted entity. The
+     * v2 controller maps the entity to its response DTO. Takes plain fields so the service stays
+     * decoupled from any generated DTO. Delegates to the {@link ProjectActor} overload below so the two
+     * callers (human REST, machine tool) never diverge.
      */
     @Transactional
     /** Pre-tags arity, kept so every existing caller reads as it did. Creates with no tags. */
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
                                    String workflowSlug, User caller) {
-        return createWorkItem(projectId, type, title, description, workflowSlug, null, caller);
+        return createWorkItem(projectId, type, title, description, workflowSlug, ProjectActor.of(caller));
     }
 
+    /**
+     * Canonical create-Work-Item business logic for any {@link ProjectActor} -- a human user or a
+     * machine actor (e.g. an addressable agent via {@code coordinator:create_work_item}). Creates with no
+     * tags; delegates to the tagged overload below.
+     */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, ProjectActor actor) {
+        return createWorkItem(projectId, type, title, description, workflowSlug, null, actor);
+    }
+
+    /** Pre-actor arity, kept so every existing caller reads as it did. Attributes to a human caller. */
     @Transactional
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
                                    String workflowSlug, Collection<String> tags, User caller) {
-        verifyMembership(projectId, caller.getId());
+        return createWorkItem(projectId, type, title, description, workflowSlug, tags, ProjectActor.of(caller));
+    }
+
+    /**
+     * Canonical create-Work-Item business logic, returning the persisted entity. The v2 controller maps the
+     * entity to its response DTO. Takes plain fields so the service stays decoupled from any generated DTO.
+     * Membership is a {@code project_members} row check, which only has meaning for a human: {@link
+     * ProjectActor#isMachine()} skips {@link #verifyMembership} entirely for a machine actor rather than
+     * failing it against a caller that could never be a project member. Attribution follows the V125
+     * user-or-label pattern: {@code createdBy}/{@code createdByLabel} mirror {@code actor.user()}/{@code
+     * actor.label()} exactly, mutually exclusive by construction (see {@link ProjectActor}).
+     */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, Collection<String> tags, ProjectActor actor) {
+        if (!actor.isMachine()) {
+            verifyMembership(projectId, actor.user().getId());
+        }
 
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
@@ -123,7 +154,8 @@ public class WorkItemService {
         workItem.setType(type);
         workItem.setTitle(title);
         workItem.setDescription(description);
-        workItem.setCreatedBy(caller);
+        workItem.setCreatedBy(actor.user());
+        workItem.setCreatedByLabel(actor.label());
         workItem.setWorkflow(workflow);
         workItem.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
         workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
@@ -142,7 +174,7 @@ public class WorkItemService {
      * absent — leave unchanged"; for {@code assigneeId} a blank string unassigns. Takes plain fields so the
      * service stays decoupled from any generated DTO version.
      *
-     * <p>{@code scheduledFor} and {@code scheduleTimezone} are the generic per-item scheduling fields (V125)
+     * <p>{@code scheduledFor} and {@code scheduleTimezone} are the generic per-item scheduling fields (V130)
      * and follow the same PATCH semantics; a blank {@code scheduleTimezone} clears the stored zone (mirroring
      * how a blank {@code assigneeId} unassigns). {@code scheduleTimezone} must be a zone {@link ZoneId#of}
      * can resolve — an unknown zone is a {@link BusinessException} (400), raised before anything is written
@@ -334,6 +366,53 @@ public class WorkItemService {
         }
         return workItemRepository.findByProjectIdAndSequenceNumber(projectId, sequenceNumber)
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+    }
+
+    /**
+     * Resolve a Work Item by either its raw id or its display id (e.g. "COND-42"), for any {@link
+     * ProjectActor} -- a human caller or a machine actor (the coordinator's {@code get_work_item} tool).
+     * Tries a raw-id lookup first (via {@link WorkItemRepository#findByIdWithProjectAndAssignee}, so the
+     * caller gets the same eagerly-fetched project/assignee as a plain id lookup would), then falls back
+     * to display-id sequence-number parsing on a miss -- mirrors {@link #resolveByDisplayId}'s malformed-
+     * id tolerance rather than throwing on a ref that simply isn't a display id. Applies the same read-
+     * access check as {@link #getWorkItemEntity} for a human caller; a machine actor skips it, matching
+     * {@link #createWorkItem(String, String, String, String, String, ProjectActor)}'s machine
+     * short-circuit -- coordination tools have no {@code project_members} row to check against.
+     */
+    @Transactional(readOnly = true)
+    public WorkItem resolveByReference(String projectId, String ref, ProjectActor actor) {
+        if (!actor.isMachine()) {
+            verifyReadAccess(projectId, actor.user().getId());
+        }
+        WorkItem item = workItemRepository.findByIdWithProjectAndAssignee(ref)
+                .filter(i -> projectId.equals(i.getProject().getId()))
+                .orElse(null);
+        if (item != null) {
+            return item;
+        }
+        Integer sequenceNumber = parseSequenceNumber(ref);
+        if (sequenceNumber == null) {
+            throw new EntityNotFoundException("Work Item not found: " + ref);
+        }
+        return workItemRepository.findByProjectIdAndSequenceNumber(projectId, sequenceNumber)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found: " + ref));
+    }
+
+    /**
+     * List Work Items in a project with the same optional type/status/workflow filters as {@link
+     * #listWorkItemEntities}, capped at the query level (see {@link
+     * WorkItemRepository#findByProjectFilteredLimited}) rather than fetched-then-truncated -- backs the
+     * coordinator's {@code list_work_items} tool. No read-access check: unlike {@link
+     * #listWorkItemEntities}'s human caller, a coordination tool's machine caller has no {@code
+     * project_members} row to check, matching {@link #resolveByReference}'s machine short-circuit.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemsForAgent(String projectId, String type, String status, String workflow,
+                                                int limit) {
+        String typeFilter = (type != null && !type.isBlank()) ? type : null;
+        String statusFilter = (status != null && !status.isBlank()) ? status : null;
+        String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
+        return workItemRepository.findByProjectFilteredLimited(projectId, typeFilter, statusFilter, workflowFilter, limit);
     }
 
     private static Integer parseSequenceNumber(String displayId) {

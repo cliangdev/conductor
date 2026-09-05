@@ -286,7 +286,12 @@ class WorkflowControllerTest {
 
     @Test
     void dispatchWorkflow_withInputs_passesInputsAndReturnsEventPayload() throws Exception {
-        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(automationWorkflow());
+        WorkflowDefinition workflow = automationWorkflow();
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(workflow);
+        // allowsManualDispatch is now WorkflowService's call (workflowService is a @MockitoBean here, so
+        // it must be stubbed explicitly) -- the real yaml-parsing decision behind it has its own coverage
+        // in WorkflowServiceTest and WorkflowYamlParserTest.
+        when(workflowService.allowsManualDispatch(workflow.getYaml())).thenReturn(true);
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workflowTriggerService.triggerManual(any(), eq("user-1"), eq(java.util.Map.of("environment", "staging"))))
                 .thenReturn(runWithEventPayload(
@@ -305,7 +310,9 @@ class WorkflowControllerTest {
 
     @Test
     void dispatchWorkflow_withoutBody_stillWorks() throws Exception {
-        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(automationWorkflow());
+        WorkflowDefinition workflow = automationWorkflow();
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(workflow);
+        when(workflowService.allowsManualDispatch(workflow.getYaml())).thenReturn(true);
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workflowTriggerService.triggerManual(any(), eq("user-1"), isNull()))
                 .thenReturn(runWithEventPayload("{\"type\":\"workflow_dispatch\"}"));
@@ -348,6 +355,7 @@ class WorkflowControllerTest {
         workflow.setName("Knowledge Librarian");
         workflow.setYaml("on:\n  workflow_dispatch:\n    manual: false\n");
         when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(workflow);
+        when(workflowService.allowsManualDispatch(workflow.getYaml())).thenReturn(false);
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
 
         mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/dispatch", PROJECT_ID, "wf-auto")
@@ -402,7 +410,7 @@ class WorkflowControllerTest {
         failedStep.setStepType("action");
         failedStep.setStatus(WorkflowStepStatus.FAILED);
         failedStep.setErrorReason("CLAUDE_TIMEOUT");
-        when(stepRunRepository.findByJobRunId("job-1")).thenReturn(List.of(failedStep));
+        when(stepRunRepository.findByJobRunIdOrderByStartedAtAscIdAsc("job-1")).thenReturn(List.of(failedStep));
 
         mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs/{r}", PROJECT_ID, "wf-auto", "run-1")
                         .header("Authorization", "Bearer valid-token"))
@@ -433,7 +441,7 @@ class WorkflowControllerTest {
         succeededStep.setStepName("review");
         succeededStep.setStepType("agent");
         succeededStep.setStatus(WorkflowStepStatus.SUCCESS);
-        when(stepRunRepository.findByJobRunId("job-1")).thenReturn(List.of(succeededStep));
+        when(stepRunRepository.findByJobRunIdOrderByStartedAtAscIdAsc("job-1")).thenReturn(List.of(succeededStep));
 
         mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs/{r}", PROJECT_ID, "wf-auto", "run-1")
                         .header("Authorization", "Bearer valid-token"))

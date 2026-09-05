@@ -1,5 +1,6 @@
 package com.conductor.integration;
 
+import com.conductor.entity.Connection;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,24 @@ public interface Connector {
             TOOL_SPEC_LOG.warn("Failed to load tool-spec JSON for connector '{}' at {}: {}", id, path, e.getMessage());
             return new IntegrationToolSpec(getMetadata().description(), List.of(), List.of());
         }
+    }
+
+    /**
+     * Called once, synchronously, right after a connection is created AND its credentials/config are
+     * fully stored -- the generic connection-creation flow ({@code IntegrationController#createConnection})
+     * calls this for EVERY connector, regardless of which capability interfaces it implements. The
+     * default no-op means most connectors need do nothing here; override it for a setup step that must
+     * succeed up front rather than fail silently at first use later -- e.g. registering a vendor-side
+     * command or webhook subscription ({@code DiscordAppConnector} registering its {@code /ask} slash
+     * command).
+     *
+     * <p>Throwing here fails the connection creation itself, with the exception's message surfaced to
+     * the caller -- the framework deletes the just-created connection row so a failed setup step never
+     * leaves a connection that looks connected but silently can't work. A connector doing something here
+     * that can be safely retried later should prefer NOT throwing (log and continue) unless success is
+     * genuinely required before the connection is usable at all.
+     */
+    default void onConnectionCreated(Connection connection, ConnectionContext ctx) {
     }
 
     private IntegrationToolSpec withValidIngest(IntegrationToolSpec spec, String connectorId) {

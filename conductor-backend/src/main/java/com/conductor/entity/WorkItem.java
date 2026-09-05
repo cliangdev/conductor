@@ -54,9 +54,14 @@ public class WorkItem {
     @JoinColumn(name = "assignee_id")
     private User assignee;
 
+    /** Null when a machine actor (e.g. an addressable agent via {@code coordinator:create_work_item})
+     *  authored this item -- {@link #createdByLabel} carries its identity instead. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by", nullable = false)
+    @JoinColumn(name = "created_by")
     private User createdBy;
+
+    @Column(name = "created_by_label", length = 255)
+    private String createdByLabel;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -104,7 +109,7 @@ public class WorkItem {
     @ColumnTransformer(write = "?::jsonb")
     private JsonNode outcomeMetric;
 
-    // --- Generic per-item scheduling (V125). Workflow-agnostic: any Workflow can put an item on a clock. ---
+    // --- Generic per-item scheduling (V130). Workflow-agnostic: any Workflow can put an item on a clock. ---
 
     /** When this Work Item is due, as an absolute instant. Null when the item is not scheduled. */
     @Column(name = "scheduled_for")
@@ -134,7 +139,7 @@ public class WorkItem {
     private Set<String> tags = new LinkedHashSet<>();
 
     /**
-     * The review round currently open on this item (COND-23, V129). Starts at 0 and is bumped whenever a
+     * The review round currently open on this item (COND-23, V134). Starts at 0 and is bumped whenever a
      * CHANGES_REQUESTED verdict routes the item out of a review status: an APPROVED {@code Review} stamped
      * with an earlier round no longer satisfies the gate, so an approval cast before a rejection cannot let
      * the item through on resubmission. Workflows with no changes-requested lane (ENGINEERING) never leave
@@ -182,6 +187,9 @@ public class WorkItem {
 
     public User getCreatedBy() { return createdBy; }
     public void setCreatedBy(User createdBy) { this.createdBy = createdBy; }
+
+    public String getCreatedByLabel() { return createdByLabel; }
+    public void setCreatedByLabel(String createdByLabel) { this.createdByLabel = createdByLabel; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

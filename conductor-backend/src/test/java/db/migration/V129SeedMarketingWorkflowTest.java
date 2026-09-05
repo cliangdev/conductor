@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * and nothing from the context cache. Each case runs against its own database cloned from a template
  * migrated to just before V124, so the full history is replayed once, not once per test.
  */
-class V124SeedMarketingWorkflowTest {
+class V129SeedMarketingWorkflowTest {
 
     private static final String TEMPLATE_DB = "v110_template";
     private static final String VERSION_BEFORE_V124 = "109";
@@ -95,7 +95,7 @@ class V124SeedMarketingWorkflowTest {
         try (Connection connection = connect(url)) {
             assertThat(marketingDefinitionProjectIds(connection)).isEmpty();
             assertThat(queryForString(connection,
-                    "SELECT success::text FROM flyway_schema_history WHERE version = '124'")).isEqualTo("true");
+                    "SELECT success::text FROM flyway_schema_history WHERE version = '129'")).isEqualTo("true");
         }
     }
 

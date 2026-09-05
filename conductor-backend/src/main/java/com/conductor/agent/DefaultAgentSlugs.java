@@ -13,8 +13,9 @@ public final class DefaultAgentSlugs {
 
     public static final String KNOWLEDGE_LIBRARIAN = "knowledge-librarian";
     public static final String METRICS_ANALYST = "metrics-analyst";
+    public static final String CEO = "ceo";
 
-    public static final Set<String> ALL = Set.of(KNOWLEDGE_LIBRARIAN, METRICS_ANALYST);
+    public static final Set<String> ALL = Set.of(KNOWLEDGE_LIBRARIAN, METRICS_ANALYST, CEO);
 
     private DefaultAgentSlugs() {
     }

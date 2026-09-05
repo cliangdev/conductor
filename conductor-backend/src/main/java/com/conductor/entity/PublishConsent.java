@@ -14,7 +14,7 @@ import java.util.UUID;
 
 /**
  * The creator's recorded consent to publish one Post, as required by TikTok's Content Sharing Guidelines
- * (MKT-1, V135).
+ * (MKT-1, V140).
  *
  * <p>One row per Work Item, present only while consent stands: no row means consent was never given, and
  * withdrawing it deletes the row. Re-consenting rewrites the row rather than appending, because the only

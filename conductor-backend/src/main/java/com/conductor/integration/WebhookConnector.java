@@ -2,6 +2,8 @@ package com.conductor.integration;
 
 import org.springframework.http.HttpHeaders;
 
+import java.util.Optional;
+
 /**
  * PUSH capability: inbound webhook. The framework owns receive/route/log/dedup/retry; the connector
  * owns verify (signature scheme), delivery-id + event-type extraction, routing, lifecycle, and the
@@ -55,6 +57,47 @@ public interface WebhookConnector extends Connector {
         return false;
     }
 
-    /** Map a verified, deduped inbound event to a domain action. Runs inside the generic retry engine. */
+    /**
+     * A provider-specific body the receiver must return synchronously, within THIS request, instead of
+     * (or in addition to) the generic empty {@code 200}. Called after {@link #verify} succeeds, before
+     * dedup/persist — e.g. Discord's interaction PONG / deferred-ack acknowledgment, or Slack's {@code
+     * url_verification} challenge echo, both of which the provider expects back within its own request
+     * timeout, not after an async dispatch.
+     *
+     * <p>{@link WebhookSyncResponse#consumed()} controls what happens next:
+     * <ul>
+     *   <li>{@code true} — the receiver returns {@code jsonBody} ({@code application/json}, 200) and
+     *       skips dedup/persist/dispatch entirely. The event never reaches {@link #handleEvent}.</li>
+     *   <li>{@code false} — the receiver still returns {@code jsonBody}, but the normal dedup/persist/
+     *       dispatch pipeline still runs underneath (synchronously, in this same request, exactly as it
+     *       does for every other connector) before the response is sent. A connector using this to defer
+     *       a slow domain action (e.g. Discord's "thinking…" ack while an agent answers) MUST make {@link
+     *       #handleEvent} fast/enqueue-only on this path — the provider's own ack timeout (Discord: 3s)
+     *       is already spent on the synchronous body, so {@code handleEvent} cannot itself do the slow
+     *       work; it must hand off (e.g. submit to a bounded executor) and return.</li>
+     * </ul>
+     *
+     * <p>Empty (the default) — today's behavior, byte-for-byte: the receiver runs the normal pipeline and
+     * returns an empty {@code 200} at the end, exactly as if this method didn't exist.
+     */
+    default Optional<WebhookSyncResponse> synchronousResponse(byte[] rawBody, HttpHeaders headers, ConnectionContext ctx) {
+        return Optional.empty();
+    }
+
+    /**
+     * Map a verified, deduped inbound event to a domain action. {@code WebhookDispatchService#dispatch}
+     * calls this SYNCHRONOUSLY, inline in the receiving request, for every connector today -- a failure
+     * marks the persisted {@code WebhookEvent} FAILED for a later scheduled retry sweep, but the first
+     * attempt always blocks the original request. That's ordinarily invisible to the provider (the
+     * receiver's own response is a fire-and-forget empty {@code 200}), but on a path following {@link
+     * #synchronousResponse} with {@code consumed=false} the receiver's response body IS the provider's
+     * synchronous acknowledgment, sent only after this method returns -- so a slow {@code handleEvent}
+     * here delays that acknowledgment too, past the provider's own ack budget. See {@link
+     * #synchronousResponse}'s javadoc for why that constrains this method to be fast/enqueue-only on
+     * that path.
+     */
     void handleEvent(InboundEvent event, ConnectionContext ctx);
+
+    /** One provider-specific synchronous acknowledgment -- see {@link #synchronousResponse}. */
+    record WebhookSyncResponse(String jsonBody, boolean consumed) {}
 }

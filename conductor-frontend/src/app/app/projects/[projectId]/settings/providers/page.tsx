@@ -15,6 +15,7 @@ import {
   type AgentProviderInfo,
 } from '@/lib/api'
 import { ClaudeProviderCard } from '@/components/providers/ClaudeProviderCard'
+import { OpenAiProviderCard } from '@/components/providers/OpenAiProviderCard'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -22,14 +23,17 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { settingsBreadcrumbs } from '@/lib/navigation'
+import { providerDisplayName } from '@/lib/providers'
 
 const CLAUDE_PROVIDER_ID = 'claude'
+const OPENAI_PROVIDER_ID = 'openai'
 
 /**
- * Settings → AI Providers: the one "Connect Claude" surface. Claude gets the special two-method
- * card ({@link ClaudeProviderCard}); any other model provider `listAgentProviders` returns falls
- * back to a generic single-credential row here (there are none today — `claude-code` is
- * deliberately absent from `listAgentProviders`, it isn't a model an agent can select).
+ * Settings → AI Providers: the "Connect Claude"/"Connect OpenAI" surfaces. Each gets a dedicated
+ * card ({@link ClaudeProviderCard}, {@link OpenAiProviderCard}); any other model provider
+ * `listAgentProviders` returns falls back to a generic single-credential row here (there are none
+ * today — `claude-code` is deliberately absent from `listAgentProviders`, it isn't a model an
+ * agent can select).
  */
 export default function ProvidersSettingsPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -53,7 +57,7 @@ export default function ProvidersSettingsPage() {
     ])
       .then(([providers, statuses]) => {
         if (cancelled) return
-        setOtherProviders(providers.filter((p) => p.id !== CLAUDE_PROVIDER_ID))
+        setOtherProviders(providers.filter((p) => p.id !== CLAUDE_PROVIDER_ID && p.id !== OPENAI_PROVIDER_ID))
         setConfigured(Object.fromEntries(statuses.map((s) => [s.provider, s.configured])))
       })
       .catch(() => {
@@ -102,11 +106,12 @@ export default function ProvidersSettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="AI Providers"
-        description="Connect Claude to power your agents and claude-code workflow steps."
+        description="Connect a model provider to power your agents. The Claude Code subscription also powers claude-code workflow steps."
         breadcrumbs={settingsBreadcrumbs(projectId, 'settings-providers')}
       />
 
       <ClaudeProviderCard projectId={projectId} />
+      <OpenAiProviderCard projectId={projectId} />
 
       {!loading && otherProviders.length > 0 && (
         <Card>
@@ -116,7 +121,7 @@ export default function ProvidersSettingsPage() {
               return (
                 <div key={provider.id} className="flex flex-col gap-2 px-4 py-4">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-foreground">{provider.id}</span>
+                    <span className="text-sm font-medium text-foreground">{providerDisplayName(provider.id)}</span>
                     {isConfigured ? (
                       <Badge variant="status-approved">Connected</Badge>
                     ) : (
