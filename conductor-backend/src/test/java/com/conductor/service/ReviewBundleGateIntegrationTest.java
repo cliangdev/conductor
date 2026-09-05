@@ -43,7 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the bundle hash stamped on the review row, and the round counter on the Work Item.
  *
  * <p>The backward-compatibility half matters as much as the new behavior: a review with a null hash and a null
- * round — every row written before V134, and every ENGINEERING review — has to keep satisfying its gate
+ * round — every row written before V115, and every ENGINEERING review — has to keep satisfying its gate
  * untouched, so those cases are asserted here alongside the new ones.
  *
  * <p>Uses the shared Postgres: nothing here enqueues workflow jobs (the project seeds no automations, so
@@ -302,7 +302,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         workItemReviewerRepository.save(assignment);
     }
 
-    /** A review row as it looks before V134: no round, no bundle hash. */
+    /** A review row as it looks before V115: no round, no bundle hash. */
     private void recordLegacyReview(WorkItem workItem, User user) {
         Review review = new Review();
         review.setWorkItemId(workItem.getId());
@@ -338,7 +338,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
     /**
      * An UPLOADED {@code file} Asset, shaped the way {@link AssetService#createFileAsset} plus
      * {@link AssetService#confirmUpload} leave one. {@code gcs_path} and {@code content_type} are mandatory
-     * for an UPLOADED row (the V132 {@code chk_assets_uploaded_has_storage} check), and {@code ref} is NOT NULL.
+     * for an UPLOADED row (the V113 {@code chk_assets_uploaded_has_storage} check), and {@code ref} is NOT NULL.
      */
     private void addUploadedAsset(String filename) {
         String assetId = UUID.randomUUID().toString();
@@ -471,7 +471,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
     @Test
     void aReviewPredatingTheBundleHashIsStillReportedAsStanding() {
         // Null round and null hash skip both tests at the gate, so they must skip both here too — an
-        // ENGINEERING review, or any written before V134, must not start reading as withdrawn.
+        // ENGINEERING review, or any written before V115, must not start reading as withdrawn.
         moveTo(post, "IN_REVIEW");
         assignReviewer(reviewerA);
         recordLegacyReview(post, reviewerA);
@@ -556,7 +556,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
     @Test
     void aReviewPredatingTheBundleHashIsStillHonoured() {
         // Null round AND null hash is the legacy shape, and it must keep working — an ENGINEERING review,
-        // or any written before V134, is not the same thing as one given for an empty bundle.
+        // or any written before V115, is not the same thing as one given for an empty bundle.
         moveTo(post, "IN_REVIEW");
         assignReviewer(reviewerA);
         recordLegacyReview(post, reviewerA);

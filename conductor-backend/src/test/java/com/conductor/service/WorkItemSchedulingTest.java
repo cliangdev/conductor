@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * DB-backed coverage for the generic per-item scheduling columns (V130): {@code scheduled_for} and
+ * DB-backed coverage for the generic per-item scheduling columns (V111): {@code scheduled_for} and
  * {@code schedule_timezone} on {@code work_items}. These are workflow-agnostic foundation columns — no
  * domain vocabulary in the schema, the entity, or the API.
  *
@@ -82,7 +82,7 @@ class WorkItemSchedulingTest extends AbstractNoneWebIntegrationTest {
         workItem = workItemRepository.save(workItem);
     }
 
-    // [auto] V130 applies cleanly and adds both columns plus the partial index
+    // [auto] V111 applies cleanly and adds both columns plus the partial index
     @Test
     void migrationAddsBothSchedulingColumns() {
         List<String> types = jdbcTemplate.queryForList(
@@ -104,7 +104,7 @@ class WorkItemSchedulingTest extends AbstractNoneWebIntegrationTest {
         assertThat(tzLength).containsExactly(64);
     }
 
-    // [auto] V130 applies cleanly and adds both columns plus the partial index
+    // [auto] V111 applies cleanly and adds both columns plus the partial index
     @Test
     void migrationAddsPartialIndexOnScheduledFor() {
         List<String> definitions = jdbcTemplate.queryForList(

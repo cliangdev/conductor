@@ -253,7 +253,7 @@ public class ReviewService {
     /**
      * Whether a review still stands, by the same two tests the review gate applies: it belongs to the open
      * review round, and — where it was bound to one — it was cast against the bundle the item currently
-     * hashes to. A review predating V134 carries a null round and a null hash and skips both, exactly as it
+     * hashes to. A review predating V115 carries a null round and a null hash and skips both, exactly as it
      * does at the gate.
      *
      * <p>Duplicating the rule here rather than exposing it from {@code WorkItemWorkflowService} would be the
@@ -268,7 +268,7 @@ public class ReviewService {
         if (review.getBundleHash() != null) {
             return review.getBundleHash().equals(currentBundleHash);
         }
-        // No hash. Legacy (pre-V134, null round) is honoured; a modern review with no hash was given
+        // No hash. Legacy (pre-V115, null round) is honoured; a modern review with no hash was given
         // when the item had no bundle to bind to, and cannot vouch for the one it has now.
         return review.getReviewRound() == null || currentBundleHash == null;
     }

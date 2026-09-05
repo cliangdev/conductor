@@ -12,7 +12,7 @@
 --
 -- work_items is the one table every Workflow shares -- every ENGINEERING PRD, every knowledge item. Three
 -- publishing-specific columns there would be NULL on all of them, and the entity that the whole
--- application loads on every read would carry a marketing compliance concern. This is the same call V126
+-- application loads on every read would carry a marketing compliance concern. This is the same call V112
 -- made for post_publish_target: a Post's publishing state hangs off work_items rather than widening it.
 --
 -- The absence of a row is meaningful and needs no backfill: no row means consent was never given, which is
@@ -30,7 +30,7 @@
 -- (sorted keys, collections ordered by their own serialization). Consent is valid only while the Post
 -- still hashes to the value stored here; any of those edits silently withdraws it, which is the point.
 --
--- Deliberately a narrower subject than reviews.bundle_hash (V129): that one also covers the caption and
+-- Deliberately a narrower subject than reviews.bundle_hash (V115): that one also covers the caption and
 -- the fire time, because that is what a *reviewer* approved. A creator consents to a preview of accounts,
 -- options and media, so moving a Post's schedule must not silently withdraw their consent.
 CREATE TABLE publish_consent (

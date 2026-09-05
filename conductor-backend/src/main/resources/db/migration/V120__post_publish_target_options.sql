@@ -10,7 +10,7 @@
 -- knobs, and every one of them would otherwise be another nullable column on this table that is NULL for
 -- three platforms out of four. The bag is per-platform by construction: the row already carries `platform`,
 -- so the keys inside are read against it and nothing else. Same TEXT-and-uninterpreted-by-SQL choice as
--- caption_override's neighbour resume_checkpoint in V126 -- Postgres never looks inside it, and nothing here
+-- caption_override's neighbour resume_checkpoint in V112 -- Postgres never looks inside it, and nothing here
 -- is queried on.
 --
 -- TikTok's keys, matching the parameters connectors/tool-specs/tiktok.json declares:

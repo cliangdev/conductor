@@ -412,7 +412,7 @@ class ConnectorAppCredentialServiceTest {
         legacy.setProjectId(PROJECT_A);
         legacy.setConnectorId(CONNECTOR_ID);
         legacy.setClientId("project-a-client-id");
-        // V137 ciphertext: written under the deployment-wide workflow-secrets key, no kms_key_reference.
+        // V118 ciphertext: written under the deployment-wide workflow-secrets key, no kms_key_reference.
         legacy.setClientSecretEncrypted("Y2lwaGVydGV4dC13cml0dGVuLXVuZGVyLXRoZS1vbGQtc2NoZW1l");
         when(repository.findByProjectIdAndConnectorId(PROJECT_A, CONNECTOR_ID))
                 .thenReturn(Optional.of(legacy));

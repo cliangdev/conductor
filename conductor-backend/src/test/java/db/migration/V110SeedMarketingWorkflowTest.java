@@ -21,18 +21,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Covers the V124 backfill that seeds MARKETING into projects that already existed when it shipped.
+ * Covers the V110 backfill that seeds MARKETING into projects that already existed when it shipped.
  *
  * <p>Uses a private container rather than {@code AbstractPostgresIntegrationTest}: the assertions are
  * about what a Flyway run does to a whole database, which the shared (already fully migrated, already
  * populated) test database cannot express. No Spring context is built here, so this costs one container
  * and nothing from the context cache. Each case runs against its own database cloned from a template
- * migrated to just before V124, so the full history is replayed once, not once per test.
+ * migrated to just before V110, so the full history is replayed once, not once per test.
  */
-class V129SeedMarketingWorkflowTest {
+class V110SeedMarketingWorkflowTest {
 
     private static final String TEMPLATE_DB = "v110_template";
-    private static final String VERSION_BEFORE_V124 = "109";
+    private static final String VERSION_BEFORE_V110 = "109";
 
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine");
     private static final AtomicInteger CASE_COUNTER = new AtomicInteger();
@@ -41,7 +41,7 @@ class V129SeedMarketingWorkflowTest {
     static void startContainerAndBuildTemplate() throws SQLException {
         POSTGRES.start();
         execOnAdminDatabase("CREATE DATABASE " + TEMPLATE_DB);
-        flyway(jdbcUrl(TEMPLATE_DB)).target(VERSION_BEFORE_V124).load().migrate();
+        flyway(jdbcUrl(TEMPLATE_DB)).target(VERSION_BEFORE_V110).load().migrate();
     }
 
     @AfterAll
@@ -51,7 +51,7 @@ class V129SeedMarketingWorkflowTest {
 
     @Test
     void seedsMarketingIntoEveryExistingProject() throws Exception {
-        String url = databaseMigratedToJustBeforeV124();
+        String url = databaseMigratedToJustBeforeV110();
         try (Connection connection = connect(url)) {
             String projectA = insertProject(connection, "Alpha");
             String projectB = insertProject(connection, "Beta");
@@ -67,7 +67,7 @@ class V129SeedMarketingWorkflowTest {
 
     @Test
     void leavesAnAlreadySeededProjectUntouchedAndSeedsOnlyTheMissingOne() throws Exception {
-        String url = databaseMigratedToJustBeforeV124();
+        String url = databaseMigratedToJustBeforeV110();
         try (Connection connection = connect(url)) {
             String seededProject = insertProject(connection, "Already Seeded");
             String unseededProject = insertProject(connection, "Needs Marketing");
@@ -88,20 +88,20 @@ class V129SeedMarketingWorkflowTest {
 
     @Test
     void appliesCleanlyWhenNoProjectsExist() throws Exception {
-        String url = databaseMigratedToJustBeforeV124();
+        String url = databaseMigratedToJustBeforeV110();
 
         migrateToLatest(url);
 
         try (Connection connection = connect(url)) {
             assertThat(marketingDefinitionProjectIds(connection)).isEmpty();
             assertThat(queryForString(connection,
-                    "SELECT success::text FROM flyway_schema_history WHERE version = '129'")).isEqualTo("true");
+                    "SELECT success::text FROM flyway_schema_history WHERE version = '110'")).isEqualTo("true");
         }
     }
 
     @Test
     void skipsAProjectWhoseWorkflowNameIsAlreadyTaken() throws Exception {
-        String url = databaseMigratedToJustBeforeV124();
+        String url = databaseMigratedToJustBeforeV110();
         try (Connection connection = connect(url)) {
             String projectWithNameClash = insertProject(connection, "Name Clash");
             String otherProject = insertProject(connection, "Other");
@@ -210,7 +210,7 @@ class V129SeedMarketingWorkflowTest {
         }
     }
 
-    private static String databaseMigratedToJustBeforeV124() throws SQLException {
+    private static String databaseMigratedToJustBeforeV110() throws SQLException {
         String database = "v110_case_" + CASE_COUNTER.incrementAndGet();
         execOnAdminDatabase("""
                 SELECT pg_terminate_backend(pid) FROM pg_stat_activity
