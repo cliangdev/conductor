@@ -310,7 +310,7 @@ class MarketingReviewGateIntegrationTest {
     /**
      * An UPLOADED {@code file} Asset, shaped the way {@link AssetService#createFileAsset} plus
      * {@link AssetService#confirmUpload} leave one. {@code gcs_path} and {@code content_type} are mandatory
-     * for an UPLOADED row (the V127 {@code chk_assets_uploaded_has_storage} check), and {@code ref} is NOT NULL.
+     * for an UPLOADED row (the V132 {@code chk_assets_uploaded_has_storage} check), and {@code ref} is NOT NULL.
      */
     private void addUploadedAsset(String filename) {
         String assetId = UUID.randomUUID().toString();

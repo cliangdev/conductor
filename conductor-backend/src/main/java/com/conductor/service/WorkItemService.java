@@ -174,7 +174,7 @@ public class WorkItemService {
      * absent — leave unchanged"; for {@code assigneeId} a blank string unassigns. Takes plain fields so the
      * service stays decoupled from any generated DTO version.
      *
-     * <p>{@code scheduledFor} and {@code scheduleTimezone} are the generic per-item scheduling fields (V125)
+     * <p>{@code scheduledFor} and {@code scheduleTimezone} are the generic per-item scheduling fields (V130)
      * and follow the same PATCH semantics; a blank {@code scheduleTimezone} clears the stored zone (mirroring
      * how a blank {@code assigneeId} unassigns). {@code scheduleTimezone} must be a zone {@link ZoneId#of}
      * can resolve — an unknown zone is a {@link BusinessException} (400), raised before anything is written
