@@ -26,7 +26,8 @@ public enum ChannelGroup {
      */
     PUBLISHING("Publishing", true, List.of(
             EventType.WORK_ITEM_STATUS_CHANGED,
-            EventType.POST_AWAITING_MANUAL
+            EventType.POST_AWAITING_MANUAL,
+            EventType.AUTO_TRANSITION_BLOCKED
     )),
 
     MEMBERS("Members", List.of(

@@ -189,6 +189,17 @@ public class DiscordProvider implements NotificationProvider {
                 color = COLOR_YELLOW;
             }
 
+            case AUTO_TRANSITION_BLOCKED -> {
+                String noun = meta.getOrDefault("noun", "Work Item");
+                String toStatus = meta.getOrDefault("toStatus", "");
+                String reason = meta.getOrDefault("reason", "");
+                title = noun + " approved, but not moved to " + toStatus;
+                description = "**" + meta.getOrDefault("workItemTitle", noun) + "**\n"
+                        + "The approval stands, but the " + noun.toLowerCase() + " could not advance on its own"
+                        + (reason.isBlank() ? "." : ": " + reason);
+                color = COLOR_YELLOW;
+            }
+
             case WORKFLOW_RUN_FAILED -> {
                 String workflowName = meta.getOrDefault("workflowName", "Workflow");
                 String stepId = meta.getOrDefault("stepId", meta.getOrDefault("jobId", ""));

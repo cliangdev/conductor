@@ -149,10 +149,19 @@ class PublishPreflightServiceTest {
     }
 
     @Test
-    void fromDraftTheNextGateMoveIsNullBecauseSubmittingIsNotAGate() {
+    void fromDraftTheNextMoveIsSubmittingForReview() {
+        PublishPreflightService.Preflight preflight = service.preflight(PROJECT, "post-1", caller);
+        assertThat(preflight.nextTransition().to()).isEqualTo("IN_REVIEW");
+        assertThat(preflight.nextTransition().label()).isEqualTo("Submit for review");
+        assertThat(preflight.nextTransition().requiresReview()).isFalse();
+        assertThat(preflight.ready()).isTrue();
+    }
+
+    @Test
+    void aScheduledPostHasNoNextMove() {
+        post.setCurrentStatus("SCHEDULED");
         PublishPreflightService.Preflight preflight = service.preflight(PROJECT, "post-1", caller);
         assertThat(preflight.nextTransition()).isNull();
-        assertThat(preflight.ready()).isTrue();
     }
 
     @Test

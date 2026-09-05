@@ -366,6 +366,7 @@ paths:
       operationId: assignWorkItemReviewer
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -422,6 +423,7 @@ paths:
       operationId: listWorkItemReviewers
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -463,6 +465,7 @@ paths:
       operationId: unassignWorkItemReviewer
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -1107,6 +1110,7 @@ paths:
       operationId: submitWorkItemReview
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -1157,6 +1161,7 @@ paths:
       operationId: listWorkItemReviews
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -2699,6 +2704,34 @@ components:
         submittedAt:
           type: string
           format: date-time
+        autoTransition:
+          $ref: "#/components/schemas/ReviewAutoTransition"
+
+    ReviewAutoTransition:
+      type: object
+      description: >-
+        What an APPROVED verdict did to the item's status, when its Workflow declares `review_approved`
+        edges (MARKETING: In Review → Approved → Scheduled). Absent when the Workflow declares none.
+        `applied` false with a `blockedReason` means the approval stands but the item could not take the
+        edge — read the publish preflight for the full list and fix the item; nobody needs to approve again.
+      required:
+        - applied
+        - fromStatus
+        - toStatus
+      properties:
+        applied:
+          type: boolean
+          description: Whether the item's status changed at all.
+        fromStatus:
+          type: string
+          description: The status the item was in when the verdict landed.
+        toStatus:
+          type: string
+          description: The status the item is in now — how far the cascade got.
+        blockedReason:
+          type: string
+          nullable: true
+          description: Why the cascade stopped short, verbatim from the gate; null when nothing blocked it.
 
     ReviewWithUserResponse:
       type: object
@@ -3317,8 +3350,9 @@ components:
     PublishPreflightTransition:
       type: object
       description: >-
-        The first gate edge out of the current status — the move a ready item takes next. Absent when the
-        current status has no gate edge out of it (already scheduled, or published).
+        The move a ready item takes next: the first gate edge out of the current status, else the edge that
+        hands it to review (Draft → In Review). Absent when the current status has neither (already
+        scheduled, or published).
       required:
         - to
         - requiresReview

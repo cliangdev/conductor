@@ -1,5 +1,7 @@
 package com.conductor.service;
 
+import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.eq;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkItemReviewer;
 import com.conductor.entity.MemberRole;
@@ -54,6 +56,15 @@ class ReviewServiceTest {
 
     @Mock
     private PublishBundleHasher publishBundleHasher;
+
+    @Mock
+    private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
+
+    @Mock
+    private WorkItemService workItemService;
+
+    @Mock
+    private WorkItemWorkflowService workItemWorkflowService;
 
     @InjectMocks
     private ReviewService reviewService;
@@ -193,5 +204,81 @@ class ReviewServiceTest {
                 PROJECT_ID, ISSUE_ID, "APPROVED", null, creatorUser))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("CREATOR role cannot submit reviews");
+    }
+
+    // --- review_approved: an approval runs the cascade the Workflow declares, and reports the outcome ---
+
+    @Test
+    void anApprovedVerdictRunsTheReviewApprovedCascadeAndReportsWhereItGot() {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(reviewerMember));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(issueReviewer));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId())).thenReturn(Optional.empty());
+        when(lifecycleTriggerDispatcher.onReviewApproved(PROJECT_ID, ISSUE_ID)).thenReturn(Optional.of(
+                new LifecycleTriggerDispatcher.AutoTransition("review_approved", "IN_REVIEW", "SCHEDULED", false, null)));
+
+        ReviewService.ReviewSubmission submission =
+                reviewService.submitReviewWithOutcome(PROJECT_ID, ISSUE_ID, "APPROVED", "ship it", reviewerUser);
+
+        assertThat(submission.review().getVerdict()).isEqualTo("APPROVED");
+        assertThat(submission.autoTransition()).isPresent();
+        assertThat(submission.autoTransition().get().applied()).isTrue();
+        assertThat(submission.autoTransition().get().toStatus()).isEqualTo("SCHEDULED");
+        verify(workItemService, never()).publishAutoTransitionBlocked(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aBlockedCascadeIsAnnouncedAndTheApprovalStillStands() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(reviewerMember));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(issueReviewer));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId())).thenReturn(Optional.empty());
+        when(lifecycleTriggerDispatcher.onReviewApproved(PROJECT_ID, ISSUE_ID)).thenReturn(Optional.of(
+                new LifecycleTriggerDispatcher.AutoTransition("review_approved", "IN_REVIEW", "IN_REVIEW", true,
+                        "Cannot move Post to APPROVED: the fire time is less than 10 minutes in the future")));
+        com.conductor.workflow.lifecycle.Statechart marketing = com.conductor.workflow.lifecycle.Statechart.parse(
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+                        getClass().getResourceAsStream("/schema/examples/marketing.workflow.json")));
+        when(workItemWorkflowService.resolveFor(PROJECT_ID, workItem)).thenReturn(marketing);
+
+        ReviewService.ReviewSubmission submission =
+                reviewService.submitReviewWithOutcome(PROJECT_ID, ISSUE_ID, "APPROVED", "ship it", reviewerUser);
+
+        assertThat(submission.autoTransition()).isPresent();
+        assertThat(submission.autoTransition().get().blocked()).isTrue();
+        assertThat(submission.autoTransition().get().applied()).isFalse();
+        verify(reviewRepository).save(any(Review.class));
+        verify(workItemService).publishAutoTransitionBlocked(eq(PROJECT_ID), eq(workItem), eq("IN_REVIEW"),
+                eq("APPROVED"), org.mockito.ArgumentMatchers.contains("less than 10 minutes"));
+    }
+
+    @Test
+    void aChangesRequestedVerdictNeverRunsTheApprovalCascade() {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(reviewerMember));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(issueReviewer));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId())).thenReturn(Optional.empty());
+        // The changes-requested lane needs the statechart; ENGINEERING declares no such lane, so nothing moves.
+        com.conductor.workflow.lifecycle.Statechart engineering;
+        try {
+            engineering = com.conductor.workflow.lifecycle.Statechart.parse(
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+                            getClass().getResourceAsStream("/schema/examples/engineering.workflow.json")));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        when(workItemWorkflowService.resolveFor(PROJECT_ID, workItem)).thenReturn(engineering);
+
+        ReviewService.ReviewSubmission submission =
+                reviewService.submitReviewWithOutcome(PROJECT_ID, ISSUE_ID, "CHANGES_REQUESTED", "no", reviewerUser);
+
+        assertThat(submission.autoTransition()).isEmpty();
+        verify(lifecycleTriggerDispatcher, never()).onReviewApproved(any(), any());
     }
 }

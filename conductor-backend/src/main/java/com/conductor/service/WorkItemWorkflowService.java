@@ -45,6 +45,11 @@ public class WorkItemWorkflowService {
 
     /** System trigger fired on every Work Item status change (the WORK_ITEM_STATUS_CHANGED event). */
     public static final String TRIGGER_STATUS_CHANGED = "status_changed";
+    /**
+     * System trigger fired when an APPROVED review is recorded and satisfies the gate. Cascades along
+     * consecutive edges declaring it, so MARKETING goes IN_REVIEW → APPROVED → SCHEDULED on one approval.
+     */
+    public static final String TRIGGER_REVIEW_APPROVED = "review_approved";
 
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
@@ -188,6 +193,11 @@ public class WorkItemWorkflowService {
                 && t.requiresReview() && !isReviewSatisfied(projectId, workItem, t)) {
             return Optional.empty();
         }
+        // A system trigger gets the same publish gate a human click does. Without this an auto-advance
+        // into the scheduled status would skip the fire-time, media and options checks entirely. A no-op
+        // on any edge the gate does not guard, so pr_merged on ENGINEERING is untouched; a refusal throws,
+        // leaving the status exactly where it was for the caller to report.
+        publishGateEvaluator.enforce(workItem, statechart, t.to());
         workItem.setCurrentStatus(t.to());
         return transition;
     }

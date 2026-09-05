@@ -1639,6 +1639,7 @@ rejects an unknown trigger with `transition … uses unknown system trigger '…
 | --- | --- | --- |
 | `pr_merged` | a linked GitHub pull request merges | **bypassed** — the merge is the authority |
 | `status_changed` | the Work Item's status changes (any move) | **honored** — a review-gated edge only fires once its Review is satisfied |
+| `review_approved` | an APPROVED review is recorded and satisfies the gate | **honored** — bound to the open review round and the publish bundle, so a stale approval never fires |
 
 ```yaml
 transitions:
@@ -1648,9 +1649,15 @@ transitions:
     trigger: status_changed        # fires when the item reaches IN_REVIEW, then advances to APPROVED
 ```
 
-`status_changed` transitions **cascade**: one status change fires the next declared edge, hop by hop, until no
-`status_changed` edge matches (a repeated status or a hard hop cap stops any statechart cycle). This lets a lifecycle
-chain automatic stages without a human between them. Adding a *new* system trigger id is a backend change (a registry
+`status_changed` and `review_approved` transitions **cascade**: one hop fires the next edge declaring the *same*
+trigger, until none matches (a repeated status or a hard hop cap stops any statechart cycle). This lets a lifecycle
+chain automatic stages without a human between them. MARKETING declares `review_approved` on both
+`IN_REVIEW → APPROVED` and `APPROVED → SCHEDULED`, so one click on Approve schedules the Post; its
+`SCHEDULED → APPROVED` "Unschedule" edge declares nothing, so a human pulling a post back is not immediately
+re-scheduled — which is exactly what would happen if the second edge used `status_changed` instead. A system hop
+runs the same publish gate and the same scheduled-status side effects a human move does; when the gate refuses a
+hop the item stays where the previous hop left it, the review response says why (`autoTransition.blockedReason`),
+and an `AUTO_TRANSITION_BLOCKED` notification goes to the Publishing channel. Adding a *new* system trigger id is a backend change (a registry
 entry in `system-triggers.json` plus the service that fires it), not a schema edit — `connector_event` and other
 connector-driven triggers remain reserved.
 

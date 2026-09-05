@@ -128,6 +128,19 @@ class WorkflowDefinitionValidatorTest {
     }
 
     @Test
+    void reviewApprovedCycleRejectedLikeStatusChanged() throws Exception {
+        String cyclic = MINI.replace(
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\"}",
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\"},"
+                + "{\"from\": \"OPEN\", \"to\": \"MID\", \"label\": \"Go\", \"trigger\": \"review_approved\"},"
+                + "{\"from\": \"MID\", \"to\": \"OPEN\", \"label\": \"Back\", \"trigger\": \"review_approved\"}")
+                .replace("{\"id\": \"DONE\", \"category\": \"terminal\", \"terminal\": true}",
+                        "{\"id\": \"MID\", \"category\": \"in_progress\"}, {\"id\": \"DONE\", \"category\": \"terminal\", \"terminal\": true}");
+        assertThat(validator.validate(PROJECT_ID, json(cyclic)).getErrors())
+                .anyMatch(e -> e.contains("review_approved transitions form a cycle"));
+    }
+
+    @Test
     void nonPublishingWorkflowNeedsNoScheduledStatus() throws Exception {
         assertThat(validator.validate(PROJECT_ID, json(MINI)).getErrors()).isEmpty();
     }

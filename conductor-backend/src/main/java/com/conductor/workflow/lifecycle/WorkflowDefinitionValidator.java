@@ -45,8 +45,12 @@ public class WorkflowDefinitionValidator {
     private static final String SCHEMA_RESOURCE = "schema/workflow-definition-v1.schema.json";
     private static final int MAX_TRANSITIONS_PER_STATUS = 5;
     private static final int MAX_REVIEW_GATED_TRANSITIONS = 3;
-    /** The one system trigger that cascades (fires on the event it also produces); see the cycle check below. */
-    private static final String TRIGGER_STATUS_CHANGED = "status_changed";
+    /**
+     * The system triggers that cascade — each hop fires the next edge declaring the same trigger — and so
+     * could auto-loop on a cyclic chart; see the cycle check below. {@code status_changed} fires on the
+     * event it also produces; {@code review_approved} continues along consecutive edges of its own trigger.
+     */
+    private static final List<String> CASCADING_TRIGGERS = List.of("status_changed", "review_approved");
 
     private final Schema schema;
     private final SkillRegistry skillRegistry;
@@ -172,7 +176,9 @@ public class WorkflowDefinitionValidator {
         // endpoints are valid; skip if earlier endpoint errors already exist to avoid noise.
         if (errors.isEmpty()) {
             validateReachability(sc, errors);
-            validateNoStatusChangedCycle(sc, errors);
+            for (String trigger : CASCADING_TRIGGERS) {
+                validateNoCascadeCycle(sc, trigger, errors);
+            }
         }
     }
 
@@ -213,15 +219,15 @@ public class WorkflowDefinitionValidator {
     }
 
     /**
-     * A cycle formed purely by {@code status_changed}-triggered edges would auto-loop at runtime: each hop
-     * fires the status-changed event that triggers the next. The dispatcher caps it, but the workflow is still
-     * broken authoring, so reject it at publish. Only {@code status_changed} edges cascade this way — a
-     * {@code pr_merged} "cycle" needs a fresh external merge per hop, so it is left alone.
+     * A cycle formed purely by edges of one cascading trigger would auto-loop at runtime: each hop fires the
+     * next edge declaring the same trigger. The dispatcher caps it, but the workflow is still broken
+     * authoring, so reject it at publish. Only cascading triggers are checked — a {@code pr_merged} "cycle"
+     * needs a fresh external merge per hop, so it is left alone.
      */
-    private void validateNoStatusChangedCycle(Statechart sc, List<String> errors) {
+    private void validateNoCascadeCycle(Statechart sc, String trigger, List<String> errors) {
         Map<String, List<String>> adjacency = new HashMap<>();
         for (StatechartTransition t : sc.transitions()) {
-            if (TRIGGER_STATUS_CHANGED.equals(t.trigger())) {
+            if (trigger.equals(t.trigger())) {
                 adjacency.computeIfAbsent(t.from(), k -> new ArrayList<>()).add(t.to());
             }
         }
@@ -229,7 +235,7 @@ public class WorkflowDefinitionValidator {
         Set<String> done = new HashSet<>();
         for (String start : adjacency.keySet()) {
             if (hasStatusChangedCycle(start, adjacency, visiting, done)) {
-                errors.add("status_changed transitions form a cycle through '" + start
+                errors.add(trigger + " transitions form a cycle through '" + start
                         + "', which would auto-loop at runtime");
                 return;
             }

@@ -215,6 +215,18 @@ class WorkItemWorkflowServiceTest {
     }
 
     @Test
+    void applySystemTransitionRunsThePublishGateBeforeMoving() {
+        WorkItem workItem = workItemAt("CODE_REVIEW");
+        Mockito.doThrow(new com.conductor.exception.UnprocessableEntityException("Cannot move Item to DONE: nope"))
+                .when(publishGateEvaluator).enforce(eq(workItem), any(), eq("DONE"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applySystemTransition(
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED))
+                .isInstanceOf(com.conductor.exception.UnprocessableEntityException.class);
+        assertThat(workItem.getCurrentStatus()).as("refused before the status was set").isEqualTo("CODE_REVIEW");
+    }
+
+    @Test
     void applySystemTransitionReturnsEmptyWhenNoTriggeredEdge() {
         WorkItem workItem = workItemAt("DRAFT"); // DRAFT has no pr_merged edge
         Optional<StatechartTransition> applied = service.applySystemTransition(

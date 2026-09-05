@@ -63,6 +63,7 @@ export const EVENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   WORKFLOW_RUN_FAILED: 'Workflow run failed',
   WORKFLOW_AUTO_PAUSED: 'Workflow auto-paused after repeated failures',
   POST_AWAITING_MANUAL: 'Post is due to be published by hand',
+  AUTO_TRANSITION_BLOCKED: 'Approved, but could not advance on its own',
 }
 
 export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
@@ -82,6 +83,8 @@ export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
   WORKFLOW_AUTO_PAUSED: 'When a workflow is auto-disabled after too many consecutive failed runs',
   POST_AWAITING_MANUAL:
     'When a destination that publishes by hand comes due and is waiting for someone to post it',
+  AUTO_TRANSITION_BLOCKED:
+    'When an approval lands but the item cannot be scheduled automatically — the gate names what to fix',
 }
 
 export const ALL_EVENT_TYPES = Object.keys(EVENT_TYPE_DESCRIPTIONS)
@@ -110,7 +113,7 @@ export const CHANNEL_GROUPS: { value: string; label: string; eventTypes: string[
     // adding it takes nothing away from a project that already had notifications.
     value: 'PUBLISHING',
     label: 'Publishing',
-    eventTypes: ['WORK_ITEM_STATUS_CHANGED', 'POST_AWAITING_MANUAL'],
+    eventTypes: ['WORK_ITEM_STATUS_CHANGED', 'POST_AWAITING_MANUAL', 'AUTO_TRANSITION_BLOCKED'],
   },
   {
     value: 'MEMBERS',

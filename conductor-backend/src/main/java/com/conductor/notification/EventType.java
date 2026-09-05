@@ -100,6 +100,17 @@ public enum EventType {
     POST_AWAITING_MANUAL("A post is due to be published by hand"),
 
     /**
+     * An approval landed but the item could not take the edge it would normally take on its own — its
+     * publish gate refused it (a fire time that has crept inside the floor, media a destination will not
+     * accept, a missing option). The review stands; a person has to fix the item and move it.
+     *
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code fromStatus},
+     * {@code toStatus}, {@code reason}
+     * <p>Optional metadata keys: {@code noun}
+     */
+    AUTO_TRANSITION_BLOCKED("An approved item could not advance automatically"),
+
+    /**
      * A GitHub pull request was opened, labeled, synchronized (new commits pushed), or reopened.
      * Explicitly excludes a merge (handled separately by the issue-completion path in {@code
      * GitHubConnector.handleEvent}) and a closed-without-merge PR (an abandoned PR shouldn't trigger

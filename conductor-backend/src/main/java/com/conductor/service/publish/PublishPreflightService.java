@@ -136,9 +136,16 @@ public class PublishPreflightService {
                 gate.isPresent() && workItemWorkflowService.isReviewSatisfied(projectId, workItem, gate.get()),
                 gate.map(StatechartTransition::reviewerRole).orElse(null));
 
+        // The move a ready item takes next: a gate edge out of the current status when there is one, else
+        // the edge that hands it to review (DRAFT → IN_REVIEW on MARKETING), so a client that only knows
+        // "I am done editing" is told where to go without learning the chart.
+        String reviewStatus = gate.map(StatechartTransition::from).orElse(null);
         NextTransition next = statechart.transitionsFrom(workItem.getCurrentStatus()).stream()
                 .filter(t -> PublishingWorkflow.isGateEdge(statechart, t.from(), t.to()))
                 .findFirst()
+                .or(() -> statechart.transitionsFrom(workItem.getCurrentStatus()).stream()
+                        .filter(t -> t.to().equals(reviewStatus))
+                        .findFirst())
                 .map(t -> new NextTransition(t.to(), t.label(), t.requiresReview()))
                 .orElse(null);
 

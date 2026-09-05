@@ -35,6 +35,16 @@ unvalidated and then sit forever, because the native hand-off refused it. Edges 
   post (`MediaTargetValidator`),
 - for an API TikTok target: a privacy level, and the creator's recorded consent.
 
+**Approve, and the rest is automatic.** MARKETING declares `trigger: review_approved` on
+`IN_REVIEW → APPROVED` and `APPROVED → SCHEDULED`, so the moment a reviewer approves, the Post is approved
+*and* scheduled — native hand-offs included — in the same request. The review response carries
+`autoTransition` saying how far it got. If the gate refuses a hop (the fire time crept inside the floor
+while the review was pending, say) the approval still stands, the Post stays put, `blockedReason` names
+the problem, and the Publishing channel gets an `AUTO_TRANSITION_BLOCKED` notification; fix the Post and
+take the edge — nobody has to approve again. Approving over the API works with a **user** API key held by
+a REVIEWER who is assigned to the item (an ADMIN outranks the role but cannot be assigned); a
+project-scoped key is refused with a 403 rather than a 500.
+
 **Ask before you move.** `GET …/work-items/{id}/publish-preflight` runs the same validators without
 transitioning and returns every blocker and warning with a stable `code`, the next gate move, whether a
 review currently satisfies the gate, whether the creator's consent stands, and `earliestFireTime` — "as

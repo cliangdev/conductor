@@ -44,6 +44,7 @@ public class ReviewService {
     /** The {@code reviewOutcomes} token a Workflow declares to opt its gated edge into that routing. */
     private static final String REQUEST_CHANGES_OUTCOME = "request_changes";
 
+    private final LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
     private final ReviewRepository reviewRepository;
     private final WorkItemReviewerRepository workItemReviewerRepository;
     private final ProjectMemberRepository projectMemberRepository;
@@ -63,7 +64,9 @@ public class ReviewService {
             SignalBus signalBus,
             WorkItemWorkflowService workItemWorkflowService,
             WorkItemService workItemService,
-            PublishBundleHasher publishBundleHasher) {
+            PublishBundleHasher publishBundleHasher,
+            LifecycleTriggerDispatcher lifecycleTriggerDispatcher) {
+        this.lifecycleTriggerDispatcher = lifecycleTriggerDispatcher;
         this.reviewRepository = reviewRepository;
         this.workItemReviewerRepository = workItemReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
@@ -75,8 +78,20 @@ public class ReviewService {
         this.publishBundleHasher = publishBundleHasher;
     }
 
+    /**
+     * A recorded verdict plus what it did to the item: the {@code review_approved} cascade's outcome when
+     * the Workflow declares such edges, else empty.
+     */
+    public record ReviewSubmission(Review review, Optional<LifecycleTriggerDispatcher.AutoTransition> autoTransition) {}
+
     @Transactional
     public Review submitReview(String projectId, String workItemId, String verdict, String body, User currentUser) {
+        return submitReviewWithOutcome(projectId, workItemId, verdict, body, currentUser).review();
+    }
+
+    @Transactional
+    public ReviewSubmission submitReviewWithOutcome(String projectId, String workItemId, String verdict, String body,
+                                                    User currentUser) {
         if (!VALID_VERDICTS.contains(verdict)) {
             throw new BusinessException("Invalid verdict. Must be one of: APPROVED, CHANGES_REQUESTED, COMMENTED");
         }
@@ -119,9 +134,9 @@ public class ReviewService {
                 Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict),
                 new SignalOrigin("work_item", workItemId)));
 
-        routeOnVerdict(projectId, workItem, verdict);
+        Optional<LifecycleTriggerDispatcher.AutoTransition> autoTransition = routeOnVerdict(projectId, workItem, verdict);
 
-        return review;
+        return new ReviewSubmission(review, autoTransition);
     }
 
     /**
@@ -160,13 +175,33 @@ public class ReviewService {
      * A Workflow declaring neither (ENGINEERING, whose gated {@code CODE_REVIEW -> DONE} edge has no
      * changes-requested lane) is untouched: reviews there stay advisory exactly as before.
      *
-     * <p>An {@code APPROVED} verdict deliberately moves nothing. Approval only <em>satisfies</em> the gate;
-     * choosing to take the now-unblocked edge stays with the doer (or with a system trigger such as
-     * {@code pr_merged}), which is what keeps the gate a gate rather than an auto-advance.
+     * <p>An {@code APPROVED} verdict moves nothing by itself. Approval only <em>satisfies</em> the gate;
+     * taking the now-unblocked edge stays with the doer — unless the Workflow says otherwise by declaring
+     * {@code trigger: review_approved} on that edge, in which case the {@link LifecycleTriggerDispatcher}
+     * runs the cascade the definition asks for (MARKETING: straight through Approved to Scheduled) and the
+     * outcome comes back here for the reviewer to see. A Workflow declaring no such edge is untouched.
      */
-    private void routeOnVerdict(String projectId, WorkItem workItem, String verdict) {
-        if (workItem == null || !CHANGES_REQUESTED_VERDICT.equals(verdict)) {
-            return;
+    private Optional<LifecycleTriggerDispatcher.AutoTransition> routeOnVerdict(String projectId, WorkItem workItem,
+                                                                                String verdict) {
+        if (workItem == null) {
+            return Optional.empty();
+        }
+        if (APPROVED_VERDICT.equals(verdict)) {
+            Optional<LifecycleTriggerDispatcher.AutoTransition> outcome =
+                    lifecycleTriggerDispatcher.onReviewApproved(projectId, workItem.getId());
+            outcome.filter(LifecycleTriggerDispatcher.AutoTransition::blocked).ifPresent(blocked -> {
+                WorkItem reloaded = workItemRepository.findById(workItem.getId()).orElse(workItem);
+                Statechart statechart = workItemWorkflowService.resolveFor(projectId, reloaded);
+                String next = statechart.triggeredTransitionFrom(blocked.toStatus(),
+                                WorkItemWorkflowService.TRIGGER_REVIEW_APPROVED)
+                        .map(StatechartTransition::to).orElse(blocked.toStatus());
+                workItemService.publishAutoTransitionBlocked(projectId, reloaded, blocked.toStatus(), next,
+                        blocked.blockedReason());
+            });
+            return outcome;
+        }
+        if (!CHANGES_REQUESTED_VERDICT.equals(verdict)) {
+            return Optional.empty();
         }
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
         String fromStatus = workItem.getCurrentStatus();
@@ -175,12 +210,12 @@ public class ReviewService {
                 .filter(StatechartTransition::requiresReview)
                 .anyMatch(t -> t.reviewOutcomes().contains(REQUEST_CHANGES_OUTCOME));
         if (!gateAcceptsRejection) {
-            return;
+            return Optional.empty();
         }
 
         Optional<StatechartTransition> route = statechart.transition(fromStatus, verdict);
         if (route.isEmpty()) {
-            return;
+            return Optional.empty();
         }
 
         // The rejection closes the review round. Any approval already sitting on the item belongs to the round
@@ -190,6 +225,7 @@ public class ReviewService {
         workItem.setCurrentStatus(route.get().to());
         workItemRepository.save(workItem);
         workItemService.publishStatusChanged(projectId, workItem, fromStatus, workItem.getCurrentStatus(), null);
+        return Optional.empty();
     }
 
     @Transactional(readOnly = true)

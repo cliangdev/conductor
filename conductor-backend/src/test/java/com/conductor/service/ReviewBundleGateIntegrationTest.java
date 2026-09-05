@@ -172,6 +172,10 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         assignReviewer(reviewerB);
 
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
+        // Reviewer A's approval scheduled the Post; bring it back before the gate so reviewer B can reject
+        // it in the same review round (a plain status move does not bump the round).
+        moveTo(post, "APPROVED");
+        moveTo(post, "IN_REVIEW");
         reviewService.submitReview(project.getId(), post.getId(), "CHANGES_REQUESTED", "tighten it", reviewerB);
 
         assertThat(reload(post).getCurrentStatus()).isEqualTo("CHANGES_REQUESTED");
@@ -375,6 +379,16 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
      * this still exercises the bundle-hash mechanism rather than short-circuiting it.
      */
     private void reopenEditAndResubmit(Runnable edit) {
+        // An approval now schedules the Post on its own (review_approved cascades to SCHEDULED), so the
+        // way back to the author is the Workflow's own edges: Unschedule, Send back, then Request changes.
+        String status = reload(post).getCurrentStatus();
+        if ("SCHEDULED".equals(status)) {
+            moveTo(post, "APPROVED");
+            status = "APPROVED";
+        }
+        if ("APPROVED".equals(status)) {
+            moveTo(post, "IN_REVIEW");
+        }
         moveTo(post, "CHANGES_REQUESTED");
         edit.run();
         moveTo(post, "IN_REVIEW");

@@ -460,6 +460,49 @@ public class WorkItemService {
     }
 
     /**
+     * What leaving the scheduled status does, beyond the status itself: any native-lane hand-off is revoked,
+     * so a Facebook or YouTube post already handed to the platform does not still go live after an
+     * unschedule, an edit-revert or a delete. A failed revocation throws, and the caller must not commit
+     * the status change. Public so a system-triggered move gets the same treatment a human's does.
+     *
+     * @param fromStatus the status the item is leaving; the item's own status is already the new one
+     */
+    public void applyScheduledExit(String projectId, WorkItem workItem, String fromStatus) {
+        String scheduledStatus = scheduledStatusFor(projectId, workItem);
+        if (scheduledStatus.equals(fromStatus) && !scheduledStatus.equals(workItem.getCurrentStatus())) {
+            nativeHandoffService.unschedule(workItem);
+        }
+    }
+
+    /**
+     * Tells the project that an approval landed but the item could not take the edge it would have taken
+     * on its own. Enriched the same way a status change is (noun, area, display id, the publishing flag
+     * notification routing reads), so it lands in the Publishing channel beside the status changes it
+     * failed to produce.
+     */
+    public void publishAutoTransitionBlocked(String projectId, WorkItem workItem, String fromStatus,
+                                             String toStatus, String reason) {
+        Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("workItemId", workItem.getId());
+        meta.put("workItemTitle", workItem.getTitle());
+        meta.put("noun", statechart.noun());
+        if (statechart.area() != null) {
+            meta.put("area", statechart.area());
+        }
+        if (workItem.getProject() != null && workItem.getProject().getKey() != null
+                && workItem.getSequenceNumber() != null) {
+            meta.put("displayId", workItem.getProject().getKey() + "-" + workItem.getSequenceNumber());
+        }
+        meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(declaresPublishTargets(statechart)));
+        meta.put("fromStatus", fromStatus);
+        meta.put("toStatus", toStatus);
+        meta.put("reason", reason == null ? "" : reason);
+        signalBus.publish(Signal.of(SignalTypes.CONDUCTOR_WORK_ITEM_AUTO_TRANSITION_BLOCKED, projectId,
+                workItem.getId(), Instant.now(), meta, new SignalOrigin("work_item", workItem.getId())));
+    }
+
+    /**
      * What entering the scheduled status does, beyond the status itself. A target's fireTime is copied from
      * the Post when the target is selected, so a Post rescheduled after its targets were chosen would
      * otherwise fire at the old time — the schedulers read fireTime off the row, never off the Work Item —
