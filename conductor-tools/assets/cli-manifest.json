@@ -164,6 +164,10 @@
       {
         "name": "conductor-ux-ui-design",
         "description": "Expert UX/UI design guidance for creating simple, user-focused interfaces. Applies human-centered design principles."
+      },
+      {
+        "name": "conductor-publisher",
+        "description": "Schedules and tracks a Post through the publishing pipeline: gathers copy, destinations and timing, checks content, creates it with create_post, reports the confirmation table, follows it through review and publishing."
       }
     ]
   },
