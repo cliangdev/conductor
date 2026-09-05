@@ -112,14 +112,18 @@ describe('createWorkItem absolutePath', () => {
 describe('getWorkItem absolutePath', () => {
   const issueId = 'iss_local'
 
-  it('returns absolutePath for a local issue', async () => {
+  it('returns the server view plus the local file for a local issue', async () => {
     const issueDir = path.join(tmpRoot, '.conductor', 'issues', issueId)
     fs.mkdirSync(issueDir, { recursive: true })
-    fs.writeFileSync(path.join(issueDir, 'issue.md'), '---\nid: iss_local\n---\n', 'utf8')
+    fs.writeFileSync(path.join(issueDir, 'issue.md'), '---\nid: iss_local\nstatus: SCHEDULED\n---\n', 'utf8')
+    // The local frontmatter says SCHEDULED; the server has since rolled the item up. The server wins —
+    // an agent polling here must never read a status this client alone remembers.
+    mockedApiGet.mockResolvedValueOnce({ id: issueId, status: 'PUBLISHED', title: 'Launch' })
 
     const result = await getWorkItem({ issueId }, baseConfig)
 
-    expect(result['source']).toBe('local')
+    expect(result['status']).toBe('PUBLISHED')
+    expect(String(result['localContent'])).toContain('status: SCHEDULED')
     expect(result['absolutePath']).toBe(issueDir + path.sep)
     expect(result['localPath']).toBe(`.conductor/issues/${issueId}/`)
   })

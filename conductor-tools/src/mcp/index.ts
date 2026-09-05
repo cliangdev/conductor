@@ -53,6 +53,15 @@ import {
   completeManualPublish,
 } from './tools/marketing.js'
 import {
+  createPost,
+  getPostStatus,
+  submitPost,
+  listPosts,
+  submitReview,
+  listAssets,
+  type CreatePostParams,
+} from './tools/posts.js'
+import {
   listProjectDocs,
   readProjectDoc,
   writeProjectDoc,
@@ -799,17 +808,17 @@ const TOOLS = [
   },
   {
     name: 'list_publish_targets',
-    description: 'Publishing destinations for a project: each connected account with its platform, connectionId, label, lane and credential health. Pass issueId to also get the targets that Work Item publishes to, each with its state, permalink and error — the read-back for set_publish_targets and the status check after a scheduled publish or a retry. A selected target also carries effectiveCaption and effectiveAssetIds: what will actually go out there, whether it chose its own or inherited the Post\'s. TikTok entries carry the creator\'s allowed privacy levels and nickname; they are the only source for a target\'s privacyLevel.',
+    description: 'Accounts a project can publish to (platform, connectionId, label, lane, health, and the publishOptions keys that platform accepts), plus a manual destination per platform. With issueId, also that Work Item\'s selected targets with state, permalink, errorMessage, effectiveCaption and effectiveAssetIds — the status read-back after set_publish_targets, a scheduled publish or a retry.',
     inputSchema: {
       type: 'object',
       properties: {
-        issueId: { type: 'string', description: 'Work Item ID — include to also return that item\'s selected targets and their publish outcomes (optional)' },
+        issueId: { type: 'string', description: 'Work Item ID — include to also return its selected targets and their outcomes (optional)' },
       },
     },
   },
   {
     name: 'set_publish_targets',
-    description: 'Choose which connected accounts a Work Item publishes to, with per-target caption, media and options. Idempotent set-replace: send the complete selection (empty array clears it), and send every field you want kept — a target re-sent without captionOverride or assetIds loses them. Already-selected targets keep their state. Discover platform/connectionId pairs with list_publish_targets first and call it again after to verify. Editing the selection on an approved item sends it back for review. Publishing to TikTok also needs the creator\'s consent, which a human records in the Conductor UI — no tool can record or skip it.',
+    description: 'Choose the accounts a Work Item publishes to, each with an optional caption override, ordered media subset and platform options. Set-replace: send the complete selection every time (a target re-sent without captionOverride or assetIds loses them; [] clears all). Editing an approved item sends it back for review. Verify with list_publish_targets; read get_post_status for what the gate still wants. TikTok consent is recorded by a human — the creator, in the Conductor UI — and no tool can.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -821,27 +830,17 @@ const TOOLS = [
             type: 'object',
             properties: {
               platform: { type: 'string', description: 'Platform of the account, from list_publish_targets' },
-              connectionId: { type: 'string', description: 'The connected account to publish to, from list_publish_targets. Omit it to select this platform\'s manual destination — the one a human posts by hand — which is offered whether or not the project has connected that platform.' },
-              captionOverride: {
-                type: 'string',
-                description: 'Copy for this destination alone, replacing the Post\'s caption here. Omit it to use the Post\'s.',
-              },
+              connectionId: { type: 'string', description: 'The connected account, from list_publish_targets. Omit for the platform\'s manual destination, which a person posts by hand.' },
+              captionOverride: { type: 'string', description: 'Copy for this destination alone. Omit to use the Post\'s caption.' },
               assetIds: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'Ordered subset of the Post\'s uploaded media this destination publishes (ids from upload_asset). Omit or send an empty array to inherit the Post\'s whole set. Order matters: Instagram crops a carousel to its first item and TikTok covers a photo post with it. Instagram takes 1 item or 2-10; Facebook one video or several photos; TikTok one video or up to 35 JPEG/WEBP images, never mixed; YouTube exactly one video.',
+                description: 'Ordered subset of the Post\'s uploaded media for this destination (ids from upload_asset or list_assets). Omit or [] to inherit the whole set. Order is content: Instagram crops a carousel to its first item.',
               },
               publishOptions: {
                 type: 'object',
-                description: 'Per-platform options for this target. A TikTok target with no privacyLevel blocks approval.',
-                properties: {
-                  privacyLevel: { type: 'string', description: 'TikTok: one of that account\'s privacyLevelOptions from list_publish_targets' },
-                  disableComment: { type: 'boolean', description: 'TikTok: turn comments off' },
-                  disableDuet: { type: 'boolean', description: 'TikTok: turn duets off' },
-                  disableStitch: { type: 'boolean', description: 'TikTok: turn stitches off' },
-                  brandContentToggle: { type: 'boolean', description: 'TikTok: paid partnership; TikTok refuses it combined with SELF_ONLY' },
-                  brandOrganicToggle: { type: 'boolean', description: 'TikTok: promoting the creator\'s own brand' },
-                },
+                additionalProperties: true,
+                description: 'Per-platform options under the keys list_publish_targets reports as optionKeys for that platform (TikTok: privacyLevel from the account\'s privacyLevelOptions, disableComment, disableDuet, disableStitch, brandContentToggle, brandOrganicToggle). Unknown keys are dropped.',
               },
             },
             required: ['platform'],
@@ -853,44 +852,154 @@ const TOOLS = [
   },
   {
     name: 'upload_asset',
-    description: 'Attach a local file to a Work Item as a file Asset in one call — mints the upload URL, uploads the bytes and confirms. filePath is a path on this machine (this server runs locally). The server enforces the media-type allowlist and size ceiling; a refused file leaves no Asset behind. Video: pass width, height and durationSeconds — they cannot be derived server-side and approval stays blocked without them. Returns the stored Asset as read back after confirmation. Use record_asset instead for a link.',
+    description: 'Attach a media file to a Work Item in one call (mint, upload, confirm) from a local path or a public URL. Video is measured here (MP4/MOV) unless width, height and durationSeconds are passed. Returns the stored Asset; a warning names any measurement still missing. Use record_asset for a link.',
     inputSchema: {
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Work Item ID' },
-        filePath: { type: 'string', description: 'Absolute path to the file on this machine' },
-        type: { type: 'string', description: 'Asset type, validated against the Workflow\'s asset_types' },
+        filePath: { type: 'string', description: 'Absolute path to a file on this machine (use this or url)' },
+        url: { type: 'string', description: 'Public http(s) URL to fetch and upload (use this or filePath)' },
+        type: { type: 'string', description: 'Asset type from the Workflow\'s asset_types (optional — defaults to the first one)' },
         label: { type: 'string', description: 'Human label (optional — defaults to the filename)' },
-        width: { type: 'number', description: 'Pixel width of the media (optional; required in practice for video)' },
-        height: { type: 'number', description: 'Pixel height of the media (optional; required in practice for video)' },
-        durationSeconds: { type: 'number', description: 'Playback length in seconds (optional; required in practice for video)' },
+        width: { type: 'number', description: 'Pixel width (optional; measured for MP4/MOV when omitted)' },
+        height: { type: 'number', description: 'Pixel height (optional; measured for MP4/MOV when omitted)' },
+        durationSeconds: { type: 'number', description: 'Playback length in seconds (optional; measured for MP4/MOV when omitted)' },
       },
-      required: ['issueId', 'filePath', 'type'],
+      required: ['issueId'],
     },
   },
   {
-    name: 'complete_manual_publish',
-    description: 'Record that a manual publish target was published by hand, storing the live URL. Only for targets on the MANUAL lane (list_publish_targets shows lane and state; a manual one due to go out is AWAITING_MANUAL) — a target that publishes automatically is refused, because its poller will publish it and report the real outcome. This reports what a human already did outside Conductor; it publishes nothing. Records the same destination Asset an API publish does, so the link surfaces on the calendar and list like any other. Returns the target as read back after recording.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Work Item ID' },
-        targetId: { type: 'string', description: 'The publish target\'s id, from list_publish_targets' },
-        permalink: { type: 'string', description: 'Link to the post that actually went out. Required — with no platform to ask, it is the only record this destination was published.' },
-        publishedAt: { type: 'string', description: 'ISO-8601 instant it actually went out (optional; defaults to now)' },
-      },
-      required: ['issueId', 'targetId', 'permalink'],
-    },
-  },
-  {
-    name: 'retry_failed_publish_targets',
-    description: 'Re-fire only the FAILED publish targets on a Work Item, with a fresh idempotency key. Published targets are untouched and nothing failed is a harmless no-op. Returns the item\'s status and every target. Publishing is asynchronous — call list_publish_targets after to see where each target landed.',
+    name: 'list_assets',
+    description: 'Every Asset on a Work Item — uploaded media with id, label, contentType, dimensions and uploadStatus, and recorded links. The ids set_publish_targets.assetIds takes.',
     inputSchema: {
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Work Item ID' },
       },
       required: ['issueId'],
+    },
+  },
+  {
+    name: 'complete_manual_publish',
+    description: 'Record that a MANUAL-lane target (state AWAITING_MANUAL in list_publish_targets) was posted by hand, storing its live URL. Refused for an automated target, whose poller reports the real outcome. Returns the target as stored.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        targetId: { type: 'string', description: 'The publish target\'s id, from list_publish_targets' },
+        permalink: { type: 'string', description: 'Link to the post that went out (required — the only record it did)' },
+        publishedAt: { type: 'string', description: 'ISO-8601 instant it went out (optional; defaults to now)' },
+      },
+      required: ['issueId', 'targetId', 'permalink'],
+    },
+  },
+  {
+    name: 'retry_failed_publish_targets',
+    description: 'Re-fire only the FAILED targets on a Work Item with a fresh idempotency key; published ones are untouched. Asynchronous — read get_post_status afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+      },
+      required: ['issueId'],
+    },
+  },
+  // --- Posts: the publishing pipeline in one call each ---
+  {
+    name: 'create_post',
+    description: 'Create, schedule and submit a Post in one call: writes the caption, uploads media (paths or URLs, video measured here), picks destinations by account name (omit account for the manual lane), schedules at the server\'s earliest acceptable time when none is given, then submits for review with the named reviewers unless submit is false. Returns the confirmation table — postId, status, time, each destination — plus blockers, warnings and nextStep. Poll get_post_status afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The caption that goes out' },
+        title: { type: 'string', description: 'Post title (optional — defaults to the caption\'s first line). Published as the YouTube title and TikTok headline.' },
+        media: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'A file on this machine' },
+              url: { type: 'string', description: 'A public http(s) URL' },
+              label: { type: 'string' },
+              width: { type: 'number' },
+              height: { type: 'number' },
+              durationSeconds: { type: 'number' },
+            },
+          },
+          description: 'Files to attach, in order. Every destination inherits all of them unless it names assetIds.',
+        },
+        targets: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              platform: { type: 'string', description: 'facebook, instagram, youtube, tiktok, … (from list_publish_targets)' },
+              account: { type: 'string', description: 'The account\'s label or connectionId from list_publish_targets. Omit for the manual destination.' },
+              captionOverride: { type: 'string', description: 'Copy for this destination alone (optional)' },
+              assetIds: { type: 'array', items: { type: ['string', 'number'] }, description: 'Ordered subset of media for this destination: 0-based indexes into `media`, or asset ids. Omit to inherit all.' },
+              options: { type: 'object', additionalProperties: true, description: 'Platform options under the keys list_publish_targets reports as optionKeys (TikTok needs privacyLevel).' },
+            },
+            required: ['platform'],
+          },
+          description: 'Where it goes. At least one.',
+        },
+        scheduledFor: { type: 'string', description: 'ISO-8601 fire time (optional — defaults to the next quarter-hour the chosen destinations accept)' },
+        timezone: { type: 'string', description: 'IANA zone the schedule is authored in (optional — defaults to this machine\'s)' },
+        submit: { type: 'boolean', description: 'Submit for review once ready (default true). false leaves it in Draft.' },
+        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the REVIEWER role)' },
+        workflow: { type: 'string', description: 'Workflow slug (optional — required only when more than one Workflow publishes)' },
+      },
+      required: ['text', 'targets'],
+    },
+  },
+  {
+    name: 'get_post_status',
+    description: 'Where a Post stands, live from the server: status, schedule, every destination with state, permalink and errorMessage, the gate\'s blockers and warnings, review state, whether the TikTok consent a human records in the UI stands, and nextStep. The read-back after create_post, submit_post, an approval, a scheduled publish or a retry.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        postId: { type: 'string', description: 'The Post\'s Work Item ID' },
+      },
+      required: ['postId'],
+    },
+  },
+  {
+    name: 'submit_post',
+    description: 'Hand a Post to review: assigns the named reviewers, then takes the move the gate names (In Review on a reviewed Workflow, Scheduled on one without a review gate) if nothing blocks it. Returns the same confirmation as create_post; blockers mean nothing moved.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        postId: { type: 'string', description: 'The Post\'s Work Item ID' },
+        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (optional)' },
+      },
+      required: ['postId'],
+    },
+  },
+  {
+    name: 'list_posts',
+    description: 'Posts across every publishing Workflow, newest schedule first, each with its destinations\' state and permalinks. Filter by status, a scheduledFor window (since/until) or platform.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Workflow status, e.g. SCHEDULED, PUBLISHED, FAILED (optional)' },
+        since: { type: 'string', description: 'ISO-8601; only Posts scheduled at or after this (optional)' },
+        until: { type: 'string', description: 'ISO-8601; only Posts scheduled at or before this (optional)' },
+        platform: { type: 'string', description: 'Only Posts with a destination on this platform (optional)' },
+        limit: { type: 'number', description: 'Max rows, up to 50 (optional)' },
+      },
+    },
+  },
+  {
+    name: 'submit_review',
+    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned reviewer holding the REVIEWER role. "approve" on a reviewed Workflow schedules the Post in the same request (autoTransition says how far it got); "request_changes" sends it back to its author. Does not record TikTok consent — a human (the creator) does that in the Conductor UI.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        postId: { type: 'string', description: 'The Post\'s Work Item ID' },
+        verdict: { type: 'string', enum: ['approve', 'request_changes'], description: 'The verdict' },
+        summary: { type: 'string', description: 'Review notes (optional)' },
+      },
+      required: ['postId', 'verdict'],
     },
   },
 ]
@@ -1536,13 +1645,57 @@ export async function runMcpServer(): Promise<void> {
             )
           )
         }
+        case 'list_assets': {
+          return successResponse(await listAssets({ issueId: params['issueId'] as string }, config))
+        }
+        case 'create_post': {
+          return successResponse(await createPost(params as unknown as CreatePostParams, config))
+        }
+        case 'get_post_status': {
+          return successResponse(await getPostStatus({ postId: params['postId'] as string }, config))
+        }
+        case 'submit_post': {
+          return successResponse(
+            await submitPost(
+              { postId: params['postId'] as string, reviewers: params['reviewers'] as string[] | undefined },
+              config
+            )
+          )
+        }
+        case 'list_posts': {
+          return successResponse(
+            await listPosts(
+              {
+                status: params['status'] as string | undefined,
+                since: params['since'] as string | undefined,
+                until: params['until'] as string | undefined,
+                platform: params['platform'] as string | undefined,
+                limit: params['limit'] as number | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'submit_review': {
+          return successResponse(
+            await submitReview(
+              {
+                postId: params['postId'] as string,
+                verdict: params['verdict'] as string,
+                summary: params['summary'] as string | undefined,
+              },
+              config
+            )
+          )
+        }
         case 'upload_asset': {
           return successResponse(
             await uploadAsset(
               {
                 issueId: params['issueId'] as string,
-                filePath: params['filePath'] as string,
-                type: params['type'] as string,
+                filePath: params['filePath'] as string | undefined,
+                url: params['url'] as string | undefined,
+                type: params['type'] as string | undefined,
                 label: params['label'] as string | undefined,
                 width: params['width'] as number | undefined,
                 height: params['height'] as number | undefined,

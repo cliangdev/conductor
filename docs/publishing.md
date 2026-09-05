@@ -134,6 +134,18 @@ Automated targets are derived from the project's ACTIVE connections — connect 
 appears, disconnect it and it stops being offered. A manual target is derived from nothing and is
 always offered, one per platform.
 
+## Over MCP
+
+An agent drives the whole pipeline with four tools, in the shape Blotato made familiar:
+`list_publish_targets` (accounts, by name) → `create_post` (caption, media from paths or URLs, destinations
+by account name, fire time, reviewers — one call) → `get_post_status` (status, every destination's
+outcome, the gate's blockers, review and consent state) → `submit_review` (as an assigned REVIEWER's user
+key; approval schedules the Post). `submit_post`, `list_posts`, `list_assets`, `set_publish_targets`,
+`upload_asset`, `retry_failed_publish_targets` and `complete_manual_publish` cover the rest. Nothing is
+decided client-side that the server also decides: the asset type comes from the Workflow, the fire time
+from the preflight's `earliestFireTime`, the readiness from the preflight. The one thing no tool does is
+record TikTok consent — that stays a human act in the UI.
+
 ## The manual lane
 
 A manual destination is how a Post publishes with **no integration at all** — a project still waiting
