@@ -226,7 +226,7 @@ public class WorkItemWorkflowService {
      * <p>On top of that, an approval must still be <em>current</em> (COND-23): it has to belong to the item's
      * open review round and, when the item carries a publish bundle, to cover the bundle as it stands now.
      * That second pass runs only when one of those bindings is actually in play — an item still on round 0
-     * with no publish targets (every ENGINEERING item, and every review written before V115) takes the
+     * with no publish targets (every ENGINEERING item, and every review written before V134) takes the
      * original path and nothing else, so its gating is byte-for-byte what it was.
      */
     private boolean isReviewSatisfied(String projectId, WorkItem workItem, StatechartTransition transition) {
@@ -246,7 +246,7 @@ public class WorkItemWorkflowService {
 
     /**
      * The bound check: at least one APPROVED review from a qualifying reviewer that belongs to the open review
-     * round and was cast against the bundle the item currently hashes to. A review predating V115 carries a
+     * round and was cast against the bundle the item currently hashes to. A review predating V134 carries a
      * null round and a null hash and skips both tests, so it satisfies the gate exactly as it always did.
      */
     private boolean hasCurrentApprovedReview(String projectId, WorkItem workItem, StatechartTransition transition) {
@@ -268,7 +268,7 @@ public class WorkItemWorkflowService {
                     continue;
                 }
             } else if (review.getReviewRound() != null) {
-                // A null hash on a review that predates V115 is the legacy case, and is honoured — that is
+                // A null hash on a review that predates V134 is the legacy case, and is honoured — that is
                 // what the round being null identifies. A null hash on a *modern* review means something
                 // else entirely: it was given while the item carried no publish targets, so there was no
                 // bundle to bind to. Treating that as "skip the check" let an approval of an empty Post

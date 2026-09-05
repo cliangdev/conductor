@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
 /**
- * DB-backed coverage for {@code V112__create_post_publish_target.sql} (COND-23). The three things
+ * DB-backed coverage for {@code V126__create_post_publish_target.sql} (COND-23). The three things
  * that can only be proven against real Postgres with Flyway + {@code ddl-auto=validate}: that the
  * migration applies and every documented column round-trips, that the uniqueness guarantees actually
  * reject a double-target and a reused idempotency key, and that the due-poll / native-handoff

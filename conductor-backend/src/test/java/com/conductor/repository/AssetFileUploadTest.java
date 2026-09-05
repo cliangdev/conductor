@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * DB-backed coverage for the file-upload storage columns added to {@code assets} by
- * {@code V113__asset_file_upload.sql} (COND-23). Three things can only be proven against real
+ * {@code V127__asset_file_upload.sql} (COND-23). Three things can only be proven against real
  * Postgres with Flyway + {@code ddl-auto=validate}: that the migration applies and the four columns
  * are nullable, that a pre-existing {@code kind='link'} row still saves and reads back untouched, and
  * that the CHECK constraint actually rejects an UPLOADED row missing its storage location.

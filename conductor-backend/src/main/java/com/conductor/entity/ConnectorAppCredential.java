@@ -51,7 +51,7 @@ public class ConnectorAppCredential implements EnvelopeEncrypted {
 
     /**
      * This row's AES-256 DEK, wrapped by the KMS KEK and Base64-encoded. Null only on a row written
-     * before the envelope landed (Flyway V118); {@code ConnectorAppCredentialService} refuses to
+     * before the envelope landed (Flyway V137); {@code ConnectorAppCredentialService} refuses to
      * decrypt such a row rather than guess at it.
      */
     @JsonIgnore

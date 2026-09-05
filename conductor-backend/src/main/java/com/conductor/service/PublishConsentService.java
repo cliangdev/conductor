@@ -47,7 +47,7 @@ import java.util.TreeMap;
  * A consent row carries a {@code consentHash} — the subject the creator agreed to. Consent holds only
  * while the Post still hashes to it, so swapping the destination account, changing a privacy level or
  * uploading a different cut silently withdraws consent instead of letting a standing "yes" cover a post
- * nobody has seen. This is the same mechanism {@code reviews.bundle_hash} (V115) uses to bind an approval
+ * nobody has seen. This is the same mechanism {@code reviews.bundle_hash} (V134) uses to bind an approval
  * to what was approved, and the canonicalisation is deliberately {@link PublishBundleHasher}'s: sorted
  * keys, collections ordered by their own serialization, hex SHA-256, so the same bundle always hashes to
  * the same value.
