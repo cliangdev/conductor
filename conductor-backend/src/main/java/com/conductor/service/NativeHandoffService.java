@@ -208,6 +208,7 @@ public class NativeHandoffService {
     private final ActiveConnectionResolver connectionResolver;
     private final ActionInvocationService actionInvocationService;
     private final PublishOutcomeService publishOutcomeService;
+    private final PublishInputBuilder publishInputBuilder;
     private final boolean enabled;
 
     /**
@@ -227,11 +228,13 @@ public class NativeHandoffService {
                                 ActiveConnectionResolver connectionResolver,
                                 ActionInvocationService actionInvocationService,
                                 PublishOutcomeService publishOutcomeService,
+                                PublishInputBuilder publishInputBuilder,
                                 @Value("${conductor.native-handoff.enabled:true}") boolean enabled) {
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
         this.publishOutcomeService = publishOutcomeService;
+        this.publishInputBuilder = publishInputBuilder;
         this.enabled = enabled;
     }
 
@@ -537,16 +540,7 @@ public class NativeHandoffService {
      * themselves are the per-platform publisher's to fill in.
      */
     private Map<String, Object> buildHandoffInput(PostPublishTarget target, WorkItem post, NativePlatform platform) {
-        Map<String, Object> input = new LinkedHashMap<>();
-        String caption = target.getCaptionOverride() != null && !target.getCaptionOverride().isBlank()
-                ? target.getCaptionOverride()
-                : post.getDescription();
-        if (caption != null) {
-            input.put(platform.captionParam(), caption);
-        }
-        if (post.getTitle() != null && !"title".equals(platform.captionParam())) {
-            input.put("title", post.getTitle());
-        }
+        Map<String, Object> input = publishInputBuilder.build(target, post, platform.captionParam());
         input.putAll(platform.publishExtras());
         // Normalized to a UTC instant, not the stored offset's rendering: the platform is being told a
         // moment in time, and an offset-bearing string round-trips differently depending on where the row

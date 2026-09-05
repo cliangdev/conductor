@@ -3,6 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
@@ -11,6 +12,7 @@ import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
@@ -28,7 +30,11 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Optional;
 
@@ -48,26 +54,37 @@ import static org.mockito.Mockito.when;
  */
 class MediaTargetValidatorTest {
 
+    private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-09-01T10:00:00Z");
     private static final String WORK_ITEM_ID = "post-1";
     private static final long GIB = 1024L * 1024 * 1024;
 
     private AssetRepository assetRepository;
     private PostPublishTargetRepository postPublishTargetRepository;
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private ConnectionRepository connectionRepository;
     private MediaTargetValidator validator;
 
     private Statechart marketing;
     private Statechart engineering;
+    /** The Post under test, shared so a test can set the copy that will actually go out. */
+    private WorkItem post;
+    private final Map<String, List<PostPublishTargetAsset>> selectionsByTarget = new LinkedHashMap<>();
 
     @BeforeEach
     void setUp() {
         assetRepository = Mockito.mock(AssetRepository.class);
         postPublishTargetRepository = Mockito.mock(PostPublishTargetRepository.class);
         connectionRepository = Mockito.mock(ConnectionRepository.class);
+        targetAssetRepository = Mockito.mock(PostPublishTargetAssetRepository.class);
+        // A real resolver over the same mocked repositories: every existing test stubs the Work Item's
+        // assets, and with no per-target selection stored those are exactly what each target inherits.
         validator = new MediaTargetValidator(assetRepository, postPublishTargetRepository,
-                connectionRepository, new ObjectMapper());
+                connectionRepository, new ObjectMapper(),
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository));
         marketing = statechart("/schema/examples/marketing.workflow.json");
         engineering = statechart("/schema/examples/engineering.workflow.json");
+        selectionsByTarget.clear();
+        post = postInReview();
     }
 
     // --- [auto] Media violating a target's format rules blocks approval with a per-target message ---
@@ -434,7 +451,7 @@ class MediaTargetValidatorTest {
     // --- helpers ---
 
     private MediaTargetValidator.Result approve() {
-        return validator.validateForTransition(postInReview(), marketing, "APPROVED");
+        return validator.validateForTransition(post, marketing, "APPROVED");
     }
 
     private WorkItem postInReview() {
@@ -458,8 +475,190 @@ class MediaTargetValidatorTest {
                 .thenReturn(new ArrayList<>(List.of(targets)));
     }
 
+    // --- Per-target media: a rule is checked against what its own destination will actually send ---
+
+    @Test
+    void aPngIsFineOnInstagramWhenInstagramWasNotTheDestinationThatSelectedIt() {
+        PostPublishTarget instagram = target("instagram", "conn-meta", "@acme");
+        PostPublishTarget facebook = target("facebook", "conn-meta", "Acme Page");
+        givenTargets(instagram, facebook);
+        Asset jpeg = image("card.jpg", "image/jpeg", 1080, 1080);
+        Asset png = image("card.png", "image/png", 1080, 1080);
+        givenAssets(jpeg, png);
+        // Before per-target media this was unapprovable: every asset was checked against every target, so
+        // a PNG uploaded for Facebook blocked the whole Post on Instagram's JPEG rule.
+        givenSelection(instagram, jpeg);
+        givenSelection(facebook, png);
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    // --- Composition: what the selected files add up to as one post ---
+
+    @Test
+    void blocksACarouselOverTenItemsOnInstagram() {
+        PostPublishTarget instagram = target("instagram", "conn-meta", "@acme");
+        givenTargets(instagram);
+        Asset[] eleven = new Asset[11];
+        for (int i = 0; i < eleven.length; i++) {
+            eleven[i] = image("card-" + i + ".jpg", "image/jpeg", 1080, 1080);
+        }
+        givenAssets(eleven);
+        givenSelection(instagram, eleven);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Instagram")
+                .hasMessageContaining("at most 10");
+    }
+
+    @Test
+    void allowsATenItemCarouselOnInstagram() {
+        PostPublishTarget instagram = target("instagram", "conn-meta", "@acme");
+        givenTargets(instagram);
+        Asset[] ten = new Asset[10];
+        for (int i = 0; i < ten.length; i++) {
+            ten[i] = image("card-" + i + ".jpg", "image/jpeg", 1080, 1080);
+        }
+        givenAssets(ten);
+        givenSelection(instagram, ten);
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksAVideoMixedWithPhotosOnFacebook() {
+        PostPublishTarget facebook = target("facebook", "conn-meta", "Acme Page");
+        givenTargets(facebook);
+        Asset clip = video("clip.mp4", 10L * 1024 * 1024, 1080, 1080, "20");
+        Asset photo = image("card.jpg", "image/jpeg", 1080, 1080);
+        givenAssets(clip, photo);
+        givenSelection(facebook, clip, photo);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Facebook")
+                .hasMessageContaining("either one video or a set of photos");
+    }
+
+    @Test
+    void allowsSeveralPhotosOnFacebook() {
+        PostPublishTarget facebook = target("facebook", "conn-meta", "Acme Page");
+        givenTargets(facebook);
+        Asset one = image("a.jpg", "image/jpeg", 1080, 1080);
+        Asset two = image("b.png", "image/png", 1080, 1080);
+        givenAssets(one, two);
+        givenSelection(facebook, one, two);
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksVideoAndImagesTogetherOnTikTok() {
+        PostPublishTarget tiktok = target("tiktok", "conn-tiktok", "@creator");
+        givenTargets(tiktok);
+        givenConnection("conn-tiktok", "{\"maxVideoPostDurationSec\":600}");
+        Asset clip = video("clip.mp4", 10L * 1024 * 1024, 1080, 1920, "20");
+        Asset photo = image("a.jpg", "image/jpeg", 1080, 1080);
+        givenAssets(clip, photo);
+        givenSelection(tiktok, clip, photo);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("TikTok")
+                .hasMessageContaining("never both");
+    }
+
+    @Test
+    void blocksAPngInATikTokPhotoPostEvenThoughEveryOtherPlatformTakesIt() {
+        PostPublishTarget tiktok = target("tiktok", "conn-tiktok", "@creator");
+        givenTargets(tiktok);
+        givenConnection("conn-tiktok", "{\"maxVideoPostDurationSec\":600}");
+        Asset png = image("a.png", "image/png", 1080, 1080);
+        givenAssets(png);
+        givenSelection(tiktok, png);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("TikTok")
+                .hasMessageContaining("JPEG or WEBP");
+    }
+
+    @Test
+    void blocksTwoVideosOnYouTube() {
+        PostPublishTarget youtube = target("youtube", "conn-yt", "Acme Channel");
+        givenTargets(youtube);
+        Asset first = video("a.mp4", 10L * 1024 * 1024, 1920, 1080, "300");
+        Asset second = video("b.mp4", 10L * 1024 * 1024, 1920, 1080, "300");
+        givenAssets(first, second);
+        givenSelection(youtube, first, second);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("YouTube")
+                .hasMessageContaining("one video");
+    }
+
+    @Test
+    void blocksAnImageOnYouTube() {
+        PostPublishTarget youtube = target("youtube", "conn-yt", "Acme Channel");
+        givenTargets(youtube);
+        Asset photo = image("a.jpg", "image/jpeg", 1920, 1080);
+        givenAssets(photo);
+        givenSelection(youtube, photo);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("YouTube")
+                .hasMessageContaining("video only");
+    }
+
+    // --- Copy: the text that will actually go out, per destination ---
+
+    @Test
+    void blocksACaptionOverInstagramsLimit() {
+        PostPublishTarget instagram = target("instagram", "conn-meta", "@acme");
+        givenTargets(instagram);
+        givenAssets(image("card.jpg", "image/jpeg", 1080, 1080));
+        post.setDescription("x".repeat(2201));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Instagram")
+                .hasMessageContaining("2200");
+    }
+
+    @Test
+    void measuresYouTubesDescriptionInBytesNotCharacters() {
+        PostPublishTarget youtube = target("youtube", "conn-yt", "Acme Channel");
+        givenTargets(youtube);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1920, 1080, "300"));
+        // 2000 four-byte emoji is 8000 bytes but only 4000 chars — a character count would pass this.
+        post.setDescription("😀".repeat(2000));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("YouTube")
+                .hasMessageContaining("byte");
+    }
+
+    @Test
+    void anOverLongCaptionOnOneDestinationDoesNotBlockAnotherThatOverridesIt() {
+        PostPublishTarget instagram = target("instagram", "conn-meta", "@acme");
+        PostPublishTarget facebook = target("facebook", "conn-meta", "Acme Page");
+        givenTargets(instagram, facebook);
+        givenAssets(image("card.jpg", "image/jpeg", 1080, 1080));
+        // Facebook's message is effectively uncapped, so the long copy is fine there; Instagram carries a
+        // shorter override and so is fine too.
+        post.setDescription("x".repeat(3000));
+        instagram.setCaptionOverride("Short and sweet");
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
     private PostPublishTarget target(String platform, String connectionId, String accountLabel) {
         PostPublishTarget target = new PostPublishTarget();
+        target.setId("target-" + platform);
         target.setPlatform(platform);
         target.setConnectionId(connectionId);
         target.setPlatformAccountLabel(accountLabel);
@@ -474,7 +673,37 @@ class MediaTargetValidatorTest {
     }
 
     private void givenAssets(Asset... assets) {
+        int index = 0;
+        for (Asset asset : assets) {
+            // Ids and an increasing createdAt, so AssetService.PUBLISH_ORDER is total and a per-target
+            // selection has something stable to name.
+            if (asset.getId() == null) {
+                asset.setId("asset-" + (++index));
+                asset.setCreatedAt(NOW.plusSeconds(index));
+            }
+        }
         when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(assets));
+    }
+
+    /**
+     * Makes {@code target} publish exactly {@code assets}, in that order, instead of the Post's set.
+     *
+     * <p>Selections accumulate into one map and the repository is stubbed once to answer from it, because
+     * the resolver asks for every custom target's rows in a single call.
+     */
+    private void givenSelection(PostPublishTarget target, Asset... assets) {
+        target.setCustomMedia(true);
+        List<PostPublishTargetAsset> rows = new ArrayList<>();
+        for (int position = 0; position < assets.length; position++) {
+            rows.add(new PostPublishTargetAsset(target.getId(), assets[position].getId(), position));
+        }
+        selectionsByTarget.put(target.getId(), rows);
+        when(targetAssetRepository.findAllByTargetIdIn(any())).thenAnswer(invocation -> {
+            Collection<String> requested = invocation.getArgument(0);
+            return requested == null ? List.<PostPublishTargetAsset>of() : requested.stream()
+                    .flatMap(id -> selectionsByTarget.getOrDefault(id, List.of()).stream())
+                    .toList();
+        });
     }
 
     private Asset image(String label, String contentType, Integer width, Integer height) {

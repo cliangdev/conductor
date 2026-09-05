@@ -41,6 +41,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import com.conductor.service.PublishInputBuilder;
+import com.conductor.service.PublishTargetMediaResolver;
+import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 
 /**
  * Unit coverage for {@link PostPublishScheduler}'s decision logic: which rows it will and will not
@@ -50,6 +54,8 @@ import static org.mockito.Mockito.when;
  */
 class PostPublishSchedulerTest {
 
+    private AssetRepository assetRepository;
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private PostPublishTargetRepository targetRepository;
     private SignalBus signalBus;
     private ActiveConnectionResolver connectionResolver;
@@ -66,6 +72,8 @@ class PostPublishSchedulerTest {
     @BeforeEach
     void setUp() {
         targetRepository = mock(PostPublishTargetRepository.class);
+        assetRepository = mock(AssetRepository.class);
+        targetAssetRepository = mock(PostPublishTargetAssetRepository.class);
         signalBus = mock(SignalBus.class);
         connectionResolver = mock(ActiveConnectionResolver.class);
         actionInvocationService = mock(ActionInvocationService.class);
@@ -95,8 +103,9 @@ class PostPublishSchedulerTest {
 
     private PostPublishScheduler newScheduler(boolean enabled) {
         PostPublishScheduler s = new PostPublishScheduler(
-                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled,
-                signalBus);
+                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService,
+                new PublishInputBuilder(new PublishTargetMediaResolver(assetRepository, targetAssetRepository)),
+                enabled, signalBus);
         s.entityManager = entityManager;
         s.self = s;
         return s;

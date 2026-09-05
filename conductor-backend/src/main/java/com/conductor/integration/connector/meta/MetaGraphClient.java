@@ -201,6 +201,45 @@ public class MetaGraphClient {
         return postForm(edge(pageId, "photos"), pageToken, form, PublishResponse.class).toPublishedPost();
     }
 
+    /**
+     * Uploads a photo to the Page without publishing it, returning the id a feed post attaches it by.
+     *
+     * <p>{@code published=false} with no {@code scheduled_publish_time} is Meta's "hold this, something
+     * else will post it" — distinct from the scheduling use of the same flag in {@link #publishPhoto}.
+     * {@code temporary=true} tells Meta the photo is a component of another post rather than an album
+     * entry, so it never appears on the Page on its own.
+     *
+     * <p>An id that is never attached simply expires; there is nothing to clean up after a failed post.
+     */
+    public String uploadUnpublishedPhoto(String pageId, String pageToken, String imageUrl) {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("url", imageUrl);
+        form.add("published", "false");
+        form.add("temporary", "true");
+        return postForm(edge(pageId, "photos"), pageToken, form, PublishResponse.class).toPublishedPost().id();
+    }
+
+    /**
+     * Publishes (or schedules) a multi-photo post: one feed story carrying photos already uploaded by
+     * {@link #uploadUnpublishedPhoto}, in the order given.
+     *
+     * <p>Meta expects the attachments as indexed form fields whose values are JSON objects
+     * ({@code attached_media[0]={"media_fbid":"..."}}), which is why they are built as strings here rather
+     * than as a JSON body. Scheduling works exactly as it does for any other feed post.
+     */
+    public PublishedPost publishFeedPostWithAttachedMedia(String pageId, String pageToken, String message,
+                                                          List<String> photoIds, Long scheduledPublishTime) {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        if (message != null && !message.isBlank()) {
+            form.add("message", message);
+        }
+        for (int index = 0; index < photoIds.size(); index++) {
+            form.add("attached_media[" + index + "]", "{\"media_fbid\":\"" + photoIds.get(index) + "\"}");
+        }
+        applySchedule(form, scheduledPublishTime);
+        return postForm(edge(pageId, "feed"), pageToken, form, PublishResponse.class).toPublishedPost();
+    }
+
     /** Publishes (or schedules) a plain text/link post on the Page's {@code /feed} edge. */
     public PublishedPost publishFeedPost(String pageId, String pageToken, String message, String link,
                                          Long scheduledPublishTime) {

@@ -48,6 +48,10 @@ export interface PublishOutcome {
   errorMessage?: string | null
   platformPostId?: string | null
   fireTime?: string | null
+  /** The copy that goes out here — this destination's own, or the Post's. */
+  effectiveCaption?: string | null
+  /** The ids of the media that goes out here, in order. */
+  effectiveAssetIds?: string[]
 }
 
 interface RetryPublishResponse {
@@ -354,9 +358,25 @@ function OutcomeRow({ target, open, onOpen, onCancel, onComplete }: OutcomeRowPr
             </a>
           )}
           {awaiting && !open && (
-            <p className="mt-0.5 ml-3.5 text-xs text-muted-foreground">
-              Nothing is publishing this one — post it yourself, then record the link.
-            </p>
+            <>
+              <p className="mt-0.5 ml-3.5 text-xs text-muted-foreground">
+                Nothing is publishing this one — post it yourself, then record the link.
+              </p>
+              {/* What to post, not just that something must be posted: this destination may carry copy
+                  and media of its own, and a person told only "post it" would go looking for them. */}
+              {target.effectiveCaption && (
+                <p className="mt-1 ml-3.5 whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs text-foreground">
+                  {target.effectiveCaption}
+                </p>
+              )}
+              {target.effectiveAssetIds && target.effectiveAssetIds.length > 0 && (
+                <p className="mt-1 ml-3.5 text-xs text-muted-foreground">
+                  {target.effectiveAssetIds.length === 1
+                    ? 'Post the file attached to this Post.'
+                    : `Post ${target.effectiveAssetIds.length} files, in the order shown on the Post.`}
+                </p>
+              )}
+            </>
           )}
           {target.errorMessage && (
             <p className={cn('mt-0.5 ml-3.5 text-xs', statusHueClasses('red').text)}>

@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -186,7 +187,7 @@ class FacebookPublishActionTest {
         assertThat(mediaResolver.resolveCalls).isEqualTo(1);
         assertThat(mediaResolver.workItemIds).containsExactly("wi-1");
         assertThat(call(HttpMethod.POST, "/page-1/photos").param("url"))
-                .isEqualTo("https://signed.example/minted-1.jpg");
+                .isEqualTo("https://signed.example/minted-1-https://signed.example/hero.jpg?exp=1");
     }
 
     @Test
@@ -467,11 +468,68 @@ class FacebookPublishActionTest {
 
     // ---- harness ---------------------------------------------------------------------------------
 
+    // --- Multi-photo: several images become one feed post with the photos attached ---
+
+    @Test
+    void severalPhotos_uploadEachUnpublishedThenAttachThemToOneFeedPost() {
+        Instant fireTime = Instant.now().plus(3, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+        mediaResolver.media = List.of(image("https://signed.example/a.jpg"),
+                image("https://signed.example/b.jpg"), image("https://signed.example/c.jpg"));
+        AtomicInteger photoId = new AtomicInteger();
+        onPost("/page-1/photos", call -> {
+            int id = photoId.incrementAndGet();
+            return new MetaGraphClient.PublishResponse("photo-" + id, null);
+        });
+        onPost("/page-1/feed", new MetaGraphClient.PublishResponse("888", "page-1_888"));
+        onGet("is_published", new MetaGraphClient.PostResponse("page-1_888", false,
+                "https://www.facebook.com/page-1/posts/888", fireTime.getEpochSecond()));
+
+        ActionResult result = connector.invoke("publish_facebook_post", handoffInput(fireTime), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("post_id", "page-1_888");
+
+        List<Call> photoUploads = calls.stream()
+                .filter(c -> c.method() == HttpMethod.POST && c.uri().getPath().endsWith("/page-1/photos"))
+                .toList();
+        assertThat(photoUploads).hasSize(3);
+        // Unpublished and temporary: each photo is a component of the feed post, never a post of its own.
+        assertThat(photoUploads).allSatisfy(call -> {
+            assertThat(call.param("published")).isEqualTo("false");
+            assertThat(call.param("temporary")).isEqualTo("true");
+            assertThat(call.param("scheduled_publish_time")).isNull();
+        });
+
+        Call feed = call(HttpMethod.POST, "/page-1/feed");
+        assertThat(feed.param("message")).isEqualTo("Launch day");
+        assertThat(feed.param("attached_media[0]")).isEqualTo("{\"media_fbid\":\"photo-1\"}");
+        assertThat(feed.param("attached_media[1]")).isEqualTo("{\"media_fbid\":\"photo-2\"}");
+        assertThat(feed.param("attached_media[2]")).isEqualTo("{\"media_fbid\":\"photo-3\"}");
+        // The schedule rides on the feed post, which is the one that actually goes live.
+        assertThat(feed.param("scheduled_publish_time")).isEqualTo(String.valueOf(fireTime.getEpochSecond()));
+    }
+
+    @Test
+    void aSinglePhotoStillGoesStraightToThePhotosEdge() {
+        mediaResolver.media = List.of(image("https://signed.example/hero.jpg"));
+        onPost("/page-1/photos", new MetaGraphClient.PublishResponse("777", "page-1_777"));
+        onGet("is_published", new MetaGraphClient.PostResponse("page-1_777", true,
+                "https://www.facebook.com/page-1/posts/777", null));
+
+        ActionResult result = connector.invoke("publish_facebook_post", handoffInput(null), CTX);
+
+        assertThat(result.success()).isTrue();
+        // One photo is a photo post, not a one-item feed attachment — same post shape as before this change.
+        assertThat(calls.stream().filter(c -> c.uri().getPath().endsWith("/page-1/feed"))).isEmpty();
+    }
+
     private Map<String, Object> handoffInput(Instant fireTime) {
         // Exactly the payload NativeHandoffService builds: copy plus handles, and no media parameters.
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("message", "Launch day");
-        input.put("scheduled_publish_time", fireTime.toString());
+        if (fireTime != null) {
+            input.put("scheduled_publish_time", fireTime.toString());
+        }
         input.put("work_item_id", "wi-1");
         input.put("target_id", "target-1");
         return input;
@@ -571,7 +629,7 @@ class FacebookPublishActionTest {
             }
             return media.stream()
                     .map(item -> item.isVideo() ? item : new PublishMedia(
-                            "https://signed.example/minted-" + resolveCalls + ".jpg",
+                            "https://signed.example/minted-" + resolveCalls + "-" + item.url(),
                             item.gcsPath(), item.contentType(), item.sizeBytes()))
                     .toList();
         }

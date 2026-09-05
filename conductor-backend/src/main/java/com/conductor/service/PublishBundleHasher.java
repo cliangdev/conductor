@@ -2,8 +2,10 @@ package com.conductor.service;
 
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.WorkItem;
 import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,8 +17,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -51,10 +55,14 @@ public class PublishBundleHasher {
             .build();
 
     private final PostPublishTargetRepository targetRepository;
+    private final PostPublishTargetAssetRepository targetAssetRepository;
     private final AssetRepository assetRepository;
 
-    public PublishBundleHasher(PostPublishTargetRepository targetRepository, AssetRepository assetRepository) {
+    public PublishBundleHasher(PostPublishTargetRepository targetRepository,
+                               PostPublishTargetAssetRepository targetAssetRepository,
+                               AssetRepository assetRepository) {
         this.targetRepository = targetRepository;
+        this.targetAssetRepository = targetAssetRepository;
         this.assetRepository = assetRepository;
     }
 
@@ -83,9 +91,34 @@ public class PublishBundleHasher {
     }
 
     private List<Map<String, Object>> targets(String workItemId) {
-        return canonicalOrder(targetRepository.findAllByWorkItemId(workItemId).stream()
-                .map(PublishBundleHasher::targetTuple)
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItemId);
+        Map<String, List<String>> selections = selectionsByTarget(targets);
+        return canonicalOrder(targets.stream()
+                // Only a custom-media target has a selection to look up, and an unsaved target has no id
+                // yet — so the lookup is guarded rather than unconditional.
+                .map(target -> targetTuple(target,
+                        target.isCustomMedia() ? selections.get(target.getId()) : null))
                 .toList());
+    }
+
+    /**
+     * The ordered media selection of every target that has one, in one query — and nothing at all when no
+     * target chooses its own, which is still the common case.
+     */
+    private Map<String, List<String>> selectionsByTarget(List<PostPublishTarget> targets) {
+        List<String> customIds = targets.stream()
+                .filter(PostPublishTarget::isCustomMedia)
+                .map(PostPublishTarget::getId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        if (customIds.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, List<String>> byTarget = new LinkedHashMap<>();
+        for (PostPublishTargetAsset row : targetAssetRepository.findAllByTargetIdIn(customIds)) {
+            byTarget.computeIfAbsent(row.getTargetId(), key -> new ArrayList<>()).add(row.getAssetId());
+        }
+        return byTarget;
     }
 
     private List<Map<String, Object>> assets(String workItemId) {
@@ -104,13 +137,23 @@ public class PublishBundleHasher {
      * a post going somewhere else. The MANUAL lane makes that reachable in the plainest way possible: every
      * manual target has a null connector and a null connection, so without {@code platform} all four of
      * them are the same tuple.
+     *
+     * <p><b>{@code assetIds} appears only for a target that chose its own media</b>, and is deliberately
+     * left out otherwise. An inheriting target's media is already covered by the Post-level {@code assets}
+     * entry, so adding a redundant copy of it would buy nothing — and would change the hash of every
+     * approval standing when this shipped, reverting Posts that nobody had touched. Omitting the key keeps
+     * those hashes byte-identical. It is <b>not</b> canonically ordered: carousel order is content, since
+     * Instagram crops every item to the first one's shape.
      */
-    private static Map<String, Object> targetTuple(PostPublishTarget target) {
+    private static Map<String, Object> targetTuple(PostPublishTarget target, List<String> assetIds) {
         Map<String, Object> tuple = new TreeMap<>();
         tuple.put("platform", target.getPlatform());
         tuple.put("connectorId", target.getConnectorId());
         tuple.put("connectionId", target.getConnectionId());
         tuple.put("captionOverride", target.getCaptionOverride());
+        if (target.isCustomMedia()) {
+            tuple.put("assetIds", assetIds == null ? List.of() : List.copyOf(assetIds));
+        }
         return tuple;
     }
 

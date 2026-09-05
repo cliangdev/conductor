@@ -1,13 +1,17 @@
 package com.conductor.service;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import java.time.OffsetDateTime;
 import com.conductor.repository.WorkItemRepository;
@@ -23,9 +27,11 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Where a Post can go, and where a Post is going (COND-23 T3.6).
@@ -180,31 +186,53 @@ public class PublishTargetService {
      * @param publishOptions per-platform option keys for this target, or null/empty when nothing was chosen.
      *                       Uninterpreted here — the keys are the platform's, and only the platform's
      *                       validator and publisher read them
+     * @param captionOverride copy for this destination alone; null or blank means the Post's caption. Set-
+     *                        replace, like every other field here: omitting it clears an override rather
+     *                        than preserving one
+     * @param assetIds       an ordered subset of the Post's uploaded files this destination publishes; null
+     *                       or empty means it inherits the Post's whole set, in Post order. Order matters —
+     *                       Instagram crops a carousel to its first item and TikTok covers a photo post
+     *                       with it
      */
-    public record TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions) {
+    public record TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions,
+                                  String captionOverride, List<String> assetIds) {
 
         /** A selection that chooses only a destination, leaving every publish option unset. */
         public TargetSelection(String platform, String connectionId) {
-            this(platform, connectionId, null);
+            this(platform, connectionId, null, null, null);
+        }
+
+        /** A selection with publish options but the Post's own caption and media. */
+        public TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions) {
+            this(platform, connectionId, publishOptions, null, null);
         }
     }
 
     private final ConnectionRepository connectionRepository;
     private final PostPublishTargetRepository targetRepository;
+    private final PostPublishTargetAssetRepository targetAssetRepository;
+    private final AssetRepository assetRepository;
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final PublishBundleGuard publishBundleGuard;
+    private final PublishTargetMediaResolver mediaResolver;
 
     public PublishTargetService(ConnectionRepository connectionRepository,
                                 PostPublishTargetRepository targetRepository,
+                                PostPublishTargetAssetRepository targetAssetRepository,
+                                AssetRepository assetRepository,
                                 WorkItemRepository workItemRepository,
                                 ProjectSecurityService projectSecurityService,
-                                PublishBundleGuard publishBundleGuard) {
+                                PublishBundleGuard publishBundleGuard,
+                                PublishTargetMediaResolver mediaResolver) {
         this.connectionRepository = connectionRepository;
         this.targetRepository = targetRepository;
+        this.targetAssetRepository = targetAssetRepository;
+        this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.publishBundleGuard = publishBundleGuard;
+        this.mediaResolver = mediaResolver;
     }
 
     /** Every target this project can currently publish to, grouped platform by platform. */
@@ -262,8 +290,57 @@ public class PublishTargetService {
         return sorted(targetRepository.findAllByWorkItemId(workItem.getId()));
     }
 
-    /** One desired destination resolved against what the project can actually publish to. */
-    private record DesiredTarget(TargetOption option, String optionsJson) {}
+    /**
+     * One target plus what it will actually publish.
+     *
+     * <p>{@code assetIds} is this target's own selection, null when it inherits — the distinction a client
+     * needs to render "Using all Post media" rather than a list that merely happens to match. {@code
+     * effectiveAssetIds} and {@code effectiveCaption} are what goes out either way, so a caller showing a
+     * preview never has to re-derive the inherit rule and get it subtly different.
+     */
+    public record TargetView(PostPublishTarget target, List<String> assetIds, List<String> effectiveAssetIds,
+                             String effectiveCaption) {}
+
+    /** {@link TargetView}s for a Post's targets, resolving all of them in a fixed number of queries. */
+    @Transactional(readOnly = true)
+    public List<TargetView> views(WorkItem workItem, List<PostPublishTarget> targets) {
+        if (targets == null || targets.isEmpty()) {
+            return List.of();
+        }
+        Map<String, PublishTargetMediaResolver.EffectiveMedia> media =
+                mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
+        return targets.stream()
+                .map(target -> {
+                    PublishTargetMediaResolver.EffectiveMedia effective = media.getOrDefault(
+                            target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
+                    return new TargetView(target,
+                            target.isCustomMedia() ? effective.assetIds() : null,
+                            effective.assetIds(),
+                            mediaResolver.effectiveCaption(target, workItem));
+                })
+                .toList();
+    }
+
+    /** The Post's targets as {@link TargetView}s — what every read path returns. */
+    @Transactional(readOnly = true)
+    public List<TargetView> listSelectedTargetViews(String projectId, String workItemId, User caller) {
+        verifyMembership(projectId, caller);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        return views(workItem, sorted(targetRepository.findAllByWorkItemId(workItem.getId())));
+    }
+
+    /**
+     * One desired destination resolved against what the project can actually publish to, with its content
+     * normalised: {@code captionOverride} blank-to-null, and {@code assetIds} validated against the Post's
+     * own assets, de-duplicated and order-preserved. Empty {@code assetIds} means inherit.
+     */
+    private record DesiredTarget(TargetOption option, String optionsJson, String captionOverride,
+                                 List<String> assetIds) {
+
+        boolean customMedia() {
+            return !assetIds.isEmpty();
+        }
+    }
 
     /**
      * Replaces the Work Item's selection with exactly {@code selections}: creates the rows that are new,
@@ -277,8 +354,8 @@ public class PublishTargetService {
      *                           endpoint cannot be used to probe which connections exist.
      */
     @Transactional
-    public List<PostPublishTarget> replaceSelection(String projectId, String workItemId,
-                                                    List<TargetSelection> selections, User caller) {
+    public List<TargetView> replaceSelection(String projectId, String workItemId,
+                                            List<TargetSelection> selections, User caller) {
         verifyMembership(projectId, caller);
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
@@ -294,7 +371,9 @@ public class PublishTargetService {
             if (option == null) {
                 throw new BusinessException("Not a publishable target for this project");
             }
-            desired.put(key, new DesiredTarget(option, canonicalOptions(selection.publishOptions())));
+            desired.put(key, new DesiredTarget(option, canonicalOptions(selection.publishOptions()),
+                    blankToNull(selection.captionOverride()),
+                    resolveAssetIds(workItem.getId(), selection.assetIds())));
         }
 
         List<PostPublishTarget> existing = targetRepository.findAllByWorkItemId(workItem.getId());
@@ -311,18 +390,18 @@ public class PublishTargetService {
                 .filter(entry -> !existingByKey.containsKey(entry.getKey()))
                 .map(Map.Entry::getValue)
                 .toList();
-        // A kept row whose options changed: still the same account and the same idempotency key, but no
+        // A kept row whose content changed: still the same account and the same idempotency key, but no
         // longer the same post, so it is a bundle change like any other — and an in-place update, because
-        // deleting the row would strand a platform post the row is the only handle on.
-        List<PostPublishTarget> reoptioned = existingByKey.entrySet().stream()
+        // deleting the row would strand a platform post the row is the only handle on. Options, caption and
+        // media all count: each of them changes what a reviewer would be approving.
+        List<PostPublishTarget> changed = existingByKey.entrySet().stream()
                 .filter(entry -> desired.containsKey(entry.getKey()))
-                .filter(entry -> !Objects.equals(canonicalOptions(entry.getValue().getPublishOptions()),
-                        desired.get(entry.getKey()).optionsJson()))
+                .filter(entry -> hasContentChanged(entry.getValue(), desired.get(entry.getKey())))
                 .map(Map.Entry::getValue)
                 .toList();
 
-        if (removed.isEmpty() && added.isEmpty() && reoptioned.isEmpty()) {
-            return sorted(existing);
+        if (removed.isEmpty() && added.isEmpty() && changed.isEmpty()) {
+            return views(workItem, sorted(existing));
         }
 
         // Frozen while somebody is reading it, for the same reason the caption and media are: changing
@@ -341,17 +420,26 @@ public class PublishTargetService {
         // Updates first, then inserts, in one saveAll: the tail of the returned list is the persisted new
         // rows, which are what the response must carry.
         List<PostPublishTarget> toSave = new ArrayList<>();
-        for (PostPublishTarget target : reoptioned) {
-            target.setPublishOptions(
-                    desired.get(selectionKey(target.getPlatform(), target.getConnectionId())).optionsJson());
+        for (PostPublishTarget target : changed) {
+            applyContent(target, desired.get(selectionKey(target.getPlatform(), target.getConnectionId())));
             toSave.add(target);
         }
         toSave.addAll(added.stream().map(target -> newRow(workItem, target)).toList());
+        List<PostPublishTarget> saved = List.of();
         if (!toSave.isEmpty()) {
-            List<PostPublishTarget> saved = targetRepository.saveAll(toSave);
-            kept.addAll(saved.subList(reoptioned.size(), saved.size()));
+            saved = targetRepository.saveAll(toSave);
+            kept.addAll(saved.subList(changed.size(), saved.size()));
         }
-        return sorted(kept);
+
+        // Media selections are rewritten after the targets are saved, because a new row has no id until
+        // then. Deleting a target's whole selection before inserting the replacement is deliberate: a
+        // reorder that swaps two positions would collide on uq_post_publish_target_asset_position if the
+        // rows were updated in place, and a delete-then-insert has no such intermediate state.
+        List<PostPublishTarget> withContent = new ArrayList<>(changed);
+        withContent.addAll(saved.subList(Math.min(changed.size(), saved.size()), saved.size()));
+        rewriteSelections(withContent, desired);
+
+        return views(workItem, sorted(kept));
     }
 
     /**
@@ -402,8 +490,99 @@ public class PublishTargetService {
 
     private PostPublishTarget newRow(WorkItem workItem, DesiredTarget desired) {
         PostPublishTarget target = newRow(workItem, desired.option());
-        target.setPublishOptions(desired.optionsJson());
+        applyContent(target, desired);
         return target;
+    }
+
+    /** Copies a desired destination's content onto its row. The join rows are written separately. */
+    private static void applyContent(PostPublishTarget target, DesiredTarget desired) {
+        target.setPublishOptions(desired.optionsJson());
+        target.setCaptionOverride(desired.captionOverride());
+        target.setCustomMedia(desired.customMedia());
+    }
+
+    /**
+     * Has anything about what this destination publishes changed? Any yes reverts an approved Post, so the
+     * comparison has to be exact in both directions — a client re-sending identical choices must not knock
+     * a Post out of Approved, and a real edit must never slip through as a no-op.
+     */
+    private boolean hasContentChanged(PostPublishTarget existing, DesiredTarget desired) {
+        if (!Objects.equals(canonicalOptions(existing.getPublishOptions()), desired.optionsJson())) {
+            return true;
+        }
+        if (!Objects.equals(blankToNull(existing.getCaptionOverride()), desired.captionOverride())) {
+            return true;
+        }
+        if (existing.isCustomMedia() != desired.customMedia()) {
+            return true;
+        }
+        // Only an explicit selection has stored rows to compare; two inheriting targets are equal by
+        // definition and need no query.
+        return desired.customMedia() && !storedAssetIds(existing.getId()).equals(desired.assetIds());
+    }
+
+    /** This target's stored selection, in order. Empty for an inheriting target. */
+    private List<String> storedAssetIds(String targetId) {
+        return targetAssetRepository.findAllByTargetId(targetId).stream()
+                .map(PostPublishTargetAsset::getAssetId)
+                .toList();
+    }
+
+    /** Replaces each target's stored selection with the one it was just given. */
+    private void rewriteSelections(List<PostPublishTarget> targets, Map<String, DesiredTarget> desired) {
+        for (PostPublishTarget target : targets) {
+            DesiredTarget wanted = desired.get(selectionKey(target.getPlatform(), target.getConnectionId()));
+            if (wanted == null) {
+                continue;
+            }
+            targetAssetRepository.deleteAllByTargetId(target.getId());
+            if (!wanted.customMedia()) {
+                continue;
+            }
+            // Flushed before the insert so the delete lands first: without it Hibernate is free to order
+            // the insert before the delete and collide on the position uniqueness constraint.
+            targetAssetRepository.flush();
+            List<PostPublishTargetAsset> rows = new ArrayList<>();
+            List<String> assetIds = wanted.assetIds();
+            for (int position = 0; position < assetIds.size(); position++) {
+                rows.add(new PostPublishTargetAsset(target.getId(), assetIds.get(position), position));
+            }
+            targetAssetRepository.saveAll(rows);
+        }
+    }
+
+    /**
+     * The Post's own file assets, in the client's order, de-duplicated.
+     *
+     * @throws BusinessException when an id is not a file asset of this Work Item — the same generic refusal
+     *                           the destination check gives, so the endpoint cannot be used to probe which
+     *                           assets exist on someone else's Post
+     */
+    private List<String> resolveAssetIds(String workItemId, List<String> requested) {
+        if (requested == null || requested.isEmpty()) {
+            return List.of();
+        }
+        Set<String> selectable = assetRepository.findAllByWorkItemId(workItemId).stream()
+                .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
+                .map(Asset::getId)
+                .collect(Collectors.toSet());
+        List<String> resolved = new ArrayList<>();
+        for (String assetId : requested) {
+            if (assetId == null || assetId.isBlank()) {
+                continue;
+            }
+            if (!selectable.contains(assetId)) {
+                throw new BusinessException("Not a media asset on this Post");
+            }
+            if (!resolved.contains(assetId)) {
+                resolved.add(assetId);
+            }
+        }
+        return List.copyOf(resolved);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private PostPublishTarget newRow(WorkItem workItem, TargetOption option) {

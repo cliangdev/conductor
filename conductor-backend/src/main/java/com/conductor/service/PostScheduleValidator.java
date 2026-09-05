@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.Asset;
+import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
@@ -17,6 +18,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
@@ -76,19 +78,23 @@ public class PostScheduleValidator {
 
     private final AssetRepository assetRepository;
     private final PostPublishTargetRepository postPublishTargetRepository;
+    private final PublishTargetMediaResolver mediaResolver;
     private final Clock clock;
 
     @Autowired
     public PostScheduleValidator(AssetRepository assetRepository,
-                                 PostPublishTargetRepository postPublishTargetRepository) {
-        this(assetRepository, postPublishTargetRepository, Clock.systemUTC());
+                                 PostPublishTargetRepository postPublishTargetRepository,
+                                 PublishTargetMediaResolver mediaResolver) {
+        this(assetRepository, postPublishTargetRepository, mediaResolver, Clock.systemUTC());
     }
 
     PostScheduleValidator(AssetRepository assetRepository,
                           PostPublishTargetRepository postPublishTargetRepository,
+                          PublishTargetMediaResolver mediaResolver,
                           Clock clock) {
         this.assetRepository = assetRepository;
         this.postPublishTargetRepository = postPublishTargetRepository;
+        this.mediaResolver = mediaResolver;
         this.clock = clock;
     }
 
@@ -148,13 +154,45 @@ public class PostScheduleValidator {
     private List<String> collectProblems(WorkItem workItem) {
         List<String> problems = new ArrayList<>();
         appendScheduleProblems(workItem, problems);
-        if (postPublishTargetRepository.findAllByWorkItemId(workItem.getId()).isEmpty()) {
+        List<PostPublishTarget> targets = postPublishTargetRepository.findAllByWorkItemId(workItem.getId());
+        if (targets.isEmpty()) {
             problems.add("no publish target is selected — pick at least one account to publish to");
         }
+        appendMediaProblems(workItem, targets, problems);
+        return problems;
+    }
+
+    /**
+     * "Has this Post got media?" is per destination now that a destination can choose its own, and the two
+     * ways of having none need different answers. Nothing uploaded at all is a Post-level problem, said
+     * once. A destination that chose files which were then deleted is its own problem, and saying "upload
+     * media" there would be wrong — there is media, it just is not selected here any more.
+     */
+    private void appendMediaProblems(WorkItem workItem, List<PostPublishTarget> targets,
+                                     List<String> problems) {
         if (!hasUploadedFileAsset(workItem)) {
             problems.add("no uploaded media file is attached — upload at least one image or video");
+            return;
         }
-        return problems;
+        if (targets.isEmpty()) {
+            return;
+        }
+        Map<String, PublishTargetMediaResolver.EffectiveMedia> byTarget =
+                mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
+        for (PostPublishTarget target : targets) {
+            PublishTargetMediaResolver.EffectiveMedia media = byTarget.getOrDefault(
+                    target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
+            if (media.isEmpty()) {
+                problems.add(platformLabel(target) + " has no media — the files chosen for it are no longer "
+                        + "on this Post; pick media for it or reset it to the Post's");
+            }
+        }
+    }
+
+    private static String platformLabel(PostPublishTarget target) {
+        String platform = target.getPlatform() == null ? "" : target.getPlatform();
+        String account = target.getPlatformAccountLabel();
+        return account == null || account.isBlank() ? platform : platform + " (" + account + ")";
     }
 
     private void appendScheduleProblems(WorkItem workItem, List<String> problems) {

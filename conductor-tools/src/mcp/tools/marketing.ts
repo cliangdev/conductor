@@ -71,6 +71,16 @@ export interface PublishTargetSelection {
    */
   connectionId?: string | null
   publishOptions?: Record<string, unknown>
+  /**
+   * Copy for this destination alone, replacing the Post's caption here. Omitted means the Post's own —
+   * and, because this is a set-replace, omitting it also clears an override already stored.
+   */
+  captionOverride?: string | null
+  /**
+   * An ordered subset of the Post's uploaded media this destination publishes. Omitted or empty means it
+   * inherits the Post's whole set. Order is content: Instagram crops a carousel to its first item.
+   */
+  assetIds?: string[]
 }
 
 function mediaTypeFor(filename: string): string {

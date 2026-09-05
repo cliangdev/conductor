@@ -7,9 +7,12 @@ import com.conductor.generated.v2.model.CompleteManualPublishRequest;
 import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.generated.v2.model.RetryPublishResponse;
 import com.conductor.service.PublishOutcomeService;
+import com.conductor.service.PublishTargetService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * COND-23 T6.2 — retrying the publish targets that failed on a Post.
@@ -29,9 +32,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class PublishOutcomeController implements PublishOutcomesApi {
 
     private final PublishOutcomeService publishOutcomeService;
+    /** Only for {@code views}: a response has to carry what each target will actually publish. */
+    private final PublishTargetService publishTargetService;
 
-    public PublishOutcomeController(PublishOutcomeService publishOutcomeService) {
+    public PublishOutcomeController(PublishOutcomeService publishOutcomeService,
+                                    PublishTargetService publishTargetService) {
         this.publishOutcomeService = publishOutcomeService;
+        this.publishTargetService = publishTargetService;
     }
 
     /**
@@ -50,8 +57,10 @@ public class PublishOutcomeController implements PublishOutcomesApi {
                 request == null ? null : request.getPermalink(),
                 request == null ? null : request.getPublishedAt(),
                 currentUser());
-        return ResponseEntity.ok(toResponse(
-                publishOutcomeService.readTarget(projectId, workItemId, targetId, currentUser())));
+        PostPublishTarget target =
+                publishOutcomeService.readTarget(projectId, workItemId, targetId, currentUser());
+        return ResponseEntity.ok(PublishTargetResponses.from(
+                publishTargetService.views(target.getWorkItem(), List.of(target)).get(0)));
     }
 
     @Override
@@ -62,25 +71,8 @@ public class PublishOutcomeController implements PublishOutcomesApi {
                 result.post().getId(),
                 result.post().getCurrentStatus(),
                 result.retried(),
-                result.targets().stream().map(PublishOutcomeController::toResponse).toList());
+                PublishTargetResponses.from(publishTargetService.views(result.post(), result.targets())));
         return ResponseEntity.ok(body);
-    }
-
-    private static PublishTargetResponse toResponse(PostPublishTarget target) {
-        return new PublishTargetResponse(
-                target.getId(),
-                target.getWorkItem().getId(),
-                PublishTargetResponse.PlatformEnum.fromValue(target.getPlatform()),
-                PublishTargetResponse.LaneEnum.fromValue(target.getLane().name()),
-                target.getState().name())
-                // Both null on the MANUAL lane, which publishes through no connector and no account.
-                .connectorId(target.getConnectorId())
-                .connectionId(target.getConnectionId())
-                .label(target.getPlatformAccountLabel())
-                .platformPostId(target.getPlatformPostId())
-                .permalink(target.getPermalink())
-                .errorMessage(target.getErrorMessage())
-                .fireTime(target.getFireTime());
     }
 
     private User currentUser() {

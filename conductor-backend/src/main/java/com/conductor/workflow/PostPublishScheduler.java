@@ -16,6 +16,7 @@ import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.ActiveConnectionResolver;
+import com.conductor.service.PublishInputBuilder;
 import com.conductor.service.PublishOutcomeService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -193,6 +194,7 @@ public class PostPublishScheduler {
     private final ActiveConnectionResolver connectionResolver;
     private final ActionInvocationService actionInvocationService;
     private final PublishOutcomeService publishOutcomeService;
+    private final PublishInputBuilder publishInputBuilder;
     private final boolean enabled;
     private final SignalBus signalBus;
 
@@ -214,12 +216,14 @@ public class PostPublishScheduler {
                                 ActiveConnectionResolver connectionResolver,
                                 ActionInvocationService actionInvocationService,
                                 PublishOutcomeService publishOutcomeService,
+                                PublishInputBuilder publishInputBuilder,
                                 @Value("${conductor.post-publish.enabled:true}") boolean enabled,
                                 SignalBus signalBus) {
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
         this.publishOutcomeService = publishOutcomeService;
+        this.publishInputBuilder = publishInputBuilder;
         this.enabled = enabled;
         this.signalBus = signalBus;
     }
@@ -449,19 +453,8 @@ public class PostPublishScheduler {
      * this poller's job ends at dispatching the right action, on the right connection, exactly once.
      */
     private Map<String, Object> buildInput(PostPublishTarget target, WorkItem post, PublishAction action) {
-        Map<String, Object> input = new LinkedHashMap<>();
-        String caption = target.getCaptionOverride() != null && !target.getCaptionOverride().isBlank()
-                ? target.getCaptionOverride()
-                : post.getDescription();
-        if (caption != null) {
-            input.put(action.captionParam(), caption);
-        }
-        if (post.getTitle() != null && !"title".equals(action.captionParam())) {
-            input.put("title", post.getTitle());
-        }
+        Map<String, Object> input = publishInputBuilder.build(target, post, action.captionParam());
         input.putAll(publishOptions(target));
-        input.put("work_item_id", post.getId());
-        input.put("target_id", target.getId());
         return input;
     }
 

@@ -922,6 +922,8 @@ export function WorkItemDetailView({
                   workflowView={workflowView}
                   onChanged={refreshIssueStatus}
                   onTikTokChange={setTikTokTargets}
+                  assets={mediaAssets}
+                  caption={issue.description ?? null}
                 />
               )}
               {/* The consent TikTok's audit requires. Renders nothing unless the Post actually carries
@@ -931,7 +933,6 @@ export function WorkItemDetailView({
                 <TikTokConsentStep
                   targets={tiktokTargets}
                   assets={mediaAssets}
-                  caption={issue.title}
                   projectId={projectId}
                   workItemId={issueId}
                   token={accessToken!}

@@ -3210,6 +3210,7 @@ components:
         - platform
         - lane
         - state
+        - effectiveAssetIds
       properties:
         id:
           type: string
@@ -3277,6 +3278,33 @@ components:
             Post re-enters its scheduled status, so it is the authoritative time for this target.
         publishOptions:
           $ref: "#/components/schemas/PublishOptions"
+        captionOverride:
+          type: string
+          nullable: true
+          description: >-
+            This destination's own copy, or null when it uses the Post's caption. See `effectiveCaption`
+            for what actually goes out.
+        assetIds:
+          type: array
+          nullable: true
+          description: >-
+            This destination's own ordered media selection, or **null when it inherits the Post's whole
+            set**. Null and a list matching the Post's assets are different states: the first keeps
+            following the Post as files change, the second does not.
+          items:
+            type: string
+        effectiveAssetIds:
+          type: array
+          description: >-
+            The media that actually goes out here, in order — this target's own selection, or the Post's
+            set when it inherits. Empty when there is none to send, which blocks approval. A client
+            rendering a preview should read this rather than re-deriving the inherit rule.
+          items:
+            type: string
+        effectiveCaption:
+          type: string
+          nullable: true
+          description: The copy that actually goes out here — `captionOverride` if set, else the Post's caption.
 
     RetryPublishResponse:
       type: object
@@ -3327,6 +3355,27 @@ components:
             destination per platform, so the platform alone identifies it.
         publishOptions:
           $ref: "#/components/schemas/PublishOptions"
+        captionOverride:
+          type: string
+          nullable: true
+          description: >-
+            Copy for this destination alone, replacing the Post's caption when it goes out here. Omit it or
+            send null to use the Post's caption. Set-replace like every other field on this schema: a client
+            that re-sends a target without this field clears an override it previously set.
+        assetIds:
+          type: array
+          nullable: true
+          description: >-
+            An ordered subset of the Post's uploaded media that this destination publishes. Omit it or send
+            an empty array to inherit the Post's whole media set in Post order — which is the default, and
+            keeps following the Post as files are added and removed.
+
+
+            Order is content, not presentation: Instagram crops every carousel item to the first item's
+            aspect ratio, and TikTok takes a photo post's cover from the first image. Each id must be a file
+            asset of this Work Item. Set-replace, like `captionOverride`.
+          items:
+            type: string
 
     PublishOptions:
       type: object

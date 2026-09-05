@@ -799,7 +799,7 @@ const TOOLS = [
   },
   {
     name: 'list_publish_targets',
-    description: 'Publishing destinations for a project: each connected account with its platform, connectionId, label, lane and credential health. Pass issueId to also get the targets that Work Item publishes to, each with its state, permalink and error — the read-back for set_publish_targets and the status check after a scheduled publish or a retry. TikTok entries carry the creator\'s allowed privacy levels and nickname; they are the only source for a target\'s privacyLevel.',
+    description: 'Publishing destinations for a project: each connected account with its platform, connectionId, label, lane and credential health. Pass issueId to also get the targets that Work Item publishes to, each with its state, permalink and error — the read-back for set_publish_targets and the status check after a scheduled publish or a retry. A selected target also carries effectiveCaption and effectiveAssetIds: what will actually go out there, whether it chose its own or inherited the Post\'s. TikTok entries carry the creator\'s allowed privacy levels and nickname; they are the only source for a target\'s privacyLevel.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -809,7 +809,7 @@ const TOOLS = [
   },
   {
     name: 'set_publish_targets',
-    description: 'Choose which connected accounts a Work Item publishes to, with per-target options. Idempotent set-replace: send the complete selection (empty array clears it); already-selected targets keep their state. Discover platform/connectionId pairs with list_publish_targets first and call it again after to verify. Editing the selection on an approved item sends it back for review. Publishing to TikTok also needs the creator\'s consent, which a human records in the Conductor UI — no tool can record or skip it.',
+    description: 'Choose which connected accounts a Work Item publishes to, with per-target caption, media and options. Idempotent set-replace: send the complete selection (empty array clears it), and send every field you want kept — a target re-sent without captionOverride or assetIds loses them. Already-selected targets keep their state. Discover platform/connectionId pairs with list_publish_targets first and call it again after to verify. Editing the selection on an approved item sends it back for review. Publishing to TikTok also needs the creator\'s consent, which a human records in the Conductor UI — no tool can record or skip it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -822,6 +822,15 @@ const TOOLS = [
             properties: {
               platform: { type: 'string', description: 'Platform of the account, from list_publish_targets' },
               connectionId: { type: 'string', description: 'The connected account to publish to, from list_publish_targets. Omit it to select this platform\'s manual destination — the one a human posts by hand — which is offered whether or not the project has connected that platform.' },
+              captionOverride: {
+                type: 'string',
+                description: 'Copy for this destination alone, replacing the Post\'s caption here. Omit it to use the Post\'s.',
+              },
+              assetIds: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Ordered subset of the Post\'s uploaded media this destination publishes (ids from upload_asset). Omit or send an empty array to inherit the Post\'s whole set. Order matters: Instagram crops a carousel to its first item and TikTok covers a photo post with it. Instagram takes 1 item or 2-10; Facebook one video or several photos; TikTok one video or up to 35 JPEG/WEBP images, never mixed; YouTube exactly one video.',
+              },
               publishOptions: {
                 type: 'object',
                 description: 'Per-platform options for this target. A TikTok target with no privacyLevel blocks approval.',

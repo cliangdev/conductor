@@ -324,6 +324,20 @@ describe('PublishOutcomePanel', () => {
     expect(screen.getByText('Post it now')).toBeInTheDocument()
   })
 
+  it('shows the copy and the file count this destination actually needs', async () => {
+    currentTargets = [
+      manualTarget('AWAITING_MANUAL', {
+        effectiveCaption: 'The TikTok cut',
+        effectiveAssetIds: ['asset-a', 'asset-b'],
+      }),
+    ]
+    renderPanel()
+
+    // A person told only "post it" would have to go hunting for which copy and which files.
+    expect(await screen.findByText('The TikTok cut')).toBeInTheDocument()
+    expect(screen.getByText(/Post 2 files/i)).toBeInTheDocument()
+  })
+
   it('records the link a human pastes back and shows the destination as published', async () => {
     currentTargets = [manualTarget('AWAITING_MANUAL')]
     renderPanel()

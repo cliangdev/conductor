@@ -103,6 +103,19 @@ public class PostPublishTarget {
     private String captionOverride;
 
     /**
+     * Whether this target publishes its own chosen media rather than the Post's whole set.
+     *
+     * <p>False (the default, and what every row created before per-target media meant) is <em>inherit</em>:
+     * the Post's uploaded files in Post order, following the Post as files come and go. True means the
+     * ordered rows in {@code post_publish_target_asset} and nothing else — <b>including when there are none
+     * left</b>, which is why this is a flag rather than "are there any join rows?". An explicit selection
+     * whose files were later deleted has no media, and the approval gate has to say so rather than fall
+     * back to publishing everything the author never chose for this platform.
+     */
+    @Column(name = "custom_media", nullable = false)
+    private boolean customMedia;
+
+    /**
      * How this post goes out on this platform, as a JSON object of per-platform option keys (TIK-1). A
      * generic bag rather than typed columns: the row already names its {@code platform}, so the keys inside
      * are read against that and nothing else, and Instagram's and YouTube's own knobs land here later
@@ -190,6 +203,9 @@ public class PostPublishTarget {
 
     public String getCaptionOverride() { return captionOverride; }
     public void setCaptionOverride(String captionOverride) { this.captionOverride = captionOverride; }
+
+    public boolean isCustomMedia() { return customMedia; }
+    public void setCustomMedia(boolean customMedia) { this.customMedia = customMedia; }
 
     public String getPublishOptions() { return publishOptions; }
     public void setPublishOptions(String publishOptions) { this.publishOptions = publishOptions; }

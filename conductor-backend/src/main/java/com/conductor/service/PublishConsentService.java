@@ -5,8 +5,10 @@ import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.PublishConsent;
 import com.conductor.entity.User;
+import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.WorkItem;
 import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.PublishConsentRepository;
 import com.conductor.repository.WorkItemRepository;
@@ -24,6 +26,8 @@ import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -118,17 +122,20 @@ public class PublishConsentService {
 
     private final PublishConsentRepository consentRepository;
     private final PostPublishTargetRepository targetRepository;
+    private final PostPublishTargetAssetRepository targetAssetRepository;
     private final AssetRepository assetRepository;
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
 
     public PublishConsentService(PublishConsentRepository consentRepository,
                                  PostPublishTargetRepository targetRepository,
+                                 PostPublishTargetAssetRepository targetAssetRepository,
                                  AssetRepository assetRepository,
                                  WorkItemRepository workItemRepository,
                                  ProjectSecurityService projectSecurityService) {
         this.consentRepository = consentRepository;
         this.targetRepository = targetRepository;
+        this.targetAssetRepository = targetAssetRepository;
         this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
@@ -237,9 +244,31 @@ public class PublishConsentService {
     }
 
     private List<Map<String, Object>> targets(String workItemId) {
-        return canonicalOrder(targetRepository.findAllByWorkItemId(workItemId).stream()
-                .map(PublishConsentService::targetTuple)
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItemId);
+        Map<String, List<String>> selections = selectionsByTarget(targets);
+        return canonicalOrder(targets.stream()
+                // Only a custom-media target has a selection to look up, and an unsaved target has no id
+                // yet — so the lookup is guarded rather than unconditional.
+                .map(target -> targetTuple(target,
+                        target.isCustomMedia() ? selections.get(target.getId()) : null))
                 .toList());
+    }
+
+    /** The ordered media selection of every target that chose its own, in one query. */
+    private Map<String, List<String>> selectionsByTarget(List<PostPublishTarget> targets) {
+        List<String> customIds = targets.stream()
+                .filter(PostPublishTarget::isCustomMedia)
+                .map(PostPublishTarget::getId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        if (customIds.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, List<String>> byTarget = new LinkedHashMap<>();
+        for (PostPublishTargetAsset row : targetAssetRepository.findAllByTargetIdIn(customIds)) {
+            byTarget.computeIfAbsent(row.getTargetId(), key -> new ArrayList<>()).add(row.getAssetId());
+        }
+        return byTarget;
     }
 
     private List<Map<String, Object>> assets(String workItemId) {
@@ -254,14 +283,22 @@ public class PublishConsentService {
      * own target tuple does not. Both are part of what the consent step shows the creator — the account
      * they are posting to and, in so many words, who will be able to see it — so changing a privacy level
      * has to withdraw consent even though it leaves the review bundle hash untouched.
+     *
+     * <p>{@code assetIds} rides along for a target that chose its own media, and is omitted for one that
+     * inherits — the Post-level {@code assets} entry already covers that case, and omitting the key leaves
+     * every consent recorded before per-target media still valid rather than silently withdrawn. What the
+     * creator is shown is exactly this target's files in this order, so both matter here.
      */
-    private static Map<String, Object> targetTuple(PostPublishTarget target) {
+    private static Map<String, Object> targetTuple(PostPublishTarget target, List<String> assetIds) {
         Map<String, Object> tuple = new TreeMap<>();
         tuple.put("platform", target.getPlatform());
         tuple.put("connectorId", target.getConnectorId());
         tuple.put("connectionId", target.getConnectionId());
         tuple.put("captionOverride", target.getCaptionOverride());
         tuple.put("publishOptions", canonicalOptions(target.getPublishOptions()));
+        if (target.isCustomMedia()) {
+            tuple.put("assetIds", assetIds == null ? List.of() : List.copyOf(assetIds));
+        }
         return tuple;
     }
 

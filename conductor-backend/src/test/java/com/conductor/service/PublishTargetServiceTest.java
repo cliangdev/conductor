@@ -1,7 +1,9 @@
 package com.conductor.service;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.Project;
 import com.conductor.entity.PublishLane;
@@ -32,6 +34,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 
 /**
  * COND-23 T3.6 — the derivation of a project's selectable publish targets and the set-replace that
@@ -47,6 +51,8 @@ class PublishTargetServiceTest {
     private static final String PROJECT = "project-1";
     private static final String WORK_ITEM = "post-1";
 
+    private AssetRepository assetRepository;
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private ConnectionRepository connectionRepository;
     private PostPublishTargetRepository targetRepository;
     private WorkItemRepository workItemRepository;
@@ -64,8 +70,11 @@ class PublishTargetServiceTest {
         workItemRepository = mock(WorkItemRepository.class);
         projectSecurityService = mock(ProjectSecurityService.class);
         publishBundleGuard = mock(PublishBundleGuard.class);
-        service = new PublishTargetService(connectionRepository, targetRepository, workItemRepository,
-                projectSecurityService, publishBundleGuard);
+        targetAssetRepository = mock(PostPublishTargetAssetRepository.class);
+        assetRepository = mock(AssetRepository.class);
+        service = new PublishTargetService(connectionRepository, targetRepository, targetAssetRepository,
+                assetRepository, workItemRepository, projectSecurityService, publishBundleGuard,
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository));
 
         caller = new User();
         caller.setId("user-1");
@@ -302,12 +311,12 @@ class PublishTargetServiceTest {
         handedOff.setPlatformPostId("fb-post-9");
         when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(handedOff));
 
-        List<PostPublishTarget> result = service.replaceSelection(PROJECT, WORK_ITEM,
+        List<PublishTargetService.TargetView> result = service.replaceSelection(PROJECT, WORK_ITEM,
                 List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta")), caller);
 
         verify(targetRepository, never()).deleteAll(any());
         assertThat(savedRows()).isEmpty();
-        assertThat(result).containsExactly(handedOff);
+        assertThat(result).extracting(PublishTargetService.TargetView::target).containsExactly(handedOff);
         assertThat(handedOff.getPlatformPostId()).isEqualTo("fb-post-9");
         assertThat(handedOff.getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
     }
@@ -331,13 +340,13 @@ class PublishTargetServiceTest {
         PostPublishTarget instagram = existingRow("instagram", "meta", "conn-meta");
         when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(facebook, instagram));
 
-        List<PostPublishTarget> result = service.replaceSelection(PROJECT, WORK_ITEM,
+        List<PublishTargetService.TargetView> result = service.replaceSelection(PROJECT, WORK_ITEM,
                 List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta")), caller);
 
         ArgumentCaptor<List<PostPublishTarget>> removed = captor();
         verify(targetRepository).deleteAll(removed.capture());
         assertThat(removed.getValue()).containsExactly(instagram);
-        assertThat(result).containsExactly(facebook);
+        assertThat(result).extracting(PublishTargetService.TargetView::target).containsExactly(facebook);
     }
 
     @Test
@@ -491,6 +500,150 @@ class PublishTargetServiceTest {
         return target;
     }
 
+    // --- Per-target caption and media are part of the selection, and editing them is a bundle edit ---
+
+    @Test
+    void aCaptionOverrideIsStoredOnTheRowAndCountsAsABundleEdit() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null,
+                        "Just for Facebook", null)), caller);
+
+        assertThat(existing.getCaptionOverride()).isEqualTo("Just for Facebook");
+        // Changing the copy one destination publishes is changing what a reviewer approved.
+        verify(publishBundleGuard).refuseTargetEditWhileFrozen(PROJECT, post);
+        verify(publishBundleGuard).revertForBundleEdit(PROJECT, post);
+    }
+
+    @Test
+    void aBlankCaptionOverrideClearsItRatherThanPublishingNothing() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
+        existing.setCaptionOverride("Old copy");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, "   ", null)),
+                caller);
+
+        assertThat(existing.getCaptionOverride()).isNull();
+    }
+
+    @Test
+    void anAssetSelectionIsStoredInOrderAndMarksTheTargetCustom() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+        givenPostAssets("asset-a", "asset-b", "asset-c");
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null,
+                        List.of("asset-c", "asset-a"))), caller);
+
+        assertThat(existing.isCustomMedia()).isTrue();
+        verify(targetAssetRepository).deleteAllByTargetId(existing.getId());
+        assertThat(savedSelectionOf(existing)).containsExactly("asset-c", "asset-a");
+    }
+
+    @Test
+    void anEmptyAssetListMeansInheritRatherThanPublishNothing() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
+        existing.setCustomMedia(true);
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+        when(targetAssetRepository.findAllByTargetId(existing.getId()))
+                .thenReturn(List.of(new PostPublishTargetAsset(existing.getId(), "asset-a", 0)));
+        givenPostAssets("asset-a");
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null,
+                        List.of())), caller);
+
+        assertThat(existing.isCustomMedia()).isFalse();
+        verify(targetAssetRepository).deleteAllByTargetId(existing.getId());
+    }
+
+    @Test
+    void reorderingASelectionIsAChange_notANoOp() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
+        existing.setCustomMedia(true);
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+        when(targetAssetRepository.findAllByTargetId(existing.getId())).thenReturn(List.of(
+                new PostPublishTargetAsset(existing.getId(), "asset-a", 0),
+                new PostPublishTargetAsset(existing.getId(), "asset-b", 1)));
+        givenPostAssets("asset-a", "asset-b");
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null,
+                        List.of("asset-b", "asset-a"))), caller);
+
+        // Order is content — Instagram crops a carousel to its first item — so a swap must revert the Post.
+        verify(publishBundleGuard).revertForBundleEdit(PROJECT, post);
+        assertThat(savedSelectionOf(existing)).containsExactly("asset-b", "asset-a");
+    }
+
+    @Test
+    void resendingTheIdenticalSelectionChangesNothingAndNeverRevertsThePost() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
+        existing.setCustomMedia(true);
+        existing.setCaptionOverride("Just for Facebook");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+        when(targetAssetRepository.findAllByTargetId(existing.getId())).thenReturn(List.of(
+                new PostPublishTargetAsset(existing.getId(), "asset-a", 0),
+                new PostPublishTargetAsset(existing.getId(), "asset-b", 1)));
+        givenPostAssets("asset-a", "asset-b");
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null,
+                        "Just for Facebook", List.of("asset-a", "asset-b"))), caller);
+
+        verify(publishBundleGuard, never()).revertForBundleEdit(any(), any());
+        verify(targetAssetRepository, never()).deleteAllByTargetId(any());
+    }
+
+    @Test
+    void anAssetThatIsNotOnThisPostIsRefused() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of());
+        givenPostAssets("asset-a");
+
+        assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null,
+                        List.of("asset-from-another-post"))), caller))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Not a media asset on this Post");
+    }
+
+    /** The Post's own file assets, which a per-target selection may name. */
+    private void givenPostAssets(String... assetIds) {
+        List<Asset> assets = new ArrayList<>();
+        for (String id : assetIds) {
+            Asset asset = new Asset();
+            asset.setId(id);
+            asset.setKind(AssetService.KIND_FILE);
+            asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+            assets.add(asset);
+        }
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(assets);
+    }
+
+    /** The ordered asset ids written for {@code target}, read off the join-table save. */
+    private List<String> savedSelectionOf(PostPublishTarget target) {
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PostPublishTargetAsset>> saved = ArgumentCaptor.forClass(List.class);
+        verify(targetAssetRepository).saveAll(saved.capture());
+        return saved.getValue().stream()
+                .filter(row -> target.getId().equals(row.getTargetId()))
+                .sorted(java.util.Comparator.comparingInt(PostPublishTargetAsset::getPosition))
+                .map(PostPublishTargetAsset::getAssetId)
+                .toList();
+    }
+
     private List<PostPublishTarget> savedRows() {
         ArgumentCaptor<List<PostPublishTarget>> saved = captor();
         verify(targetRepository, org.mockito.Mockito.atMost(1)).saveAll(saved.capture());
@@ -623,12 +776,12 @@ class PublishTargetServiceTest {
                 "{\"privacyLevel\":\"SELF_ONLY\"}");
         when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
 
-        List<PostPublishTarget> result = service.replaceSelection(PROJECT, WORK_ITEM,
+        List<PublishTargetService.TargetView> result = service.replaceSelection(PROJECT, WORK_ITEM,
                 List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
                         Map.of("privacyLevel", "PUBLIC_TO_EVERYONE"))), caller);
 
         verify(targetRepository, never()).deleteAll(any());
-        assertThat(result).containsExactly(existing);
+        assertThat(result).extracting(PublishTargetService.TargetView::target).containsExactly(existing);
         assertThat(existing.getPublishOptions()).isEqualTo("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
         assertThat(savedRows()).containsExactly(existing);
     }
@@ -709,13 +862,13 @@ class PublishTargetServiceTest {
                 "{\"privacyLevel\":\"SELF_ONLY\"}");
         when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(tiktok));
 
-        List<PostPublishTarget> result = service.replaceSelection(PROJECT, WORK_ITEM,
+        List<PublishTargetService.TargetView> result = service.replaceSelection(PROJECT, WORK_ITEM,
                 List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
                                 Map.of("privacyLevel", "PUBLIC_TO_EVERYONE")),
                         new PublishTargetService.TargetSelection("facebook", "conn-meta")),
                 caller);
 
-        assertThat(result).extracting(PostPublishTarget::getPlatform)
+        assertThat(result).extracting(view -> view.target().getPlatform())
                 .containsExactly("facebook", "tiktok");
         assertThat(savedRows()).extracting(PostPublishTarget::getPlatform)
                 .containsExactly("tiktok", "facebook");

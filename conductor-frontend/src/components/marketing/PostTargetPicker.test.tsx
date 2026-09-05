@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
 import {
@@ -89,7 +89,13 @@ function selection(o: PublishTargetOption, id = `target-${o.platform}-${o.connec
 let availableTargets: PublishTargetOption[] = []
 let selectedTargets: SelectedPublishTarget[] = []
 let putBodies: Array<{
-  targets: Array<{ platform: string; connectionId: string | null; publishOptions?: unknown }>
+  targets: Array<{
+    platform: string
+    connectionId: string | null
+    publishOptions?: unknown
+    captionOverride?: string
+    assetIds?: string[]
+  }>
 }> = []
 let putRejection: { status: number; detail: string } | null = null
 
@@ -115,11 +121,20 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const body = JSON.parse(init!.body as string)
     putBodies.push(body)
     selectedTargets = body.targets.map(
-      (t: { platform: string; connectionId: string; publishOptions?: unknown }) => ({
+      (t: {
+        platform: string
+        connectionId: string
+        publishOptions?: unknown
+        captionOverride?: string
+        assetIds?: string[]
+      }) => ({
         ...selection(
           option({ platform: t.platform as PublishTargetOption['platform'], connectionId: t.connectionId })
         ),
         publishOptions: t.publishOptions,
+        // Echoed the way the server does, so a save round-trips a customisation instead of blanking it.
+        captionOverride: t.captionOverride ?? null,
+        assetIds: t.assetIds ?? null,
       })
     )
     return jsonResponse(200, selectedTargets)
@@ -159,6 +174,135 @@ function renderPicker(props: Partial<React.ComponentProps<typeof PostTargetPicke
 async function loaded() {
   await waitFor(() => expect(screen.getByText(/accounts? selected/i)).toBeInTheDocument())
 }
+
+const POST_ASSETS = [
+  { id: 'asset-a', type: 'instagram_post', label: 'Square', contentType: 'image/jpeg' },
+  { id: 'asset-b', type: 'instagram_post', label: 'Portrait', contentType: 'image/jpeg' },
+] as React.ComponentProps<typeof PostTargetPicker>['assets']
+
+/** The last PUT body's entry for one platform. */
+function lastSelectionFor(platform: string) {
+  return putBodies.at(-1)!.targets.find((t) => t.platform === platform)!
+}
+
+describe('PostTargetPicker — per-destination caption and media', () => {
+  it('sends a caption written for one destination, and nothing for the others', async () => {
+    availableTargets = [
+      option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' }),
+      option({ platform: 'instagram', connectionId: 'conn-meta', label: '@acme' }),
+    ]
+    selectedTargets = [
+      selection(option({ platform: 'facebook', connectionId: 'conn-meta' })),
+      selection(option({ platform: 'instagram', connectionId: 'conn-meta' })),
+    ]
+    renderPicker({ assets: POST_ASSETS, caption: 'The shared caption' })
+    await loaded()
+
+    fireEvent.click(screen.getAllByRole('button', { name: /customize for this destination/i })[0]!)
+    fireEvent.change(screen.getByLabelText(/caption for this destination/i), {
+      target: { value: 'Just for Facebook' },
+    })
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    expect(lastSelectionFor('facebook').captionOverride).toBe('Just for Facebook')
+    // Every selected target rides along on a set-replace, and the untouched one must stay inherited.
+    expect(lastSelectionFor('instagram')).not.toHaveProperty('captionOverride')
+  })
+
+  it('shows the Post caption as what an uncustomised destination falls back to', async () => {
+    availableTargets = [option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })]
+    selectedTargets = [selection(option({ platform: 'facebook', connectionId: 'conn-meta' }))]
+    renderPicker({ assets: POST_ASSETS, caption: 'The shared caption' })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
+
+    expect(screen.getByLabelText(/caption for this destination/i)).toHaveAttribute(
+      'placeholder',
+      'The shared caption'
+    )
+    expect(screen.getByText(/using the post's caption/i)).toBeInTheDocument()
+    expect(screen.getByText(/using all post media \(2\)/i)).toBeInTheDocument()
+  })
+
+  it('sends the chosen media in the order it was arranged', async () => {
+    availableTargets = [option({ platform: 'instagram', connectionId: 'conn-meta', label: '@acme' })]
+    selectedTargets = [selection(option({ platform: 'instagram', connectionId: 'conn-meta' }))]
+    renderPicker({ assets: POST_ASSETS, caption: 'Shared' })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
+    // Unticking the first leaves the second, rather than starting from an empty selection.
+    fireEvent.click(screen.getByRole('checkbox', { name: /publish square here/i }))
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    expect(lastSelectionFor('instagram').assetIds).toEqual(['asset-b'])
+  })
+
+  it('reordering a selection is its own save, because order is what the platform sees', async () => {
+    availableTargets = [option({ platform: 'instagram', connectionId: 'conn-meta', label: '@acme' })]
+    selectedTargets = [
+      {
+        ...selection(option({ platform: 'instagram', connectionId: 'conn-meta' })),
+        assetIds: ['asset-a', 'asset-b'],
+      },
+    ]
+    renderPicker({ assets: POST_ASSETS, caption: 'Shared' })
+    await loaded()
+
+    // An already-customised destination opens with its editor showing.
+    fireEvent.click(screen.getByRole('button', { name: /move portrait earlier/i }))
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    expect(lastSelectionFor('instagram').assetIds).toEqual(['asset-b', 'asset-a'])
+  })
+
+  it('resets a destination to the Post’s media', async () => {
+    availableTargets = [option({ platform: 'instagram', connectionId: 'conn-meta', label: '@acme' })]
+    selectedTargets = [
+      {
+        ...selection(option({ platform: 'instagram', connectionId: 'conn-meta' })),
+        assetIds: ['asset-a'],
+      },
+    ]
+    renderPicker({ assets: POST_ASSETS, caption: 'Shared' })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: /use all post media/i }))
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    // Absent, not an empty array: inheriting is the absence of a choice.
+    expect(lastSelectionFor('instagram')).not.toHaveProperty('assetIds')
+  })
+
+  it('opens the editor already showing for a destination that differs from the Post', async () => {
+    availableTargets = [option({ platform: 'instagram', connectionId: 'conn-meta', label: '@acme' })]
+    selectedTargets = [
+      {
+        ...selection(option({ platform: 'instagram', connectionId: 'conn-meta' })),
+        captionOverride: 'Grid copy',
+      },
+    ]
+    renderPicker({ assets: POST_ASSETS, caption: 'Shared' })
+    await loaded()
+
+    // A customisation nobody can see is a customisation nobody remembers making.
+    expect(screen.getByRole('button', { name: /customized for this destination/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/caption for this destination/i)).toHaveValue('Grid copy')
+  })
+
+  it('disables the editor while the Post is frozen for review', async () => {
+    availableTargets = [option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })]
+    selectedTargets = [selection(option({ platform: 'facebook', connectionId: 'conn-meta' }))]
+    renderPicker({ assets: POST_ASSETS, caption: 'Shared', status: 'IN_REVIEW' })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
+
+    // Editing past the gate is refused by the server; disabling says so instead of 400ing.
+    expect(screen.getByLabelText(/caption for this destination/i)).toBeDisabled()
+  })
+})
 
 describe('workflowDeclaresPublishTargets', () => {
   it('is true for a Workflow whose asset types name a publishable platform', () => {

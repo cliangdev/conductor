@@ -11,6 +11,7 @@ import com.conductor.integration.connector.tiktok.TikTokClient.UploadSession;
 import com.conductor.integration.connector.tiktok.TikTokClient.VideoPostInfo;
 import com.conductor.integration.connector.tiktok.TikTokPublishAction.VideoRangeReader;
 import com.conductor.repository.AssetRepository;
+import com.conductor.service.StorageService;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,6 +41,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -87,6 +89,9 @@ class TikTokPublishActionTest {
 
     private TikTokPublishAction action;
 
+    /** Signs a predictable URL so a photo post's images resolve without a real bucket. */
+    private final StorageService storageService = mock(StorageService.class);
+
     @BeforeEach
     void setUp() {
         client = mock(TikTokClient.class);
@@ -115,7 +120,7 @@ class TikTokPublishActionTest {
             return new ByteArrayInputStream(new byte[] {1, 2, 3});
         };
         TikTokPublishAction publishAction = new TikTokPublishAction(tikTokClient, assetRepository,
-                targetRepository, actionInvocationService, objectMapper, reader);
+                targetRepository, actionInvocationService, objectMapper, reader, storageService);
         publishAction.pollIntervalMillis = 0L;
         return publishAction;
     }
@@ -532,6 +537,122 @@ class TikTokPublishActionTest {
         config.put("privacyLevelOptions", options);
         config.put("maxVideoPostDurationSec", 300);
         return new ConnectionContext("proj", "tiktok", "conn-1", ACCESS_TOKEN, null, null, config, null);
+    }
+
+    // --- Photo posts: images are fetched from URLs, not uploaded, and never re-initialised on a retry ---
+
+    @Test
+    void photoPost_initialisesOnceWithEveryImageInTheChosenOrderAndNeverUploadsBytes() {
+        givenPhotos("photo-b", "photo-a");
+        when(client.initPhotoPost(anyString(), any(), any())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        ActionResult result = action.publish(photoInput("photo-b", "photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> urls = ArgumentCaptor.forClass(List.class);
+        verify(client).initPhotoPost(eq(ACCESS_TOKEN), any(), urls.capture());
+        // The destination's order, because TikTok covers a photo post with its first image.
+        assertThat(urls.getValue()).containsExactly("https://signed/photo-b", "https://signed/photo-a");
+        // A photo post is PULL_FROM_URL: there is nothing to chunk and nothing to upload.
+        verify(client, never()).initFileUpload(anyString(), any(), any());
+        verify(client, never()).uploadChunk(anyString(), any(), anyLong(), anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void photoPost_carriesTheTitleAndDescriptionSeparately_truncatingAnOverLongTitle() {
+        givenPhotos("photo-a");
+        when(client.initPhotoPost(anyString(), any(), any())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+        Map<String, Object> input = photoInput("photo-a");
+        input.put("headline", "H".repeat(120));
+        input.put("description", "The long body copy");
+
+        action.publish(input, context());
+
+        ArgumentCaptor<TikTokClient.PhotoPostInfo> info =
+                ArgumentCaptor.forClass(TikTokClient.PhotoPostInfo.class);
+        verify(client).initPhotoPost(eq(ACCESS_TOKEN), info.capture(), any());
+        assertThat(info.getValue().title()).hasSize(90);
+        assertThat(info.getValue().description()).isEqualTo("The long body copy");
+    }
+
+    @Test
+    void photoPost_resumingAfterAStatusFailureNeverOpensASecondPost() {
+        givenPhotos("photo-a");
+        // A checkpoint from the first attempt: TikTok already has the post, only its outcome is unknown.
+        storedCheckpoint.set("{\"publishId\":\"" + PUBLISH_ID + "\",\"mode\":\"PHOTO\","
+                + "\"assetIds\":[\"photo-a\"]}");
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        // Re-initialising here is exactly how the creator ends up with the same photos posted twice.
+        verify(client, never()).initPhotoPost(anyString(), any(), any());
+        verify(client).fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID);
+    }
+
+    @Test
+    void photoPost_namesTheUrlPrefixPrerequisiteWhenTikTokWillNotFetchTheImages() {
+        givenPhotos("photo-a");
+        when(client.initPhotoPost(anyString(), any(), any())).thenThrow(
+                new TikTokClient.TikTokApiException("url ownership unverified",
+                        TikTokClient.ERROR_URL_OWNERSHIP_UNVERIFIED, false));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isFalse();
+        // Retrying cannot help, so the message has to name the one thing that does.
+        assertThat(result.message()).contains("verified URL prefix");
+        assertThat(result.message()).contains("developer portal");
+    }
+
+    @Test
+    void aVideoSelectionStillTakesTheChunkedUploadPath() {
+        stubHappyPath();
+        Map<String, Object> input = schedulerInput();
+        input.put("asset_ids", List.of(ASSET_ID));
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isTrue();
+        verify(client).initFileUpload(eq(ACCESS_TOKEN), any(VideoPostInfo.class), any());
+        verify(client, never()).initPhotoPost(anyString(), any(), any());
+    }
+
+    /** The Post's images, signed so the action can hand TikTok fetchable URLs. */
+    private void givenPhotos(String... assetIds) {
+        List<Asset> photos = new ArrayList<>();
+        for (String id : assetIds) {
+            Asset asset = new Asset();
+            asset.setId(id);
+            asset.setKind("file");
+            asset.setType("post_media");
+            asset.setRef("assets/" + id + ".jpg");
+            asset.setGcsPath("assets/" + id + ".jpg");
+            asset.setUploadStatus("UPLOADED");
+            asset.setContentType("image/jpeg");
+            asset.setSizeBytes(2048L);
+            asset.setCreatedAt(OffsetDateTime.parse("2026-08-01T09:00:00Z"));
+            photos.add(asset);
+            when(storageService.generateSignedUrl(eq("assets/" + id + ".jpg"), anyInt()))
+                    .thenReturn("https://signed/" + id);
+        }
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(photos);
+    }
+
+    private static Map<String, Object> photoInput(String... assetIds) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("title", "Launch teaser");
+        input.put("work_item_id", WORK_ITEM_ID);
+        input.put("target_id", TARGET_ID);
+        input.put("asset_ids", List.of(assetIds));
+        return input;
     }
 
     private static Asset videoAsset(String id, long sizeBytes) {

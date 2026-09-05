@@ -6,6 +6,7 @@ import com.conductor.entity.Project;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,6 +42,7 @@ class PostScheduleValidatorTest {
 
     private AssetRepository assetRepository;
     private PostPublishTargetRepository postPublishTargetRepository;
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private PostScheduleValidator validator;
 
     private Statechart marketing;
@@ -50,7 +52,9 @@ class PostScheduleValidatorTest {
     void setUp() {
         assetRepository = Mockito.mock(AssetRepository.class);
         postPublishTargetRepository = Mockito.mock(PostPublishTargetRepository.class);
+        targetAssetRepository = Mockito.mock(PostPublishTargetAssetRepository.class);
         validator = new PostScheduleValidator(assetRepository, postPublishTargetRepository,
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository),
                 Clock.fixed(NOW.toInstant(), ZoneOffset.UTC));
         marketing = statechart("/schema/examples/marketing.workflow.json");
         engineering = statechart("/schema/examples/engineering.workflow.json");
