@@ -27,12 +27,20 @@ import java.util.stream.Collectors;
  * <ol>
  *   <li>the project's own {@link ConnectorAppCredential} row → {@link CredentialSource#PROJECT}</li>
  *   <li>the deployment env vars named by {@link OAuth2Connector#clientIdProperty()} /
- *       {@link OAuth2Connector#clientSecretProperty()} → {@link CredentialSource#DEPLOYMENT}</li>
+ *       {@link OAuth2Connector#clientSecretProperty()} → {@link CredentialSource#DEPLOYMENT}, but only
+ *       for a connector that {@link OAuth2Connector#allowsDeploymentCredentials() allows} them</li>
  *   <li>neither → {@link CredentialSource#NONE}, carrying the property names that are missing</li>
  * </ol>
  * A project with no row resolves exactly what the deployment resolved before this class existed, so
  * every existing deployment keeps working untouched and one workspace's own app never leaks into
  * another's flows.
+ *
+ * <p><b>The publishing platforms opt out of step 2.</b> A Meta, TikTok or YouTube app carries its own
+ * App Review, its own rate limits and its own relationship with the creator whose account it posts to,
+ * so it belongs to the workspace rather than to whoever runs the deployment. For those connectors this
+ * class never reads the environment: no row means {@link CredentialSource#NONE} with <em>no</em>
+ * missing-property names, which is how a caller tells "this workspace has entered nothing" apart from
+ * "the deployment is missing an env var".
  *
  * <p><b>Crypto.</b> The client secret rides the same envelope as every other Integrations secret:
  * {@link CredentialService} generates a DEK for this row, wraps it with the KMS KEK into the row's
@@ -65,7 +73,9 @@ public class ConnectorAppCredentialService {
      *
      * @param missingProperties env var names that would have to be set for a
      *        {@link CredentialSource#DEPLOYMENT} resolve to succeed; empty unless
-     *        {@link CredentialSource#NONE}.
+     *        {@link CredentialSource#NONE}, and empty even then for a connector that takes no
+     *        deployment credentials at all — there is no env var that would fix it, only an admin
+     *        entering the workspace's own app
      */
     public record ResolvedAppCredentials(String connectorId, CredentialSource source, String clientId,
                                          String clientSecret, List<String> missingProperties) {
@@ -81,7 +91,8 @@ public class ConnectorAppCredentialService {
      */
     public record AppCredentialStatus(String connectorId, CredentialSource source, String clientId,
                                       String clientSecretLast4, List<String> missingProperties,
-                                      String updatedBy, OffsetDateTime updatedAt) {
+                                      String updatedBy, OffsetDateTime updatedAt,
+                                      boolean allowsDeploymentCredentials) {
         public boolean configured() {
             return source != CredentialSource.NONE;
         }
@@ -169,8 +180,13 @@ public class ConnectorAppCredentialService {
     }
 
     /**
-     * Drops this project's own app credentials for a connector, returning it to the deployment env
-     * vars. ADMIN only. A no-op when the project never had a row.
+     * Drops this project's own app credentials for a connector. ADMIN only, and a no-op when the
+     * project never had a row.
+     *
+     * <p>What the connector falls back to depends on whether it
+     * {@link OAuth2Connector#allowsDeploymentCredentials() takes} deployment credentials: the Google
+     * family returns to the deployment env vars, while a publishing platform simply becomes
+     * unconfigured and nobody can connect it until an admin enters another app.
      */
     @Transactional
     public void clear(String projectId, String connectorId, User caller) {
@@ -182,7 +198,16 @@ public class ConnectorAppCredentialService {
         });
     }
 
+    /**
+     * The deployment leg of {@link #resolve}, or a bare {@link CredentialSource#NONE} for a connector
+     * whose app must belong to the workspace. The empty {@code missingProperties} in that case is the
+     * signal, not an oversight: naming an env var would tell an admin to do something that would not
+     * help, since nothing reads it for this connector.
+     */
     private ResolvedAppCredentials resolveFromDeployment(OAuth2Connector connector) {
+        if (!connector.allowsDeploymentCredentials()) {
+            return new ResolvedAppCredentials(connector.getId(), CredentialSource.NONE, null, null, List.of());
+        }
         String clientId = property(connector.clientIdProperty());
         String clientSecret = property(connector.clientSecretProperty());
         List<String> missing = new ArrayList<>();
@@ -208,11 +233,13 @@ public class ConnectorAppCredentialService {
                         row.getProjectId(), row.getConnectorId());
             }
             return new AppCredentialStatus(connector.getId(), CredentialSource.PROJECT, row.getClientId(),
-                    row.getClientSecretLast4(), List.of(), row.getUpdatedBy(), row.getUpdatedAt());
+                    row.getClientSecretLast4(), List.of(), row.getUpdatedBy(), row.getUpdatedAt(),
+                    connector.allowsDeploymentCredentials());
         }
         ResolvedAppCredentials deployment = resolveFromDeployment(connector);
         return new AppCredentialStatus(connector.getId(), deployment.source(), deployment.clientId(),
-                last4(deployment.clientSecret()), deployment.missingProperties(), null, null);
+                last4(deployment.clientSecret()), deployment.missingProperties(), null, null,
+                connector.allowsDeploymentCredentials());
     }
 
     /**

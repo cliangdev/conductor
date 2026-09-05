@@ -74,8 +74,8 @@ export default function IntegrationsPage() {
   const connected = integrations.filter((i) => i.connected);
 
   // An OAuth2 connector with no platform app behind it has nothing to consent to — starting the
-  // flow from here would only redirect the user into a server error naming an environment
-  // variable. Non-OAuth2 connectors carry no app credential at all, so they are never blocked.
+  // flow from here would only redirect the user into a server error. Non-OAuth2 connectors carry no
+  // app credential at all, so they are never blocked.
   const blockedOnAppCredential = (item: IntegrationListItem) =>
     item.authType === 'OAUTH2' && item.appCredential?.credentialSource === 'NONE';
 
@@ -285,7 +285,9 @@ export default function IntegrationsPage() {
                       href={detailHref(item)}
                       unavailableReason={
                         blockedOnAppCredential(item)
-                          ? 'No platform app is configured, so nobody can connect this yet.'
+                          ? item.appCredential?.allowsDeploymentCredentials
+                            ? 'No platform app is configured, so nobody can connect this yet.'
+                            : "Enter this workspace's app credentials to let members connect."
                           : undefined
                       }
                       trailing={

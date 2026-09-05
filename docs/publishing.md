@@ -49,6 +49,31 @@ caption, fire time, targets and uploaded assets; changing any of them reverts th
 revokes anything already handed to a platform. That is why editing a schedule after approval sends the
 Post back — it is working, not misbehaving.
 
+## App credentials
+
+Meta, TikTok and YouTube publish as a **platform app**, and that app belongs to the workspace, not to
+whoever runs the deployment. Each carries its own App Review or audit, its own rate limits, and its own
+relationship with the creator whose account it posts to, so there is no deployment-wide app to inherit
+and no environment variable to set.
+
+A project admin enters the pair at **Settings → Integrations → *connector***: the client id (public,
+shown back in full) and the client secret (stored under the same KMS envelope as every other
+Integrations secret, and never returned — only its last four characters are). **Verify** probes the
+provider with them and reports what it proved. Until a pair is stored the connector is offered but not
+connectable, and its card says so rather than sending anyone into a consent flow that would fail.
+
+The credential is keyed on the connector, so YouTube's Google OAuth client is separate from the one
+GSC and GCP Billing inherit from the deployment — opting YouTube out of that shared client took nothing
+away from them.
+
+Two consequences worth knowing:
+
+- **Consent, exchange and completion all run as the same app.** The credentials resolved when the
+  consent URL is built are carried through the token exchange and into the connector's completion hook,
+  which is what Meta's long-lived token swap authenticates with. Nothing re-reads them halfway.
+- **Clearing a credential takes the connector offline for new connections.** Connections that already
+  exist keep working on their stored tokens until a refresh needs the app again.
+
 ## Publish targets and lanes
 
 A **publish target** is one row per (Post, platform, account): the durable anchor the pipeline hangs

@@ -703,6 +703,7 @@ public class IntegrationController implements IntegrationsApi {
                 .clientId(status.clientId())
                 .clientSecretLast4(status.clientSecretLast4())
                 .missingProperties(status.missingProperties())
+                .allowsDeploymentCredentials(status.allowsDeploymentCredentials())
                 .updatedBy(status.updatedBy())
                 .updatedAt(status.updatedAt());
     }

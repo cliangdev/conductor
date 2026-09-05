@@ -25,8 +25,9 @@ import java.util.Optional;
  * <p>A non-Google {@link OAuth2Connector}, so it overrides all five endpoint methods rather than
  * inheriting the Google defaults ({@link #authorizationUrl()}, {@link #tokenUrl()},
  * {@link #clientIdProperty()}, {@link #clientSecretProperty()}, {@link #extraAuthorizationParams()}).
- * The client key/secret come from backend config ({@code TIKTOK_CLIENT_KEY}/
- * {@code TIKTOK_CLIENT_SECRET}), never from per-project settings.
+ * The client key/secret are the <b>workspace's own</b> ({@link #allowsDeploymentCredentials()} is
+ * false): a TikTok app carries its own audit and its own creator relationship, so there is no
+ * deployment fallback and a project that has stored none simply cannot connect.
  *
  * <p><b>TikTok deviates from RFC 6749 in two ways, both named by the connector rather than patched
  * into the shared flow.</b> It calls the client identifier {@code client_key}
@@ -151,6 +152,15 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
     @Override
     public String clientSecretProperty() {
         return "TIKTOK_CLIENT_SECRET";
+    }
+
+    /**
+     * A TikTok app belongs to the workspace that had it audited, so the deployment's app is never a
+     * stand-in for one a project has not set. The property names above stay only as identifiers.
+     */
+    @Override
+    public boolean allowsDeploymentCredentials() {
+        return false;
     }
 
     /**

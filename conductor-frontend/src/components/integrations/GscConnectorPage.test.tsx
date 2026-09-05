@@ -41,6 +41,7 @@ const credential = (
   clientId: credentialSource === 'NONE' ? null : 'google-app.apps.googleusercontent.com',
   clientSecretLast4: credentialSource === 'NONE' ? null : 'wxyz',
   missingProperties: credentialSource === 'NONE' ? ['GOOGLE_OAUTH_CLIENT_ID'] : [],
+  allowsDeploymentCredentials: true,
   updatedBy: null,
   updatedAt: null,
 })

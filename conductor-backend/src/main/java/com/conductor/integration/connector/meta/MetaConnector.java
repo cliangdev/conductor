@@ -15,7 +15,6 @@ import com.conductor.service.AssetService;
 import com.conductor.service.StorageService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
-import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 
@@ -34,8 +33,9 @@ import java.util.Optional;
  * <p>The first non-Google {@link OAuth2Connector} in the codebase, so it overrides all five endpoint
  * methods rather than inheriting the Google defaults ({@link #authorizationUrl()}, {@link #tokenUrl()},
  * {@link #clientIdProperty()}, {@link #clientSecretProperty()}, {@link #extraAuthorizationParams()}).
- * The app id/secret come from backend config ({@code META_APP_ID}/{@code META_APP_SECRET}), never
- * from per-project settings.
+ * The app id/secret are the <b>workspace's own</b> ({@link #allowsDeploymentCredentials()} is false):
+ * a Meta app carries its own App Review and its own creator relationship, so there is no deployment
+ * fallback and a project that has stored none simply cannot connect.
  *
  * <p><b>Post-callback completion.</b> The shared {@code OAuthFlowService} only knows how to swap a
  * code for a token; Meta needs three more steps before the connection is usable, and they live in
@@ -74,7 +74,6 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
      */
     private static final Duration INVOCATION_TIMEOUT = Duration.ofMinutes(12);
 
-    private final Environment environment;
     private final MetaGraphClient graphClient;
     private final FacebookPublishAction facebookPublisher;
     private final InstagramPublishAction instagramPublisher;
@@ -83,17 +82,15 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     // constructor and the context fails at deploy only, since @Profile("!local") beans never
     // instantiate in tests (see DiscordActionConnector).
     @Autowired
-    public MetaConnector(Environment environment, AssetRepository assetRepository, StorageService storageService) {
-        this(environment, new MetaGraphClient(),
-                new AssetPublishMediaResolver(assetRepository, storageService));
+    public MetaConnector(AssetRepository assetRepository, StorageService storageService) {
+        this(new MetaGraphClient(), new AssetPublishMediaResolver(assetRepository, storageService));
     }
 
-    MetaConnector(Environment environment, MetaGraphClient graphClient) {
-        this(environment, graphClient, workItemId -> List.of());
+    MetaConnector(MetaGraphClient graphClient) {
+        this(graphClient, workItemId -> List.of());
     }
 
-    MetaConnector(Environment environment, MetaGraphClient graphClient, PublishMediaResolver mediaResolver) {
-        this.environment = environment;
+    MetaConnector(MetaGraphClient graphClient, PublishMediaResolver mediaResolver) {
         this.graphClient = graphClient;
         this.facebookPublisher = new FacebookPublishAction(graphClient, mediaResolver);
         this.instagramPublisher = new InstagramPublishAction(graphClient, mediaResolver);
@@ -174,6 +171,15 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     }
 
     /**
+     * A Meta app belongs to the workspace that had it reviewed, so the deployment's app is never a
+     * stand-in for one a project has not set. The property names above stay only as identifiers.
+     */
+    @Override
+    public boolean allowsDeploymentCredentials() {
+        return false;
+    }
+
+    /**
      * Meta's consent params, not Google's. There is no {@code access_type=offline}/{@code
      * prompt=consent} here: Meta has no refresh-token grant at all — longevity comes from the
      * long-lived exchange in {@link #completeAuthorization}. {@code auth_type=rerequest} is the Meta
@@ -236,11 +242,15 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
 
     /**
      * The shared completion seam {@code OAuthFlowService} calls once the admin has picked a Page. It
-     * is a thin bridge onto {@link #completeAuthorization(String, String)}: Java has no structural
-     * typing, so without this override that method would <b>not</b> satisfy
+     * is a thin bridge onto {@link #completeAuthorization(String, String, String, String)}: Java has
+     * no structural typing, so without this override that method would <b>not</b> satisfy
      * {@link OAuth2Connector#completeAuthorization(OAuthCompletionRequest)} and the flow would
      * silently fall through to the interface's no-op default — persisting the short-lived user token
      * and no Page identity at all.
+     *
+     * <p>The app credentials ride in on the request rather than being resolved here. That is what makes
+     * a workspace's own Meta app work end to end: the long-lived exchange below authenticates as the
+     * very app the user just consented to, and never as whatever the deployment happens to hold.
      *
      * <p>The credential returned is the <b>Page</b> access token, not the user token: that is what
      * publishing authenticates with, and it is long-lived because it was read with the long-lived
@@ -249,8 +259,8 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
      */
     @Override
     public OAuthCompletion completeAuthorization(OAuthCompletionRequest request) {
-        MetaAuthorization authorization =
-                completeAuthorization(request.accessToken(), request.selectedAccountId());
+        MetaAuthorization authorization = completeAuthorization(request.accessToken(),
+                request.selectedAccountId(), request.clientId(), request.clientSecret());
         Object pageName = authorization.config().get(CONFIG_PAGE_NAME);
         return new OAuthCompletion(authorization.pageAccessToken(), request.refreshToken(),
                 pageName != null ? pageName.toString() : null, authorization.config());
@@ -262,11 +272,19 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
      * @param shortLivedUserToken the {@code access_token} the code exchange returned
      * @param selectedPageId      the Page the admin picked; may be null when the user administers
      *                            exactly one Page, which is then selected implicitly
+     * @param appId               the Meta app id the consent ran as
+     * @param appSecret           that app's secret; Meta's long-lived exchange is an app-authenticated
+     *                            call, so the connection cannot be completed without it
      */
-    public MetaAuthorization completeAuthorization(String shortLivedUserToken, String selectedPageId) {
-        MetaAppCredentials credentials = requireAppCredentials();
-        MetaGraphClient.LongLivedToken longLived = graphClient.exchangeForLongLivedUserToken(
-                credentials.appId(), credentials.appSecret(), shortLivedUserToken);
+    public MetaAuthorization completeAuthorization(String shortLivedUserToken, String selectedPageId,
+                                                   String appId, String appSecret) {
+        if (isBlank(appId) || isBlank(appSecret)) {
+            throw new IllegalStateException("Meta app credentials are required to finish connecting this "
+                    + "Page. A project admin must enter this workspace's Meta app id and secret under "
+                    + "Settings -> Integrations -> Meta, then start the connection again.");
+        }
+        MetaGraphClient.LongLivedToken longLived =
+                graphClient.exchangeForLongLivedUserToken(appId, appSecret, shortLivedUserToken);
 
         List<MetaGraphClient.PageAccount> pages = graphClient.listPages(longLived.accessToken());
         MetaGraphClient.PageAccount page = selectPage(pages, selectedPageId);
@@ -345,18 +363,8 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
                         "Facebook Page '" + selectedPageId + "' is not administered by this account."));
     }
 
-    private record MetaAppCredentials(String appId, String appSecret) {}
-
-    private MetaAppCredentials requireAppCredentials() {
-        String appId = environment.getProperty(clientIdProperty(), "");
-        if (appId.isBlank()) {
-            throw new IllegalStateException("Meta app credentials not configured: " + clientIdProperty());
-        }
-        String appSecret = environment.getProperty(clientSecretProperty(), "");
-        if (appSecret.isBlank()) {
-            throw new IllegalStateException("Meta app credentials not configured: " + clientSecretProperty());
-        }
-        return new MetaAppCredentials(appId, appSecret);
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static String stringValue(Map<String, Object> config, String key) {

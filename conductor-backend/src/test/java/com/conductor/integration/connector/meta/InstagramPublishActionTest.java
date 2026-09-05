@@ -10,7 +10,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
@@ -48,7 +47,7 @@ class InstagramPublishActionTest {
 
     @BeforeEach
     void setUp() {
-        connector = new MetaConnector(new MockEnvironment(), new MetaGraphClient(restTemplate), mediaResolver);
+        connector = new MetaConnector(new MetaGraphClient(restTemplate), mediaResolver);
         // No real waiting between container status polls.
         connector.instagramPublisher().pollIntervalMillis = 0L;
         lenient().when(restTemplate.exchange(any(URI.class), any(HttpMethod.class), any(HttpEntity.class),

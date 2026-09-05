@@ -148,7 +148,16 @@ public class ConnectorAppCredentialVerificationService {
                 : probeExpectedFailure(connector, credentials);
     }
 
+    /**
+     * The "nothing to probe" report. A connector that takes no deployment credentials has no env var
+     * worth naming — suggesting one would send an admin to change something nothing reads — so it is
+     * told the single thing that fixes it.
+     */
     private List<Check> notConfigured(ResolvedAppCredentials credentials) {
+        if (credentials.missingProperties().isEmpty()) {
+            return List.of(fail("No app credentials are configured for this connector — enter this "
+                    + "workspace's client id and secret above, then verify again"));
+        }
         return List.of(fail("No app credentials are configured for this connector — set them for this "
                 + "workspace, or set " + String.join(" and ", credentials.missingProperties())
                 + " on the deployment"));

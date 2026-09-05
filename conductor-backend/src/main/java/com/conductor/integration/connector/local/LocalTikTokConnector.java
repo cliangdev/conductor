@@ -156,6 +156,12 @@ public class LocalTikTokConnector implements OAuth2Connector, ActionConnector {
         return true;
     }
 
+    /** Mirrors the real connector: this platform's app belongs to the workspace, not the deployment. */
+    @Override
+    public boolean allowsDeploymentCredentials() {
+        return false;
+    }
+
     /**
      * Reads the fake creator profile without a call out. The access token is passed through untouched
      * rather than validated: a local connection may carry a placeholder token, or none, and refusing it

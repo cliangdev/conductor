@@ -40,6 +40,12 @@ import java.util.Optional;
  * upload weeks later depends on). Do not re-declare those five here; a change to Google's shared flow
  * must reach this connector without an edit.
  *
+ * <p>It does, however, override {@link #allowsDeploymentCredentials()}. Sharing Google's <i>flow</i> is
+ * not sharing Google's <i>app</i>: {@code youtube.upload} is a sensitive scope whose verification is
+ * granted to one OAuth client, and a workspace publishing to its own channel publishes as its own
+ * verified app. Because a stored credential is keyed on the connector id, entering one here leaves GSC
+ * and GCP Billing inheriting the deployment client exactly as before.
+ *
  * <p><b>Post-callback completion.</b> The shared {@code OAuthFlowService} only swaps a code for a
  * token; the channel identity has to be read afterwards, which is what
  * {@link #completeAuthorization(String)} does — {@code channels.list?part=snippet&mine=true}. The
@@ -167,6 +173,16 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
         return List.of(
                 "https://www.googleapis.com/auth/youtube.upload",
                 "https://www.googleapis.com/auth/youtube.readonly");
+    }
+
+    /**
+     * The workspace brings its own Google OAuth client for YouTube — see the class javadoc on why
+     * sharing Google's flow is not sharing Google's app. The inherited {@code GOOGLE_OAUTH_*} property
+     * names stay only as identifiers; nothing reads them for this connector.
+     */
+    @Override
+    public boolean allowsDeploymentCredentials() {
+        return false;
     }
 
     /**

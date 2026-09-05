@@ -96,17 +96,23 @@ public class OAuthFlowService {
 
     /**
      * The app credentials this project's flow runs as: its own stored pair if it has one, else the
-     * deployment env vars. A project that has set nothing therefore resolves exactly what this method
-     * resolved when it read {@code Environment} directly, down to the exception message — which names
-     * the first missing property, as it always has.
+     * deployment env vars where the connector accepts them.
+     *
+     * <p>The two ways this fails need different messages, because they need different fixes. A
+     * Google-family connector with nothing set names the missing env var, as it always has. A
+     * publishing platform has no env var to name — nothing reads one for it — so it names the one
+     * thing that resolves it, which is an admin entering the workspace's app.
      */
     private OAuthCredentials requireOAuthConfig(String projectId, OAuth2Connector connector) {
         var resolved = appCredentialService.resolve(projectId, connector);
         if (!resolved.configured()) {
-            String missing = resolved.missingProperties().isEmpty()
-                    ? connector.clientIdProperty()
-                    : resolved.missingProperties().get(0);
-            throw new IllegalStateException("OAuth client credentials not configured: " + missing);
+            if (resolved.missingProperties().isEmpty()) {
+                throw new IllegalStateException("No app credentials are configured for connector '"
+                        + connector.getId() + "' in this workspace. A project admin must enter the "
+                        + "platform app's client id and secret under Settings -> Integrations.");
+            }
+            throw new IllegalStateException(
+                    "OAuth client credentials not configured: " + resolved.missingProperties().get(0));
         }
         return new OAuthCredentials(resolved.clientId(), resolved.clientSecret());
     }
@@ -172,7 +178,14 @@ public class OAuthFlowService {
         String connectorId = oauthState.getConnectorId();
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
 
-        Map<String, Object> tokenResponse = exchangeCodeForTokens(projectId, connectorId, code, redirectUri);
+        // Resolved once, then used for the exchange AND the completion hook. Resolving separately in
+        // each place is how a workspace's own app could authenticate the consent and the deployment's
+        // app the long-lived swap that follows it.
+        OAuthCredentials creds = connector.usesStubAuthorization()
+                ? null
+                : requireOAuthConfig(projectId, connector);
+
+        Map<String, Object> tokenResponse = exchangeCodeForTokens(connector, creds, code, redirectUri);
 
         String accessToken = (String) tokenResponse.get("access_token");
         String refreshToken = (String) tokenResponse.get("refresh_token");
@@ -196,7 +209,9 @@ public class OAuthFlowService {
         }
 
         OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
-                new OAuth2Connector.OAuthCompletionRequest(accessToken, refreshToken, null));
+                new OAuth2Connector.OAuthCompletionRequest(accessToken, refreshToken, null,
+                        creds == null ? null : creds.clientId(),
+                        creds == null ? null : creds.clientSecret()));
         applyCompletion(conn, completion, accessToken, refreshToken, expiresAt);
 
         oAuthStateRepository.delete(oauthState);
@@ -263,8 +278,14 @@ public class OAuthFlowService {
         if (creds.accessToken() == null || creds.accessToken().isBlank()) {
             throw new BusinessException("Connection " + conn.getId() + " has no stored OAuth token");
         }
+        // The connection's own project, so the hook runs as the same app the authorization ran as.
+        OAuthCredentials appCreds = connector.usesStubAuthorization()
+                ? null
+                : requireOAuthConfig(conn.getProjectId(), connector);
         OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
-                new OAuth2Connector.OAuthCompletionRequest(creds.accessToken(), creds.refreshToken(), accountId));
+                new OAuth2Connector.OAuthCompletionRequest(creds.accessToken(), creds.refreshToken(), accountId,
+                        appCreds == null ? null : appCreds.clientId(),
+                        appCreds == null ? null : appCreds.clientSecret()));
         applyCompletion(conn, completion, creds.accessToken(), creds.refreshToken(), conn.getTokenExpiresAt());
         log.info("OAuth account selection completed for connection={} account={}", conn.getId(), accountId);
         return conn;
@@ -377,14 +398,18 @@ public class OAuthFlowService {
                 + "). Reconnect the account.";
     }
 
+    /**
+     * Swaps the authorization code for tokens, as {@code creds} — the same pair the caller will hand
+     * the completion hook, so consent, exchange and completion are provably one app.
+     *
+     * @param creds null only for a stub-authorizing connector, which never reaches the POST
+     */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exchangeCodeForTokens(String projectId, String connectorId, String code,
-                                                      String redirectUri) {
-        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+    private Map<String, Object> exchangeCodeForTokens(OAuth2Connector connector, OAuthCredentials creds,
+                                                      String code, String redirectUri) {
         if (connector.usesStubAuthorization()) {
-            return stubTokenResponse(connectorId);
+            return stubTokenResponse(connector.getId());
         }
-        OAuthCredentials creds = requireOAuthConfig(projectId, connector);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);

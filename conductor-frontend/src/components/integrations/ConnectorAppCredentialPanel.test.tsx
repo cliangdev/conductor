@@ -23,12 +23,27 @@ vi.mock('@/components/ui/toast', () => ({
   useToast: () => ({ showToast }),
 }))
 
-// Flatten the modal so ConfirmModal's content is in the DOM whenever it is open.
+// Flatten the modal so ConfirmModal's content is in the DOM whenever it is open. The description is
+// rendered here as the real Modal renders it: it carries the consequence of confirming, so a double
+// that dropped it would let that copy change untested.
 vi.mock('@/components/ui/modal', () => ({
-  Modal: ({ open, children, title, footer }: { open: boolean; children: ReactNode; title: string; footer: ReactNode }) =>
+  Modal: ({
+    open,
+    children,
+    title,
+    description,
+    footer,
+  }: {
+    open: boolean
+    children: ReactNode
+    title: string
+    description?: string
+    footer: ReactNode
+  }) =>
     open ? (
       <div data-testid="modal">
         <h2>{title}</h2>
+        {description && <p>{description}</p>}
         {children}
         {footer}
       </div>
@@ -71,13 +86,30 @@ const members = () => [
 ]
 let mockFetchMembers = vi.fn(async () => members())
 
+// Meta's shape: its app carries its own App Review, so there is no deployment app to inherit and no
+// env var whose absence explains the NONE.
 const NONE: ConnectorAppCredentialStatus = {
   connectorId: 'meta',
   credentialSource: 'NONE',
   configured: false,
   clientId: null,
   clientSecretLast4: null,
-  missingProperties: ['META_APP_ID', 'META_APP_SECRET'],
+  missingProperties: [],
+  allowsDeploymentCredentials: false,
+  updatedBy: null,
+  updatedAt: null,
+}
+
+// The Google family's shape: one deployment app is meant to be inherited, so an unset env var is
+// exactly what a NONE means and naming it is the actionable advice.
+const NONE_INHERITABLE: ConnectorAppCredentialStatus = {
+  connectorId: 'gsc',
+  credentialSource: 'NONE',
+  configured: false,
+  clientId: null,
+  clientSecretLast4: null,
+  missingProperties: ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'],
+  allowsDeploymentCredentials: true,
   updatedBy: null,
   updatedAt: null,
 }
@@ -89,6 +121,7 @@ const DEPLOYMENT: ConnectorAppCredentialStatus = {
   clientId: 'dep-client-1234',
   clientSecretLast4: '9999',
   missingProperties: [],
+  allowsDeploymentCredentials: true,
   updatedBy: null,
   updatedAt: null,
 }
@@ -100,6 +133,7 @@ const PROJECT: ConnectorAppCredentialStatus = {
   clientId: 'proj-client-5678',
   clientSecretLast4: '8888',
   missingProperties: [],
+  allowsDeploymentCredentials: false,
   updatedBy: 'user-7',
   updatedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
 }
@@ -140,12 +174,22 @@ beforeEach(() => {
 })
 
 describe('ConnectorAppCredentialPanel — readiness states', () => {
-  it('names every missing property when no credential is configured', () => {
+  it('names every missing property when a connector that can inherit one is unconfigured', () => {
+    renderPanel(NONE_INHERITABLE)
+
+    expect(screen.getByText('Not configured')).toBeInTheDocument()
+    expect(screen.getByText('GOOGLE_OAUTH_CLIENT_ID')).toBeInTheDocument()
+    expect(screen.getByText('GOOGLE_OAUTH_CLIENT_SECRET')).toBeInTheDocument()
+  })
+
+  it('tells a workspace to enter its own app, naming no env var, when none can be inherited', () => {
     renderPanel(NONE)
 
     expect(screen.getByText('Not configured')).toBeInTheDocument()
-    expect(screen.getByText('META_APP_ID')).toBeInTheDocument()
-    expect(screen.getByText('META_APP_SECRET')).toBeInTheDocument()
+    expect(screen.getByText(/belong to the workspace that registered them/i)).toBeInTheDocument()
+    // Naming an env var here would send an admin to set something nothing reads for this connector.
+    expect(screen.queryByText(/META_APP_ID/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/on the deployment/i)).not.toBeInTheDocument()
   })
 
   it('says a deployment credential is inherited and shared, and offers no clear action', () => {
@@ -177,6 +221,14 @@ describe('ConnectorAppCredentialPanel — readiness states', () => {
 
     expect(screen.getByText(/doesn't need its own app review/i)).toBeInTheDocument()
   })
+
+  it('warns that clearing takes the connector offline when no deployment app can take over', () => {
+    renderPanel(PROJECT)
+    fireEvent.click(screen.getByRole('button', { name: /^clear$/i }))
+
+    expect(screen.getByText(/Remove this workspace's Meta app\?/i)).toBeInTheDocument()
+    expect(screen.getByText(/Nobody can connect Meta until another app is entered/i)).toBeInTheDocument()
+  })
 })
 
 describe('ConnectorAppCredentialPanel — permissions', () => {
@@ -196,7 +248,7 @@ describe('ConnectorAppCredentialPanel — permissions', () => {
     renderPanel(NONE)
 
     expect(screen.queryByRole('button', { name: /credential for this workspace/i })).not.toBeInTheDocument()
-    expect(screen.getByText('META_APP_ID')).toBeInTheDocument()
+    expect(screen.getByText(/belong to the workspace that registered them/i)).toBeInTheDocument()
   })
 })
 
@@ -400,14 +452,16 @@ describe('ConnectorCard readiness', () => {
         name="Meta"
         description="Marketing"
         href="/app/projects/proj-1/integrations/meta"
-        unavailableReason="Set META_APP_ID and META_APP_SECRET before connecting."
+        unavailableReason="Enter this workspace's app credentials to let members connect."
       />
     )
 
     // No connect handler exists at all, so no click can reach a flow that would fail.
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
     expect(screen.getByRole('link')).toHaveAttribute('href', '/app/projects/proj-1/integrations/meta')
-    expect(screen.getByText('Set META_APP_ID and META_APP_SECRET before connecting.')).toBeInTheDocument()
+    expect(
+      screen.getByText("Enter this workspace's app credentials to let members connect.")
+    ).toBeInTheDocument()
   })
 
   it('stays a plain connect button when nothing blocks it', () => {
@@ -446,7 +500,7 @@ describe('GenericConnectorPage app credential readiness', () => {
     renderPage(metaConnector(NONE))
 
     expect(await screen.findByRole('button', { name: /^authorize$/i })).toBeDisabled()
-    expect(screen.getByText('META_APP_ID')).toBeInTheDocument()
+    expect(screen.getByText(/belong to the workspace that registered them/i)).toBeInTheDocument()
   })
 
   // The browse grid sends a blocked connector here instead of into a doomed consent flow, so this

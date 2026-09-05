@@ -220,6 +220,23 @@ class ConnectorAppCredentialVerificationServiceTest {
     }
 
     @Test
+    void reportsErrorTellingTheAdminToEnterCredentials_whenTheConnectorTakesNoDeploymentApp() {
+        StubConnector meta = metaConnector();
+        // NONE with no missing properties is how the credential service says "workspace-only, and this
+        // workspace has entered nothing" — there is no env var that would resolve it.
+        when(appCredentialService.resolve(eq(PROJECT_ID), any())).thenReturn(
+                new ResolvedAppCredentials("meta", CredentialSource.NONE, null, null, List.of()));
+
+        var report = service.verify(PROJECT_ID, meta);
+
+        server.verify();
+        assertThat(report.status()).isEqualTo(ConnectorAppCredentialVerificationService.ReportStatus.ERROR);
+        assertThat(messages(report))
+                .contains("enter this workspace's client id and secret")
+                .doesNotContain("on the deployment");
+    }
+
+    @Test
     void neverEchoesTheClientSecretEvenWhenTheProviderDoes() {
         StubConnector google = googleConnector();
         resolves(google, CredentialSource.PROJECT, "google-client-id", SECRET);

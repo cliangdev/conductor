@@ -269,16 +269,29 @@ export function ConnectorAppCredentialPanel({
             {source === 'NONE' && (
               <Alert variant="warning">
                 <p>No platform app is configured, so nobody can connect {connectorName} yet.</p>
-                {status.missingProperties.length > 0 && (
+                {/*
+                  Two different NONEs need two different instructions. A connector that can inherit the
+                  deployment's app has an env var worth naming; one whose app must belong to the
+                  workspace does not, and naming one would send an admin to set something nothing reads.
+                */}
+                {status.allowsDeploymentCredentials ? (
+                  status.missingProperties.length > 0 && (
+                    <p className="mt-1">
+                      Set{' '}
+                      {status.missingProperties.map((property, index) => (
+                        <span key={property}>
+                          {index > 0 && ', '}
+                          <code className="font-mono text-xs">{property}</code>
+                        </span>
+                      ))}{' '}
+                      on the deployment, or give this workspace its own credential.
+                    </p>
+                  )
+                ) : (
                   <p className="mt-1">
-                    Set{' '}
-                    {status.missingProperties.map((property, index) => (
-                      <span key={property}>
-                        {index > 0 && ', '}
-                        <code className="font-mono text-xs">{property}</code>
-                      </span>
-                    ))}{' '}
-                    on the deployment, or give this workspace its own credential.
+                    {connectorName} apps belong to the workspace that registered them, so there is no
+                    deployment credential to fall back on. Enter this workspace&apos;s client ID and
+                    secret below.
                   </p>
                 )}
               </Alert>
@@ -347,10 +360,23 @@ export function ConnectorAppCredentialPanel({
         )}
       </div>
 
+      {/*
+        Clearing means two different things. Where a deployment app exists the workspace falls back to
+        it and connecting keeps working; where it does not, clearing takes the connector offline for
+        everyone, so the dialog says so rather than promising a fallback that isn't there.
+      */}
       <ConfirmModal
         open={confirmingClear}
-        title="Use the deployment credential?"
-        description={`This removes the client ID and secret set on this workspace. ${connectorName} consent flows fall back to whatever the deployment provides.`}
+        title={
+          status.allowsDeploymentCredentials
+            ? 'Use the deployment credential?'
+            : `Remove this workspace's ${connectorName} app?`
+        }
+        description={
+          status.allowsDeploymentCredentials
+            ? `This removes the client ID and secret set on this workspace. ${connectorName} consent flows fall back to whatever the deployment provides.`
+            : `This removes the client ID and secret set on this workspace. Nobody can connect ${connectorName} until another app is entered here; connections that already exist keep working until their tokens need refreshing.`
+        }
         confirmLabel="Clear"
         busyLabel="Clearing…"
         busy={clearing}

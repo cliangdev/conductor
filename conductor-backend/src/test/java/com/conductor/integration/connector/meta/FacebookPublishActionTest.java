@@ -20,7 +20,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
@@ -70,7 +69,7 @@ class FacebookPublishActionTest {
 
     @BeforeEach
     void setUp() {
-        connector = new MetaConnector(new MockEnvironment(), new MetaGraphClient(restTemplate), mediaResolver);
+        connector = new MetaConnector(new MetaGraphClient(restTemplate), mediaResolver);
         lenient().when(restTemplate.exchange(any(URI.class), any(HttpMethod.class), any(HttpEntity.class),
                         any(Class.class)))
                 .thenAnswer(invocation -> {
