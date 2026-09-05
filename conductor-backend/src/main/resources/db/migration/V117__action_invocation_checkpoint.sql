@@ -7,7 +7,7 @@
 -- URI, byte offset, chunk index) so the next attempt for the SAME idempotency_key picks up where the
 -- failed one stopped.
 --
--- TEXT and uninterpreted by SQL (same choice as post_publish_target.resume_checkpoint in V126) --
+-- TEXT and uninterpreted by SQL (same choice as post_publish_target.resume_checkpoint in V112) --
 -- only the media-upload code that wrote the payload parses it. Nullable: every existing invocation,
 -- and every connector that never opts in, leaves it NULL. Scoping needs no index -- the checkpoint is
 -- only ever reached through the existing unique idempotency_key.

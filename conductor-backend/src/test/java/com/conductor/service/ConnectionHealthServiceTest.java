@@ -48,7 +48,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Health tracking for a connection, end to end against a real Postgres so the V133 columns, the
+ * Health tracking for a connection, end to end against a real Postgres so the V114 columns, the
  * entity mapping, and the service that writes them are all proven together.
  *
  * <p>Connection health is deliberately NOT connection status: every assertion here also checks that
@@ -104,7 +104,7 @@ class ConnectionHealthServiceTest extends AbstractNoneWebIntegrationTest {
         return connectionRepository.findById(connectionId).orElseThrow();
     }
 
-    // ---- [auto] V133 applies and the three health columns round-trip on the Connection entity ----
+    // ---- [auto] V114 applies and the three health columns round-trip on the Connection entity ----
 
     @Test
     void healthColumnsRoundTripOnTheConnectionEntity() {
