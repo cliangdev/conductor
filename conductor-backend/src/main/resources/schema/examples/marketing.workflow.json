@@ -8,6 +8,7 @@
   "default_view": "calendar",
   "types": ["POST"],
   "asset_types": ["facebook_post", "instagram_post", "youtube_video", "tiktok_post"],
+  "publishes_from": "SCHEDULED",
   "metric": null,
   "statuses": [
     { "id": "DRAFT", "label": "Draft", "category": "open", "initial": true },
@@ -23,6 +24,7 @@
     {
       "from": "IN_REVIEW",
       "to": "APPROVED",
+      "trigger": "review_approved",
       "label": "Approve",
       "requiresReview": true,
       "reviewOutcomes": ["approve", "request_changes"],
@@ -30,7 +32,7 @@
     },
     { "from": "IN_REVIEW", "to": "CHANGES_REQUESTED", "label": "Request changes" },
     { "from": "CHANGES_REQUESTED", "to": "IN_REVIEW", "label": "Resubmit" },
-    { "from": "APPROVED", "to": "SCHEDULED", "label": "Schedule" },
+    { "from": "APPROVED", "to": "SCHEDULED", "label": "Schedule", "trigger": "review_approved" },
     { "from": "APPROVED", "to": "IN_REVIEW", "label": "Send back" },
     { "from": "SCHEDULED", "to": "APPROVED", "label": "Unschedule" },
     { "from": "SCHEDULED", "to": "PUBLISHED", "label": "Published" },

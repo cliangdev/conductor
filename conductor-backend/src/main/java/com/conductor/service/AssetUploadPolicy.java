@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.exception.BusinessException;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartStatus;
 import com.conductor.workflow.lifecycle.StatechartTransition;
@@ -159,7 +160,15 @@ public final class AssetUploadPolicy {
         }
         boolean terminal = chart.transitionsFrom(statusId).isEmpty()
                 || chart.status(statusId).map(StatechartStatus::terminal).orElse(false);
-        return terminal ? "reopened, which this status does not allow" : "sent back for changes";
+        if (terminal) {
+            return "reopened, which this status does not allow";
+        }
+        // With no review gate there is nobody to send it back: the freeze came from scheduling, and the way
+        // out is the Workflow's own edge back before it (Unschedule).
+        if (reviewGate(chart).isEmpty() && PublishingWorkflow.isScheduledOrLater(chart, statusId)) {
+            return "unscheduled";
+        }
+        return "sent back for changes";
     }
 
     /**
@@ -200,6 +209,21 @@ public final class AssetUploadPolicy {
             return true;
         }
         return isApprovedOrLater(chart, statusId);
+    }
+
+    /**
+     * Whether an item's content — caption, media, schedule, destinations — is frozen at {@code statusId}.
+     *
+     * <p>Two boundaries, and either freezes. {@link #isUnderReviewOrLater} is the review freeze: from the
+     * moment a reviewer may be reading, the author no longer holds the pen. The scheduled region
+     * ({@link PublishingWorkflow#isScheduledOrLater}) is the platform freeze: a native destination has
+     * been handed the post, and a caption or file changed underneath it would publish something nobody
+     * approved. On a Workflow with a review gate the second is inside the first, so this is the same test
+     * it always was; on a Workflow that chose to have no review gate it is the only freeze there is, and
+     * without it media could be deleted under a post Facebook is already holding.
+     */
+    public static boolean isFrozen(Statechart chart, String statusId) {
+        return isUnderReviewOrLater(chart, statusId) || PublishingWorkflow.isScheduledOrLater(chart, statusId);
     }
 
     public static boolean isApprovedOrLater(Statechart chart, String statusId) {

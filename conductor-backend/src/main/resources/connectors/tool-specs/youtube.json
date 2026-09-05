@@ -15,7 +15,12 @@
         "target_id": "Id of the post_publish_target this upload belongs to, used to resume an interrupted upload (optional)",
         "idempotency_key": "Key the upload's resume checkpoint is stored under, when the caller owns one of its own (optional)"
       },
-      "outputKeys": ["video_id", "permalink", "privacy_status", "publish_at"]
+      "outputKeys": [
+        "video_id",
+        "permalink",
+        "privacy_status",
+        "publish_at"
+      ]
     },
     {
       "id": "unpublish_video",
@@ -25,7 +30,13 @@
         "privacy_status": "Privacy to park the video at (optional; defaults to private)",
         "publish_at": "ISO-8601 instant to reschedule the publish for, or null to clear the schedule (optional)"
       },
-      "outputKeys": ["video_id", "privacy_status", "is_public", "permalink", "publish_at"]
+      "outputKeys": [
+        "video_id",
+        "privacy_status",
+        "is_public",
+        "permalink",
+        "publish_at"
+      ]
     },
     {
       "id": "get_video_status",
@@ -33,7 +44,38 @@
       "params": {
         "video_id": "Id of the video to read back (required)"
       },
-      "outputKeys": ["video_id", "privacy_status", "is_public", "permalink", "publish_at", "title"]
+      "outputKeys": [
+        "video_id",
+        "privacy_status",
+        "is_public",
+        "permalink",
+        "publish_at",
+        "title"
+      ]
+    },
+    {
+      "id": "get_video_statistics",
+      "description": "Read the view, like and comment counts of up to 50 videos in one videos.list call (one quota unit); a video the channel no longer holds comes back as unavailable",
+      "params": {
+        "post_ids": "Video ids to read (required, list, at most 50)"
+      },
+      "outputKeys": [
+        "metrics"
+      ]
+    }
+  ],
+  "ingest": [
+    {
+      "id": "post_metrics",
+      "label": "Post performance",
+      "description": "Views, likes, comments and shares for every post published through this channel, read back on a cadence and kept per post",
+      "mode": "SNAPSHOT",
+      "sink": "POST_METRICS",
+      "defaultIntervalMinutes": 360,
+      "quota": {
+        "maxCallsPerPull": 10,
+        "maxPostAgeDays": 90
+      }
     }
   ]
 }

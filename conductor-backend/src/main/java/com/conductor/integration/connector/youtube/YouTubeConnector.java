@@ -98,6 +98,7 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
     private static final String ACTION_UNPUBLISH_VIDEO = "unpublish_video";
     private static final String ACTION_GET_VIDEO_STATUS = "get_video_status";
+    private static final String ACTION_GET_VIDEO_STATISTICS = "get_video_statistics";
 
     /** Privacy a revoked upload is parked at, and the default a publish is created with. */
     private static final String PRIVATE = "private";
@@ -263,6 +264,7 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
                 case ACTION_PUBLISH_VIDEO -> publishAction.publish(input, ctx);
                 case ACTION_UNPUBLISH_VIDEO -> unpublishVideo(input, ctx);
                 case ACTION_GET_VIDEO_STATUS -> getVideoStatus(input, ctx);
+                case ACTION_GET_VIDEO_STATISTICS -> getVideoStatistics(input, ctx);
                 default -> ActionResult.error("Unknown YouTube action: " + actionId);
             };
         } catch (HttpClientErrorException e) {
@@ -298,6 +300,36 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     }
 
     /** Whether the upload has actually gone public yet, for the native lane's confirmation poller. */
+    /**
+     * The public counters of a batch of videos — the {@code post_metrics} feed's read. One
+     * {@code videos.list} call per batch, a single quota unit however many ids it carries.
+     */
+    private ActionResult getVideoStatistics(Map<String, Object> input, ConnectionContext ctx) {
+        Object raw = input == null ? null : input.get("post_ids");
+        List<String> ids = new java.util.ArrayList<>();
+        if (raw instanceof java.util.Collection<?> items) {
+            items.forEach(item -> {
+                if (item != null && !String.valueOf(item).isBlank()) {
+                    ids.add(String.valueOf(item).trim());
+                }
+            });
+        }
+        if (ids.isEmpty()) {
+            return ActionResult.error(ACTION_GET_VIDEO_STATISTICS + " requires 'post_ids'");
+        }
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (YouTubeDataClient.VideoStatistics stats : dataClient.listVideoStatistics(ctx.accessToken(), ids)) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("post_id", stats.id());
+            row.put("unavailable", stats.unavailable());
+            if (stats.views() != null) row.put("views", stats.views());
+            if (stats.likes() != null) row.put("likes", stats.likes());
+            if (stats.comments() != null) row.put("comments", stats.comments());
+            rows.add(row);
+        }
+        return ActionResult.ok(Map.of("metrics", rows));
+    }
+
     private ActionResult getVideoStatus(Map<String, Object> input, ConnectionContext ctx) {
         String videoId = YouTubePublishAction.stringValue(input, "video_id");
         if (videoId == null) {

@@ -1,5 +1,7 @@
-import { readFile } from 'node:fs/promises'
-import { basename, extname } from 'node:path'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, extname, join } from 'node:path'
+import { probeVideo } from '../../lib/mp4-probe.js'
 import { Config } from '../config.js'
 import { apiGet, apiPost, apiPut, apiDelete, putBytes } from '../api.js'
 
@@ -106,15 +108,69 @@ export async function listPublishTargets(
   params: { issueId?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  const available = await apiGet<unknown[]>(`${V2_PROJECT(config)}/publish-targets`, config)
+  const accounts = await apiGet<unknown[]>(`${V2_PROJECT(config)}/publish-targets`, config)
   if (!params.issueId) {
-    return { available }
+    return { accounts }
   }
   const selected = await apiGet<unknown[]>(
     `${workItemBase(config, params.issueId)}/publish-targets`,
     config
   )
-  return { available, selected }
+  return { accounts, selected }
+}
+
+/**
+ * The asset type a file on this Work Item is recorded under when the caller did not say: the first one
+ * its Workflow declares. The UI makes the same choice — on a publishing Workflow the type changes nothing
+ * a person can see, and asking an agent to name `instagram_post` for a file bound for Facebook was the
+ * kind of magic string that made the pipeline hard to drive.
+ */
+async function defaultAssetType(config: Config, issueId: string): Promise<string> {
+  const item = await apiGet<{ workflow?: string }>(workItemBase(config, issueId), config)
+  const slug = item.workflow
+  const workflows = await apiGet<Array<Record<string, unknown>>>(
+    `/api/v1/projects/${config.projectId}/workflows?lifecycle=true`,
+    config
+  )
+  const bound = (Array.isArray(workflows) ? workflows : []).find((w) => w['slug'] === slug)
+  const def = bound?.['definition'] as Record<string, unknown> | undefined
+  const types = (def?.['asset_types'] as string[] | undefined) ?? []
+  if (types.length === 0) {
+    throw new Error(
+      `Workflow ${slug ?? '(unknown)'} declares no asset types, so a file cannot be attached to this Work Item.`
+    )
+  }
+  return types[0]!
+}
+
+/**
+ * Fetches a public URL to a temp file so it can go through the same mint → PUT → confirm path a local file
+ * does. The server never fetches a URL itself; this runs on the machine the MCP server runs on.
+ */
+async function downloadToTemp(url: string): Promise<{ filePath: string; contentType: string | null; cleanup: () => Promise<void> }> {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error(`"${url}" is not a valid URL`)
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error(`Only http(s) URLs can be fetched, not ${parsed.protocol}`)
+  }
+  const response = await fetch(parsed)
+  if (!response.ok) {
+    throw new Error(`Fetching ${url} failed: HTTP ${response.status}`)
+  }
+  const dir = await mkdtemp(join(tmpdir(), 'conductor-media-'))
+  let name = basename(parsed.pathname) || 'download'
+  const headerType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? null
+  if (!extname(name) && headerType) {
+    const ext = Object.entries(MEDIA_TYPES).find(([, type]) => type === headerType)?.[0]
+    if (ext) name += ext
+  }
+  const filePath = join(dir, name)
+  await writeFile(filePath, new Uint8Array(await response.arrayBuffer()))
+  return { filePath, contentType: headerType, cleanup: () => rm(dir, { recursive: true, force: true }) }
 }
 
 export async function setPublishTargets(
@@ -146,6 +202,39 @@ export async function setPublishTargets(
 export async function uploadAsset(
   params: {
     issueId: string
+    filePath?: string
+    url?: string
+    type?: string
+    label?: string
+    width?: number
+    height?: number
+    durationSeconds?: number
+  },
+  config: Config
+): Promise<Record<string, unknown>> {
+  if (!params.filePath && !params.url) {
+    throw new Error('Pass filePath (a file on this machine) or url (a public http(s) URL).')
+  }
+  let filePath = params.filePath as string
+  let cleanup: (() => Promise<void>) | undefined
+  let fetchedType: string | null = null
+  if (!params.filePath && params.url) {
+    const downloaded = await downloadToTemp(params.url)
+    filePath = downloaded.filePath
+    cleanup = downloaded.cleanup
+    fetchedType = downloaded.contentType
+  }
+  try {
+    return await uploadFile({ ...params, filePath, type: params.type ?? (await defaultAssetType(config, params.issueId)) },
+        fetchedType, config)
+  } finally {
+    if (cleanup) await cleanup()
+  }
+}
+
+async function uploadFile(
+  params: {
+    issueId: string
     filePath: string
     type: string
     label?: string
@@ -153,6 +242,7 @@ export async function uploadAsset(
     height?: number
     durationSeconds?: number
   },
+  fetchedType: string | null,
   config: Config
 ): Promise<Record<string, unknown>> {
   let bytes: Uint8Array
@@ -165,8 +255,26 @@ export async function uploadAsset(
   }
 
   const filename = basename(params.filePath)
-  const contentType = mediaTypeFor(filename)
+  const guessed = mediaTypeFor(filename)
+  const contentType = guessed === DEFAULT_MEDIA_TYPE && fetchedType ? fetchedType : guessed
   const base = workItemBase(config, params.issueId)
+
+  // A video's measurements come from the client — the server has no container parser by design — and
+  // the approval gate blocks without them. Measure here, the way the browser does, unless the caller
+  // already did; a caller's numbers always win.
+  let width = params.width
+  let height = params.height
+  let durationSeconds = params.durationSeconds
+  if (contentType.startsWith('video/') && (width == null || height == null || durationSeconds == null)) {
+    try {
+      const probe = await probeVideo(params.filePath)
+      width = width ?? probe.width ?? undefined
+      height = height ?? probe.height ?? undefined
+      durationSeconds = durationSeconds ?? probe.durationSeconds ?? undefined
+    } catch {
+      // Unreadable container: fall through and let the read-back warning say what is missing.
+    }
+  }
 
   const ticket = await apiPost<UploadTicket>(
     `${base}/assets/uploads`,
@@ -176,9 +284,9 @@ export async function uploadAsset(
       filename,
       contentType,
       sizeBytes: bytes.byteLength,
-      width: params.width,
-      height: params.height,
-      durationSeconds: params.durationSeconds,
+      width,
+      height,
+      durationSeconds,
     },
     config
   )

@@ -1,5 +1,7 @@
 package com.conductor.integration.connector.meta;
 
+import java.util.ArrayList;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.integration.ConnectorHttp;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -372,6 +374,77 @@ public class MetaGraphClient {
                 Boolean.TRUE.equals(body.isPublished()),
                 body.permalinkUrl(),
                 body.scheduledPublishTime() != null ? Instant.ofEpochSecond(body.scheduledPublishTime()) : null);
+    }
+
+    /** One published post's counts, as Graph reports them; {@code unavailable} when Graph no longer knows the id. */
+    public record PostMetrics(String id, Long likes, Long comments, Long shares, boolean unavailable) {}
+
+    /**
+     * Reads the engagement counts of up to fifty Page posts in one call ({@code ?ids=a,b,c}). An id Graph
+     * cannot resolve comes back as an error entry, which is recorded as {@code unavailable} rather than
+     * failing the batch — one deleted post must not hide the counts of the rest.
+     */
+    public List<PostMetrics> readPostMetrics(List<String> postIds, String pageToken) {
+        if (postIds == null || postIds.isEmpty()) {
+            return List.of();
+        }
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/")
+                .queryParam("ids", String.join(",", postIds))
+                .queryParam("fields", "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)")
+                .encode().build().toUri());
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), JsonNode.class);
+        JsonNode body = response.getBody();
+        List<PostMetrics> metrics = new ArrayList<>();
+        for (String id : postIds) {
+            JsonNode node = body == null ? null : body.get(id);
+            if (node == null || node.has("error")) {
+                metrics.add(new PostMetrics(id, null, null, null, true));
+                continue;
+            }
+            metrics.add(new PostMetrics(id,
+                    summaryCount(node.path("likes")),
+                    summaryCount(node.path("comments")),
+                    node.path("shares").path("count").isNumber() ? node.path("shares").path("count").asLong() : null,
+                    false));
+        }
+        return metrics;
+    }
+
+    /**
+     * Reads the like and comment counts of up to fifty Instagram media in one call. Views, reach and saves
+     * live behind the insights edge, whose availability varies by media type and permission; they are
+     * left null here rather than risking the whole batch on a field one media type refuses.
+     */
+    public List<PostMetrics> readMediaMetrics(List<String> mediaIds, String token) {
+        if (mediaIds == null || mediaIds.isEmpty()) {
+            return List.of();
+        }
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/")
+                .queryParam("ids", String.join(",", mediaIds))
+                .queryParam("fields", "id,like_count,comments_count")
+                .encode().build().toUri());
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), JsonNode.class);
+        JsonNode body = response.getBody();
+        List<PostMetrics> metrics = new ArrayList<>();
+        for (String id : mediaIds) {
+            JsonNode node = body == null ? null : body.get(id);
+            if (node == null || node.has("error")) {
+                metrics.add(new PostMetrics(id, null, null, null, true));
+                continue;
+            }
+            metrics.add(new PostMetrics(id,
+                    node.path("like_count").isNumber() ? node.path("like_count").asLong() : null,
+                    node.path("comments_count").isNumber() ? node.path("comments_count").asLong() : null,
+                    null, false));
+        }
+        return metrics;
+    }
+
+    private static Long summaryCount(JsonNode edge) {
+        JsonNode total = edge.path("summary").path("total_count");
+        return total.isNumber() ? total.asLong() : null;
     }
 
     /** Deletes a Page post — the revocation path for a post Meta is still holding for its fire time. */

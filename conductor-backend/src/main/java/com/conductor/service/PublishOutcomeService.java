@@ -8,6 +8,9 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
@@ -29,7 +32,6 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -110,21 +112,6 @@ import java.util.regex.Pattern;
 public class PublishOutcomeService {
 
     private static final Logger log = LoggerFactory.getLogger(PublishOutcomeService.class);
-
-    /**
-     * How one platform's outcome is read and filed: the Asset type a published destination becomes, the
-     * output key that platform reports its post id under (the connectors' own shipped vocabulary — see
-     * {@code meta.json}, {@code youtube.json}, {@code tiktok.json}), and the name to fall back to when a
-     * target does not carry an account label.
-     */
-    record OutcomePlatform(String assetType, String postIdOutputKey, String displayName) {}
-
-    /** Keyed by the {@code post_publish_target.platform} vocabulary. */
-    static final Map<String, OutcomePlatform> PLATFORMS = Map.of(
-            "facebook", new OutcomePlatform("facebook_post", "post_id", "Facebook"),
-            "instagram", new OutcomePlatform("instagram_post", "media_id", "Instagram"),
-            "youtube", new OutcomePlatform("youtube_video", "video_id", "YouTube"),
-            "tiktok", new OutcomePlatform("tiktok_post", "post_id", "TikTok"));
 
     /** The output key every publish action reports its public URL under. */
     private static final String PERMALINK_OUTPUT_KEY = "permalink";
@@ -228,6 +215,7 @@ public class PublishOutcomeService {
      */
     static final Duration NATIVE_RETRY_LEAD = PostScheduleValidator.MINIMUM_LEAD_TIME.multipliedBy(2);
 
+    private final PublishPlatformRegistry platformRegistry;
     private final PostPublishTargetRepository targetRepository;
     private final AssetService assetService;
     private final ConnectionHealthService connectionHealthService;
@@ -258,7 +246,8 @@ public class PublishOutcomeService {
     @Lazy
     private WorkItemService workItemService;
 
-    public PublishOutcomeService(PostPublishTargetRepository targetRepository,
+    public PublishOutcomeService(PublishPlatformRegistry platformRegistry,
+                                 PostPublishTargetRepository targetRepository,
                                  AssetService assetService,
                                  ConnectionHealthService connectionHealthService,
                                  WorkItemRepository workItemRepository,
@@ -267,6 +256,7 @@ public class PublishOutcomeService {
                                  @Value("${conductor.post-publish.enabled:true}") boolean reconciliationEnabled,
                                  @Value("${conductor.post-publish.stranded-after-minutes:60}")
                                  long strandedAfterMinutes) {
+        this.platformRegistry = platformRegistry;
         this.targetRepository = targetRepository;
         this.assetService = assetService;
         this.connectionHealthService = connectionHealthService;
@@ -295,8 +285,8 @@ public class PublishOutcomeService {
             return applyFailure(target, message, isPermanentAuthFailure(message));
         }
         Map<String, Object> output = result.output() == null ? Map.of() : result.output();
-        OutcomePlatform platform = platformFor(target.getPlatform());
-        String platformPostId = platform == null ? null : stringValue(output, platform.postIdOutputKey());
+        PublishPlatform platform = platformFor(target.getPlatform());
+        String platformPostId = platform == null ? null : stringValue(output, platform.publish().postIdOutputKey());
         return applySuccess(target, platformPostId, stringValue(output, PERMALINK_OUTPUT_KEY));
     }
 
@@ -468,7 +458,7 @@ public class PublishOutcomeService {
         }
 
         Statechart statechart = statechartFor(post);
-        String scheduledStatus = NativeHandoffService.SCHEDULED_STATUS;
+        String scheduledStatus = scheduledStatus(statechart);
         String fromStatus = post.getCurrentStatus();
         String failedStatus = statechart == null ? null : failedStatus(statechart).orElse(null);
         if (!scheduledStatus.equals(fromStatus) && !(failedStatus != null && failedStatus.equals(fromStatus))) {
@@ -581,33 +571,23 @@ public class PublishOutcomeService {
         return true;
     }
 
-    /**
-     * The status a Post reaches when every target published: the status the workflow's scheduled status
-     * transitions to that the workflow itself marks terminal. Publishing is the one way out of the pipeline
-     * that ends the item's life, so "terminal" is what identifies it — no status name is assumed.
-     */
+    /** The status a Post reaches when every target published — see {@link PublishingWorkflow#publishedStatus}. */
     static Optional<String> publishedStatus(Statechart statechart) {
-        return statechart.transitionsFrom(NativeHandoffService.SCHEDULED_STATUS).stream()
-                .map(StatechartTransition::to)
-                .filter(statechart::isTerminal)
-                .findFirst();
+        return PublishingWorkflow.publishedStatus(statechart);
+    }
+
+    /** The status a Post reaches when a target failed — see {@link PublishingWorkflow#failedStatus}. */
+    static Optional<String> failedStatus(Statechart statechart) {
+        return PublishingWorkflow.failedStatus(statechart);
     }
 
     /**
-     * The status a Post reaches when a target failed: the non-terminal status the scheduled status
-     * transitions to that is neither the review gate's approved status (the "unschedule" edge back) nor the
-     * review status itself. What is left is the workflow's own "publish failed" landing — {@code FAILED} in
-     * MARKETING, whatever a different workflow calls it.
+     * The status the Post waits in for its fire time, by its own Workflow; the legacy name when the
+     * Workflow cannot be resolved, so a retry or a roll-up is never refused over a lookup failure.
      */
-    static Optional<String> failedStatus(Statechart statechart) {
-        Optional<StatechartTransition> gate = AssetUploadPolicy.reviewGate(statechart);
-        String approved = gate.map(StatechartTransition::to).orElse(null);
-        String review = gate.map(StatechartTransition::from).orElse(null);
-        return statechart.transitionsFrom(NativeHandoffService.SCHEDULED_STATUS).stream()
-                .map(StatechartTransition::to)
-                .filter(to -> !statechart.isTerminal(to))
-                .filter(to -> !to.equals(approved) && !to.equals(review))
-                .findFirst();
+    private static String scheduledStatus(Statechart statechart) {
+        return statechart == null ? PublishingWorkflow.LEGACY_SCHEDULED_STATUS
+                : PublishingWorkflow.scheduledStatus(statechart).orElse(PublishingWorkflow.LEGACY_SCHEDULED_STATUS);
     }
 
     private void rollUp(PostPublishTarget target) {
@@ -627,7 +607,12 @@ public class PublishOutcomeService {
             return;
         }
         WorkItem post = workItemRepository.findById(postId).orElse(null);
-        if (post == null || !NativeHandoffService.SCHEDULED_STATUS.equals(post.getCurrentStatus())) {
+        if (post == null) {
+            return;
+        }
+        Statechart statechart = statechartFor(post);
+        String scheduledStatus = scheduledStatus(statechart);
+        if (!scheduledStatus.equals(post.getCurrentStatus())) {
             return;
         }
 
@@ -641,7 +626,6 @@ public class PublishOutcomeService {
         boolean everyTargetPublished = counted.stream()
                 .allMatch(t -> t.getState() == PostPublishTargetState.PUBLISHED);
 
-        Statechart statechart = statechartFor(post);
         if (statechart == null) {
             log.warn("Post {} finished publishing but its workflow could not be resolved; status left at {}",
                     postId, post.getCurrentStatus());
@@ -653,7 +637,7 @@ public class PublishOutcomeService {
                             + "{} status out of {}; status left at {}",
                     postId, counted.stream().filter(t -> t.getState() == PostPublishTargetState.PUBLISHED).count(),
                     counted.size(), statechart.slug(), everyTargetPublished ? "published" : "failed",
-                    NativeHandoffService.SCHEDULED_STATUS, post.getCurrentStatus());
+                    scheduledStatus, post.getCurrentStatus());
             return;
         }
 
@@ -731,8 +715,8 @@ public class PublishOutcomeService {
     }
 
     /** The Asset type a published destination on {@code platform} becomes, or null if unrecognised. */
-    static String assetTypeFor(String platform) {
-        OutcomePlatform outcome = platformFor(platform);
+    String assetTypeFor(String platform) {
+        PublishPlatform outcome = platformFor(platform);
         return outcome == null ? null : outcome.assetType();
     }
 
@@ -810,7 +794,7 @@ public class PublishOutcomeService {
                     target.getId(), target.getPlatform());
             return;
         }
-        OutcomePlatform platform = platformFor(target.getPlatform());
+        PublishPlatform platform = platformFor(target.getPlatform());
         if (platform == null) {
             log.warn("Target {} names platform '{}', which has no Asset type; no Asset recorded",
                     target.getId(), target.getPlatform());
@@ -826,13 +810,13 @@ public class PublishOutcomeService {
     }
 
     /** The account a human would recognise this destination by, falling back to the platform's name. */
-    private static String accountLabel(PostPublishTarget target, OutcomePlatform platform) {
+    private static String accountLabel(PostPublishTarget target, PublishPlatform platform) {
         String label = target.getPlatformAccountLabel();
-        return label != null && !label.isBlank() ? label : platform.displayName();
+        return label != null && !label.isBlank() ? label : platform.label();
     }
 
-    private static OutcomePlatform platformFor(String platform) {
-        return platform == null ? null : PLATFORMS.get(platform.trim().toLowerCase(Locale.ROOT));
+    private PublishPlatform platformFor(String platform) {
+        return platformRegistry.find(platform).orElse(null);
     }
 
     private static String stringValue(Map<String, Object> output, String key) {

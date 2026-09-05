@@ -8,6 +8,9 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
@@ -86,68 +89,19 @@ public class NativeHandoffService {
      * first-class way for a Workflow to declare "this is the status an item waits in for its fire time".
      * When it grows one, both uses become a read of that field.
      */
-    static final String SCHEDULED_STATUS = "SCHEDULED";
+    static final String SCHEDULED_STATUS = PublishingWorkflow.LEGACY_SCHEDULED_STATUS;
 
     /** Facebook refuses a {@code scheduled_publish_time} more than thirty days from the API request. */
-    static final Duration FACEBOOK_MAX_LEAD = Duration.ofDays(30);
+    static final Duration FACEBOOK_MAX_LEAD = PublishPlatformRegistry.FACEBOOK_MAX_LEAD;
 
-    /**
-     * How far from "now" a platform will accept a scheduled post. A {@code null} {@link #maxLead} means the
-     * platform declares no far-future limit (YouTube), not "zero".
+    /*
+     * Which platforms are native, how each is told to schedule a post, where it reports the id of what it
+     * created, how that creation is taken back and how far out it accepts a fire time all come from the
+     * PublishPlatformRegistry. Facebook reschedules are always cancel-and-recreate — the Graph API's editing
+     * of an already scheduled post is too limited to rely on — so its revocation is a plain DELETE of the
+     * stored post id. YouTube's is a re-privatization with publish_at cleared, which strands the upload
+     * harmlessly instead of destroying a video a human may still want.
      */
-    record HandoffWindow(Duration minLead, Duration maxLead) {
-
-        boolean accepts(OffsetDateTime now, OffsetDateTime fireTime) {
-            return fireTime != null && !tooSoon(now, fireTime) && !tooFarOut(now, fireTime);
-        }
-
-        boolean tooSoon(OffsetDateTime now, OffsetDateTime fireTime) {
-            return fireTime != null && fireTime.isBefore(now.plus(minLead));
-        }
-
-        boolean tooFarOut(OffsetDateTime now, OffsetDateTime fireTime) {
-            return maxLead != null && fireTime != null && fireTime.isAfter(now.plus(maxLead));
-        }
-    }
-
-    /**
-     * Everything this service needs to know about one native platform: how it is told to schedule a post,
-     * where it reports the id of what it created, and how that creation is taken back.
-     *
-     * <p>The action ids and parameter names are the connectors' own shipped vocabulary
-     * ({@code meta.json}, {@code youtube.json}); the revoke actions are the counterparts the platform
-     * publishers implement.
-     */
-    record NativePlatform(String publishActionId,
-                          String scheduleParam,
-                          String captionParam,
-                          Map<String, Object> publishExtras,
-                          String postIdOutputKey,
-                          String revokeActionId,
-                          String revokeIdParam,
-                          Map<String, Object> revokeExtras,
-                          List<String> clearedOnRevoke,
-                          HandoffWindow window) {}
-
-    /**
-     * The native lane, keyed by the {@code post_publish_target.platform} vocabulary.
-     *
-     * <p>Facebook reschedules are always cancel-and-recreate — the Graph API's editing of an already
-     * scheduled post is too limited to rely on — so revocation is a plain DELETE of the stored post id.
-     * YouTube's is a re-privatization with {@code publish_at} cleared, which strands the upload harmlessly
-     * instead of destroying a video a human may still want.
-     */
-    static final Map<String, NativePlatform> NATIVE_PLATFORMS = Map.of(
-            "facebook", new NativePlatform(
-                    "publish_facebook_post", "scheduled_publish_time", "message", Map.of(),
-                    "post_id",
-                    "delete_facebook_post", "post_id", Map.of(), List.of(),
-                    new HandoffWindow(PostScheduleValidator.MINIMUM_LEAD_TIME, FACEBOOK_MAX_LEAD)),
-            "youtube", new NativePlatform(
-                    "publish_video", "publish_at", "description", Map.of("privacy_status", "private"),
-                    "video_id",
-                    "unpublish_video", "video_id", Map.of("privacy_status", "private"), List.of("publish_at"),
-                    new HandoffWindow(Duration.ZERO, null)));
 
     /**
      * The claim: {@code PENDING -> HANDED_OFF} in one statement whose {@code WHERE} re-asserts both the
@@ -199,11 +153,13 @@ public class NativeHandoffService {
     /**
      * How far ahead the sweep's finder looks. Deliberately far out rather than Facebook's thirty days:
      * YouTube declares no far-future limit, so a bound of thirty days would strand a YouTube target whose
-     * hand-off on entering the scheduled status failed. The per-platform {@link HandoffWindow} is what
+     * hand-off on entering the scheduled status failed. The per-platform {@link PublishPlatform.HandoffWindow} is what
      * actually decides; the finder bound only caps the scan.
      */
     Duration sweepHorizon = Duration.ofDays(3650);
 
+    private final PublishPlatformRegistry platformRegistry;
+    private final PublishingWorkflow publishingWorkflow;
     private final PostPublishTargetRepository targetRepository;
     private final ActiveConnectionResolver connectionResolver;
     private final ActionInvocationService actionInvocationService;
@@ -224,12 +180,16 @@ public class NativeHandoffService {
     @Lazy
     NativeHandoffService self;
 
-    public NativeHandoffService(PostPublishTargetRepository targetRepository,
+    public NativeHandoffService(PublishPlatformRegistry platformRegistry,
+                                PublishingWorkflow publishingWorkflow,
+                                PostPublishTargetRepository targetRepository,
                                 ActiveConnectionResolver connectionResolver,
                                 ActionInvocationService actionInvocationService,
                                 PublishOutcomeService publishOutcomeService,
                                 PublishInputBuilder publishInputBuilder,
                                 @Value("${conductor.native-handoff.enabled:true}") boolean enabled) {
+        this.platformRegistry = platformRegistry;
+        this.publishingWorkflow = publishingWorkflow;
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
@@ -411,12 +371,12 @@ public class NativeHandoffService {
             return;
         }
 
-        NativePlatform platform = NATIVE_PLATFORMS.get(dispatch.platform());
-        String platformPostId = stringValue(result.output(), platform.postIdOutputKey());
+        PublishPlatform platform = platformRegistry.require(dispatch.platform());
+        String platformPostId = stringValue(result.output(), platform.publish().postIdOutputKey());
         String permalink = stringValue(result.output(), "permalink");
         if (platformPostId == null) {
             log.warn("Platform accepted target {} but reported no '{}' — it cannot be revoked by id",
-                    dispatch.targetId(), platform.postIdOutputKey());
+                    dispatch.targetId(), platform.publish().postIdOutputKey());
             return;
         }
 
@@ -464,13 +424,13 @@ public class NativeHandoffService {
             log.warn("Post publish target {} has no owning post; skipping hand-off", targetId);
             return null;
         }
-        if (requireScheduledStatus && !SCHEDULED_STATUS.equals(post.getCurrentStatus())) {
+        if (requireScheduledStatus && !publishingWorkflow.isInScheduledStatus(post)) {
             log.debug("Post publish target {} skipped: its post is in status {}, not {}",
-                    targetId, post.getCurrentStatus(), SCHEDULED_STATUS);
+                    targetId, post.getCurrentStatus(), publishingWorkflow.scheduledStatusOf(post));
             return null;
         }
 
-        NativePlatform platform = nativePlatformFor(target.getPlatform());
+        PublishPlatform platform = nativePlatformFor(target.getPlatform());
         if (platform == null) {
             log.warn("Post publish target {} names platform '{}', which has no native hand-off; skipping",
                     targetId, target.getPlatform());
@@ -496,7 +456,7 @@ public class NativeHandoffService {
         }
 
         HandoffDispatch dispatch = new HandoffDispatch(targetId, post.getId(),
-                normalizedPlatform(target.getPlatform()), connection.get(), platform.publishActionId(),
+                normalizedPlatform(target.getPlatform()), connection.get(), platform.publish().actionId(),
                 buildHandoffInput(target, post, platform), target.getIdempotencyKey());
 
         int claimed = entityManager.createQuery(CLAIM_QUERY)
@@ -539,13 +499,13 @@ public class NativeHandoffService {
      * and the two handles the platform publisher resolves this post's media from. Media parameters
      * themselves are the per-platform publisher's to fill in.
      */
-    private Map<String, Object> buildHandoffInput(PostPublishTarget target, WorkItem post, NativePlatform platform) {
-        Map<String, Object> input = publishInputBuilder.build(target, post, platform.captionParam());
-        input.putAll(platform.publishExtras());
+    private Map<String, Object> buildHandoffInput(PostPublishTarget target, WorkItem post, PublishPlatform platform) {
+        Map<String, Object> input = publishInputBuilder.build(target, post, platform.publish().captionParam());
+        input.putAll(platform.publish().extras());
         // Normalized to a UTC instant, not the stored offset's rendering: the platform is being told a
         // moment in time, and an offset-bearing string round-trips differently depending on where the row
         // was written. The Post's own timezone stays on the Work Item, for humans.
-        input.put(platform.scheduleParam(), target.getFireTime().toInstant().toString());
+        input.put(platform.publish().scheduleParam(), target.getFireTime().toInstant().toString());
         input.put("work_item_id", post.getId());
         input.put("target_id", target.getId());
         return input;
@@ -555,7 +515,7 @@ public class NativeHandoffService {
 
     private void revokeOnPlatform(PostPublishTarget target, String platformPostId) {
         String platform = normalizedPlatform(target.getPlatform());
-        NativePlatform nativePlatform = nativePlatformFor(target.getPlatform());
+        PublishPlatform nativePlatform = nativePlatformFor(target.getPlatform());
         if (nativePlatform == null) {
             throw new BusinessException("Cannot revoke post publish target " + target.getId()
                     + ": platform '" + target.getPlatform() + "' has no native revoke action");
@@ -573,17 +533,17 @@ public class NativeHandoffService {
 
     private void invokeRevokeAction(Connection connection, String platform, String platformPostId,
                                     String idempotencyKey) {
-        NativePlatform nativePlatform = NATIVE_PLATFORMS.get(platform);
+        PublishPlatform.RevokeAction revoke = platformRegistry.require(platform).revoke();
         Map<String, Object> input = new LinkedHashMap<>();
-        input.put(nativePlatform.revokeIdParam(), platformPostId);
-        input.putAll(nativePlatform.revokeExtras());
+        input.put(revoke.idParam(), platformPostId);
+        input.putAll(revoke.extras());
         // Explicit nulls, not omissions: clearing publishAt is the difference between a re-privatized
         // upload and one that quietly goes public at the time the human just cancelled.
-        for (String cleared : nativePlatform.clearedOnRevoke()) {
+        for (String cleared : revoke.clearedOnRevoke()) {
             input.put(cleared, null);
         }
 
-        ActionResult result = actionInvocationService.invoke(connection, nativePlatform.revokeActionId(),
+        ActionResult result = actionInvocationService.invoke(connection, revoke.actionId(),
                 input, idempotencyKey, List.of());
 
         if (result == null || !result.success()) {
@@ -610,9 +570,9 @@ public class NativeHandoffService {
                 .toList();
     }
 
-    private NativePlatform nativePlatformFor(String platform) {
-        String normalized = normalizedPlatform(platform);
-        return normalized == null ? null : NATIVE_PLATFORMS.get(normalized);
+    /** The platform, when it is one whose posts are scheduled natively; null otherwise. */
+    private PublishPlatform nativePlatformFor(String platform) {
+        return platformRegistry.find(platform).filter(PublishPlatform::isNative).orElse(null);
     }
 
     private String normalizedPlatform(String platform) {

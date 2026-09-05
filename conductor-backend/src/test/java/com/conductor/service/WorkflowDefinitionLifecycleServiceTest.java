@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
@@ -46,7 +47,8 @@ class WorkflowDefinitionLifecycleServiceTest {
         versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         security = Mockito.mock(ProjectSecurityService.class);
         WorkflowDefinitionValidator validator =
-                new WorkflowDefinitionValidator(new SkillRegistry(mapper, Mockito.mock(ProjectSkillRepository.class)), new SystemTriggerRegistry(mapper));
+                new WorkflowDefinitionValidator(new SkillRegistry(mapper, Mockito.mock(ProjectSkillRepository.class)), new SystemTriggerRegistry(mapper),
+                        new PublishPlatformRegistry());
         service = new WorkflowDefinitionLifecycleService(repository, versionRepository, security, validator);
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }

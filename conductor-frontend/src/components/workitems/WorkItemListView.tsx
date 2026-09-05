@@ -40,6 +40,8 @@ import { WorkItemBoardView } from '@/components/workitems/WorkItemBoardView'
 import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarView'
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
+import { ComposePostModal } from '@/components/marketing/ComposePostModal'
+import { workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
@@ -338,17 +340,33 @@ export function WorkItemListView({
         }
       />
 
-      <CreateWorkItemModal
-        open={creating}
-        onOpenChange={setCreating}
-        projectId={projectId}
-        workflowSlug={slug}
-        workflowView={workflowView}
-        detailArea={detailArea}
-        noun={noun}
-        token={accessToken!}
-        onCreated={() => void loadIssues()}
-      />
+      {/* A publishing Workflow gets the compose card (caption, media, destinations, time in one go);
+          everything else keeps the generic title-and-description modal. */}
+      {workflowDeclaresPublishTargets(workflowView) ? (
+        <ComposePostModal
+          open={creating}
+          onOpenChange={setCreating}
+          projectId={projectId}
+          workflowSlug={slug}
+          workflowView={workflowView}
+          detailArea={detailArea}
+          noun={noun}
+          token={accessToken!}
+          onCreated={() => void loadIssues()}
+        />
+      ) : (
+        <CreateWorkItemModal
+          open={creating}
+          onOpenChange={setCreating}
+          projectId={projectId}
+          workflowSlug={slug}
+          workflowView={workflowView}
+          detailArea={detailArea}
+          noun={noun}
+          token={accessToken!}
+          onCreated={() => void loadIssues()}
+        />
+      )}
 
       {/* View tabs + display mode toggle */}
       <div className="flex items-center border-b border-border mb-4 -mx-1 px-1">

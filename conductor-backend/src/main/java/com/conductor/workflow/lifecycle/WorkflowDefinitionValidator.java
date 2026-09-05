@@ -1,5 +1,7 @@
 package com.conductor.workflow.lifecycle;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.networknt.schema.Error;
@@ -19,6 +21,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -42,16 +45,23 @@ public class WorkflowDefinitionValidator {
     private static final String SCHEMA_RESOURCE = "schema/workflow-definition-v1.schema.json";
     private static final int MAX_TRANSITIONS_PER_STATUS = 5;
     private static final int MAX_REVIEW_GATED_TRANSITIONS = 3;
-    /** The one system trigger that cascades (fires on the event it also produces); see the cycle check below. */
-    private static final String TRIGGER_STATUS_CHANGED = "status_changed";
+    /**
+     * The system triggers that cascade — each hop fires the next edge declaring the same trigger — and so
+     * could auto-loop on a cyclic chart; see the cycle check below. {@code status_changed} fires on the
+     * event it also produces; {@code review_approved} continues along consecutive edges of its own trigger.
+     */
+    private static final List<String> CASCADING_TRIGGERS = List.of("status_changed", "review_approved");
 
     private final Schema schema;
     private final SkillRegistry skillRegistry;
     private final SystemTriggerRegistry systemTriggerRegistry;
+    private final PublishPlatformRegistry publishPlatformRegistry;
 
-    public WorkflowDefinitionValidator(SkillRegistry skillRegistry, SystemTriggerRegistry systemTriggerRegistry) {
+    public WorkflowDefinitionValidator(SkillRegistry skillRegistry, SystemTriggerRegistry systemTriggerRegistry,
+                                       PublishPlatformRegistry publishPlatformRegistry) {
         this.skillRegistry = skillRegistry;
         this.systemTriggerRegistry = systemTriggerRegistry;
+        this.publishPlatformRegistry = publishPlatformRegistry;
         this.schema = loadSchema();
     }
 
@@ -142,6 +152,8 @@ public class WorkflowDefinitionValidator {
             errors.add(gated + " review-gated transitions, exceeds the cap of " + MAX_REVIEW_GATED_TRANSITIONS);
         }
 
+        validatePublishesFrom(sc, statusIds, errors);
+
         // Every skill Step references a bindable skill id. Load the project's bindable set once (a single
         // query), lazily — statecharts with no skill steps issue no query at all.
         Set<String> bindableSkills = null;
@@ -164,20 +176,58 @@ public class WorkflowDefinitionValidator {
         // endpoints are valid; skip if earlier endpoint errors already exist to avoid noise.
         if (errors.isEmpty()) {
             validateReachability(sc, errors);
-            validateNoStatusChangedCycle(sc, errors);
+            for (String trigger : CASCADING_TRIGGERS) {
+                validateNoCascadeCycle(sc, trigger, errors);
+            }
         }
     }
 
     /**
-     * A cycle formed purely by {@code status_changed}-triggered edges would auto-loop at runtime: each hop
-     * fires the status-changed event that triggers the next. The dispatcher caps it, but the workflow is still
-     * broken authoring, so reject it at publish. Only {@code status_changed} edges cascade this way — a
-     * {@code pr_merged} "cycle" needs a fresh external merge per hop, so it is left alone.
+     * A Workflow that publishes — one whose {@code asset_types} names a platform — has to say which status
+     * its Posts wait in for their fire time, because that is the status the pollers dispatch from and the
+     * entry the publish validators guard. {@code publishes_from} says so explicitly; a chart that predates
+     * the field is accepted when it has a status literally named {@code SCHEDULED}, which is what every
+     * pinned MARKETING snapshot has. Either way the status must exist, must not be terminal (a Post waits
+     * there, it does not end there) and must lead to a terminal status (publishing is how a Post finishes).
      */
-    private void validateNoStatusChangedCycle(Statechart sc, List<String> errors) {
+    private void validatePublishesFrom(Statechart sc, Set<String> statusIds, List<String> errors) {
+        Optional<String> declared = sc.publishesFrom();
+        if (declared.isPresent() && !statusIds.contains(declared.get())) {
+            errors.add("publishes_from references unknown status: " + declared.get());
+            return;
+        }
+        Optional<String> scheduled = PublishingWorkflow.scheduledStatus(sc);
+        if (scheduled.isEmpty()) {
+            if (publishPlatformRegistry.declaresPublishing(sc)) {
+                errors.add("a Workflow whose asset_types name a publishable platform must declare"
+                        + " publishes_from: the status its items wait in for their fire time");
+            }
+            return;
+        }
+        String status = scheduled.get();
+        if (sc.isTerminal(status)) {
+            errors.add("publishes_from status '" + status + "' is terminal; an item must be able to wait there");
+            return;
+        }
+        boolean reachesTerminal = sc.transitionsFrom(status).stream()
+                .map(StatechartTransition::to)
+                .anyMatch(sc::isTerminal);
+        if (declared.isPresent() && !reachesTerminal) {
+            errors.add("publishes_from status '" + status + "' has no transition to a terminal status,"
+                    + " so a published item could never finish");
+        }
+    }
+
+    /**
+     * A cycle formed purely by edges of one cascading trigger would auto-loop at runtime: each hop fires the
+     * next edge declaring the same trigger. The dispatcher caps it, but the workflow is still broken
+     * authoring, so reject it at publish. Only cascading triggers are checked — a {@code pr_merged} "cycle"
+     * needs a fresh external merge per hop, so it is left alone.
+     */
+    private void validateNoCascadeCycle(Statechart sc, String trigger, List<String> errors) {
         Map<String, List<String>> adjacency = new HashMap<>();
         for (StatechartTransition t : sc.transitions()) {
-            if (TRIGGER_STATUS_CHANGED.equals(t.trigger())) {
+            if (trigger.equals(t.trigger())) {
                 adjacency.computeIfAbsent(t.from(), k -> new ArrayList<>()).add(t.to());
             }
         }
@@ -185,7 +235,7 @@ public class WorkflowDefinitionValidator {
         Set<String> done = new HashSet<>();
         for (String start : adjacency.keySet()) {
             if (hasStatusChangedCycle(start, adjacency, visiting, done)) {
-                errors.add("status_changed transitions form a cycle through '" + start
+                errors.add(trigger + " transitions form a cycle through '" + start
                         + "', which would auto-loop at runtime");
                 return;
             }

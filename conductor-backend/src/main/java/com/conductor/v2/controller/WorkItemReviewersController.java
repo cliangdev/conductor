@@ -1,5 +1,6 @@
 package com.conductor.v2.controller;
 
+import com.conductor.exception.ForbiddenException;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItemReviewer;
 import com.conductor.generated.v2.api.WorkItemReviewersApi;
@@ -69,6 +70,13 @@ public class WorkItemReviewersController implements WorkItemReviewersApi {
     }
 
     private User currentUser() {
-        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof User user)) {
+            // A project-scoped API key authenticates as the project, not as a person; reviewer assignment
+            // is a person's act. Say so rather than fall over on the cast.
+            throw new ForbiddenException("Reviewers can only be assigned or read by a user — a user API key or a"
+                    + " signed-in session, not a project API key");
+        }
+        return user;
     }
 }

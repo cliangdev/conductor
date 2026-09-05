@@ -20,6 +20,7 @@ vi.mock('../mcp/files.js', () => ({
   resolveLocalPath: vi.fn(() => '/tmp/proj'),
 }))
 vi.mock('node:fs/promises', () => ({ readFile: vi.fn() }))
+vi.mock('../lib/mp4-probe.js', () => ({ probeVideo: vi.fn(async () => ({ width: null, height: null, durationSeconds: null })) }))
 
 import { readFile } from 'node:fs/promises'
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete, putBytes } from '../mcp/api.js'
@@ -200,7 +201,7 @@ describe('list_publish_targets discovers accounts and a Post’s selection', () 
 
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/publish-targets', config)
     expect(apiGet).toHaveBeenCalledTimes(1)
-    expect(result['available']).toHaveLength(1)
+    expect(result['accounts']).toHaveLength(1)
     expect(result['selected']).toBeUndefined()
   })
 
@@ -218,7 +219,7 @@ describe('list_publish_targets discovers accounts and a Post’s selection', () 
     ])
 
     const result = await listPublishTargets({}, config)
-    const tiktok = (result['available'] as Record<string, unknown>[])[0]!
+    const tiktok = (result['accounts'] as Record<string, unknown>[])[0]!
 
     expect(tiktok['privacyLevelOptions']).toEqual(['PUBLIC_TO_EVERYONE', 'SELF_ONLY'])
     expect(tiktok['creatorNickname']).toBe('@acme')

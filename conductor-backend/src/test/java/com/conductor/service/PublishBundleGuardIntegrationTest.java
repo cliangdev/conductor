@@ -404,13 +404,21 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
         });
     }
 
-    /** A Post with a complete bundle, an approval from the reviewer, and status APPROVED. */
+    /**
+     * A Post with a complete bundle, an approval from the reviewer, and status APPROVED.
+     *
+     * <p>The approval now schedules the Post on its own (review_approved cascades to SCHEDULED and hands the
+     * native Facebook target off), so this pulls it back with the Workflow's Unschedule edge — which
+     * revokes that hand-off — and then forgets those platform calls, so each test asserts only the calls
+     * its own edit makes.
+     */
     private void approvedPost() {
         completePublishBundle();
         moveTo("IN_REVIEW");
         assignReviewer(post, reviewer);
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewer);
         moveTo("APPROVED");
+        org.mockito.Mockito.clearInvocations(actionInvocationService);
     }
 
     private void completePublishBundle() {

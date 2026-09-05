@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishGateEvaluator;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
@@ -48,9 +49,7 @@ class WorkItemWorkflowServiceTest {
     private ProjectMemberRepository projectMemberRepository;
     private ReviewRepository reviewRepository;
     private WorkflowDefinitionVersionRepository versionRepository;
-    private PostScheduleValidator postScheduleValidator;
-    private MediaTargetValidator mediaTargetValidator;
-    private PublishOptionsValidator publishOptionsValidator;
+    private PublishGateEvaluator publishGateEvaluator;
     private WorkItemWorkflowService service;
 
     @BeforeEach
@@ -69,12 +68,9 @@ class WorkItemWorkflowServiceTest {
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         SystemTriggerRegistry systemTriggerRegistry = new SystemTriggerRegistry(new ObjectMapper());
         PublishBundleHasher publishBundleHasher = Mockito.mock(PublishBundleHasher.class);
-        postScheduleValidator = Mockito.mock(PostScheduleValidator.class);
-        mediaTargetValidator = Mockito.mock(MediaTargetValidator.class);
-        publishOptionsValidator = Mockito.mock(PublishOptionsValidator.class);
+        publishGateEvaluator = Mockito.mock(PublishGateEvaluator.class);
         service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
-                reviewRepository, resolver, systemTriggerRegistry, publishBundleHasher, postScheduleValidator,
-                mediaTargetValidator, publishOptionsValidator);
+                reviewRepository, resolver, systemTriggerRegistry, publishBundleHasher, publishGateEvaluator);
     }
 
     /**
@@ -90,9 +86,7 @@ class WorkItemWorkflowServiceTest {
 
         service.validateTransition(PROJECT_ID, item, "IN_REVIEW");
 
-        verify(postScheduleValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
-        verify(mediaTargetValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
-        verify(publishOptionsValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
+        verify(publishGateEvaluator).enforce(eq(item), any(), eq("IN_REVIEW"));
     }
 
     /** An illegal transition must fail before the publish-bundle validator is ever consulted. */
@@ -103,9 +97,7 @@ class WorkItemWorkflowServiceTest {
         assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, item, "DONE"))
                 .isInstanceOf(BusinessException.class);
 
-        verify(postScheduleValidator, never()).validateForTransition(any(), any(), any());
-        verify(mediaTargetValidator, never()).validateForTransition(any(), any(), any());
-        verify(publishOptionsValidator, never()).validateForTransition(any(), any(), any());
+        verify(publishGateEvaluator, never()).enforce(any(), any(), any());
     }
 
     private WorkflowDefinitionVersion engineeringSnapshot() {
@@ -220,6 +212,18 @@ class WorkItemWorkflowServiceTest {
         // gate bypassed → no review lookups at all
         verify(reviewRepository, never()).existsApprovedByReviewerRole(any(), any(), any(), any());
         verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any());
+    }
+
+    @Test
+    void applySystemTransitionRunsThePublishGateBeforeMoving() {
+        WorkItem workItem = workItemAt("CODE_REVIEW");
+        Mockito.doThrow(new com.conductor.exception.UnprocessableEntityException("Cannot move Item to DONE: nope"))
+                .when(publishGateEvaluator).enforce(eq(workItem), any(), eq("DONE"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applySystemTransition(
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED))
+                .isInstanceOf(com.conductor.exception.UnprocessableEntityException.class);
+        assertThat(workItem.getCurrentStatus()).as("refused before the status was set").isEqualTo("CODE_REVIEW");
     }
 
     @Test

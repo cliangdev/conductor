@@ -309,7 +309,8 @@ class MetaConnectorTest {
         assertThat(spec.description()).isNotBlank();
         assertThat(spec.actions()).extracting(ActionSpec::id)
                 .containsExactlyInAnyOrder("publish_facebook_post", "publish_instagram_media",
-                        "delete_facebook_post", "get_facebook_post");
+                        "delete_facebook_post", "get_facebook_post",
+                        "get_facebook_post_metrics", "get_instagram_media_metrics");
 
         ActionSpec facebook = actionById(spec, "publish_facebook_post");
         assertThat(facebook.params()).isNotEmpty();
@@ -341,7 +342,8 @@ class MetaConnectorTest {
 
         assertThat(actions).extracting(ActionDescriptor::id)
                 .containsExactlyInAnyOrder("publish_facebook_post", "publish_instagram_media",
-                        "delete_facebook_post", "get_facebook_post");
+                        "delete_facebook_post", "get_facebook_post",
+                        "get_facebook_post_metrics", "get_instagram_media_metrics");
         assertThat(actions).allSatisfy(a -> assertThat(a.inputKeys()).isNotEmpty());
     }
 

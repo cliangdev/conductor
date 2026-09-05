@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
+import org.mockito.Spy;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -82,6 +84,10 @@ class WorkItemServiceTest {
 
     @Mock
     private PublishTargetService publishTargetService;
+
+    /** Real, not mocked: the registry is static data, and a mock would answer "not publishing" for every Workflow. */
+    @Spy
+    private PublishPlatformRegistry platformRegistry = new PublishPlatformRegistry();
 
     @InjectMocks
     private WorkItemService workItemService;

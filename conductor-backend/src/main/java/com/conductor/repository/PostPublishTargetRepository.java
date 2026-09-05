@@ -18,6 +18,22 @@ public interface PostPublishTargetRepository extends JpaRepository<PostPublishTa
     List<PostPublishTarget> findAllByWorkItemIdAndState(String workItemId, PostPublishTargetState state);
 
     /**
+     * Published destinations on one connection that are still worth reading performance numbers for:
+     * they have a platform post id to ask about and fired within the window the feed's quota allows.
+     * Newest first, so a project with a long history reads its recent posts before the budget runs out.
+     */
+    @Query("""
+            SELECT t FROM PostPublishTarget t
+             WHERE t.connectionId = :connectionId
+               AND t.state = com.conductor.entity.PostPublishTargetState.PUBLISHED
+               AND t.platformPostId IS NOT NULL
+               AND t.fireTime >= :since
+             ORDER BY t.fireTime DESC
+            """)
+    List<PostPublishTarget> findPublishedForMetrics(@Param("connectionId") String connectionId,
+                                                    @Param("since") OffsetDateTime since);
+
+    /**
      * The APP_MANAGED due poll: targets Conductor still holds whose fire time has arrived. Rows with a
      * null {@code fireTime} are never due — they have not been scheduled yet.
      */

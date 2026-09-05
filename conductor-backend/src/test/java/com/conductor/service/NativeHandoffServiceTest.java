@@ -1,5 +1,8 @@
 package com.conductor.service;
 
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
+import com.conductor.service.publish.PublishingWorkflow;
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
@@ -97,9 +100,11 @@ class NativeHandoffServiceTest {
     }
 
     private NativeHandoffService newService(boolean enabled) {
+        PublishPlatformRegistry registry = new PublishPlatformRegistry();
         NativeHandoffService s = new NativeHandoffService(
+                registry, new PublishingWorkflow(registry, org.mockito.Mockito.mock(WorkflowDefinitionResolver.class)),
                 targetRepository, connectionResolver, actionInvocationService, publishOutcomeService,
-                new PublishInputBuilder(new PublishTargetMediaResolver(assetRepository, targetAssetRepository)),
+                new PublishInputBuilder(registry, new PublishTargetMediaResolver(assetRepository, targetAssetRepository)),
                 enabled);
         s.entityManager = entityManager;
         s.self = s;

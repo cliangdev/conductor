@@ -3,6 +3,11 @@ package com.conductor.v2.controller;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.PublishTargetsApi;
 import com.conductor.generated.v2.model.PublishConsentResponse;
+import com.conductor.generated.v2.model.PublishPreflightConsent;
+import com.conductor.generated.v2.model.PublishPreflightFinding;
+import com.conductor.generated.v2.model.PublishPreflightResponse;
+import com.conductor.generated.v2.model.PublishPreflightReview;
+import com.conductor.generated.v2.model.PublishPreflightTransition;
 import com.conductor.generated.v2.model.PublishTargetOption;
 import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.generated.v2.model.PublishTargetSelection;
@@ -10,6 +15,8 @@ import com.conductor.generated.v2.model.RecordPublishConsentRequest;
 import com.conductor.generated.v2.model.ReplacePublishTargetsRequest;
 import com.conductor.service.PublishConsentService;
 import com.conductor.service.PublishTargetService;
+import com.conductor.service.publish.PublishFinding;
+import com.conductor.service.publish.PublishPreflightService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
@@ -37,11 +44,39 @@ public class PublishTargetController implements PublishTargetsApi {
 
     private final PublishTargetService publishTargetService;
     private final PublishConsentService publishConsentService;
+    private final PublishPreflightService publishPreflightService;
 
     public PublishTargetController(PublishTargetService publishTargetService,
-                                   PublishConsentService publishConsentService) {
+                                   PublishConsentService publishConsentService,
+                                   PublishPreflightService publishPreflightService) {
         this.publishTargetService = publishTargetService;
         this.publishConsentService = publishConsentService;
+        this.publishPreflightService = publishPreflightService;
+    }
+
+    @Override
+    public ResponseEntity<PublishPreflightResponse> getWorkItemPublishPreflight(String projectId, String workItemId) {
+        PublishPreflightService.Preflight preflight =
+                publishPreflightService.preflight(projectId, workItemId, currentUser());
+        PublishPreflightResponse body = new PublishPreflightResponse(
+                preflight.publishing(),
+                preflight.ready(),
+                preflight.blockers().stream().map(PublishTargetController::toFinding).toList(),
+                preflight.warnings().stream().map(PublishTargetController::toFinding).toList(),
+                new PublishPreflightConsent(preflight.consent().required(),
+                        PublishPreflightConsent.VerdictEnum.fromValue(preflight.consent().verdict().name())),
+                new PublishPreflightReview(preflight.review().gated(), preflight.review().assignedReviewers(),
+                        preflight.review().satisfied()).reviewerRole(preflight.review().reviewerRole()))
+                .earliestFireTime(preflight.earliestFireTime());
+        if (preflight.nextTransition() != null) {
+            body.nextTransition(new PublishPreflightTransition(preflight.nextTransition().to(),
+                    preflight.nextTransition().requiresReview()).label(preflight.nextTransition().label()));
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    private static PublishPreflightFinding toFinding(PublishFinding finding) {
+        return new PublishPreflightFinding(finding.code(), finding.message()).targetId(finding.targetId());
     }
 
     @Override
@@ -116,7 +151,8 @@ public class PublishTargetController implements PublishTargetsApi {
                 // Null, not an empty list, when a TikTok connection never cached the creator's levels: the
                 // picker has to tell "reconnect this account" apart from a genuinely empty set of choices.
                 .privacyLevelOptions(option.privacyLevelOptions())
-                .creatorNickname(option.creatorNickname());
+                .creatorNickname(option.creatorNickname())
+                .optionKeys(option.optionKeys());
     }
 
     private User currentUser() {

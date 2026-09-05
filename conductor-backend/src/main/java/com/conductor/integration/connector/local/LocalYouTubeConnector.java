@@ -56,6 +56,7 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
     private static final String ACTION_UNPUBLISH_VIDEO = "unpublish_video";
     private static final String ACTION_GET_VIDEO_STATUS = "get_video_status";
+    private static final String ACTION_GET_VIDEO_STATISTICS = "get_video_statistics";
 
     private static final String PRIVATE = "private";
     private static final String PUBLIC = "public";
@@ -158,6 +159,7 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
             case ACTION_PUBLISH_VIDEO -> publishVideo(safeInput);
             case ACTION_UNPUBLISH_VIDEO -> unpublishVideo(safeInput);
             case ACTION_GET_VIDEO_STATUS -> getVideoStatus(safeInput);
+            case ACTION_GET_VIDEO_STATISTICS -> LocalMetrics.answer(safeInput);
             // A returned error is PERMANENT per the ActionConnector contract, so an unknown action
             // dead-letters locally exactly as it would in production.
             default -> ActionResult.error("Unknown YouTube action: " + actionId);

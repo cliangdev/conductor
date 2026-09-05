@@ -9,6 +9,9 @@ import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PublishFinding;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -36,7 +39,7 @@ import java.util.Set;
  * <h2>When this runs</h2>
  * Exactly the same definition-driven rule {@link PostScheduleValidator} uses, and for the same reasons: the
  * edge being traversed must declare {@code requiresReview}, and the workflow must declare at least one
- * {@code asset_types} entry naming a platform in {@link PostScheduleValidator#PUBLISH_PLATFORMS}. Keying on
+ * {@code asset_types} entry naming a platform in the {@link PublishPlatformRegistry}. Keying on
  * the <em>edge</em> rather than the status keeps MARKETING's ungated {@code SCHEDULED -> APPROVED}
  * ("Unschedule") back-edge open, so a human can always pull a post back. ENGINEERING declares only
  * {@code github_pr}, so its own review-gated edge is never even queried.
@@ -100,11 +103,14 @@ public class MediaTargetValidator {
 
     private static final String INSTAGRAM_FEED_IMAGE_TYPE = "image/jpeg";
 
-    private static final Map<String, String> PLATFORM_LABELS = Map.of(
-            "facebook", "Facebook",
-            "instagram", "Instagram",
-            "youtube", "YouTube",
-            "tiktok", "TikTok");
+    /** Finding codes. A file's type, size, dimensions or aspect a platform refuses, or cannot be checked. */
+    public static final String MEDIA_FORMAT = "MEDIA_FORMAT";
+    /** The set as a whole: too many items, a mix a platform refuses, or the wrong count. */
+    public static final String MEDIA_COMPOSITION = "MEDIA_COMPOSITION";
+    /** Caption or title longer than a platform accepts. */
+    public static final String COPY_TOO_LONG = "COPY_TOO_LONG";
+    /** An advisory the platform will act on without refusing (a Short, a cropped carousel, a cut title). */
+    public static final String MEDIA_ADVISORY = "MEDIA_ADVISORY";
 
     /** Instagram publishes 1 item, or a carousel of 2 to 10. */
     public static final int INSTAGRAM_MAX_CAROUSEL_ITEMS = 10;
@@ -122,17 +128,20 @@ public class MediaTargetValidator {
     /** YouTube's description ceiling is 5000 *bytes* of UTF-8, not characters. */
     public static final int YOUTUBE_MAX_DESCRIPTION_BYTES = 5000;
 
+    private final PublishPlatformRegistry platformRegistry;
     private final AssetRepository assetRepository;
     private final PostPublishTargetRepository postPublishTargetRepository;
     private final ConnectionRepository connectionRepository;
     private final ObjectMapper objectMapper;
     private final PublishTargetMediaResolver mediaResolver;
 
-    public MediaTargetValidator(AssetRepository assetRepository,
+    public MediaTargetValidator(PublishPlatformRegistry platformRegistry,
+                                AssetRepository assetRepository,
                                 PostPublishTargetRepository postPublishTargetRepository,
                                 ConnectionRepository connectionRepository,
                                 ObjectMapper objectMapper,
                                 PublishTargetMediaResolver mediaResolver) {
+        this.platformRegistry = platformRegistry;
         this.assetRepository = assetRepository;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
@@ -169,18 +178,44 @@ public class MediaTargetValidator {
         if (!appliesTo(workItem, statechart, toStatus)) {
             return Result.CLEAN;
         }
+        List<PublishFinding> findings = inspect(workItem);
+        List<String> problems = findings.stream().filter(PublishFinding::blocks).map(PublishFinding::message).toList();
+        if (!problems.isEmpty()) {
+            throw new UnprocessableEntityException(
+                    "Cannot move " + statechart.noun() + " to " + toStatus + ": " + String.join("; ", problems));
+        }
+        List<String> warnings = findings.stream().map(PublishFinding::message).toList();
+        warnings.forEach(warning -> log.warn("Publish media advisory for work item {}: {}",
+                workItem.getId(), warning));
+        return warnings.isEmpty() ? Result.CLEAN : new Result(warnings);
+    }
+
+    /** Whether the {@code -> toStatus} move out of the item's current status is one this validator guards. */
+    public boolean appliesTo(WorkItem workItem, Statechart statechart, String toStatus) {
+        if (workItem == null || statechart == null || toStatus == null) {
+            return false;
+        }
+        return platformRegistry.declaresPublishing(statechart)
+                && PublishingWorkflow.isGateEdge(statechart, workItem.getCurrentStatus(), toStatus);
+    }
+
+    /**
+     * Every media rule any selected destination would refuse the Post over, plus the advisories a human
+     * should see, right now and regardless of status. Per target, not per Post: two destinations on the
+     * same Post routinely publish different files, so a rule is checked against what its own target will
+     * actually send. Problems keep the order a refused transition has always listed them in — each target's
+     * file rules, then its composition, then its copy.
+     */
+    public List<PublishFinding> inspect(WorkItem workItem) {
         List<PostPublishTarget> targets = postPublishTargetRepository.findAllByWorkItemId(workItem.getId());
         if (targets.isEmpty()) {
             // PostScheduleValidator owns "you must pick a target"; there is nothing here to check against.
-            return Result.CLEAN;
+            return List.of();
         }
-        // Per target, not per Post: two destinations on the same Post routinely publish different files
-        // now, so a rule has to be checked against what its own target will actually send.
         Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
                 mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
 
-        List<String> problems = new ArrayList<>();
-        List<String> warnings = new ArrayList<>();
+        List<PublishFinding> findings = new ArrayList<>();
         for (PostPublishTarget target : targets) {
             List<Asset> media = mediaByTarget
                     .getOrDefault(target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE).assets();
@@ -189,45 +224,21 @@ public class MediaTargetValidator {
                 // it is; checking file rules against an empty list here would add nothing but noise.
                 continue;
             }
+            List<String> formatProblems = new ArrayList<>();
+            List<String> compositionProblems = new ArrayList<>();
+            List<String> copyProblems = new ArrayList<>();
+            List<String> warnings = new ArrayList<>();
             for (Asset asset : media) {
-                inspect(target, asset, problems, warnings);
+                inspect(target, asset, formatProblems, warnings);
             }
-            inspectComposition(target, media, problems, warnings);
-            inspectCopy(target, workItem, media, problems, warnings);
+            inspectComposition(target, media, compositionProblems, warnings);
+            inspectCopy(target, workItem, media, copyProblems, warnings);
+            formatProblems.forEach(p -> findings.add(PublishFinding.blocker(MEDIA_FORMAT, p, target.getId())));
+            compositionProblems.forEach(p -> findings.add(PublishFinding.blocker(MEDIA_COMPOSITION, p, target.getId())));
+            copyProblems.forEach(p -> findings.add(PublishFinding.blocker(COPY_TOO_LONG, p, target.getId())));
+            warnings.forEach(w -> findings.add(PublishFinding.warning(MEDIA_ADVISORY, w, target.getId())));
         }
-        if (!problems.isEmpty()) {
-            throw new UnprocessableEntityException(
-                    "Cannot move " + statechart.noun() + " to " + toStatus + ": " + String.join("; ", problems));
-        }
-        warnings.forEach(warning -> log.warn("Publish media advisory for work item {}: {}",
-                workItem.getId(), warning));
-        return warnings.isEmpty() ? Result.CLEAN : new Result(warnings);
-    }
-
-    private boolean appliesTo(WorkItem workItem, Statechart statechart, String toStatus) {
-        if (workItem == null || statechart == null || toStatus == null) {
-            return false;
-        }
-        if (!declaresPublishTargets(statechart)) {
-            return false;
-        }
-        Optional<StatechartTransition> transition =
-                statechart.transition(workItem.getCurrentStatus(), toStatus);
-        return transition.isPresent() && transition.get().requiresReview();
-    }
-
-    private boolean declaresPublishTargets(Statechart statechart) {
-        return statechart.assetTypes().stream().anyMatch(MediaTargetValidator::namesPublishPlatform);
-    }
-
-    private static boolean namesPublishPlatform(String assetType) {
-        if (assetType == null) {
-            return false;
-        }
-        String normalized = assetType.trim().toLowerCase(Locale.ROOT);
-        int separator = normalized.indexOf('_');
-        String head = separator < 0 ? normalized : normalized.substring(0, separator);
-        return PostScheduleValidator.PUBLISH_PLATFORMS.contains(head);
+        return findings;
     }
 
     private void inspect(PostPublishTarget target, Asset asset, List<String> problems, List<String> warnings) {
@@ -531,9 +542,7 @@ public class MediaTargetValidator {
     }
 
     private String platformLabel(PostPublishTarget target) {
-        String platform = target.getPlatform() == null
-                ? "" : target.getPlatform().trim().toLowerCase(Locale.ROOT);
-        String name = PLATFORM_LABELS.getOrDefault(platform, target.getPlatform());
+        String name = platformRegistry.labelOf(target.getPlatform());
         String account = target.getPlatformAccountLabel();
         return account == null || account.isBlank() ? name : name + " (" + account + ")";
     }

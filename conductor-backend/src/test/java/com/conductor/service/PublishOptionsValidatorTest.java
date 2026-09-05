@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PublishLane;
@@ -58,7 +59,7 @@ class PublishOptionsValidatorTest {
         // The consent rule (MKT-1) is its own block of tests below; every options test runs with consent
         // standing so that a rejection there can only be about the options.
         when(publishConsentService.verdict(any())).thenReturn(PublishConsentService.Verdict.VALID);
-        validator = new PublishOptionsValidator(postPublishTargetRepository, connectionRepository,
+        validator = new PublishOptionsValidator(new PublishPlatformRegistry(), postPublishTargetRepository, connectionRepository,
                 publishConsentService, new ObjectMapper());
         marketing = statechart("/schema/examples/marketing.workflow.json");
         engineering = statechart("/schema/examples/engineering.workflow.json");
@@ -351,8 +352,17 @@ class PublishOptionsValidatorTest {
         assertThatCode(() -> validator.validateForTransition(
                 workItem("MARKETING", "DRAFT"), marketing, "IN_REVIEW")).doesNotThrowAnyException();
         assertThatCode(() -> validator.validateForTransition(
-                workItem("MARKETING", "APPROVED"), marketing, "SCHEDULED")).doesNotThrowAnyException();
+                workItem("MARKETING", "IN_REVIEW"), marketing, "CHANGES_REQUESTED")).doesNotThrowAnyException();
         verifyNoInteractions(postPublishTargetRepository, connectionRepository, publishConsentService);
+    }
+
+    @Test
+    void schedulingIsAGateEdgeToo() {
+        WorkItem post = workItem("MARKETING", "APPROVED");
+        org.mockito.Mockito.when(postPublishTargetRepository.findAllByWorkItemId(post.getId())).thenReturn(List.of());
+
+        assertThatCode(() -> validator.validateForTransition(post, marketing, "SCHEDULED")).doesNotThrowAnyException();
+        org.mockito.Mockito.verify(postPublishTargetRepository).findAllByWorkItemId(post.getId());
     }
 
     @Test

@@ -220,6 +220,54 @@ public class YouTubeDataClient {
         return toVideoStatus(items.get(0));
     }
 
+    /** A video's public counters; {@code unavailable} when the channel no longer holds it. */
+    public record VideoStatistics(String id, Long views, Long likes, Long comments, boolean unavailable) {}
+
+    /**
+     * The statistics of up to fifty videos in one call — {@code videos.list?part=statistics}, one quota
+     * unit regardless of how many ids it carries. An id the response omits is a video the channel no longer
+     * holds, recorded as {@code unavailable}.
+     */
+    public List<VideoStatistics> listVideoStatistics(String accessToken, List<String> videoIds) {
+        if (videoIds == null || videoIds.isEmpty()) {
+            return List.of();
+        }
+        URI uri = UriComponentsBuilder.fromUriString(API_BASE + "/videos")
+                .queryParam("part", "statistics")
+                .queryParam("id", String.join(",", videoIds))
+                .build().toUri();
+        ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.GET,
+                new HttpEntity<>(bearer(accessToken)), String.class);
+        JsonNode items = parse(response.getBody()).path("items");
+        java.util.Map<String, JsonNode> byId = new java.util.HashMap<>();
+        if (items.isArray()) {
+            items.forEach(item -> byId.put(item.path("id").asText(), item.path("statistics")));
+        }
+        List<VideoStatistics> result = new java.util.ArrayList<>();
+        for (String id : videoIds) {
+            JsonNode stats = byId.get(id);
+            if (stats == null) {
+                result.add(new VideoStatistics(id, null, null, null, true));
+                continue;
+            }
+            result.add(new VideoStatistics(id, count(stats, "viewCount"), count(stats, "likeCount"),
+                    count(stats, "commentCount"), false));
+        }
+        return result;
+    }
+
+    private static Long count(JsonNode stats, String field) {
+        JsonNode node = stats.path(field);
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(node.asText());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /**
      * Rewrites a video's {@code status} part. {@code publishAt} is always sent — as an explicit JSON null
      * when {@code publishAt} is null — because omitting it leaves an existing scheduled publish standing.

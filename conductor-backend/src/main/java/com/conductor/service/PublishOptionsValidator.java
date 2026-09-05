@@ -7,6 +7,10 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PublishFinding;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -38,7 +42,7 @@ import java.util.Optional;
  * The same definition-driven rule {@link PostScheduleValidator} and {@link MediaTargetValidator} use, for
  * the same reasons: the edge being traversed must declare {@code requiresReview}, and the workflow must
  * declare at least one {@code asset_types} entry naming a platform in
- * {@link PostScheduleValidator#PUBLISH_PLATFORMS}. Keying on the <em>edge</em> rather than the status
+ * the {@link PublishPlatformRegistry}. Keying on the <em>edge</em> rather than the status
  * keeps MARKETING's ungated {@code SCHEDULED -> APPROVED} ("Unschedule") back-edge open, so a human can
  * always pull a post back. ENGINEERING declares only {@code github_pr}, so its own review-gated edge is
  * never even queried.
@@ -89,23 +93,23 @@ public class PublishOptionsValidator {
      */
     static final String CONFIG_PRIVACY_LEVEL_OPTIONS = "privacyLevelOptions";
 
-    private static final String PLATFORM_TIKTOK = "tiktok";
+    /** Finding codes: a per-target option is missing, disallowed or unreadable; the creator's consent does not stand. */
+    public static final String PUBLISH_OPTIONS = "PUBLISH_OPTIONS";
+    public static final String CONSENT_NEVER_GIVEN = "CONSENT_NEVER_GIVEN";
+    public static final String CONSENT_SUPERSEDED = "CONSENT_SUPERSEDED";
 
-    private static final Map<String, String> PLATFORM_LABELS = Map.of(
-            "facebook", "Facebook",
-            "instagram", "Instagram",
-            "youtube", "YouTube",
-            "tiktok", "TikTok");
-
+    private final PublishPlatformRegistry platformRegistry;
     private final PostPublishTargetRepository postPublishTargetRepository;
     private final ConnectionRepository connectionRepository;
     private final PublishConsentService publishConsentService;
     private final ObjectMapper objectMapper;
 
-    public PublishOptionsValidator(PostPublishTargetRepository postPublishTargetRepository,
+    public PublishOptionsValidator(PublishPlatformRegistry platformRegistry,
+                                   PostPublishTargetRepository postPublishTargetRepository,
                                    ConnectionRepository connectionRepository,
                                    PublishConsentService publishConsentService,
                                    ObjectMapper objectMapper) {
+        this.platformRegistry = platformRegistry;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
         this.publishConsentService = publishConsentService;
@@ -126,14 +130,39 @@ public class PublishOptionsValidator {
         if (!appliesTo(workItem, statechart, toStatus)) {
             return;
         }
+        List<String> problems = inspect(workItem).stream()
+                .filter(PublishFinding::blocks)
+                .map(PublishFinding::message)
+                .toList();
+        if (!problems.isEmpty()) {
+            throw new UnprocessableEntityException(
+                    "Cannot move " + statechart.noun() + " to " + toStatus + ": " + String.join("; ", problems));
+        }
+    }
+
+    /** Whether the {@code -> toStatus} move out of the item's current status is one this validator guards. */
+    public boolean appliesTo(WorkItem workItem, Statechart statechart, String toStatus) {
+        if (workItem == null || statechart == null || toStatus == null) {
+            return false;
+        }
+        return platformRegistry.declaresPublishing(statechart)
+                && PublishingWorkflow.isGateEdge(statechart, workItem.getCurrentStatus(), toStatus);
+    }
+
+    /**
+     * Every option or consent rule a selected destination would refuse the Post over, right now and
+     * regardless of status. Per-target option problems first, in target order, then the Post-level consent
+     * verdict — the order a refused transition has always listed them in.
+     */
+    public List<PublishFinding> inspect(WorkItem workItem) {
         List<PostPublishTarget> targets = postPublishTargetRepository.findAllByWorkItemId(workItem.getId());
         if (targets.isEmpty()) {
             // PostScheduleValidator owns "you must pick a target"; there is nothing here to check.
-            return;
+            return List.of();
         }
 
-        List<String> problems = new ArrayList<>();
-        boolean anyTikTokApiTarget = false;
+        List<PublishFinding> findings = new ArrayList<>();
+        boolean consentRequired = false;
         for (PostPublishTarget target : targets) {
             // A MANUAL target is exempt from every rule below, because every rule below is about what
             // Conductor would send to TikTok's Content Posting API — and on this lane Conductor sends
@@ -146,44 +175,23 @@ public class PublishOptionsValidator {
             if (target.getLane() == PublishLane.MANUAL) {
                 continue;
             }
-            if (PLATFORM_TIKTOK.equals(normalized(target.getPlatform()))) {
-                anyTikTokApiTarget = true;
+            PublishPlatform platform = platformRegistry.find(target.getPlatform()).orElse(null);
+            if (platform == null) {
+                continue;
+            }
+            if (platform.has(PublishPlatform.Gate.PRIVACY_LEVEL)) {
+                List<String> problems = new ArrayList<>();
                 inspectTikTok(target, problems);
+                problems.forEach(p -> findings.add(PublishFinding.blocker(PUBLISH_OPTIONS, p, target.getId())));
+            }
+            if (platform.has(PublishPlatform.Gate.CREATOR_CONSENT)) {
+                consentRequired = true;
             }
         }
-        if (anyTikTokApiTarget) {
-            inspectConsent(workItem, problems);
+        if (consentRequired) {
+            inspectConsent(workItem).ifPresent(findings::add);
         }
-        if (!problems.isEmpty()) {
-            throw new UnprocessableEntityException(
-                    "Cannot move " + statechart.noun() + " to " + toStatus + ": " + String.join("; ", problems));
-        }
-    }
-
-    private boolean appliesTo(WorkItem workItem, Statechart statechart, String toStatus) {
-        if (workItem == null || statechart == null || toStatus == null) {
-            return false;
-        }
-        if (!declaresPublishTargets(statechart)) {
-            return false;
-        }
-        Optional<StatechartTransition> transition =
-                statechart.transition(workItem.getCurrentStatus(), toStatus);
-        return transition.isPresent() && transition.get().requiresReview();
-    }
-
-    private boolean declaresPublishTargets(Statechart statechart) {
-        return statechart.assetTypes().stream().anyMatch(PublishOptionsValidator::namesPublishPlatform);
-    }
-
-    private static boolean namesPublishPlatform(String assetType) {
-        if (assetType == null) {
-            return false;
-        }
-        String normalized = normalized(assetType);
-        int separator = normalized.indexOf('_');
-        String head = separator < 0 ? normalized : normalized.substring(0, separator);
-        return PostScheduleValidator.PUBLISH_PLATFORMS.contains(head);
+        return findings;
     }
 
     private void inspectTikTok(PostPublishTarget target, List<String> problems) {
@@ -222,16 +230,18 @@ public class PublishOptionsValidator {
      * different things from a human, and "consent required" alone would send someone to a checkbox that
      * is already ticked.
      */
-    private void inspectConsent(WorkItem workItem, List<String> problems) {
-        switch (publishConsentService.verdict(workItem)) {
-            case NEVER_GIVEN -> problems.add("this Post publishes to TikTok, and TikTok requires the"
+    private Optional<PublishFinding> inspectConsent(WorkItem workItem) {
+        return switch (publishConsentService.verdict(workItem)) {
+            case NEVER_GIVEN -> Optional.of(PublishFinding.blocker(CONSENT_NEVER_GIVEN,
+                    "this Post publishes to TikTok, and TikTok requires the"
                     + " creator's consent first — review the preview and the destination account, then"
-                    + " consent to publishing this post to TikTok");
-            case SUPERSEDED -> problems.add("the TikTok posting consent on this Post was given for a"
+                    + " consent to publishing this post to TikTok"));
+            case SUPERSEDED -> Optional.of(PublishFinding.blocker(CONSENT_SUPERSEDED,
+                    "the TikTok posting consent on this Post was given for a"
                     + " different version of it — the destination accounts, their publish options or the"
-                    + " media have changed since, so review the preview and consent again");
-            default -> { }
-        }
+                    + " media have changed since, so review the preview and consent again"));
+            default -> Optional.empty();
+        };
     }
 
     /**
@@ -294,8 +304,7 @@ public class PublishOptionsValidator {
     }
 
     private String describe(PostPublishTarget target) {
-        String platform = normalized(target.getPlatform());
-        String name = PLATFORM_LABELS.getOrDefault(platform, target.getPlatform());
+        String name = platformRegistry.labelOf(target.getPlatform());
         String account = target.getPlatformAccountLabel();
         return account == null || account.isBlank() ? name : name + " (" + account + ")";
     }

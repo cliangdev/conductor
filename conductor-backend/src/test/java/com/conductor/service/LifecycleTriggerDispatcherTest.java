@@ -65,12 +65,15 @@ class LifecycleTriggerDispatcherTest {
 
     /** Stub applySystemTransition to walk the Work Item through {@code targets}, then return empty. */
     private void advanceThrough(String... targets) {
+        advanceWith(WorkItemWorkflowService.TRIGGER_STATUS_CHANGED, targets);
+    }
+
+    private void advanceWith(String trigger, String... targets) {
         Deque<String> queue = new ArrayDeque<>();
         for (String t : targets) {
             queue.add(t);
         }
-        when(workItemWorkflowService.applySystemTransition(eq(PROJECT_ID), eq(workItem),
-                eq(WorkItemWorkflowService.TRIGGER_STATUS_CHANGED)))
+        when(workItemWorkflowService.applySystemTransition(eq(PROJECT_ID), eq(workItem), eq(trigger)))
                 .thenAnswer(inv -> {
                     if (queue.isEmpty()) {
                         return Optional.empty();
@@ -79,6 +82,88 @@ class LifecycleTriggerDispatcherTest {
                     workItem.setCurrentStatus(next);
                     return Optional.of(transitionTo(next));
                 });
+    }
+
+    // --- review_approved: the same cascade, started directly, with its outcome reported back ---
+
+    @Test
+    void reviewApprovedCascadesAlongItsOwnTriggerAndReportsTheOutcome() {
+        advanceWith(WorkItemWorkflowService.TRIGGER_REVIEW_APPROVED, "APPROVED", "SCHEDULED");
+
+        Optional<LifecycleTriggerDispatcher.AutoTransition> outcome =
+                dispatcher.onReviewApproved(PROJECT_ID, WORK_ITEM_ID);
+
+        assertThat(outcome).isPresent();
+        assertThat(outcome.get().applied()).isTrue();
+        assertThat(outcome.get().blocked()).isFalse();
+        assertThat(outcome.get().fromStatus()).isEqualTo("A");
+        assertThat(outcome.get().toStatus()).isEqualTo("SCHEDULED");
+        assertThat(workItem.getCurrentStatus()).isEqualTo("SCHEDULED");
+        verify(workItemRepository, times(2)).save(workItem);
+        // Every hop gets the scheduled-status side effects a human move gets, exit before entry.
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(workItemService);
+        order.verify(workItemService).applyScheduledExit(PROJECT_ID, workItem, "A");
+        order.verify(workItemService).applyScheduledEntry(PROJECT_ID, workItem);
+        order.verify(workItemService).publishStatusChanged(PROJECT_ID, workItem, "A", "APPROVED", null);
+        order.verify(workItemService).applyScheduledExit(PROJECT_ID, workItem, "APPROVED");
+        order.verify(workItemService).applyScheduledEntry(PROJECT_ID, workItem);
+        order.verify(workItemService).publishStatusChanged(PROJECT_ID, workItem, "APPROVED", "SCHEDULED", null);
+        // A status_changed edge is never consulted by a review_approved cascade.
+        verify(workItemWorkflowService, never()).applySystemTransition(any(), any(),
+                eq(WorkItemWorkflowService.TRIGGER_STATUS_CHANGED));
+    }
+
+    @Test
+    void aHopTheGateRefusesStopsTheCascadeWhereItStandsAndSaysWhy() {
+        Deque<String> queue = new ArrayDeque<>(java.util.List.of("APPROVED"));
+        when(workItemWorkflowService.applySystemTransition(eq(PROJECT_ID), eq(workItem),
+                eq(WorkItemWorkflowService.TRIGGER_REVIEW_APPROVED)))
+                .thenAnswer(inv -> {
+                    if (queue.isEmpty()) {
+                        throw new com.conductor.exception.UnprocessableEntityException(
+                                "Cannot move Post to SCHEDULED: the fire time is less than 10 minutes in the future");
+                    }
+                    String next = queue.poll();
+                    workItem.setCurrentStatus(next);
+                    return Optional.of(transitionTo(next));
+                });
+
+        Optional<LifecycleTriggerDispatcher.AutoTransition> outcome =
+                dispatcher.onReviewApproved(PROJECT_ID, WORK_ITEM_ID);
+
+        assertThat(outcome).isPresent();
+        assertThat(outcome.get().blocked()).isTrue();
+        assertThat(outcome.get().applied()).as("the first hop still landed").isTrue();
+        assertThat(outcome.get().toStatus()).isEqualTo("APPROVED");
+        assertThat(outcome.get().blockedReason()).contains("less than 10 minutes");
+        assertThat(workItem.getCurrentStatus()).isEqualTo("APPROVED");
+        verify(workItemRepository, times(1)).save(workItem);
+    }
+
+    @Test
+    void noReviewApprovedEdgeIsAReportedNoop() {
+        advanceWith(WorkItemWorkflowService.TRIGGER_REVIEW_APPROVED);
+
+        Optional<LifecycleTriggerDispatcher.AutoTransition> outcome =
+                dispatcher.onReviewApproved(PROJECT_ID, WORK_ITEM_ID);
+
+        assertThat(outcome).isPresent();
+        assertThat(outcome.get().applied()).isFalse();
+        assertThat(outcome.get().blocked()).isFalse();
+        verify(workItemRepository, never()).save(any());
+    }
+
+    @Test
+    void aFailedRevocationOnExitUndoesTheHop() {
+        advanceWith(WorkItemWorkflowService.TRIGGER_REVIEW_APPROVED, "B");
+        doThrow(new RuntimeException("platform refused the revoke"))
+                .when(workItemService).applyScheduledExit(PROJECT_ID, workItem, "A");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> dispatcher.onReviewApproved(PROJECT_ID, WORK_ITEM_ID))
+                .hasMessageContaining("platform refused the revoke");
+
+        assertThat(workItem.getCurrentStatus()).isEqualTo("A");
+        verify(workItemRepository, never()).save(any());
     }
 
     private static StatechartTransition transitionTo(String to) {

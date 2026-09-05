@@ -3,6 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartStatus;
 import com.conductor.workflow.lifecycle.StatechartTransition;
@@ -172,7 +173,7 @@ public class PublishBundleGuard {
         }
 
         // Revoke FIRST, inside the caller's transaction. A failure throws here and nothing below runs.
-        if (NativeHandoffService.SCHEDULED_STATUS.equals(fromStatus)) {
+        if (PublishingWorkflow.isScheduledStatus(statechart, fromStatus)) {
             nativeHandoffService.unschedule(post);
         }
 
@@ -264,7 +265,7 @@ public class PublishBundleGuard {
                                            java.util.Collection<String> tags) {
         Statechart statechart = statechartOrNull(projectId, workItem);
         if (statechart == null
-                || !AssetUploadPolicy.isUnderReviewOrLater(statechart, workItem.getCurrentStatus())) {
+                || !AssetUploadPolicy.isFrozen(statechart, workItem.getCurrentStatus())) {
             return;
         }
         // Past the gate the existing revert path owns this: an edit there takes the approval back rather
@@ -290,7 +291,7 @@ public class PublishBundleGuard {
     public void refuseTargetEditWhileFrozen(String projectId, WorkItem workItem) {
         Statechart statechart = statechartOrNull(projectId, workItem);
         if (statechart == null
-                || !AssetUploadPolicy.isUnderReviewOrLater(statechart, workItem.getCurrentStatus())) {
+                || !AssetUploadPolicy.isFrozen(statechart, workItem.getCurrentStatus())) {
             return;
         }
         String statusLabel = statechart.status(workItem.getCurrentStatus())

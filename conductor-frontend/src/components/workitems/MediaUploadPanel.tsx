@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { apiErrorMessage, apiPost } from '@/lib/api'
+import { apiDelete, apiErrorMessage, apiPost } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { WorkflowView, WorkItemAsset } from '@/types/workItem'
 
@@ -189,7 +189,8 @@ function formatBytes(bytes: number | null | undefined): string {
  * upload progress. No Authorization header: the URL carries its own signature, and adding one would
  * make GCS reject the PUT.
  */
-function putToSignedUrl(
+/** Exported for the compose form, which uploads the same way before the Post page ever opens. */
+export function putToSignedUrl(
   uploadUrl: string,
   file: File,
   onProgress: (percent: number) => void,
@@ -308,6 +309,25 @@ export function MediaUploadPanel({
     upload(file)
   }
 
+  const [removing, setRemoving] = useState<string | null>(null)
+
+  /**
+   * Removing a file is only offered before review — the server refuses it afterwards, and a control that
+   * always fails is worse than none. Deleting is how a wrong upload is corrected, so it never asks twice.
+   */
+  async function remove(assetId: string) {
+    setError(null)
+    setRemoving(assetId)
+    try {
+      await apiDelete(`/api/v2/projects/${projectId}/work-items/${workItemId}/assets/${assetId}`, token)
+      await onUploaded()
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not remove the file'))
+    } finally {
+      setRemoving(null)
+    }
+  }
+
   return (
     <Card className={className}>
       <CardHeader>
@@ -355,7 +375,22 @@ export function MediaUploadPanel({
                     )}
                     <span className="truncate">{asset.label || asset.type}</span>
                   </span>
-                  <span className="shrink-0">{formatBytes(asset.sizeBytes)}</span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {formatBytes(asset.sizeBytes)}
+                    {!locked && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1.5 text-xs"
+                        disabled={removing === asset.id || uploading}
+                        onClick={() => void remove(asset.id)}
+                        aria-label={`Remove ${asset.label || asset.type}`}
+                      >
+                        {removing === asset.id ? 'Removing…' : 'Remove'}
+                      </Button>
+                    )}
+                  </span>
                 </div>
               </li>
             ))}

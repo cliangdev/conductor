@@ -222,8 +222,10 @@ class MarketingReviewGateIntegrationTest {
 
         moveTo("IN_REVIEW");
         assignReviewer(reviewer);
+        // The approval itself moves the Post (review_approved cascades IN_REVIEW → APPROVED → SCHEDULED),
+        // and the APPROVED hop fires status_changed exactly once.
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewer);
-        moveTo("APPROVED");
+        assertThat(reload().getCurrentStatus()).isEqualTo("SCHEDULED");
 
         List<WorkflowRun> runs = workflowRunRepository.findByWorkflowIdOrderByStartedAtDesc(onApproved.getId());
         assertThat(runs).hasSize(1);
@@ -238,6 +240,51 @@ class MarketingReviewGateIntegrationTest {
         assertThat(payload.path("noun").asText()).isEqualTo("Post");
 
         assertThat(workflowRunRepository.findByWorkflowIdOrderByStartedAtDesc(onPublished.getId())).isEmpty();
+    }
+
+    // [auto] One approval schedules the Post; a refused hop leaves the approval standing and says why
+
+    @Test
+    void oneApprovalSchedulesThePostAndReportsIt() {
+        moveTo("IN_REVIEW");
+        assignReviewer(reviewer);
+
+        ReviewService.ReviewSubmission submission = reviewService.submitReviewWithOutcome(
+                project.getId(), post.getId(), "APPROVED", "ship it", reviewer);
+
+        assertThat(submission.autoTransition()).isPresent();
+        assertThat(submission.autoTransition().get().applied()).isTrue();
+        assertThat(submission.autoTransition().get().blocked()).isFalse();
+        assertThat(submission.autoTransition().get().fromStatus()).isEqualTo("IN_REVIEW");
+        assertThat(submission.autoTransition().get().toStatus()).isEqualTo("SCHEDULED");
+        assertThat(reload().getCurrentStatus()).isEqualTo("SCHEDULED");
+        assertThat(postPublishTargetRepository.findAllByWorkItemId(post.getId()))
+                .allSatisfy(target -> assertThat(target.getFireTime()).isEqualTo(reload().getScheduledFor()));
+
+        // A human Unschedule is a plain status change: nothing re-fires review_approved.
+        moveTo("APPROVED");
+        assertThat(reload().getCurrentStatus()).isEqualTo("APPROVED");
+    }
+
+    @Test
+    void anApprovalTheGateRefusesStandsButMovesNothing() {
+        // Fire time inside Facebook's floor: the bundle hash is what the approval binds to, and the review
+        // gate is satisfied, but the publish gate on the very first hop refuses it.
+        schedule(OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(5));
+        moveTo("IN_REVIEW");
+        assignReviewer(reviewer);
+
+        ReviewService.ReviewSubmission submission = reviewService.submitReviewWithOutcome(
+                project.getId(), post.getId(), "APPROVED", "ship it", reviewer);
+
+        assertThat(submission.autoTransition()).isPresent();
+        assertThat(submission.autoTransition().get().blocked()).isTrue();
+        assertThat(submission.autoTransition().get().applied()).isFalse();
+        assertThat(submission.autoTransition().get().blockedReason()).contains("less than 10 minutes");
+        assertThat(reload().getCurrentStatus()).isEqualTo("IN_REVIEW");
+        // The approval stands: once the schedule is fixed the gate opens without a second review.
+        assertThat(reviewRepository.findAllByWorkItemId(post.getId()))
+                .anySatisfy(review -> assertThat(review.getVerdict()).isEqualTo("APPROVED"));
     }
 
     // --- helpers ---

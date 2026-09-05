@@ -54,6 +54,7 @@ public class LocalTikTokConnector implements OAuth2Connector, ActionConnector {
     static final String CONFIG_MAX_VIDEO_DURATION_SEC = "maxVideoPostDurationSec";
 
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
+    private static final String ACTION_QUERY_VIDEO_METRICS = "query_video_metrics";
 
     static final String LOCAL_CREATOR_NICKNAME = "Local Creator";
     static final String LOCAL_CREATOR_USERNAME = "local.creator";
@@ -180,6 +181,9 @@ public class LocalTikTokConnector implements OAuth2Connector, ActionConnector {
 
     @Override
     public ActionResult invoke(String actionId, Map<String, Object> input, ConnectionContext ctx) {
+        if (ACTION_QUERY_VIDEO_METRICS.equals(actionId)) {
+            return LocalMetrics.answer(input != null ? input : Map.of());
+        }
         // A returned error is PERMANENT per the ActionConnector contract, so an unknown action
         // dead-letters locally exactly as it would in production.
         if (!ACTION_PUBLISH_VIDEO.equals(actionId)) {

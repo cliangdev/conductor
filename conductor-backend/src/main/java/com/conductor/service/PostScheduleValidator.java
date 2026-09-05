@@ -6,6 +6,10 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PublishFinding;
+import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,11 +21,9 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Locale;
-import java.util.Optional;
-import java.util.Set;
 
 /**
  * Guards the approval gate of a <em>publishing</em> Workflow (COND-23): a Post may not be approved until it
@@ -33,16 +35,18 @@ import java.util.Set;
  * validator fires when <b>both</b> of the following are true of the Work Item's own bound {@link Statechart}:
  *
  * <ol>
- *   <li><b>The edge being traversed is the workflow's approval gate</b> — the {@code from -> to} transition
- *       declares {@code requiresReview}. That is the definition-driven spelling of "a human signs this off
- *       before it becomes real", whatever the workflow chose to name the status.
- *       <p>Deliberately keyed on the <em>edge</em>, not on "any edge into that status". MARKETING also
- *       declares an ungated {@code SCHEDULED -> APPROVED} ("Unschedule") back-edge; keying on the status
- *       would make unscheduling impossible exactly when it matters most — once the fire time is inside the
- *       ten-minute floor or already past, the human could no longer pull the post back.</li>
+ *   <li><b>The edge being traversed is a publish gate</b> — the {@code from -> to} transition declares
+ *       {@code requiresReview}, or it enters the status the Workflow publishes from
+ *       ({@link PublishingWorkflow#isGateEdge}). The first is the definition-driven spelling of "a human
+ *       signs this off before it becomes real"; the second is what makes a Workflow with no review gate
+ *       still safe, and what catches a Post approved in time but scheduled too late.
+ *       <p>Deliberately keyed on edges <em>into</em> the scheduled status, never out of it. MARKETING
+ *       declares an ungated {@code SCHEDULED -> APPROVED} ("Unschedule") back-edge; guarding that would
+ *       make unscheduling impossible exactly when it matters most — once the fire time is inside the
+ *       platform's floor or already past, the human could no longer pull the post back.</li>
  *   <li><b>The workflow declares publishing as a concept</b> — at least one of its declared
- *       {@code asset_types} names a platform the publishing pipeline can target (see
- *       {@link #PUBLISH_PLATFORMS}, the same vocabulary {@code post_publish_target.platform} uses). MARKETING
+ *       {@code asset_types} names a platform the publishing pipeline can target (the
+ *       {@link PublishPlatformRegistry}, the same vocabulary {@code post_publish_target.platform} uses). MARKETING
  *       declares {@code facebook_post}/{@code instagram_post}/{@code youtube_video}/{@code tiktok_post} and
  *       opts in; ENGINEERING declares only {@code github_pr} and is untouched, review-gated edges included.
  *       Any authored workflow that declares a platform asset type opts in by saying so in its definition.</li>
@@ -50,12 +54,15 @@ import java.util.Set;
  *
  * <p>The second condition is a heuristic over {@code asset_types} only because the statechart schema has no
  * first-class "this workflow publishes" declaration yet. When it grows one, replace
- * {@link #declaresPublishTargets} with a read of that field; nothing else here changes.
+ * {@link PublishPlatformRegistry#declaresPublishing} with a read of that field; nothing else here changes.
  *
- * <h2>The ten-minute floor</h2>
- * Facebook's native {@code scheduled_publish_time} refuses anything under ten minutes out. The floor is
- * applied uniformly to every platform rather than per-platform so the rule a human learns once holds
- * everywhere — a Post that is approvable is approvable for all of its targets.
+ * <h2>The lead-time floor</h2>
+ * Each platform declares how much notice it needs ({@link PublishPlatform#minLead}): Facebook's native
+ * {@code scheduled_publish_time} refuses anything under ten minutes out, an app-managed destination needs
+ * only the dispatch poller's next tick, a manual one needs nothing but "in the future". The Post's floor is
+ * the largest over its selected destinations, and the message names the destination that demands it. With
+ * no destination selected yet the historical ten-minute default stands, so an author scheduling before
+ * choosing accounts is never told a time is fine and then told it is not.
  *
  * <p>Purely a read-and-throw: it never writes, so a rejection leaves the Work Item exactly as it was and the
  * caller's status change never commits. Every rejection names the specific field that is missing or invalid,
@@ -65,33 +72,39 @@ import java.util.Set;
 public class PostScheduleValidator {
 
     /**
-     * Facebook's native scheduling minimum, applied uniformly to every platform. See the class javadoc.
+     * The floor a Post with no destinations yet, or a destination on an unknown platform, is held to. See
+     * the class javadoc.
      */
-    public static final Duration MINIMUM_LEAD_TIME = Duration.ofMinutes(10);
+    public static final Duration MINIMUM_LEAD_TIME = PublishPlatform.DEFAULT_MIN_LEAD;
 
-    /**
-     * Platforms the publishing pipeline can target — the {@code post_publish_target.platform} vocabulary. A
-     * workflow declaring an {@code asset_types} entry named for one of these (e.g. {@code facebook_post})
-     * declares publishing as a concept.
-     */
-    static final Set<String> PUBLISH_PLATFORMS = Set.of("facebook", "instagram", "youtube", "tiktok");
+    public static final String NO_FIRE_TIME = "NO_FIRE_TIME";
+    public static final String NO_TIMEZONE = "NO_TIMEZONE";
+    public static final String UNKNOWN_TIMEZONE = "UNKNOWN_TIMEZONE";
+    public static final String FIRE_TIME_TOO_SOON = "FIRE_TIME_TOO_SOON";
+    public static final String NO_TARGETS = "NO_TARGETS";
+    public static final String NO_MEDIA = "NO_MEDIA";
+    public static final String TARGET_MEDIA_MISSING = "TARGET_MEDIA_MISSING";
 
+    private final PublishPlatformRegistry platformRegistry;
     private final AssetRepository assetRepository;
     private final PostPublishTargetRepository postPublishTargetRepository;
     private final PublishTargetMediaResolver mediaResolver;
     private final Clock clock;
 
     @Autowired
-    public PostScheduleValidator(AssetRepository assetRepository,
+    public PostScheduleValidator(PublishPlatformRegistry platformRegistry,
+                                 AssetRepository assetRepository,
                                  PostPublishTargetRepository postPublishTargetRepository,
                                  PublishTargetMediaResolver mediaResolver) {
-        this(assetRepository, postPublishTargetRepository, mediaResolver, Clock.systemUTC());
+        this(platformRegistry, assetRepository, postPublishTargetRepository, mediaResolver, Clock.systemUTC());
     }
 
-    PostScheduleValidator(AssetRepository assetRepository,
+    PostScheduleValidator(PublishPlatformRegistry platformRegistry,
+                          AssetRepository assetRepository,
                           PostPublishTargetRepository postPublishTargetRepository,
                           PublishTargetMediaResolver mediaResolver,
                           Clock clock) {
+        this.platformRegistry = platformRegistry;
         this.assetRepository = assetRepository;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.mediaResolver = mediaResolver;
@@ -112,7 +125,10 @@ public class PostScheduleValidator {
         if (!appliesTo(workItem, statechart, toStatus)) {
             return;
         }
-        List<String> problems = collectProblems(workItem);
+        List<String> problems = inspect(workItem).stream()
+                .filter(PublishFinding::blocks)
+                .map(PublishFinding::message)
+                .toList();
         if (!problems.isEmpty()) {
             throw new UnprocessableEntityException(
                     "Cannot move " + statechart.noun() + " to " + toStatus + ": "
@@ -120,46 +136,57 @@ public class PostScheduleValidator {
         }
     }
 
-    private boolean appliesTo(WorkItem workItem, Statechart statechart, String toStatus) {
+    /** Whether the {@code -> toStatus} move out of the item's current status is one this validator guards. */
+    public boolean appliesTo(WorkItem workItem, Statechart statechart, String toStatus) {
         if (workItem == null || statechart == null || toStatus == null) {
             return false;
         }
-        if (!declaresPublishTargets(statechart)) {
-            return false;
-        }
-        Optional<StatechartTransition> transition =
-                statechart.transition(workItem.getCurrentStatus(), toStatus);
-        return transition.isPresent() && transition.get().requiresReview();
+        return platformRegistry.declaresPublishing(statechart)
+                && PublishingWorkflow.isGateEdge(statechart, workItem.getCurrentStatus(), toStatus);
     }
 
     /**
-     * Whether this workflow treats publish targets as a concept, read off its own declared {@code asset_types}:
-     * an entry named for a platform in {@link #PUBLISH_PLATFORMS} (e.g. {@code instagram_post}, or a bare
-     * {@code youtube}) means the workflow's items go out to platforms.
+     * Everything this validator would refuse the Post for, right now, regardless of what status it is in
+     * or whether anyone is trying to move it. The list a preflight shows and the list a refused transition
+     * throws are the same list.
      */
-    private boolean declaresPublishTargets(Statechart statechart) {
-        return statechart.assetTypes().stream().anyMatch(this::namesPublishPlatform);
-    }
-
-    private boolean namesPublishPlatform(String assetType) {
-        if (assetType == null) {
-            return false;
-        }
-        String normalized = assetType.trim().toLowerCase(Locale.ROOT);
-        int separator = normalized.indexOf('_');
-        String head = separator < 0 ? normalized : normalized.substring(0, separator);
-        return PUBLISH_PLATFORMS.contains(head);
-    }
-
-    private List<String> collectProblems(WorkItem workItem) {
-        List<String> problems = new ArrayList<>();
-        appendScheduleProblems(workItem, problems);
+    public List<PublishFinding> inspect(WorkItem workItem) {
+        List<PublishFinding> findings = new ArrayList<>();
         List<PostPublishTarget> targets = postPublishTargetRepository.findAllByWorkItemId(workItem.getId());
+        appendScheduleProblems(workItem, targets, findings);
         if (targets.isEmpty()) {
-            problems.add("no publish target is selected — pick at least one account to publish to");
+            findings.add(PublishFinding.blocker(NO_TARGETS,
+                    "no publish target is selected — pick at least one account to publish to"));
         }
-        appendMediaProblems(workItem, targets, problems);
-        return problems;
+        appendMediaProblems(workItem, targets, findings);
+        return findings;
+    }
+
+    /**
+     * The earliest fire time these destinations would accept from "now": the largest lead over the
+     * selection, or the default floor when nothing is selected yet. What a client shows as "as soon as
+     * possible".
+     */
+    public OffsetDateTime earliestFireTime(List<PostPublishTarget> targets) {
+        return OffsetDateTime.now(clock).plus(leadTimeFor(targets).lead()).withNano(0).plusSeconds(1);
+    }
+
+    /** The floor a selection is held to, and the destination that demands it (null for the default). */
+    record LeadTime(Duration lead, PostPublishTarget demandedBy) {}
+
+    LeadTime leadTimeFor(List<PostPublishTarget> targets) {
+        if (targets == null || targets.isEmpty()) {
+            return new LeadTime(MINIMUM_LEAD_TIME, null);
+        }
+        LeadTime longest = new LeadTime(Duration.ZERO, null);
+        for (PostPublishTarget target : targets) {
+            PublishPlatform platform = platformRegistry.find(target.getPlatform()).orElse(null);
+            Duration lead = platform == null ? MINIMUM_LEAD_TIME : platform.minLead(target.getLane());
+            if (lead.compareTo(longest.lead()) > 0) {
+                longest = new LeadTime(lead, platform == null ? null : target);
+            }
+        }
+        return longest;
     }
 
     /**
@@ -169,9 +196,10 @@ public class PostScheduleValidator {
      * media" there would be wrong — there is media, it just is not selected here any more.
      */
     private void appendMediaProblems(WorkItem workItem, List<PostPublishTarget> targets,
-                                     List<String> problems) {
+                                     List<PublishFinding> findings) {
         if (!hasUploadedFileAsset(workItem)) {
-            problems.add("no uploaded media file is attached — upload at least one image or video");
+            findings.add(PublishFinding.blocker(NO_MEDIA,
+                    "no uploaded media file is attached — upload at least one image or video"));
             return;
         }
         if (targets.isEmpty()) {
@@ -183,37 +211,56 @@ public class PostScheduleValidator {
             PublishTargetMediaResolver.EffectiveMedia media = byTarget.getOrDefault(
                     target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
             if (media.isEmpty()) {
-                problems.add(platformLabel(target) + " has no media — the files chosen for it are no longer "
-                        + "on this Post; pick media for it or reset it to the Post's");
+                findings.add(PublishFinding.blocker(TARGET_MEDIA_MISSING,
+                        platformLabel(target) + " has no media — the files chosen for it are no longer "
+                                + "on this Post; pick media for it or reset it to the Post's",
+                        target.getId()));
             }
         }
     }
 
-    private static String platformLabel(PostPublishTarget target) {
+    private String platformLabel(PostPublishTarget target) {
         String platform = target.getPlatform() == null ? "" : target.getPlatform();
         String account = target.getPlatformAccountLabel();
         return account == null || account.isBlank() ? platform : platform + " (" + account + ")";
     }
 
-    private void appendScheduleProblems(WorkItem workItem, List<String> problems) {
+    private void appendScheduleProblems(WorkItem workItem, List<PostPublishTarget> targets,
+                                        List<PublishFinding> findings) {
         OffsetDateTime fireTime = workItem.getScheduledFor();
         if (fireTime == null) {
-            problems.add("no fire time is set — set a scheduled publish time (scheduledFor)");
+            findings.add(PublishFinding.blocker(NO_FIRE_TIME,
+                    "no fire time is set — set a scheduled publish time (scheduledFor)"));
         }
         String timezone = workItem.getScheduleTimezone();
         if (timezone == null || timezone.isBlank()) {
-            problems.add("no schedule timezone is set — set an IANA timezone (scheduleTimezone)");
+            findings.add(PublishFinding.blocker(NO_TIMEZONE,
+                    "no schedule timezone is set — set an IANA timezone (scheduleTimezone)"));
         } else if (!isKnownZone(timezone)) {
-            problems.add("the schedule timezone '" + timezone + "' is not a known IANA timezone");
+            findings.add(PublishFinding.blocker(UNKNOWN_TIMEZONE,
+                    "the schedule timezone '" + timezone + "' is not a known IANA timezone"));
         }
-        if (fireTime != null) {
-            OffsetDateTime earliest = OffsetDateTime.now(clock).plus(MINIMUM_LEAD_TIME);
-            if (fireTime.isBefore(earliest)) {
-                problems.add("the fire time " + fireTime
-                        + " is less than " + MINIMUM_LEAD_TIME.toMinutes()
-                        + " minutes in the future — schedule it at least "
-                        + MINIMUM_LEAD_TIME.toMinutes() + " minutes out");
+        if (fireTime == null) {
+            return;
+        }
+        LeadTime lead = leadTimeFor(targets);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        if (lead.lead().isZero()) {
+            if (!fireTime.isAfter(now)) {
+                findings.add(PublishFinding.blocker(FIRE_TIME_TOO_SOON,
+                        "the fire time " + fireTime + " is not in the future — schedule it later than now"));
             }
+            return;
+        }
+        if (fireTime.isBefore(now.plus(lead.lead()))) {
+            long minutes = Math.max(1, lead.lead().toMinutes());
+            String unit = minutes == 1 ? " minute" : " minutes";
+            String demand = lead.demandedBy() == null ? ""
+                    : " (" + platformLabel(lead.demandedBy()) + " needs at least " + minutes + unit + "' notice)";
+            findings.add(PublishFinding.blocker(FIRE_TIME_TOO_SOON,
+                    "the fire time " + fireTime + " is less than " + minutes + unit
+                            + " in the future — schedule it at least " + minutes + unit + " out" + demand,
+                    lead.demandedBy() == null ? null : lead.demandedBy().getId()));
         }
     }
 

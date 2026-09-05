@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
@@ -94,7 +95,7 @@ class NativePublishConfirmationPollerTest {
 
     private NativePublishConfirmationPoller newPoller(boolean enabled) {
         NativePublishConfirmationPoller p = new NativePublishConfirmationPoller(
-                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled);
+                new PublishPlatformRegistry(), targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled);
         p.entityManager = entityManager;
         p.self = p;
         return p;

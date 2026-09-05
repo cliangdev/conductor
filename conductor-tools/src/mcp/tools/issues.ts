@@ -264,22 +264,17 @@ async function getWorkItemImpl(
   }
   const localPath = `.conductor/issues/${params.issueId}/`
 
-  const local = readIssueFile(config, params.issueId)
-  if (local !== null) {
-    return {
-      issueId: params.issueId,
-      content: local,
-      source: 'local',
-      localPath,
-      ...(absolutePath ? { absolutePath } : {}),
-    }
-  }
-
+  // Always the server's view. The local file used to short-circuit this read, and its frontmatter is only
+  // ever updated by this client — so a status the backend changed on its own (a publish roll-up to
+  // Published or Failed, a bundle-guard revert) was invisible to an agent polling here. The local file
+  // still comes along, as what it is: the locally authored content.
   const issue = await apiGet<IssueResponse>(endpoint.item(config.projectId, params.issueId), config)
+  const local = readIssueFile(config, params.issueId)
   return {
     ...(issue as unknown as Record<string, unknown>),
     localPath,
     ...(absolutePath ? { absolutePath } : {}),
+    ...(local !== null ? { localContent: local } : {}),
   }
 }
 

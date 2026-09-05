@@ -3,6 +3,8 @@ package com.conductor.v2.controller;
 import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.WorkItemReviewsApi;
+import com.conductor.exception.ForbiddenException;
+import com.conductor.generated.v2.model.ReviewAutoTransition;
 import com.conductor.generated.v2.model.ReviewResponse;
 import com.conductor.generated.v2.model.ReviewWithUserResponse;
 import com.conductor.generated.v2.model.SubmitReviewRequest;
@@ -37,9 +39,15 @@ public class WorkItemReviewsController implements WorkItemReviewsApi {
     public ResponseEntity<ReviewResponse> submitWorkItemReview(String projectId, String workItemId,
                                                                SubmitReviewRequest request) {
         User caller = currentUser();
-        Review review = reviewService.submitReview(
+        ReviewService.ReviewSubmission submission = reviewService.submitReviewWithOutcome(
                 projectId, workItemId, request.getVerdict(), request.getBody(), caller);
-        return ResponseEntity.status(201).body(toV2(review));
+        ReviewResponse body = toV2(submission.review());
+        // What the approval did, so an approver (a person or an agent) learns in the same response whether
+        // the item went on to schedule itself or is waiting on something the gate named.
+        submission.autoTransition().ifPresent(outcome -> body.autoTransition(
+                new ReviewAutoTransition(outcome.applied(), outcome.fromStatus(), outcome.toStatus())
+                        .blockedReason(outcome.blockedReason())));
+        return ResponseEntity.status(201).body(body);
     }
 
     @Override
@@ -69,6 +77,13 @@ public class WorkItemReviewsController implements WorkItemReviewsApi {
     }
 
     private User currentUser() {
-        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof User user)) {
+            // A project-scoped API key authenticates as the project, not as a person, and a review is a
+            // person's verdict. Say so rather than fall over on the cast.
+            throw new ForbiddenException("Reviews can only be submitted or read by a user — a user API key or a"
+                    + " signed-in session, not a project API key");
+        }
+        return user;
     }
 }

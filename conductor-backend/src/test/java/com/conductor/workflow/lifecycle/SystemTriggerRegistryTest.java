@@ -14,6 +14,8 @@ class SystemTriggerRegistryTest {
     void registersTheBuiltInTriggers() {
         assertThat(registry.isRegistered("pr_merged")).isTrue();
         assertThat(registry.isRegistered("status_changed")).isTrue();
+        assertThat(registry.isRegistered("review_approved")).isTrue();
+        assertThat(registry.bypassesReviewGate("review_approved")).isFalse();
     }
 
     @Test
@@ -37,6 +39,6 @@ class SystemTriggerRegistryTest {
     void exposesAllTriggers() {
         assertThat(registry.all())
                 .extracting(SystemTriggerRegistry.SystemTrigger::id)
-                .containsExactlyInAnyOrder("pr_merged", "status_changed");
+                .containsExactlyInAnyOrder("pr_merged", "status_changed", "review_approved");
     }
 }

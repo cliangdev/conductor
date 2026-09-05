@@ -44,9 +44,46 @@ class FeedPullServiceTest {
     private final DigestSink digestSink = mock(DigestSink.class);
     private final MetricsDigestService metricsDigestService = mock(MetricsDigestService.class);
 
+    private final com.conductor.service.publish.PostMetricsFeedPuller postMetricsFeedPuller =
+            mock(com.conductor.service.publish.PostMetricsFeedPuller.class);
+
     private final FeedPullService service = new FeedPullService(
             feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink,
-            metricsDigestService);
+            metricsDigestService, postMetricsFeedPuller);
+
+    @org.junit.jupiter.api.Test
+    void aPostMetricsFeedIsPulledByThePullerAndNeverReachesASink() {
+        ConnectorFeed feed = feed();
+        feed.setConnectorId("meta");
+        feed.setIngestId("post_metrics");
+        com.conductor.entity.Connection conn = new com.conductor.entity.Connection();
+        conn.setId("conn-1");
+        conn.setProjectId("proj-1");
+        conn.setConnectorId("meta");
+        org.mockito.Mockito.when(connectionService.getById("conn-1")).thenReturn(java.util.Optional.of(conn));
+        org.mockito.Mockito.when(connectionService.toContext(conn)).thenReturn(
+                new com.conductor.integration.ConnectionContext("proj-1", "meta", "conn-1", "tok", null, null,
+                        java.util.Map.of(), null));
+        com.conductor.integration.IngestSpec spec = new com.conductor.integration.IngestSpec("post_metrics", "l", "d",
+                IngestMode.SNAPSHOT, null, null, 360, null, null, null, null,
+                com.conductor.integration.IngestSink.POST_METRICS, null);
+        com.conductor.integration.Connector connector = mock(com.conductor.integration.Connector.class);
+        com.conductor.integration.IntegrationToolSpec toolSpec = mock(com.conductor.integration.IntegrationToolSpec.class);
+        org.mockito.Mockito.when(toolSpec.ingest()).thenReturn(java.util.List.of(spec));
+        org.mockito.Mockito.when(connector.getToolSpec()).thenReturn(toolSpec);
+        org.mockito.Mockito.when(connectorRegistry.getById("meta")).thenReturn(java.util.Optional.of(connector));
+        org.mockito.Mockito.when(postMetricsFeedPuller.pull(org.mockito.ArgumentMatchers.eq(feed),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(conn), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.conductor.integration.IngestBatch.empty("2026-09-04T14"));
+
+        boolean more = service.pull(feed);
+
+        org.assertj.core.api.Assertions.assertThat(more).isFalse();
+        org.mockito.Mockito.verify(postMetricsFeedPuller).pull(org.mockito.ArgumentMatchers.eq(feed),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(conn), org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verifyNoInteractions(digestSink, metricsDigestService, snapshotIngestAdapter);
+        org.assertj.core.api.Assertions.assertThat(feed.getCursorState()).isEqualTo("2026-09-04T14");
+    }
 
     private static ConnectorFeed feed() {
         ConnectorFeed feed = new ConnectorFeed();

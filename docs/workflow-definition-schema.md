@@ -44,6 +44,7 @@ semantics:
 | `default_view` | ✓ | `list` \| `board` \| `calendar`. |
 | `types` | ✓ | Allowed Work Item types (strings, not a DB enum). |
 | `asset_types` | – | Allowed produced-output Asset types. |
+| `publishes_from` | – | The status Work Items wait in for their fire time (publishing Workflows only). Required, at publish, when `asset_types` names a publishable platform; a chart without it falls back to a status literally named `SCHEDULED`. See [`publishing.md`](publishing.md#which-status-is-scheduled). |
 | `metric` | – | `null` to opt out, else `{name, unit?, direction}`. |
 | `statuses` | ✓ | `{id, label?, category, initial?, terminal?}`; ≤10. `label` is the human display name (falls back to a humanized id). |
 | `transitions` | ✓ | `{from, to, label, requiresReview?, reviewOutcomes?, reviewerRole?, trigger?, steps?}`. |

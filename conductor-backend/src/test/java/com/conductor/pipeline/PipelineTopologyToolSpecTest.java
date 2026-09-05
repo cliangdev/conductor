@@ -42,6 +42,13 @@ class PipelineTopologyToolSpecTest {
         for (Path file : toolSpecFiles()) {
             IntegrationToolSpec spec = mapper.readValue(file.toFile(), IntegrationToolSpec.class);
             for (IngestSpec ingest : spec.ingest()) {
+                // A post-metrics feed never reaches a sink at all: FeedPullService hands it to
+                // PostMetricsFeedPuller, which writes post_publish_target_metric rows and answers with no
+                // items, so neither FEEDS -> INBOX nor FEEDS -> DIGESTS is taken. It is outside this
+                // invariant, not an exception to it.
+                if (ingest.sink() == com.conductor.integration.IngestSink.POST_METRICS) {
+                    continue;
+                }
                 if (!ingest.isMetricFeed()) {
                     violations.add(file.getFileName() + ":" + ingest.id());
                 }

@@ -61,6 +61,13 @@
       "uniqueItems": true,
       "items": { "type": "string", "minLength": 1, "maxLength": 64 }
     },
+    "publishes_from": {
+      "description": "The status a Work Item waits in for its fire time — the one the publishing pollers dispatch from, and the entry into which the publish validators guard. Required (enforced at publish, not by this schema) when asset_types names a publishable platform; a chart without it falls back to a status literally named SCHEDULED.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "minLength": 2,
+      "maxLength": 48
+    },
     "metric": {
       "description": "Optional Outcome Metric kept as a time series. null/absent means the Workflow opts out (e.g. Engineering).",
       "oneOf": [

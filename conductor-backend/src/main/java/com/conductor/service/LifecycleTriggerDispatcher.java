@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
+import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalTypes;
@@ -71,6 +72,43 @@ public class LifecycleTriggerDispatcher {
     }
 
     /**
+     * What a system-triggered cascade did to a Work Item.
+     *
+     * @param trigger       the trigger that ran
+     * @param fromStatus    the status the item was in when the cascade started
+     * @param toStatus      the status it is in now — how far the cascade got
+     * @param blocked       whether a hop was refused by the publish gate; the status is wherever the
+     *                      previous hop left it
+     * @param blockedReason the gate's own words when blocked, else null
+     */
+    public record AutoTransition(String trigger, String fromStatus, String toStatus, boolean blocked,
+                                 String blockedReason) {
+        public boolean applied() {
+            return fromStatus != null && !fromStatus.equals(toStatus);
+        }
+    }
+
+    /**
+     * Runs the {@code review_approved} cascade for a Work Item whose gate an APPROVED review has just
+     * satisfied, and reports what happened so the reviewer can be told. Unlike the status-changed path
+     * this is called directly rather than through a signal: the outcome has to travel back up to the
+     * review request, and an approval that could not schedule its Post is something the approver must see.
+     *
+     * <p>Empty when called from inside another cascade (the nested hop is the outer loop's to take).
+     */
+    public Optional<AutoTransition> onReviewApproved(String projectId, String workItemId) {
+        if (Boolean.TRUE.equals(IN_CASCADE.get())) {
+            return Optional.empty();
+        }
+        IN_CASCADE.set(Boolean.TRUE);
+        try {
+            return Optional.ofNullable(cascade(projectId, workItemId, WorkItemWorkflowService.TRIGGER_REVIEW_APPROVED));
+        } finally {
+            IN_CASCADE.remove();
+        }
+    }
+
+    /**
      * The leading type check is defense-in-depth: {@code LifecycleSignalSubscriber.interestedIn} already
      * filters to {@link SignalTypes#CONDUCTOR_WORK_ITEM_STATUS_CHANGED} before {@code onSignal} ever calls
      * this method, but several unit tests call it directly and rely on the same no-op contract.
@@ -90,44 +128,72 @@ public class LifecycleTriggerDispatcher {
 
         IN_CASCADE.set(Boolean.TRUE);
         try {
-            cascade(signal.projectId(), workItemId);
+            cascade(signal.projectId(), workItemId, WorkItemWorkflowService.TRIGGER_STATUS_CHANGED);
         } finally {
             IN_CASCADE.remove();
         }
     }
 
-    private void cascade(String projectId, String workItemId) {
+    /**
+     * One cascade: hop along consecutive edges declaring {@code trigger} until none matches, a status
+     * repeats, the hop cap is hit, or the publish gate refuses a hop. Every hop persists, gets the same
+     * side effects a human status change gets (revoking a native hand-off on the way out of the scheduled
+     * status, re-stamping and handing off on the way in), and re-publishes the status-changed event so
+     * notifications and YAML automations fire for it.
+     *
+     * @return where the item ended up, or null when it could not be loaded
+     */
+    private AutoTransition cascade(String projectId, String workItemId, String trigger) {
         // Fresh load inside this transaction — never operate on the detached entity carried in the event
         // (accessing its lazy associations later would throw; see #240 §4).
         WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
         if (workItem == null) {
-            return;
+            return null;
         }
+        String startStatus = workItem.getCurrentStatus();
         Set<String> visited = new HashSet<>();
-        visited.add(workItem.getCurrentStatus());
+        visited.add(startStatus);
 
         for (int hops = 0; hops < MAX_CASCADE_HOPS; hops++) {
             String fromStatus = workItem.getCurrentStatus();
-            Optional<StatechartTransition> applied = workItemWorkflowService.applySystemTransition(
-                    projectId, workItem, WorkItemWorkflowService.TRIGGER_STATUS_CHANGED);
+            Optional<StatechartTransition> applied;
+            try {
+                applied = workItemWorkflowService.applySystemTransition(projectId, workItem, trigger);
+            } catch (UnprocessableEntityException refused) {
+                // The gate said no. The status was never set, so the item stays exactly where the previous
+                // hop left it; the reason travels back to whoever started the cascade.
+                log.warn("Lifecycle cascade ({}) for Work Item {} stopped at {}: {}",
+                        trigger, workItemId, fromStatus, refused.getMessage());
+                return new AutoTransition(trigger, startStatus, fromStatus, true, refused.getMessage());
+            }
             if (applied.isEmpty()) {
-                return;
+                return new AutoTransition(trigger, startStatus, fromStatus, false, null);
             }
             String toStatus = workItem.getCurrentStatus();
             // Cycle guard BEFORE any side effect: if this hop revisits a status, undo the in-memory advance
             // (the Work Item is managed in the triggering transaction, so an un-reverted mutation would still
-            // flush at commit) and stop — a cyclic status_changed edge must not persist or publish a hop.
+            // flush at commit) and stop — a cyclic edge must not persist or publish a hop.
             if (!visited.add(toStatus)) {
                 workItem.setCurrentStatus(fromStatus);
                 log.warn("Lifecycle cascade for Work Item {} halted: revisited status {} (statechart cycle)",
                         workItemId, toStatus);
-                return;
+                return new AutoTransition(trigger, startStatus, fromStatus, false, null);
+            }
+            // Leaving the scheduled status revokes a native hand-off FIRST, exactly as a human move does. A
+            // failed revocation undoes the in-memory advance so the flush cannot strand a live scheduled post.
+            try {
+                workItemService.applyScheduledExit(projectId, workItem, fromStatus);
+            } catch (RuntimeException revokeFailed) {
+                workItem.setCurrentStatus(fromStatus);
+                throw revokeFailed;
             }
             workItemRepository.save(workItem);
+            workItemService.applyScheduledEntry(projectId, workItem);
             // Re-publish per hop so notifications + YAML automations fire for it. The re-entrancy guard makes
             // the nested lifecycle evaluation a no-op, so this loop stays the sole advancer.
             workItemService.publishStatusChanged(projectId, workItem, fromStatus, toStatus, null);
         }
         log.warn("Lifecycle cascade for Work Item {} halted at the hop cap ({})", workItemId, MAX_CASCADE_HOPS);
+        return new AutoTransition(trigger, startStatus, workItem.getCurrentStatus(), false, null);
     }
 }

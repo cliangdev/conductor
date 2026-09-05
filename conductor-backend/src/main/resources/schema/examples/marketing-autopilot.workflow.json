@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "MARKETING_AUTOPILOT",
+  "area": "MARKETING",
+  "version": 1,
+  "state": "PUBLISHED",
+  "noun": "Post",
+  "default_view": "calendar",
+  "types": ["POST"],
+  "asset_types": ["facebook_post", "instagram_post", "youtube_video", "tiktok_post"],
+  "publishes_from": "SCHEDULED",
+  "metric": null,
+  "statuses": [
+    { "id": "DRAFT", "label": "Draft", "category": "open", "initial": true },
+    { "id": "SCHEDULED", "label": "Scheduled", "category": "in_progress" },
+    { "id": "PUBLISHED", "label": "Published", "category": "terminal", "terminal": true },
+    { "id": "FAILED", "label": "Failed", "category": "in_progress" }
+  ],
+  "transitions": [
+    { "from": "DRAFT", "to": "SCHEDULED", "label": "Schedule" },
+    { "from": "SCHEDULED", "to": "DRAFT", "label": "Unschedule" },
+    { "from": "SCHEDULED", "to": "PUBLISHED", "label": "Published" },
+    { "from": "SCHEDULED", "to": "FAILED", "label": "Publish failed" },
+    { "from": "FAILED", "to": "SCHEDULED", "label": "Retry" },
+    { "from": "FAILED", "to": "DRAFT", "label": "Edit" }
+  ]
+}

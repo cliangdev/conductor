@@ -66,6 +66,8 @@ describe('workflow-aware MCP tools', () => {
         workflowId: 'wf-1',
         types: ['PRD'],
         statuses: [{ id: 'DRAFT' }],
+        assetTypes: [],
+        publishesFrom: null,
       },
     ])
   })

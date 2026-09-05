@@ -47,6 +47,7 @@ class FacebookPublishAction {
     static final String ACTION_PUBLISH = "publish_facebook_post";
     static final String ACTION_DELETE = "delete_facebook_post";
     static final String ACTION_GET = "get_facebook_post";
+    static final String ACTION_METRICS = "get_facebook_post_metrics";
 
     private final MetaGraphClient graphClient;
     private final PublishMediaResolver mediaResolver;
@@ -131,6 +132,39 @@ class FacebookPublishAction {
         output.put("post_id", postId);
         output.put("deleted", true);
         return ActionResult.ok(output);
+    }
+
+    /**
+     * Engagement counts for a batch of Page posts — the {@code post_metrics} feed's read. Answers one
+     * {@code metrics} entry per requested id, in order, with {@code unavailable} for an id Graph no longer
+     * resolves, so one deleted post never hides the numbers of the rest.
+     */
+    ActionResult metrics(Map<String, Object> input, ConnectionContext ctx) {
+        List<String> postIds = MetaConnector.MetaActions.stringList(input, "post_ids");
+        if (postIds.isEmpty()) {
+            return ActionResult.error(ACTION_METRICS + " requires 'post_ids'");
+        }
+        String token = MetaConnector.MetaActions.tokenOrNull(ctx);
+        if (token == null) {
+            return ActionResult.error("Meta connection has no Page access token; reconnect the Page");
+        }
+        List<MetaGraphClient.PostMetrics> read;
+        try {
+            read = graphClient.readPostMetrics(postIds, token);
+        } catch (HttpClientErrorException e) {
+            return MetaConnector.MetaActions.permanentOrRethrow(e, "Facebook could not read post metrics");
+        }
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (MetaGraphClient.PostMetrics m : read) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("post_id", m.id());
+            row.put("unavailable", m.unavailable());
+            if (m.likes() != null) row.put("likes", m.likes());
+            if (m.comments() != null) row.put("comments", m.comments());
+            if (m.shares() != null) row.put("shares", m.shares());
+            rows.add(row);
+        }
+        return ActionResult.ok(Map.of("metrics", rows));
     }
 
     ActionResult get(Map<String, Object> input, ConnectionContext ctx) {

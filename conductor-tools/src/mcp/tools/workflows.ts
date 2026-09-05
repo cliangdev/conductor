@@ -42,6 +42,11 @@ export async function listWorkflows(
       workflowId: w['id'],
       types: def?.['types'] ?? [],
       statuses: def?.['statuses'] ?? [],
+      // The asset types a Workflow declares are how it opts into publishing (an entry named for a
+      // platform) and what upload_asset's `type` is validated against — so an agent needs them here,
+      // not by parsing the statechart.
+      assetTypes: def?.['asset_types'] ?? [],
+      publishesFrom: def?.['publishes_from'] ?? null,
     }
   })
 }

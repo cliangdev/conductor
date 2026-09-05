@@ -23,6 +23,9 @@ public final class SignalTypes {
     public static final String CONDUCTOR_WORK_ITEM_COMMENT_ADDED = "conductor.work_item.comment_added";
     public static final String CONDUCTOR_WORK_ITEM_COMMENT_REPLIED = "conductor.work_item.comment_replied";
     public static final String CONDUCTOR_WORK_ITEM_ASSET_ADDED = "conductor.work_item.asset_added";
+    /** An approved Work Item could not advance automatically — its publish gate refused the next edge. */
+    public static final String CONDUCTOR_WORK_ITEM_AUTO_TRANSITION_BLOCKED =
+            "conductor.work_item.auto_transition_blocked";
     public static final String CONDUCTOR_WORK_ITEM_AWAITING_MANUAL_PUBLISH =
             "conductor.work_item.awaiting_manual_publish";
 

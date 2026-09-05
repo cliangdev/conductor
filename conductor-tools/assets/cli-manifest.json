@@ -164,6 +164,10 @@
       {
         "name": "conductor-ux-ui-design",
         "description": "Expert UX/UI design guidance for creating simple, user-focused interfaces. Applies human-centered design principles."
+      },
+      {
+        "name": "conductor-publisher",
+        "description": "Schedules and tracks a Post through the publishing pipeline: gathers copy, destinations and timing, checks content, creates it with create_post, reports the confirmation table, follows it through review and publishing."
       }
     ]
   },
@@ -586,7 +590,7 @@
     },
     {
       "name": "list_publish_targets",
-      "description": "List the project's connected publishing accounts, and optionally a Work Item's selected targets with their publish state, permalink and error.",
+      "description": "Accounts a project can publish to (with each platform's option keys), plus a Work Item's selected targets and outcomes.",
       "category": "marketing"
     },
     {
@@ -600,12 +604,10 @@
     },
     {
       "name": "upload_asset",
-      "description": "Attach a local file to a Work Item as a file Asset in one call (mint, upload, confirm).",
+      "description": "Attach a media file to a Work Item from a local path or a public URL in one call; MP4/MOV are measured here.",
       "category": "marketing",
       "requiredParams": [
-        "issueId",
-        "filePath",
-        "type"
+        "issueId"
       ]
     },
     {
@@ -625,6 +627,68 @@
       "requiredParams": [
         "issueId"
       ]
+    },
+    {
+      "name": "list_assets",
+      "description": "Every Asset on a Work Item \u2014 uploaded media and recorded links, with the ids set_publish_targets takes.",
+      "category": "marketing",
+      "requiredParams": [
+        "issueId"
+      ]
+    },
+    {
+      "name": "create_post",
+      "description": "Create, schedule and submit a Post in one call: caption, media (paths or URLs), destinations by account name, fire time, reviewers.",
+      "category": "marketing",
+      "requiredParams": [
+        "text",
+        "targets"
+      ]
+    },
+    {
+      "name": "get_post_status",
+      "description": "Where a Post stands: status, every destination's outcome, the gate's blockers and warnings, review and consent state, next step.",
+      "category": "marketing",
+      "requiredParams": [
+        "postId"
+      ]
+    },
+    {
+      "name": "submit_post",
+      "description": "Hand a Post to review: assign reviewers and take the move the gate names, if nothing blocks it.",
+      "category": "marketing",
+      "requiredParams": [
+        "postId"
+      ]
+    },
+    {
+      "name": "list_posts",
+      "description": "Posts across every publishing Workflow with their destinations, filtered by status, schedule window or platform.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "submit_review",
+      "description": "Record an approve / request_changes verdict on a Post as this API key's user (an assigned REVIEWER). Approval schedules the Post.",
+      "category": "marketing",
+      "requiredParams": [
+        "postId",
+        "verdict"
+      ]
+    },
+    {
+      "name": "get_post_analytics",
+      "description": "Views, likes, comments and shares per destination of a Post, as the platform reports them, with snapshots over time.",
+      "category": "marketing",
+      "requiredParams": [
+        "postId"
+      ]
+    },
+    {
+      "name": "list_top_posts",
+      "description": "The project's best-performing published destinations ranked by one metric.",
+      "category": "marketing",
+      "requiredParams": []
     }
   ]
 }
