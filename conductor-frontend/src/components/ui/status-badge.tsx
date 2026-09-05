@@ -82,12 +82,16 @@ export interface StatusBadgeProps {
   status: string
   category?: string
   label?: string
+  /** Explicit hue override for domain-local status vocabularies (e.g. agent memory's derived
+   *  tri-state) whose ids are common English words that must not enter the global
+   *  {@code WELL_KNOWN_HUES} map — a Workflow could legitimately name a Work Item status "Raw". */
+  hue?: StatusHue
   className?: string
 }
 
 /** The single source of status color — replaces every local STATUS_COLORS map. */
-function StatusBadge({ status, category, label, className }: StatusBadgeProps) {
-  const classes = HUE_CLASSES[statusHue(status, category)]
+function StatusBadge({ status, category, label, hue, className }: StatusBadgeProps) {
+  const classes = HUE_CLASSES[hue ?? statusHue(status, category)]
   return (
     <span
       className={cn(

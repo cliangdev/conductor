@@ -54,9 +54,14 @@ public class WorkItem {
     @JoinColumn(name = "assignee_id")
     private User assignee;
 
+    /** Null when a machine actor (e.g. an addressable agent via {@code coordinator:create_work_item})
+     *  authored this item -- {@link #createdByLabel} carries its identity instead. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by", nullable = false)
+    @JoinColumn(name = "created_by")
     private User createdBy;
+
+    @Column(name = "created_by_label", length = 255)
+    private String createdByLabel;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -182,6 +187,9 @@ public class WorkItem {
 
     public User getCreatedBy() { return createdBy; }
     public void setCreatedBy(User createdBy) { this.createdBy = createdBy; }
+
+    public String getCreatedByLabel() { return createdByLabel; }
+    public void setCreatedByLabel(String createdByLabel) { this.createdByLabel = createdByLabel; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

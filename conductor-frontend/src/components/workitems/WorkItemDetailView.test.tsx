@@ -651,24 +651,37 @@ describe('WorkItemDetailView', () => {
     })
   })
 
-describe('the tab bar is never a one-way trip', () => {
-  it('offers a content tab when there are no documents, so Activity can be left', async () => {
-    // With no documents there were no document tabs, so Activity was the only one on the bar — and the
-    // caption, media and accounts all hide on Activity. Clicking it stranded you with nothing to click.
-    DOCS = []
-    await renderView()
+  describe('creator byline', () => {
+    it('resolves a human creator by member id', async () => {
+      ISSUE = { ...ISSUE, createdBy: 'user-2', createdByLabel: undefined }
+      await renderView()
+      expect(await screen.findByText(/created by cara creator/i)).toBeInTheDocument()
+    })
 
-    // Named after the Workflow's noun, so it reads as the thing itself.
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'PRD' })).toBeInTheDocument())
-
-    await userEvent.click(screen.getByRole('tab', { name: /Activity/ }))
-    expect(screen.getByRole('tab', { name: 'PRD' })).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('tab', { name: 'PRD' }))
-    await waitFor(() =>
-      expect(screen.getByRole('tab', { name: 'PRD' })).toHaveAttribute('aria-selected', 'true')
-    )
+    it('falls back to createdByLabel for an agent-created item with no createdBy', async () => {
+      ISSUE = { ...ISSUE, createdBy: undefined, createdByLabel: 'Agent (ceo)' }
+      await renderView()
+      expect(await screen.findByText(/created by agent \(ceo\)/i)).toBeInTheDocument()
+    })
   })
-})
 
+  describe('the tab bar is never a one-way trip', () => {
+    it('offers a content tab when there are no documents, so Activity can be left', async () => {
+      // With no documents there were no document tabs, so Activity was the only one on the bar — and the
+      // caption, media and accounts all hide on Activity. Clicking it stranded you with nothing to click.
+      DOCS = []
+      await renderView()
+
+      // Named after the Workflow's noun, so it reads as the thing itself.
+      await waitFor(() => expect(screen.getByRole('tab', { name: 'PRD' })).toBeInTheDocument())
+
+      await userEvent.click(screen.getByRole('tab', { name: /Activity/ }))
+      expect(screen.getByRole('tab', { name: 'PRD' })).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('tab', { name: 'PRD' }))
+      await waitFor(() =>
+        expect(screen.getByRole('tab', { name: 'PRD' })).toHaveAttribute('aria-selected', 'true')
+      )
+    })
+  })
 })

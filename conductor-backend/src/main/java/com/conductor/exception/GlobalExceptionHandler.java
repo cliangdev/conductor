@@ -1,9 +1,13 @@
 package com.conductor.exception;
 
 import com.conductor.agent.AgentReferencedByWorkflowsException;
+import com.conductor.conversation.AgentNotAddressableException;
+import com.conductor.conversation.ConversationBusyException;
+import com.conductor.conversation.ConversationNotFoundException;
 import com.conductor.knowledge.page.FrontmatterException;
 import com.conductor.knowledge.page.KnowledgeConflictException;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -17,6 +21,7 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.exc.InvalidFormatException;
@@ -148,6 +153,37 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ForbiddenException.class)
     public ProblemDetail handleForbiddenException(ForbiddenException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(ConversationNotFoundException.class)
+    public ProblemDetail handleConversationNotFoundException(ConversationNotFoundException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    /**
+     * {@link AgentNotAddressableException#isAmbiguous()} picks the status: an ambiguous name match is a
+     * 409 (the caller's request is well-formed but underspecified -- add the slug to resolve it
+     * deterministically), while every other case (including the plain not-found and the default-to-CEO
+     * case) is a 404 (nothing in the project matches at all).
+     */
+    @ExceptionHandler(AgentNotAddressableException.class)
+    public ProblemDetail handleAgentNotAddressableException(AgentNotAddressableException e) {
+        HttpStatus status = e.isAmbiguous() ? HttpStatus.CONFLICT : HttpStatus.NOT_FOUND;
+        ProblemDetail problem = ProblemDetail.forStatus(status);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(ConversationBusyException.class)
+    public ProblemDetail handleConversationBusyException(ConversationBusyException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
         problem.setType(URI.create("about:blank"));
         problem.setDetail(e.getMessage());
         return problem;
@@ -310,6 +346,57 @@ public class GlobalExceptionHandler {
 
     private String defaultMessage(FieldError fe) {
         return fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "Invalid value";
+    }
+
+    /**
+     * A {@code @Validated}-interface query-param constraint (e.g. the generated {@code MemoryApi}'s
+     * {@code @Max} on {@code limit}) fails validation before the controller method runs, and without this
+     * handler falls through to the catch-all {@link #handleUnexpectedException} as a 500 -- a rejected
+     * query param is a client error, same reasoning as {@link #handleValidationException} for request
+     * bodies. One entry per violated parameter, following that method's {@code fieldErrors} shape.
+     */
+    /**
+     * The generated API interfaces are {@code @Validated}, so a violated query-param constraint (e.g.
+     * {@code MemoryApi}'s {@code @Max} on {@code limit}) surfaces as a {@code
+     * ConstraintViolationException} from the AOP method-validation interceptor -- a client error, not the
+     * 500 the catch-all would return. (Spring's own handler-method validation path raises {@link
+     * HandlerMethodValidationException} instead; {@link #handleHandlerMethodValidationException} covers
+     * that shape.)
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ProblemDetail handleConstraintViolationException(ConstraintViolationException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail("Validation failed");
+        List<Map<String, String>> fieldErrors = e.getConstraintViolations().stream()
+                .map(v -> Map.of(
+                        "field", v.getPropertyPath() != null ? v.getPropertyPath().toString() : "",
+                        "message", v.getMessage() != null ? v.getMessage() : "Invalid value"))
+                .collect(Collectors.toList());
+        problem.setProperty("fieldErrors", fieldErrors);
+        return problem;
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ProblemDetail handleHandlerMethodValidationException(HandlerMethodValidationException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail("Validation failed");
+
+        List<Map<String, String>> fieldErrors = e.getParameterValidationResults().stream()
+                .flatMap(result -> result.getResolvableErrors().stream()
+                        .map(error -> Map.of(
+                                "field", parameterName(result),
+                                "message", error.getDefaultMessage() != null ? error.getDefaultMessage() : "Invalid value")))
+                .collect(Collectors.toList());
+
+        problem.setProperty("fieldErrors", fieldErrors);
+        return problem;
+    }
+
+    private String parameterName(org.springframework.validation.method.ParameterValidationResult result) {
+        String name = result.getMethodParameter().getParameterName();
+        return name != null ? name : "";
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)

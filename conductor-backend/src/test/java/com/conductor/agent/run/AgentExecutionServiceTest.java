@@ -3,6 +3,7 @@ package com.conductor.agent.run;
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentRepository;
 import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.agent.provider.ChatMessage;
 import com.conductor.agent.provider.ChatModelProvider;
 import com.conductor.agent.provider.ChatRequest;
 import com.conductor.agent.provider.ChatResponse;
@@ -17,13 +18,17 @@ import com.conductor.agent.tool.ToolResult;
 import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -49,6 +54,22 @@ class AgentExecutionServiceTest {
         public ToolResult invoke(Map<String, Object> arguments, ToolInvocationContext context) {
             calls.incrementAndGet();
             return ToolResult.ok("TOOL_OUTPUT");
+        }
+    }
+
+    /** Records every {@link ChatRequest} it's asked to complete, always finalizing immediately. */
+    private static final class CapturingProvider implements ChatModelProvider {
+        final List<ChatRequest> requests = new ArrayList<>();
+
+        public String id() { return "fake"; }
+
+        public ChatResponse complete(ChatRequest request, String apiKey) {
+            // The runner reuses one mutable transcript list across turns, so snapshot messages() here --
+            // otherwise later mutations (e.g. the finalizing assistant turn) would leak into this capture.
+            requests.add(new ChatRequest(request.model(), request.systemPrompt(), List.copyOf(request.messages()),
+                    request.tools(), request.maxTokens(), request.temperature()));
+            return new ChatResponse(ChatResponse.StopReason.COMPLETE, "Final answer",
+                    List.of(), new TokenUsage(3, 2));
         }
     }
 
@@ -145,5 +166,246 @@ class AgentExecutionServiceTest {
         assertThat(tool.calls.get()).isEqualTo(2);
         assertThat(result.status()).isEqualTo(AgentRun.Status.FAILED.name());
         assertThat(result.usage()).isEqualTo(new TokenUsage(2, 2));
+    }
+
+    @Test
+    void priorMessagesAppearInOrderBeforeTheFinalTaskMessage() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        List<ChatMessage> prior = List.of(
+                ChatMessage.user("earlier question"),
+                ChatMessage.assistant("earlier answer", List.of()));
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null), prior, null);
+
+        List<ChatMessage> sent = provider.requests.get(0).messages();
+        assertThat(sent).hasSize(3);
+        assertThat(sent.get(0)).isEqualTo(prior.get(0));
+        assertThat(sent.get(1)).isEqualTo(prior.get(1));
+        assertThat(sent.get(2).role()).isEqualTo(ChatMessage.Role.USER);
+        assertThat(sent.get(2).text()).contains("Do the thing");
+    }
+
+    @Test
+    void systemPromptSuffixIsAppendedWhenPresentAndOmittedWhenAbsent() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        AgentRunRequest request = new AgentRunRequest("agent-1", "Do the thing", Map.of(), null);
+
+        service.run(request, List.of(), "Extra instructions.");
+        assertThat(provider.requests.get(0).systemPrompt())
+                .isEqualTo("You are a test agent.\n\nExtra instructions.");
+
+        service.run(request, List.of(), null);
+        assertThat(provider.requests.get(1).systemPrompt()).isEqualTo("You are a test agent.");
+    }
+
+    @Test
+    void singleShotRunMatchesTheThreeArgOverloadWithNoPriorMessagesOrSuffix() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        AgentRunRequest request = new AgentRunRequest("agent-1", "Do the thing", Map.of(), null);
+
+        service.run(request);
+        service.run(request, List.of(), null);
+
+        assertThat(provider.requests.get(0)).isEqualTo(provider.requests.get(1));
+    }
+
+    // ---- deniedToolIds: withheld from the model, and answered distinctly if called anyway ----
+
+    @Test
+    void deniedToolIdsAreWithheldFromTheToolDefsSentToTheProvider() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null),
+                List.of(), null, Set.of("fake:t1"));
+
+        assertThat(provider.requests.get(0).tools()).isEmpty();
+    }
+
+    @Test
+    void emptyDeniedToolIdsBehavesIdenticallyToTheThreeArgOverload() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        AgentRunRequest request = new AgentRunRequest("agent-1", "Do the thing", Map.of(), null);
+
+        service.run(request, List.of(), null);
+        service.run(request, List.of(), null, Set.of());
+
+        assertThat(provider.requests.get(0)).isEqualTo(provider.requests.get(1));
+    }
+
+    /**
+     * If the model calls a denied tool anyway (e.g. it saw the name earlier in the conversation window,
+     * before this run's denial applied), the tool must never actually execute, and the error fed back to
+     * the model must be distinguishable from "unknown tool" -- clear enough for the agent to relay to the
+     * human on the other end. Asserted on the persisted {@code agent_runs.tool_calls_json}, the actual
+     * payload the model saw, not just on the run's overall status.
+     */
+    @Test
+    void deniedToolCalledAnywayIsNeverExecutedAndGetsADisabledErrorNotUnknownTool() {
+        RecordingTool tool = new RecordingTool();
+        AtomicInteger turns = new AtomicInteger();
+        ChatModelProvider provider = new ChatModelProvider() {
+            public String id() { return "fake"; }
+            public ChatResponse complete(ChatRequest request, String apiKey) {
+                if (turns.getAndIncrement() == 0) {
+                    return new ChatResponse(ChatResponse.StopReason.TOOL_USE, "let me check",
+                            List.of(new ToolCall("call-1", "fake_tool", "{}")), new TokenUsage(10, 5));
+                }
+                return new ChatResponse(ChatResponse.StopReason.COMPLETE, "Final answer",
+                        List.of(), new TokenUsage(3, 2));
+            }
+        };
+
+        Agent agent = agent("{}");
+        AgentRepository agentRepo = mock(AgentRepository.class);
+        when(agentRepo.findById("agent-1")).thenReturn(Optional.of(agent));
+        ArgumentCaptor<AgentRun> savedRun = ArgumentCaptor.forClass(AgentRun.class);
+        AgentRunRepository runRepo = mock(AgentRunRepository.class);
+        when(runRepo.save(savedRun.capture())).thenAnswer(inv -> inv.getArgument(0));
+        ProviderCredentialService credentials = mock(ProviderCredentialService.class);
+        when(credentials.resolveApiKey("p1", "fake")).thenReturn(Optional.of("sk-test"));
+        LogRedactionService redaction = mock(LogRedactionService.class);
+        when(redaction.redact(any(), any())).thenAnswer(inv -> inv.getArgument(1));
+        AgentExecutionService service = new AgentExecutionService(agentRepo, registryFor(provider), credentials,
+                registryFor(tool), runRepo, redaction, MAPPER);
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null),
+                List.of(), null, Set.of("fake:t1"));
+
+        assertThat(tool.calls.get()).isZero();
+        assertThat(result.status()).isEqualTo(AgentRun.Status.SUCCEEDED.name());
+        List<AgentRun> saved = savedRun.getAllValues();
+        String toolCallsJson = saved.get(saved.size() - 1).getToolCallsJson();
+        assertThat(toolCallsJson)
+                .contains("disabled for this conversation")
+                .doesNotContain("Unknown or unavailable tool");
+    }
+
+    // ---- maxTokens: unset stays null so each provider applies its own cap ----
+
+    @Test
+    void unsetMaxTokensInConfigIsPassedThroughAsNullNotAHardcodedDefault() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(provider.requests.get(0).maxTokens()).isNull();
+    }
+
+    @Test
+    void explicitMaxTokensInConfigFlowsThroughToTheRequest() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{\"maxTokens\":4096}"), provider, new RecordingTool());
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(provider.requests.get(0).maxTokens()).isEqualTo(4096);
+    }
+
+    // ---- MAX_TOKENS terminal turn: FAILED when blank, SUCCEEDED-with-warning when truncated but non-empty ----
+
+    @Test
+    void maxTokensStopReasonWithBlankTextFails() {
+        ChatModelProvider provider = new ChatModelProvider() {
+            public String id() { return "fake"; }
+            public ChatResponse complete(ChatRequest request, String apiKey) {
+                return new ChatResponse(ChatResponse.StopReason.MAX_TOKENS, "", List.of(), new TokenUsage(5, 5));
+            }
+        };
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(result.status()).isEqualTo(AgentRun.Status.FAILED.name());
+        assertThat(result.outputText()).isEmpty();
+    }
+
+    @Test
+    void maxTokensStopReasonWithNonBlankTextSucceedsWithTruncationWarning() {
+        ChatModelProvider provider = new ChatModelProvider() {
+            public String id() { return "fake"; }
+            public ChatResponse complete(ChatRequest request, String apiKey) {
+                return new ChatResponse(ChatResponse.StopReason.MAX_TOKENS, "partial answer",
+                        List.of(), new TokenUsage(5, 5));
+            }
+        };
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(result.status()).isEqualTo(AgentRun.Status.SUCCEEDED.name());
+        assertThat(result.outputText()).isEqualTo("partial answer");
+    }
+
+    @Test
+    void priorMessagesOverTheCharCapThrows() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        List<ChatMessage> tooLong = List.of(ChatMessage.user("x".repeat(60_001)));
+
+        assertThatThrownBy(() -> service.run(
+                new AgentRunRequest("agent-1", "Do the thing", Map.of(), null), tooLong, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ---- missing API key: the failure reason must name the fix and any already-configured alternative ----
+
+    /** Runs the agent with no credential for its provider and returns the persisted run's errorReason. */
+    private String runWithNoCredentialAndCaptureErrorReason(
+            List<ProviderCredentialService.ProviderCredentialStatusView> statuses) {
+        Agent agent = agent("{}");
+        AgentRepository agentRepo = mock(AgentRepository.class);
+        when(agentRepo.findById("agent-1")).thenReturn(Optional.of(agent));
+
+        ArgumentCaptor<AgentRun> savedRun = ArgumentCaptor.forClass(AgentRun.class);
+        AgentRunRepository runRepo = mock(AgentRunRepository.class);
+        when(runRepo.save(savedRun.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        ProviderCredentialService credentials = mock(ProviderCredentialService.class);
+        when(credentials.resolveApiKey("p1", "fake")).thenReturn(Optional.empty());
+        when(credentials.listStatuses("p1")).thenReturn(statuses);
+
+        LogRedactionService redaction = mock(LogRedactionService.class);
+        when(redaction.redact(any(), any())).thenAnswer(inv -> inv.getArgument(1));
+
+        AgentExecutionService service = new AgentExecutionService(agentRepo, registryFor(new CapturingProvider()),
+                credentials, registryFor(new RecordingTool()), runRepo, redaction, MAPPER);
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+        assertThat(result.status()).isEqualTo(AgentRun.Status.FAILED.name());
+
+        List<AgentRun> saved = savedRun.getAllValues();
+        return saved.get(saved.size() - 1).getErrorReason();
+    }
+
+    @Test
+    void missingApiKeyMessageNamesTheFixWhenNoOtherProviderIsConfigured() {
+        String reason = runWithNoCredentialAndCaptureErrorReason(
+                List.of(new ProviderCredentialService.ProviderCredentialStatusView("fake", false)));
+
+        assertThat(reason).isEqualTo("No API key configured for provider 'fake' in this project — add one "
+                + "under Settings → AI Providers.");
+    }
+
+    @Test
+    void missingApiKeyMessageNamesOtherConfiguredModelProvidersButNotNonModelOnes() {
+        // "claude-code" is a NON_MODEL_PROVIDERS credential id, not a selectable agent model provider --
+        // suggesting it here would tell the operator to do something impossible.
+        String reason = runWithNoCredentialAndCaptureErrorReason(List.of(
+                new ProviderCredentialService.ProviderCredentialStatusView("fake", false),
+                new ProviderCredentialService.ProviderCredentialStatusView("claude", true),
+                new ProviderCredentialService.ProviderCredentialStatusView("claude-code", true)));
+
+        assertThat(reason)
+                .contains("No API key configured for provider 'fake'")
+                .contains("Settings → AI Providers")
+                .contains("This project has a key configured for: claude.")
+                .doesNotContain("claude-code");
     }
 }

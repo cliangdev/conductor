@@ -5,6 +5,9 @@ import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentService;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
+import com.conductor.agent.provider.ChatModelProvider;
+import com.conductor.agent.provider.ModelInfo;
+import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
@@ -66,6 +69,7 @@ class AgentControllerTest {
     @MockitoBean private ClaudeRuntimeService claudeRuntimeService;
     @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private ProjectMemberRepository projectMemberRepository;
+    @MockitoBean private ModelProviderRegistry providerRegistry;
     @MockitoBean private ObjectMapper objectMapper;
 
     // Security filter chain collaborators
@@ -97,6 +101,13 @@ class AgentControllerTest {
         apiKey.setKeyValue("project-api-key");
         when(projectApiKeyRepository.findByKeyValueWithProject("project-api-key"))
                 .thenReturn(java.util.Optional.of(apiKey));
+
+        // updateAgent now reads the existing agent first (to preserve configJson keys AgentConfig
+        // doesn't model -- see toConfigMap) before building the update input. Default every lookup to
+        // a blank-config stub; individual tests override with a more specific stub when the stored
+        // config's contents matter.
+        when(agentService.get(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(stubAgent());
     }
 
     // ---- project API key auth (bug fix regression coverage) ----
@@ -169,6 +180,32 @@ class AgentControllerTest {
                 .andExpect(jsonPath("$.isDefault").value(false));
     }
 
+    // ---- addressable mapping ----
+
+    @Test
+    void getAgent_configAddressableTrue_addressableTrue() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Agent agent = stubAgent();
+        agent.setConfigJson("{\"addressable\":true}");
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(agent);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.addressable").value(true));
+    }
+
+    @Test
+    void getAgent_configAddressableAbsent_addressableFalse() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(stubAgent());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.addressable").value(false));
+    }
+
     // ---- listAgentTools ----
 
     @Test
@@ -205,14 +242,15 @@ class AgentControllerTest {
     void listAgentProviders_happyPath_returnsProvidersWithDefaultModel() throws Exception {
         when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(agentService.listProviders()).thenReturn(List.of(
-                new AgentService.ProviderOption("claude", "claude-opus-4-8")));
+                new AgentService.ProviderOption("claude", "claude-opus-4-8", false)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value("claude"))
-                .andExpect(jsonPath("$[0].defaultModel").value("claude-opus-4-8"));
+                .andExpect(jsonPath("$[0].defaultModel").value("claude-opus-4-8"))
+                .andExpect(jsonPath("$[0].defaultModelIsLive").value(false));
     }
 
     @Test
@@ -222,6 +260,69 @@ class AgentControllerTest {
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- listProviderModels ----
+
+    @Test
+    void listProviderModels_nonAdmin_returns403() throws Exception {
+        // ADMIN/CREATOR-gated, not just member -- this decrypts and spends the project's key against
+        // the vendor, same trigger as verifyProviderCredential.
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/openai/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listProviderModels_unknownProvider_returnsEmptyListNot500() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        when(providerRegistry.findById("not-a-provider")).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/not-a-provider/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.models.length()").value(0));
+    }
+
+    @Test
+    void listProviderModels_noStoredCredential_returnsEmptyListWithoutCallingProvider() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        ChatModelProvider provider = org.mockito.Mockito.mock(ChatModelProvider.class);
+        when(providerRegistry.findById("openai")).thenReturn(Optional.of(provider));
+        when(providerCredentialService.resolveApiKey(PROJECT_ID, "openai")).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/openai/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.models.length()").value(0));
+
+        verify(provider, org.mockito.Mockito.never()).availableModels(any());
+    }
+
+    @Test
+    void listProviderModels_populated_returnsIdsAndLatestFlag() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        ChatModelProvider provider = org.mockito.Mockito.mock(ChatModelProvider.class);
+        when(providerRegistry.findById("openai")).thenReturn(Optional.of(provider));
+        when(providerCredentialService.resolveApiKey(PROJECT_ID, "openai")).thenReturn(Optional.of("sk-test"));
+        when(provider.availableModels("sk-test")).thenReturn(List.of(
+                new ModelInfo("gpt-5.6-sol", true),
+                new ModelInfo("gpt-5.5", false)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/openai/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.models.length()").value(2))
+                .andExpect(jsonPath("$.models[0].id").value("gpt-5.6-sol"))
+                .andExpect(jsonPath("$.models[0].latest").value(true))
+                .andExpect(jsonPath("$.models[1].id").value("gpt-5.5"))
+                .andExpect(jsonPath("$.models[1].latest").value(false));
     }
 
     // ---- listProviderCredentialStatuses ----
@@ -457,6 +558,77 @@ class AgentControllerTest {
         ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
         verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
         assertThat(captor.getValue().config()).containsEntry("runtime", "api");
+    }
+
+    // ---- agent config "addressable" round-trip (bug fix: AgentConfig had no way to opt an agent in) ----
+
+    @Test
+    void createAgent_withAddressableConfig_passesAddressableThroughToService() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        when(agentService.create(eq(PROJECT_ID), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\","
+                                + "\"config\":{\"addressable\":true}}"))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).create(eq(PROJECT_ID), captor.capture());
+        assertThat(captor.getValue().config()).containsEntry("addressable", true);
+    }
+
+    @Test
+    void updateAgent_withAddressableConfig_passesAddressableThroughToService() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(stubAgent());
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"addressable\":true}}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().config()).containsEntry("addressable", true);
+    }
+
+    // An edit made through the known-field AgentConfig DTO must not destroy a configJson key it
+    // doesn't model -- seededPromptHash (written by CoordinatorProvisioner) is exactly such a key: if
+    // an unrelated Agents-form save wiped it, the CEO agent's prompt would be treated as
+    // operator-edited forever, and a future shipped prompt update could never refresh it again.
+    @Test
+    void updateAgent_unrelatedConfigEdit_preservesUnknownConfigKeyLikeSeededPromptHash() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        Agent existing = stubAgent();
+        existing.setConfigJson("{\"maxToolTurns\":24,\"seededPromptHash\":\"abc123\"}");
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(existing);
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+        // AgentController's ObjectMapper is a @MockitoBean here -- delegate the raw-map read
+        // (readConfigMap) to a real Jackson instance so the preservation logic is genuinely exercised.
+        com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        when(objectMapper.readValue(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.any(com.fasterxml.jackson.core.type.TypeReference.class)))
+                .thenAnswer(inv -> realMapper.readValue((String) inv.getArgument(0),
+                        (com.fasterxml.jackson.core.type.TypeReference<?>) inv.getArgument(1)));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"addressable\":true}}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().config())
+                .containsEntry("seededPromptHash", "abc123")
+                .containsEntry("addressable", true);
     }
 
     @Test

@@ -249,9 +249,41 @@ public class ProjectDocService {
         projectDocRepository.delete(doc);
     }
 
+    /** @param limit caps the ranked result set at the query level -- callers pass whatever they intend
+     *                to actually use (the REST endpoint's own page size, or an agent tool's already-
+     *                clamped {@code limit} argument) rather than fetching everything and truncating after. */
     @Transactional(readOnly = true)
-    public List<ProjectDoc> searchDocs(String projectId, String query) {
-        return projectDocRepository.searchByProjectIdAndQuery(projectId, query);
+    public List<ProjectDoc> searchDocs(String projectId, String query, int limit) {
+        return projectDocRepository.searchByProjectIdAndQuery(projectId, query, limit);
+    }
+
+    /**
+     * Best-effort snippet around the first case-insensitive hit of {@code query} in {@code content},
+     * falling back to a leading clip when there's no hit. Shared by {@code
+     * ProjectDocsController#searchProjectDocs} (REST) and the coordinator's {@code search_project_docs}
+     * tool (machine) -- both already rank-order docs via {@link #searchDocs}, so this only picks WHERE
+     * within each doc's content to cut the snippet.
+     *
+     * <p>Runs {@link DocImageMarkers#summarize} on {@code content} itself rather than asking callers to
+     * do it first. A snippet is prose shown as-is (to a human in search results, or to a model via a
+     * tool result) and a raw {@code conductor-image:} storage-path marker has no business surfacing in
+     * either -- see {@link DocImageMarkers}'s javadoc. Leaving that to the caller is how the coordinator
+     * tool came to leak markers into a model's context in the first place while the REST path didn't:
+     * both call sites wrapped this identically, so the wrapping belongs here, where it can't be
+     * forgotten by the next caller.
+     */
+    public static String extractSnippet(String rawContent, String query) {
+        String content = DocImageMarkers.summarize(rawContent);
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        int index = content.toLowerCase().indexOf(query.toLowerCase());
+        if (index < 0) {
+            return content.length() > 200 ? content.substring(0, 200) : content;
+        }
+        int start = Math.max(0, index - 50);
+        int end = Math.min(content.length(), index + query.length() + 150);
+        return content.substring(start, end);
     }
 
     /** Records who last touched the doc — a user, or a machine actor's label. */

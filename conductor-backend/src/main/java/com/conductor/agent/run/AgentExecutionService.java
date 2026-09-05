@@ -27,9 +27,11 @@ import org.springframework.stereotype.Service;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The agent module's core: a ReAct (reason + act) loop with guardrails. Given an
@@ -48,10 +50,10 @@ public class AgentExecutionService {
     private static final Logger log = LoggerFactory.getLogger(AgentExecutionService.class);
 
     private static final int DEFAULT_MAX_TOOL_TURNS = 8;
-    private static final int DEFAULT_MAX_TOKENS = 8192;
     private static final int MAX_PROVIDER_ATTEMPTS = 3;
     private static final long INITIAL_BACKOFF_MS = 500;
     private static final long MAX_BACKOFF_MS = 8_000;
+    private static final long MAX_PRIOR_MESSAGE_CHARS = 60_000;
 
     private final AgentRepository agentRepository;
     private final ModelProviderRegistry providerRegistry;
@@ -79,9 +81,48 @@ public class AgentExecutionService {
 
     /** Run an agent (resolved by id) to completion or a guardrail. Never throws for ordinary failures. */
     public AgentRunResult run(AgentRunRequest request) {
+        return run(request, List.of(), null);
+    }
+
+    /**
+     * Multi-turn variant for addressable agents (e.g. a {@code Conversation}): {@code priorMessages} is
+     * an already-windowed, alternating user/assistant history sent to the provider verbatim -- ahead of
+     * the usual {@code buildFirstUserMessage(task, context, outputSchema)} turn, which stays the final
+     * message and the only one wrapped with context/schema. {@code systemPromptSuffix} (nullable) is
+     * appended to the agent's {@code systemPrompt} for this call only; it is never persisted onto the
+     * {@link Agent}. Prior messages are windowed by the caller -- this throws
+     * {@link IllegalArgumentException} if their combined content exceeds 60,000 characters rather than
+     * silently truncating.
+     */
+    public AgentRunResult run(AgentRunRequest request, List<ChatMessage> priorMessages, String systemPromptSuffix) {
+        return run(request, priorMessages, systemPromptSuffix, Set.of());
+    }
+
+    /**
+     * Same as {@link #run(AgentRunRequest, List, String)}, plus {@code deniedToolIds} -- tool ids to
+     * withhold from the model entirely for this one run, without touching the agent's own stored {@code
+     * toolIds} (which is shared, persisted state -- mutating it to narrow one caller's access would narrow
+     * every caller's). The Discord {@code /ask} write-action toggle (see {@code DiscordAppConnector}) is
+     * the first consumer: a connection with write actions off passes {@code
+     * CoordinatorToolProvider#WRITE_CAPABLE_TOOL_IDS} here so a guild member's turn never sees {@code
+     * create_work_item}/{@code dispatch_workflow} in its tool list at all. A denied id that isn't even
+     * among the agent's resolved tools is simply a no-op -- there was nothing to withhold. If the model
+     * calls a denied tool anyway (e.g. it saw the name earlier in the conversation window, before this
+     * run's denial applied), {@link #executeTool} returns a distinguishable "disabled" error rather than
+     * "unknown tool", so the agent has something coherent to relay back to the human.
+     */
+    public AgentRunResult run(AgentRunRequest request, List<ChatMessage> priorMessages, String systemPromptSuffix,
+                              Set<String> deniedToolIds) {
+        List<ChatMessage> prior = priorMessages == null ? List.of() : priorMessages;
+        long priorChars = prior.stream().mapToLong(m -> m.text() == null ? 0 : m.text().length()).sum();
+        if (priorChars > MAX_PRIOR_MESSAGE_CHARS) {
+            throw new IllegalArgumentException(
+                    "priorMessages content (" + priorChars + " chars) exceeds the " + MAX_PRIOR_MESSAGE_CHARS
+                            + "-char cap; the caller must window the history");
+        }
         Agent agent = agentRepository.findById(request.agentId())
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + request.agentId()));
-        return runForAgent(agent, request);
+        return runForAgent(agent, request, prior, systemPromptSuffix, deniedToolIds == null ? Set.of() : deniedToolIds);
     }
 
     /**
@@ -97,7 +138,8 @@ public class AgentExecutionService {
         Agent agent = agentRepository.findByProjectIdAndSlug(projectId, agentRef)
                 .or(() -> agentRepository.findById(agentRef).filter(a -> projectId.equals(a.getProjectId())))
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + agentRef));
-        return runForAgent(agent, new AgentRunRequest(agent.getId(), task, context, outputSchema));
+        return runForAgent(agent, new AgentRunRequest(agent.getId(), task, context, outputSchema), List.of(), null,
+                Set.of());
     }
 
     /**
@@ -115,9 +157,14 @@ public class AgentExecutionService {
                 agent.getSystemPrompt(), parseToolIds(agent.getToolIds()), cfg.maxToolTurns(), cfg.runtime());
     }
 
-    private AgentRunResult runForAgent(Agent agent, AgentRunRequest request) {
+    private AgentRunResult runForAgent(Agent agent, AgentRunRequest request,
+                                       List<ChatMessage> priorMessages, String systemPromptSuffix,
+                                       Set<String> deniedToolIds) {
         String projectId = agent.getProjectId();
         AgentConfig cfg = parseConfig(agent.getConfigJson());
+        String effectiveSystemPrompt = systemPromptSuffix == null || systemPromptSuffix.isBlank()
+                ? agent.getSystemPrompt()
+                : (agent.getSystemPrompt() == null ? "" : agent.getSystemPrompt()) + "\n\n" + systemPromptSuffix;
 
         AgentRun run = new AgentRun();
         run.setAgentId(agent.getId());
@@ -139,21 +186,31 @@ public class AgentExecutionService {
         Optional<String> apiKey = credentialService.resolveApiKey(projectId, agent.getProvider());
         if (apiKey.isEmpty()) {
             return finish(run, usage, transcript, toolCallLog, AgentRun.Status.FAILED, null, null,
-                    "No API key configured for provider '" + agent.getProvider() + "' in this project");
+                    missingApiKeyMessage(projectId, agent.getProvider()));
         }
 
-        // Resolve tools the agent is bound to.
+        // Resolve tools the agent is bound to, withholding any denied for this run -- a denied tool is
+        // dropped from toolDefs entirely (the model never sees it exists), but its bare name is kept in
+        // deniedToolNames so executeTool can still recognize a call to it and answer with a "disabled"
+        // error instead of "unknown tool" if the model calls it anyway.
         List<AgentTool> tools = toolRegistry.resolveAll(projectId, parseToolIds(agent.getToolIds()));
         Map<String, AgentTool> toolsByName = new LinkedHashMap<>();
+        Set<String> deniedToolNames = new LinkedHashSet<>();
         List<ToolDef> toolDefs = new ArrayList<>();
         for (AgentTool t : tools) {
+            if (deniedToolIds.contains(t.id())) {
+                deniedToolNames.add(t.name());
+                continue;
+            }
             toolsByName.put(t.name(), t);
             toolDefs.add(new ToolDef(t.name(), t.description(), t.inputSchema()));
         }
 
         ToolInvocationContext toolCtx = new ToolInvocationContext(projectId, agent.getId(), run.getId());
 
-        // Seed the conversation.
+        // Seed the conversation: caller-windowed prior turns verbatim, then the task as the final
+        // user message (the only one wrapped with context/schema).
+        transcript.addAll(priorMessages);
         transcript.add(ChatMessage.user(buildFirstUserMessage(request)));
 
         // The in-process "api" runtime drives its own request loop, so unlike the claude-code runtime
@@ -168,7 +225,7 @@ public class AgentExecutionService {
         try {
             for (int turn = 0; turn < effectiveMaxTurns; turn++) {
                 ChatRequest req = new ChatRequest(
-                        agent.getModel(), agent.getSystemPrompt(), transcript, toolDefs,
+                        agent.getModel(), effectiveSystemPrompt, transcript, toolDefs,
                         cfg.maxTokens(), cfg.temperature());
                 ChatResponse resp = completeWithRetry(provider.get(), req, apiKey.get());
                 usage = usage.plus(resp.usage());
@@ -176,7 +233,7 @@ public class AgentExecutionService {
                 if (resp.stopReason() == ChatResponse.StopReason.TOOL_USE && resp.hasToolCalls()) {
                     transcript.add(ChatMessage.assistant(resp.text(), resp.toolCalls()));
                     for (ToolCall call : resp.toolCalls()) {
-                        ToolResult result = executeTool(toolsByName, call, toolCtx, toolCallLog);
+                        ToolResult result = executeTool(toolsByName, deniedToolNames, call, toolCtx, toolCallLog);
                         transcript.add(ChatMessage.toolResult(call.id(), result.payload()));
                     }
                     continue;
@@ -186,8 +243,19 @@ public class AgentExecutionService {
                 finalText = resp.text() == null ? "" : resp.text();
                 transcript.add(ChatMessage.assistant(finalText, List.of()));
                 if (resp.stopReason() == ChatResponse.StopReason.MAX_TOKENS) {
-                    status = AgentRun.Status.SUCCEEDED;
-                    errorReason = "Model hit max output tokens; answer may be truncated";
+                    if (finalText.isBlank()) {
+                        // The realistic reasoning-model failure mode: the entire completion budget
+                        // was consumed by internal reasoning before any visible answer was produced.
+                        // Reporting this as SUCCEEDED would hand the caller an empty assistant
+                        // message with no indication anything went wrong.
+                        status = AgentRun.Status.FAILED;
+                        errorReason = "Model hit max output tokens before producing any visible "
+                                + "answer (likely all consumed by internal reasoning); increase "
+                                + "maxTokens or simplify the task";
+                    } else {
+                        status = AgentRun.Status.SUCCEEDED;
+                        errorReason = "Model hit max output tokens; answer may be truncated";
+                    }
                 } else {
                     status = AgentRun.Status.SUCCEEDED;
                     errorReason = null;
@@ -203,6 +271,29 @@ public class AgentExecutionService {
         Map<String, Object> structured = request.outputSchema() != null
                 ? extractJsonObject(finalText) : null;
         return finish(run, usage, transcript, toolCallLog, status, finalText, structured, errorReason);
+    }
+
+    /**
+     * An actionable failure message for a missing credential: names the fix (Settings → AI Providers)
+     * and, when the project already has a key for a different provider, names those too. This reaches
+     * a Discord {@code /ask} user via an addressable agent (e.g. the CEO agent) whenever an operator
+     * switches the agent's provider before configuring a key for it — "no openai key configured; this
+     * project has a claude key configured" is the difference between a five-second fix and a support
+     * ticket. Excludes {@link ProviderCredentialService#NON_MODEL_PROVIDERS} (e.g. {@code claude-code})
+     * from the "other providers" list since those can never be picked as an agent's model provider.
+     */
+    private String missingApiKeyMessage(String projectId, String provider) {
+        String base = "No API key configured for provider '" + provider + "' in this project — add one "
+                + "under Settings → AI Providers.";
+        List<String> configuredElsewhere = credentialService.listStatuses(projectId).stream()
+                .filter(s -> s.configured() && !s.provider().equals(provider))
+                .map(ProviderCredentialService.ProviderCredentialStatusView::provider)
+                .filter(p -> !ProviderCredentialService.NON_MODEL_PROVIDERS.contains(p))
+                .toList();
+        if (configuredElsewhere.isEmpty()) {
+            return base;
+        }
+        return base + " This project has a key configured for: " + String.join(", ", configuredElsewhere) + ".";
     }
 
     // ---- ReAct internals ----
@@ -225,13 +316,16 @@ public class AgentExecutionService {
         }
     }
 
-    private ToolResult executeTool(Map<String, AgentTool> toolsByName, ToolCall call,
+    private ToolResult executeTool(Map<String, AgentTool> toolsByName, Set<String> deniedToolNames, ToolCall call,
                                    ToolInvocationContext ctx, List<Map<String, Object>> toolCallLog) {
         Map<String, Object> args = parseArguments(call.argumentsJson());
         AgentTool tool = toolsByName.get(call.name());
         ToolResult result;
         if (tool == null) {
-            result = ToolResult.error("Unknown or unavailable tool: " + call.name());
+            result = deniedToolNames.contains(call.name())
+                    ? ToolResult.error("Tool '" + call.name() + "' is disabled for this conversation -- write "
+                            + "actions are turned off.")
+                    : ToolResult.error("Unknown or unavailable tool: " + call.name());
         } else {
             try {
                 result = tool.invoke(args, ctx);
@@ -292,7 +386,10 @@ public class AgentExecutionService {
     private AgentConfig parseConfig(String configJson) {
         Map<String, Object> cfg = parseObject(configJson);
         Integer maxToolTurns = asIntOrNull(cfg.get("maxToolTurns"));
-        Integer maxTokens = asInt(cfg.get("maxTokens"), DEFAULT_MAX_TOKENS);
+        // Unset stays null rather than a hardcoded default -- each ChatModelProvider applies its own
+        // cap (ClaudeProvider substitutes 8192; OpenAiProvider needs a much larger completion budget
+        // since reasoning tokens count against it too).
+        Integer maxTokens = asIntOrNull(cfg.get("maxTokens"));
         Double temperature = asDouble(cfg.get("temperature"));
         Object runtimeVal = cfg.get("runtime");
         String runtime = runtimeVal instanceof String s && !s.isBlank() ? s : null;
@@ -338,11 +435,6 @@ public class AgentExecutionService {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private Integer asInt(Object v, int fallback) {
-        Integer parsed = asIntOrNull(v);
-        return parsed != null ? parsed : fallback;
     }
 
     /** Unset/blank/unparseable stays {@code null} — callers decide whether that means "unbounded" or apply their own default. */
@@ -392,7 +484,7 @@ public class AgentExecutionService {
      * when unset — the "api" runtime's ReAct loop falls back to {@link #DEFAULT_MAX_TOOL_TURNS}, while
      * the {@code claude-code} runtime passes {@code null} straight through so the CLI runs unbounded.
      */
-    private record AgentConfig(Integer maxToolTurns, int maxTokens, Double temperature, String runtime) {}
+    private record AgentConfig(Integer maxToolTurns, Integer maxTokens, Double temperature, String runtime) {}
 
     /**
      * Engine-agnostic view of a resolved {@link Agent} — the shape the workflow {@code agent} step's
