@@ -111,10 +111,13 @@ class PublishPlatformRegistryTest {
                 Map.entry("disableDuet", "disable_duet"),
                 Map.entry("disableStitch", "disable_stitch"),
                 Map.entry("brandContentToggle", "brand_content_toggle"),
-                Map.entry("brandOrganicToggle", "brand_organic_toggle"));
+                Map.entry("brandOrganicToggle", "brand_organic_toggle"),
+                Map.entry("isAigc", "is_aigc"),
+                Map.entry("videoCoverTimestampMs", "video_cover_timestamp_ms"),
+                Map.entry("autoAddMusic", "auto_add_music"),
+                Map.entry("photoCoverIndex", "photo_cover_index"));
         assertThat(registry.require("facebook").optionParams()).isEmpty();
-        assertThat(registry.require("instagram").optionParams()).isEmpty();
-        assertThat(registry.require("youtube").optionParams()).isEmpty();
+        // Instagram's and YouTube's keys are pinned, in order, by optionKeys_coverEveryPlatformsOptions_inSpecOrder.
     }
 
     @Test
@@ -144,8 +147,11 @@ class PublishPlatformRegistryTest {
         assertThat(window.accepts(now, now.plusMinutes(9))).isFalse();
         assertThat(window.tooSoon(now, now.plusMinutes(9))).isTrue();
         assertThat(window.accepts(now, now.plusMinutes(10))).isTrue();
-        assertThat(window.accepts(now, now.plusDays(30))).isTrue();
-        assertThat(window.tooFarOut(now, now.plusDays(31))).isTrue();
+        assertThat(window.accepts(now, now.plusDays(75))).isTrue();
+        assertThat(window.tooFarOut(now, now.plusDays(76))).isTrue();
+        // A reel has a shorter ceiling on Facebook's side than a feed post.
+        assertThat(facebook.windowFor(PostFormat.REEL).accepts(now, now.plusDays(29))).isTrue();
+        assertThat(facebook.windowFor(PostFormat.REEL).tooFarOut(now, now.plusDays(30))).isTrue();
         assertThat(registry.require("youtube").window().accepts(now, now.plusYears(5))).isTrue();
         assertThat(window.accepts(now, null)).isFalse();
     }

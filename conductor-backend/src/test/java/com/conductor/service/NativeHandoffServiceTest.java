@@ -205,8 +205,9 @@ class NativeHandoffServiceTest {
     }
 
     @Test
-    void aFacebookTargetFortyFiveDaysOutStaysPendingAndIsNeverHandedOff() {
-        given(pendingNative("facebook", Duration.ofDays(45)));
+    void aFacebookTargetAHundredDaysOutStaysPendingAndIsNeverHandedOff() {
+        // Beyond the Page feed's 75-day scheduling ceiling.
+        given(pendingNative("facebook", Duration.ofDays(100)));
 
         service.handoffForPost(post(NativeHandoffService.SCHEDULED_STATUS));
 
@@ -241,8 +242,8 @@ class NativeHandoffServiceTest {
     // --- [auto] ...and is deferred and later completed for far-future fire times -----------------
 
     @Test
-    void aDeferredFacebookTargetIsHandedOffOnceItsFireTimeComesInsideTheThirtyDayWindow() {
-        OffsetDateTime fireTime = OffsetDateTime.now().plusDays(45);
+    void aDeferredFacebookTargetIsHandedOffOnceItsFireTimeComesInsideTheSeventyFiveDayWindow() {
+        OffsetDateTime fireTime = OffsetDateTime.now().plusDays(100);
         PostPublishTarget target = target(post(NativeHandoffService.SCHEDULED_STATUS), "facebook",
                 PublishLane.NATIVE, PostPublishTargetState.PENDING, fireTime);
         given(target);
@@ -250,8 +251,8 @@ class NativeHandoffServiceTest {
         service.runTick(OffsetDateTime.now());
         verifyNoInteractions(actionInvocationService);
 
-        // Twenty days later the same row is now twenty-five days out — inside the window.
-        service.runTick(OffsetDateTime.now().plusDays(20));
+        // Thirty days later the same row is now seventy days out — inside the window.
+        service.runTick(OffsetDateTime.now().plusDays(30));
 
         verify(actionInvocationService).invoke(any(), eq("publish_facebook_post"), any(),
                 eq("pub:post-1:facebook:connection-1"), any());
