@@ -3,13 +3,14 @@
   "actions": [
     {
       "id": "publish_facebook_post",
-      "description": "Publish a post to the connected Facebook Page. Media is resolved from the Work Item's uploaded assets when no explicit media URL is supplied.",
+      "description": "Publish a post to the connected Facebook Page: a feed post, a Reel or a Story. Media is resolved from the Work Item's uploaded assets when no explicit media URL is supplied.",
       "params": {
-        "message": "Post text (required unless link, media params or work_item_id media is supplied)",
-        "link": "URL to attach to the post (optional)",
+        "format": "feed, reel or story (optional; defaults to feed). A single video always goes out as a Reel — Meta no longer accepts a Page video any other way. A story publishes immediately and carries no caption",
+        "message": "Post text (required unless link, media params or work_item_id media is supplied; ignored for a story)",
+        "link": "URL to attach to the post (optional; feed only)",
         "image_url": "Publicly reachable image URL to attach as a photo post (optional; resolved from the Work Item's assets when omitted)",
-        "video_url": "Publicly reachable video URL (optional; a Work Item video asset is uploaded resumably instead)",
-        "scheduled_publish_time": "ISO-8601 instant to schedule the post for (optional; immediate when omitted)",
+        "video_url": "Publicly reachable video URL (optional; resolved from the Work Item's assets when omitted)",
+        "scheduled_publish_time": "ISO-8601 instant to schedule the post for (optional; immediate when omitted; ignored for a story, which cannot be scheduled)",
         "work_item_id": "Work Item whose uploaded media assets this post publishes (optional)",
         "target_id": "Post publish target this invocation fulfils (optional; carried for correlation only)"
       },
@@ -17,7 +18,8 @@
         "post_id",
         "permalink",
         "scheduled",
-        "scheduled_publish_time"
+        "scheduled_publish_time",
+        "is_story"
       ]
     },
     {
@@ -46,19 +48,26 @@
     },
     {
       "id": "publish_instagram_media",
-      "description": "Publish an image or video to the Instagram Business account linked to the connected Page. Creates the media container and publishes it in the same invocation, at fire time.",
+      "description": "Publish an image or video to the Instagram Business account linked to the connected Page: a feed post, a Reel or a Story. Creates the media container and publishes it in the same invocation, at fire time.",
       "params": {
+        "format": "feed, reel or story (optional; defaults to feed). A single feed video is already published as a Reel. A story takes exactly one item and carries no caption",
         "media_type": "IMAGE, VIDEO or REELS (optional; inferred from the resolved media when omitted)",
         "image_url": "Publicly reachable image URL (optional; resolved from the Work Item's assets when omitted)",
         "video_url": "Publicly reachable video URL (optional; resolved from the Work Item's assets when omitted)",
-        "caption": "Caption text, including any hashtags (optional)",
+        "caption": "Caption text, including any hashtags (optional; ignored for a story)",
+        "share_to_feed": "Whether a Reel also appears in the feed (optional boolean; Reel/single-video only)",
+        "collaborators": "Up to 3 usernames to tag as collaborators (optional list; Reel/single-video only, ignored on a carousel)",
+        "alt_text": "Accessibility description for a single feed image (optional; single image only)",
+        "cover_asset_id": "Id of one of the Post's own image Assets to use as a Reel's cover (optional; Reel/single-video only)",
+        "audio_name": "Attribution label for the audio used on a Reel (optional; Reel/single-video only)",
         "work_item_id": "Work Item whose uploaded media assets this post publishes (optional)",
         "target_id": "Post publish target this invocation fulfils (optional; carried for correlation only)"
       },
       "outputKeys": [
         "media_id",
         "permalink",
-        "creation_id"
+        "creation_id",
+        "is_story"
       ]
     },
     {

@@ -259,7 +259,7 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
             case ACTION_PUBLISH_FACEBOOK -> publishFacebook(safeInput, ctx);
             case ACTION_DELETE_FACEBOOK -> deleteFacebook(safeInput);
             case ACTION_GET_FACEBOOK -> getFacebook(safeInput);
-            case ACTION_PUBLISH_INSTAGRAM -> publishInstagram(ctx);
+            case ACTION_PUBLISH_INSTAGRAM -> publishInstagram(safeInput, ctx);
             case ACTION_FACEBOOK_METRICS, ACTION_INSTAGRAM_METRICS -> LocalMetrics.answer(safeInput);
             // A returned error is PERMANENT per the ActionConnector contract, so a misrouted invocation
             // dead-letters locally exactly as it would in production.
@@ -276,8 +276,28 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
                     + string(input, "scheduled_publish_time"));
         }
 
+        String format = string(input, "format");
         String pageId = configString(ctx, CONFIG_PAGE_ID, "local-page");
-        String postId = pageId + "_" + nextId();
+
+        // A Story is always immediate — Meta cannot schedule one, and this stub mirrors that rather than
+        // pretending it can.
+        if ("story".equals(format)) {
+            String storyId = "fb-story-" + nextId();
+            String permalink = LOCAL_PERMALINK_BASE + "/facebook/" + storyId;
+            facebookPosts.put(storyId, new LocalPost(storyId, permalink, null));
+
+            Map<String, Object> output = new LinkedHashMap<>();
+            output.put("post_id", storyId);
+            output.put("is_story", true);
+            output.put("permalink", permalink);
+            return ActionResult.ok(output);
+        }
+
+        // A Reel gets its own id shape so a test (or a human reading the calendar locally) can tell a
+        // Reel from a feed post without decoding the connector's internal state.
+        String postId = "reel".equals(format)
+                ? "fb-reel-" + nextId()
+                : pageId + "_" + nextId();
         String permalink = LOCAL_PERMALINK_BASE + "/facebook/" + postId;
         facebookPosts.put(postId, new LocalPost(postId, permalink, scheduledAt));
 
@@ -328,15 +348,40 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
         return ActionResult.ok(output);
     }
 
-    private ActionResult publishInstagram(ConnectionContext ctx) {
+    /**
+     * Accepts every format and Instagram's five option params, echoing enough of them back that a test
+     * (or a developer at a REPL) can see they arrived — this stub never reaches Meta, so nothing here
+     * validates the options the way the real connector's {@code InstagramPublishAction} does.
+     */
+    private ActionResult publishInstagram(Map<String, Object> input, ConnectionContext ctx) {
         String igUserId = configString(ctx, CONFIG_IG_ACCOUNT_ID, "local-ig");
+        String format = string(input, "format");
         String suffix = nextId();
-        String mediaId = igUserId + "_" + suffix;
+        String idPrefix = "story".equals(format) ? "ig-story-" : "reel".equals(format) ? "ig-reel-" : igUserId + "_";
+        String mediaId = idPrefix + suffix;
 
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("media_id", mediaId);
         output.put("creation_id", "local-ig-container-" + suffix);
         output.put("permalink", LOCAL_PERMALINK_BASE + "/instagram/" + mediaId);
+        if ("story".equals(format)) {
+            output.put("is_story", true);
+        }
+        if (input.get("share_to_feed") != null) {
+            output.put("share_to_feed", input.get("share_to_feed"));
+        }
+        if (input.get("collaborators") != null) {
+            output.put("collaborators", input.get("collaborators"));
+        }
+        if (input.get("alt_text") != null) {
+            output.put("alt_text", input.get("alt_text"));
+        }
+        if (input.get("cover_asset_id") != null) {
+            output.put("cover_asset_id", input.get("cover_asset_id"));
+        }
+        if (input.get("audio_name") != null) {
+            output.put("audio_name", input.get("audio_name"));
+        }
         return ActionResult.ok(output);
     }
 

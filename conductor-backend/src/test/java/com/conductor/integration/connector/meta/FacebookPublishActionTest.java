@@ -190,45 +190,198 @@ class FacebookPublishActionTest {
                 .isEqualTo("https://signed.example/minted-1-https://signed.example/hero.jpg?exp=1");
     }
 
+    // --- [auto] A single video, feed or reel format, always goes out through the Page Reels API ---
+
     @Test
-    void videoAsset_goesOutThroughTheResumableUploadPhases_withTheScheduleOnFinish() {
+    void singleVideoAsset_publishesThroughTheReelsApi_withTheScheduleOnFinish() {
         Instant fireTime = Instant.now().plus(2, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
         mediaResolver.media = List.of(new PublishMedia("https://signed.example/clip.mp4",
                 "assets/proj/wi-1/clip.mp4", "video/mp4", 6L));
-        mediaResolver.bytes = new byte[]{1, 2, 3, 4, 5, 6};
-        routes.add(new Route(HttpMethod.POST, "/page-1/videos", call -> switch (call.param("upload_phase")) {
-            case "start" -> new MetaGraphClient.VideoSessionResponse("vid-9", "sess-1", "0", "6");
-            case "transfer" -> new MetaGraphClient.VideoSessionResponse(null, "sess-1", "6", "6");
-            default -> new MetaGraphClient.PublishResponse("vid-9", null);
-        }));
-        onGet("is_published", new MetaGraphClient.PostResponse("vid-9", false, "https://fb/vid-9", null));
+        onPost("/page-1/video_reels", call -> "start".equals(call.param("upload_phase"))
+                ? reelStart("vid-9", "https://rupload.facebook.com/video-upload/v21.0/vid-9")
+                : new MetaGraphClient.SuccessResponse(true));
+        onPost("https://rupload.facebook.com/video-upload/v21.0/vid-9", call -> "ok");
+        onGet("id,status,permalink_url", videoStatusNode("vid-9", "ready", "https://fb/reels/vid-9"));
 
         ActionResult result = connector.invoke("publish_facebook_post", handoffInput(fireTime), CTX);
 
         assertThat(result.success()).isTrue();
         assertThat(result.output()).containsEntry("post_id", "vid-9");
-        assertThat(calls.stream().filter(c -> c.uri().getPath().endsWith("/videos")).map(c -> c.param("upload_phase")))
-                .containsExactly("start", "transfer", "finish");
-        Call finish = calls.stream().filter(c -> "finish".equals(c.param("upload_phase"))).findFirst().orElseThrow();
+        assertThat(result.output()).containsEntry("permalink", "https://fb/reels/vid-9");
+        assertThat(result.output()).containsEntry("scheduled", true);
+
+        List<Call> reelCalls = calls.stream().filter(c -> c.uri().getPath().endsWith("/video_reels")).toList();
+        assertThat(reelCalls).hasSize(2);
+        assertThat(reelCalls.get(0).param("upload_phase")).isEqualTo("start");
+        Call finish = reelCalls.get(1);
+        assertThat(finish.param("upload_phase")).isEqualTo("finish");
+        assertThat(finish.param("video_id")).isEqualTo("vid-9");
+        assertThat(finish.param("video_state")).isEqualTo("SCHEDULED");
         assertThat(finish.param("scheduled_publish_time")).isEqualTo(String.valueOf(fireTime.getEpochSecond()));
-        assertThat(finish.param("published")).isEqualTo("false");
-        assertThat(finish.param("upload_session_id")).isEqualTo("sess-1");
+        assertThat(finish.param("description")).isEqualTo("Launch day");
+
+        Call upload = calls.stream().filter(c -> c.uri().toString().contains("rupload.facebook.com"))
+                .findFirst().orElseThrow();
+        assertThat(upload.header("file_url")).isEqualTo("https://signed.example/clip.mp4");
     }
 
     @Test
-    void callerSuppliedVideoUrl_isFetchedByMeta_ratherThanChunkedFromBytesThatDoNotExistHere() {
-        onPost("/page-1/videos", call -> new MetaGraphClient.PublishResponse("vid-12", null));
-        onGet("is_published", new MetaGraphClient.PostResponse("vid-12", true, "https://fb/vid-12", null));
+    void reelWithNoScheduledTime_finishesAsPublishedImmediately() {
+        mediaResolver.media = List.of(new PublishMedia("https://signed.example/clip.mp4",
+                "assets/proj/wi-1/clip.mp4", "video/mp4", 6L));
+        onPost("/page-1/video_reels", call -> "start".equals(call.param("upload_phase"))
+                ? reelStart("vid-10", "https://rupload.facebook.com/video-upload/v21.0/vid-10")
+                : new MetaGraphClient.SuccessResponse(true));
+        onPost("https://rupload.facebook.com/video-upload/v21.0/vid-10", call -> "ok");
+        onGet("id,status,permalink_url", videoStatusNode("vid-10", "processing", null));
+
+        ActionResult result = connector.invoke("publish_facebook_post",
+                Map.of("format", "reel", "message", "Clip", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("scheduled", false);
+        Call finish = calls.stream()
+                .filter(c -> c.uri().getPath().endsWith("/video_reels") && "finish".equals(c.param("upload_phase")))
+                .findFirst().orElseThrow();
+        assertThat(finish.param("video_state")).isEqualTo("PUBLISHED");
+        assertThat(finish.form()).doesNotContainKey("scheduled_publish_time");
+        // The permalink read reported "processing", not "ready" — no permalink yet.
+        assertThat(result.output()).doesNotContainKey("permalink");
+    }
+
+    @Test
+    void reelFormatWithoutAVideo_returnsPermanentErrorNamingTheRequirement() {
+        mediaResolver.media = List.of(image("https://signed.example/hero.jpg"));
+
+        ActionResult result = connector.invoke("publish_facebook_post",
+                Map.of("format", "reel", "message", "Clip", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("Reel").contains("video");
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
+    void callerSuppliedVideoUrl_isFetchedByMetaThroughTheReelsApi_ratherThanChunkedFromBytesThatDoNotExistHere() {
+        onPost("/page-1/video_reels", call -> "start".equals(call.param("upload_phase"))
+                ? reelStart("vid-12", "https://rupload.facebook.com/video-upload/v21.0/vid-12")
+                : new MetaGraphClient.SuccessResponse(true));
+        onPost("https://rupload.facebook.com/video-upload/v21.0/vid-12", call -> "ok");
+        onGet("id,status,permalink_url", videoStatusNode("vid-12", "ready", "https://fb/vid-12"));
 
         ActionResult result = connector.invoke("publish_facebook_post",
                 Map.of("message", "Clip", "video_url", "https://cdn.example/clip.mp4"), CTX);
 
         assertThat(result.success()).isTrue();
-        Call videos = call(HttpMethod.POST, "/page-1/videos");
-        assertThat(videos.param("file_url")).isEqualTo("https://cdn.example/clip.mp4");
-        assertThat(videos.form()).doesNotContainKey("upload_phase");
+        assertThat(result.output()).containsEntry("post_id", "vid-12");
+        Call upload = calls.stream().filter(c -> c.uri().toString().contains("rupload.facebook.com"))
+                .findFirst().orElseThrow();
+        assertThat(upload.header("file_url")).isEqualTo("https://cdn.example/clip.mp4");
         // A hosted URL is the caller's own; no asset lookup is needed for it.
         assertThat(mediaResolver.resolveCalls).isZero();
+    }
+
+    // --- [auto] get_facebook_post reads a Reel's liveness from status.video_status, not is_published ---
+
+    @Test
+    void getFacebookPost_reelId_readsLivenessFromVideoStatus() {
+        onGet("id,status,permalink_url", videoStatusNode("vid-9", "ready", "https://fb/reels/vid-9"));
+
+        ActionResult result = connector.invoke("get_facebook_post", Map.of("post_id", "vid-9"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("is_published", true);
+        assertThat(result.output()).containsEntry("permalink", "https://fb/reels/vid-9");
+    }
+
+    @Test
+    void getFacebookPost_reelIdStillProcessing_reportsNotYetLive() {
+        onGet("id,status,permalink_url", videoStatusNode("vid-9", "processing", null));
+
+        ActionResult result = connector.invoke("get_facebook_post", Map.of("post_id", "vid-9"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("is_published", false);
+    }
+
+    // --- [auto] A Facebook Story publishes immediately, ignores its caption, and needs exactly one item ---
+
+    @Test
+    void storyWithPhoto_uploadsUnpublishedThenPublishesThePhotoStory() {
+        mediaResolver.media = List.of(image("https://signed.example/hero.jpg"));
+        onPost("/page-1/photos", new MetaGraphClient.PublishResponse("photo-1", null));
+        onPost("/page-1/photo_stories", new MetaGraphClient.PublishResponse("story-1", null));
+
+        ActionResult result = connector.invoke("publish_facebook_post",
+                Map.of("format", "story", "message", "Ignored", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("post_id", "story-1");
+        assertThat(result.output()).containsEntry("is_story", true);
+        Call photo = call(HttpMethod.POST, "/page-1/photos");
+        assertThat(photo.param("published")).isEqualTo("false");
+        Call story = call(HttpMethod.POST, "/page-1/photo_stories");
+        assertThat(story.param("photo_id")).isEqualTo("photo-1");
+        // Instagram's Facebook counterpart ignores a Story's caption; it is never sent.
+        assertThat(story.form()).doesNotContainKey("message").doesNotContainKey("caption");
+    }
+
+    @Test
+    void storyWithVideo_goesThroughTheVideoStoriesResumableUpload() {
+        mediaResolver.media = List.of(new PublishMedia("https://signed.example/clip.mp4",
+                "assets/proj/wi-1/clip.mp4", "video/mp4", 6L));
+        onPost("/page-1/video_stories", call -> "start".equals(call.param("upload_phase"))
+                ? reelStart("vid-20", "https://rupload.facebook.com/video-upload/v21.0/vid-20")
+                : new MetaGraphClient.PublishResponse("story-20", null));
+        onPost("https://rupload.facebook.com/video-upload/v21.0/vid-20", call -> "ok");
+
+        ActionResult result = connector.invoke("publish_facebook_post",
+                Map.of("format", "story", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("post_id", "story-20");
+        assertThat(result.output()).containsEntry("is_story", true);
+        Call upload = calls.stream().filter(c -> c.uri().toString().contains("rupload.facebook.com"))
+                .findFirst().orElseThrow();
+        assertThat(upload.header("file_url")).isEqualTo("https://signed.example/clip.mp4");
+    }
+
+    @Test
+    void storyIgnoresScheduledPublishTime_andPublishesImmediately() {
+        mediaResolver.media = List.of(image("https://signed.example/hero.jpg"));
+        onPost("/page-1/photos", new MetaGraphClient.PublishResponse("photo-2", null));
+        onPost("/page-1/photo_stories", new MetaGraphClient.PublishResponse("story-2", null));
+
+        Map<String, Object> input = withFormat("story", handoffInput(Instant.now().plus(3, ChronoUnit.DAYS)));
+        ActionResult result = connector.invoke("publish_facebook_post", input, CTX);
+
+        assertThat(result.success()).isTrue();
+        Call story = call(HttpMethod.POST, "/page-1/photo_stories");
+        assertThat(story.form()).doesNotContainKey("scheduled_publish_time");
+    }
+
+    @Test
+    void storyWithTwoAssets_isAPermanentErrorNamingTheRule() {
+        mediaResolver.media = List.of(image("https://signed.example/a.jpg"), image("https://signed.example/b.jpg"));
+
+        ActionResult result = connector.invoke("publish_facebook_post",
+                Map.of("format", "story", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("Story").contains("exactly one");
+        assertThat(calls).isEmpty();
+    }
+
+    // --- [auto] delete_facebook_post also takes down a reel or a story by the same generic id delete ---
+
+    @Test
+    void deleteFacebookPost_reelOrStoryId_usesTheSameGenericDelete() {
+        routes.add(new Route(HttpMethod.DELETE, "/vid-9", call -> new MetaGraphClient.SuccessResponse(true)));
+
+        ActionResult result = connector.invoke("delete_facebook_post", Map.of("post_id", "vid-9"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("post_id", "vid-9").containsEntry("deleted", true);
     }
 
     @Test
@@ -392,7 +545,8 @@ class FacebookPublishActionTest {
         onGetThrow("is_published", HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request",
                 new HttpHeaders(), "{\"error\":{\"message\":\"Unsupported get request\"}}".getBytes(), null));
 
-        ActionResult result = connector.invoke("get_facebook_post", Map.of("post_id", "gone"), CTX);
+        // Underscore-bearing id: a Page-post id, not a Reel's — the Reel read is covered separately.
+        ActionResult result = connector.invoke("get_facebook_post", Map.of("post_id", "page-1_gone"), CTX);
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).contains("400");
@@ -539,6 +693,29 @@ class FacebookPublishActionTest {
         return new PublishMedia(url, "assets/proj/wi-1/hero.jpg", "image/jpeg", 2048L);
     }
 
+    private static Map<String, Object> withFormat(String format, Map<String, Object> input) {
+        Map<String, Object> withFormat = new LinkedHashMap<>(input);
+        withFormat.put("format", format);
+        return withFormat;
+    }
+
+    /** The {@code upload_phase=start} answer a Reel or a video Story's resumable upload begins with. */
+    private static MetaGraphClient.ReelStartResponse reelStart(String videoId, String uploadUrl) {
+        return new MetaGraphClient.ReelStartResponse(videoId, uploadUrl);
+    }
+
+    /** A Reel's {@code id,status,permalink_url} read, shaped exactly as Graph answers it. */
+    private static com.fasterxml.jackson.databind.JsonNode videoStatusNode(String id, String videoStatus,
+                                                                           String permalink) {
+        com.fasterxml.jackson.databind.node.ObjectNode node = new ObjectMapper().createObjectNode();
+        node.put("id", id);
+        node.putObject("status").put("video_status", videoStatus);
+        if (permalink != null) {
+            node.put("permalink_url", permalink);
+        }
+        return node;
+    }
+
     private void onPost(String uriContains, Object body) {
         routes.add(new Route(HttpMethod.POST, uriContains, call -> body));
     }
@@ -601,6 +778,10 @@ class FacebookPublishActionTest {
         String bearerToken() {
             String authorization = entity.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
             return authorization == null ? null : authorization.replace("Bearer ", "");
+        }
+
+        String header(String name) {
+            return entity.getHeaders().getFirst(name);
         }
 
         @Override

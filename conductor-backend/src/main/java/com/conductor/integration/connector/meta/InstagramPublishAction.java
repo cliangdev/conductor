@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * The Instagram Content Publishing two-step, run end to end inside <b>one</b> invocation at fire time:
@@ -29,8 +30,20 @@ import java.util.Map;
  * <h2>The publishing limit is checked first</h2>
  * Instagram caps an account at 100 published posts per rolling 24 hours. Creating a container against an
  * exhausted quota produces an object that can never be published and expires unused, so the quota is read
- * <b>before</b> the container. Exhaustion is reported as {@link ActionResult#error} — PERMANENT for this
- * attempt, because the retry budget is minutes and the quota window is hours; a human reschedules.
+ * <b>before</b> the container — for a Story exactly as for a feed post or a Reel, since Meta counts a
+ * published Story against the same rolling budget. Exhaustion is reported as {@link ActionResult#error} —
+ * PERMANENT for this attempt, because the retry budget is minutes and the quota window is hours; a human
+ * reschedules.
+ *
+ * <h2>Format</h2>
+ * The target's {@code format} arrives lower-case. A {@code story} takes exactly one image or video, a
+ * {@code STORIES} container, and no caption — Instagram ignores one, so it is never sent. A {@code reel},
+ * and a {@code feed} post whose single item is a video (already {@code REELS} — every feed video is a
+ * Reel on Instagram), may carry {@code cover_url} (resolved from {@code cover_asset_id}, one of the
+ * Post's own image Assets), {@code share_to_feed}, up to three {@code collaborators} and
+ * {@code audio_name}. A single feed image may carry {@code alt_text}. A carousel accepts none of the
+ * Reel options — Instagram refuses collaborators on one, so they are dropped with a log line rather than
+ * sent and rejected.
  *
  * <h2>Carousels</h2>
  * Two or more items become a carousel: one container per item with {@code is_carousel_item=true}, then a
@@ -87,9 +100,16 @@ class InstagramPublishAction {
     private static final String MEDIA_TYPE_VIDEO = "VIDEO";
     private static final String MEDIA_TYPE_REELS = "REELS";
     private static final String MEDIA_TYPE_CAROUSEL = "CAROUSEL";
+    private static final String MEDIA_TYPE_STORIES = "STORIES";
+
+    private static final String FORMAT_STORY = "story";
+    private static final String FORMAT_REEL = "reel";
 
     /** Instagram publishes a carousel of 2 to 10 items; the approval gate refuses more long before here. */
     static final int MAX_CAROUSEL_ITEMS = 10;
+
+    /** Instagram allows at most three tagged collaborators on a Reel or feed post. */
+    static final int MAX_COLLABORATORS = 3;
 
     /** How long to wait between container status polls. Package-private so tests don't sleep. */
     long pollIntervalMillis = 5_000L;
@@ -147,7 +167,23 @@ class InstagramPublishAction {
                     + " items; this post selected " + media.size());
         }
 
-        String caption = MetaActions.string(input, "caption");
+        String workItemId = MetaActions.string(input, "work_item_id");
+        String format = MetaActions.string(input, "format");
+        boolean storyRequested = FORMAT_STORY.equalsIgnoreCase(format);
+        boolean reelRequested = FORMAT_REEL.equalsIgnoreCase(format);
+
+        if (storyRequested && media.size() != 1) {
+            return ActionResult.error("An Instagram Story needs exactly one image or video; this destination "
+                    + "selected " + media.size() + " items");
+        }
+        if (reelRequested && (media.size() != 1 || !media.get(0).isVideo())) {
+            return ActionResult.error("An Instagram Reel needs exactly one video; this destination selected "
+                    + media.size() + " item(s)");
+        }
+
+        // Instagram ignores a Story's caption outright, so it is never sent.
+        String caption = storyRequested ? null : MetaActions.string(input, "caption");
+
         try {
             MetaGraphClient.PublishingLimit limit = graphClient.readContentPublishingLimit(igUserId, token);
             if (limit.exhausted()) {
@@ -159,11 +195,30 @@ class InstagramPublishAction {
 
             Map<String, Object> output = new LinkedHashMap<>();
             String containerId;
-            if (media.size() == 1) {
+            if (storyRequested) {
+                PublishMedia only = media.get(0);
+                containerId = graphClient.createMediaContainer(igUserId, token, storyContainerParams(only));
+                if (only.isVideo()) {
+                    ActionResult stuck = awaitContainer(containerId, token);
+                    if (stuck != null) {
+                        return stuck;
+                    }
+                }
+                output.put("is_story", true);
+            } else if (media.size() == 1) {
                 PublishMedia only = media.get(0);
                 String mediaType = mediaType(MetaActions.string(input, "media_type"), only);
+                Map<String, String> extras = Map.of();
+                if (MEDIA_TYPE_REELS.equals(mediaType)) {
+                    ReelOptions options = resolveReelOptions(input, workItemId);
+                    if (options.error() != null) {
+                        return options.error();
+                    }
+                    extras = options.params();
+                }
+                String altText = MEDIA_TYPE_IMAGE.equals(mediaType) ? MetaActions.string(input, "alt_text") : null;
                 containerId = graphClient.createMediaContainer(igUserId, token,
-                        containerParams(mediaType, only, caption));
+                        containerParams(mediaType, only, caption, extras, altText));
                 if (!MEDIA_TYPE_IMAGE.equals(mediaType)) {
                     ActionResult stuck = awaitContainer(containerId, token);
                     if (stuck != null) {
@@ -171,6 +226,13 @@ class InstagramPublishAction {
                     }
                 }
             } else {
+                List<String> collaborators = MetaActions.stringList(input, "collaborators");
+                if (!collaborators.isEmpty()) {
+                    // Instagram refuses collaborators on a carousel outright; dropping them here is what
+                    // lets the rest of the post go out rather than failing on a parameter it never asked for.
+                    log.info("Instagram carousels do not accept collaborators; ignoring {} name(s) for work "
+                            + "item {}", collaborators.size(), workItemId);
+                }
                 List<String> childIds = new ArrayList<>();
                 for (PublishMedia item : media) {
                     // Children carry no caption — the caption belongs to the carousel, and Instagram
@@ -279,10 +341,26 @@ class InstagramPublishAction {
         return params;
     }
 
-    private static Map<String, String> containerParams(String mediaType, PublishMedia media, String caption) {
+    /** A Story container: {@code STORIES} plus the one asset's URL. No caption — Instagram ignores one. */
+    private static Map<String, String> storyContainerParams(PublishMedia media) {
+        Map<String, String> params = new LinkedHashMap<>();
+        if (media.isVideo()) {
+            params.put("video_url", media.url());
+        } else {
+            params.put("image_url", media.url());
+        }
+        params.put("media_type", MEDIA_TYPE_STORIES);
+        return params;
+    }
+
+    private static Map<String, String> containerParams(String mediaType, PublishMedia media, String caption,
+                                                        Map<String, String> extras, String altText) {
         Map<String, String> params = new LinkedHashMap<>();
         if (MEDIA_TYPE_IMAGE.equals(mediaType)) {
             params.put("image_url", media.url());
+            if (altText != null && !altText.isBlank()) {
+                params.put("alt_text", altText);
+            }
         } else {
             params.put("video_url", media.url());
             params.put("media_type", mediaType);
@@ -290,7 +368,64 @@ class InstagramPublishAction {
         if (caption != null && !caption.isBlank()) {
             params.put("caption", caption);
         }
+        if (extras != null) {
+            params.putAll(extras);
+        }
         return params;
+    }
+
+    /** What {@link #resolveReelOptions} answers with: the params to add, or the error to return instead. */
+    private record ReelOptions(Map<String, String> params, ActionResult error) {
+        static ReelOptions ok(Map<String, String> params) {
+            return new ReelOptions(params, null);
+        }
+
+        static ReelOptions fail(ActionResult error) {
+            return new ReelOptions(Map.of(), error);
+        }
+    }
+
+    /**
+     * The Reel-only option params: {@code share_to_feed} passed through as given, up to three
+     * {@code collaborators} JSON-encoded (Graph's array shape for a form-encoded request), and
+     * {@code audio_name}. {@code cover_asset_id} is resolved to a signed URL the same way every other
+     * piece of media is — an id naming no image Asset on this Work Item is an error naming it, not a
+     * silently coverless Reel.
+     */
+    private ReelOptions resolveReelOptions(Map<String, Object> input, String workItemId) {
+        Map<String, String> params = new LinkedHashMap<>();
+        Object shareToFeed = input.get("share_to_feed");
+        if (shareToFeed != null) {
+            params.put("share_to_feed", String.valueOf(shareToFeed));
+        }
+        List<String> collaborators = MetaActions.stringList(input, "collaborators");
+        if (collaborators.size() > MAX_COLLABORATORS) {
+            return ReelOptions.fail(ActionResult.error("Instagram allows at most " + MAX_COLLABORATORS
+                    + " collaborators; this post named " + collaborators.size()));
+        }
+        if (!collaborators.isEmpty()) {
+            params.put("collaborators", toJsonArray(collaborators));
+        }
+        String audioName = MetaActions.string(input, "audio_name");
+        if (audioName != null) {
+            params.put("audio_name", audioName);
+        }
+        String coverAssetId = MetaActions.string(input, "cover_asset_id");
+        if (coverAssetId != null) {
+            List<PublishMedia> cover = mediaResolver.resolve(workItemId, List.of(coverAssetId));
+            if (cover.isEmpty() || cover.get(0).url() == null || cover.get(0).url().isBlank()) {
+                return ReelOptions.fail(ActionResult.error("Instagram cover_asset_id '" + coverAssetId
+                        + "' does not name an image asset on this Work Item"));
+            }
+            params.put("cover_url", cover.get(0).url());
+        }
+        return ReelOptions.ok(params);
+    }
+
+    private static String toJsonArray(List<String> values) {
+        return values.stream()
+                .map(value -> "\"" + value.replace("\"", "\\\"") + "\"")
+                .collect(Collectors.joining(",", "[", "]"));
     }
 
     /**

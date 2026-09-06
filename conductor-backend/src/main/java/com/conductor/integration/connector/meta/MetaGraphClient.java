@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.integration.ConnectorHttp;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -19,7 +18,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -51,16 +49,17 @@ public class MetaGraphClient {
     static final String GRAPH_BASE = "https://graph.facebook.com/v21.0";
 
     /**
+     * The host every Reels/Stories resumable upload's {@code upload_url} resolves to. Checked the same
+     * way {@link #GRAPH_HOST} is: these calls carry the Page token too, and {@code upload_url} is
+     * server-supplied but is validated before use anyway, on the same belt-and-braces principle.
+     */
+    static final String UPLOAD_HOST = "rupload.facebook.com";
+
+    /**
      * Instagram's published cap: 100 posts per rolling 24 hours, per account. Meta reports the account's
      * own {@code quota_total}; this is the documented value used when it reports none.
      */
     static final int DEFAULT_INSTAGRAM_QUOTA_TOTAL = 100;
-
-    /** Chunk ceiling for a resumable video transfer when Meta's own offsets don't bound it smaller. */
-    private static final int MAX_VIDEO_CHUNK_BYTES = 4 * 1024 * 1024;
-
-    /** Bounds the transfer loop so a server that stops advancing the offset can't spin forever. */
-    private static final int MAX_VIDEO_CHUNKS = 2000;
 
     /**
      * A video upload can outrun the webhook-shaped default timeout, so the connector declares its own
@@ -109,6 +108,20 @@ public class MetaGraphClient {
 
     /** A Page post as Meta currently sees it — the answer to "has the scheduled post gone live yet?". */
     public record PagePost(String id, boolean published, String permalink, Instant scheduledPublishTime) {}
+
+    /**
+     * A Reel video as Meta currently sees it. Reels do not answer the Page-post read
+     * ({@link #readPost}) — they have no {@code is_published} field — so this is read from
+     * {@code status.video_status} instead ({@code "ready"} means live) via {@link #readVideoStatus}.
+     */
+    public record VideoStatus(String id, boolean published, String permalink) {}
+
+    /**
+     * The two things Meta's {@code upload_phase=start} answers with for a Reel or a Story video: the
+     * video's own id (what {@code finish} and every later read use) and the {@code rupload.facebook.com}
+     * URL the file itself is handed to.
+     */
+    public record ReelUploadSession(String videoId, String uploadUrl) {}
 
     /**
      * The Instagram account's rolling publishing budget. {@code quotaTotal} is the account's own
@@ -257,103 +270,117 @@ public class MetaGraphClient {
     }
 
     /**
-     * Uploads a video to the Page's {@code /videos} edge with Meta's three-phase resumable protocol —
-     * {@code start} opens a session and states the first byte range, {@code transfer} sends each chunk
-     * and is answered with the next range, {@code finish} commits the upload along with its description
-     * and schedule.
-     *
-     * <p>Resumable rather than a single {@code source} POST because a Page video runs to 1.5 GB: a
-     * single-shot upload that dies at 90% has to restart from byte zero, while the transfer loop below
-     * only re-sends the chunk that failed.
+     * Publishes (or schedules) a Reel on the Page's {@code /video_reels} edge — Meta's Reels guide says
+     * this is now the <b>only</b> way to put a video on a Page; the old {@code /videos} edge (chunked
+     * {@code upload_phase=start}/{@code transfer}/{@code finish}) is not used for a Page video any more,
+     * reel or feed. Three phases: {@code start} opens the session and returns a {@code video_id} plus an
+     * {@code upload_url} on {@value #UPLOAD_HOST}; the file itself is handed over by
+     * {@link #uploadHostedFile} rather than chunked from local bytes, because every video this connector
+     * publishes already has a signed read URL Meta can fetch; {@code finish} commits it with
+     * {@code video_state=SCHEDULED} plus the unix {@code scheduled_publish_time} when one is given, else
+     * {@code PUBLISHED} — Reels 3-90 seconds, 9:16 recommended.
      */
-    public PublishedPost publishVideo(String pageId, String pageToken, byte[] content, String description,
-                                      String title, Long scheduledPublishTime) {
-        if (content == null || content.length == 0) {
-            throw new IllegalArgumentException("Cannot upload an empty video to Facebook");
-        }
-        URI uri = edge(pageId, "videos");
-
-        MultiValueMap<String, String> start = new LinkedMultiValueMap<>();
-        start.add("upload_phase", "start");
-        start.add("file_size", String.valueOf(content.length));
-        VideoSessionResponse session = postForm(uri, pageToken, start, VideoSessionResponse.class);
-        if (session.uploadSessionId() == null || session.uploadSessionId().isBlank()) {
-            throw new IllegalStateException("Facebook video upload returned no upload_session_id");
-        }
-
-        long offset = parseOffset(session.startOffset(), 0L);
-        long end = parseOffset(session.endOffset(), content.length);
-        for (int chunk = 0; offset < content.length && chunk < MAX_VIDEO_CHUNKS; chunk++) {
-            int from = (int) offset;
-            int to = (int) Math.min(Math.min(end, content.length), (long) from + MAX_VIDEO_CHUNK_BYTES);
-            if (to <= from) {
-                break;
-            }
-            VideoSessionResponse transferred = transferVideoChunk(uri, pageToken, session.uploadSessionId(),
-                    from, Arrays.copyOfRange(content, from, to));
-            long nextOffset = parseOffset(transferred.startOffset(), to);
-            end = parseOffset(transferred.endOffset(), content.length);
-            if (nextOffset <= offset) {
-                // Meta stopped advancing: sending the same bytes again would loop forever.
-                offset = to;
-            } else {
-                offset = nextOffset;
-            }
-        }
+    public PublishedPost publishReel(String pageId, String pageToken, String fileUrl, String description,
+                                     String title, Long scheduledPublishTime) {
+        ReelUploadSession session = startResumableEdgeUpload(pageId, pageToken, "video_reels");
+        uploadHostedFile(session.uploadUrl(), pageToken, fileUrl);
 
         MultiValueMap<String, String> finish = new LinkedMultiValueMap<>();
         finish.add("upload_phase", "finish");
-        finish.add("upload_session_id", session.uploadSessionId());
+        finish.add("video_id", session.videoId());
+        if (scheduledPublishTime != null) {
+            finish.add("video_state", "SCHEDULED");
+            finish.add("scheduled_publish_time", String.valueOf(scheduledPublishTime));
+        } else {
+            finish.add("video_state", "PUBLISHED");
+        }
         if (description != null && !description.isBlank()) {
             finish.add("description", description);
         }
         if (title != null && !title.isBlank()) {
             finish.add("title", title);
         }
-        applySchedule(finish, scheduledPublishTime);
-        postForm(uri, pageToken, finish, PublishResponse.class);
-
+        postForm(edge(pageId, "video_reels"), pageToken, finish, SuccessResponse.class);
         return new PublishedPost(session.videoId(), null);
     }
 
     /**
-     * Publishes a video Meta fetches itself from {@code fileUrl}, for the case where the caller supplied a
-     * hosted URL rather than a stored asset. The resumable path in {@link #publishVideo} cannot serve it:
-     * there are no local bytes to chunk.
+     * Publishes a video Story on the Page's {@code /video_stories} edge: {@code start}/{@code finish}
+     * exactly as {@link #publishReel} opens and closes, minus a schedule — a Story cannot be scheduled by
+     * Meta and always goes out immediately. {@code finish} answers with the story's own {@code post_id}.
      */
-    public PublishedPost publishVideoFromUrl(String pageId, String pageToken, String fileUrl, String description,
-                                             String title, Long scheduledPublishTime) {
-        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-        form.add("file_url", fileUrl);
-        if (description != null && !description.isBlank()) {
-            form.add("description", description);
-        }
-        if (title != null && !title.isBlank()) {
-            form.add("title", title);
-        }
-        applySchedule(form, scheduledPublishTime);
-        return postForm(edge(pageId, "videos"), pageToken, form, PublishResponse.class).toPublishedPost();
+    public PublishedPost publishVideoStory(String pageId, String pageToken, String fileUrl) {
+        ReelUploadSession session = startResumableEdgeUpload(pageId, pageToken, "video_stories");
+        uploadHostedFile(session.uploadUrl(), pageToken, fileUrl);
+
+        MultiValueMap<String, String> finish = new LinkedMultiValueMap<>();
+        finish.add("upload_phase", "finish");
+        finish.add("video_id", session.videoId());
+        return postForm(edge(pageId, "video_stories"), pageToken, finish, PublishResponse.class).toPublishedPost();
     }
 
-    private VideoSessionResponse transferVideoChunk(URI uri, String pageToken, String uploadSessionId,
-                                                    long startOffset, byte[] chunk) {
-        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        body.add("upload_phase", "transfer");
-        body.add("upload_session_id", uploadSessionId);
-        body.add("start_offset", String.valueOf(startOffset));
-        body.add("video_file_chunk", new ByteArrayResource(chunk) {
-            @Override
-            public String getFilename() {
-                return "chunk-" + startOffset;
-            }
-        });
+    /**
+     * Publishes a photo Story from a photo already uploaded unpublished ({@link #uploadUnpublishedPhoto}):
+     * {@code /{page-id}/photo_stories} with the photo's id. Answers with the story's own {@code post_id}.
+     */
+    public PublishedPost publishPhotoStory(String pageId, String pageToken, String photoId) {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("photo_id", photoId);
+        return postForm(edge(pageId, "photo_stories"), pageToken, form, PublishResponse.class).toPublishedPost();
+    }
 
-        HttpHeaders headers = bearer(pageToken);
-        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-        ResponseEntity<VideoSessionResponse> response = uploadRestTemplate.exchange(
-                uri, HttpMethod.POST, new HttpEntity<>(body, headers), VideoSessionResponse.class);
-        VideoSessionResponse transferred = response.getBody();
-        return transferred != null ? transferred : new VideoSessionResponse(null, uploadSessionId, null, null);
+    /**
+     * Opens a resumable upload session on a Reels- or Stories-shaped edge ({@code video_reels} or
+     * {@code video_stories}): both answer {@code upload_phase=start} the same way, a {@code video_id} and
+     * an {@code upload_url} the file is handed to next.
+     */
+    private ReelUploadSession startResumableEdgeUpload(String pageId, String pageToken, String edgeName) {
+        MultiValueMap<String, String> start = new LinkedMultiValueMap<>();
+        start.add("upload_phase", "start");
+        ReelStartResponse response = postForm(edge(pageId, edgeName), pageToken, start, ReelStartResponse.class);
+        if (response.videoId() == null || response.videoId().isBlank()
+                || response.uploadUrl() == null || response.uploadUrl().isBlank()) {
+            throw new IllegalStateException("Facebook " + edgeName + " upload returned no video_id/upload_url");
+        }
+        return new ReelUploadSession(response.videoId(), response.uploadUrl());
+    }
+
+    /**
+     * Hands a hosted file over to a Reels/Stories upload session by reference: the {@code file_url}
+     * header, not a request body — Meta fetches the bytes itself, exactly as it does for a photo post's
+     * {@code url} form field. This is why no local video content is ever read for a Page video any more.
+     */
+    private void uploadHostedFile(String uploadUrl, String pageToken, String fileUrl) {
+        URI uri = requireUploadUri(URI.create(uploadUrl));
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.AUTHORIZATION, "OAuth " + pageToken);
+        headers.set("file_url", fileUrl);
+        uploadRestTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(headers), String.class);
+    }
+
+    /**
+     * Reads a Reel's current state — Reels do not answer the Page-post fields {@link #readPost} reads, so
+     * the confirmation poller's "is it live yet?" comes from {@code status.video_status} instead;
+     * {@code "ready"} (or an explicit {@code published=true}) means the Reel has gone out.
+     */
+    public VideoStatus readVideoStatus(String videoId, String pageToken) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + videoId)
+                .queryParam("fields", "id,status,permalink_url")
+                .encode().build().toUri());
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), JsonNode.class);
+        JsonNode body = response.getBody();
+        if (body == null) {
+            throw new IllegalStateException("Facebook returned no body for video " + videoId);
+        }
+        String statusCode = body.path("status").path("video_status").isTextual()
+                ? body.path("status").path("video_status").asText() : null;
+        boolean published = (statusCode != null && ("ready".equalsIgnoreCase(statusCode)
+                || "published".equalsIgnoreCase(statusCode)))
+                || (body.hasNonNull("published") && body.path("published").asBoolean(false));
+        String permalink = body.path("permalink_url").isTextual() ? body.path("permalink_url").asText() : null;
+        String id = body.path("id").isTextual() ? body.path("id").asText() : videoId;
+        return new VideoStatus(id, published, permalink);
     }
 
     /**
@@ -575,18 +602,6 @@ public class MetaGraphClient {
         return headers;
     }
 
-    /** Graph reports offsets as decimal strings; a missing or unparsable one falls back to {@code fallback}. */
-    private static long parseOffset(String value, long fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return Long.parseLong(value.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
     @JsonIgnoreProperties(ignoreUnknown = true)
     record TokenResponse(@JsonProperty("access_token") String accessToken,
                          @JsonProperty("token_type") String tokenType,
@@ -621,10 +636,8 @@ public class MetaGraphClient {
     record SuccessResponse(@JsonProperty("success") Boolean success) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record VideoSessionResponse(@JsonProperty("video_id") String videoId,
-                                @JsonProperty("upload_session_id") String uploadSessionId,
-                                @JsonProperty("start_offset") String startOffset,
-                                @JsonProperty("end_offset") String endOffset) {}
+    record ReelStartResponse(@JsonProperty("video_id") String videoId,
+                             @JsonProperty("upload_url") String uploadUrl) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record PublishingLimitResponse(@JsonProperty("data") List<PublishingLimitEntry> data) {}
@@ -665,6 +678,21 @@ public class MetaGraphClient {
                 || host == null || !GRAPH_HOST.equalsIgnoreCase(host)) {
             // Deliberately does not echo the URI, which may embed a token.
             throw new IllegalArgumentException("Meta Graph request must target https://" + GRAPH_HOST);
+        }
+        return uri;
+    }
+
+    /**
+     * Same belt-and-braces check as {@link #requireGraphUri}, for the one call that targets a different
+     * host: a Reels/Stories {@code upload_url} is server-supplied (Meta's own {@code upload_phase=start}
+     * answer), but it still carries the Page token, so it is validated before use exactly as a hand-built
+     * Graph URI is.
+     */
+    static URI requireUploadUri(URI uri) {
+        String host = uri.getHost();
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || host == null || !UPLOAD_HOST.equalsIgnoreCase(host)) {
+            throw new IllegalArgumentException("Meta upload request must target https://" + UPLOAD_HOST);
         }
         return uri;
     }
