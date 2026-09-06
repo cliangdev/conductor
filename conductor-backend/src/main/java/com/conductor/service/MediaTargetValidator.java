@@ -9,7 +9,9 @@ import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PostFormat;
 import com.conductor.service.publish.PublishFinding;
+import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -111,6 +113,20 @@ public class MediaTargetValidator {
     public static final String COPY_TOO_LONG = "COPY_TOO_LONG";
     /** An advisory the platform will act on without refusing (a Short, a cropped carousel, a cut title). */
     public static final String MEDIA_ADVISORY = "MEDIA_ADVISORY";
+    /** A story destination was given anything other than exactly one media item. */
+    public static final String STORY_SINGLE_ITEM = "STORY_SINGLE_ITEM";
+    /** A story's media is far from the 9:16 shape the surface is read in — advisory, not a refusal. */
+    public static final String STORY_ASPECT = "STORY_ASPECT";
+    /** A caption (Post or override) was set on a story, which the platform drops on arrival. */
+    public static final String STORY_CAPTION_IGNORED = "STORY_CAPTION_IGNORED";
+    /** A reel destination was given anything other than exactly one video, no images. */
+    public static final String REEL_SINGLE_VIDEO = "REEL_SINGLE_VIDEO";
+    /** A reel's video is far from the 9:16 shape the surface is read in — advisory, not a refusal. */
+    public static final String REEL_ASPECT = "REEL_ASPECT";
+    /** A Facebook feed post whose one item is a video, which Facebook now publishes as a Reel. */
+    public static final String FACEBOOK_VIDEO_IS_REEL = "FACEBOOK_VIDEO_IS_REEL";
+    /** A target's chosen format is not one its platform offers at all — defensive; selection already refuses it. */
+    public static final String FORMAT_UNSUPPORTED = "FORMAT_UNSUPPORTED";
 
     /** Instagram publishes 1 item, or a carousel of 2 to 10. */
     public static final int INSTAGRAM_MAX_CAROUSEL_ITEMS = 10;
@@ -127,6 +143,31 @@ public class MediaTargetValidator {
     public static final int YOUTUBE_MAX_TITLE_CHARS = 100;
     /** YouTube's description ceiling is 5000 *bytes* of UTF-8, not characters. */
     public static final int YOUTUBE_MAX_DESCRIPTION_BYTES = 5000;
+
+    /** Instagram story image ceiling: 8 MB. */
+    public static final long INSTAGRAM_STORY_MAX_IMAGE_BYTES = 8L * 1024 * 1024;
+    /** Instagram story video ceiling: 100 MB. */
+    public static final long INSTAGRAM_STORY_MAX_VIDEO_BYTES = 100L * 1024 * 1024;
+    public static final int INSTAGRAM_STORY_MIN_VIDEO_SECONDS = 3;
+    public static final int INSTAGRAM_STORY_MAX_VIDEO_SECONDS = 60;
+    /** Facebook story photo ceiling: 10 MB. */
+    public static final long FACEBOOK_STORY_MAX_PHOTO_BYTES = 10L * 1024 * 1024;
+    public static final int FACEBOOK_STORY_MIN_VIDEO_SECONDS = 3;
+    public static final int FACEBOOK_STORY_MAX_VIDEO_SECONDS = 60;
+
+    public static final int FACEBOOK_REEL_MIN_SECONDS = 3;
+    public static final int FACEBOOK_REEL_MAX_SECONDS = 90;
+    public static final int INSTAGRAM_REEL_MIN_SECONDS = 3;
+    public static final int INSTAGRAM_REEL_MAX_SECONDS = 900;
+    /** Instagram reel file ceiling: 300 MB. */
+    public static final long INSTAGRAM_REEL_MAX_VIDEO_BYTES = 300L * 1024 * 1024;
+
+    /** The band around 9:16 (0.5625) a story is expected to sit in; outside it is a warning, not a refusal. */
+    private static final double STORY_MIN_ASPECT = 0.5;
+    private static final double STORY_MAX_ASPECT = 0.6;
+    /** A wider band for a reel: "outside 9:16 by more than a little" tolerates more than a story does. */
+    private static final double REEL_MIN_ASPECT = 0.4;
+    private static final double REEL_MAX_ASPECT = 0.8;
 
     private final PublishPlatformRegistry platformRegistry;
     private final AssetRepository assetRepository;
@@ -224,21 +265,182 @@ public class MediaTargetValidator {
                 // it is; checking file rules against an empty list here would add nothing but noise.
                 continue;
             }
-            List<String> formatProblems = new ArrayList<>();
-            List<String> compositionProblems = new ArrayList<>();
-            List<String> copyProblems = new ArrayList<>();
-            List<String> warnings = new ArrayList<>();
-            for (Asset asset : media) {
-                inspect(target, asset, formatProblems, warnings);
+            PostFormat format = PostFormat.parse(target.getFormat());
+            PublishPlatform platform = platformRegistry.find(target.getPlatform()).orElse(null);
+            if (platform != null && !platform.supports(format)) {
+                // Defensive: target selection already refuses a format the platform does not offer, so this
+                // should be unreachable in practice. Refusing here rather than falling through to a format's
+                // rules keeps a future selection bug from being checked against the wrong shape.
+                findings.add(PublishFinding.blocker(FORMAT_UNSUPPORTED, describe(target) + " does not publish a "
+                        + format.wire() + " — this format is not offered here", target.getId()));
+                continue;
             }
-            inspectComposition(target, media, compositionProblems, warnings);
-            inspectCopy(target, workItem, media, copyProblems, warnings);
-            formatProblems.forEach(p -> findings.add(PublishFinding.blocker(MEDIA_FORMAT, p, target.getId())));
-            compositionProblems.forEach(p -> findings.add(PublishFinding.blocker(MEDIA_COMPOSITION, p, target.getId())));
-            copyProblems.forEach(p -> findings.add(PublishFinding.blocker(COPY_TOO_LONG, p, target.getId())));
-            warnings.forEach(w -> findings.add(PublishFinding.warning(MEDIA_ADVISORY, w, target.getId())));
+            switch (format) {
+                case STORY -> inspectStory(target, media, workItem, findings);
+                case REEL -> inspectReel(target, media, findings);
+                default -> inspectFeed(target, media, workItem, findings);
+            }
         }
         return findings;
+    }
+
+    /** The rules unchanged since before formats existed: per-file format, composition, copy. */
+    private void inspectFeed(PostPublishTarget target, List<Asset> media, WorkItem workItem,
+                             List<PublishFinding> findings) {
+        List<String> formatProblems = new ArrayList<>();
+        List<String> compositionProblems = new ArrayList<>();
+        List<String> copyProblems = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        for (Asset asset : media) {
+            inspect(target, asset, formatProblems, warnings);
+        }
+        inspectComposition(target, media, compositionProblems, warnings);
+        inspectCopy(target, workItem, media, copyProblems, warnings);
+        formatProblems.forEach(p -> findings.add(PublishFinding.blocker(MEDIA_FORMAT, p, target.getId())));
+        compositionProblems.forEach(p -> findings.add(PublishFinding.blocker(MEDIA_COMPOSITION, p, target.getId())));
+        copyProblems.forEach(p -> findings.add(PublishFinding.blocker(COPY_TOO_LONG, p, target.getId())));
+        warnings.forEach(w -> findings.add(PublishFinding.warning(MEDIA_ADVISORY, w, target.getId())));
+
+        if ("facebook".equals(normalizedPlatform(target)) && media.size() == 1 && isVideo(media.get(0))) {
+            findings.add(PublishFinding.warning(FACEBOOK_VIDEO_IS_REEL, describe(target)
+                    + " is a single video — Facebook now publishes Page videos as Reels (3–90 seconds, "
+                    + "vertical recommended)", target.getId()));
+        }
+    }
+
+    /**
+     * A story: exactly one item, checked against that platform's own story limits, with the caption
+     * flagged rather than checked — the platform drops it, so a length rule would be checking text that
+     * never arrives.
+     */
+    private void inspectStory(PostPublishTarget target, List<Asset> media, WorkItem post,
+                              List<PublishFinding> findings) {
+        String where = describe(target);
+        if (media.size() != 1) {
+            findings.add(PublishFinding.blocker(STORY_SINGLE_ITEM,
+                    where + " has " + media.size() + " files — a story is exactly one item", target.getId()));
+        } else {
+            Asset asset = media.get(0);
+            switch (normalizedPlatform(target)) {
+                case "instagram" -> inspectInstagramStoryAsset(target, asset, findings);
+                case "facebook" -> inspectFacebookStoryAsset(target, asset, findings);
+                default -> { }
+            }
+            warnIfAspectOutsideRange(target, asset, STORY_MIN_ASPECT, STORY_MAX_ASPECT, STORY_ASPECT, "a story",
+                    findings);
+        }
+        String caption = mediaResolver.effectiveCaption(target, post);
+        if (caption != null && !caption.isBlank()) {
+            findings.add(PublishFinding.warning(STORY_CAPTION_IGNORED, where
+                    + " has a caption, but a story carries no caption — " + platformLabel(target)
+                    + " will drop it", target.getId()));
+        }
+    }
+
+    /** A reel: exactly one video, no images, checked against that platform's own reel limits. */
+    private void inspectReel(PostPublishTarget target, List<Asset> media, List<PublishFinding> findings) {
+        String where = describe(target);
+        long videos = media.stream().filter(MediaTargetValidator::isVideo).count();
+        if (media.size() != 1 || videos != 1) {
+            findings.add(PublishFinding.blocker(REEL_SINGLE_VIDEO,
+                    where + " has " + media.size() + " file(s) — a reel is exactly one video, no images",
+                    target.getId()));
+            return;
+        }
+        Asset asset = media.get(0);
+        switch (normalizedPlatform(target)) {
+            case "facebook" -> {
+                checkDuration(target, asset, FACEBOOK_REEL_MIN_SECONDS, FACEBOOK_REEL_MAX_SECONDS,
+                        "a Facebook reel", findings);
+                checkSize(target, asset, FACEBOOK_MAX_VIDEO_BYTES, "a Facebook reel", "1.5 GB", findings);
+            }
+            case "instagram" -> {
+                checkDuration(target, asset, INSTAGRAM_REEL_MIN_SECONDS, INSTAGRAM_REEL_MAX_SECONDS,
+                        "an Instagram reel", findings);
+                checkSize(target, asset, INSTAGRAM_REEL_MAX_VIDEO_BYTES, "an Instagram reel", "300 MB", findings);
+            }
+            default -> { }
+        }
+        warnIfAspectOutsideRange(target, asset, REEL_MIN_ASPECT, REEL_MAX_ASPECT, REEL_ASPECT, "a reel", findings);
+    }
+
+    private void inspectInstagramStoryAsset(PostPublishTarget target, Asset asset, List<PublishFinding> findings) {
+        if (isImage(asset)) {
+            String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+            if (!INSTAGRAM_FEED_IMAGE_TYPE.equals(contentType)) {
+                findings.add(PublishFinding.blocker(MEDIA_FORMAT, describe(target, asset) + " is " + contentType
+                        + " — an Instagram story image must be JPEG (image/jpeg); re-export it as a JPEG",
+                        target.getId()));
+                return;
+            }
+            checkSize(target, asset, INSTAGRAM_STORY_MAX_IMAGE_BYTES, "an Instagram story image", "8 MB", findings);
+        } else if (isVideo(asset)) {
+            checkDuration(target, asset, INSTAGRAM_STORY_MIN_VIDEO_SECONDS, INSTAGRAM_STORY_MAX_VIDEO_SECONDS,
+                    "an Instagram story video", findings);
+            checkSize(target, asset, INSTAGRAM_STORY_MAX_VIDEO_BYTES, "an Instagram story video", "100 MB",
+                    findings);
+        }
+    }
+
+    private void inspectFacebookStoryAsset(PostPublishTarget target, Asset asset, List<PublishFinding> findings) {
+        if (isVideo(asset)) {
+            checkDuration(target, asset, FACEBOOK_STORY_MIN_VIDEO_SECONDS, FACEBOOK_STORY_MAX_VIDEO_SECONDS,
+                    "a Facebook story video", findings);
+        } else if (isImage(asset)) {
+            checkSize(target, asset, FACEBOOK_STORY_MAX_PHOTO_BYTES, "a Facebook story photo", "10 MB", findings);
+        }
+    }
+
+    /** A duration outside {@code [minSeconds, maxSeconds]}, or unmeasurable, blocks — the family every other rule here follows. */
+    private void checkDuration(PostPublishTarget target, Asset asset, int minSeconds, int maxSeconds, String label,
+                               List<PublishFinding> findings) {
+        MediaMetadata metadata = MediaMetadata.of(asset);
+        if (!metadata.hasDuration()) {
+            findings.add(PublishFinding.blocker(MEDIA_FORMAT, describe(target, asset) + " has an unknown"
+                    + " duration, so " + label + "'s " + minSeconds + "–" + maxSeconds + " second rule cannot be"
+                    + " checked — re-upload the video with its duration", target.getId()));
+            return;
+        }
+        BigDecimal duration = metadata.durationSeconds();
+        if (duration.compareTo(BigDecimal.valueOf(minSeconds)) < 0
+                || duration.compareTo(BigDecimal.valueOf(maxSeconds)) > 0) {
+            findings.add(PublishFinding.blocker(MEDIA_FORMAT, describe(target, asset) + " is "
+                    + duration.stripTrailingZeros().toPlainString() + " seconds — " + label + " must be "
+                    + minSeconds + " to " + maxSeconds + " seconds", target.getId()));
+        }
+    }
+
+    /** A file size over {@code maxBytes}, or unmeasurable, blocks. */
+    private void checkSize(PostPublishTarget target, Asset asset, long maxBytes, String label, String limitLabel,
+                           List<PublishFinding> findings) {
+        Long size = asset.getSizeBytes();
+        if (size == null) {
+            findings.add(PublishFinding.blocker(MEDIA_FORMAT, describe(target, asset)
+                    + " has an unknown file size, so " + label + "'s " + limitLabel + " limit cannot be checked",
+                    target.getId()));
+            return;
+        }
+        if (size > maxBytes) {
+            findings.add(PublishFinding.blocker(MEDIA_FORMAT, describe(target, asset) + " is "
+                    + formatSize(size) + " — " + label + " must be at most " + limitLabel, target.getId()));
+        }
+    }
+
+    /** As {@link #warnCarouselAspects}, but a generic band around 9:16 shared by stories and reels. */
+    private void warnIfAspectOutsideRange(PostPublishTarget target, Asset asset, double min, double max,
+                                          String code, String noun, List<PublishFinding> findings) {
+        MediaMetadata metadata = MediaMetadata.of(asset);
+        if (!metadata.hasDimensions()) {
+            // Unknown metadata never manufactures a warning either: a warning asserts something that could
+            // fail, and "we don't know" is not that assertion.
+            return;
+        }
+        double aspect = metadata.aspectRatio().orElseThrow();
+        if (aspect < min - ASPECT_EPSILON || aspect > max + ASPECT_EPSILON) {
+            findings.add(PublishFinding.warning(code, describe(target, asset) + " has an aspect ratio of "
+                    + formatAspect(aspect) + ":1 (" + asset.getWidth() + "x" + asset.getHeight() + ") — "
+                    + noun + " reads best near 9:16 (0.56:1)", target.getId()));
+        }
     }
 
     private void inspect(PostPublishTarget target, Asset asset, List<String> problems, List<String> warnings) {
@@ -560,6 +762,14 @@ public class MediaTargetValidator {
 
     private static String formatGigabytes(long bytes) {
         return String.format(Locale.ROOT, "%.2f GB", bytes / (double) (1024L * 1024 * 1024));
+    }
+
+    /** MB below a gigabyte, GB at or above it — whichever unit a human reads a story or reel's limit in. */
+    private static String formatSize(long bytes) {
+        if (bytes >= 1024L * 1024 * 1024) {
+            return formatGigabytes(bytes);
+        }
+        return String.format(Locale.ROOT, "%.2f MB", bytes / (double) (1024 * 1024));
     }
 
 
