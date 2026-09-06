@@ -676,6 +676,12 @@ class MediaTargetValidatorTest {
         return target;
     }
 
+    private PostPublishTarget target(String platform, String connectionId, String accountLabel, String format) {
+        PostPublishTarget target = target(platform, connectionId, accountLabel);
+        target.setFormat(format);
+        return target;
+    }
+
     private void givenConnection(String connectionId, String configJson) {
         Connection connection = new Connection();
         connection.setId(connectionId);
@@ -813,6 +819,288 @@ class MediaTargetValidatorTest {
         assertThatThrownBy(this::approve).isInstanceOf(UnprocessableEntityException.class);
     }
 
+    // --- [auto] Post formats: story (COND-post-formats) -------------------------------------------
+
+    @Test
+    void blocksAStoryTargetWithTwoItems() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        Asset a = image("a.jpg", "image/jpeg", 1080, 1920);
+        Asset b = image("b.jpg", "image/jpeg", 1080, 1920);
+        givenAssets(a, b);
+        givenSelection(story, a, b);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Instagram")
+                .hasMessageContaining("exactly one item");
+    }
+
+    @Test
+    void allowsAStoryTargetWithExactlyOneItem() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1920));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksAnInstagramStoryImageThatIsNotJpeg() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(image("a.png", "image/png", 1080, 1920));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Instagram story image")
+                .hasMessageContaining("JPEG");
+    }
+
+    @Test
+    void blocksAnInstagramStoryImageOverEightMegabytes() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        Asset asset = image("a.jpg", "image/jpeg", 1080, 1920);
+        asset.setSizeBytes(9L * 1024 * 1024);
+        givenAssets(asset);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("8 MB");
+    }
+
+    @Test
+    void blocksAnInstagramStoryVideoShorterThanThreeSeconds() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "2"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Instagram story video")
+                .hasMessageContaining("3 to 60 seconds");
+    }
+
+    @Test
+    void blocksAnInstagramStoryVideoLongerThanSixtySeconds() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "61"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("3 to 60 seconds");
+    }
+
+    @Test
+    void allowsAnInstagramStoryVideoWithinRange() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "30"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksAFacebookStoryVideoOutsideDuration() {
+        PostPublishTarget story = target("facebook", "conn-meta", "Acme Page", "STORY");
+        givenTargets(story);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "1"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Facebook story video");
+    }
+
+    @Test
+    void blocksAFacebookStoryPhotoOverTenMegabytes() {
+        PostPublishTarget story = target("facebook", "conn-meta", "Acme Page", "STORY");
+        givenTargets(story);
+        Asset asset = image("a.jpg", "image/jpeg", 1080, 1920);
+        asset.setSizeBytes(11L * 1024 * 1024);
+        givenAssets(asset);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("10 MB");
+    }
+
+    @Test
+    void warnsWhenAStorysAspectIsFarFromNineBySixteen() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1080));
+
+        MediaTargetValidator.Result result = approve();
+
+        assertThat(result.warnings()).anyMatch(w -> w.contains("aspect ratio"));
+    }
+
+    @Test
+    void doesNotWarnWhenAStorysAspectIsNearNineBySixteen() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1920));
+
+        MediaTargetValidator.Result result = approve();
+
+        assertThat(result.warnings()).noneMatch(w -> w.contains("aspect ratio"));
+    }
+
+    @Test
+    void warnsWhenACaptionIsSetOnAStory() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1920));
+        post.setDescription("Check out our launch!");
+
+        MediaTargetValidator.Result result = approve();
+
+        assertThat(result.warnings()).anyMatch(w -> w.contains("no caption"));
+    }
+
+    @Test
+    void doesNotWarnWhenAStoryHasNoCaption() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1920));
+
+        MediaTargetValidator.Result result = approve();
+
+        assertThat(result.warnings()).noneMatch(w -> w.contains("no caption"));
+    }
+
+    // --- [auto] Post formats: reel -------------------------------------------------------------
+
+    @Test
+    void blocksAReelTargetWithAnImageInsteadOfAVideo() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
+        givenTargets(reel);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1920));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("exactly one video");
+    }
+
+    @Test
+    void blocksAReelTargetWithTwoVideos() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
+        givenTargets(reel);
+        Asset a = video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "20");
+        Asset b = video("b.mp4", 10L * 1024 * 1024, 1080, 1920, "20");
+        givenAssets(a, b);
+        givenSelection(reel, a, b);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("exactly one video");
+    }
+
+    @Test
+    void allowsAReelTargetWithExactlyOneVideo() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
+        givenTargets(reel);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "20"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksAFacebookReelOutsideItsDurationRange() {
+        PostPublishTarget reel = target("facebook", "conn-meta", "Acme Page", "REEL");
+        givenTargets(reel);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "91"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Facebook reel")
+                .hasMessageContaining("3 to 90 seconds");
+    }
+
+    @Test
+    void blocksAFacebookReelOverOneAndAHalfGigabytes() {
+        PostPublishTarget reel = target("facebook", "conn-meta", "Acme Page", "REEL");
+        givenTargets(reel);
+        givenAssets(video("a.mp4", (long) (1.8 * GIB), 1080, 1920, "20"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("1.5 GB");
+    }
+
+    @Test
+    void blocksAnInstagramReelOverFifteenMinutes() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
+        givenTargets(reel);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "901"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("Instagram reel")
+                .hasMessageContaining("3 to 900 seconds");
+    }
+
+    @Test
+    void blocksAnInstagramReelOverThreeHundredMegabytes() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
+        givenTargets(reel);
+        givenAssets(video("a.mp4", 301L * 1024 * 1024, 1080, 1920, "20"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("300 MB");
+    }
+
+    @Test
+    void warnsWhenAReelsAspectIsFarFromNineBySixteen() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
+        givenTargets(reel);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1920, 1080, "20"));
+
+        MediaTargetValidator.Result result = approve();
+
+        assertThat(result.warnings()).anyMatch(w -> w.contains("aspect ratio"));
+    }
+
+    // --- [auto] A Facebook feed post whose one item is a video is now a Reel on Facebook's side ---
+
+    @Test
+    void warnsWhenAFacebookFeedPostIsASingleVideo() {
+        PostPublishTarget feed = target("facebook", "conn-meta", "Acme Page");
+        givenTargets(feed);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1920, 1080, "20"));
+
+        MediaTargetValidator.Result result = approve();
+
+        assertThat(result.warnings()).anyMatch(w -> w.contains("Reels"));
+    }
+
+    @Test
+    void doesNotWarnAboutReelsWhenAFacebookFeedPostHasAPhoto() {
+        PostPublishTarget feed = target("facebook", "conn-meta", "Acme Page");
+        givenTargets(feed);
+        givenAssets(image("a.jpg", "image/jpeg", 1200, 630));
+
+        MediaTargetValidator.Result result = approve();
+
+        assertThat(result.warnings()).noneMatch(w -> w.contains("Reels"));
+    }
+
+    // --- [auto] A format the platform does not offer is refused defensively ------------------------
+
+    @Test
+    void blocksAFormatThePlatformDoesNotOffer() {
+        PostPublishTarget target = target("youtube", "conn-yt", "Acme Channel", "REEL");
+        givenTargets(target);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "20"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("YouTube")
+                .hasMessageContaining("does not publish");
+    }
 
     @Nested
     class MetadataCaptureAtUploadConfirm {
