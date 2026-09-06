@@ -20,14 +20,32 @@ the platform names as examples.
 ## Step 1 — Gather three things, and ask rather than guess
 
 1. **The copy** — inline, or a file path you `Read`. Keep it exactly as given.
-2. **The destinations** — which platforms, and which account on each. If the person did not name
-   the platforms, ask; never assume "everywhere".
+2. **The destinations** — which platforms, which account on each, and which format (feed, reel or
+   story — see below) when a platform offers more than one. If the person did not name the
+   platforms, ask; never assume "everywhere".
 3. **The timing** — a specific time in a named timezone, "as soon as possible", or "next free slot".
    With nothing said, default to scheduling (the earliest time the destinations accept, rounded to
    the quarter-hour), never to publishing immediately.
 
 Also note any media the person handed you: local paths or public URLs, in the order they should
 appear. Media that must be measured (video) is measured by the tool; you do not need dimensions.
+
+### Formats
+
+Some platforms publish more than one surface. Ask which one the person means when it is not
+obvious from what they said — the destination's `formats` in `list_publish_targets` is the one
+source of what a given account actually offers, so check it rather than assuming every platform
+offers all three:
+
+- **feed** — the platform's ordinary post (an image, a video, a carousel, a photo set). The default
+  when nobody says otherwise.
+- **reel** — one vertical video. One instance of this is Facebook or Instagram; a reel is never a
+  carousel or a set of photos.
+- **story** — exactly one image or clip, gone after 24 hours, with no caption at all (the platform
+  drops it even if you send one) — do not treat a story caption as lost work, it was never going
+  to show. `create_post` and `set_publish_targets` fire a story at its scheduled time themselves,
+  since neither Facebook nor Instagram can schedule one, so its lead time is short (about a
+  minute) rather than the platform's own scheduling window.
 
 ## Step 2 — Look before you post
 
@@ -37,8 +55,16 @@ Call `list_publish_targets` first and group the accounts by platform. Then:
   schedule it, hold it to the same review and media rules, and at fire time ask a person to post
   it by hand and paste the link. Say so, and use it only if the person wants it.
 - An account whose `healthStatus` is `UNHEALTHY` will not publish; say so and offer the others.
-- Each platform's `optionKeys` are the only options it takes. TikTok needs a `privacyLevel` from
-  that account's `privacyLevelOptions`; nothing else needs an option to go out.
+
+### Options
+
+Every platform accepts a different bag of per-destination options, and the set changes as
+connectors gain capabilities — so read `optionKeys` off that destination's row in
+`list_publish_targets` and use exactly those keys. Never guess a key by analogy with another
+platform, and never invent one because it sounds plausible; an unrecognized key is silently
+dropped rather than acted on. TikTok needs a `privacyLevel` from that account's
+`privacyLevelOptions` before it will publish at all; nothing else needs an option to go out, so
+absent a stated preference, leave every other option unset rather than filling in a default.
 
 Then run this checklist against the copy, per destination, and **halt on any failure** — report it
 and ask how to proceed. Do not fix content yourself.
@@ -57,9 +83,9 @@ hears about a problem from you, in one message, rather than as a blocker after t
 ## Step 3 — Create it: one call
 
 Call `create_post` with the copy as `text`, the media list, the destinations as
-`{platform, account}` (omit `account` for a manual destination), the schedule if one was given,
-`reviewers` if the person named who should approve, and `submit: true` (the default) unless the
-person asked for a draft.
+`{platform, account, format}` (omit `account` for a manual destination, `format` for feed), the
+schedule if one was given, `reviewers` if the person named who should approve, and `submit: true`
+(the default) unless the person asked for a draft.
 
 Read the result before saying anything:
 
