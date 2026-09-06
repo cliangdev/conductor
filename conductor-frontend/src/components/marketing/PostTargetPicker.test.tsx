@@ -526,14 +526,12 @@ describe('PostTargetPicker', () => {
 // ── TIK-2: per-target TikTok publish options ────────────────────────────────
 
 describe('PostTargetPicker — TikTok publish options', () => {
-  it('reveals the options for a TikTok account once it is selected and customized', async () => {
+  it('reveals the options for a TikTok account once it is selected', async () => {
     const tiktok = tiktokOption('acme')
     availableTargets = [tiktok]
     selectedTargets = [selection(tiktok)]
     renderPicker()
     await loaded()
-
-    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
 
     expect(await screen.findByLabelText(/who can view this video/i)).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Comment' })).toBeInTheDocument()
@@ -542,7 +540,7 @@ describe('PostTargetPicker — TikTok publish options', () => {
     expect(screen.getByRole('switch', { name: /disclose commercial content/i })).toBeInTheDocument()
   })
 
-  it('keeps the options out of the way until the account is chosen and customized', async () => {
+  it('keeps the options out of the way until the account is chosen', async () => {
     availableTargets = [tiktokOption('acme')]
     renderPicker()
     await loaded()
@@ -551,9 +549,6 @@ describe('PostTargetPicker — TikTok publish options', () => {
     expect(screen.queryByLabelText(/who can view this video/i)).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('checkbox', { name: /@acme/ }))
-    expect(screen.queryByLabelText(/who can view this video/i)).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
     expect(await screen.findByLabelText(/who can view this video/i)).toBeInTheDocument()
   })
 
@@ -577,7 +572,6 @@ describe('PostTargetPicker — TikTok publish options', () => {
     renderPicker()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
     const select = await screen.findByLabelText(/who can view this video/i)
     expect(Array.from(select.querySelectorAll('option')).map((o) => o.textContent)).toEqual([
       'Select who can view this video…',
@@ -593,7 +587,6 @@ describe('PostTargetPicker — TikTok publish options', () => {
     renderPicker()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
     expect(await screen.findByLabelText(/who can view this video/i)).toHaveValue('')
   })
 
@@ -604,7 +597,6 @@ describe('PostTargetPicker — TikTok publish options', () => {
     renderPicker()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
     await userEvent.selectOptions(
       await screen.findByLabelText(/who can view this video/i),
       'PUBLIC_TO_EVERYONE'
@@ -649,9 +641,6 @@ describe('PostTargetPicker — TikTok publish options', () => {
     renderPicker()
     await loaded()
 
-    for (const button of screen.getAllByRole('button', { name: /customize for this destination/i })) {
-      fireEvent.click(button)
-    }
     const selects = await screen.findAllByLabelText(/who can view this video/i)
     expect(selects).toHaveLength(2)
     // The second creator reports fewer levels, and gets only those.
@@ -686,7 +675,6 @@ describe('PostTargetPicker — TikTok publish options', () => {
     renderPicker()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
     expect(await screen.findByLabelText(/who can view this video/i)).toHaveValue(
       'MUTUAL_FOLLOW_FRIENDS'
     )
@@ -703,7 +691,6 @@ describe('PostTargetPicker — TikTok publish options', () => {
     renderPicker()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/branded content/i)
     expect(screen.getByRole('alert')).toHaveTextContent(/can.t be posted privately/i)
   })

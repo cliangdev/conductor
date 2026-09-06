@@ -839,6 +839,20 @@ function TargetRow({
           >
             {customized ? 'Customized for this destination' : 'Customize for this destination'}
           </button>
+          {/* TikTok's options stay visible whenever the account is picked, not behind "Customize": the
+              privacy level is mandatory for approval, so hiding it would only move the blocker. */}
+            {showOptions && option.platform === 'tiktok' && (
+              <TikTokPublishOptions
+                idPrefix={`tiktok-${option.connectionId}`}
+                accountLabel={option.label}
+                privacyLevelOptions={option.privacyLevelOptions ?? []}
+                isVideo={effectiveAssets.some((a) => isVideoContentType(a.contentType))}
+                images={effectiveAssets.filter((a) => !isVideoContentType(a.contentType))}
+                value={tiktokOptions}
+                disabled={saving}
+                onChange={onTikTokOptionsChange}
+              />
+            )}
           {customizing && (
             <div className="mt-2 space-y-3">
               <PostFormatSelector
@@ -849,18 +863,6 @@ function TargetRow({
                 disabled={saving || frozen}
                 onChange={onFormatChange}
               />
-              {showOptions && option.platform === 'tiktok' && (
-                <TikTokPublishOptions
-                  idPrefix={`tiktok-${option.connectionId}`}
-                  accountLabel={option.label}
-                  privacyLevelOptions={option.privacyLevelOptions ?? []}
-                  isVideo={effectiveAssets.some((a) => isVideoContentType(a.contentType))}
-                  images={effectiveAssets.filter((a) => !isVideoContentType(a.contentType))}
-                  value={tiktokOptions}
-                  disabled={saving}
-                  onChange={onTikTokOptionsChange}
-                />
-              )}
               {showOptions && option.platform === 'instagram' && (
                 <InstagramPublishOptions
                   idPrefix={idPrefix}
