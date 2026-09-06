@@ -30,6 +30,7 @@ import {
 } from '@/components/workitems/MediaUploadPanel'
 import type { CreateWorkItemModalProps } from '@/components/workitems/CreateWorkItemModal'
 import type { PublishTargetOption } from '@/components/marketing/PostTargetPicker'
+import { PostFormatSelector, type PostFormat } from '@/components/marketing/PostFormatSelector'
 
 interface CreatedWorkItem {
   id: string
@@ -143,6 +144,7 @@ export function ComposePostModal({
   const [files, setFiles] = useState<File[]>([])
   const [options, setOptions] = useState<PublishTargetOption[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [formats, setFormats] = useState<Record<string, PostFormat>>({})
   const [when, setWhen] = useState('')
   const [timeZone, setTimeZone] = useState(browserTimeZone)
   const [saving, setSaving] = useState(false)
@@ -155,6 +157,7 @@ export function ComposePostModal({
     setCaption('')
     setFiles([])
     setSelected(new Set())
+    setFormats({})
     setWhen('')
     setStep(null)
     let cancelled = false
@@ -252,7 +255,11 @@ export function ComposePostModal({
       setStep('Choosing destinations…')
       const targets = options
         .filter((o) => selected.has(targetKey(o)))
-        .map((o) => ({ platform: o.platform, ...(o.connectionId ? { connectionId: o.connectionId } : {}) }))
+        .map((o) => ({
+          platform: o.platform,
+          ...(o.connectionId ? { connectionId: o.connectionId } : {}),
+          format: formats[targetKey(o)] ?? 'feed',
+        }))
       await apiPut(`${base}/publish-targets`, { targets }, token)
     } catch (err) {
       problems.push(apiErrorMessage(err, 'Could not save the destinations'))
@@ -395,23 +402,38 @@ export function ComposePostModal({
                 {list.map((option) => {
                   const key = targetKey(option)
                   const unhealthy = option.healthStatus === 'UNHEALTHY'
+                  const checked = selected.has(key)
                   return (
-                    <label key={key} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(key)}
-                        disabled={unhealthy || saving}
-                        onChange={() => toggle(option)}
-                        aria-label={option.label}
-                      />
-                      <span className={unhealthy ? 'text-muted-foreground' : undefined}>{option.label}</span>
-                      {option.lane === 'MANUAL' && (
-                        <span className="text-xs text-muted-foreground">a person posts it by hand</span>
+                    <div key={key}>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={unhealthy || saving}
+                          onChange={() => toggle(option)}
+                          aria-label={option.label}
+                        />
+                        <span className={unhealthy ? 'text-muted-foreground' : undefined}>{option.label}</span>
+                        {option.lane === 'MANUAL' && (
+                          <span className="text-xs text-muted-foreground">a person posts it by hand</span>
+                        )}
+                        {unhealthy && (
+                          <span className="text-xs text-muted-foreground">reconnect this account first</span>
+                        )}
+                      </label>
+                      {checked && (
+                        <div className="ml-6 mt-1">
+                          <PostFormatSelector
+                            idPrefix={key}
+                            platform={option.platform}
+                            formats={option.formats}
+                            value={formats[key] ?? 'feed'}
+                            disabled={saving}
+                            onChange={(next) => setFormats((prev) => ({ ...prev, [key]: next }))}
+                          />
+                        </div>
                       )}
-                      {unhealthy && (
-                        <span className="text-xs text-muted-foreground">reconnect this account first</span>
-                      )}
-                    </label>
+                    </div>
                   )
                 })}
               </div>

@@ -27,7 +27,14 @@ const MARKETING: WorkflowView = {
 }
 
 const ACCOUNTS = [
-  { platform: 'instagram', connectionId: 'c-ig', label: '@acme', lane: 'APP_MANAGED', healthStatus: 'HEALTHY' },
+  {
+    platform: 'instagram',
+    connectionId: 'c-ig',
+    label: '@acme',
+    lane: 'APP_MANAGED',
+    healthStatus: 'HEALTHY',
+    formats: ['feed', 'reel', 'story'],
+  },
   { platform: 'facebook', connectionId: 'c-fb', label: 'Acme Page', lane: 'NATIVE', healthStatus: 'UNHEALTHY' },
   { platform: 'instagram', connectionId: null, label: 'Instagram (manual)', lane: 'MANUAL' },
 ]
@@ -106,12 +113,34 @@ describe('ComposePostModal', () => {
     const create = calls.find((c) => c.method === 'POST' && c.url.endsWith('/work-items'))
     expect(create?.body).toEqual({ type: 'POST', title: 'Launch day!', description: 'Launch day!\nMore below.', workflow: 'MARKETING' })
     const targets = calls.find((c) => c.method === 'PUT')
-    expect(targets?.body).toEqual({ targets: [{ platform: 'instagram', connectionId: 'c-ig' }, { platform: 'instagram' }] })
+    expect(targets?.body).toEqual({
+      targets: [
+        { platform: 'instagram', connectionId: 'c-ig', format: 'feed' },
+        { platform: 'instagram', format: 'feed' },
+      ],
+    })
     const schedule = calls.find((c) => c.method === 'PATCH')
     expect(schedule?.body).toEqual({ scheduledFor: '2026-09-04T12:15:00.000Z', scheduleTimezone: 'UTC' })
     expect(onCreated).toHaveBeenCalled()
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(toastErrorSpy).not.toHaveBeenCalled()
+  })
+
+  it('offers a format selector only for a destination with more than feed, and sends the choice', async () => {
+    renderModal()
+    await screen.findByLabelText('@acme')
+
+    // Facebook (feed-only here) never grows a selector, whether or not it is checked.
+    await userEvent.click(screen.getByLabelText('@acme'))
+    expect(screen.getByRole('radiogroup', { name: /post format/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Reel' }))
+    await userEvent.type(screen.getByLabelText('Caption'), 'Reel time')
+    await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    const targets = calls.find((c) => c.method === 'PUT')
+    expect(targets?.body).toEqual({ targets: [{ platform: 'instagram', connectionId: 'c-ig', format: 'reel' }] })
   })
 
   it('cannot be submitted without a caption and a destination', async () => {

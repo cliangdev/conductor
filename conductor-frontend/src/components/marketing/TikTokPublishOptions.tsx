@@ -18,9 +18,11 @@
 
 import { useState } from 'react'
 import { Alert } from '@/components/ui/alert'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 
 export interface TikTokPublishOptionValues {
   /** null until the creator picks one — TikTok will not accept a post without an explicit choice. */
@@ -32,6 +34,15 @@ export interface TikTokPublishOptionValues {
   brandContentToggle: boolean
   /** "Your Brand" — the creator promoting their own business. */
   brandOrganicToggle: boolean
+  /** Discloses the post as AI-generated or AI-edited content. */
+  isAigc: boolean
+  /** Video posts only: where TikTok freezes the cover frame, in milliseconds from the start. Omitted
+   *  rather than 0 when nobody has picked one. */
+  videoCoverTimestampMs?: number | null
+  /** Photo posts only: adds one of TikTok's own royalty-free tracks. */
+  autoAddMusic?: boolean
+  /** Photo posts only: index into this target's own images for the cover TikTok shows. */
+  photoCoverIndex?: number | null
 }
 
 export const EMPTY_TIKTOK_OPTIONS: TikTokPublishOptionValues = {
@@ -41,6 +52,7 @@ export const EMPTY_TIKTOK_OPTIONS: TikTokPublishOptionValues = {
   disableStitch: false,
   brandContentToggle: false,
   brandOrganicToggle: false,
+  isAigc: false,
 }
 
 /** TikTok's own wording for the privacy levels its creator-info endpoint reports. */
@@ -93,6 +105,10 @@ export function normalizeTikTokOptions(
     disableStitch: raw?.disableStitch ?? false,
     brandContentToggle: raw?.brandContentToggle ?? false,
     brandOrganicToggle: raw?.brandOrganicToggle ?? false,
+    isAigc: raw?.isAigc ?? false,
+    ...(raw?.videoCoverTimestampMs != null ? { videoCoverTimestampMs: raw.videoCoverTimestampMs } : {}),
+    ...(raw?.autoAddMusic !== undefined ? { autoAddMusic: raw.autoAddMusic } : {}),
+    ...(raw?.photoCoverIndex != null ? { photoCoverIndex: raw.photoCoverIndex } : {}),
   }
 }
 
@@ -139,6 +155,10 @@ interface TikTokPublishOptionsProps {
   accountLabel: string
   /** Exactly what TikTok reported for this creator. An empty list is a broken connection, not "all". */
   privacyLevelOptions: string[]
+  /** Whether this target's effective media is a video (vs. a photo set) — TikTok never mixes the two. */
+  isVideo?: boolean
+  /** This target's own images, in publish order, for the photo-post cover picker. Empty for a video post. */
+  images?: MediaAsset[]
   value: TikTokPublishOptionValues
   onChange: (next: TikTokPublishOptionValues) => void
   disabled?: boolean
@@ -148,6 +168,8 @@ export function TikTokPublishOptions({
   idPrefix,
   accountLabel,
   privacyLevelOptions,
+  isVideo = false,
+  images = [],
   value,
   onChange,
   disabled,
@@ -249,6 +271,65 @@ export function TikTokPublishOptions({
           </div>
         )}
       </div>
+
+      <SwitchRow
+        id={`${idPrefix}-aigc`}
+        label="AI-generated or AI-edited content"
+        description="Discloses that this post was made or altered with AI."
+        checked={value.isAigc}
+        disabled={disabled}
+        onCheckedChange={(checked) => set({ isAigc: checked })}
+      />
+
+      {isVideo ? (
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-cover-timestamp`}>Cover frame</Label>
+          <Input
+            id={`${idPrefix}-cover-timestamp`}
+            type="number"
+            min={0}
+            step={100}
+            placeholder="Milliseconds from the start"
+            disabled={disabled}
+            value={value.videoCoverTimestampMs ?? ''}
+            onChange={(e) => {
+              const parsed = e.target.value === '' ? undefined : Number(e.target.value)
+              set({ videoCoverTimestampMs: parsed === undefined || Number.isNaN(parsed) ? undefined : parsed })
+            }}
+          />
+          <p className="text-xs text-muted-foreground">
+            Where TikTok freezes the cover, in milliseconds from the start of the video.
+          </p>
+        </div>
+      ) : (
+        <>
+          <SwitchRow
+            id={`${idPrefix}-auto-music`}
+            label="Add TikTok music automatically"
+            checked={value.autoAddMusic ?? false}
+            disabled={disabled}
+            onCheckedChange={(checked) => set({ autoAddMusic: checked })}
+          />
+          <div className="space-y-1">
+            <Label htmlFor={`${idPrefix}-cover-index`}>Cover image</Label>
+            <Select
+              id={`${idPrefix}-cover-index`}
+              disabled={disabled || images.length === 0}
+              value={value.photoCoverIndex != null ? String(value.photoCoverIndex) : ''}
+              onChange={(e) =>
+                set({ photoCoverIndex: e.target.value === '' ? undefined : Number(e.target.value) })
+              }
+            >
+              <option value="">Use the first image</option>
+              {images.map((asset, index) => (
+                <option key={asset.id} value={index}>
+                  {asset.label || asset.type}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </>
+      )}
     </div>
   )
 }
