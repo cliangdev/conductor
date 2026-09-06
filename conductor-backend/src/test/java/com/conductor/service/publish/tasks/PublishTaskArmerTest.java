@@ -141,6 +141,29 @@ class PublishTaskArmerTest {
     }
 
     @Test
+    void armPost_reReadsRowsTheCallersContextHoldsStale_soTheTaskCarriesTheRestampedFireTime() {
+        // The row in the caller's context still says the old fire time; the database (via refresh) says the new one.
+        WorkItem post = new WorkItem();
+        post.setId("post-1");
+        OffsetDateTime oldFire = now.plusMinutes(5);
+        OffsetDateTime newFire = now.plusHours(2);
+        PostPublishTarget stale = target("ig", "instagram", PublishLane.APP_MANAGED, PostPublishTargetState.PENDING, oldFire);
+        when(targetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(stale));
+        jakarta.persistence.EntityManager em = org.mockito.Mockito.mock(jakarta.persistence.EntityManager.class);
+        when(em.contains(stale)).thenReturn(true);
+        when(em.isJoinedToTransaction()).thenReturn(true);
+        org.mockito.Mockito.doAnswer(invocation -> { stale.setFireTime(newFire); return null; }).when(em).refresh(stale);
+        armer.entityManager = em;
+
+        armer.armPost(post);
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(em);
+        inOrder.verify(em).flush();
+        inOrder.verify(em).refresh(stale);
+        verify(scheduler).scheduleAfterCommit(PublishTask.dispatch("ig", newFire, newFire));
+    }
+
+    @Test
     void armPost_withNoPost_armsNothing() {
         assertThat(armer.armPost(null)).isZero();
         verify(scheduler, never()).scheduleAfterCommit(any());

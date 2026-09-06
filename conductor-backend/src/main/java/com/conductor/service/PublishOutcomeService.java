@@ -18,6 +18,7 @@ import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -613,7 +614,12 @@ public class PublishOutcomeService {
         if (postId == null) {
             return;
         }
-        WorkItem post = workItemRepository.findById(postId).orElse(null);
+        // Under a row lock on the Post, so concurrent outcomes serialise their tallies. Two destinations
+        // firing in the same second — which is exactly what Cloud Tasks delivers — each record their own
+        // outcome in their own REQUIRES_NEW transaction; without the lock each counts the rows it can see,
+        // finds the other still in flight, and neither rolls the Post up. The second waits here for the
+        // first to commit and then sees every outcome.
+        WorkItem post = entityManager.find(WorkItem.class, postId, LockModeType.PESSIMISTIC_WRITE);
         if (post == null) {
             return;
         }

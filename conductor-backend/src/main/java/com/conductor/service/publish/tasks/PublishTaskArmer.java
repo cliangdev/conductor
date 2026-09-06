@@ -10,10 +10,13 @@ import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -45,6 +48,13 @@ public class PublishTaskArmer {
     private final PublishPlatformRegistry platformRegistry;
     private final PublishTaskScheduler scheduler;
 
+    /**
+     * Optional: null in a plain unit test. Used to re-read a row the caller's persistence context may hold
+     * stale — see {@link #armPost}.
+     */
+    @PersistenceContext
+    EntityManager entityManager;
+
     public PublishTaskArmer(PostPublishTargetRepository targetRepository,
                             PublishPlatformRegistry platformRegistry,
                             PublishTaskScheduler scheduler) {
@@ -60,7 +70,14 @@ public class PublishTaskArmer {
         }
         OffsetDateTime now = OffsetDateTime.now();
         int armed = 0;
-        for (PostPublishTarget target : targetRepository.findAllByWorkItemId(post.getId())) {
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(post.getId());
+        // Entering the scheduled status restamps every PENDING row's fire time in its own transaction
+        // (PublishTargetService#restampFireTimes is REQUIRES_NEW) after the gate validators loaded those
+        // same rows into the caller's context. A query here would hand back the cached, pre-restamp copies
+        // and arm a task for the old time, which the handler would then rightly drop as stale — leaving the
+        // Post to the sweep. Flush what the caller itself changed, then re-read the rows from the database.
+        refresh(targets);
+        for (PostPublishTarget target : targets) {
             Optional<PublishTask> task = taskFor(target, now);
             if (task.isPresent()) {
                 scheduler.scheduleAfterCommit(task.get());
@@ -69,6 +86,22 @@ public class PublishTaskArmer {
         }
         log.debug("Armed {} publish task(s) for post {}", armed, post.getId());
         return armed;
+    }
+
+    private void refresh(List<PostPublishTarget> targets) {
+        if (entityManager == null) {
+            return;
+        }
+        boolean flushed = false;
+        for (PostPublishTarget target : targets) {
+            if (entityManager.contains(target)) {
+                if (!flushed && entityManager.isJoinedToTransaction()) {
+                    entityManager.flush();
+                    flushed = true;
+                }
+                entityManager.refresh(target);
+            }
+        }
     }
 
     /** The task {@code target} needs next, if any. */
