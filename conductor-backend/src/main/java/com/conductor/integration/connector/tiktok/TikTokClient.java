@@ -99,6 +99,8 @@ public class TikTokClient {
     static final long TARGET_CHUNK_BYTES = 10L * 1024 * 1024;
 
     /** TikTok signals success with {@code error.code == "ok"}, not with the HTTP status alone. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
     private static final String ERROR_CODE_OK = "ok";
 
     /** Publish status TikTok reports once the post is live. */
@@ -374,10 +376,10 @@ public class TikTokClient {
         }
         URI uri = URI.create(API_BASE + "/video/query/?fields=id,view_count,like_count,comment_count,share_count");
         Map<String, Object> body = Map.of("filters", Map.of("video_ids", videoIds));
-        ResponseEntity<JsonNode> response = exchangeClassifying("video query", () ->
+        ResponseEntity<String> response = exchangeClassifying("video query", () ->
                 restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(body, jsonHeaders(accessToken)),
-                        JsonNode.class));
-        JsonNode root = response.getBody();
+                        String.class));
+        JsonNode root = parseJson(response.getBody());
         JsonNode error = root == null ? null : root.get("error");
         if (error != null && error.hasNonNull("code") && !"ok".equals(error.path("code").asText())) {
             throw new TikTokApiException("TikTok video query failed: " + error.path("message").asText(),
@@ -573,4 +575,20 @@ public class TikTokClient {
     record ErrorEnvelope(@JsonProperty("code") String code,
                          @JsonProperty("message") String message,
                          @JsonProperty("log_id") String logId) {}
+
+    /**
+     * Parses a JSON body read as text. Read as text on purpose: this codebase's HTTP converters are
+     * Jackson 3, which cannot produce a Jackson 2 {@code JsonNode}, so asking the template for one fails
+     * at runtime against a real server even though a mocked template returns whatever it is told.
+     */
+    static JsonNode parseJson(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            return JSON.readTree(body);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Response was not JSON: " + e.getMessage(), e);
+        }
+    }
 }

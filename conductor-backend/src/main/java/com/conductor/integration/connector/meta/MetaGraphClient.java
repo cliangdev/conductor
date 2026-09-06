@@ -65,6 +65,8 @@ public class MetaGraphClient {
      * A video upload can outrun the webhook-shaped default timeout, so the connector declares its own
      * invocation deadline; this is the per-request bound underneath it.
      */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
     private static final Duration UPLOAD_TIMEOUT = Duration.ofMinutes(5);
 
     private final RestTemplate restTemplate;
@@ -367,9 +369,9 @@ public class MetaGraphClient {
         URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + videoId)
                 .queryParam("fields", "id,status,permalink_url")
                 .encode().build().toUri());
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
-                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), JsonNode.class);
-        JsonNode body = response.getBody();
+        ResponseEntity<String> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), String.class);
+        JsonNode body = parseJson(response.getBody());
         if (body == null) {
             throw new IllegalStateException("Facebook returned no body for video " + videoId);
         }
@@ -419,9 +421,9 @@ public class MetaGraphClient {
                 .queryParam("ids", String.join(",", postIds))
                 .queryParam("fields", "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)")
                 .encode().build().toUri());
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
-                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), JsonNode.class);
-        JsonNode body = response.getBody();
+        ResponseEntity<String> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), String.class);
+        JsonNode body = parseJson(response.getBody());
         List<PostMetrics> metrics = new ArrayList<>();
         for (String id : postIds) {
             JsonNode node = body == null ? null : body.get(id);
@@ -451,9 +453,9 @@ public class MetaGraphClient {
                 .queryParam("ids", String.join(",", mediaIds))
                 .queryParam("fields", "id,like_count,comments_count")
                 .encode().build().toUri());
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
-                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), JsonNode.class);
-        JsonNode body = response.getBody();
+        ResponseEntity<String> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+        JsonNode body = parseJson(response.getBody());
         List<PostMetrics> metrics = new ArrayList<>();
         for (String id : mediaIds) {
             JsonNode node = body == null ? null : body.get(id);
@@ -697,4 +699,20 @@ public class MetaGraphClient {
         return uri;
     }
 
+
+    /**
+     * Parses a JSON body read as text. Read as text on purpose: this codebase's HTTP converters are
+     * Jackson 3, which cannot produce a Jackson 2 {@code JsonNode}, so asking the template for one fails
+     * at runtime against a real server even though a mocked template returns whatever it is told.
+     */
+    static JsonNode parseJson(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            return JSON.readTree(body);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Response was not JSON: " + e.getMessage(), e);
+        }
+    }
 }

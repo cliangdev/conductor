@@ -9,6 +9,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -57,11 +58,17 @@ class InstagramPublishActionTest {
                     Call call = new Call(invocation.getArgument(1), invocation.getArgument(0),
                             invocation.getArgument(2));
                     calls.add(call);
-                    return ResponseEntity.ok(routes.stream()
+                    Object body = routes.stream()
                             .filter(route -> route.matches(call))
                             .findFirst()
                             .orElseThrow(() -> new AssertionError("Unstubbed Graph call: " + call))
-                            .body().apply(call));
+                            .body().apply(call);
+                    // The JSON-tree reads ask for text and parse it themselves (the converters on this
+                    // classpath are Jackson 3); a route stubbed with a JsonNode answers as its JSON.
+                    if (String.class.equals(invocation.getArgument(3)) && body instanceof JsonNode node) {
+                        body = node.toString();
+                    }
+                    return ResponseEntity.ok(body);
                 });
     }
 

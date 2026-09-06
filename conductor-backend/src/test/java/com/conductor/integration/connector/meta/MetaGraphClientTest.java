@@ -142,11 +142,8 @@ class MetaGraphClientTest {
         server.verify();
     }
 
-    // readVideoStatus deserializes into com.fasterxml.jackson.databind.JsonNode directly (as
-    // readPostMetrics/readMediaMetrics already do); MockRestServiceServer's real message conversion
-    // cannot exercise that response type on this classpath, so it is driven against a mocked
-    // RestTemplate instead — exactly the harness FacebookPublishActionTest/InstagramPublishActionTest
-    // already use for the same reason.
+    // readVideoStatus reads text and parses it; these two drive it through a mocked template that
+    // answers with the JSON, the real-converter path is covered further down.
 
     @Test
     void readVideoStatus_readyMeansPublished_andCarriesThePermalink() throws Exception {
@@ -179,7 +176,60 @@ class MetaGraphClientTest {
     private static MetaGraphClient clientReturning(JsonNode body) {
         RestTemplate mocked = mock(RestTemplate.class);
         when(mocked.exchange(any(URI.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class)))
-                .thenReturn(ResponseEntity.ok(body));
+                .thenReturn(ResponseEntity.ok(body.toString()));
         return new MetaGraphClient(mocked);
+    }
+
+    // ---- JSON-tree reads over a real transport ----------------------------------------------------
+    // These three reads used to ask the template for a Jackson 2 JsonNode. The converters on this classpath
+    // are Jackson 3, which cannot produce one, so a mocked template hid a read that failed against Graph.
+
+    @Test
+    void readPostMetrics_parsesABatch_overTheRealConverters() {
+        server.expect(requestTo(containsString("/v21.0/?ids=p1,p2")))
+                .andExpect(method(org.springframework.http.HttpMethod.GET))
+                .andRespond(withSuccess("{\"p1\":{\"id\":\"p1\",\"shares\":{\"count\":4},"
+                        + "\"likes\":{\"summary\":{\"total_count\":10}},"
+                        + "\"comments\":{\"summary\":{\"total_count\":2}}},"
+                        + "\"p2\":{\"error\":{\"message\":\"Unsupported get request\",\"code\":100}}}",
+                        MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("p1", "p2"), "page-token");
+
+        assertThat(metrics).hasSize(2);
+        assertThat(metrics.get(0).id()).isEqualTo("p1");
+        assertThat(metrics.get(0).likes()).isEqualTo(10L);
+        assertThat(metrics.get(0).comments()).isEqualTo(2L);
+        assertThat(metrics.get(0).shares()).isEqualTo(4L);
+        assertThat(metrics.get(0).unavailable()).isFalse();
+        assertThat(metrics.get(1).unavailable()).isTrue();
+        server.verify();
+    }
+
+    @Test
+    void readMediaMetrics_parsesABatch_overTheRealConverters() {
+        server.expect(requestTo(containsString("/v21.0/?ids=m1")))
+                .andRespond(withSuccess("{\"m1\":{\"id\":\"m1\",\"like_count\":7,\"comments_count\":1}}",
+                        MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m1"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.likes()).isEqualTo(7L);
+            assertThat(m.comments()).isEqualTo(1L);
+            assertThat(m.unavailable()).isFalse();
+        });
+    }
+
+    @Test
+    void readVideoStatus_parsesAReel_overTheRealConverters() {
+        server.expect(requestTo(containsString("/v21.0/vid-9?fields=id,status,permalink_url")))
+                .andRespond(withSuccess("{\"id\":\"vid-9\",\"status\":{\"video_status\":\"ready\"},"
+                        + "\"permalink_url\":\"/reel/9\"}", MediaType.APPLICATION_JSON));
+
+        MetaGraphClient.VideoStatus status = client.readVideoStatus("vid-9", "page-token");
+
+        assertThat(status.published()).isTrue();
+        assertThat(status.permalink()).contains("/reel/9");
     }
 }
