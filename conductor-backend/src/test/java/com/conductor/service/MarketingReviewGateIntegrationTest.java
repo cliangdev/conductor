@@ -347,7 +347,11 @@ class MarketingReviewGateIntegrationTest {
         target.setConnectorId(connectorId);
         target.setConnectionId(connection.getId());
         target.setPlatform(platform);
-        target.setLane(PublishLane.APP_MANAGED);
+        // The lane a connected account really publishes this platform on: a Facebook Page is handed to
+        // Facebook's own scheduler (NATIVE) and so needs its ten-minute floor; Instagram and TikTok are
+        // dispatched by Conductor. A held story is the one Facebook case that is APP_MANAGED, and it is
+        // not what these rows are.
+        target.setLane(new com.conductor.service.publish.PublishPlatformRegistry().require(platform).automatedLane());
         target.setState(PostPublishTargetState.PENDING);
         target.setCaptionOverride(captionOverride);
         target.setIdempotencyKey("key-" + UUID.randomUUID());
