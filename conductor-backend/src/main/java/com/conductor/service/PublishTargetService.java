@@ -524,7 +524,7 @@ public class PublishTargetService {
         }
         PublishPlatform platform = platformRegistry.find(option.platform()).orElse(null);
         if (platform != null && !platform.supports(format)) {
-            throw new BusinessException(platform.label() + " does not publish " + format.wire() + "s; it offers "
+            throw new BusinessException(platform.label() + " does not publish " + format.plural() + "; it offers "
                     + platform.formats().stream().sorted().map(PostFormat::wire)
                             .collect(java.util.stream.Collectors.joining(", ")));
         }

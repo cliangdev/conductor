@@ -993,7 +993,7 @@ class PublishTargetServiceTest {
         assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
                 List.of(new PublishTargetService.TargetSelection("tiktok", null, null, null, null, "story")), caller))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("TikTok does not publish storys")
+                .hasMessageContaining("TikTok does not publish stories")
                 .hasMessageContaining("feed");
         assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
                 List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null, null, "live")), caller))

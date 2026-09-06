@@ -15,6 +15,15 @@ public enum PostFormat {
     REEL,
     STORY;
 
+    /** The plural a human reads in a refusal: "feed posts", "reels", "stories". */
+    public String plural() {
+        return switch (this) {
+            case FEED -> "feed posts";
+            case REEL -> "reels";
+            case STORY -> "stories";
+        };
+    }
+
     /** The value as it travels over the API and into connector inputs: lowercase. */
     public String wire() {
         return name().toLowerCase(Locale.ROOT);
