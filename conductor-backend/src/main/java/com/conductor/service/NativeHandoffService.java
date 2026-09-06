@@ -256,6 +256,15 @@ public class NativeHandoffService {
         }
     }
 
+    /**
+     * Hands one target off now: the request-time entry point for a HANDOFF {@code PublishTask} arriving
+     * from Cloud Tasks (see {@code PublishTaskHandler}). Same claim as the sweep, and it requires the Post
+     * to still be in its scheduled status, exactly as the sweep does.
+     */
+    public void handoffNow(String targetId, OffsetDateTime now) {
+        handoffTarget(targetId, now, true);
+    }
+
     // ---- (c) revocation ------------------------------------------------------------------------
 
     /**

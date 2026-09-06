@@ -165,4 +165,27 @@ class RunTokenServiceTest {
 
         assertThat(runTokenService.parseMcpToken(tokenWithoutProjectId)).isEmpty();
     }
+    // ---- publish task tokens (Cloud Tasks carrying a PublishTask) ----
+
+    @Test
+    void publishTaskToken_isBoundToItsTarget() {
+        String token = runTokenService.generatePublishTaskToken("target-1", java.time.Instant.now().plusSeconds(3600));
+        assertThat(runTokenService.validatePublishTaskToken(token, "target-1")).isTrue();
+        assertThat(runTokenService.validatePublishTaskToken(token, "target-2")).isFalse();
+    }
+
+    @Test
+    void publishTaskToken_isNotARunToken_andViceVersa() {
+        String publish = runTokenService.generatePublishTaskToken("x", java.time.Instant.now().plusSeconds(3600));
+        String run = runTokenService.generateRunToken("x", 1);
+        assertThat(runTokenService.validateRunToken(publish, "x")).isFalse();
+        assertThat(runTokenService.validatePublishTaskToken(run, "x")).isFalse();
+        assertThat(runTokenService.parseMcpToken(publish)).isEmpty();
+    }
+
+    @Test
+    void publishTaskToken_expiresWhenTold() {
+        String token = runTokenService.generatePublishTaskToken("x", java.time.Instant.now().minusSeconds(60));
+        assertThat(runTokenService.validatePublishTaskToken(token, "x")).isFalse();
+    }
 }

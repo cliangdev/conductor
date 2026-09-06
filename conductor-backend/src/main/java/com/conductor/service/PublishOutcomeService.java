@@ -9,6 +9,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.publish.PublishPlatform;
+import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.WorkItemRepository;
@@ -222,6 +223,7 @@ public class PublishOutcomeService {
     private final WorkItemRepository workItemRepository;
     private final WorkflowDefinitionResolver resolver;
     private final ProjectSecurityService projectSecurityService;
+    private final PublishTaskArmer publishTaskArmer;
     private final boolean reconciliationEnabled;
 
     /**
@@ -253,6 +255,7 @@ public class PublishOutcomeService {
                                  WorkItemRepository workItemRepository,
                                  WorkflowDefinitionResolver resolver,
                                  ProjectSecurityService projectSecurityService,
+                                 PublishTaskArmer publishTaskArmer,
                                  @Value("${conductor.post-publish.enabled:true}") boolean reconciliationEnabled,
                                  @Value("${conductor.post-publish.stranded-after-minutes:60}")
                                  long strandedAfterMinutes) {
@@ -263,6 +266,7 @@ public class PublishOutcomeService {
         this.workItemRepository = workItemRepository;
         this.resolver = resolver;
         this.projectSecurityService = projectSecurityService;
+        this.publishTaskArmer = publishTaskArmer;
         this.reconciliationEnabled = reconciliationEnabled;
         this.strandedAfter = Duration.ofMinutes(strandedAfterMinutes);
     }
@@ -485,6 +489,9 @@ public class PublishOutcomeService {
             log.info("Post {} moved {} -> {} while {} retried target(s) are in flight",
                     post.getId(), fromStatus, scheduledStatus, failed.size());
         }
+        // The re-fired rows are PENDING again with fresh fire times: give each its timed request, as
+        // entering the scheduled status does, rather than leaving them to the sweep.
+        publishTaskArmer.armPost(post);
         return new RetryResult(post, sorted(targetRepository.findAllByWorkItemId(post.getId())), failed.size());
     }
 

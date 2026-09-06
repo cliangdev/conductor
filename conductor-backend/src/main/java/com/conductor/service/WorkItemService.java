@@ -13,6 +13,7 @@ import com.conductor.repository.AssetRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
@@ -63,6 +64,7 @@ public class WorkItemService {
     private final WorkItemWorkflowService workItemWorkflowService;
     private final AssetService assetService;
     private final NativeHandoffService nativeHandoffService;
+    private final PublishTaskArmer publishTaskArmer;
     private final PublishBundleGuard publishBundleGuard;
     private final PublishTargetService publishTargetService;
     private final PublishPlatformRegistry platformRegistry;
@@ -78,6 +80,7 @@ public class WorkItemService {
             WorkItemWorkflowService workItemWorkflowService,
             AssetService assetService,
             NativeHandoffService nativeHandoffService,
+            PublishTaskArmer publishTaskArmer,
             PublishBundleGuard publishBundleGuard,
             PublishTargetService publishTargetService,
             AssetRepository assetRepository,
@@ -94,6 +97,7 @@ public class WorkItemService {
         this.workItemWorkflowService = workItemWorkflowService;
         this.assetService = assetService;
         this.nativeHandoffService = nativeHandoffService;
+        this.publishTaskArmer = publishTaskArmer;
         this.publishBundleGuard = publishBundleGuard;
         this.publishTargetService = publishTargetService;
     }
@@ -598,6 +602,9 @@ public class WorkItemService {
         }
         publishTargetService.restampFireTimes(workItem);
         nativeHandoffService.handoffForPost(workItem);
+        // Each target now gets a timed request for its next step (dispatch, hand-off, or confirmation) so it
+        // fires on the minute even on a Cloud Run instance that is asleep; the pollers remain as a sweep.
+        publishTaskArmer.armPost(workItem);
     }
 
     /**

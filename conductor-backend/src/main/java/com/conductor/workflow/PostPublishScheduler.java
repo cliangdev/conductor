@@ -311,6 +311,32 @@ public class PostPublishScheduler {
                 .executeUpdate();
     }
 
+    /**
+     * Fires one target now, on whichever lane it is on: the request-time entry point for a DISPATCH
+     * {@code PublishTask} arriving from Cloud Tasks (see {@code PublishTaskHandler}), which is how a
+     * scheduled Post fires on the minute on a Cloud Run instance that may have been asleep. Exactly the
+     * claims the sweep makes — a duplicate delivery, or a delivery racing the sweep, updates zero rows.
+     * A NATIVE row is not this class's: it is handed off, not dispatched.
+     */
+    public void fireTarget(String targetId, OffsetDateTime now) {
+        PostPublishTarget target = targetRepository.findById(targetId).orElse(null);
+        if (target == null || target.getLane() == null) {
+            return;
+        }
+        switch (target.getLane()) {
+            case APP_MANAGED -> claimAndDispatch(targetId);
+            case MANUAL -> {
+                if (self.flagManualInNewTx(targetId) > 0) {
+                    log.info("Target {} is due and is a manual destination; awaiting a human to publish it",
+                            targetId);
+                    announceAwaitingManual(target);
+                }
+            }
+            default -> log.debug("Target {} is on the {} lane; it is handed off, not dispatched",
+                    targetId, target.getLane());
+        }
+    }
+
     private void claimAndDispatch(String targetId) {
         PublishDispatch dispatch = self.claimInNewTx(targetId);
         if (dispatch == null) {

@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
@@ -88,6 +89,9 @@ class WorkItemServiceTest {
     /** Real, not mocked: the registry is static data, and a mock would answer "not publishing" for every Workflow. */
     @Spy
     private PublishPlatformRegistry platformRegistry = new PublishPlatformRegistry();
+
+    @Mock
+    private PublishTaskArmer publishTaskArmer;
 
     @InjectMocks
     private WorkItemService workItemService;
