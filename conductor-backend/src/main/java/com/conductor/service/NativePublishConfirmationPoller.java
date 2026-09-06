@@ -204,10 +204,29 @@ public class NativePublishConfirmationPoller {
                                PublishPlatform.ConfirmAction action, String platformPostId, String idempotencyKey,
                                int attempt) {}
 
-    private void confirmTarget(String targetId, OffsetDateTime now) {
+    /** How one confirmation attempt ended, for the caller deciding whether to come back. */
+    public enum ConfirmOutcome {
+        /** The row reached a terminal state: confirmed live, or failed after the last attempt. */
+        SETTLED,
+        /** The platform does not report it live yet and attempts remain. */
+        RETRY_LATER,
+        /** Nothing was attempted: the row is not confirmable (wrong state, too early, no connection...). */
+        SKIPPED
+    }
+
+    /**
+     * Runs one confirmation attempt now: the request-time entry point for a CONFIRM {@code PublishTask}
+     * arriving from Cloud Tasks (see {@code PublishTaskHandler}). Same claim as the sweep — the attempt
+     * counter is bumped with a conditional UPDATE, so a duplicate delivery attempts nothing.
+     */
+    public ConfirmOutcome confirmNow(String targetId, OffsetDateTime now) {
+        return confirmTarget(targetId, now);
+    }
+
+    private ConfirmOutcome confirmTarget(String targetId, OffsetDateTime now) {
         ConfirmationAttempt attempt = self.claimAttemptInNewTx(targetId, now);
         if (attempt == null) {
-            return;
+            return ConfirmOutcome.SKIPPED;
         }
         log.debug("Asking {} whether post {} for target {} is live (attempt {} of {})",
                 attempt.platform(), attempt.platformPostId(), targetId, attempt.attempt(),
@@ -224,7 +243,7 @@ public class NativePublishConfirmationPoller {
                     attempt.platformPostId());
             publishOutcomeService.recordSuccess(attempt.targetId(), platformPostId,
                     stringValue(output, PERMALINK_OUTPUT_KEY));
-            return;
+            return ConfirmOutcome.SETTLED;
         }
 
         String reason = readable
@@ -232,10 +251,11 @@ public class NativePublishConfirmationPoller {
                 : "the check itself failed: " + (result == null ? "no result" : result.message());
         if (attempt.attempt() >= maxConfirmationAttempts) {
             publishOutcomeService.recordFailure(attempt.targetId(), exhaustedMessage(attempt, reason));
-            return;
+            return ConfirmOutcome.SETTLED;
         }
         log.debug("Target {} not confirmed live on attempt {} of {} ({}); leaving it handed off",
                 attempt.targetId(), attempt.attempt(), maxConfirmationAttempts, reason);
+        return ConfirmOutcome.RETRY_LATER;
     }
 
     /**

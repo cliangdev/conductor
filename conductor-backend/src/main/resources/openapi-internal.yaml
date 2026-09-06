@@ -17,6 +17,8 @@ tags:
     description: Workflow run worker callbacks (logs, outputs, job failures)
   - name: work-item-assets-internal
     description: Local-profile passthrough for work-item file-Asset bytes
+  - name: publish-internal
+    description: Cloud Tasks targets for timed publishing work on post_publish_target rows
 
 paths:
   /workflow-runs/{runId}/log-chunk:
@@ -247,6 +249,71 @@ paths:
         "404":
           description: No such Asset, or the Asset does not belong to this Work Item
 
+  /publish-targets/{targetId}/dispatch:
+    post:
+      tags: [publish-internal]
+      summary: Fire a due APP_MANAGED or MANUAL publish target
+      description: >
+        Cloud Tasks' HTTP target for a DISPATCH publish task (see CloudTasksPublishTaskScheduler),
+        delivered at the target's fire time. Claims the row PENDING -> PUBLISHING (or -> AWAITING_MANUAL
+        on the manual lane) with the same conditional UPDATE PostPublishScheduler's sweep uses, then
+        publishes through the connector before responding. A no-op 200 when the row is no longer
+        PENDING, when its fire time no longer matches `fireTime` (the Post was rescheduled and a fresh
+        task exists), or when it is not due yet (re-armed for the right moment instead).
+      operationId: dispatchPublishTarget
+      security:
+        - publishTaskToken: []
+      parameters:
+        - $ref: "#/components/parameters/TargetId"
+        - $ref: "#/components/parameters/FireTime"
+      responses:
+        "200":
+          description: Delivered — acted on, re-armed, or nothing left to do
+        "401":
+          description: Missing or invalid publish task token
+
+  /publish-targets/{targetId}/handoff:
+    post:
+      tags: [publish-internal]
+      summary: Hand a NATIVE publish target to the platform's own scheduler
+      description: >
+        Cloud Tasks' HTTP target for a HANDOFF publish task, delivered when the platform's hand-off
+        window opens. Same claim as NativeHandoffService's sweep; on success a CONFIRM task is armed
+        for the fire time. Same stale/not-due/no-op rules as the dispatch endpoint.
+      operationId: handoffPublishTarget
+      security:
+        - publishTaskToken: []
+      parameters:
+        - $ref: "#/components/parameters/TargetId"
+        - $ref: "#/components/parameters/FireTime"
+      responses:
+        "200":
+          description: Delivered — acted on, re-armed, or nothing left to do
+        "401":
+          description: Missing or invalid publish task token
+
+  /publish-targets/{targetId}/confirm:
+    post:
+      tags: [publish-internal]
+      summary: Ask the platform whether a handed-off publish target is live
+      description: >
+        Cloud Tasks' HTTP target for a CONFIRM publish task, delivered at the fire time and re-armed
+        a minute later while the platform does not yet report the post live, up to the confirmation
+        poller's attempt cap. `attempt` is the row's attempts count this task expects; a mismatch
+        means another confirmation chain owns the row and this one ends.
+      operationId: confirmPublishTarget
+      security:
+        - publishTaskToken: []
+      parameters:
+        - $ref: "#/components/parameters/TargetId"
+        - $ref: "#/components/parameters/FireTime"
+        - $ref: "#/components/parameters/Attempt"
+      responses:
+        "200":
+          description: Delivered — confirmed, re-armed, or nothing left to do
+        "401":
+          description: Missing or invalid publish task token
+
 components:
   parameters:
     RunId:
@@ -273,11 +340,37 @@ components:
       required: true
       schema:
         type: string
+    TargetId:
+      name: targetId
+      in: path
+      required: true
+      schema:
+        type: string
+    FireTime:
+      name: fireTime
+      in: query
+      required: true
+      description: The target's fire time when the task was armed, as epoch seconds
+      schema:
+        type: integer
+        format: int64
+    Attempt:
+      name: attempt
+      in: query
+      required: true
+      description: The attempts count the row is expected to hold when this task arrives
+      schema:
+        type: integer
+        format: int32
   securitySchemes:
     runToken:
       type: http
       scheme: bearer
       description: Per-run ephemeral token minted by RunTokenService
+    publishTaskToken:
+      type: http
+      scheme: bearer
+      description: Per-target token minted by RunTokenService for a Cloud Task carrying a PublishTask
   schemas:
     LogChunkRequest:
       type: object

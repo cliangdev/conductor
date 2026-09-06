@@ -230,6 +230,57 @@ item to the first one's shape, which may well be what was wanted.
 > verified URL prefix for the app in the TikTok developer portal. Without it every photo post fails with
 > a message naming this; video posts are unaffected, since they upload their bytes.
 
+## Firing on time
+
+A scheduled Post fires from a **Cloud Task**, not from a background thread. Production runs the backend
+on Cloud Run at `min-instances=0` with CPU throttling: a `@Scheduled` thread only gets CPU while a
+request is being served, and with no traffic there is no instance at all. Workflow job dispatch moved to
+Cloud Tasks for that reason (#388, `CloudTasksJobDispatcher`); timed publishing uses the same shape.
+
+**Arming.** Entering the scheduled status (and a retry of failed targets) hands every target of the Post
+to `PublishTaskArmer`, which creates one task per target for its next step:
+
+| Row | Task | Delivered at |
+|---|---|---|
+| `PENDING`, APP_MANAGED or MANUAL | `DISPATCH` | the fire time |
+| `PENDING`, NATIVE | `HANDOFF` | fire time minus the platform's maximum lead (now, if already inside it) |
+| `HANDED_OFF` | `CONFIRM` | the fire time, then every minute while the platform does not report it live |
+
+Each task is an HTTP request to `POST /internal/v1/publish-targets/{id}/{dispatch|handoff|confirm}`
+with a target-bound bearer token (`RunTokenService#generatePublishTaskToken`) and the target's fire time
+as a snapshot in the URL. `PublishTaskHandler` receives it and runs **the same conditional claim the
+poller runs** — `PENDING → PUBLISHING` in one `UPDATE … WHERE state = 'PENDING'` — so a duplicate
+delivery, or a task racing the sweep, updates zero rows and publishes nothing twice.
+
+**What makes a task safe to deliver late, early, or after the Post changed:**
+
+- *Stale.* The row's fire time no longer matches the snapshot: the Post was rescheduled and a fresh task
+  exists. Dropped. Unscheduling never cancels a task; the row's state does that on arrival.
+- *Early.* The row's fire time is still ahead — Cloud Tasks caps `scheduleTime` at 30 days, so a Post
+  scheduled further out is armed at the cap and re-armed on arrival; a platform's hand-off window may
+  not have opened yet. Re-armed for the right moment, not acted on.
+- *Owned elsewhere.* A `CONFIRM` whose attempt number is not the row's — another chain is already
+  polling this row. Dropped, so the two never fork.
+
+**The pollers stay on** (`PostPublishScheduler`, `NativeHandoffService`, `NativePublishConfirmationPoller`,
+`PublishOutcomeService`'s stranded-row sweep) as the sweep behind this path. They cost nothing while the
+instance is asleep, and they catch anything a failed task creation left behind, which is logged at ERROR.
+Both paths honour the same `conductor.*.enabled` flags.
+
+**Setup.** The queue is separate from `workflow-jobs` so it can retry on a cadence of seconds to minutes:
+
+```bash
+gcloud tasks queues create publish-tasks --location us-central1 \
+  --max-attempts 20 --min-backoff 10s --max-backoff 300s --max-doublings 5 \
+  --max-concurrent-dispatches 16
+```
+
+`GCP_TASKS_DISPATCH_BASE_URL` (the backend's own URL) and `GCP_PROJECT_ID` are the same variables the job
+dispatcher already needs; `GCP_TASKS_PUBLISH_QUEUE_NAME` overrides the queue name. The runtime service
+account needs `cloudtasks.tasks.create` on the queue. On the `local` profile, `LocalPublishTaskScheduler`
+holds tasks on an in-process timer instead, gated by the same three flags, so a laptop with the pollers
+switched on watches a Post fire on the minute.
+
 ## Outcomes
 
 A Post's single status cannot describe a partial send, so every target keeps its own row. A Post that
@@ -299,7 +350,8 @@ example Workflow and the enums agree with the registry.
 ## Where things live
 
 - `service/publish/PublishPlatformRegistry` — the one table of platforms; everything below reads it
-- `workflow/PostPublishScheduler` — the APP_MANAGED dispatch poller and the MANUAL flagging pass
+- `service/publish/tasks/` — `PublishTaskArmer` (one timed Cloud Task per target on schedule entry and retry), `PublishTaskHandler` (the request-time entry point behind `/internal/v1/publish-targets/*`), `CloudTasksPublishTaskScheduler` / `LocalPublishTaskScheduler`
+- `workflow/PostPublishScheduler` — the APP_MANAGED dispatch poller and the MANUAL flagging pass (now the sweep behind the Cloud Tasks path)
 - `service/NativeHandoffService` — hand-off, confirmation and revocation for the NATIVE lane
 - `service/PublishOutcomeService` — outcome recording, the Post-level roll-up, retry, manual completion
 - `service/PostScheduleValidator`, `MediaTargetValidator`, `PublishOptionsValidator` — the approval gate
