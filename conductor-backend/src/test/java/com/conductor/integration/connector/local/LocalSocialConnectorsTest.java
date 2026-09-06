@@ -257,6 +257,70 @@ class LocalSocialConnectorsTest {
                 .startsWith(LocalMetaConnector.LOCAL_PERMALINK_BASE);
     }
 
+    // ---- formats -------------------------------------------------------------------------------
+
+    @Test
+    void localFacebookStoryPublishesImmediatelyWithAFormatEncodedId() {
+        ActionResult result = meta.invoke("publish_facebook_post",
+                Map.of("format", "story", "message", "ignored anyway"), metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("post_id")).asString().startsWith("fb-story-");
+        assertThat(result.output()).containsEntry("is_story", true);
+    }
+
+    @Test
+    void localFacebookReelPublishesWithAFormatEncodedId() {
+        Instant future = Instant.now().plusSeconds(3600);
+        ActionResult result = meta.invoke("publish_facebook_post",
+                Map.of("format", "reel", "message", "dancing", "scheduled_publish_time", future.toString()),
+                metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("post_id")).asString().startsWith("fb-reel-");
+        assertThat(result.output()).containsEntry("scheduled", true);
+
+        ActionResult readBack = meta.invoke("get_facebook_post",
+                Map.of("post_id", result.output().get("post_id")), metaContext());
+        assertThat(readBack.output()).containsEntry("is_published", false);
+    }
+
+    @Test
+    void localInstagramStoryPublishesWithAFormatEncodedIdAndNoCaptionRoundTrip() {
+        ActionResult result = meta.invoke("publish_instagram_media",
+                Map.of("format", "story", "caption", "ignored"), metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("media_id")).asString().startsWith("ig-story-");
+        assertThat(result.output()).containsEntry("is_story", true);
+    }
+
+    @Test
+    void localInstagramReelAcceptsEveryOptionParamAndEchoesThemBack() {
+        ActionResult result = meta.invoke("publish_instagram_media",
+                Map.of("format", "reel", "caption", "dance", "share_to_feed", true,
+                        "collaborators", List.of("alice", "bob"), "cover_asset_id", "asset-1",
+                        "audio_name", "Original audio"),
+                metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("media_id")).asString().startsWith("ig-reel-");
+        assertThat(result.output()).containsEntry("share_to_feed", true);
+        assertThat(result.output()).containsEntry("collaborators", List.of("alice", "bob"));
+        assertThat(result.output()).containsEntry("cover_asset_id", "asset-1");
+        assertThat(result.output()).containsEntry("audio_name", "Original audio");
+    }
+
+    @Test
+    void localInstagramFeedImageAcceptsAltText() {
+        ActionResult result = meta.invoke("publish_instagram_media",
+                Map.of("caption", "hero", "alt_text", "a hero shot"), metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("alt_text", "a hero shot");
+        assertThat(result.output()).doesNotContainKey("is_story");
+    }
+
     @Test
     void localYouTubePublishReturnsACannedVideoIdAndGoesPublicAtItsPublishAt() {
         ActionResult published = youtube.invoke("publish_video",
