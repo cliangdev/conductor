@@ -240,9 +240,10 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
-    void aFacebookTargetFortyFiveDaysOutStaysPendingUntilItsFireTimeComesInsideTheThirtyDayWindow() {
+    void aFacebookTargetAHundredDaysOutStaysPendingUntilItsFireTimeComesInsideTheSeventyFiveDayWindow() {
         OffsetDateTime now = OffsetDateTime.now();
-        PostPublishTarget target = pendingNative("facebook", now.plusDays(45));
+        // Beyond the Page feed's 75-day scheduling ceiling.
+        PostPublishTarget target = pendingNative("facebook", now.plusDays(100));
 
         runSweep(now);
 
@@ -250,8 +251,8 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
         verify(actionInvocationService, never())
                 .invoke(any(), anyString(), any(), eq(target.getIdempotencyKey()), any());
 
-        // Twenty days later the same row is twenty-five days out — now inside Facebook's window.
-        runSweep(now.plusDays(20));
+        // Thirty days later the same row is seventy days out — now inside Facebook's window.
+        runSweep(now.plusDays(30));
 
         PostPublishTarget stored = reload(target);
         assertThat(stored.getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
@@ -259,7 +260,7 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
-    void aYouTubeTargetFarInTheFutureIsHandedOffImmediatelyBecauseYouTubeHasNoThirtyDayLimit() {
+    void aYouTubeTargetFarInTheFutureIsHandedOffImmediatelyBecauseYouTubeHasNoCeiling() {
         OffsetDateTime fireTime = OffsetDateTime.now().plusDays(400);
         PostPublishTarget target = pendingNative("youtube", fireTime);
 
