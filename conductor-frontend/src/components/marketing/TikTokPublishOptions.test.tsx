@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   TikTokPublishOptions,
@@ -205,5 +205,38 @@ describe('TikTokPublishOptions', () => {
     expect(screen.getByLabelText(/who can view this video/i)).toBeDisabled()
     expect(screen.getByRole('switch', { name: 'Comment' })).toBeDisabled()
     expect(screen.getByRole('switch', { name: 'Branded Content' })).toBeDisabled()
+  })
+
+  it('discloses AI-generated or AI-edited content', async () => {
+    const { onChange } = renderOptions()
+    const aigc = screen.getByRole('switch', { name: /ai-generated or ai-edited content/i })
+    expect(aigc).not.toBeChecked()
+    await userEvent.click(aigc)
+    expect(onChange).toHaveBeenCalledWith(values({ isAigc: true }))
+  })
+
+  it('offers a cover timestamp for a video post', async () => {
+    const { onChange } = renderOptions({ isVideo: true })
+    expect(screen.queryByLabelText(/add tiktok music automatically/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/cover image/i)).not.toBeInTheDocument()
+
+    const cover = screen.getByLabelText(/cover frame/i)
+    fireEvent.change(cover, { target: { value: '1500' } })
+    expect(onChange).toHaveBeenLastCalledWith(values({ videoCoverTimestampMs: 1500 }))
+  })
+
+  it('offers auto-music and a cover picker for a photo post', async () => {
+    const images = [
+      { id: 'asset-a', type: 'tiktok', label: 'Photo A', contentType: 'image/jpeg' },
+      { id: 'asset-b', type: 'tiktok', label: 'Photo B', contentType: 'image/jpeg' },
+    ] as React.ComponentProps<typeof TikTokPublishOptions>['images']
+    const { onChange } = renderOptions({ isVideo: false, images })
+    expect(screen.queryByLabelText(/cover frame/i)).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('switch', { name: /add tiktok music automatically/i }))
+    expect(onChange).toHaveBeenLastCalledWith(values({ autoAddMusic: true }))
+
+    await userEvent.selectOptions(screen.getByLabelText(/cover image/i), '1')
+    expect(onChange).toHaveBeenLastCalledWith(values({ photoCoverIndex: 1 }))
   })
 })

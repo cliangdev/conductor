@@ -35,6 +35,7 @@ import { statusMeta } from '@/lib/workflows'
 import {
   isApprovedOrLater,
   isUnderReviewOrLater,
+  isVideoContentType,
   type MediaAsset,
 } from '@/components/workitems/MediaUploadPanel'
 import {
@@ -44,6 +45,22 @@ import {
   tiktokOptionsProblem,
   type TikTokPublishOptionValues,
 } from '@/components/marketing/TikTokPublishOptions'
+import {
+  InstagramPublishOptions,
+  isSingleImageTarget,
+  normalizeInstagramOptions,
+  type InstagramPublishOptionValues,
+} from '@/components/marketing/InstagramPublishOptions'
+import {
+  YouTubePublishOptions,
+  normalizeYouTubeOptions,
+  type YouTubePublishOptionValues,
+} from '@/components/marketing/YouTubePublishOptions'
+import {
+  FormatBadge,
+  PostFormatSelector,
+  type PostFormat,
+} from '@/components/marketing/PostFormatSelector'
 import type { TikTokConsentTarget } from '@/components/marketing/TikTokConsentStep'
 import type { WorkflowView } from '@/types/workItem'
 
@@ -77,7 +94,14 @@ export interface PublishTargetOption {
   creatorNickname?: string | null
   /** The `publishOptions` keys a target on this platform accepts, from the server's platform registry. */
   optionKeys?: string[]
+  /** The formats this platform offers, e.g. `['feed', 'reel', 'story']`. Every platform lists `feed`. */
+  formats?: string[]
 }
+
+/** The union of every platform's own option bag. Field names never collide across platforms. */
+export type PublishOptionsBag = Partial<TikTokPublishOptionValues> &
+  Partial<InstagramPublishOptionValues> &
+  Partial<YouTubePublishOptionValues>
 
 /** One destination actually selected on this Post (a persisted post_publish_target row). */
 export interface SelectedPublishTarget {
@@ -90,8 +114,10 @@ export interface SelectedPublishTarget {
   lane: PublishLane
   state: string
   platformPostId?: string | null
-  /** Per-target publish options, currently TikTok-only. Partial — an older row carries nothing. */
-  publishOptions?: Partial<TikTokPublishOptionValues> | null
+  /** The shape this destination publishes in. Absent reads as `feed`, same as the API default. */
+  format?: PostFormat | null
+  /** Per-target publish options, keyed by platform. Partial — an older row carries nothing. */
+  publishOptions?: PublishOptionsBag | null
   /** This destination's own copy, or null when it uses the Post's caption. */
   captionOverride?: string | null
   /** Its own ordered media, or null when it inherits the Post's whole set. */
@@ -106,7 +132,8 @@ interface PublishTargetSelectionPayload {
   platform: PublishPlatform
   /** Omitted (null) selects the platform's manual destination. */
   connectionId: string | null
-  publishOptions?: TikTokPublishOptionValues
+  format?: PostFormat
+  publishOptions?: PublishOptionsBag
   captionOverride?: string | null
   assetIds?: string[]
 }
@@ -166,6 +193,54 @@ function seedTikTokOptions(
     seeded[key] = normalizeTikTokOptions(target.publishOptions ?? fallback[key])
   }
   return seeded
+}
+
+/** Same trap, for Instagram's own option bag. */
+function seedInstagramOptions(
+  targets: SelectedPublishTarget[],
+  fallback: Record<string, InstagramPublishOptionValues> = {}
+): Record<string, InstagramPublishOptionValues> {
+  const seeded: Record<string, InstagramPublishOptionValues> = {}
+  for (const target of targets) {
+    if (target.platform !== 'instagram') continue
+    const key = targetKey(target.platform, target.connectionId)
+    seeded[key] = normalizeInstagramOptions(target.publishOptions ?? fallback[key])
+  }
+  return seeded
+}
+
+/** Same trap, for YouTube's own option bag. */
+function seedYouTubeOptions(
+  targets: SelectedPublishTarget[],
+  fallback: Record<string, YouTubePublishOptionValues> = {}
+): Record<string, YouTubePublishOptionValues> {
+  const seeded: Record<string, YouTubePublishOptionValues> = {}
+  for (const target of targets) {
+    if (target.platform !== 'youtube') continue
+    const key = targetKey(target.platform, target.connectionId)
+    seeded[key] = normalizeYouTubeOptions(target.publishOptions ?? fallback[key])
+  }
+  return seeded
+}
+
+/** The format each persisted target carries. A missing value reads as `feed`, same as the API. */
+function seedFormats(
+  targets: SelectedPublishTarget[],
+  fallback: Record<string, PostFormat> = {}
+): Record<string, PostFormat> {
+  const seeded: Record<string, PostFormat> = {}
+  for (const target of targets) {
+    const key = targetKey(target.platform, target.connectionId)
+    seeded[key] = target.format ?? fallback[key] ?? 'feed'
+  }
+  return seeded
+}
+
+/** This target's own effective media, in publish order — the chosen subset, or the whole Post's. */
+function effectiveAssetsFor(content: TargetContent | undefined, assets: MediaAsset[]): MediaAsset[] {
+  const ids = content?.assetIds ?? assets.map((a) => a.id)
+  const byId = new Map(assets.map((a) => [a.id, a]))
+  return ids.map((id) => byId.get(id)).filter((a): a is MediaAsset => Boolean(a))
 }
 
 /**
@@ -228,13 +303,21 @@ export function PostTargetPicker({
 }: PostTargetPickerProps) {
   const [options, setOptions] = useState<PublishTargetOption[]>([])
   const [selected, setSelected] = useState<SelectedPublishTarget[]>([])
-  // Per-target caption and media, held beside `selected` for the same reason the TikTok options are:
+  // Per-target caption and media, held beside `selected` for the same reason the platform options are:
   // it is the thing being edited, and an edit that fails to save must not linger.
   const [contentByKey, setContentByKey] = useState<Record<string, TargetContent>>({})
   const [customizing, setCustomizing] = useState<Set<string>>(new Set())
-  // Per-target TikTok options, keyed the same way a target is. Kept beside `selected` rather than
-  // inside it because it is the thing being edited, and an edit that fails to save must not linger.
+  // Per-target format and platform options, keyed the same way a target is. Kept beside `selected`
+  // rather than inside it because it is the thing being edited, and an edit that fails to save must
+  // not linger.
+  const [formatByKey, setFormatByKey] = useState<Record<string, PostFormat>>({})
   const [optionsByKey, setOptionsByKey] = useState<Record<string, TikTokPublishOptionValues>>({})
+  const [instagramOptionsByKey, setInstagramOptionsByKey] = useState<
+    Record<string, InstagramPublishOptionValues>
+  >({})
+  const [youtubeOptionsByKey, setYoutubeOptionsByKey] = useState<
+    Record<string, YouTubePublishOptionValues>
+  >({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -257,6 +340,9 @@ export function PostTargetPicker({
         setOptions(available)
         setSelected(current)
         setOptionsByKey(seedTikTokOptions(current))
+        setInstagramOptionsByKey(seedInstagramOptions(current))
+        setYoutubeOptionsByKey(seedYouTubeOptions(current))
+        setFormatByKey(seedFormats(current))
         const content = seedContent(current)
         setContentByKey(content)
         // Any destination that already differs from the Post opens with its editor showing, so a
@@ -313,12 +399,24 @@ export function PostTargetPicker({
     [rows]
   )
 
+  interface SavePatch {
+    keys?: Set<string>
+    tiktok?: Record<string, TikTokPublishOptionValues>
+    instagram?: Record<string, InstagramPublishOptionValues>
+    youtube?: Record<string, YouTubePublishOptionValues>
+    content?: Record<string, TargetContent>
+    formats?: Record<string, PostFormat>
+  }
+
   const save = useCallback(
-    async (
-      nextKeys: Set<string>,
-      nextOptions: Record<string, TikTokPublishOptionValues>,
-      nextContent: Record<string, TargetContent> = contentByKey
-    ) => {
+    async (patch: SavePatch) => {
+      const nextKeys = patch.keys ?? selectedKeys
+      const nextTiktok = patch.tiktok ?? optionsByKey
+      const nextInstagram = patch.instagram ?? instagramOptionsByKey
+      const nextYoutube = patch.youtube ?? youtubeOptionsByKey
+      const nextContent = patch.content ?? contentByKey
+      const nextFormats = patch.formats ?? formatByKey
+
       // Every selected target's caption and media go out on every save, because this endpoint is a
       // set-replace: a target sent without them would have its customisation cleared by an edit to a
       // different target entirely.
@@ -333,24 +431,36 @@ export function PostTargetPicker({
           ...(content.assetIds === null ? {} : { assetIds: content.assetIds }),
         }
       }
+      // Options ride along only for an API (non-manual) target. A manual one never uses them — they
+      // are the payload we would send the platform, and on that lane the creator sets every one of
+      // them in the platform's own composer — and sending them anyway would store a bag of
+      // meaningless falses on the row that then counts as part of the publish bundle.
+      const optionsFor = (o: PublishTargetOption): Partial<PublishTargetSelectionPayload> => {
+        if (isManual(o)) return {}
+        const key = targetKey(o.platform, o.connectionId)
+        if (o.platform === 'tiktok') {
+          return { publishOptions: nextTiktok[key] ?? EMPTY_TIKTOK_OPTIONS }
+        }
+        if (o.platform === 'instagram') {
+          const values = nextInstagram[key]
+          return values && Object.keys(values).length > 0 ? { publishOptions: values } : {}
+        }
+        if (o.platform === 'youtube') {
+          const values = nextYoutube[key]
+          return values && Object.keys(values).length > 0 ? { publishOptions: values } : {}
+        }
+        return {}
+      }
       // Only ever send targets the project can still publish to; an orphan would be refused.
       const payload: PublishTargetSelectionPayload[] = options
         .filter((o) => nextKeys.has(targetKey(o.platform, o.connectionId)))
-        .map((o) =>
-          // Options ride along only for an API TikTok target. A manual one never uses them — they are
-          // the payload we would send TikTok, and on that lane the creator sets every one of them in
-          // TikTok's own composer — and sending them anyway would store a bag of meaningless falses on
-          // the row that then counts as part of the publish bundle.
-          o.platform === 'tiktok' && !isManual(o)
-            ? {
-                platform: o.platform,
-                connectionId: o.connectionId,
-                publishOptions:
-                  nextOptions[targetKey(o.platform, o.connectionId)] ?? EMPTY_TIKTOK_OPTIONS,
-                ...contentFor(o),
-              }
-            : { platform: o.platform, connectionId: o.connectionId, ...contentFor(o) }
-        )
+        .map((o) => ({
+          platform: o.platform,
+          connectionId: o.connectionId,
+          format: nextFormats[targetKey(o.platform, o.connectionId)] ?? 'feed',
+          ...optionsFor(o),
+          ...contentFor(o),
+        }))
       setSaving(true)
       try {
         const updated = await apiPut<SelectedPublishTarget[]>(
@@ -362,8 +472,11 @@ export function PostTargetPicker({
         // What was just sent is only committed once the server took it — an edit that 400s reverts
         // to what is on the server. The server's echo wins where it has one, so a value it clamps
         // shows as clamped rather than as what was typed.
-        setOptionsByKey({ ...nextOptions, ...seedTikTokOptions(updated, nextOptions) })
+        setOptionsByKey({ ...nextTiktok, ...seedTikTokOptions(updated, nextTiktok) })
+        setInstagramOptionsByKey({ ...nextInstagram, ...seedInstagramOptions(updated, nextInstagram) })
+        setYoutubeOptionsByKey({ ...nextYoutube, ...seedYouTubeOptions(updated, nextYoutube) })
         setContentByKey({ ...nextContent, ...seedContent(updated, nextContent) })
+        setFormatByKey({ ...nextFormats, ...seedFormats(updated, nextFormats) })
         onChanged?.(updated)
       } catch (err) {
         toastError(apiErrorMessage(err, 'Could not update publishing accounts'))
@@ -371,7 +484,19 @@ export function PostTargetPicker({
         setSaving(false)
       }
     },
-    [options, projectId, workItemId, token, onChanged, contentByKey]
+    [
+      options,
+      projectId,
+      workItemId,
+      token,
+      onChanged,
+      selectedKeys,
+      optionsByKey,
+      instagramOptionsByKey,
+      youtubeOptionsByKey,
+      contentByKey,
+      formatByKey,
+    ]
   )
 
   const toggle = useCallback(
@@ -380,19 +505,48 @@ export function PostTargetPicker({
       const next = new Set(selectedKeys)
       if (next.has(key)) next.delete(key)
       else next.add(key)
-      void save(next, optionsByKey)
+      void save({ keys: next })
     },
-    [selectedKeys, optionsByKey, save]
+    [selectedKeys, save]
   )
 
   const changeTikTokOptions = useCallback(
     (option: PublishTargetOption, next: TikTokPublishOptionValues) => {
-      void save(selectedKeys, {
-        ...optionsByKey,
-        [targetKey(option.platform, option.connectionId)]: next,
+      void save({
+        tiktok: { ...optionsByKey, [targetKey(option.platform, option.connectionId)]: next },
       })
     },
-    [selectedKeys, optionsByKey, save]
+    [optionsByKey, save]
+  )
+
+  const changeInstagramOptions = useCallback(
+    (option: PublishTargetOption, next: InstagramPublishOptionValues) => {
+      void save({
+        instagram: {
+          ...instagramOptionsByKey,
+          [targetKey(option.platform, option.connectionId)]: next,
+        },
+      })
+    },
+    [instagramOptionsByKey, save]
+  )
+
+  const changeYouTubeOptions = useCallback(
+    (option: PublishTargetOption, next: YouTubePublishOptionValues) => {
+      void save({
+        youtube: { ...youtubeOptionsByKey, [targetKey(option.platform, option.connectionId)]: next },
+      })
+    },
+    [youtubeOptionsByKey, save]
+  )
+
+  const changeFormat = useCallback(
+    (option: PublishTargetOption, next: PostFormat) => {
+      void save({
+        formats: { ...formatByKey, [targetKey(option.platform, option.connectionId)]: next },
+      })
+    },
+    [formatByKey, save]
   )
 
   /** Opens or closes one destination's editor. Purely local — nothing is saved by looking. */
@@ -411,9 +565,9 @@ export function PostTargetPicker({
       const key = targetKey(option.platform, option.connectionId)
       const nextContent = { ...contentByKey, [key]: next }
       setContentByKey(nextContent)
-      void save(selectedKeys, optionsByKey, nextContent)
+      void save({ content: nextContent })
     },
-    [contentByKey, selectedKeys, optionsByKey, save]
+    [contentByKey, save]
   )
 
   /** Every selected TikTok destination, with the options it carries and why it isn't postable yet. */
@@ -526,31 +680,34 @@ export function PostTargetPicker({
                 <div className="px-4 py-1 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
                   {PLATFORM_LABELS[group.platform]}
                 </div>
-                {group.targets.map((option) => (
-                  <TargetRow
-                    key={targetKey(option.platform, option.connectionId)}
-                    option={option}
-                    checked={selectedKeys.has(targetKey(option.platform, option.connectionId))}
-                    unavailable={!availableKeys.has(targetKey(option.platform, option.connectionId))}
-                    saving={saving}
-                    tiktokOptions={
-                      optionsByKey[targetKey(option.platform, option.connectionId)] ??
-                      EMPTY_TIKTOK_OPTIONS
-                    }
-                    assets={assets}
-                    postCaption={caption}
-                    content={
-                      contentByKey[targetKey(option.platform, option.connectionId)] ??
-                      INHERITED_CONTENT
-                    }
-                    customizing={customizing.has(targetKey(option.platform, option.connectionId))}
-                    frozen={frozen}
-                    onToggle={() => toggle(option)}
-                    onTikTokOptionsChange={(next) => changeTikTokOptions(option, next)}
-                    onCustomizeToggle={() => toggleCustomizing(option)}
-                    onContentChange={(next) => changeContent(option, next)}
-                  />
-                ))}
+                {group.targets.map((option) => {
+                  const key = targetKey(option.platform, option.connectionId)
+                  return (
+                    <TargetRow
+                      key={key}
+                      option={option}
+                      checked={selectedKeys.has(key)}
+                      unavailable={!availableKeys.has(key)}
+                      saving={saving}
+                      format={formatByKey[key] ?? 'feed'}
+                      tiktokOptions={optionsByKey[key] ?? EMPTY_TIKTOK_OPTIONS}
+                      instagramOptions={instagramOptionsByKey[key] ?? {}}
+                      youtubeOptions={youtubeOptionsByKey[key] ?? {}}
+                      assets={assets}
+                      postCaption={caption}
+                      content={contentByKey[key] ?? INHERITED_CONTENT}
+                      customizing={customizing.has(key)}
+                      frozen={frozen}
+                      onToggle={() => toggle(option)}
+                      onFormatChange={(next) => changeFormat(option, next)}
+                      onTikTokOptionsChange={(next) => changeTikTokOptions(option, next)}
+                      onInstagramOptionsChange={(next) => changeInstagramOptions(option, next)}
+                      onYouTubeOptionsChange={(next) => changeYouTubeOptions(option, next)}
+                      onCustomizeToggle={() => toggleCustomizing(option)}
+                      onContentChange={(next) => changeContent(option, next)}
+                    />
+                  )
+                })}
               </div>
             ))}
           </fieldset>
@@ -566,7 +723,10 @@ interface TargetRowProps {
   /** The connection behind an already-selected target has gone away. */
   unavailable: boolean
   saving: boolean
+  format: PostFormat
   tiktokOptions: TikTokPublishOptionValues
+  instagramOptions: InstagramPublishOptionValues
+  youtubeOptions: YouTubePublishOptionValues
   /** The Post's media and caption, which this destination may override. */
   assets: MediaAsset[]
   postCaption: string | null
@@ -576,7 +736,10 @@ interface TargetRowProps {
   /** Editing is refused past the review gate, so the controls are disabled rather than 400ing. */
   frozen: boolean
   onToggle: () => void
+  onFormatChange: (next: PostFormat) => void
   onTikTokOptionsChange: (next: TikTokPublishOptionValues) => void
+  onInstagramOptionsChange: (next: InstagramPublishOptionValues) => void
+  onYouTubeOptionsChange: (next: YouTubePublishOptionValues) => void
   onCustomizeToggle: () => void
   onContentChange: (next: TargetContent) => void
 }
@@ -586,14 +749,20 @@ function TargetRow({
   checked,
   unavailable,
   saving,
+  format,
   tiktokOptions,
+  instagramOptions,
+  youtubeOptions,
   assets,
   postCaption,
   content,
   customizing,
   frozen,
   onToggle,
+  onFormatChange,
   onTikTokOptionsChange,
+  onInstagramOptionsChange,
+  onYouTubeOptionsChange,
   onCustomizeToggle,
   onContentChange,
 }: TargetRowProps) {
@@ -610,14 +779,16 @@ function TargetRow({
         ? "Conductor won't post this one. It still goes through review and onto the calendar; when it's due you'll be asked to post it yourself and paste the link back."
         : null
 
-  // TikTok is the one platform whose post carries per-target choices, and TikTok's own guidelines
-  // require them to be made per account rather than once for the Post. They open with the account,
-  // and sit outside the <label> so a click on a control doesn't also un-pick the destination.
-  // Only for an API target: the per-target options are the payload we send TikTok, and on the manual
-  // lane the creator sets all of them in TikTok's own composer.
-  const showTikTokOptions =
-    option.platform === 'tiktok' && checked && !unavailable && !isManual(option)
+  // Platform options are only meaningful for an API target: they are the payload we send the
+  // platform, and on the manual lane the creator sets all of it in the platform's own composer.
+  const showOptions = checked && !unavailable && !isManual(option)
   const customized = content.captionOverride !== null || content.assetIds !== null
+  const idPrefix = `${option.platform}-${option.connectionId ?? 'manual'}`
+
+  // This destination's own effective media, for the pickers that key off it — TikTok's video/photo
+  // split, and Instagram's single-image alt text.
+  const effectiveAssets = effectiveAssetsFor(content, assets)
+  const postImages = assets.filter((a) => !isVideoContentType(a.contentType))
 
   return (
     <div>
@@ -636,7 +807,10 @@ function TargetRow({
           onChange={onToggle}
         />
         <span className="min-w-0">
-          <span className="block text-sm text-foreground">{option.label}</span>
+          <span className="block text-sm text-foreground">
+            {option.label}
+            <FormatBadge format={format} />
+          </span>
           {note && (
             <span
               id={noteId}
@@ -654,35 +828,67 @@ function TargetRow({
           )}
         </span>
       </label>
-      {showTikTokOptions && (
-        <TikTokPublishOptions
-          idPrefix={`tiktok-${option.connectionId}`}
-          accountLabel={option.label}
-          privacyLevelOptions={option.privacyLevelOptions ?? []}
-          value={tiktokOptions}
-          disabled={saving}
-          onChange={onTikTokOptionsChange}
-        />
-      )}
       {checked && !unavailable && (
         <div className="px-4 pb-3">
           <button
             type="button"
-            // Outside the <label>, like the TikTok options: a click here must not also un-pick the
-            // destination it belongs to.
+            // Outside the <label>, like the option editors below: a click here must not also un-pick
+            // the destination it belongs to.
             className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline"
             onClick={onCustomizeToggle}
           >
             {customized ? 'Customized for this destination' : 'Customize for this destination'}
           </button>
           {customizing && (
-            <TargetContentEditor
-              assets={assets}
-              postCaption={postCaption}
-              value={content}
-              disabled={saving || frozen}
-              onChange={onContentChange}
-            />
+            <div className="mt-2 space-y-3">
+              <PostFormatSelector
+                idPrefix={idPrefix}
+                platform={option.platform}
+                formats={option.formats}
+                value={format}
+                disabled={saving || frozen}
+                onChange={onFormatChange}
+              />
+              {showOptions && option.platform === 'tiktok' && (
+                <TikTokPublishOptions
+                  idPrefix={`tiktok-${option.connectionId}`}
+                  accountLabel={option.label}
+                  privacyLevelOptions={option.privacyLevelOptions ?? []}
+                  isVideo={effectiveAssets.some((a) => isVideoContentType(a.contentType))}
+                  images={effectiveAssets.filter((a) => !isVideoContentType(a.contentType))}
+                  value={tiktokOptions}
+                  disabled={saving}
+                  onChange={onTikTokOptionsChange}
+                />
+              )}
+              {showOptions && option.platform === 'instagram' && (
+                <InstagramPublishOptions
+                  idPrefix={idPrefix}
+                  format={format}
+                  images={postImages}
+                  isSingleImage={isSingleImageTarget(effectiveAssets)}
+                  value={instagramOptions}
+                  disabled={saving}
+                  onChange={onInstagramOptionsChange}
+                />
+              )}
+              {showOptions && option.platform === 'youtube' && (
+                <YouTubePublishOptions
+                  idPrefix={idPrefix}
+                  images={postImages}
+                  value={youtubeOptions}
+                  disabled={saving}
+                  onChange={onYouTubeOptionsChange}
+                />
+              )}
+              <TargetContentEditor
+                assets={assets}
+                postCaption={postCaption}
+                value={content}
+                disabled={saving || frozen}
+                onChange={onContentChange}
+              />
+            </div>
           )}
         </div>
       )}
