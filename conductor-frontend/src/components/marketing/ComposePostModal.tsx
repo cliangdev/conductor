@@ -346,7 +346,10 @@ export function ComposePostModal({
             accept={ALLOWED_MEDIA_CONTENT_TYPES.join(',')}
             className="sr-only"
             onChange={(e) => {
-              setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])])
+              // Read the list now: the updater below runs after this handler, by which time the input
+              // has been cleared so the same file can be picked again, and it would see nothing.
+              const picked = Array.from(e.target.files ?? [])
+              setFiles((prev) => [...prev, ...picked])
               e.target.value = ''
             }}
           />

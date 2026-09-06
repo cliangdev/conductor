@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+
+// The signed-URL upload is an XMLHttpRequest jsdom cannot complete; the ticket and confirm calls
+// around it are what this file asserts on.
+vi.mock('@/components/workitems/MediaUploadPanel', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/workitems/MediaUploadPanel')>()),
+  putToSignedUrl: vi.fn(async () => {}),
+}))
 import type { WorkflowView } from '@/types/workItem'
 import { ComposePostModal, nextQuarterHour, toInstant } from './ComposePostModal'
 
@@ -61,6 +68,11 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (targetsRejection) return json(targetsRejection.status, { detail: targetsRejection.detail })
     return json(200, [])
   }
+  if (method === 'POST' && url.endsWith('/assets/uploads')) {
+    return json(201, { assetId: 'asset-1', uploadUrl: 'http://storage.test/put/asset-1', gcsPath: 'x', expiresAt: 'y' })
+  }
+  if (method === 'PUT' && url.startsWith('http://storage.test/')) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
+  if (method === 'POST' && url.endsWith('/assets/asset-1/confirm')) return { ok: true, status: 204, headers: { get: () => null }, json: async () => ({}) }
   if (method === 'PATCH') return json(200, {})
   throw new Error(`unexpected ${method} ${url}`)
 })
@@ -141,6 +153,34 @@ describe('ComposePostModal', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
     const targets = calls.find((c) => c.method === 'PUT')
     expect(targets?.body).toEqual({ targets: [{ platform: 'instagram', connectionId: 'c-ig', format: 'reel' }] })
+  })
+
+  it('lists a chosen file and uploads it before the destinations are saved', async () => {
+    renderModal()
+    await screen.findByLabelText('@acme')
+    await userEvent.type(screen.getByLabelText('Caption'), 'With a picture')
+    await userEvent.click(screen.getByLabelText('@acme'))
+
+    // The input clears itself after each pick so the same file can be chosen twice; the list must
+    // still show what was picked (the handler has to read the files before the state updater runs).
+    const file = new File([new Uint8Array([1, 2, 3])], 'story.jpg', { type: 'image/jpeg' })
+    await userEvent.upload(document.getElementById('compose-media') as HTMLInputElement, file)
+    expect(await screen.findByText('story.jpg')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add another' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+    await waitFor(() => expect(pushSpy).toHaveBeenCalled())
+
+    const methods = calls.map((c) => `${c.method} ${c.url.replace(/^.*\/work-items/, '/work-items')}`)
+    const uploadIndex = methods.findIndex((m) => m.endsWith('/assets/uploads'))
+    const confirmIndex = methods.findIndex((m) => m.endsWith('/assets/asset-1/confirm'))
+    const targetsIndex = methods.findIndex((m) => m.startsWith('PUT') && m.endsWith('/publish-targets'))
+    expect(uploadIndex).toBeGreaterThan(-1)
+    expect(confirmIndex).toBeGreaterThan(uploadIndex)
+    expect(targetsIndex).toBeGreaterThan(confirmIndex)
+    const ticket = calls[uploadIndex].body as { filename: string; contentType: string; type: string }
+    expect(ticket.filename).toBe('story.jpg')
+    expect(ticket.contentType).toBe('image/jpeg')
   })
 
   it('cannot be submitted without a caption and a destination', async () => {
