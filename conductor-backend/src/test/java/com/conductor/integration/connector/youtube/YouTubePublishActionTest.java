@@ -401,6 +401,217 @@ class YouTubePublishActionTest {
         verifyNoInteractions(invocations);
     }
 
+    // --- [new] notify_subscribers, made_for_kids, contains_synthetic_media reach VideoMetadata ---
+
+    @Test
+    void publish_newBooleanOptions_reachVideoMetadataWhenPresent() {
+        stubHappyUpload("vid-123");
+        Map<String, Object> input = handoffInput();
+        input.put("notify_subscribers", false);
+        input.put("made_for_kids", true);
+        input.put("contains_synthetic_media", "true");
+
+        action().publish(input, ctx());
+
+        ArgumentCaptor<VideoMetadata> metadata = ArgumentCaptor.forClass(VideoMetadata.class);
+        verify(dataClient).initiateResumableUpload(anyString(), metadata.capture(), anyLong(), anyString());
+        assertThat(metadata.getValue().notifySubscribers()).isFalse();
+        assertThat(metadata.getValue().madeForKids()).isTrue();
+        assertThat(metadata.getValue().containsSyntheticMedia()).isTrue();
+    }
+
+    @Test
+    void publish_newBooleanOptions_areNullRatherThanADefaultWhenAbsent() {
+        stubHappyUpload("vid-123");
+
+        action().publish(handoffInput(), ctx());
+
+        ArgumentCaptor<VideoMetadata> metadata = ArgumentCaptor.forClass(VideoMetadata.class);
+        verify(dataClient).initiateResumableUpload(anyString(), metadata.capture(), anyLong(), anyString());
+        assertThat(metadata.getValue().notifySubscribers()).isNull();
+        assertThat(metadata.getValue().madeForKids()).isNull();
+        assertThat(metadata.getValue().containsSyntheticMedia()).isNull();
+    }
+
+    @Test
+    void publish_madeForKids_garbageValueFailsWithAClearMessageBeforeUploading() {
+        Map<String, Object> input = handoffInput();
+        input.put("made_for_kids", "not-a-boolean");
+
+        ActionResult result = action().publish(input, ctx());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("made_for_kids").contains("boolean");
+        verifyNoInteractions(dataClient);
+    }
+
+    // --- [new] playlist_ids: added after a successful upload, a failure is a warning ---
+
+    @Test
+    void publish_addsTheUploadedVideoToEveryNamedPlaylist() {
+        stubHappyUpload("vid-123");
+        Map<String, Object> input = handoffInput();
+        input.put("playlist_ids", List.of("pl-1", "pl-2"));
+
+        ActionResult result = action().publish(input, ctx());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).doesNotContainKey("warnings");
+        verify(dataClient).addToPlaylist(ACCESS_TOKEN, "pl-1", "vid-123");
+        verify(dataClient).addToPlaylist(ACCESS_TOKEN, "pl-2", "vid-123");
+    }
+
+    @Test
+    void publish_aPlaylistFailure_isAWarningRatherThanAFailedPublish() {
+        stubHappyUpload("vid-123");
+        org.mockito.Mockito.doThrow(new RuntimeException("playlist not found"))
+                .when(dataClient).addToPlaylist(ACCESS_TOKEN, "pl-bad", "vid-123");
+        Map<String, Object> input = handoffInput();
+        input.put("playlist_ids", List.of("pl-bad", "pl-good"));
+
+        ActionResult result = action().publish(input, ctx());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsKey("warnings");
+        @SuppressWarnings("unchecked")
+        List<String> warnings = (List<String>) result.output().get("warnings");
+        assertThat(warnings).anySatisfy(w -> assertThat(w).contains("pl-bad").contains("playlist not found"));
+        verify(dataClient).addToPlaylist(ACCESS_TOKEN, "pl-good", "vid-123");
+    }
+
+    @Test
+    void publish_withNoPlaylistIds_addsToNothing() {
+        stubHappyUpload("vid-123");
+
+        action().publish(handoffInput(), ctx());
+
+        verify(dataClient, never()).addToPlaylist(anyString(), anyString(), anyString());
+    }
+
+    // --- [new] thumbnail_asset_id: validated up front, a set failure is a warning ---
+
+    @Test
+    void publish_thumbnailAssetId_setsTheThumbnailAfterTheUploadSucceeds() {
+        stubHappyUpload("vid-123");
+        ThumbnailLocatorStub thumbnails = new ThumbnailLocatorStub(
+                Optional.of(new YouTubePublishAction.ThumbnailImage(new byte[] {1, 2, 3}, "image/jpeg")));
+        Map<String, Object> input = handoffInput();
+        input.put("thumbnail_asset_id", "thumb-1");
+
+        ActionResult result = new YouTubePublishAction(dataClient, i -> media, checkpoints, thumbnails)
+                .publish(input, ctx());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).doesNotContainKey("warnings");
+        ArgumentCaptor<byte[]> bytes = ArgumentCaptor.forClass(byte[].class);
+        verify(dataClient).setThumbnail(eq(ACCESS_TOKEN), eq("vid-123"), bytes.capture(), eq("image/jpeg"));
+        assertThat(bytes.getValue()).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void publish_thumbnailAssetId_missingOrNotAnImage_failsBeforeTheUploadStarts() {
+        ThumbnailLocatorStub thumbnails = new ThumbnailLocatorStub(Optional.empty());
+        Map<String, Object> input = handoffInput();
+        input.put("thumbnail_asset_id", "thumb-missing");
+
+        ActionResult result = new YouTubePublishAction(dataClient, i -> media, checkpoints, thumbnails)
+                .publish(input, ctx());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("thumb-missing").contains("thumbnail_asset_id");
+        verifyNoInteractions(dataClient);
+    }
+
+    @Test
+    void publish_thumbnailSetFailure_isAWarningRatherThanAFailedPublish() {
+        stubHappyUpload("vid-123");
+        org.mockito.Mockito.doThrow(new RuntimeException("channel not eligible for custom thumbnails"))
+                .when(dataClient).setThumbnail(anyString(), anyString(), any(byte[].class), anyString());
+        ThumbnailLocatorStub thumbnails = new ThumbnailLocatorStub(
+                Optional.of(new YouTubePublishAction.ThumbnailImage(new byte[] {9}, "image/png")));
+        Map<String, Object> input = handoffInput();
+        input.put("thumbnail_asset_id", "thumb-1");
+
+        ActionResult result = new YouTubePublishAction(dataClient, i -> media, checkpoints, thumbnails)
+                .publish(input, ctx());
+
+        assertThat(result.success()).isTrue();
+        @SuppressWarnings("unchecked")
+        List<String> warnings = (List<String>) result.output().get("warnings");
+        assertThat(warnings).anySatisfy(w -> assertThat(w).contains("channel not eligible"));
+    }
+
+    @Test
+    void publish_withNoThumbnailAssetId_neverConsultsTheLocator() {
+        stubHappyUpload("vid-123");
+        YouTubePublishAction.ThumbnailLocator thumbnails = mock(YouTubePublishAction.ThumbnailLocator.class);
+
+        action(thumbnails).publish(handoffInput(), ctx());
+
+        verifyNoInteractions(thumbnails);
+    }
+
+    // --- [new] AssetThumbnailLocator: resolves an image Asset scoped to the Post, reading it whole ---
+
+    @Test
+    void assetThumbnailLocator_resolvesAnUploadedImageBelongingToThePost() {
+        AssetRepository assets = mock(AssetRepository.class);
+        StorageService storage = mock(StorageService.class);
+        when(assets.findAllByWorkItemId("post-1")).thenReturn(List.of(
+                asset("thumb-1", "image/jpeg", "posts/thumb.jpg", 2048L)));
+        when(storage.download("posts/thumb.jpg")).thenReturn(new byte[] {5, 6, 7});
+
+        Optional<YouTubePublishAction.ThumbnailImage> found =
+                new YouTubePublishAction.AssetThumbnailLocator(assets, storage).locate("post-1", "thumb-1");
+
+        assertThat(found).isPresent();
+        assertThat(found.get().bytes()).containsExactly(5, 6, 7);
+        assertThat(found.get().contentType()).isEqualTo("image/jpeg");
+    }
+
+    @Test
+    void assetThumbnailLocator_aVideoAssetIdIsNotAThumbnail() {
+        AssetRepository assets = mock(AssetRepository.class);
+        StorageService storage = mock(StorageService.class);
+        when(assets.findAllByWorkItemId("post-1")).thenReturn(List.of(
+                asset("a-video", "video/mp4", "posts/film.mp4", 2_000_000L)));
+
+        Optional<YouTubePublishAction.ThumbnailImage> found =
+                new YouTubePublishAction.AssetThumbnailLocator(assets, storage).locate("post-1", "a-video");
+
+        assertThat(found).isEmpty();
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void assetThumbnailLocator_unknownAssetId_isEmpty() {
+        AssetRepository assets = mock(AssetRepository.class);
+        when(assets.findAllByWorkItemId("post-1")).thenReturn(List.of());
+
+        Optional<YouTubePublishAction.ThumbnailImage> found = new YouTubePublishAction.AssetThumbnailLocator(
+                assets, mock(StorageService.class)).locate("post-1", "gone");
+
+        assertThat(found).isEmpty();
+    }
+
+    /** A canned answer for one lookup, standing in for {@link YouTubePublishAction.AssetThumbnailLocator}. */
+    private static final class ThumbnailLocatorStub implements YouTubePublishAction.ThumbnailLocator {
+        private final Optional<YouTubePublishAction.ThumbnailImage> answer;
+
+        ThumbnailLocatorStub(Optional<YouTubePublishAction.ThumbnailImage> answer) {
+            this.answer = answer;
+        }
+
+        @Override
+        public Optional<YouTubePublishAction.ThumbnailImage> locate(String workItemId, String assetId) {
+            return answer;
+        }
+    }
+
+    private YouTubePublishAction action(YouTubePublishAction.ThumbnailLocator thumbnailLocator) {
+        return new YouTubePublishAction(dataClient, input -> media, checkpoints, thumbnailLocator);
+    }
+
     // --- helpers ---
 
     private void captureChunks(List<Long> offsets, List<Integer> lengths) {

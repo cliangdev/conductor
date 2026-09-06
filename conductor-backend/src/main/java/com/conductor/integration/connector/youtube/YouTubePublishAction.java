@@ -24,6 +24,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -82,12 +83,20 @@ public class YouTubePublishAction {
     private final YouTubeDataClient dataClient;
     private final MediaLocator mediaLocator;
     private final UploadCheckpoints checkpoints;
+    private final ThumbnailLocator thumbnailLocator;
 
+    /** Every caller that predates {@code thumbnail_asset_id} — the lookup is simply always empty. */
     public YouTubePublishAction(YouTubeDataClient dataClient, MediaLocator mediaLocator,
                                 UploadCheckpoints checkpoints) {
+        this(dataClient, mediaLocator, checkpoints, ThumbnailLocator.none());
+    }
+
+    public YouTubePublishAction(YouTubeDataClient dataClient, MediaLocator mediaLocator,
+                                UploadCheckpoints checkpoints, ThumbnailLocator thumbnailLocator) {
         this.dataClient = dataClient;
         this.mediaLocator = mediaLocator;
         this.checkpoints = checkpoints;
+        this.thumbnailLocator = thumbnailLocator;
     }
 
     /**
@@ -113,6 +122,24 @@ public class YouTubePublishAction {
     /** Resolves the video a publish payload refers to. Returns {@code null} when there is none. */
     public interface MediaLocator {
         MediaSource locate(Map<String, Object> input);
+    }
+
+    /** A thumbnail image's bytes and content type, read whole — unlike the video, small enough to buffer. */
+    public record ThumbnailImage(byte[] bytes, String contentType) {}
+
+    /**
+     * Resolves the Post's own image Asset a {@code thumbnail_asset_id} names. Empty rather than an
+     * exception for "no such asset" or "not an image": the caller decides what that means (here, a
+     * publish-time error before the upload starts).
+     */
+    public interface ThumbnailLocator {
+
+        Optional<ThumbnailImage> locate(String workItemId, String assetId);
+
+        /** For a caller with no thumbnail support wired up — every lookup comes back empty. */
+        static ThumbnailLocator none() {
+            return (workItemId, assetId) -> Optional.empty();
+        }
     }
 
     /** Where an interrupted upload left off: the open session, and the bytes the platform has committed. */
@@ -162,6 +189,30 @@ public class YouTubePublishAction {
             privacyStatus = DEFAULT_PRIVACY;
         }
 
+        Boolean notifySubscribers;
+        Boolean madeForKids;
+        Boolean containsSyntheticMedia;
+        try {
+            notifySubscribers = optionalBoolean(input, "notify_subscribers");
+            madeForKids = optionalBoolean(input, "made_for_kids");
+            containsSyntheticMedia = optionalBoolean(input, "contains_synthetic_media");
+        } catch (IllegalArgumentException e) {
+            return ActionResult.error(e.getMessage());
+        }
+
+        // A bad thumbnail_asset_id is a mistake worth catching before the upload starts, not after: the
+        // video would otherwise publish successfully and only the thumbnail — silently — would be missing.
+        String thumbnailAssetId = stringValue(input, "thumbnail_asset_id");
+        ThumbnailImage thumbnail = null;
+        if (thumbnailAssetId != null) {
+            String workItemId = stringValue(input, "work_item_id");
+            thumbnail = thumbnailLocator.locate(workItemId, thumbnailAssetId).orElse(null);
+            if (thumbnail == null) {
+                return ActionResult.error("thumbnail_asset_id " + thumbnailAssetId
+                        + " does not name an uploaded image on this Post");
+            }
+        }
+
         MediaSource media = mediaLocator.locate(input);
         if (media == null) {
             return ActionResult.error("No uploaded video is attached to this post, so there is nothing to "
@@ -174,7 +225,8 @@ public class YouTubePublishAction {
         String accessToken = ctx.accessToken();
         String contentType = media.contentType() != null ? media.contentType() : DEFAULT_CONTENT_TYPE;
         VideoMetadata metadata = new VideoMetadata(stringValue(input, "title"),
-                stringValue(input, "description"), privacyStatus, publishAt);
+                stringValue(input, "description"), privacyStatus, publishAt,
+                notifySubscribers, madeForKids, containsSyntheticMedia);
 
         Checkpoint resumed = checkpoints.read(input).filter(cp -> cp.sessionUri() != null).orElse(null);
         String sessionUri;
@@ -192,12 +244,39 @@ public class YouTubePublishAction {
         }
 
         String videoId = uploadFrom(accessToken, sessionUri, media, offset, input);
+
+        // Neither step below can fail the publish: the video is already live (or scheduled), and a
+        // playlist or thumbnail problem is something for a human to notice, not a reason to retry an
+        // upload that already succeeded.
+        List<String> warnings = new ArrayList<>();
+        for (String playlistId : stringList(input, "playlist_ids")) {
+            try {
+                dataClient.addToPlaylist(accessToken, playlistId, videoId);
+            } catch (Exception e) {
+                log.warn("Could not add YouTube video {} to playlist {}: {}", videoId, playlistId, e.getMessage());
+                warnings.add("Could not add the video to playlist " + playlistId + ": " + e.getMessage());
+            }
+        }
+        if (thumbnail != null) {
+            try {
+                dataClient.setThumbnail(accessToken, videoId, thumbnail.bytes(), thumbnail.contentType());
+            } catch (Exception e) {
+                // YouTube refuses a custom thumbnail on an unverified channel — expected often enough that
+                // this must never fail an otherwise-successful publish.
+                log.warn("Could not set the YouTube thumbnail for video {}: {}", videoId, e.getMessage());
+                warnings.add("Could not set the thumbnail: " + e.getMessage());
+            }
+        }
+
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("video_id", videoId);
         output.put("permalink", YouTubeDataClient.WATCH_URL_PREFIX + videoId);
         output.put("privacy_status", privacyStatus);
         if (publishAt != null) {
             output.put("publish_at", publishAt.toString());
+        }
+        if (!warnings.isEmpty()) {
+            output.put("warnings", warnings);
         }
         return ActionResult.ok(output);
     }
@@ -302,6 +381,45 @@ public class YouTubePublishAction {
                     && asset.getGcsPath() != null
                     && asset.getSizeBytes() != null
                     && contentType != null && contentType.startsWith("video/");
+        }
+    }
+
+    /**
+     * Resolves a Post's own image Asset by id, and reads it whole — a thumbnail is at most a few
+     * megabytes, so unlike the video path there is no reason to stream it.
+     */
+    public static final class AssetThumbnailLocator implements ThumbnailLocator {
+
+        private final AssetRepository assetRepository;
+        private final StorageService storageService;
+
+        public AssetThumbnailLocator(AssetRepository assetRepository, StorageService storageService) {
+            this.assetRepository = assetRepository;
+            this.storageService = storageService;
+        }
+
+        @Override
+        public Optional<ThumbnailImage> locate(String workItemId, String assetId) {
+            if (workItemId == null || assetId == null) {
+                return Optional.empty();
+            }
+            Asset asset = assetRepository.findAllByWorkItemId(workItemId).stream()
+                    .filter(a -> assetId.equals(a.getId()))
+                    .findFirst()
+                    .orElse(null);
+            if (asset == null || !isUploadedImage(asset)) {
+                return Optional.empty();
+            }
+            byte[] bytes = storageService.download(asset.getGcsPath());
+            return Optional.of(new ThumbnailImage(bytes, AssetUploadPolicy.normalizeContentType(asset.getContentType())));
+        }
+
+        private static boolean isUploadedImage(Asset asset) {
+            String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+            return AssetService.KIND_FILE.equals(asset.getKind())
+                    && AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())
+                    && asset.getGcsPath() != null
+                    && contentType != null && contentType.startsWith("image/");
         }
     }
 
@@ -443,6 +561,52 @@ public class YouTubePublishAction {
     static Instant instantValue(Map<String, Object> input, String key) {
         String value = stringValue(input, key);
         return value == null ? null : Instant.parse(value);
+    }
+
+    /**
+     * An optional boolean option: {@code null} when the caller named nothing (so YouTube's own default
+     * stands), leniently parsed from a real {@link Boolean}, a 0/1, or a "true"/"false" string otherwise,
+     * and an {@link IllegalArgumentException} naming the offending parameter for anything else.
+     */
+    static Boolean optionalBoolean(Map<String, Object> input, String key) {
+        Object value = input == null ? null : input.get(key);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof Number number) {
+            int i = number.intValue();
+            if (i == 0) return false;
+            if (i == 1) return true;
+            throw new IllegalArgumentException(key + " must be a boolean, got " + value);
+        }
+        String text = value.toString().trim();
+        if (text.equalsIgnoreCase("true")) {
+            return true;
+        }
+        if (text.equalsIgnoreCase("false")) {
+            return false;
+        }
+        throw new IllegalArgumentException(key + " must be a boolean (true/false), got '" + value + "'");
+    }
+
+    /** A list-of-strings input parameter, tolerating the single-string form and dropping blanks. */
+    static List<String> stringList(Map<String, Object> input, String key) {
+        Object value = input == null ? null : input.get(key);
+        if (value instanceof String single) {
+            return single.isBlank() ? List.of() : List.of(single.trim());
+        }
+        if (value instanceof java.util.Collection<?> collection) {
+            return collection.stream()
+                    .filter(Objects::nonNull)
+                    .map(Object::toString)
+                    .map(String::trim)
+                    .filter(text -> !text.isBlank())
+                    .toList();
+        }
+        return List.of();
     }
 
     private static String firstNonBlank(String first, String second) {

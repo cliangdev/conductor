@@ -78,8 +78,20 @@ public class YouTubeDataClient {
     /** One YouTube channel owned by the authorizing identity. */
     public record Channel(String id, String title) {}
 
-    /** The {@code snippet} + {@code status} a video is created with. */
-    public record VideoMetadata(String title, String description, String privacyStatus, Instant publishAt) {}
+    /**
+     * The {@code snippet} + {@code status} a video is created with. The three trailing fields are
+     * {@code null}, not {@code false}, when a caller names none of them — YouTube's own defaults
+     * ({@code notifySubscribers} defaults to true, the other two are simply omitted from {@code status})
+     * stand untouched rather than being overridden by an explicit false. The four-argument constructor
+     * covers every caller that predates these options.
+     */
+    public record VideoMetadata(String title, String description, String privacyStatus, Instant publishAt,
+                                Boolean notifySubscribers, Boolean madeForKids, Boolean containsSyntheticMedia) {
+
+        public VideoMetadata(String title, String description, String privacyStatus, Instant publishAt) {
+            this(title, description, privacyStatus, publishAt, null, null, null);
+        }
+    }
 
     /**
      * What the platform said about one uploaded chunk: either it wants more bytes from
@@ -137,10 +149,14 @@ public class YouTubeDataClient {
      */
     public String initiateResumableUpload(String accessToken, VideoMetadata metadata, long contentLength,
                                           String contentType) {
-        URI uri = UriComponentsBuilder.fromUriString(UPLOAD_BASE + "/videos")
+        UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(UPLOAD_BASE + "/videos")
                 .queryParam("uploadType", "resumable")
-                .queryParam("part", "snippet,status")
-                .build().toUri();
+                .queryParam("part", "snippet,status");
+        if (metadata.notifySubscribers() != null) {
+            // YouTube defaults this to true; only send it when the caller actually named a choice.
+            uriBuilder.queryParam("notifySubscribers", metadata.notifySubscribers());
+        }
+        URI uri = uriBuilder.build().toUri();
 
         HttpHeaders headers = bearer(accessToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -155,6 +171,12 @@ public class YouTubeDataClient {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("privacyStatus", metadata.privacyStatus());
         status.put("publishAt", metadata.publishAt() == null ? null : metadata.publishAt().toString());
+        if (metadata.madeForKids() != null) {
+            status.put("selfDeclaredMadeForKids", metadata.madeForKids());
+        }
+        if (metadata.containsSyntheticMedia() != null) {
+            status.put("containsSyntheticMedia", metadata.containsSyntheticMedia());
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("snippet", snippet);
         body.put("status", status);
@@ -294,6 +316,48 @@ public class YouTubeDataClient {
         JsonNode video = parse(response.getBody());
         return video.hasNonNull("id") ? toVideoStatus(video)
                 : new VideoStatus(videoId, null, privacyStatus, publishAt);
+    }
+
+    /**
+     * Adds an already-uploaded video to one playlist — {@code playlistItems.insert?part=snippet}. Called
+     * once per {@code playlist_ids} entry after a publish succeeds; the caller treats a failure here as a
+     * warning rather than a failed publish, so this simply lets whatever {@link RestTemplate} throws
+     * propagate rather than classifying it itself.
+     */
+    public void addToPlaylist(String accessToken, String playlistId, String videoId) {
+        URI uri = UriComponentsBuilder.fromUriString(API_BASE + "/playlistItems")
+                .queryParam("part", "snippet")
+                .build().toUri();
+        HttpHeaders headers = bearer(accessToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> resourceId = new LinkedHashMap<>();
+        resourceId.put("kind", "youtube#video");
+        resourceId.put("videoId", videoId);
+        Map<String, Object> snippet = new LinkedHashMap<>();
+        snippet.put("playlistId", playlistId);
+        snippet.put("resourceId", resourceId);
+        Map<String, Object> body = Map.of("snippet", snippet);
+
+        restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(toJson(body), headers), String.class);
+    }
+
+    /**
+     * Sets a video's custom thumbnail — {@code thumbnails.set?videoId=...} with the image bytes as the
+     * request body. YouTube refuses this on an unverified channel, which the caller treats as a warning
+     * rather than a failed publish, so — like {@link #addToPlaylist} — this does not classify the failure
+     * itself.
+     */
+    public void setThumbnail(String accessToken, String videoId, byte[] imageBytes, String contentType) {
+        URI uri = UriComponentsBuilder.fromUriString(UPLOAD_BASE + "/thumbnails/set")
+                .queryParam("videoId", videoId)
+                .build().toUri();
+        HttpHeaders headers = bearer(accessToken);
+        headers.setContentType(contentType != null && !contentType.isBlank()
+                ? MediaType.parseMediaType(contentType) : MediaType.IMAGE_JPEG);
+        headers.setContentLength(imageBytes.length);
+
+        restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(imageBytes, headers), String.class);
     }
 
     // ---- internals ------------------------------------------------------------------------------
