@@ -810,7 +810,7 @@ const TOOLS = [
   },
   {
     name: 'list_publish_targets',
-    description: 'Accounts a project can publish to (platform, connectionId, label, lane, health, and the publishOptions keys that platform accepts), plus a manual destination per platform. With issueId, also that Work Item\'s selected targets with state, permalink, errorMessage, effectiveCaption and effectiveAssetIds — the status read-back after set_publish_targets, a scheduled publish or a retry.',
+    description: 'Accounts a project can publish to (platform, connectionId, label, lane, health, the publishOptions keys that platform accepts, and the post formats — feed/reel/story — it offers), plus a manual destination per platform. With issueId, also that Work Item\'s selected targets with state, permalink, errorMessage, effectiveCaption and effectiveAssetIds — the status read-back after set_publish_targets, a scheduled publish or a retry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -820,7 +820,7 @@ const TOOLS = [
   },
   {
     name: 'set_publish_targets',
-    description: 'Choose the accounts a Work Item publishes to, each with an optional caption override, ordered media subset and platform options. Set-replace: send the complete selection every time (a target re-sent without captionOverride or assetIds loses them; [] clears all). Editing an approved item sends it back for review. Verify with list_publish_targets; read get_post_status for what the gate still wants. TikTok consent is recorded by a human — the creator, in the Conductor UI — and no tool can.',
+    description: 'Choose the accounts a Work Item publishes to, each with an optional format, caption override, ordered media subset and platform options. Set-replace: send the complete selection every time (a target re-sent without captionOverride or assetIds loses them; [] clears all). Editing an approved item sends it back for review. Verify with list_publish_targets; read get_post_status for what the gate still wants. TikTok consent is recorded by a human — the creator, in the Conductor UI — and no tool can.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -833,16 +833,17 @@ const TOOLS = [
             properties: {
               platform: { type: 'string', description: 'Platform of the account, from list_publish_targets' },
               connectionId: { type: 'string', description: 'The connected account, from list_publish_targets. Omit for the platform\'s manual destination, which a person posts by hand.' },
-              captionOverride: { type: 'string', description: 'Copy for this destination alone. Omit to use the Post\'s caption.' },
+              format: { type: 'string', enum: ['feed', 'reel', 'story'], description: 'The surface this destination publishes to (default feed). Must be one of that platform\'s formats in list_publish_targets, or the selection is refused.' },
+              captionOverride: { type: 'string', description: 'Copy for this destination alone. Omit to use the Post\'s caption. Ignored by a story, which the platform publishes without one.' },
               assetIds: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'Ordered subset of the Post\'s uploaded media for this destination (ids from upload_asset or list_assets). Omit or [] to inherit the whole set. Order is content: Instagram crops a carousel to its first item.',
+                description: 'Ordered subset of the Post\'s uploaded media for this destination (ids from upload_asset or list_assets). Omit or [] to inherit the whole set. Order is content: Instagram crops a carousel to its first item. A story takes exactly one.',
               },
               publishOptions: {
                 type: 'object',
                 additionalProperties: true,
-                description: 'Per-platform options under the keys list_publish_targets reports as optionKeys for that platform (TikTok: privacyLevel from the account\'s privacyLevelOptions, disableComment, disableDuet, disableStitch, brandContentToggle, brandOrganicToggle). Unknown keys are dropped.',
+                description: 'Per-platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key — read optionKeys first. Unknown keys are dropped.',
               },
             },
             required: ['platform'],
@@ -909,7 +910,7 @@ const TOOLS = [
   // --- Posts: the publishing pipeline in one call each ---
   {
     name: 'create_post',
-    description: 'Create, schedule and submit a Post in one call: writes the caption, uploads media (paths or URLs, video measured here), picks destinations by account name (omit account for the manual lane), schedules at the server\'s earliest acceptable time when none is given, then submits for review with the named reviewers unless submit is false. Returns the confirmation table — postId, status, time, each destination — plus blockers, warnings and nextStep. Poll get_post_status afterwards.',
+    description: 'Create, schedule and submit a Post in one call: writes the caption, uploads media (paths or URLs, video measured here), picks destinations by account name and format (omit account for the manual lane, format for feed), schedules at the server\'s earliest acceptable time when none is given, then submits for review with the named reviewers unless submit is false. A story target given several media resolves to the first, and drops a captionOverride — both noted in warnings. Returns the confirmation table — postId, status, time, each destination — plus blockers, warnings and nextStep. Poll get_post_status afterwards.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -937,9 +938,10 @@ const TOOLS = [
             properties: {
               platform: { type: 'string', description: 'facebook, instagram, youtube, tiktok, … (from list_publish_targets)' },
               account: { type: 'string', description: 'The account\'s label or connectionId from list_publish_targets. Omit for the manual destination.' },
-              captionOverride: { type: 'string', description: 'Copy for this destination alone (optional)' },
-              assetIds: { type: 'array', items: { type: ['string', 'number'] }, description: 'Ordered subset of media for this destination: 0-based indexes into `media`, or asset ids. Omit to inherit all.' },
-              options: { type: 'object', additionalProperties: true, description: 'Platform options under the keys list_publish_targets reports as optionKeys (TikTok needs privacyLevel).' },
+              format: { type: 'string', enum: ['feed', 'reel', 'story'], description: 'The surface this destination publishes to (default feed). Must be one of that platform\'s formats in list_publish_targets.' },
+              captionOverride: { type: 'string', description: 'Copy for this destination alone (optional). Ignored by a story.' },
+              assetIds: { type: 'array', items: { type: ['string', 'number'] }, description: 'Ordered subset of media for this destination: 0-based indexes into `media`, or asset ids. Omit to inherit all; a story keeps only the first.' },
+              options: { type: 'object', additionalProperties: true, description: 'Platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key.' },
             },
             required: ['platform'],
           },
@@ -956,7 +958,7 @@ const TOOLS = [
   },
   {
     name: 'get_post_status',
-    description: 'Where a Post stands, live from the server: status, schedule, every destination with state, permalink and errorMessage, the gate\'s blockers and warnings, review state, whether the TikTok consent a human records in the UI stands, and nextStep. The read-back after create_post, submit_post, an approval, a scheduled publish or a retry.',
+    description: 'Where a Post stands, live from the server: status, schedule, every destination with state, permalink, errorMessage and format (shown only when not feed), the gate\'s blockers and warnings, review state, whether the TikTok consent a human records in the UI stands, and nextStep. The read-back after create_post, submit_post, an approval, a scheduled publish or a retry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -979,7 +981,7 @@ const TOOLS = [
   },
   {
     name: 'list_posts',
-    description: 'Posts across every publishing Workflow, newest schedule first, each with its destinations\' state and permalinks. Filter by status, a scheduledFor window (since/until) or platform.',
+    description: 'Posts across every publishing Workflow, newest schedule first, each with its destinations\' state, permalinks and format (shown only when not feed). Filter by status, a scheduledFor window (since/until) or platform.',
     inputSchema: {
       type: 'object',
       properties: {

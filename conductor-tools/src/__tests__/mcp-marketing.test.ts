@@ -225,6 +225,19 @@ describe('list_publish_targets discovers accounts and a Post’s selection', () 
     expect(tiktok['creatorNickname']).toBe('@acme')
   })
 
+  it('surfaces each account’s post formats', async () => {
+    mocked(apiGet).mockResolvedValueOnce([
+      { platform: 'instagram', connectionId: 'c1', label: '@acme', lane: 'APP_MANAGED', formats: ['feed', 'reel', 'story'] },
+      { platform: 'youtube', connectionId: 'c2', label: 'Acme', lane: 'NATIVE', formats: ['feed'] },
+    ])
+
+    const result = await listPublishTargets({}, config)
+    const [instagram, youtube] = result['accounts'] as Record<string, unknown>[]
+
+    expect(instagram!['formats']).toEqual(['feed', 'reel', 'story'])
+    expect(youtube!['formats']).toEqual(['feed'])
+  })
+
   it('also returns the Work Item’s selected targets with their publish outcomes', async () => {
     mocked(apiGet)
       .mockResolvedValueOnce([{ platform: 'tiktok', connectionId: 'c9', lane: 'APP_MANAGED' }])
@@ -304,6 +317,22 @@ describe('set_publish_targets chooses destinations and per-target options', () =
       config
     )
     expect(result['targets']).toEqual(stored)
+  })
+
+  it('passes a per-target format straight through to the PUT body', async () => {
+    mocked(apiPut).mockResolvedValue([{ id: 't1', platform: 'facebook', format: 'story', state: 'PENDING' }])
+
+    const result = await setPublishTargets(
+      { issueId: 'w1', targets: [{ platform: 'facebook', connectionId: 'c1', format: 'story' }] },
+      config
+    )
+
+    expect(apiPut).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets',
+      { targets: [{ platform: 'facebook', connectionId: 'c1', format: 'story' }] },
+      config
+    )
+    expect((result['targets'] as Array<Record<string, unknown>>)[0]!['format']).toBe('story')
   })
 
   it('sends a per-target caption and its ordered media selection verbatim', async () => {

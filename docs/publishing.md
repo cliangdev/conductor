@@ -137,14 +137,19 @@ always offered, one per platform.
 ## Over MCP
 
 An agent drives the whole pipeline with four tools, in the shape Blotato made familiar:
-`list_publish_targets` (accounts, by name) → `create_post` (caption, media from paths or URLs, destinations
-by account name, fire time, reviewers — one call) → `get_post_status` (status, every destination's
-outcome, the gate's blockers, review and consent state) → `submit_review` (as an assigned REVIEWER's user
-key; approval schedules the Post). `submit_post`, `list_posts`, `list_assets`, `set_publish_targets`,
-`upload_asset`, `retry_failed_publish_targets` and `complete_manual_publish` cover the rest. Nothing is
-decided client-side that the server also decides: the asset type comes from the Workflow, the fire time
-from the preflight's `earliestFireTime`, the readiness from the preflight. The one thing no tool does is
-record TikTok consent — that stays a human act in the UI.
+`list_publish_targets` (accounts, by name, each with the formats and `optionKeys` it accepts) →
+`create_post` (caption, media from paths or URLs, destinations by account name and `format` — feed,
+reel or story — fire time, reviewers — one call) → `get_post_status` (status, every destination's
+outcome and format, the gate's blockers, review and consent state) → `submit_review` (as an assigned
+REVIEWER's user key; approval schedules the Post). `submit_post`, `list_posts`, `list_assets`,
+`set_publish_targets`, `upload_asset`, `retry_failed_publish_targets` and `complete_manual_publish`
+cover the rest. `format` defaults to `feed` and is omitted from a response when it is feed, to keep
+the common case's output small. Giving a story target more media than it can take resolves to the
+first file rather than refusing outright, with a warning saying so; a captionOverride on a story
+target gets its own warning, since the platform drops it. Nothing is decided client-side that the
+server also decides: the asset type comes from the Workflow, the fire time from the preflight's
+`earliestFireTime`, the readiness from the preflight. The one thing no tool does is record TikTok
+consent — that stays a human act in the UI.
 
 ## The manual lane
 
@@ -210,25 +215,90 @@ A destination that chose files which were later deleted is **not** the same as o
 it has no media, and the approval gate says so rather than quietly publishing the whole Post there.
 Deleting media is only possible before review, so this can never rewrite an approved bundle.
 
+## Formats
+
+A target doesn't just pick a platform and an account — on Facebook and Instagram it also picks a
+**format**, which is the shape of the surface it publishes to, not just a media constraint. `feed`
+is the default and needs nothing said. `set_publish_targets` and `create_post`'s `targets[]` take it
+as `format: "feed" | "reel" | "story"`; a value a platform doesn't offer (`formats` on that account's
+row in `list_publish_targets`) is refused at selection, before anything is uploaded.
+
+- **Feed** is the platform's ordinary post: an image, a video, or a carousel/photo set. Every
+  platform offers it, and it's what "just publish this" means with nothing else said.
+- **Reel** is one vertical video, Facebook or Instagram only. Facebook now turns every Page video
+  into a Reel regardless of which format was asked for (`FACEBOOK_VIDEO_IS_REEL`, a warning, not a
+  refusal) — there is no longer a plain "video post" on Facebook. Facebook reels schedule at most
+  **29 days** ahead (its Reels endpoint's own ceiling, tighter than the feed's); Instagram reels
+  have no such cap. A reel that isn't close to vertical still publishes — `REEL_ASPECT` warns rather
+  than blocks, the same way a mixed-aspect carousel does.
+- **Story** is exactly one image or clip. It **takes no caption** — the platform drops it even if
+  one is sent (`STORY_CAPTION_IGNORED`, a warning) — and it expires 24 hours after it goes out.
+  Neither platform can schedule a story the way they schedule a feed post or a reel, so a story's
+  lane is `APP_MANAGED` even on an otherwise `NATIVE` (Facebook) connection, and Conductor holds it
+  and fires it itself at the fire time — with the same **1-minute** lead an app-managed destination
+  always needs, not Facebook's native 10 minutes. Giving it more than one asset selects only the
+  first at approval-check time (`STORY_SINGLE_ITEM`); a caller building the selection itself should
+  send exactly one rather than rely on that.
+
+Meanwhile the two long-standing Facebook feed numbers move: **75 days** is the actual scheduling
+ceiling for a Page feed post (the doc previously said 30, which was never the real limit), and the
+new 29-day figure is a Reels-only cap layered under it.
+
 ## What each platform accepts
 
-Checked at the approval gate, per target, against that target's own media — so a PNG uploaded for
-Facebook no longer blocks the Post because Instagram is also selected.
+Checked at the approval gate, per target, against that target's own media and format — so a PNG
+uploaded for Facebook no longer blocks the Post because Instagram is also selected, and a feed
+target's rules don't apply to a reel or story target on the same account.
 
-| Platform | Media | Copy |
-|---|---|---|
-| **Instagram** | 1 item, or a carousel of 2–10 (images and video may mix). Feed images must be JPEG, aspect 4:5 to 1.91:1 | caption ≤ 2200 characters |
-| **Facebook** | 1 video, **or** any number of photos; never both. Video ≤ 1.5 GB | message effectively uncapped |
-| **TikTok** | 1 video (≤ 4 GB, within the creator's own duration cap), **or** 1–35 images. Never both, and photo-post images must be **JPEG or WEBP** — PNG is refused here and nowhere else | video caption ≤ 2200; photo post: title ≤ 90 (cut, with a warning), description ≤ 4000 |
-| **YouTube** | exactly 1 video, no images | title ≤ 100 characters; description ≤ 5000 **bytes** of UTF-8 |
+| Platform / format | Media | Copy | Limits |
+|---|---|---|---|
+| **Instagram feed** | 1 item, or a carousel of 2–10 (images and video may mix). Feed images must be JPEG, aspect 4:5 to 1.91:1 | caption ≤ 2200 characters | — |
+| **Instagram reel** | 1 vertical video (`REEL_SINGLE_VIDEO`; off-vertical warns, `REEL_ASPECT`) | caption ≤ 2200 characters | 3 seconds – 15 minutes |
+| **Instagram story** | exactly 1 image or clip (`STORY_SINGLE_ITEM`; off-vertical warns, `STORY_ASPECT`) | none — dropped if sent (`STORY_CAPTION_IGNORED`) | expires 24h after publish; fired by Conductor, 1-minute lead |
+| **Facebook feed** | 1 video, **or** any number of photos; never both. Video ≤ 1.5 GB | message effectively uncapped | schedulable up to 75 days ahead |
+| **Facebook reel** | 1 vertical video (`REEL_SINGLE_VIDEO`; off-vertical warns, `REEL_ASPECT`). Every Page video publishes as a Reel (`FACEBOOK_VIDEO_IS_REEL`) | message effectively uncapped | 3–90 seconds; schedulable up to 29 days ahead |
+| **Facebook story** | exactly 1 image or clip (`STORY_SINGLE_ITEM`; off-vertical warns, `STORY_ASPECT`) | none — dropped if sent (`STORY_CAPTION_IGNORED`) | expires 24h after publish; fired by Conductor, 1-minute lead |
+| **TikTok video** | 1 video (≤ 4 GB, within the creator's own duration cap) | caption ≤ 2200 | — |
+| **TikTok photo** | 1–35 images, **JPEG or WEBP only** — PNG is refused here and nowhere else | title ≤ 90 (cut, with a warning), description ≤ 4000 | — |
+| **YouTube video** | exactly 1 video, no images | title ≤ 100 characters; description ≤ 5000 **bytes** of UTF-8 | — |
 
 A carousel of mixed aspect ratios is a warning, not a refusal: Instagram will publish it, cropping every
-item to the first one's shape, which may well be what was wanted.
+item to the first one's shape, which may well be what was wanted. Selecting a format a platform doesn't
+offer (`FORMAT_UNSUPPORTED`) is refused outright, at selection rather than at the gate.
 
 > **TikTok photo posts need one piece of setup.** TikTok has no chunked upload for images, so a photo
 > post hands over URLs for TikTok to fetch — which requires the storage host to be registered as a
 > verified URL prefix for the app in the TikTok developer portal. Without it every photo post fails with
 > a message naming this; video posts are unaffected, since they upload their bytes.
+
+## Options
+
+`publishOptions` is a per-target bag, read only against that target's own platform (and, where noted,
+its format). A key outside a platform's `optionKeys` — read from `list_publish_targets`, never
+guessed — is dropped rather than acted on (`OPTION_UNKNOWN`, a warning); a value of the wrong shape
+for a key that does apply refuses the write (`OPTION_INVALID`); a key that's real for the platform
+but doesn't apply to this target's format or media (e.g. `coverAssetId` on a feed post) is dropped
+with a warning naming why (`OPTION_IGNORED`).
+
+| Platform | Key | Type | Applies to |
+|---|---|---|---|
+| Instagram | `shareToFeed` | boolean | reels |
+| Instagram | `collaborators` | up to 3 usernames | not carousels |
+| Instagram | `altText` | string, ≤ 1000 chars | single images |
+| Instagram | `coverAssetId` | one of the Post's image assets | reels |
+| Instagram | `audioName` | string | reels |
+| YouTube | `notifySubscribers` | boolean | — |
+| YouTube | `madeForKids` | boolean | — |
+| YouTube | `containsSyntheticMedia` | boolean | — |
+| YouTube | `playlistIds` | list of strings | — |
+| YouTube | `thumbnailAssetId` | one of the Post's image assets | — |
+| TikTok | `privacyLevel` | string, from the account's `privacyLevelOptions` | — |
+| TikTok | `disableComment`, `disableDuet`, `disableStitch` | boolean | — |
+| TikTok | `brandContentToggle`, `brandOrganicToggle` | boolean | — |
+| TikTok | `isAigc` | boolean | — |
+| TikTok | `videoCoverTimestampMs` | non-negative integer | video posts |
+| TikTok | `autoAddMusic` | boolean | photo posts |
+| TikTok | `photoCoverIndex` | zero-based integer | photo posts |
 
 ## Firing on time
 
@@ -332,6 +402,21 @@ publishable `asset_types` prefers the Publishing channel and **falls back to the
 project has not configured one**, so adding this took nothing away from a project that already had
 notifications. A manual-publish alert has no fallback — there is nothing sensible to say about it in an
 Issues channel — so it is simply silent until a Publishing channel exists.
+
+## Known gaps
+
+- **Facebook's first comment** isn't set by the pipeline — a Post's caption goes on the post itself,
+  and there is no way to attach a separate first comment (the way some tools stash a link or a
+  hashtag block) yet.
+- **YouTube visibility** is only ever "private until `publish_at`, public after" for a scheduled
+  upload — that is the only shape YouTube's own scheduler offers, so there is no way to land a
+  scheduled video as unlisted, or to keep it private past its publish time.
+- **Instagram stickers and links on stories** (polls, countdowns, the swipe-up/link sticker) aren't
+  reachable at all — the Graph API's story-publishing endpoint doesn't expose them, not a gap in
+  Conductor's own coverage.
+- **New platforms** — Threads, Bluesky, LinkedIn, X and Pinterest — are still deferred. Adding one is
+  the same shape of work as any other entry in `PublishPlatformRegistry` (see below); none is
+  currently scheduled.
 
 ## Adding a platform
 

@@ -72,6 +72,11 @@ export interface PublishTargetSelection {
    * destination — the one a human posts by hand — of which there is exactly one per platform.
    */
   connectionId?: string | null
+  /**
+   * The surface this destination publishes to: feed (default), reel or story. From that platform's
+   * `formats` in list_publish_targets — selecting one it does not offer is refused.
+   */
+  format?: 'feed' | 'reel' | 'story'
   publishOptions?: Record<string, unknown>
   /**
    * Copy for this destination alone, replacing the Post's caption here. Omitted means the Post's own —
