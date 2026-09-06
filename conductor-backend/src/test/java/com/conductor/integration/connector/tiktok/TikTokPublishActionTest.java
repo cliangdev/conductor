@@ -459,6 +459,221 @@ class TikTokPublishActionTest {
                 .hasMessageContaining("rate_limit_exceeded");
     }
 
+    @Test
+    void wireLevel_isAigcAndCoverTimestamp_reachTheWireAsNamedByTikTok() throws Exception {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        List<HttpEntity<?>> sent = new ArrayList<>();
+        stubTikTokHttp(restTemplate, sent, okEnvelope());
+        TikTokPublishAction wired = newAction(new TikTokClient(restTemplate));
+        Map<String, Object> input = schedulerInput();
+        input.put("is_aigc", true);
+        input.put("video_cover_timestamp_ms", 2500);
+
+        wired.publish(input, context());
+
+        String initBody = objectMapper.writeValueAsString(sent.get(0).getBody());
+        assertThat(initBody).contains("\"is_aigc\":true");
+        assertThat(initBody).contains("\"video_cover_timestamp_ms\":2500");
+    }
+
+    @Test
+    void wireLevel_absentOptionsAreOmittedFromTheWireRatherThanSentAsFalseOrZero() throws Exception {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        List<HttpEntity<?>> sent = new ArrayList<>();
+        stubTikTokHttp(restTemplate, sent, okEnvelope());
+        TikTokPublishAction wired = newAction(new TikTokClient(restTemplate));
+
+        wired.publish(schedulerInput(), context());
+
+        String initBody = objectMapper.writeValueAsString(sent.get(0).getBody());
+        assertThat(initBody).doesNotContain("is_aigc").doesNotContain("video_cover_timestamp_ms");
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void wireLevel_photoPostCoverIndexAndAutoAddMusic_reachTheWireAsNamedByTikTok() throws Exception {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        List<HttpEntity<?>> sent = new ArrayList<>();
+        when(restTemplate.exchange(any(URI.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class)))
+                .thenAnswer(invocation -> {
+                    URI uri = invocation.getArgument(0);
+                    HttpEntity<?> entity = invocation.getArgument(2);
+                    sent.add(entity);
+                    if (uri.toString().endsWith(TikTokClient.CONTENT_INIT_PATH)) {
+                        Map<String, Object> body = new LinkedHashMap<>();
+                        body.put("error", okEnvelope());
+                        body.put("data", Map.of("publish_id", PUBLISH_ID));
+                        return new ResponseEntity(
+                                objectMapper.convertValue(body, TikTokClient.VideoInitResponse.class),
+                                HttpStatus.OK);
+                    }
+                    Map<String, Object> body = new LinkedHashMap<>();
+                    body.put("error", okEnvelope());
+                    body.put("data", Map.of("status", "PUBLISH_COMPLETE",
+                            "publicaly_available_post_id", List.of("7280002")));
+                    return new ResponseEntity(
+                            objectMapper.convertValue(body, TikTokClient.PublishStatusResponse.class),
+                            HttpStatus.OK);
+                });
+        givenPhotos("photo-a", "photo-b", "photo-c");
+        TikTokPublishAction wired = newAction(new TikTokClient(restTemplate));
+        Map<String, Object> input = photoInput("photo-a", "photo-b", "photo-c");
+        input.put("photo_cover_index", 1);
+        input.put("auto_add_music", true);
+
+        ActionResult result = wired.publish(input, context());
+
+        assertThat(result.success()).isTrue();
+        String initBody = objectMapper.writeValueAsString(sent.get(0).getBody());
+        assertThat(initBody).contains("\"photo_cover_index\":1");
+        assertThat(initBody).contains("\"auto_add_music\":true");
+    }
+
+    // --- [new] TikTok's new video-post options: is_aigc and video_cover_timestamp_ms ---
+
+    @Test
+    void publish_isAigcAndCoverTimestamp_reachPostInfoWhenPresent() {
+        stubHappyPath();
+        Map<String, Object> input = schedulerInput();
+        input.put("is_aigc", true);
+        input.put("video_cover_timestamp_ms", 1500);
+
+        action.publish(input, context());
+
+        ArgumentCaptor<VideoPostInfo> postInfo = ArgumentCaptor.forClass(VideoPostInfo.class);
+        verify(client).initFileUpload(eq(ACCESS_TOKEN), postInfo.capture(), any(ChunkPlan.class));
+        assertThat(postInfo.getValue().isAigc()).isTrue();
+        assertThat(postInfo.getValue().videoCoverTimestampMs()).isEqualTo(1500L);
+    }
+
+    @Test
+    void publish_isAigcAndCoverTimestamp_areNullRatherThanADefaultWhenAbsent() {
+        stubHappyPath();
+
+        action.publish(schedulerInput(), context());
+
+        ArgumentCaptor<VideoPostInfo> postInfo = ArgumentCaptor.forClass(VideoPostInfo.class);
+        verify(client).initFileUpload(eq(ACCESS_TOKEN), postInfo.capture(), any(ChunkPlan.class));
+        assertThat(postInfo.getValue().isAigc()).isNull();
+        assertThat(postInfo.getValue().videoCoverTimestampMs()).isNull();
+    }
+
+    @Test
+    void publish_isAigc_leniantlyParsesStringAndNumericBooleans() {
+        stubHappyPath();
+        Map<String, Object> input = schedulerInput();
+        input.put("is_aigc", "true");
+
+        action.publish(input, context());
+
+        ArgumentCaptor<VideoPostInfo> postInfo = ArgumentCaptor.forClass(VideoPostInfo.class);
+        verify(client).initFileUpload(eq(ACCESS_TOKEN), postInfo.capture(), any(ChunkPlan.class));
+        assertThat(postInfo.getValue().isAigc()).isTrue();
+    }
+
+    @Test
+    void publish_isAigc_garbageValueFailsWithAClearMessage() {
+        Map<String, Object> input = schedulerInput();
+        input.put("is_aigc", "maybe");
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("is_aigc").contains("boolean");
+        verify(client, never()).initFileUpload(anyString(), any(), any());
+    }
+
+    @Test
+    void publish_videoCoverTimestampMs_negativeValueFailsWithAClearMessage() {
+        Map<String, Object> input = schedulerInput();
+        input.put("video_cover_timestamp_ms", -5);
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("video_cover_timestamp_ms").contains("non-negative");
+        verify(client, never()).initFileUpload(anyString(), any(), any());
+    }
+
+    @Test
+    void publish_videoCoverTimestampMs_leniantlyParsesAStringInteger() {
+        stubHappyPath();
+        Map<String, Object> input = schedulerInput();
+        input.put("video_cover_timestamp_ms", "1500");
+
+        action.publish(input, context());
+
+        ArgumentCaptor<VideoPostInfo> postInfo = ArgumentCaptor.forClass(VideoPostInfo.class);
+        verify(client).initFileUpload(eq(ACCESS_TOKEN), postInfo.capture(), any(ChunkPlan.class));
+        assertThat(postInfo.getValue().videoCoverTimestampMs()).isEqualTo(1500L);
+    }
+
+    // --- [new] TikTok's new photo-post options: auto_add_music and photo_cover_index ---
+
+    @Test
+    void photoPost_autoAddMusicAndCoverIndex_reachTheirRespectivePayloads() {
+        givenPhotos("photo-a", "photo-b", "photo-c");
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+        Map<String, Object> input = photoInput("photo-a", "photo-b", "photo-c");
+        input.put("auto_add_music", true);
+        input.put("photo_cover_index", 2);
+
+        action.publish(input, context());
+
+        ArgumentCaptor<TikTokClient.PhotoPostInfo> info =
+                ArgumentCaptor.forClass(TikTokClient.PhotoPostInfo.class);
+        ArgumentCaptor<Integer> coverIndex = ArgumentCaptor.forClass(Integer.class);
+        verify(client).initPhotoPost(eq(ACCESS_TOKEN), info.capture(), any(), coverIndex.capture());
+        assertThat(info.getValue().autoAddMusic()).isTrue();
+        assertThat(coverIndex.getValue()).isEqualTo(2);
+    }
+
+    @Test
+    void photoPost_optionsAreAbsentRatherThanDefaultedWhenNotNamed() {
+        givenPhotos("photo-a", "photo-b");
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        action.publish(photoInput("photo-a", "photo-b"), context());
+
+        ArgumentCaptor<TikTokClient.PhotoPostInfo> info =
+                ArgumentCaptor.forClass(TikTokClient.PhotoPostInfo.class);
+        ArgumentCaptor<Integer> coverIndex = ArgumentCaptor.forClass(Integer.class);
+        verify(client).initPhotoPost(eq(ACCESS_TOKEN), info.capture(), any(), coverIndex.capture());
+        assertThat(info.getValue().autoAddMusic()).isNull();
+        // Absent names TikTok's own default: the first image.
+        assertThat(coverIndex.getValue()).isZero();
+    }
+
+    @Test
+    void photoPost_coverIndexOutOfRange_failsNamingTheImageCount() {
+        givenPhotos("photo-a", "photo-b");
+        Map<String, Object> input = photoInput("photo-a", "photo-b");
+        input.put("photo_cover_index", 2);
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("photo_cover_index").contains("2").contains("2 images");
+        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
+    }
+
+    @Test
+    void photoPost_coverIndexNegative_isRejectedBeforeInit() {
+        givenPhotos("photo-a");
+        Map<String, Object> input = photoInput("photo-a");
+        input.put("photo_cover_index", -1);
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("photo_cover_index").contains("non-negative");
+        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
+    }
+
     // ---- helpers ----
 
     private void stubHappyPath() {
@@ -544,7 +759,7 @@ class TikTokPublishActionTest {
     @Test
     void photoPost_initialisesOnceWithEveryImageInTheChosenOrderAndNeverUploadsBytes() {
         givenPhotos("photo-b", "photo-a");
-        when(client.initPhotoPost(anyString(), any(), any())).thenReturn(PUBLISH_ID);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
         when(client.fetchPublishStatus(anyString(), anyString()))
                 .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
 
@@ -553,7 +768,7 @@ class TikTokPublishActionTest {
         assertThat(result.success()).isTrue();
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> urls = ArgumentCaptor.forClass(List.class);
-        verify(client).initPhotoPost(eq(ACCESS_TOKEN), any(), urls.capture());
+        verify(client).initPhotoPost(eq(ACCESS_TOKEN), any(), urls.capture(), anyInt());
         // The destination's order, because TikTok covers a photo post with its first image.
         assertThat(urls.getValue()).containsExactly("https://signed/photo-b", "https://signed/photo-a");
         // A photo post is PULL_FROM_URL: there is nothing to chunk and nothing to upload.
@@ -564,7 +779,7 @@ class TikTokPublishActionTest {
     @Test
     void photoPost_carriesTheTitleAndDescriptionSeparately_truncatingAnOverLongTitle() {
         givenPhotos("photo-a");
-        when(client.initPhotoPost(anyString(), any(), any())).thenReturn(PUBLISH_ID);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
         when(client.fetchPublishStatus(anyString(), anyString()))
                 .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
         Map<String, Object> input = photoInput("photo-a");
@@ -575,7 +790,7 @@ class TikTokPublishActionTest {
 
         ArgumentCaptor<TikTokClient.PhotoPostInfo> info =
                 ArgumentCaptor.forClass(TikTokClient.PhotoPostInfo.class);
-        verify(client).initPhotoPost(eq(ACCESS_TOKEN), info.capture(), any());
+        verify(client).initPhotoPost(eq(ACCESS_TOKEN), info.capture(), any(), anyInt());
         assertThat(info.getValue().title()).hasSize(90);
         assertThat(info.getValue().description()).isEqualTo("The long body copy");
     }
@@ -593,14 +808,14 @@ class TikTokPublishActionTest {
 
         assertThat(result.success()).isTrue();
         // Re-initialising here is exactly how the creator ends up with the same photos posted twice.
-        verify(client, never()).initPhotoPost(anyString(), any(), any());
+        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
         verify(client).fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID);
     }
 
     @Test
     void photoPost_namesTheUrlPrefixPrerequisiteWhenTikTokWillNotFetchTheImages() {
         givenPhotos("photo-a");
-        when(client.initPhotoPost(anyString(), any(), any())).thenThrow(
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenThrow(
                 new TikTokClient.TikTokApiException("url ownership unverified",
                         TikTokClient.ERROR_URL_OWNERSHIP_UNVERIFIED, false));
 
@@ -622,7 +837,7 @@ class TikTokPublishActionTest {
 
         assertThat(result.success()).isTrue();
         verify(client).initFileUpload(eq(ACCESS_TOKEN), any(VideoPostInfo.class), any());
-        verify(client, never()).initPhotoPost(anyString(), any(), any());
+        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
     }
 
     /** The Post's images, signed so the action can hand TikTok fetchable URLs. */

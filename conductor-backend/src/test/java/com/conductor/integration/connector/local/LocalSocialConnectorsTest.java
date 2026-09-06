@@ -294,6 +294,58 @@ class LocalSocialConnectorsTest {
     }
 
     @Test
+    void localTikTokPublishEchoesTheNewOptionsSoATestCanSeeTheyReachedTheConnector() {
+        ActionResult result = tiktok.invoke("publish_video",
+                Map.of("title", "local clip", "work_item_id", "wi-1",
+                        "is_aigc", true, "video_cover_timestamp_ms", 1500,
+                        "auto_add_music", false, "photo_cover_index", 1),
+                tiktokContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output())
+                .containsEntry("is_aigc", true)
+                .containsEntry("video_cover_timestamp_ms", 1500)
+                .containsEntry("auto_add_music", false)
+                .containsEntry("photo_cover_index", 1);
+    }
+
+    @Test
+    void localTikTokPublishOmitsTheNewOptionsWhenNotNamed() {
+        ActionResult result = tiktok.invoke("publish_video",
+                Map.of("title", "local clip", "work_item_id", "wi-1"), tiktokContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).doesNotContainKeys(
+                "is_aigc", "video_cover_timestamp_ms", "auto_add_music", "photo_cover_index");
+    }
+
+    @Test
+    void localYouTubePublishEchoesTheNewOptionsSoATestCanSeeTheyReachedTheConnector() {
+        ActionResult result = youtube.invoke("publish_video",
+                Map.of("title", "local upload", "notify_subscribers", false, "made_for_kids", true,
+                        "contains_synthetic_media", true, "playlist_ids", List.of("pl-1"),
+                        "thumbnail_asset_id", "thumb-1"),
+                youtubeContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output())
+                .containsEntry("notify_subscribers", false)
+                .containsEntry("made_for_kids", true)
+                .containsEntry("contains_synthetic_media", true)
+                .containsEntry("playlist_ids", List.of("pl-1"))
+                .containsEntry("thumbnail_asset_id", "thumb-1");
+    }
+
+    @Test
+    void localYouTubePublishOmitsTheNewOptionsWhenNotNamed() {
+        ActionResult result = youtube.invoke("publish_video", Map.of("title", "local upload"), youtubeContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).doesNotContainKeys("notify_subscribers", "made_for_kids",
+                "contains_synthetic_media", "playlist_ids", "thumbnail_asset_id");
+    }
+
+    @Test
     void anUnknownActionIsStillAPermanentError() {
         assertThat(meta.invoke("nope", Map.of(), metaContext()).success()).isFalse();
         assertThat(youtube.invoke("nope", Map.of(), youtubeContext()).success()).isFalse();

@@ -186,7 +186,20 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
         if (publishAt != null) {
             output.put("publish_at", publishAt.toString());
         }
+        // Echoed rather than acted on: this stub never touches YouTube, but a test needs to see that the
+        // new options actually reached the connector's input.
+        echoIfPresent(input, output, "notify_subscribers");
+        echoIfPresent(input, output, "made_for_kids");
+        echoIfPresent(input, output, "contains_synthetic_media");
+        echoIfPresent(input, output, "playlist_ids");
+        echoIfPresent(input, output, "thumbnail_asset_id");
         return ActionResult.ok(output);
+    }
+
+    private static void echoIfPresent(Map<String, Object> input, Map<String, Object> output, String key) {
+        if (input != null && input.containsKey(key)) {
+            output.put(key, input.get(key));
+        }
     }
 
     /**
