@@ -201,8 +201,23 @@ public record PublishPlatform(String id,
      * The earliest a fire time may be for a destination on the given lane. A MANUAL destination has no
      * platform API to satisfy, so nothing but "in the future" applies to it.
      */
+    /** The lead Conductor's own dispatch needs when it holds a row the platform would normally schedule. */
+    public static final Duration HELD_MIN_LEAD = Duration.ofMinutes(1);
+
+    /**
+     * The shortest lead a target on {@code lane} can be scheduled with. A MANUAL destination needs none. A
+     * platform's own {@link #minLead()} is what its scheduler demands of a native hand-off (Facebook's ten
+     * minutes); a row Conductor holds and fires itself — a story on a platform that cannot schedule one —
+     * only needs the dispatch poll's lead, however long the native floor is.
+     */
     public Duration minLead(PublishLane lane) {
-        return lane == PublishLane.MANUAL ? Duration.ZERO : minLead;
+        if (lane == PublishLane.MANUAL) {
+            return Duration.ZERO;
+        }
+        if (lane == PublishLane.APP_MANAGED && automatedLane == PublishLane.NATIVE) {
+            return HELD_MIN_LEAD;
+        }
+        return minLead;
     }
 
     /** The native hand-off window, built from the same leads the approval gate reads. */

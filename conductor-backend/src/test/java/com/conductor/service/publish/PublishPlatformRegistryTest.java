@@ -210,6 +210,16 @@ class PublishPlatformRegistryTest {
     }
 
     @Test
+    void aHeldFacebookStory_needsOnlyTheDispatchLead_notFacebooksNativeFloor() {
+        PublishPlatform facebook = registry.require("facebook");
+        assertThat(facebook.minLead(PublishLane.NATIVE)).isEqualTo(Duration.ofMinutes(10));
+        assertThat(facebook.minLead(PublishLane.APP_MANAGED)).isEqualTo(PublishPlatform.HELD_MIN_LEAD);
+        assertThat(facebook.minLead(PublishLane.MANUAL)).isEqualTo(Duration.ZERO);
+        // Instagram is app-managed by nature: its own one-minute lead stands.
+        assertThat(registry.require("instagram").minLead(PublishLane.APP_MANAGED)).isEqualTo(Duration.ofMinutes(1));
+    }
+
+    @Test
     void facebookReels_scheduleAtMost29DaysOut_feedPosts75() {
         PublishPlatform facebook = registry.require("facebook");
         assertThat(facebook.maxLeadFor(PostFormat.FEED)).isEqualTo(Duration.ofDays(75));
