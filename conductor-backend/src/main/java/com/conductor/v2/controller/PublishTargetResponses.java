@@ -1,6 +1,7 @@
 package com.conductor.v2.controller;
 
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.generated.v2.model.PostFormat;
 import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.service.PublishTargetService.TargetView;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -51,6 +52,8 @@ final class PublishTargetResponses {
                 .fireTime(target.getFireTime())
                 .publishOptions(readOptions(target.getPublishOptions()))
                 .captionOverride(target.getCaptionOverride())
+                .format(PostFormat.fromValue(
+                        com.conductor.service.publish.PostFormat.parse(target.getFormat()).wire()))
                 // Null rather than a list when this target inherits the Post's media, so a client can render
                 // "using all Post media" instead of a selection that merely happens to match today.
                 .assetIds(view.assetIds())

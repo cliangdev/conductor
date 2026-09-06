@@ -92,6 +92,7 @@ let putBodies: Array<{
   targets: Array<{
     platform: string
     connectionId: string | null
+    format?: string
     publishOptions?: unknown
     captionOverride?: string
     assetIds?: string[]
@@ -124,6 +125,7 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       (t: {
         platform: string
         connectionId: string
+        format?: string
         publishOptions?: unknown
         captionOverride?: string
         assetIds?: string[]
@@ -131,6 +133,7 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
         ...selection(
           option({ platform: t.platform as PublishTargetOption['platform'], connectionId: t.connectionId })
         ),
+        format: t.format ?? 'feed',
         publishOptions: t.publishOptions,
         // Echoed the way the server does, so a save round-trips a customisation instead of blanking it.
         captionOverride: t.captionOverride ?? null,
@@ -413,7 +416,9 @@ describe('PostTargetPicker', () => {
     await userEvent.click(await screen.findByRole('checkbox', { name: /@acme_uk/ }))
 
     await waitFor(() => expect(putBodies).toHaveLength(1))
-    expect(putBodies[0]).toEqual({ targets: [{ platform: 'instagram', connectionId: 'conn-b' }] })
+    expect(putBodies[0]).toEqual({
+      targets: [{ platform: 'instagram', connectionId: 'conn-b', format: 'feed' }],
+    })
     await waitFor(() => expect(screen.getByRole('checkbox', { name: /@acme_uk/ })).toBeChecked())
     expect(screen.getByRole('checkbox', { name: /@acme$/ })).not.toBeChecked()
   })
@@ -429,7 +434,9 @@ describe('PostTargetPicker', () => {
     await userEvent.click(await screen.findByRole('checkbox', { name: /@acme/ }))
 
     await waitFor(() => expect(putBodies).toHaveLength(1))
-    expect(putBodies[0]).toEqual({ targets: [{ platform: 'facebook', connectionId: 'conn-meta' }] })
+    expect(putBodies[0]).toEqual({
+      targets: [{ platform: 'facebook', connectionId: 'conn-meta', format: 'feed' }],
+    })
   })
 
   it('warns that editing an approved Post sends it back for review', async () => {
@@ -480,7 +487,7 @@ describe('PostTargetPicker', () => {
     await waitFor(() => expect(putBodies).toHaveLength(1))
     // Null, not the string "manual": the platform alone identifies a manual destination, and the
     // backend's CHECK constraint ties a null connection to the MANUAL lane.
-    expect(putBodies[0].targets).toEqual([{ platform: 'tiktok', connectionId: null }])
+    expect(putBodies[0].targets).toEqual([{ platform: 'tiktok', connectionId: null, format: 'feed' }])
   })
 
   it('says plainly that a manual destination will not publish itself', async () => {
@@ -600,6 +607,7 @@ describe('PostTargetPicker — TikTok publish options', () => {
       {
         platform: 'tiktok',
         connectionId: 'acme',
+        format: 'feed',
         publishOptions: {
           privacyLevel: 'PUBLIC_TO_EVERYONE',
           disableComment: false,
@@ -607,6 +615,7 @@ describe('PostTargetPicker — TikTok publish options', () => {
           disableStitch: false,
           brandContentToggle: false,
           brandOrganicToggle: false,
+          isAigc: false,
         },
       },
     ])
@@ -711,5 +720,88 @@ describe('PostTargetPicker — TikTok publish options', () => {
     await loaded()
 
     await waitFor(() => expect(onTikTokChange).toHaveBeenCalledWith([]))
+  })
+})
+
+// ── post formats ─────────────────────────────────────────────────────────────
+
+describe('PostTargetPicker — post formats', () => {
+  it('hides the format selector for a platform that only offers feed', async () => {
+    const youtube = option({ platform: 'youtube', connectionId: 'conn-yt', label: 'Acme Channel', formats: ['feed'] })
+    availableTargets = [youtube]
+    selectedTargets = [selection(youtube)]
+    renderPicker()
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
+    expect(screen.queryByRole('radiogroup', { name: /post format/i })).not.toBeInTheDocument()
+  })
+
+  it('offers a format selector for a platform with reel and story', async () => {
+    const instagram = option({
+      platform: 'instagram',
+      connectionId: 'conn-meta',
+      label: '@acme',
+      formats: ['feed', 'reel', 'story'],
+    })
+    availableTargets = [instagram]
+    selectedTargets = [selection(instagram)]
+    renderPicker()
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
+    expect(screen.getByRole('radiogroup', { name: /post format/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Story' })).toBeInTheDocument()
+  })
+
+  it('sends the chosen format on save', async () => {
+    const instagram = option({
+      platform: 'instagram',
+      connectionId: 'conn-meta',
+      label: '@acme',
+      formats: ['feed', 'reel', 'story'],
+    })
+    availableTargets = [instagram]
+    selectedTargets = [selection(instagram)]
+    renderPicker()
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: /customize for this destination/i }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Story' }))
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    expect(lastSelectionFor('instagram').format).toBe('story')
+  })
+
+  it('sends feed by default when a target never touched the selector', async () => {
+    availableTargets = [option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })]
+    renderPicker()
+    await loaded()
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: /Acme Page/ }))
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    expect(lastSelectionFor('facebook').format).toBe('feed')
+  })
+
+  it('badges a reel and a story destination, and badges nothing for feed', async () => {
+    const instagram = option({
+      platform: 'instagram',
+      connectionId: 'conn-meta',
+      label: '@acme',
+      formats: ['feed', 'reel', 'story'],
+    })
+    const facebook = option({ platform: 'facebook', connectionId: 'conn-fb', label: 'Acme Page' })
+    availableTargets = [instagram, facebook]
+    selectedTargets = [
+      { ...selection(instagram), format: 'reel' },
+      { ...selection(facebook), format: 'feed' },
+    ]
+    renderPicker()
+    await loaded()
+
+    expect(screen.getByText('Reel')).toBeInTheDocument()
+    expect(screen.queryByText('Story')).not.toBeInTheDocument()
+    expect(screen.queryByText('Feed')).not.toBeInTheDocument()
   })
 })

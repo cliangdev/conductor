@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,7 +59,10 @@ public record PublishPlatform(String id,
                               Map<String, String> optionParams,
                               Duration minLead,
                               Duration maxLead,
-                              Set<Gate> gates) {
+                              Set<Gate> gates,
+                              Set<PostFormat> formats,
+                              Map<PostFormat, Duration> maxLeadByFormat,
+                              Map<PostFormat, PublishLane> laneByFormat) {
 
     /**
      * Facebook's native scheduling minimum, the floor every platform shared before leads went per platform.
@@ -162,7 +166,19 @@ public record PublishPlatform(String id,
         }
     }
 
+    /** A platform that publishes feed posts only, on one lane, with one hand-off window: the shape before formats. */
+    public PublishPlatform(String id, String label, String connectorId, String assetType, String manualLabel,
+                           PublishLane automatedLane, PublishAction publish, RevokeAction revoke,
+                           ConfirmAction confirm, MetricsAction metrics, Map<String, String> optionParams,
+                           Duration minLead, Duration maxLead, Set<Gate> gates) {
+        this(id, label, connectorId, assetType, manualLabel, automatedLane, publish, revoke, confirm, metrics,
+                optionParams, minLead, maxLead, gates, EnumSet.of(PostFormat.FEED), Map.of(), Map.of());
+    }
+
     public PublishPlatform {
+        formats = formats == null || formats.isEmpty() ? EnumSet.of(PostFormat.FEED) : EnumSet.copyOf(formats);
+        maxLeadByFormat = maxLeadByFormat == null ? Map.of() : Map.copyOf(maxLeadByFormat);
+        laneByFormat = laneByFormat == null ? Map.of() : Map.copyOf(laneByFormat);
         optionParams = ordered(optionParams);
         gates = gates == null ? Set.of() : Set.copyOf(gates);
     }
@@ -192,6 +208,30 @@ public record PublishPlatform(String id,
     /** The native hand-off window, built from the same leads the approval gate reads. */
     public HandoffWindow window() {
         return new HandoffWindow(minLead, maxLead);
+    }
+
+    /** Whether this platform publishes in {@code format} at all. Every platform offers {@link PostFormat#FEED}. */
+    public boolean supports(PostFormat format) {
+        return format != null && formats.contains(format);
+    }
+
+    /**
+     * The lane a connected account publishes {@code format} on. Most formats share the platform's
+     * {@link #automatedLane()}; a format the platform cannot schedule itself (a Facebook story) is held by
+     * Conductor and fired at its time instead, i.e. APP_MANAGED.
+     */
+    public PublishLane laneFor(PostFormat format) {
+        return laneByFormat.getOrDefault(format == null ? PostFormat.FEED : format, automatedLane);
+    }
+
+    /** The furthest ahead the platform's own scheduler accepts {@code format}; null when it has no ceiling. */
+    public Duration maxLeadFor(PostFormat format) {
+        return maxLeadByFormat.getOrDefault(format == null ? PostFormat.FEED : format, maxLead);
+    }
+
+    /** The native hand-off window for {@code format}: {@link #window()} with that format's ceiling. */
+    public HandoffWindow windowFor(PostFormat format) {
+        return new HandoffWindow(minLead, maxLeadFor(format));
     }
 
     /** Whether this platform trips the given approval rule. */

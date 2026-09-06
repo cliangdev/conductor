@@ -197,7 +197,19 @@ public class LocalTikTokConnector implements OAuth2Connector, ActionConnector {
         output.put("publish_id", "local-tt-publish-" + suffix);
         output.put("post_id", postId);
         output.put("permalink", LOCAL_PERMALINK_BASE + "/tiktok/@" + username + "/video/" + postId);
+        // Echoed rather than acted on: this stub never touches TikTok, but a test needs to see that the
+        // new options actually reached the connector's input.
+        echoIfPresent(input, output, "is_aigc");
+        echoIfPresent(input, output, "video_cover_timestamp_ms");
+        echoIfPresent(input, output, "auto_add_music");
+        echoIfPresent(input, output, "photo_cover_index");
         return ActionResult.ok(output);
+    }
+
+    private static void echoIfPresent(Map<String, Object> input, Map<String, Object> output, String key) {
+        if (input != null && input.containsKey(key)) {
+            output.put(key, input.get(key));
+        }
     }
 
     private static String configString(ConnectionContext ctx, String key, String fallback) {

@@ -14,7 +14,11 @@
         "disable_duet": "Turn off Duet for this post (optional, default false)",
         "disable_stitch": "Turn off Stitch for this post (optional, default false)",
         "brand_content_toggle": "Disclosure flag: the post is a paid partnership / branded content (optional, default false)",
-        "brand_organic_toggle": "Disclosure flag: the post promotes the creator's own business (optional, default false)"
+        "brand_organic_toggle": "Disclosure flag: the post promotes the creator's own business (optional, default false)",
+        "is_aigc": "Video posts only: label the post as AI-generated content (optional, TikTok's own default when omitted)",
+        "video_cover_timestamp_ms": "Video posts only: millisecond timestamp of the frame TikTok should use as the post's cover (optional, non-negative integer; defaults to TikTok's own choice)",
+        "auto_add_music": "Photo posts only: let TikTok automatically add a soundtrack to the post (optional, TikTok's own default when omitted)",
+        "photo_cover_index": "Photo posts only: zero-based index into this destination's selected images naming the cover (optional, defaults to the first image; must be within the image count)"
       },
       "outputKeys": [
         "post_id",

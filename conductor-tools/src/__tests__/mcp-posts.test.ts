@@ -185,6 +185,112 @@ describe('create_post', () => {
     expect(mocked(apiPatch).mock.calls.every((c) => !(c[1] as Record<string, unknown>)['status'])).toBe(true)
   })
 
+  it('passes a per-target format through to set_publish_targets', async () => {
+    serve({
+      '/api/v2/projects/proj-1/publish-targets': ACCOUNTS,
+      '/api/v1/projects/proj-1/workflows': WORKFLOWS,
+      '/api/v2/projects/proj-1/work-items/w1/publish-preflight': readyPreflight(),
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+        { id: 't-fb', platform: 'facebook', label: 'Acme Page', lane: 'NATIVE', state: 'PENDING', format: 'reel' },
+      ],
+      '/api/v2/projects/proj-1/work-items/w1/assets': [{ id: 'a1', label: 'clip.mp4', contentType: 'video/mp4' }],
+      '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-9', status: 'DRAFT' },
+    })
+    mocked(apiPost).mockImplementation(async (path: string) => {
+      if (path.endsWith('/work-items')) return { id: 'w1', displayId: 'MK-9', status: 'DRAFT' }
+      if (path.endsWith('/assets/uploads')) return { assetId: 'a1', uploadUrl: 'https://bucket/a1' }
+      if (path.endsWith('/confirm')) return undefined
+      throw new Error(`unexpected POST ${path}`)
+    })
+    mocked(apiPut).mockResolvedValue([])
+    mocked(apiPatch).mockResolvedValue({})
+
+    await createPost(
+      {
+        text: 'Reel time',
+        media: [{ path: '/tmp/clip.mp4' }],
+        targets: [{ platform: 'facebook', account: 'Acme Page', format: 'reel' }],
+        submit: false,
+      },
+      config
+    )
+
+    const sent = mocked(apiPut).mock.calls[0]![1] as { targets: Array<Record<string, unknown>> }
+    expect(sent.targets[0]!['format']).toBe('reel')
+  })
+
+  it('resolves a story target with several media to the first, warning it did', async () => {
+    serve({
+      '/api/v2/projects/proj-1/publish-targets': ACCOUNTS,
+      '/api/v1/projects/proj-1/workflows': WORKFLOWS,
+      '/api/v2/projects/proj-1/work-items/w1/publish-preflight': readyPreflight(),
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+        { id: 't-fb', platform: 'facebook', label: 'Acme Page', lane: 'NATIVE', state: 'PENDING', format: 'story' },
+      ],
+      '/api/v2/projects/proj-1/work-items/w1/assets': [
+        { id: 'a1', label: 'one.png' },
+        { id: 'a2', label: 'two.png' },
+      ],
+      '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-10', status: 'DRAFT' },
+    })
+    let uploads = 0
+    mocked(apiPost).mockImplementation(async (path: string) => {
+      if (path.endsWith('/work-items')) return { id: 'w1', displayId: 'MK-10', status: 'DRAFT' }
+      if (path.endsWith('/assets/uploads')) return { assetId: `a${++uploads}`, uploadUrl: 'https://bucket/a' }
+      if (path.endsWith('/confirm')) return undefined
+      throw new Error(`unexpected POST ${path}`)
+    })
+    mocked(apiPut).mockResolvedValue([])
+    mocked(apiPatch).mockResolvedValue({})
+
+    const result = await createPost(
+      {
+        text: 'Story time',
+        media: [{ path: '/tmp/one.png' }, { path: '/tmp/two.png' }],
+        targets: [{ platform: 'facebook', account: 'Acme Page', format: 'story' }],
+        submit: false,
+      },
+      config
+    )
+
+    const sent = mocked(apiPut).mock.calls[0]![1] as { targets: Array<Record<string, unknown>> }
+    expect(sent.targets[0]!['assetIds']).toEqual(['a1'])
+    expect((result['warnings'] as string[]).join(' ')).toContain('story takes one item')
+  })
+
+  it('warns that a story drops a captionOverride rather than silently sending it', async () => {
+    serve({
+      '/api/v2/projects/proj-1/publish-targets': ACCOUNTS,
+      '/api/v1/projects/proj-1/workflows': WORKFLOWS,
+      '/api/v2/projects/proj-1/work-items/w1/publish-preflight': readyPreflight(),
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+        { id: 't-fb', platform: 'facebook', label: 'Acme Page', lane: 'NATIVE', state: 'PENDING', format: 'story' },
+      ],
+      '/api/v2/projects/proj-1/work-items/w1/assets': [{ id: 'a1', label: 'one.png' }],
+      '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-11', status: 'DRAFT' },
+    })
+    mocked(apiPost).mockImplementation(async (path: string) => {
+      if (path.endsWith('/work-items')) return { id: 'w1', displayId: 'MK-11', status: 'DRAFT' }
+      if (path.endsWith('/assets/uploads')) return { assetId: 'a1', uploadUrl: 'https://bucket/a1' }
+      if (path.endsWith('/confirm')) return undefined
+      throw new Error(`unexpected POST ${path}`)
+    })
+    mocked(apiPut).mockResolvedValue([])
+    mocked(apiPatch).mockResolvedValue({})
+
+    const result = await createPost(
+      {
+        text: 'Story time',
+        media: [{ path: '/tmp/one.png' }],
+        targets: [{ platform: 'facebook', account: 'Acme Page', format: 'story', captionOverride: 'ignored anyway' }],
+        submit: false,
+      },
+      config
+    )
+
+    expect((result['warnings'] as string[]).join(' ')).toContain('a story has no caption')
+  })
+
   it('needs `workflow` when more than one Workflow publishes', async () => {
     serve({
       '/api/v2/projects/proj-1/publish-targets': ACCOUNTS,
@@ -212,6 +318,24 @@ describe('get_post_status / submit_post / list_posts / submit_review', () => {
     expect(result['status']).toBe('FAILED')
     expect((result['targets'] as Array<Record<string, unknown>>)[1]).toMatchObject({ state: 'FAILED', errorMessage: 'token expired' })
     expect(String(result['nextStep'])).toContain('Scheduled')
+  })
+
+  it('get_post_status shows format only when it is not feed', async () => {
+    serve({
+      '/api/v2/projects/proj-1/work-items/w1/publish-preflight': readyPreflight({ nextTransition: null }),
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+        { id: 't1', platform: 'facebook', label: 'Acme Page', lane: 'NATIVE', state: 'PENDING', format: 'feed' },
+        { id: 't2', platform: 'instagram', label: '@acme', lane: 'APP_MANAGED', state: 'PENDING', format: 'story' },
+      ],
+      '/api/v2/projects/proj-1/work-items/w1/assets': [],
+      '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-7', status: 'SCHEDULED' },
+    })
+
+    const result = await getPostStatus({ postId: 'w1' }, config)
+    const targets = result['targets'] as Array<Record<string, unknown>>
+
+    expect(targets[0]!['format']).toBeUndefined()
+    expect(targets[1]!['format']).toBe('story')
   })
 
   it('submit_post assigns reviewers and takes the move the gate names', async () => {
@@ -263,6 +387,26 @@ describe('get_post_status / submit_post / list_posts / submit_review', () => {
     expect((facebookOnly['posts'] as Array<Record<string, unknown>>).map((p) => p['displayId'])).toEqual(['MK-1'])
     expect(mocked(apiGet).mock.calls.some((c) => String(c[0]).includes('workflow=MARKETING'))).toBe(true)
     expect(mocked(apiGet).mock.calls.some((c) => String(c[0]).includes('workflow=ENGINEERING'))).toBe(false)
+  })
+
+  it('list_posts shows a target’s format only when it is not feed', async () => {
+    serve({
+      '/api/v2/projects/proj-1/publish-targets': ACCOUNTS,
+      '/api/v1/projects/proj-1/workflows': WORKFLOWS,
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+        { id: 't1', platform: 'facebook', label: 'Acme Page', state: 'PENDING', format: 'feed' },
+        { id: 't2', platform: 'instagram', label: '@acme', state: 'PENDING', format: 'reel' },
+      ],
+      '/api/v2/projects/proj-1/work-items?': [
+        { id: 'w1', displayId: 'MK-1', title: 'One', status: 'SCHEDULED', scheduledFor: '2026-09-01T10:00:00Z' },
+      ],
+    })
+
+    const result = await listPosts({}, config)
+    const targets = (result['posts'] as Array<Record<string, unknown>>)[0]!['targets'] as Array<Record<string, unknown>>
+
+    expect(targets[0]!['format']).toBeUndefined()
+    expect(targets[1]!['format']).toBe('reel')
   })
 
   it('submit_review maps the verdict, relays autoTransition, and surfaces a 403 as an error', async () => {

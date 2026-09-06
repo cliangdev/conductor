@@ -257,6 +257,70 @@ class LocalSocialConnectorsTest {
                 .startsWith(LocalMetaConnector.LOCAL_PERMALINK_BASE);
     }
 
+    // ---- formats -------------------------------------------------------------------------------
+
+    @Test
+    void localFacebookStoryPublishesImmediatelyWithAFormatEncodedId() {
+        ActionResult result = meta.invoke("publish_facebook_post",
+                Map.of("format", "story", "message", "ignored anyway"), metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("post_id")).asString().startsWith("fb-story-");
+        assertThat(result.output()).containsEntry("is_story", true);
+    }
+
+    @Test
+    void localFacebookReelPublishesWithAFormatEncodedId() {
+        Instant future = Instant.now().plusSeconds(3600);
+        ActionResult result = meta.invoke("publish_facebook_post",
+                Map.of("format", "reel", "message", "dancing", "scheduled_publish_time", future.toString()),
+                metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("post_id")).asString().startsWith("fb-reel-");
+        assertThat(result.output()).containsEntry("scheduled", true);
+
+        ActionResult readBack = meta.invoke("get_facebook_post",
+                Map.of("post_id", result.output().get("post_id")), metaContext());
+        assertThat(readBack.output()).containsEntry("is_published", false);
+    }
+
+    @Test
+    void localInstagramStoryPublishesWithAFormatEncodedIdAndNoCaptionRoundTrip() {
+        ActionResult result = meta.invoke("publish_instagram_media",
+                Map.of("format", "story", "caption", "ignored"), metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("media_id")).asString().startsWith("ig-story-");
+        assertThat(result.output()).containsEntry("is_story", true);
+    }
+
+    @Test
+    void localInstagramReelAcceptsEveryOptionParamAndEchoesThemBack() {
+        ActionResult result = meta.invoke("publish_instagram_media",
+                Map.of("format", "reel", "caption", "dance", "share_to_feed", true,
+                        "collaborators", List.of("alice", "bob"), "cover_asset_id", "asset-1",
+                        "audio_name", "Original audio"),
+                metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output().get("media_id")).asString().startsWith("ig-reel-");
+        assertThat(result.output()).containsEntry("share_to_feed", true);
+        assertThat(result.output()).containsEntry("collaborators", List.of("alice", "bob"));
+        assertThat(result.output()).containsEntry("cover_asset_id", "asset-1");
+        assertThat(result.output()).containsEntry("audio_name", "Original audio");
+    }
+
+    @Test
+    void localInstagramFeedImageAcceptsAltText() {
+        ActionResult result = meta.invoke("publish_instagram_media",
+                Map.of("caption", "hero", "alt_text", "a hero shot"), metaContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("alt_text", "a hero shot");
+        assertThat(result.output()).doesNotContainKey("is_story");
+    }
+
     @Test
     void localYouTubePublishReturnsACannedVideoIdAndGoesPublicAtItsPublishAt() {
         ActionResult published = youtube.invoke("publish_video",
@@ -291,6 +355,58 @@ class LocalSocialConnectorsTest {
         assertThat(result.output().get("post_id")).asString().isNotBlank();
         assertThat(result.output().get("permalink")).asString()
                 .startsWith(LocalTikTokConnector.LOCAL_PERMALINK_BASE);
+    }
+
+    @Test
+    void localTikTokPublishEchoesTheNewOptionsSoATestCanSeeTheyReachedTheConnector() {
+        ActionResult result = tiktok.invoke("publish_video",
+                Map.of("title", "local clip", "work_item_id", "wi-1",
+                        "is_aigc", true, "video_cover_timestamp_ms", 1500,
+                        "auto_add_music", false, "photo_cover_index", 1),
+                tiktokContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output())
+                .containsEntry("is_aigc", true)
+                .containsEntry("video_cover_timestamp_ms", 1500)
+                .containsEntry("auto_add_music", false)
+                .containsEntry("photo_cover_index", 1);
+    }
+
+    @Test
+    void localTikTokPublishOmitsTheNewOptionsWhenNotNamed() {
+        ActionResult result = tiktok.invoke("publish_video",
+                Map.of("title", "local clip", "work_item_id", "wi-1"), tiktokContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).doesNotContainKeys(
+                "is_aigc", "video_cover_timestamp_ms", "auto_add_music", "photo_cover_index");
+    }
+
+    @Test
+    void localYouTubePublishEchoesTheNewOptionsSoATestCanSeeTheyReachedTheConnector() {
+        ActionResult result = youtube.invoke("publish_video",
+                Map.of("title", "local upload", "notify_subscribers", false, "made_for_kids", true,
+                        "contains_synthetic_media", true, "playlist_ids", List.of("pl-1"),
+                        "thumbnail_asset_id", "thumb-1"),
+                youtubeContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output())
+                .containsEntry("notify_subscribers", false)
+                .containsEntry("made_for_kids", true)
+                .containsEntry("contains_synthetic_media", true)
+                .containsEntry("playlist_ids", List.of("pl-1"))
+                .containsEntry("thumbnail_asset_id", "thumb-1");
+    }
+
+    @Test
+    void localYouTubePublishOmitsTheNewOptionsWhenNotNamed() {
+        ActionResult result = youtube.invoke("publish_video", Map.of("title", "local upload"), youtubeContext());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).doesNotContainKeys("notify_subscribers", "made_for_kids",
+                "contains_synthetic_media", "playlist_ids", "thumbnail_asset_id");
     }
 
     @Test

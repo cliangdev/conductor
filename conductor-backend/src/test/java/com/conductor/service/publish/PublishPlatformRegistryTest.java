@@ -111,10 +111,13 @@ class PublishPlatformRegistryTest {
                 Map.entry("disableDuet", "disable_duet"),
                 Map.entry("disableStitch", "disable_stitch"),
                 Map.entry("brandContentToggle", "brand_content_toggle"),
-                Map.entry("brandOrganicToggle", "brand_organic_toggle"));
+                Map.entry("brandOrganicToggle", "brand_organic_toggle"),
+                Map.entry("isAigc", "is_aigc"),
+                Map.entry("videoCoverTimestampMs", "video_cover_timestamp_ms"),
+                Map.entry("autoAddMusic", "auto_add_music"),
+                Map.entry("photoCoverIndex", "photo_cover_index"));
         assertThat(registry.require("facebook").optionParams()).isEmpty();
-        assertThat(registry.require("instagram").optionParams()).isEmpty();
-        assertThat(registry.require("youtube").optionParams()).isEmpty();
+        // Instagram's and YouTube's keys are pinned, in order, by optionKeys_coverEveryPlatformsOptions_inSpecOrder.
     }
 
     @Test
@@ -132,7 +135,7 @@ class PublishPlatformRegistryTest {
     void leadsAndWindowsMatchTheNativeHandoff() {
         PublishPlatform facebook = registry.require("facebook");
         assertThat(facebook.minLead()).isEqualTo(Duration.ofMinutes(10));
-        assertThat(facebook.maxLead()).isEqualTo(Duration.ofDays(30));
+        assertThat(facebook.maxLead()).isEqualTo(Duration.ofDays(75));
         assertThat(registry.require("youtube").minLead()).isEqualTo(Duration.ZERO);
         assertThat(registry.require("youtube").maxLead()).isNull();
         assertThat(registry.require("instagram").minLead()).isEqualTo(Duration.ofMinutes(1));
@@ -144,8 +147,11 @@ class PublishPlatformRegistryTest {
         assertThat(window.accepts(now, now.plusMinutes(9))).isFalse();
         assertThat(window.tooSoon(now, now.plusMinutes(9))).isTrue();
         assertThat(window.accepts(now, now.plusMinutes(10))).isTrue();
-        assertThat(window.accepts(now, now.plusDays(30))).isTrue();
-        assertThat(window.tooFarOut(now, now.plusDays(31))).isTrue();
+        assertThat(window.accepts(now, now.plusDays(75))).isTrue();
+        assertThat(window.tooFarOut(now, now.plusDays(76))).isTrue();
+        // A reel has a shorter ceiling on Facebook's side than a feed post.
+        assertThat(facebook.windowFor(PostFormat.REEL).accepts(now, now.plusDays(29))).isTrue();
+        assertThat(facebook.windowFor(PostFormat.REEL).tooFarOut(now, now.plusDays(30))).isTrue();
         assertThat(registry.require("youtube").window().accepts(now, now.plusYears(5))).isTrue();
         assertThat(window.accepts(now, null)).isFalse();
     }
@@ -179,5 +185,62 @@ class PublishPlatformRegistryTest {
         assertThat(registry.declaresPublishing(marketing)).isTrue();
         assertThat(registry.declaresPublishing(engineering)).isFalse();
         assertThat(registry.declaresPublishing(null)).isFalse();
+    }
+
+    // ---- formats: which shapes each platform publishes, on which lane, with which ceiling ----
+
+    @Test
+    void metaPlatformsOfferReelsAndStories_othersFeedOnly() {
+        assertThat(registry.require("facebook").formats())
+                .containsExactlyInAnyOrder(PostFormat.FEED, PostFormat.REEL, PostFormat.STORY);
+        assertThat(registry.require("instagram").formats())
+                .containsExactlyInAnyOrder(PostFormat.FEED, PostFormat.REEL, PostFormat.STORY);
+        assertThat(registry.require("youtube").formats()).containsExactly(PostFormat.FEED);
+        assertThat(registry.require("tiktok").formats()).containsExactly(PostFormat.FEED);
+        assertThat(registry.require("tiktok").supports(PostFormat.STORY)).isFalse();
+    }
+
+    @Test
+    void facebookStory_isHeldByConductor_becauseFacebookCannotScheduleOne() {
+        PublishPlatform facebook = registry.require("facebook");
+        assertThat(facebook.laneFor(PostFormat.FEED)).isEqualTo(PublishLane.NATIVE);
+        assertThat(facebook.laneFor(PostFormat.REEL)).isEqualTo(PublishLane.NATIVE);
+        assertThat(facebook.laneFor(PostFormat.STORY)).isEqualTo(PublishLane.APP_MANAGED);
+        assertThat(registry.require("instagram").laneFor(PostFormat.STORY)).isEqualTo(PublishLane.APP_MANAGED);
+    }
+
+    @Test
+    void facebookReels_scheduleAtMost29DaysOut_feedPosts75() {
+        PublishPlatform facebook = registry.require("facebook");
+        assertThat(facebook.maxLeadFor(PostFormat.FEED)).isEqualTo(Duration.ofDays(75));
+        assertThat(facebook.maxLeadFor(PostFormat.REEL)).isEqualTo(Duration.ofDays(29));
+        assertThat(facebook.windowFor(PostFormat.REEL).maxLead()).isEqualTo(Duration.ofDays(29));
+        assertThat(facebook.windowFor(null).maxLead()).isEqualTo(Duration.ofDays(75));
+    }
+
+    @Test
+    void optionKeys_coverEveryPlatformsOptions_inSpecOrder() {
+        assertThat(registry.require("instagram").optionParams().keySet())
+                .containsExactly("shareToFeed", "collaborators", "altText", "coverAssetId", "audioName");
+        assertThat(registry.require("youtube").optionParams().keySet())
+                .containsExactly("notifySubscribers", "madeForKids", "containsSyntheticMedia", "playlistIds",
+                        "thumbnailAssetId");
+        assertThat(registry.require("tiktok").optionParams())
+                .containsEntry("isAigc", "is_aigc")
+                .containsEntry("videoCoverTimestampMs", "video_cover_timestamp_ms")
+                .containsEntry("autoAddMusic", "auto_add_music")
+                .containsEntry("photoCoverIndex", "photo_cover_index");
+        assertThat(registry.require("facebook").optionParams()).isEmpty();
+    }
+
+    @Test
+    void postFormat_parsesLeniently_andRejectsUnknown() {
+        assertThat(PostFormat.parse(null)).isEqualTo(PostFormat.FEED);
+        assertThat(PostFormat.parse("  ")).isEqualTo(PostFormat.FEED);
+        assertThat(PostFormat.parse("story")).isEqualTo(PostFormat.STORY);
+        assertThat(PostFormat.parse("Reel")).isEqualTo(PostFormat.REEL);
+        assertThat(PostFormat.REEL.wire()).isEqualTo("reel");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> PostFormat.parse("live"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

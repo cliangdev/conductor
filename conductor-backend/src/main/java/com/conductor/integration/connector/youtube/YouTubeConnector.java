@@ -10,6 +10,7 @@ import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.connector.youtube.YouTubePublishAction.AssetMediaLocator;
+import com.conductor.integration.connector.youtube.YouTubePublishAction.AssetThumbnailLocator;
 import com.conductor.integration.connector.youtube.YouTubePublishAction.InvocationCheckpoints;
 import com.conductor.integration.connector.youtube.YouTubePublishAction.UploadCheckpoints;
 import com.conductor.repository.AssetRepository;
@@ -127,7 +128,8 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
         this.publishAction = new YouTubePublishAction(dataClient,
                 new AssetMediaLocator(assetRepository, storageService,
                         com.conductor.integration.ConnectorHttp.restTemplate(YouTubeDataClient.REQUEST_TIMEOUT)),
-                new InvocationCheckpoints(actionInvocations::getObject, targetRepository, objectMapper));
+                new InvocationCheckpoints(actionInvocations::getObject, targetRepository, objectMapper),
+                new AssetThumbnailLocator(assetRepository, storageService));
     }
 
     YouTubeConnector(YouTubeDataClient dataClient) {

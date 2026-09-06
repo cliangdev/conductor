@@ -6,6 +6,7 @@ import com.conductor.entity.PublishLane;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.NativeHandoffService;
 import com.conductor.service.NativePublishConfirmationPoller;
+import com.conductor.service.publish.PostFormat;
 import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.workflow.PostPublishScheduler;
@@ -139,7 +140,7 @@ public class PublishTaskHandler {
             return;
         }
         PublishPlatform.HandoffWindow window = platformRegistry.find(target.getPlatform())
-                .map(PublishPlatform::window).orElse(null);
+                .map(platform -> platform.windowFor(PostFormat.parse(target.getFormat()))).orElse(null);
         if (window != null && window.tooFarOut(now, target.getFireTime())) {
             rearm(PublishTask.handoff(target.getId(), target.getFireTime(),
                     target.getFireTime().minus(window.maxLead())));

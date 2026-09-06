@@ -299,6 +299,123 @@ class YouTubeConnectorTest {
         assertThat(new YouTubeDataClient(restTemplate).getVideo(ACCESS_TOKEN, "gone")).isNull();
     }
 
+    // --- [new] notifySubscribers, madeForKids, containsSyntheticMedia on the wire ---
+
+    @Test
+    void dataClient_initiateResumableUpload_addsNotifySubscribersOnlyWhenNamed() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        HttpHeaders responseHeaders = new HttpHeaders();
+        responseHeaders.setLocation(URI.create("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(new ResponseEntity<>("", responseHeaders, HttpStatus.OK));
+
+        new YouTubeDataClient(restTemplate).initiateResumableUpload(ACCESS_TOKEN,
+                new YouTubeDataClient.VideoMetadata("t", "d", "private", null, false, null, null),
+                100L, "video/mp4");
+
+        ArgumentCaptor<URI> uri = ArgumentCaptor.forClass(URI.class);
+        org.mockito.Mockito.verify(restTemplate).exchange(uri.capture(), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(String.class));
+        assertThat(uri.getValue().toString()).contains("notifySubscribers=false");
+    }
+
+    @Test
+    void dataClient_initiateResumableUpload_omitsNotifySubscribersWhenAbsent() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        HttpHeaders responseHeaders = new HttpHeaders();
+        responseHeaders.setLocation(URI.create("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(new ResponseEntity<>("", responseHeaders, HttpStatus.OK));
+
+        new YouTubeDataClient(restTemplate).initiateResumableUpload(ACCESS_TOKEN,
+                new YouTubeDataClient.VideoMetadata("t", "d", "private", null),
+                100L, "video/mp4");
+
+        ArgumentCaptor<URI> uri = ArgumentCaptor.forClass(URI.class);
+        org.mockito.Mockito.verify(restTemplate).exchange(uri.capture(), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(String.class));
+        assertThat(uri.getValue().toString()).doesNotContain("notifySubscribers");
+    }
+
+    @Test
+    void dataClient_initiateResumableUpload_declaresMadeForKidsAndSyntheticMediaWhenNamed() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        HttpHeaders responseHeaders = new HttpHeaders();
+        responseHeaders.setLocation(URI.create("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(new ResponseEntity<>("", responseHeaders, HttpStatus.OK));
+
+        new YouTubeDataClient(restTemplate).initiateResumableUpload(ACCESS_TOKEN,
+                new YouTubeDataClient.VideoMetadata("t", "d", "private", null, null, true, true),
+                100L, "video/mp4");
+
+        ArgumentCaptor<HttpEntity> request = ArgumentCaptor.forClass(HttpEntity.class);
+        org.mockito.Mockito.verify(restTemplate).exchange(any(URI.class), eq(HttpMethod.POST), request.capture(),
+                eq(String.class));
+        assertThat(request.getValue().getBody().toString())
+                .contains("\"selfDeclaredMadeForKids\":true")
+                .contains("\"containsSyntheticMedia\":true");
+    }
+
+    @Test
+    void dataClient_initiateResumableUpload_omitsMadeForKidsAndSyntheticMediaWhenAbsent() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        HttpHeaders responseHeaders = new HttpHeaders();
+        responseHeaders.setLocation(URI.create("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(new ResponseEntity<>("", responseHeaders, HttpStatus.OK));
+
+        new YouTubeDataClient(restTemplate).initiateResumableUpload(ACCESS_TOKEN,
+                new YouTubeDataClient.VideoMetadata("t", "d", "private", null),
+                100L, "video/mp4");
+
+        ArgumentCaptor<HttpEntity> request = ArgumentCaptor.forClass(HttpEntity.class);
+        org.mockito.Mockito.verify(restTemplate).exchange(any(URI.class), eq(HttpMethod.POST), request.capture(),
+                eq(String.class));
+        assertThat(request.getValue().getBody().toString())
+                .doesNotContain("selfDeclaredMadeForKids")
+                .doesNotContain("containsSyntheticMedia");
+    }
+
+    // --- [new] addToPlaylist and setThumbnail on the wire ---
+
+    @Test
+    void dataClient_addToPlaylist_postsSnippetWithPlaylistIdAndVideoResourceId() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{}"));
+
+        new YouTubeDataClient(restTemplate).addToPlaylist(ACCESS_TOKEN, "pl-1", "vid-123");
+
+        ArgumentCaptor<URI> uri = ArgumentCaptor.forClass(URI.class);
+        ArgumentCaptor<HttpEntity> request = ArgumentCaptor.forClass(HttpEntity.class);
+        org.mockito.Mockito.verify(restTemplate).exchange(uri.capture(), eq(HttpMethod.POST), request.capture(),
+                eq(String.class));
+        assertThat(uri.getValue().toString()).contains("/playlistItems").contains("part=snippet");
+        assertThat(request.getValue().getBody().toString())
+                .contains("\"playlistId\":\"pl-1\"")
+                .contains("\"kind\":\"youtube#video\"")
+                .contains("\"videoId\":\"vid-123\"");
+    }
+
+    @Test
+    void dataClient_setThumbnail_postsTheImageBytesToThumbnailsSetWithTheVideoId() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{}"));
+        byte[] jpeg = {1, 2, 3, 4};
+
+        new YouTubeDataClient(restTemplate).setThumbnail(ACCESS_TOKEN, "vid-123", jpeg, "image/jpeg");
+
+        ArgumentCaptor<URI> uri = ArgumentCaptor.forClass(URI.class);
+        ArgumentCaptor<HttpEntity> request = ArgumentCaptor.forClass(HttpEntity.class);
+        org.mockito.Mockito.verify(restTemplate).exchange(uri.capture(), eq(HttpMethod.POST), request.capture(),
+                eq(String.class));
+        assertThat(uri.getValue().toString()).contains("/thumbnails/set").contains("videoId=vid-123");
+        assertThat(request.getValue().getBody()).isEqualTo(jpeg);
+        assertThat(request.getValue().getHeaders().getContentType().toString()).isEqualTo("image/jpeg");
+    }
+
     // --- [auto] YouTube implements the generic completion seam rather than falling through to the no-op ---
 
     @Test

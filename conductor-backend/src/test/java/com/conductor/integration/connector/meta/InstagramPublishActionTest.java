@@ -9,6 +9,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -57,11 +58,17 @@ class InstagramPublishActionTest {
                     Call call = new Call(invocation.getArgument(1), invocation.getArgument(0),
                             invocation.getArgument(2));
                     calls.add(call);
-                    return ResponseEntity.ok(routes.stream()
+                    Object body = routes.stream()
                             .filter(route -> route.matches(call))
                             .findFirst()
                             .orElseThrow(() -> new AssertionError("Unstubbed Graph call: " + call))
-                            .body().apply(call));
+                            .body().apply(call);
+                    // The JSON-tree reads ask for text and parse it themselves (the converters on this
+                    // classpath are Jackson 3); a route stubbed with a JsonNode answers as its JSON.
+                    if (String.class.equals(invocation.getArgument(3)) && body instanceof JsonNode node) {
+                        body = node.toString();
+                    }
+                    return ResponseEntity.ok(body);
                 });
     }
 
@@ -229,6 +236,208 @@ class InstagramPublishActionTest {
         assertThat(result.success()).isFalse();
         assertThat(result.message()).contains("image or video");
         assertThat(calls).isEmpty();
+    }
+
+    // --- [auto] format=story: a STORIES container, no caption, exactly one asset ---
+
+    @Test
+    void storyFormat_createsAStoriesContainerWithNoCaption() {
+        mediaResolver.media = List.of(image());
+        quotaAvailable(4);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-story"));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-story"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-story", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "caption", "Ignored", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("is_story", true);
+        Call create = call(HttpMethod.POST, "/ig-1/media");
+        assertThat(create.param("media_type")).isEqualTo("STORIES");
+        // Instagram ignores a Story's caption outright; it is never sent.
+        assertThat(create.param("caption")).isNull();
+    }
+
+    @Test
+    void storyFormat_withVideo_pollsTheContainerBeforePublishing() {
+        mediaResolver.media = List.of(video());
+        quotaAvailable(4);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-story-v"));
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-story-v"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-story-v", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        Call create = call(HttpMethod.POST, "/ig-1/media");
+        assertThat(create.param("video_url")).isEqualTo("https://signed.example/clip.mp4");
+        assertThat(create.param("media_type")).isEqualTo("STORIES");
+    }
+
+    @Test
+    void storyFormat_withTwoAssets_isAPermanentErrorNamingTheRule() {
+        mediaResolver.media = List.of(image(), image());
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("Story").contains("exactly one");
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
+    void storyFormat_stillChecksThePublishingQuotaFirst() {
+        mediaResolver.media = List.of(image());
+        onGet("content_publishing_limit", call -> new MetaGraphClient.PublishingLimitResponse(List.of(
+                new MetaGraphClient.PublishingLimitEntry(100,
+                        new MetaGraphClient.PublishingLimitConfig(100, 86400)))));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("publishing limit");
+        assertThat(calls).noneMatch(call -> call.uri().toString().endsWith("/ig-1/media"));
+    }
+
+    // --- [auto] format=reel (and a single feed video, already REELS) carries cover/share/collaborators/audio ---
+
+    @Test
+    void reelOptions_shareToFeedCollaboratorsAndAudioName_rideOnTheContainer() {
+        mediaResolver.media = List.of(video());
+        quotaAvailable(4);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-reel"));
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-reel"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-reel", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "reel", "caption", "Dance", "work_item_id", "wi-1",
+                        "share_to_feed", true, "collaborators", List.of("alice", "bob"),
+                        "audio_name", "Original audio - acme"), CTX);
+
+        assertThat(result.success()).isTrue();
+        Call create = call(HttpMethod.POST, "/ig-1/media");
+        assertThat(create.param("media_type")).isEqualTo("REELS");
+        assertThat(create.param("share_to_feed")).isEqualTo("true");
+        assertThat(create.param("collaborators")).isEqualTo("[\"alice\",\"bob\"]");
+        assertThat(create.param("audio_name")).isEqualTo("Original audio - acme");
+    }
+
+    @Test
+    void reelOptions_tooManyCollaborators_isAPermanentErrorNamingTheLimit() {
+        mediaResolver.media = List.of(video());
+        quotaAvailable(4);
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "reel", "work_item_id", "wi-1",
+                        "collaborators", List.of("a", "b", "c", "d")), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("at most 3").contains("collaborators");
+        assertThat(calls).noneMatch(call -> call.uri().toString().endsWith("/ig-1/media"));
+    }
+
+    @Test
+    void reelCoverAssetId_resolvesToASignedCoverUrl() {
+        mediaResolver.media = List.of(video());
+        mediaResolver.byAssetId.put("cover-asset-1", new PublishMedia(
+                "https://signed.example/cover.jpg", "assets/proj/wi-1/cover.jpg", "image/jpeg", 512L));
+        quotaAvailable(4);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-reel-cover"));
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-reel-cover"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-reel-cover", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "reel", "work_item_id", "wi-1", "cover_asset_id", "cover-asset-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(call(HttpMethod.POST, "/ig-1/media").param("cover_url"))
+                .isEqualTo("https://signed.example/cover.jpg");
+    }
+
+    @Test
+    void reelCoverAssetId_unknownId_isAPermanentErrorNamingIt() {
+        mediaResolver.media = List.of(video());
+        // No entries in byAssetId, so any explicit cover id comes back empty — an id naming no asset.
+        mediaResolver.byAssetId.put("some-other-asset", image());
+        quotaAvailable(4);
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "reel", "work_item_id", "wi-1", "cover_asset_id", "does-not-exist"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("does-not-exist");
+        assertThat(calls).noneMatch(call -> call.uri().toString().endsWith("/ig-1/media"));
+    }
+
+    // --- [auto] alt_text applies to a single feed image ---
+
+    @Test
+    void altText_onASingleImage_isSentOnTheContainer() {
+        mediaResolver.media = List.of(image());
+        quotaAvailable(4);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-alt"));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-alt"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-alt", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "Hero", "work_item_id", "wi-1", "alt_text", "A hero shot of the product"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(call(HttpMethod.POST, "/ig-1/media").param("alt_text"))
+                .isEqualTo("A hero shot of the product");
+    }
+
+    // --- [auto] Collaborators are refused on a carousel; ignored with a log rather than sent ---
+
+    @Test
+    void carousel_ignoresCollaborators_ratherThanSendingThemToAnEdgeThatRefusesThem() {
+        mediaResolver.media = List.of(image(), image());
+        quotaAvailable(4);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse(
+                call.param("children") != null ? "carousel-parent" : "child-" + calls.size()));
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-carousel"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-carousel", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "Ignore me", "work_item_id", "wi-1", "collaborators", List.of("alice")), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(calls).noneMatch(call -> "alice".equals(call.param("collaborators")));
+    }
+
+    // --- [auto] Metrics: a per-id read failure never fails the batch ---
+
+    @Test
+    void metrics_unavailableIdDoesNotFailTheBatch() {
+        onGet("ids=", call -> {
+            com.fasterxml.jackson.databind.node.ObjectNode root = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+            root.putObject("media-ok").put("like_count", 5).put("comments_count", 1);
+            root.putObject("media-bad").putObject("error").put("message", "Unsupported request");
+            return root;
+        });
+
+        ActionResult result = connector.invoke("get_instagram_media_metrics",
+                Map.of("post_ids", List.of("media-ok", "media-bad")), CTX);
+
+        assertThat(result.success()).isTrue();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows).anySatisfy(row -> {
+            assertThat(row.get("post_id")).isEqualTo("media-ok");
+            assertThat(row.get("unavailable")).isEqualTo(false);
+        });
+        assertThat(rows).anySatisfy(row -> {
+            assertThat(row.get("post_id")).isEqualTo("media-bad");
+            assertThat(row.get("unavailable")).isEqualTo(true);
+        });
     }
 
     // ---- harness ---------------------------------------------------------------------------------
@@ -412,6 +621,13 @@ class InstagramPublishActionTest {
         private List<PublishMedia> media = new ArrayList<>();
         private int resolveCalls;
 
+        /**
+         * Populated only by the {@code cover_asset_id} tests: a specific asset id resolves to a specific
+         * piece of media, so a wrong id can be proven to come back empty rather than falling through to
+         * the Post's whole media set.
+         */
+        private final Map<String, PublishMedia> byAssetId = new java.util.LinkedHashMap<>();
+
         @Override
         public List<PublishMedia> resolve(String workItemId) {
             resolveCalls++;
@@ -422,6 +638,16 @@ class InstagramPublishActionTest {
                             "https://signed.example/minted-" + resolveCalls + "-" + item.gcsPath(),
                             item.gcsPath(), item.contentType(), item.sizeBytes()))
                     .toList();
+        }
+
+        @Override
+        public List<PublishMedia> resolve(String workItemId, List<String> assetIds) {
+            if (!byAssetId.isEmpty() && assetIds != null && assetIds.size() == 1) {
+                resolveCalls++;
+                PublishMedia only = byAssetId.get(assetIds.get(0));
+                return only == null ? List.of() : List.of(only);
+            }
+            return resolve(workItemId);
         }
     }
 }

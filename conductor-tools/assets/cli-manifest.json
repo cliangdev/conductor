@@ -590,12 +590,12 @@
     },
     {
       "name": "list_publish_targets",
-      "description": "Accounts a project can publish to (with each platform's option keys), plus a Work Item's selected targets and outcomes.",
+      "description": "Accounts a project can publish to (option keys and post formats per platform), plus a Work Item's selected targets and outcomes.",
       "category": "marketing"
     },
     {
       "name": "set_publish_targets",
-      "description": "Replace which connected accounts a Work Item publishes to, with per-target publish options.",
+      "description": "Replace which connected accounts a Work Item publishes to, with per-target format, media and publish options.",
       "category": "marketing",
       "requiredParams": [
         "issueId",
@@ -638,7 +638,7 @@
     },
     {
       "name": "create_post",
-      "description": "Create, schedule and submit a Post in one call: caption, media (paths or URLs), destinations by account name, fire time, reviewers.",
+      "description": "Create, schedule and submit a Post in one call: caption, media (paths or URLs), destinations by account name and format, fire time, reviewers.",
       "category": "marketing",
       "requiredParams": [
         "text",
@@ -647,7 +647,7 @@
     },
     {
       "name": "get_post_status",
-      "description": "Where a Post stands: status, every destination's outcome, the gate's blockers and warnings, review and consent state, next step.",
+      "description": "Where a Post stands: status, every destination's outcome and format, the gate's blockers and warnings, review and consent state, next step.",
       "category": "marketing",
       "requiredParams": [
         "postId"
@@ -663,7 +663,7 @@
     },
     {
       "name": "list_posts",
-      "description": "Posts across every publishing Workflow with their destinations, filtered by status, schedule window or platform.",
+      "description": "Posts across every publishing Workflow with their destinations and formats, filtered by status, schedule window or platform.",
       "category": "marketing",
       "requiredParams": []
     },

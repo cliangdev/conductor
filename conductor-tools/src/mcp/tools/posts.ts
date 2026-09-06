@@ -39,6 +39,8 @@ export interface TargetInput {
   platform: string
   /** The connected account's label as list_publish_targets shows it, or its connectionId. Omitted = manual. */
   account?: string
+  /** feed (default), reel or story — from that platform's `formats` in list_publish_targets. */
+  format?: 'feed' | 'reel' | 'story'
   captionOverride?: string
   /** Indexes into `media` (0-based) or asset ids. Order is content. */
   assetIds?: Array<string | number>
@@ -64,6 +66,7 @@ interface AccountOption {
   lane: string
   healthStatus?: string | null
   optionKeys?: string[]
+  formats?: string[]
 }
 
 interface Finding {
@@ -103,6 +106,7 @@ interface TargetRow {
   permalink?: string | null
   errorMessage?: string | null
   fireTime?: string | null
+  format?: string | null
 }
 
 interface Member {
@@ -339,20 +343,37 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
     assets.push(stored)
   }
 
-  const selection: PublishTargetSelection[] = resolved.map(({ input, account }) => ({
-    platform: account.platform,
-    connectionId: account.lane === 'MANUAL' ? null : account.connectionId,
-    captionOverride: input.captionOverride ?? null,
-    assetIds: (input.assetIds ?? []).map((ref) => {
+  const selection: PublishTargetSelection[] = resolved.map(({ input, account }) => {
+    let assetIds = (input.assetIds ?? []).map((ref) => {
       if (typeof ref === 'number') {
         const asset = assets[ref]
         if (!asset) throw new Error(`assetIds refers to media[${ref}], but only ${assets.length} media were given.`)
         return String(asset['id'])
       }
       return ref
-    }),
-    publishOptions: input.options,
-  }))
+    })
+
+    // A story is exactly one image or clip. When the caller gave several files and no explicit
+    // assetIds for this destination, resolve it to the first rather than blocking on it — and say so.
+    if (input.format === 'story' && assetIds.length === 0 && assets.length > 1) {
+      assetIds = [String(assets[0]!['id'])]
+      warnings.push(
+        `${account.platform}: story takes one item — used the first of ${assets.length} media. Pass assetIds to choose a different one.`
+      )
+    }
+    if (input.format === 'story' && input.captionOverride) {
+      warnings.push(`${account.platform}: a story has no caption — ${account.platform} drops it.`)
+    }
+
+    return {
+      platform: account.platform,
+      connectionId: account.lane === 'MANUAL' ? null : account.connectionId,
+      format: input.format,
+      captionOverride: input.captionOverride ?? null,
+      assetIds,
+      publishOptions: input.options,
+    }
+  })
   await setPublishTargets({ issueId: postId, targets: selection }, config)
 
   // Schedule: the server knows what the chosen destinations can accept; nothing here guesses a lead time.
@@ -421,6 +442,7 @@ async function confirmation(
       state: t.state,
       permalink: t.permalink ?? null,
       errorMessage: t.errorMessage ?? null,
+      ...(t.format && t.format !== 'feed' ? { format: t.format } : {}),
     })),
     assets: assets.map((a) => ({ id: a['id'], label: a['label'], contentType: a['contentType'] })),
     blockers: preflight.blockers,
@@ -498,7 +520,13 @@ export async function listPosts(
     const selected = (await apiGet<TargetRow[]>(`${workItemBase(config, row.id)}/publish-targets`, config)) ?? []
     const targets = selected
       .filter((t) => !params.platform || String(t.platform).toLowerCase() === params.platform.toLowerCase())
-      .map((t) => ({ platform: t.platform, account: t.label ?? null, state: t.state, permalink: t.permalink ?? null }))
+      .map((t) => ({
+        platform: t.platform,
+        account: t.label ?? null,
+        state: t.state,
+        permalink: t.permalink ?? null,
+        ...(t.format && t.format !== 'feed' ? { format: t.format } : {}),
+      }))
     if (params.platform && targets.length === 0) continue
     posts.push({
       postId: row.id,

@@ -963,4 +963,69 @@ class PublishTargetServiceTest {
                 .containsExactly("facebook", "instagram");
     }
 
+    // ---- formats: feed, reel, story -------------------------------------------------------------
+
+    @Test
+    void aStoryOnAConnectedFacebookPageIsHeldByConductorRatherThanHandedOff() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        post.setScheduledFor(OffsetDateTime.parse("2026-09-01T12:00:00Z"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null, null, "story"),
+                        new PublishTargetService.TargetSelection("instagram", "conn-meta", null, null, null, "reel")),
+                caller);
+
+        assertThat(savedRows()).extracting(PostPublishTarget::getPlatform, PostPublishTarget::getFormat,
+                        PostPublishTarget::getLane)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("facebook", "STORY", PublishLane.APP_MANAGED),
+                        org.assertj.core.groups.Tuple.tuple("instagram", "REEL", PublishLane.APP_MANAGED));
+    }
+
+    @Test
+    void anAbsentFormatMeansFeed_andAFeedOnlyPlatformRefusesAnyOther() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta")), caller);
+        assertThat(savedRows()).extracting(PostPublishTarget::getFormat).containsExactly("FEED");
+
+        // The MANUAL TikTok destination exists for every project, so this is refused on format, not on account.
+        assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", null, null, null, null, "story")), caller))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("TikTok does not publish stories")
+                .hasMessageContaining("feed");
+        assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null, null, "live")), caller))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("not a post format");
+    }
+
+    @Test
+    void changingAFormatIsABundleEdit_resendingTheSameFormatIsNot() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
+        existing.setFormat("REEL");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null, null, "reel")), caller);
+        verify(publishBundleGuard, never()).revertForBundleEdit(PROJECT, post);
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta", null, null, null, "story")), caller);
+        assertThat(existing.getFormat()).isEqualTo("STORY");
+        assertThat(existing.getLane()).isEqualTo(PublishLane.APP_MANAGED);
+        verify(publishBundleGuard).revertForBundleEdit(PROJECT, post);
+    }
+
+    @Test
+    void everyOptionRowListsTheFormatsItsPlatformOffers() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+        assertThat(options).filteredOn(o -> "facebook".equals(o.platform()))
+                .allSatisfy(o -> assertThat(o.formats()).containsExactly("feed", "reel", "story"));
+        assertThat(options).filteredOn(o -> "tiktok".equals(o.platform()))
+                .allSatisfy(o -> assertThat(o.formats()).containsExactly("feed"));
+    }
 }

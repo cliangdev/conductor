@@ -100,6 +100,14 @@ public class TikTokPublishAction {
     static final String INPUT_DESCRIPTION = "description";
     /** A photo post's short title, kept apart from the video path's {@code title}. */
     static final String INPUT_HEADLINE = "headline";
+    /** Video posts only: TikTok's AI-generated-content disclosure label. */
+    static final String INPUT_IS_AIGC = "is_aigc";
+    /** Video posts only: the millisecond timestamp of the frame TikTok should use as the post's cover. */
+    static final String INPUT_VIDEO_COVER_TIMESTAMP_MS = "video_cover_timestamp_ms";
+    /** Photo posts only: let TikTok pick a soundtrack for the post automatically. */
+    static final String INPUT_AUTO_ADD_MUSIC = "auto_add_music";
+    /** Photo posts only: zero-based index into the destination's selected images, naming the cover. */
+    static final String INPUT_PHOTO_COVER_INDEX = "photo_cover_index";
 
     /** TikTok cuts a photo post's title at 90 characters. */
     static final int MAX_PHOTO_TITLE_CHARS = 90;
@@ -398,8 +406,9 @@ public class TikTokPublishAction {
             List<String> urls = photos.stream()
                     .map(photo -> signedUrl(photo))
                     .toList();
+            int coverIndex = resolvePhotoCoverIndex(input, photos.size());
             try {
-                publishId = client.initPhotoPost(accessToken, buildPhotoPostInfo(input, ctx), urls);
+                publishId = client.initPhotoPost(accessToken, buildPhotoPostInfo(input, ctx), urls, coverIndex);
             } catch (TikTokApiException e) {
                 if (TikTokClient.ERROR_URL_OWNERSHIP_UNVERIFIED.equalsIgnoreCase(e.code())) {
                     // Permanent, and not the creator's fault: photo posts are PULL_FROM_URL only, so this
@@ -443,9 +452,28 @@ public class TikTokPublishAction {
         String title = truncate(firstNonBlank(text(input.get(INPUT_HEADLINE)), text(input.get(INPUT_TITLE))),
                 MAX_PHOTO_TITLE_CHARS);
         String description = firstNonBlank(text(input.get(INPUT_DESCRIPTION)), text(input.get(INPUT_TITLE)));
+        Boolean autoAddMusic = optionalBoolean(input.get(INPUT_AUTO_ADD_MUSIC), INPUT_AUTO_ADD_MUSIC);
         return new TikTokClient.PhotoPostInfo(title, description, privacyLevel,
                 flag(input.get("disable_comment")), flag(input.get("brand_content_toggle")),
-                flag(input.get("brand_organic_toggle")));
+                flag(input.get("brand_organic_toggle")), autoAddMusic);
+    }
+
+    /**
+     * The zero-based image the cover should be, defaulting to 0 (TikTok's own default: the first image)
+     * when the destination named none. Out of range is a permanent rejection naming the count, so a typo
+     * fails before TikTok ever sees the post rather than as an obscure {@code content.init} error.
+     */
+    private int resolvePhotoCoverIndex(Map<String, Object> input, int photoCount) {
+        Integer index = optionalNonNegativeInt(input.get(INPUT_PHOTO_COVER_INDEX), INPUT_PHOTO_COVER_INDEX);
+        if (index == null) {
+            return 0;
+        }
+        if (index >= photoCount) {
+            throw new PermanentPublishException("photo_cover_index " + index
+                    + " is out of range for this photo post's " + photoCount
+                    + (photoCount == 1 ? " image" : " images"));
+        }
+        return index;
     }
 
     private static String firstNonBlank(String first, String second) {
@@ -585,10 +613,13 @@ public class TikTokPublishAction {
             privacyLevel = DEFAULT_PRIVACY_LEVEL;
         }
         requireAllowedPrivacyLevel(privacyLevel, ctx);
+        Boolean isAigc = optionalBoolean(input.get(INPUT_IS_AIGC), INPUT_IS_AIGC);
+        Long coverTimestampMs = optionalNonNegativeLong(input.get(INPUT_VIDEO_COVER_TIMESTAMP_MS),
+                INPUT_VIDEO_COVER_TIMESTAMP_MS);
         return new VideoPostInfo(text(input.get(INPUT_TITLE)), privacyLevel,
                 flag(input.get("disable_comment")), flag(input.get("disable_duet")),
                 flag(input.get("disable_stitch")), flag(input.get("brand_content_toggle")),
-                flag(input.get("brand_organic_toggle")));
+                flag(input.get("brand_organic_toggle")), isAigc, coverTimestampMs);
     }
 
     /**
@@ -712,5 +743,67 @@ public class TikTokPublishAction {
             return bool;
         }
         return value != null && Boolean.parseBoolean(value.toString().trim());
+    }
+
+    /**
+     * An optional boolean option: {@code null} when the caller named nothing (so TikTok's own default
+     * stands), leniently parsed from a real {@link Boolean}, a 0/1, or a "true"/"false" string otherwise,
+     * and a permanent rejection naming the offending parameter for anything else — a typo here should fail
+     * before a single byte moves, not read as TikTok's default and publish quietly wrong.
+     */
+    private static Boolean optionalBoolean(Object value, String paramName) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof Number number) {
+            int i = number.intValue();
+            if (i == 0) return false;
+            if (i == 1) return true;
+            throw new PermanentPublishException(paramName + " must be a boolean, got " + value);
+        }
+        String text = value.toString().trim();
+        if (text.equalsIgnoreCase("true")) {
+            return true;
+        }
+        if (text.equalsIgnoreCase("false")) {
+            return false;
+        }
+        throw new PermanentPublishException(paramName + " must be a boolean (true/false), got '" + value + "'");
+    }
+
+    /** As {@link #optionalBoolean}, for a non-negative integer option. */
+    private static Long optionalNonNegativeLong(Object value, String paramName) {
+        if (value == null) {
+            return null;
+        }
+        long parsed;
+        if (value instanceof Number number) {
+            parsed = number.longValue();
+        } else {
+            try {
+                parsed = Long.parseLong(value.toString().trim());
+            } catch (NumberFormatException e) {
+                throw new PermanentPublishException(paramName + " must be an integer, got '" + value + "'");
+            }
+        }
+        if (parsed < 0) {
+            throw new PermanentPublishException(paramName + " must be non-negative, got " + parsed);
+        }
+        return parsed;
+    }
+
+    /** As {@link #optionalNonNegativeLong}, narrowed to an {@code int} — for an index, never a byte count. */
+    private static Integer optionalNonNegativeInt(Object value, String paramName) {
+        Long parsed = optionalNonNegativeLong(value, paramName);
+        if (parsed == null) {
+            return null;
+        }
+        if (parsed > Integer.MAX_VALUE) {
+            throw new PermanentPublishException(paramName + " is too large: " + parsed);
+        }
+        return parsed.intValue();
     }
 }

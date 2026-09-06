@@ -1,10 +1,12 @@
 package com.conductor.service;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.publish.PublishFinding;
@@ -20,6 +22,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -97,23 +100,64 @@ public class PublishOptionsValidator {
     public static final String PUBLISH_OPTIONS = "PUBLISH_OPTIONS";
     public static final String CONSENT_NEVER_GIVEN = "CONSENT_NEVER_GIVEN";
     public static final String CONSENT_SUPERSEDED = "CONSENT_SUPERSEDED";
+    /** An option's value is not the shape the key requires (a string where a boolean belongs, and so on). */
+    public static final String OPTION_INVALID = "OPTION_INVALID";
+    /** A key the destination's platform does not declare in its {@code optionParams} — dropped, not refused. */
+    public static final String OPTION_UNKNOWN = "OPTION_UNKNOWN";
+    /** A well-formed option the platform will silently ignore given the rest of the target's shape. */
+    public static final String OPTION_IGNORED = "OPTION_IGNORED";
+
+    /** What shape a generic option value must have, beyond "the platform accepts this key at all". */
+    private enum OptionType { BOOLEAN, ALT_TEXT, COLLABORATORS, PLAYLIST_IDS, NON_NEGATIVE_INT, PHOTO_COVER_INDEX, IMAGE_ASSET_ID }
+
+    /** Alt text's own ceiling — Instagram's own limit for the field, independent of any caption ceiling. */
+    private static final int ALT_TEXT_MAX_CHARS = 1000;
+    /** Instagram refuses collaborators once a carousel has two or more items. */
+    private static final int CAROUSEL_MIN_ITEMS = 2;
+    private static final int COLLABORATORS_MAX = 3;
+
+    /**
+     * The option keys whose value this validator checks the shape of, across every platform that declares
+     * them — a whitelist, so a key with no entry here is still a known option ({@link PublishPlatform
+     * #optionParams()} says so) whose value is simply not type-checked.
+     */
+    private static final Map<String, OptionType> OPTION_TYPES = Map.ofEntries(
+            Map.entry("shareToFeed", OptionType.BOOLEAN),
+            Map.entry("notifySubscribers", OptionType.BOOLEAN),
+            Map.entry("madeForKids", OptionType.BOOLEAN),
+            Map.entry("containsSyntheticMedia", OptionType.BOOLEAN),
+            Map.entry("isAigc", OptionType.BOOLEAN),
+            Map.entry("autoAddMusic", OptionType.BOOLEAN),
+            Map.entry("altText", OptionType.ALT_TEXT),
+            Map.entry("collaborators", OptionType.COLLABORATORS),
+            Map.entry("playlistIds", OptionType.PLAYLIST_IDS),
+            Map.entry("videoCoverTimestampMs", OptionType.NON_NEGATIVE_INT),
+            Map.entry("photoCoverIndex", OptionType.PHOTO_COVER_INDEX),
+            Map.entry("coverAssetId", OptionType.IMAGE_ASSET_ID),
+            Map.entry("thumbnailAssetId", OptionType.IMAGE_ASSET_ID));
 
     private final PublishPlatformRegistry platformRegistry;
     private final PostPublishTargetRepository postPublishTargetRepository;
     private final ConnectionRepository connectionRepository;
     private final PublishConsentService publishConsentService;
     private final ObjectMapper objectMapper;
+    private final PublishTargetMediaResolver mediaResolver;
+    private final AssetRepository assetRepository;
 
     public PublishOptionsValidator(PublishPlatformRegistry platformRegistry,
                                    PostPublishTargetRepository postPublishTargetRepository,
                                    ConnectionRepository connectionRepository,
                                    PublishConsentService publishConsentService,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   PublishTargetMediaResolver mediaResolver,
+                                   AssetRepository assetRepository) {
         this.platformRegistry = platformRegistry;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
         this.publishConsentService = publishConsentService;
         this.objectMapper = objectMapper;
+        this.mediaResolver = mediaResolver;
+        this.assetRepository = assetRepository;
     }
 
     /**
@@ -160,6 +204,8 @@ public class PublishOptionsValidator {
             // PostScheduleValidator owns "you must pick a target"; there is nothing here to check.
             return List.of();
         }
+        Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
+                mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
 
         List<PublishFinding> findings = new ArrayList<>();
         boolean consentRequired = false;
@@ -187,11 +233,178 @@ public class PublishOptionsValidator {
             if (platform.has(PublishPlatform.Gate.CREATOR_CONSENT)) {
                 consentRequired = true;
             }
+            List<Asset> media = mediaByTarget
+                    .getOrDefault(target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE).assets();
+            inspectOptionValues(workItem, target, platform, media, findings);
         }
         if (consentRequired) {
             inspectConsent(workItem).ifPresent(findings::add);
         }
         return findings;
+    }
+
+    /**
+     * Every key actually present in this target's options bag, checked two ways: is it one the platform
+     * declares at all ({@link PublishPlatform#optionParams()}), and if so, is its value the shape that key
+     * requires. A key the platform never declares is dropped rather than sent, so it is a warning; a
+     * declared key with the wrong shape would be sent wrong, so it blocks.
+     */
+    private void inspectOptionValues(WorkItem workItem, PostPublishTarget target, PublishPlatform platform,
+                                     List<Asset> media, List<PublishFinding> findings) {
+        JsonNode options = readOptions(target);
+        if (options == null) {
+            // A corrupt bag is already reported for TikTok by inspectTikTok's own read; for every other
+            // platform there is no existing "cannot be read" rule to extend, and inventing one here would
+            // report the same fact twice for TikTok under two different codes.
+            return;
+        }
+        long imageCount = media.stream().filter(PublishOptionsValidator::isImage).count();
+        boolean hasVideo = media.stream().anyMatch(PublishOptionsValidator::isVideo);
+        boolean postTypeKnown = !media.isEmpty();
+
+        Iterator<String> keys = options.fieldNames();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            JsonNode value = options.get(key);
+            if (!platform.optionParams().containsKey(key)) {
+                findings.add(PublishFinding.warning(OPTION_UNKNOWN, describe(target) + " sets '" + key
+                        + "', which " + platform.label() + " does not accept — it will be dropped rather than"
+                        + " sent", target.getId()));
+                continue;
+            }
+            OptionType type = OPTION_TYPES.get(key);
+            if (type != null) {
+                String problem = validateOptionValue(workItem, target, key, type, value, imageCount);
+                if (problem != null) {
+                    findings.add(PublishFinding.blocker(OPTION_INVALID, problem, target.getId()));
+                    continue;
+                }
+            }
+            inspectIgnoredOption(target, platform, key, media.size(), hasVideo, postTypeKnown, findings);
+        }
+    }
+
+    /** A value that is the right shape but that the rest of the target's own content makes moot. */
+    private void inspectIgnoredOption(PostPublishTarget target, PublishPlatform platform, String key,
+                                      int mediaCount, boolean hasVideo, boolean postTypeKnown,
+                                      List<PublishFinding> findings) {
+        if ("instagram".equals(platform.id()) && "collaborators".equals(key) && mediaCount >= CAROUSEL_MIN_ITEMS) {
+            findings.add(PublishFinding.warning(OPTION_IGNORED, describe(target)
+                    + " sets 'collaborators' on a carousel — Instagram refuses collaborators on a carousel, so"
+                    + " the connector drops them", target.getId()));
+            return;
+        }
+        if (!"tiktok".equals(platform.id()) || !postTypeKnown) {
+            return;
+        }
+        if (("autoAddMusic".equals(key) || "photoCoverIndex".equals(key)) && hasVideo) {
+            findings.add(PublishFinding.warning(OPTION_IGNORED, describe(target) + " sets '" + key
+                    + "' on a video post — TikTok only applies it to a photo post, so it will be ignored",
+                    target.getId()));
+        } else if ("videoCoverTimestampMs".equals(key) && !hasVideo) {
+            findings.add(PublishFinding.warning(OPTION_IGNORED, describe(target)
+                    + " sets 'videoCoverTimestampMs' on a photo post — TikTok only applies it to a video post,"
+                    + " so it will be ignored", target.getId()));
+        }
+    }
+
+    /**
+     * Whether {@code value} is the shape {@code type} requires, and if not, a message naming the destination,
+     * the key and what it must be instead. {@code null} means the value is fine.
+     */
+    private String validateOptionValue(WorkItem workItem, PostPublishTarget target, String key, OptionType type,
+                                       JsonNode value, long imageCount) {
+        String where = describe(target);
+        return switch (type) {
+            case BOOLEAN -> isBooleanish(value) ? null
+                    : where + " sets '" + key + "' to something other than true/false — it must be a boolean";
+            case ALT_TEXT -> {
+                if (!value.isTextual()) {
+                    yield where + " sets '" + key + "' to something other than text — it must be a string";
+                }
+                int length = value.asText().length();
+                yield length > ALT_TEXT_MAX_CHARS
+                        ? where + " has a " + length + "-character '" + key + "' — it must be at most "
+                                + ALT_TEXT_MAX_CHARS + " characters"
+                        : null;
+            }
+            case COLLABORATORS -> {
+                List<String> names = textItems(value);
+                yield value.isArray() && names.size() == value.size() && !names.isEmpty()
+                        && names.size() <= COLLABORATORS_MAX ? null
+                        : where + " sets '" + key + "' — it must be a list of 1 to " + COLLABORATORS_MAX
+                                + " non-blank usernames";
+            }
+            case PLAYLIST_IDS -> {
+                List<String> ids = textItems(value);
+                yield value.isArray() && ids.size() == value.size() && !ids.isEmpty() ? null
+                        : where + " sets '" + key + "' — it must be a list of non-blank playlist ids";
+            }
+            case NON_NEGATIVE_INT -> isNonNegativeInt(value) ? null
+                    : where + " sets '" + key + "' to something other than a non-negative whole number";
+            case PHOTO_COVER_INDEX -> {
+                if (!isNonNegativeInt(value)) {
+                    yield where + " sets '" + key + "' to something other than a non-negative whole number";
+                }
+                yield value.asLong() >= imageCount
+                        ? where + " has '" + key + "' of " + value.asLong() + ", but only " + imageCount
+                                + " image(s) are selected here"
+                        : null;
+            }
+            case IMAGE_ASSET_ID -> validateImageAssetId(workItem, where, key, value);
+        };
+    }
+
+    private String validateImageAssetId(WorkItem workItem, String where, String key, JsonNode value) {
+        if (!value.isTextual() || value.asText().isBlank()) {
+            return where + " sets '" + key + "' to something other than an asset id";
+        }
+        String assetId = value.asText().trim();
+        Asset asset = assetRepository.findByIdAndWorkItemId(assetId, workItem.getId()).orElse(null);
+        if (asset == null) {
+            return where + " sets '" + key + "' to '" + assetId + "', which is not an asset on this Post";
+        }
+        if (!isImage(asset)) {
+            return where + " sets '" + key + "' to '" + assetId + "', which is not an image";
+        }
+        return null;
+    }
+
+    private static boolean isBooleanish(JsonNode value) {
+        if (value.isBoolean()) {
+            return true;
+        }
+        if (!value.isTextual()) {
+            return false;
+        }
+        String text = value.asText().trim();
+        return "true".equalsIgnoreCase(text) || "false".equalsIgnoreCase(text);
+    }
+
+    private static boolean isNonNegativeInt(JsonNode value) {
+        return value.isIntegralNumber() && value.asLong() >= 0;
+    }
+
+    private static List<String> textItems(JsonNode array) {
+        List<String> items = new ArrayList<>();
+        if (array.isArray()) {
+            array.forEach(node -> {
+                if (node.isTextual() && !node.asText().isBlank()) {
+                    items.add(node.asText());
+                }
+            });
+        }
+        return items;
+    }
+
+    private static boolean isImage(Asset asset) {
+        String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+        return contentType != null && contentType.startsWith("image/");
+    }
+
+    private static boolean isVideo(Asset asset) {
+        String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+        return contentType != null && contentType.startsWith("video/");
     }
 
     private void inspectTikTok(PostPublishTarget target, List<String> problems) {

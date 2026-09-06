@@ -151,6 +151,11 @@ public class PublishBundleHasher {
         tuple.put("connectorId", target.getConnectorId());
         tuple.put("connectionId", target.getConnectionId());
         tuple.put("captionOverride", target.getCaptionOverride());
+        // Only when it is not the default: every row hashed before formats existed was a feed post, and
+        // adding the key unconditionally would read every one of their approvals as stale.
+        if (target.getFormat() != null && !"FEED".equalsIgnoreCase(target.getFormat())) {
+            tuple.put("format", target.getFormat().toUpperCase(java.util.Locale.ROOT));
+        }
         if (target.isCustomMedia()) {
             tuple.put("assetIds", assetIds == null ? List.of() : List.copyOf(assetIds));
         }

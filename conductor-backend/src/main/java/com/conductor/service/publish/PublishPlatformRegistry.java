@@ -36,7 +36,9 @@ import java.util.Set;
 public class PublishPlatformRegistry {
 
     /** Facebook refuses a {@code scheduled_publish_time} more than thirty days from the API request. */
-    public static final Duration FACEBOOK_MAX_LEAD = Duration.ofDays(30);
+    public static final Duration FACEBOOK_MAX_LEAD = Duration.ofDays(75);
+    /** Facebook's Reels endpoint schedules at most 29 days ahead, unlike the Page feed's 75. */
+    public static final Duration FACEBOOK_REEL_MAX_LEAD = Duration.ofDays(29);
 
     /**
      * The lead an app-managed destination needs: twice the dispatch poller's 30-second tick, so a Post
@@ -54,16 +56,24 @@ public class PublishPlatformRegistry {
                     new MetricsAction("get_facebook_post_metrics", 50),
                     Map.of(),
                     PublishPlatform.DEFAULT_MIN_LEAD, FACEBOOK_MAX_LEAD,
-                    Set.of()),
+                    Set.of(),
+                    // A story cannot be scheduled on Facebook's side, so Conductor holds it and fires it at
+                    // its time (APP_MANAGED); feed posts and reels are handed to the Page's own scheduler.
+                    EnumSet.of(PostFormat.FEED, PostFormat.REEL, PostFormat.STORY),
+                    Map.of(PostFormat.REEL, FACEBOOK_REEL_MAX_LEAD),
+                    Map.of(PostFormat.STORY, PublishLane.APP_MANAGED)),
             new PublishPlatform("instagram", "Instagram", "meta", "instagram_post", "Instagram (manual)",
                     PublishLane.APP_MANAGED,
                     new PublishAction("publish_instagram_media", "caption", Map.of(), Map.of(),
                             "media_id", null),
                     null, null,
                     new MetricsAction("get_instagram_media_metrics", 50),
-                    Map.of(),
+                    instagramOptionParams(),
                     APP_MANAGED_MIN_LEAD, null,
-                    Set.of()),
+                    Set.of(),
+                    EnumSet.of(PostFormat.FEED, PostFormat.REEL, PostFormat.STORY),
+                    Map.of(),
+                    Map.of()),
             new PublishPlatform("youtube", "YouTube", "youtube", "youtube_video", "YouTube (manual)",
                     PublishLane.NATIVE,
                     new PublishAction("publish_video", "description", Map.of(),
@@ -72,7 +82,7 @@ public class PublishPlatformRegistry {
                             List.of("publish_at")),
                     new ConfirmAction("get_video_status", "video_id", "video_id", PlatformLiveness::youtubeIsLive),
                     new MetricsAction("get_video_statistics", 50),
-                    Map.of(),
+                    youtubeOptionParams(),
                     Duration.ZERO, null,
                     Set.of()),
             new PublishPlatform("tiktok", "TikTok", "tiktok", "tiktok_post", "TikTok (manual)",
@@ -99,7 +109,39 @@ public class PublishPlatformRegistry {
         params.put("disableStitch", "disable_stitch");
         params.put("brandContentToggle", "brand_content_toggle");
         params.put("brandOrganicToggle", "brand_organic_toggle");
+        params.put("isAigc", "is_aigc");
+        params.put("videoCoverTimestampMs", "video_cover_timestamp_ms");
+        params.put("autoAddMusic", "auto_add_music");
+        params.put("photoCoverIndex", "photo_cover_index");
         return Collections.unmodifiableMap(params);
+    }
+
+    /**
+     * Instagram's option keys. {@code coverAssetId} names one of the Post's own image files to use as a reel's
+     * cover; {@code collaborators} is a list of up to three usernames; {@code altText} applies to single images.
+     */
+    private static Map<String, String> instagramOptionParams() {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("shareToFeed", "share_to_feed");
+        params.put("collaborators", "collaborators");
+        params.put("altText", "alt_text");
+        params.put("coverAssetId", "cover_asset_id");
+        params.put("audioName", "audio_name");
+        return params;
+    }
+
+    /**
+     * YouTube's option keys. Visibility is not among them: a scheduled upload is private until
+     * {@code publish_at} and public after, which is the only shape YouTube's scheduler offers.
+     */
+    private static Map<String, String> youtubeOptionParams() {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("notifySubscribers", "notify_subscribers");
+        params.put("madeForKids", "made_for_kids");
+        params.put("containsSyntheticMedia", "contains_synthetic_media");
+        params.put("playlistIds", "playlist_ids");
+        params.put("thumbnailAssetId", "thumbnail_asset_id");
+        return params;
     }
 
     private final List<PublishPlatform> platforms;

@@ -1,17 +1,26 @@
 package com.conductor.service.publish;
 
+import com.conductor.entity.Asset;
+import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkItemReviewer;
+import com.conductor.repository.AssetRepository;
+import com.conductor.repository.ConnectionRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkItemReviewerRepository;
+import com.conductor.service.AssetService;
 import com.conductor.service.MediaTargetValidator;
 import com.conductor.service.PostScheduleValidator;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.PublishConsentService;
+import com.conductor.service.PublishOptionsValidator;
+import com.conductor.service.PublishTargetMediaResolver;
 import com.conductor.service.WorkItemWorkflowService;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
@@ -180,6 +189,104 @@ class PublishPreflightServiceTest {
         assertThat(preflight.review().satisfied()).isTrue();
         assertThat(preflight.consent().required()).isTrue();
         assertThat(preflight.consent().verdict()).isEqualTo(PublishConsentService.Verdict.SUPERSEDED);
+    }
+
+    /**
+     * An end-to-end proof that {@link PublishPreflightService} surfaces the post-formats codes: wires a
+     * real {@link PublishGateEvaluator} over real {@link MediaTargetValidator} and
+     * {@link PublishOptionsValidator} instances (mocked only at the repository boundary), so the finding
+     * codes seen here are exactly what a client reading {@code publish-preflight} would see.
+     */
+    @Test
+    void surfacesAStorysSingleItemBlockerAndATikTokFeedTargetsIgnoredOptionWarning() {
+        PostPublishTargetRepository realTargetRepository = mock(PostPublishTargetRepository.class);
+        AssetRepository assetRepository = mock(AssetRepository.class);
+        PostPublishTargetAssetRepository targetAssetRepository = mock(PostPublishTargetAssetRepository.class);
+        ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
+        PublishConsentService realConsentService = mock(PublishConsentService.class);
+        when(realConsentService.verdict(post)).thenReturn(PublishConsentService.Verdict.VALID);
+
+        PublishPlatformRegistry registry = new PublishPlatformRegistry();
+        PublishTargetMediaResolver mediaResolver =
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository);
+        MediaTargetValidator realMedia = new MediaTargetValidator(registry, assetRepository, realTargetRepository,
+                connectionRepository, new ObjectMapper(), mediaResolver);
+        PublishOptionsValidator realOptions = new PublishOptionsValidator(registry, realTargetRepository,
+                connectionRepository, realConsentService, new ObjectMapper(), mediaResolver, assetRepository);
+        PublishGateEvaluator realEvaluator = new PublishGateEvaluator(new PublishingWorkflow(registry, resolver),
+                postScheduleValidator, realMedia, realOptions);
+        PublishPreflightService realService = new PublishPreflightService(security, workItemRepository, resolver,
+                new PublishingWorkflow(registry, resolver), realEvaluator, postScheduleValidator,
+                realTargetRepository, realConsentService, reviewerRepository, workflowService);
+
+        PostPublishTarget story = new PostPublishTarget();
+        story.setId("t-story");
+        story.setPlatform("instagram");
+        story.setPlatformAccountLabel("@acme");
+        story.setFormat("STORY");
+        story.setCustomMedia(true);
+
+        PostPublishTarget tiktokFeed = new PostPublishTarget();
+        tiktokFeed.setId("t-tiktok");
+        tiktokFeed.setPlatform("tiktok");
+        tiktokFeed.setConnectionId("conn-tiktok");
+        tiktokFeed.setPlatformAccountLabel("@creator");
+        tiktokFeed.setPublishOptions("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\",\"autoAddMusic\":true}");
+        tiktokFeed.setCustomMedia(true);
+
+        when(realTargetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(story, tiktokFeed));
+
+        Asset image1 = uploadedImage("story-1.jpg");
+        Asset image2 = uploadedImage("story-2.jpg");
+        Asset clip = uploadedVideo("dance.mp4", "20");
+        when(assetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(image1, image2, clip));
+        when(targetAssetRepository.findAllByTargetIdIn(any())).thenReturn(List.of(
+                new PostPublishTargetAsset("t-story", image1.getId(), 0),
+                new PostPublishTargetAsset("t-story", image2.getId(), 1),
+                new PostPublishTargetAsset("t-tiktok", clip.getId(), 0)));
+
+        Connection tiktokConnection = new Connection();
+        tiktokConnection.setId("conn-tiktok");
+        tiktokConnection.setConfigJson(
+                "{\"privacyLevelOptions\":[\"PUBLIC_TO_EVERYONE\"],\"maxVideoPostDurationSec\":600}");
+        when(connectionRepository.findById("conn-tiktok")).thenReturn(Optional.of(tiktokConnection));
+
+        PublishPreflightService.Preflight preflight = realService.preflight(PROJECT, "post-1", caller);
+
+        assertThat(preflight.blockers())
+                .filteredOn(f -> "t-story".equals(f.targetId()))
+                .extracting(PublishFinding::code)
+                .containsExactly(MediaTargetValidator.STORY_SINGLE_ITEM);
+        assertThat(preflight.blockers()).noneMatch(f -> "t-tiktok".equals(f.targetId()));
+        assertThat(preflight.warnings())
+                .filteredOn(f -> "t-tiktok".equals(f.targetId()))
+                .extracting(PublishFinding::code)
+                .contains(PublishOptionsValidator.OPTION_IGNORED);
+    }
+
+    private Asset uploadedImage(String label) {
+        Asset asset = new Asset();
+        asset.setId("asset-" + label);
+        asset.setLabel(label);
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setContentType("image/jpeg");
+        asset.setSizeBytes(1024L);
+        return asset;
+    }
+
+    private Asset uploadedVideo(String label, String durationSeconds) {
+        Asset asset = new Asset();
+        asset.setId("asset-" + label);
+        asset.setLabel(label);
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setContentType("video/mp4");
+        asset.setSizeBytes(1024L * 1024);
+        asset.setWidth(1080);
+        asset.setHeight(1920);
+        asset.setDurationSeconds(new java.math.BigDecimal(durationSeconds));
+        return asset;
     }
 
     private static User user(String id) {

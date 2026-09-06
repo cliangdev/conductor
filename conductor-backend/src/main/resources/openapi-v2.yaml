@@ -3415,6 +3415,11 @@ components:
             `disableComment` on TikTok), in the order the platform's publish action declares them. Empty
             for a platform with no per-target options. A key outside this list is dropped at dispatch, so
             a client should read this rather than guess from the platform name.
+        formats:
+          type: array
+          description: The post formats this platform publishes, e.g. `[feed, reel, story]`. Every platform lists `feed`.
+          items:
+            $ref: "#/components/schemas/PostFormat"
 
     PublishMetricSnapshot:
       type: object
@@ -3745,6 +3750,8 @@ components:
           description: >-
             This destination's own copy, or null when it uses the Post's caption. See `effectiveCaption`
             for what actually goes out.
+        format:
+          $ref: "#/components/schemas/PostFormat"
         assetIds:
           type: array
           nullable: true
@@ -3814,6 +3821,8 @@ components:
             The connected account to publish through. Omit it (or send null) to select this platform's
             MANUAL destination instead — the one a human publishes by hand. There is exactly one manual
             destination per platform, so the platform alone identifies it.
+        format:
+          $ref: "#/components/schemas/PostFormat"
         publishOptions:
           $ref: "#/components/schemas/PublishOptions"
         captionOverride:
@@ -3837,6 +3846,21 @@ components:
             asset of this Work Item. Set-replace, like `captionOverride`.
           items:
             type: string
+
+    PostFormat:
+      type: string
+      description: >-
+        The shape a destination publishes in. `feed` is the platform's ordinary post — an image, a video, a
+        carousel, a photo set — and the default. `reel` is short vertical video on Facebook or Instagram.
+        `story` is a single image or clip on Facebook or Instagram that disappears after 24 hours, takes
+        no caption, and is fired by Conductor at its time because the platforms cannot schedule one. Each
+        option row lists the formats its platform offers under `formats`; selecting one it does not offer
+        is refused.
+      enum:
+        - feed
+        - reel
+        - story
+      default: feed
 
     PublishOptions:
       type: object

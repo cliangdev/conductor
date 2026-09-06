@@ -4,6 +4,7 @@ import java.util.Map;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.integration.ConnectorHttp;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpEntity;
@@ -98,6 +99,8 @@ public class TikTokClient {
     static final long TARGET_CHUNK_BYTES = 10L * 1024 * 1024;
 
     /** TikTok signals success with {@code error.code == "ok"}, not with the HTTP status alone. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
     private static final String ERROR_CODE_OK = "ok";
 
     /** Publish status TikTok reports once the post is live. */
@@ -166,18 +169,29 @@ public class TikTokClient {
     public record CreatorInfo(String nickname, String username, List<String> privacyLevelOptions,
                               Integer maxVideoPostDurationSec) {}
 
-    /** Everything TikTok needs to know about the post itself, independent of how the bytes arrive. */
+    /**
+     * Everything TikTok needs to know about the post itself, independent of how the bytes arrive.
+     *
+     * <p>{@code isAigc} and {@code videoCoverTimestampMs} are {@code null}, not {@code false}/{@code 0},
+     * when the caller named neither: TikTok defaults the cover to the first frame and leaves the
+     * AI-generated-content label alone, and sending an explicit {@code false}/{@code 0} is not the same
+     * thing as never asking.
+     */
     public record VideoPostInfo(String title, String privacyLevel, boolean disableComment,
                                 boolean disableDuet, boolean disableStitch,
-                                boolean brandContentToggle, boolean brandOrganicToggle) {}
+                                boolean brandContentToggle, boolean brandOrganicToggle,
+                                Boolean isAigc, Long videoCoverTimestampMs) {}
 
     /**
      * A photo post's settings. Two text fields rather than one — TikTok caps the title at 90 characters and
      * the description at 4000 — and no duet/stitch toggles, which are video-only concepts.
+     *
+     * <p>{@code autoAddMusic} is {@code null} rather than {@code false} when the caller named nothing, for
+     * the same reason {@link VideoPostInfo#isAigc()} is: TikTok's own default should stand untouched.
      */
     public record PhotoPostInfo(String title, String description, String privacyLevel,
                                 boolean disableComment, boolean brandContentToggle,
-                                boolean brandOrganicToggle) {}
+                                boolean brandOrganicToggle, Boolean autoAddMusic) {}
 
     /**
      * How one file is cut up for {@link #SOURCE_FILE_UPLOAD}. TikTok's rule is not "ceil": the chunk
@@ -273,7 +287,8 @@ public class TikTokClient {
         VideoInitRequest request = new VideoInitRequest(
                 new PostInfoPayload(postInfo.title(), postInfo.privacyLevel(), postInfo.disableComment(),
                         postInfo.disableDuet(), postInfo.disableStitch(),
-                        postInfo.brandContentToggle(), postInfo.brandOrganicToggle()),
+                        postInfo.brandContentToggle(), postInfo.brandOrganicToggle(),
+                        postInfo.isAigc(), postInfo.videoCoverTimestampMs()),
                 new SourceInfoPayload(SOURCE_FILE_UPLOAD, plan.videoSize(), plan.chunkSize(),
                         plan.totalChunkCount()));
 
@@ -299,15 +314,16 @@ public class TikTokClient {
      * straight to {@link #fetchPublishStatus}. A photo post also carries <b>two</b> pieces of text where a
      * video carries one: a short {@code title} and a longer {@code description}.
      */
-    public String initPhotoPost(String accessToken, PhotoPostInfo postInfo, List<String> photoUrls) {
+    public String initPhotoPost(String accessToken, PhotoPostInfo postInfo, List<String> photoUrls,
+                                int photoCoverIndex) {
         if (photoUrls == null || photoUrls.isEmpty()) {
             throw new TikTokApiException("A TikTok photo post needs at least one image", null, false);
         }
         PhotoInitRequest request = new PhotoInitRequest(
                 new PhotoPostInfoPayload(postInfo.title(), postInfo.description(), postInfo.privacyLevel(),
                         postInfo.disableComment(), postInfo.brandContentToggle(),
-                        postInfo.brandOrganicToggle()),
-                new PhotoSourceInfoPayload(SOURCE_PULL_FROM_URL, 0, List.copyOf(photoUrls)),
+                        postInfo.brandOrganicToggle(), postInfo.autoAddMusic()),
+                new PhotoSourceInfoPayload(SOURCE_PULL_FROM_URL, photoCoverIndex, List.copyOf(photoUrls)),
                 POST_MODE_DIRECT_POST,
                 MEDIA_TYPE_PHOTO);
 
@@ -360,10 +376,10 @@ public class TikTokClient {
         }
         URI uri = URI.create(API_BASE + "/video/query/?fields=id,view_count,like_count,comment_count,share_count");
         Map<String, Object> body = Map.of("filters", Map.of("video_ids", videoIds));
-        ResponseEntity<JsonNode> response = exchangeClassifying("video query", () ->
+        ResponseEntity<String> response = exchangeClassifying("video query", () ->
                 restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(body, jsonHeaders(accessToken)),
-                        JsonNode.class));
-        JsonNode root = response.getBody();
+                        String.class));
+        JsonNode root = parseJson(response.getBody());
         JsonNode error = root == null ? null : root.get("error");
         if (error != null && error.hasNonNull("code") && !"ok".equals(error.path("code").asText())) {
             throw new TikTokApiException("TikTok video query failed: " + error.path("message").asText(),
@@ -491,7 +507,11 @@ public class TikTokClient {
                            @JsonProperty("disable_duet") boolean disableDuet,
                            @JsonProperty("disable_stitch") boolean disableStitch,
                            @JsonProperty("brand_content_toggle") boolean brandContentToggle,
-                           @JsonProperty("brand_organic_toggle") boolean brandOrganicToggle) {}
+                           @JsonProperty("brand_organic_toggle") boolean brandOrganicToggle,
+                           @JsonInclude(JsonInclude.Include.NON_NULL)
+                           @JsonProperty("is_aigc") Boolean isAigc,
+                           @JsonInclude(JsonInclude.Include.NON_NULL)
+                           @JsonProperty("video_cover_timestamp_ms") Long videoCoverTimestampMs) {}
 
     record SourceInfoPayload(@JsonProperty("source") String source,
                              @JsonProperty("video_size") long videoSize,
@@ -508,7 +528,9 @@ public class TikTokClient {
                                 @JsonProperty("privacy_level") String privacyLevel,
                                 @JsonProperty("disable_comment") boolean disableComment,
                                 @JsonProperty("brand_content_toggle") boolean brandContentToggle,
-                                @JsonProperty("brand_organic_toggle") boolean brandOrganicToggle) {}
+                                @JsonProperty("brand_organic_toggle") boolean brandOrganicToggle,
+                                @JsonInclude(JsonInclude.Include.NON_NULL)
+                                @JsonProperty("auto_add_music") Boolean autoAddMusic) {}
 
     record PhotoSourceInfoPayload(@JsonProperty("source") String source,
                                   @JsonProperty("photo_cover_index") int photoCoverIndex,
@@ -553,4 +575,20 @@ public class TikTokClient {
     record ErrorEnvelope(@JsonProperty("code") String code,
                          @JsonProperty("message") String message,
                          @JsonProperty("log_id") String logId) {}
+
+    /**
+     * Parses a JSON body read as text. Read as text on purpose: this codebase's HTTP converters are
+     * Jackson 3, which cannot produce a Jackson 2 {@code JsonNode}, so asking the template for one fails
+     * at runtime against a real server even though a mocked template returns whatever it is told.
+     */
+    static JsonNode parseJson(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            return JSON.readTree(body);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Response was not JSON: " + e.getMessage(), e);
+        }
+    }
 }

@@ -1,13 +1,17 @@
 package com.conductor.service;
 
 import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
+import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -46,6 +51,8 @@ class PublishOptionsValidatorTest {
     private PostPublishTargetRepository postPublishTargetRepository;
     private ConnectionRepository connectionRepository;
     private PublishConsentService publishConsentService;
+    private AssetRepository assetRepository;
+    private PostPublishTargetAssetRepository targetAssetRepository;
     private PublishOptionsValidator validator;
 
     private Statechart marketing;
@@ -56,11 +63,14 @@ class PublishOptionsValidatorTest {
         postPublishTargetRepository = Mockito.mock(PostPublishTargetRepository.class);
         connectionRepository = Mockito.mock(ConnectionRepository.class);
         publishConsentService = Mockito.mock(PublishConsentService.class);
+        assetRepository = Mockito.mock(AssetRepository.class);
+        targetAssetRepository = Mockito.mock(PostPublishTargetAssetRepository.class);
         // The consent rule (MKT-1) is its own block of tests below; every options test runs with consent
         // standing so that a rejection there can only be about the options.
         when(publishConsentService.verdict(any())).thenReturn(PublishConsentService.Verdict.VALID);
         validator = new PublishOptionsValidator(new PublishPlatformRegistry(), postPublishTargetRepository, connectionRepository,
-                publishConsentService, new ObjectMapper());
+                publishConsentService, new ObjectMapper(),
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository), assetRepository);
         marketing = statechart("/schema/examples/marketing.workflow.json");
         engineering = statechart("/schema/examples/engineering.workflow.json");
     }
@@ -417,6 +427,7 @@ class PublishOptionsValidatorTest {
         target.setConnectionId(connectionId);
         target.setPlatformAccountLabel(accountLabel);
         target.setPublishOptions(publishOptions);
+        lastTargetRef = target;
         return target;
     }
 
@@ -502,4 +513,297 @@ class PublishOptionsValidatorTest {
         verifyNoInteractions(connectionRepository, publishConsentService);
     }
 
+    // --- Per-target option types: a declared key with the wrong shape blocks (OPTION_INVALID) ---
+
+    @Test
+    void blocksABooleanOptionThatIsNeitherABooleanNorABooleanishString() {
+        givenTargets(target("youtube", "conn-yt", "Acme Channel", "{\"notifySubscribers\":\"maybe\"}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("notifySubscribers")
+                .hasMessageContaining("boolean");
+    }
+
+    @Test
+    void acceptsABooleanOptionAsAStringTrueOrFalse() {
+        givenTargets(target("youtube", "conn-yt", "Acme Channel",
+                "{\"notifySubscribers\":\"true\",\"madeForKids\":\"FALSE\"}"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksAnAltTextOverOneThousandCharacters() {
+        givenTargets(target("instagram", "conn-meta", "@acme",
+                "{\"altText\":\"" + "x".repeat(1001) + "\"}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("altText")
+                .hasMessageContaining("1000");
+    }
+
+    @Test
+    void allowsAltTextAtExactlyOneThousandCharacters() {
+        givenTargets(target("instagram", "conn-meta", "@acme",
+                "{\"altText\":\"" + "x".repeat(1000) + "\"}"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksCollaboratorsWithMoreThanThreeUsernames() {
+        givenTargets(target("instagram", "conn-meta", "@acme",
+                "{\"collaborators\":[\"a\",\"b\",\"c\",\"d\"]}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("collaborators")
+                .hasMessageContaining("1 to 3");
+    }
+
+    @Test
+    void blocksAnEmptyCollaboratorsList() {
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"collaborators\":[]}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("collaborators");
+    }
+
+    @Test
+    void allowsOneToThreeCollaborators() {
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"collaborators\":[\"a\",\"b\",\"c\"]}"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksAnEmptyPlaylistIdsList() {
+        givenTargets(target("youtube", "conn-yt", "Acme Channel", "{\"playlistIds\":[]}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("playlistIds");
+    }
+
+    @Test
+    void allowsANonEmptyPlaylistIdsList() {
+        givenTargets(target("youtube", "conn-yt", "Acme Channel", "{\"playlistIds\":[\"pl-1\",\"pl-2\"]}"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksANegativeVideoCoverTimestamp() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"videoCoverTimestampMs\":-1,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("videoCoverTimestampMs")
+                .hasMessageContaining("non-negative");
+    }
+
+    @Test
+    void allowsANonNegativeVideoCoverTimestamp() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"videoCoverTimestampMs\":1500,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        Asset clip = video("clip.mp4");
+        givenAssets(clip);
+        givenSelection(lastTarget(), clip);
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksAPhotoCoverIndexAtOrBeyondTheImageCount() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"photoCoverIndex\":2,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        Asset a = image("a.jpg");
+        Asset b = image("b.jpg");
+        givenAssets(a, b);
+        givenSelection(lastTarget(), a, b);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("photoCoverIndex")
+                .hasMessageContaining("2 image(s)");
+    }
+
+    @Test
+    void allowsAPhotoCoverIndexWithinTheImageCount() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"photoCoverIndex\":1,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        Asset a = image("a.jpg");
+        Asset b = image("b.jpg");
+        givenAssets(a, b);
+        givenSelection(lastTarget(), a, b);
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void blocksACoverAssetIdThatIsNotAnAssetOnThePost() {
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"coverAssetId\":\"missing\"}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("coverAssetId")
+                .hasMessageContaining("not an asset on this Post");
+    }
+
+    @Test
+    void blocksAThumbnailAssetIdThatIsNotAnImage() {
+        Asset clip = video("clip.mp4");
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(clip));
+        when(assetRepository.findByIdAndWorkItemId(clip.getId(), WORK_ITEM_ID)).thenReturn(Optional.of(clip));
+        givenTargets(target("youtube", "conn-yt", "Acme Channel", "{\"thumbnailAssetId\":\"" + clip.getId() + "\"}"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("thumbnailAssetId")
+                .hasMessageContaining("not an image");
+    }
+
+    @Test
+    void allowsACoverAssetIdThatIsAnImageOnThePost() {
+        Asset cover = image("cover.jpg");
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(cover));
+        when(assetRepository.findByIdAndWorkItemId(cover.getId(), WORK_ITEM_ID)).thenReturn(Optional.of(cover));
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"coverAssetId\":\"" + cover.getId() + "\"}"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    // --- A key the platform does not declare is a warning, not a blocker (OPTION_UNKNOWN) ---
+
+    @Test
+    void warnsRatherThanBlocksOnAKeyThePlatformDoesNotDeclare() {
+        givenTargets(target("youtube", "conn-yt", "Acme Channel", "{\"nonsenseKey\":true}"));
+
+        List<com.conductor.service.publish.PublishFinding> findings =
+                validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.code()).isEqualTo("OPTION_UNKNOWN");
+            assertThat(f.blocks()).isFalse();
+            assertThat(f.message()).contains("nonsenseKey");
+        });
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    // --- A well-formed option the rest of the target's content makes moot (OPTION_IGNORED) ---
+
+    @Test
+    void warnsWhenCollaboratorsIsSetOnAnInstagramCarousel() {
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"collaborators\":[\"friend\"]}"));
+        Asset a = image("a.jpg");
+        Asset b = image("b.jpg");
+        givenAssets(a, b);
+        givenSelection(lastTarget(), a, b);
+
+        List<com.conductor.service.publish.PublishFinding> findings =
+                validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.code()).isEqualTo("OPTION_IGNORED");
+            assertThat(f.blocks()).isFalse();
+            assertThat(f.message()).contains("collaborators").contains("carousel");
+        });
+    }
+
+    @Test
+    void doesNotWarnWhenCollaboratorsIsSetOnASingleInstagramItem() {
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"collaborators\":[\"friend\"]}"));
+        Asset a = image("a.jpg");
+        givenAssets(a);
+        givenSelection(lastTarget(), a);
+
+        List<com.conductor.service.publish.PublishFinding> findings =
+                validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+
+        assertThat(findings).noneMatch(f -> "OPTION_IGNORED".equals(f.code()));
+    }
+
+    @Test
+    void warnsWhenAutoAddMusicIsSetOnATikTokVideoPost() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"autoAddMusic\":true,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        Asset clip = video("clip.mp4");
+        givenAssets(clip);
+        givenSelection(lastTarget(), clip);
+
+        List<com.conductor.service.publish.PublishFinding> findings =
+                validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.code()).isEqualTo("OPTION_IGNORED");
+            assertThat(f.message()).contains("autoAddMusic").contains("video post");
+        });
+    }
+
+    @Test
+    void warnsWhenVideoCoverTimestampIsSetOnATikTokPhotoPost() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget(
+                "{\"videoCoverTimestampMs\":500,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        Asset a = image("a.jpg");
+        givenAssets(a);
+        givenSelection(lastTarget(), a);
+
+        List<com.conductor.service.publish.PublishFinding> findings =
+                validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.code()).isEqualTo("OPTION_IGNORED");
+            assertThat(f.message()).contains("videoCoverTimestampMs").contains("photo post");
+        });
+    }
+
+    // --- helpers for the option-type and ignored-option tests ---
+
+    private PostPublishTarget lastTargetRef;
+
+    private PostPublishTarget lastTarget() {
+        return lastTargetRef;
+    }
+
+    private void givenAssets(Asset... assets) {
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(assets));
+    }
+
+    private void givenSelection(PostPublishTarget target, Asset... assets) {
+        target.setCustomMedia(true);
+        List<PostPublishTargetAsset> rows = new ArrayList<>();
+        for (int position = 0; position < assets.length; position++) {
+            rows.add(new PostPublishTargetAsset(target.getId(), assets[position].getId(), position));
+        }
+        when(targetAssetRepository.findAllByTargetIdIn(any())).thenReturn(rows);
+    }
+
+    private int assetCounter = 0;
+
+    private Asset image(String label) {
+        Asset asset = new Asset();
+        asset.setId("asset-" + (++assetCounter));
+        asset.setLabel(label);
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setContentType("image/jpeg");
+        asset.setSizeBytes(1024L);
+        return asset;
+    }
+
+    private Asset video(String label) {
+        Asset asset = new Asset();
+        asset.setId("asset-" + (++assetCounter));
+        asset.setLabel(label);
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setContentType("video/mp4");
+        asset.setSizeBytes(1024L * 1024);
+        return asset;
+    }
 }
