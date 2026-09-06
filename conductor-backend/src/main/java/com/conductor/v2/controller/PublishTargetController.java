@@ -2,6 +2,7 @@ package com.conductor.v2.controller;
 
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.PublishTargetsApi;
+import com.conductor.generated.v2.model.PostFormat;
 import com.conductor.generated.v2.model.PublishConsentResponse;
 import com.conductor.generated.v2.model.PublishPreflightConsent;
 import com.conductor.generated.v2.model.PublishPreflightFinding;
@@ -105,7 +106,8 @@ public class PublishTargetController implements PublishTargetsApi {
                                 selection.getConnectionId(),
                                 selection.getPublishOptions(),
                                 selection.getCaptionOverride(),
-                                selection.getAssetIds()))
+                                selection.getAssetIds(),
+                                selection.getFormat() == null ? null : selection.getFormat().getValue()))
                         .toList();
         return ResponseEntity.ok(PublishTargetResponses.from(
                 publishTargetService.replaceSelection(projectId, workItemId, selections, currentUser())));
@@ -148,6 +150,7 @@ public class PublishTargetController implements PublishTargetsApi {
                 .connectionId(option.connectionId())
                 .healthStatus(option.healthStatus())
                 .healthMessage(option.healthMessage())
+                .formats(option.formats().stream().map(PostFormat::fromValue).toList())
                 // Null, not an empty list, when a TikTok connection never cached the creator's levels: the
                 // picker has to tell "reconnect this account" apart from a genuinely empty set of choices.
                 .privacyLevelOptions(option.privacyLevelOptions())

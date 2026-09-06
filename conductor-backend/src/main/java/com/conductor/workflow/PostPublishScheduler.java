@@ -436,56 +436,8 @@ public class PostPublishScheduler {
      * this poller's job ends at dispatching the right action, on the right connection, exactly once.
      */
     private Map<String, Object> buildInput(PostPublishTarget target, WorkItem post, PublishPlatform platform) {
-        Map<String, Object> input = publishInputBuilder.build(target, post, platform.publish().captionParam());
-        input.putAll(publishOptions(target, platform));
-        return input;
+        // Options ride along from PublishInputBuilder, which both lanes share.
+        return publishInputBuilder.build(target, post, platform.publish().captionParam());
     }
 
-    /**
-     * This target's chosen publish options, under the parameter names its connector's tool spec declares
-     * ({@link PublishPlatform#optionParams()}). The bag is stored in the API's camelCase vocabulary and the
-     * actions take snake_case; the platform's map is a whitelist rather than a blind copy, so an
-     * unrecognised key is dropped and a client cannot smuggle an arbitrary parameter into a connector call.
-     *
-     * <p>Nothing is invented here: an option the human did not choose is simply absent, and the connector's
-     * own default applies. That is deliberate even for TikTok's {@code privacy_level}, whose absence is the
-     * bug this feature closes — {@code PublishOptionsValidator} refuses to approve a TikTok target without
-     * one, so by the time a row is due it has been chosen. Manufacturing a value here would put the guess
-     * back, one layer down.
-     */
-    private Map<String, Object> publishOptions(PostPublishTarget target, PublishPlatform platform) {
-        Map<String, String> params = platform.optionParams();
-        String json = target.getPublishOptions();
-        if (params.isEmpty() || json == null || json.isBlank()) {
-            return Map.of();
-        }
-        JsonNode options;
-        try {
-            options = OPTIONS_MAPPER.readTree(json);
-        } catch (Exception e) {
-            // Do not fail the publish over an unreadable bag: the platform's own defaults still apply, and
-            // the row is visible to a human. Loud, because it means a stored choice is being ignored.
-            log.error("Unreadable publish options on target {}; publishing without them: {}",
-                    target.getId(), e.toString());
-            return Map.of();
-        }
-        if (!options.isObject()) {
-            return Map.of();
-        }
-        Map<String, Object> input = new LinkedHashMap<>();
-        params.forEach((optionKey, param) -> {
-            JsonNode value = options.get(optionKey);
-            if (value == null || value.isNull()) {
-                return;
-            }
-            if (value.isBoolean()) {
-                input.put(param, value.booleanValue());
-            } else if (value.isNumber()) {
-                input.put(param, value.numberValue());
-            } else if (value.isTextual() && !value.asText().isBlank()) {
-                input.put(param, value.asText());
-            }
-        });
-        return input;
-    }
 }

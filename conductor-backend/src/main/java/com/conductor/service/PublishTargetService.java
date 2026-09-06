@@ -15,6 +15,7 @@ import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import java.time.OffsetDateTime;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.publish.PostFormat;
 import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -165,7 +166,8 @@ public class PublishTargetService {
                                String healthMessage,
                                List<String> privacyLevelOptions,
                                String creatorNickname,
-                               List<String> optionKeys) {
+                               List<String> optionKeys,
+                               List<String> formats) {
 
         String key() {
             return selectionKey(platform, connectionId);
@@ -187,11 +189,17 @@ public class PublishTargetService {
      *                       with it
      */
     public record TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions,
-                                  String captionOverride, List<String> assetIds) {
+                                  String captionOverride, List<String> assetIds, String format) {
 
         /** A selection that chooses only a destination, leaving every publish option unset. */
         public TargetSelection(String platform, String connectionId) {
-            this(platform, connectionId, null, null, null);
+            this(platform, connectionId, null, null, null, null);
+        }
+
+        /** A feed-format selection: the shape every selection had before formats existed. */
+        public TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions,
+                               String captionOverride, List<String> assetIds) {
+            this(platform, connectionId, publishOptions, captionOverride, assetIds, null);
         }
 
         /** A selection with publish options but the Post's own caption and media. */
@@ -330,7 +338,7 @@ public class PublishTargetService {
      * own assets, de-duplicated and order-preserved. Empty {@code assetIds} means inherit.
      */
     private record DesiredTarget(TargetOption option, String optionsJson, String captionOverride,
-                                 List<String> assetIds) {
+                                 List<String> assetIds, PostFormat format) {
 
         boolean customMedia() {
             return !assetIds.isEmpty();
@@ -368,7 +376,8 @@ public class PublishTargetService {
             }
             desired.put(key, new DesiredTarget(option, canonicalOptions(selection.publishOptions()),
                     blankToNull(selection.captionOverride()),
-                    resolveAssetIds(workItem.getId(), selection.assetIds())));
+                    resolveAssetIds(workItem.getId(), selection.assetIds()),
+                    resolveFormat(option, selection.format())));
         }
 
         List<PostPublishTarget> existing = targetRepository.findAllByWorkItemId(workItem.getId());
@@ -490,10 +499,42 @@ public class PublishTargetService {
     }
 
     /** Copies a desired destination's content onto its row. The join rows are written separately. */
-    private static void applyContent(PostPublishTarget target, DesiredTarget desired) {
+    private void applyContent(PostPublishTarget target, DesiredTarget desired) {
         target.setPublishOptions(desired.optionsJson());
         target.setCaptionOverride(desired.captionOverride());
         target.setCustomMedia(desired.customMedia());
+        target.setFormat(desired.format().name());
+        // The lane follows the format: a connected account publishes most formats through the platform's
+        // own scheduler, but one the platform cannot schedule (a Facebook story) is held and fired here.
+        if (desired.option().lane() != PublishLane.MANUAL) {
+            target.setLane(laneFor(desired.option(), desired.format()));
+        }
+    }
+
+    /**
+     * The format a selection asks for, checked against what the platform offers. Absent means feed, which
+     * every platform publishes; anything else must be in the platform's {@code formats}.
+     */
+    private PostFormat resolveFormat(TargetOption option, String requested) {
+        PostFormat format;
+        try {
+            format = PostFormat.parse(requested);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("'" + requested + "' is not a post format — use feed, reel or story");
+        }
+        PublishPlatform platform = platformRegistry.find(option.platform()).orElse(null);
+        if (platform != null && !platform.supports(format)) {
+            throw new BusinessException(platform.label() + " does not publish " + format.wire() + "s; it offers "
+                    + platform.formats().stream().sorted().map(PostFormat::wire)
+                            .collect(java.util.stream.Collectors.joining(", ")));
+        }
+        return format;
+    }
+
+    private PublishLane laneFor(TargetOption option, PostFormat format) {
+        return platformRegistry.find(option.platform())
+                .map(platform -> platform.laneFor(format))
+                .orElse(option.lane());
     }
 
     /**
@@ -509,6 +550,9 @@ public class PublishTargetService {
             return true;
         }
         if (existing.isCustomMedia() != desired.customMedia()) {
+            return true;
+        }
+        if (PostFormat.parse(existing.getFormat()) != desired.format()) {
             return true;
         }
         // Only an explicit selection has stored rows to compare; two inheriting targets are equal by
@@ -647,7 +691,7 @@ public class PublishTargetService {
         // connection to derive anything from.
         for (PublishPlatform platform : platformRegistry.all()) {
             options.add(new TargetOption(platform.id(), null, null, platform.manualLabel(),
-                    PublishLane.MANUAL, null, null, null, null, optionKeys(platform)));
+                    PublishLane.MANUAL, null, null, null, null, optionKeys(platform), formats(platform)));
         }
         return List.copyOf(options);
     }
@@ -661,7 +705,12 @@ public class PublishTargetService {
         return new TargetOption(platform.id(), connection.getConnectorId(), connection.getId(),
                 label != null ? label : fallbackLabel(connection),
                 platform.automatedLane(), connection.getHealthStatus(), connection.getHealthMessage(),
-                privacyLevelOptions, creatorNickname, optionKeys(platform));
+                privacyLevelOptions, creatorNickname, optionKeys(platform), formats(platform));
+    }
+
+    /** The formats this platform publishes, on the wire (feed, reel, story) in enum order. */
+    private static List<String> formats(PublishPlatform platform) {
+        return platform.formats().stream().sorted().map(PostFormat::wire).toList();
     }
 
     private static List<String> optionKeys(PublishPlatform platform) {

@@ -8,6 +8,7 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PostFormat;
 import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.service.publish.PublishingWorkflow;
@@ -445,8 +446,9 @@ public class NativeHandoffService {
                     targetId, target.getPlatform());
             return null;
         }
-        if (!platform.window().accepts(now, target.getFireTime())) {
-            if (platform.window().tooFarOut(now, target.getFireTime())) {
+        PublishPlatform.HandoffWindow window = platform.windowFor(PostFormat.parse(target.getFormat()));
+        if (!window.accepts(now, target.getFireTime())) {
+            if (window.tooFarOut(now, target.getFireTime())) {
                 log.debug("Target {} fires at {}, beyond {}'s hand-off window; deferring",
                         targetId, target.getFireTime(), target.getPlatform());
             } else {

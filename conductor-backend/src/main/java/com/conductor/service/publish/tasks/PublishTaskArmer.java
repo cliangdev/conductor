@@ -5,6 +5,7 @@ import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.publish.PostFormat;
 import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import org.slf4j.Logger;
@@ -91,8 +92,7 @@ public class PublishTaskArmer {
     /** When the platform will first accept the hand-off: fire time less its maximum lead, never in the past. */
     OffsetDateTime handoffOpensAt(PostPublishTarget target, OffsetDateTime now) {
         Duration maxLead = platformRegistry.find(target.getPlatform())
-                .map(PublishPlatform::window)
-                .map(PublishPlatform.HandoffWindow::maxLead)
+                .map(platform -> platform.maxLeadFor(PostFormat.parse(target.getFormat())))
                 .orElse(null);
         if (maxLead == null) {
             return now;

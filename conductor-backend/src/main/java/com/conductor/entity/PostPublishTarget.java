@@ -103,6 +103,14 @@ public class PostPublishTarget {
     private String captionOverride;
 
     /**
+     * The shape this destination publishes in — {@code FEED}, {@code REEL} or {@code STORY}, see
+     * {@code PostFormat}. Stored as text so the enum can grow without a migration; {@code FEED} for every row
+     * that predates formats.
+     */
+    @Column(name = "format", length = 16, nullable = false)
+    private String format = "FEED";
+
+    /**
      * Whether this target publishes its own chosen media rather than the Post's whole set.
      *
      * <p>False (the default, and what every row created before per-target media meant) is <em>inherit</em>:
@@ -202,6 +210,9 @@ public class PostPublishTarget {
     public void setAttempts(int attempts) { this.attempts = attempts; }
 
     public String getCaptionOverride() { return captionOverride; }
+    public String getFormat() { return format; }
+    public void setFormat(String format) { this.format = format == null || format.isBlank() ? "FEED" : format; }
+
     public void setCaptionOverride(String captionOverride) { this.captionOverride = captionOverride; }
 
     public boolean isCustomMedia() { return customMedia; }
