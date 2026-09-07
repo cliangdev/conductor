@@ -183,6 +183,36 @@ describe('ComposePostModal', () => {
     expect(ticket.contentType).toBe('image/jpeg')
   })
 
+  it('explains the by-hand rows when no account is connected, and not otherwise', async () => {
+    // Only manual destinations: nothing has been connected.
+    const manualOnly = ACCOUNTS.filter((a) => a.lane === 'MANUAL')
+    fetchMock.mockImplementationOnce(async (url: string) => {
+      calls.push({ method: 'GET', url, body: undefined })
+      return json(200, manualOnly)
+    })
+    renderModal()
+    await screen.findByLabelText('Instagram (manual)')
+    expect(screen.getByText(/No accounts are connected yet/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Integrations' })).toHaveAttribute('href', '/app/projects/project-1/integrations')
+  })
+
+  it('says nothing about connecting when an account is connected', async () => {
+    renderModal()
+    await screen.findByLabelText('@acme')
+    expect(screen.queryByText(/No accounts are connected yet/)).not.toBeInTheDocument()
+  })
+
+  it('says what is still missing while the button is disabled', async () => {
+    renderModal()
+    await screen.findByLabelText('@acme')
+    expect(screen.getByText('Needs a caption and at least one destination.')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('Caption'), 'Hello')
+    expect(screen.getByText('Needs at least one destination.')).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText('@acme'))
+    expect(screen.queryByText(/^Needs /)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create post' })).toBeEnabled()
+  })
+
   it('cannot be submitted without a caption and a destination', async () => {
     renderModal()
     await screen.findByLabelText('@acme')
