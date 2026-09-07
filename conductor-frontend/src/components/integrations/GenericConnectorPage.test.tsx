@@ -14,6 +14,8 @@ vi.mock('@/lib/api', () => ({
   createConnection: vi.fn(),
   deleteConnection: vi.fn(),
   apiPost: vi.fn(),
+  apiGet: vi.fn(),
+  apiPut: vi.fn(),
   apiErrorMessage: (err: unknown, fallback: string) => {
     const detail = (err as { detail?: unknown })?.detail
     return typeof detail === 'string' && detail.trim() ? detail : fallback
@@ -84,5 +86,33 @@ describe('GenericConnectorPage', () => {
     await waitFor(() => {
       expect(screen.getAllByText('Cannot disconnect right now')).toHaveLength(1)
     })
+  })
+
+  it('reopens the account picker from a connection whose selection never happened', async () => {
+    const metaConnector = {
+      ...discordConnector,
+      connectorId: 'meta',
+      name: 'Meta',
+      authType: 'OAUTH2' as const,
+      singleInstance: false,
+      configFields: [],
+      connections: [{ id: 'conn-meta', status: 'ACTIVE' as const, label: null, authType: 'OAUTH2', awaitingAccountSelection: true }],
+    }
+    vi.mocked(api.listIntegrations).mockResolvedValue([metaConnector])
+    vi.mocked(api.apiGet).mockResolvedValue({ accounts: [{ id: 'page-1', label: 'Rexipe' }] })
+    renderPage('meta')
+
+    expect(await screen.findByRole('button', { name: 'Choose account' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Choose an account' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose account' }))
+
+    expect(await screen.findByRole('heading', { name: 'Choose an account' })).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.apiGet).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/integrations/meta/connections/conn-meta/oauth/accounts',
+        'test-token'
+      )
+    )
   })
 })

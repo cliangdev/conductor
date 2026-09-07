@@ -203,6 +203,20 @@ public interface OAuth2Connector extends Connector {
     }
 
     /**
+     * Whether {@code config} — the connection's stored, non-secret identifiers — already names the account
+     * this connection acts as. Only meaningful when {@link #requiresAccountSelection()} is true, so the
+     * default says yes and an ordinary single-account connector needs no override.
+     *
+     * <p>This exists because a parked connection is otherwise invisible: the callback stores the grant
+     * before the picker runs, so a picker that errored or a tab closed on it leaves a row that is ACTIVE,
+     * holds a token, and can never publish. The connector is the only party that knows which config key
+     * the selection writes, hence it answers rather than the flow service guessing.
+     */
+    default boolean accountSelected(Map<String, Object> config) {
+        return true;
+    }
+
+    /**
      * Whether this connector authorizes against no provider at all: the flow service then skips the
      * client-credential requirement, sends the browser straight back to its own callback with a
      * synthetic code, and answers the code-for-token exchange with canned tokens instead of a POST.

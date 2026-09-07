@@ -225,6 +225,12 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
         return true;
     }
 
+    /** Selection writes the Page id; until it is there the grant is a user token with nowhere to post. */
+    @Override
+    public boolean accountSelected(Map<String, Object> config) {
+        return config != null && config.get(CONFIG_PAGE_ID) instanceof String pageId && !pageId.isBlank();
+    }
+
     /**
      * Pages offered in the post-consent picker.
      *

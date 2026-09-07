@@ -19,6 +19,8 @@ export interface ConnectionSummary {
   tokenExpiresAt?: string | null
   healthStatus?: string | null
   fetchedAt?: string | null
+  /** The OAuth grant is stored but no account was chosen for it; the picker has to run again. */
+  awaitingAccountSelection?: boolean
 }
 
 export interface ConnectionResponse {

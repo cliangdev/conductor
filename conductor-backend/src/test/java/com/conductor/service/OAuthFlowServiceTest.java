@@ -383,4 +383,50 @@ class OAuthFlowServiceTest {
             assertThat(body.getFirst(key)).isEqualTo(expectedValue);
         }
     }
+
+    // ---- awaitingAccountSelection ----
+
+    /** Meta-shaped: the grant covers several accounts and selection writes a "pageId". */
+    private static class SelectingConnector extends FakeOAuth2Connector {
+        @Override
+        public boolean requiresAccountSelection() { return true; }
+
+        @Override
+        public boolean accountSelected(Map<String, Object> config) { return config.get("pageId") != null; }
+    }
+
+    private static Connection oauthConnection(String connectorId, String configJson) {
+        Connection conn = new Connection();
+        conn.setId("conn-1");
+        conn.setProjectId("proj-1");
+        conn.setConnectorId(connectorId);
+        conn.setAuthType("OAUTH2");
+        conn.setStatus("ACTIVE");
+        conn.setConfigJson(configJson);
+        return conn;
+    }
+
+    @Test
+    void awaitingAccountSelection_parkedGrantWithoutASelection_isReported() {
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new SelectingConnector()));
+
+        // The callback stores the grant and leaves the row ACTIVE before the picker runs, so a
+        // selection that never happened is visible only through the missing config.
+        assertThat(service.awaitingAccountSelection(oauthConnection("acme", null))).isTrue();
+        assertThat(service.awaitingAccountSelection(oauthConnection("acme", "{}"))).isTrue();
+        assertThat(service.awaitingAccountSelection(oauthConnection("acme", "not json"))).isTrue();
+        assertThat(service.awaitingAccountSelection(oauthConnection("acme", "{\"pageId\":\"page-1\"}"))).isFalse();
+    }
+
+    @Test
+    void awaitingAccountSelection_neverForSingleAccountConnectorsOrNonOAuthRows() {
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new FakeOAuth2Connector()));
+
+        assertThat(service.awaitingAccountSelection(oauthConnection("acme", null))).isFalse();
+
+        Connection apiKey = oauthConnection("acme", null);
+        apiKey.setAuthType("API_KEY");
+        assertThat(service.awaitingAccountSelection(apiKey)).isFalse();
+        verify(connectorRegistry, never()).findOAuth2("other");
+    }
 }

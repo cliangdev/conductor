@@ -32,6 +32,8 @@ interface ConnectionRowProps {
   canMutate?: boolean;
   disconnecting?: boolean;
   onDisconnect?: (connectionId: string) => void;
+  /** Reopens the account picker for a grant whose selection never happened. */
+  onChooseAccount?: (connectionId: string) => void;
 }
 
 /** One connected instance of a connector, with the error state an unhealthy connection needs. */
@@ -43,8 +45,13 @@ export function ConnectionRow({
   canMutate = false,
   disconnecting = false,
   onDisconnect,
+  onChooseAccount,
 }: ConnectionRowProps) {
   const unhealthy = isUnhealthy(connection);
+  // The callback stores the grant before the picker runs, so a picker that failed (or a tab closed on
+  // it) leaves a row that reads ACTIVE yet can never publish. Without this the only way back to the
+  // picker was the `?selectAccount=` marker the redirect carried, and that is gone after one navigation.
+  const awaitingAccount = !unhealthy && connection.awaitingAccountSelection === true;
 
   return (
     <div className="bg-card rounded-lg border border-border p-4 flex items-center gap-4">
@@ -57,8 +64,14 @@ export function ConnectionRow({
           {/* "ERROR" only selects the red hue from the one status ramp; the label is what a user
               reads, and it names the fix rather than the diagnosis. */}
           {unhealthy && <StatusBadge status="ERROR" label="Needs reconnect" />}
+          {awaitingAccount && <StatusBadge status="SETUP_REQUIRED" label="Choose an account" />}
         </div>
-        {unhealthy ? (
+        {awaitingAccount ? (
+          <div className="text-xs text-muted-foreground mt-0.5">
+            Authorized, but no account was chosen for it yet. Nothing can publish through this connection
+            until one is.
+          </div>
+        ) : unhealthy ? (
           <div className="text-xs text-status-failed mt-0.5">
             {connection.healthMessage ||
               "The platform rejected this connection's credentials. Reconnect the account."}
@@ -79,6 +92,11 @@ export function ConnectionRow({
           </div>
         )}
       </div>
+      {awaitingAccount && canMutate && onChooseAccount && (
+        <Button type="button" size="sm" onClick={() => onChooseAccount(connection.id)}>
+          Choose account
+        </Button>
+      )}
       {canMutate && onDisconnect && (
         <Button
           type="button"

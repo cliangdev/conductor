@@ -254,6 +254,34 @@ public class OAuthFlowService {
     }
 
     /**
+     * Whether {@code conn} was parked by the callback for an account choice that never happened — the
+     * picker errored, or the tab was closed on it. Such a row is ACTIVE and holds a token, so nothing
+     * else about it says it is unusable; the connector is asked, because only it knows what a finished
+     * selection writes. False for every connector that needs no selection, and for non-OAuth rows.
+     */
+    public boolean awaitingAccountSelection(Connection conn) {
+        if (!AuthType.OAUTH2.name().equals(conn.getAuthType())) {
+            return false;
+        }
+        return connectorRegistry.findOAuth2(conn.getConnectorId())
+                .filter(OAuth2Connector::requiresAccountSelection)
+                .map(connector -> !connector.accountSelected(parseConfig(conn.getConfigJson())))
+                .orElse(false);
+    }
+
+    private Map<String, Object> parseConfig(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            // Unreadable config cannot name an account; treat it as no selection rather than fail the list.
+            return Map.of();
+        }
+    }
+
+    /**
      * Accounts the connection's stored grant covers, for the post-consent picker. Returns an empty
      * list for a connector that needs no selection, so a caller never has to know which is which.
      */
