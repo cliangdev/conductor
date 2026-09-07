@@ -30,52 +30,166 @@ that administers a test Page, a TikTok account, and about two hours.
 
 ---
 
-## Part 2 — Set up Facebook and Instagram (20 minutes)
+## Words Meta and TikTok use
 
-### The accounts
-
-5. [ ] Have a Facebook **Page** you administer. Create one if needed (Facebook → Pages → Create).
-6. [ ] Have an Instagram account switched to **Business** or **Creator** (Instagram app → Settings →
-   Account type).
-7. [ ] Link that Instagram account to the Page: Page → Settings → **Linked accounts** → Instagram →
-   Connect. *You should see:* the Instagram username under the Page's linked accounts.
-
-### The Meta app
-
-8. [ ] Go to https://developers.facebook.com → **My Apps** → **Create App**. Type: **Business**. Name it
-   `Conductor Publishing Lab`.
-9. [ ] In the app, **Add product** → **Facebook Login for Business** → Set up.
-10. [ ] **Add product** → **Instagram** → Set up.
-11. [ ] Facebook Login for Business → **Settings** → **Valid OAuth Redirect URIs** → paste the redirect
-    URI from step 4 → Save.
-12. [ ] **App settings → Basic**: copy the **App ID** and the **App Secret** (click Show). Keep them for
-    Part 4.
-13. [ ] **App roles → Roles**: make sure the Facebook account you will authorize with is listed as
-    Admin, Developer or Tester. *Why: the app stays in Development mode for this test, and only
-    accounts with a role can use it. That is fine; posts are still real.*
-
-Conductor will ask for these permissions at consent; grant all of them:
-`pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`,
-`instagram_content_publish`, `business_management`.
+| Word | What it means here |
+|---|---|
+| **Facebook profile** | You, as a person. Conductor never posts to a profile. |
+| **Facebook Page** | A public page a business or brand runs. Conductor posts to a Page. You "switch into" a Page to manage it. |
+| **Instagram professional account** | An Instagram account switched to the **Business** or **Creator** type. Only these can be posted to by an app. |
+| **Linking** | Attaching the Instagram professional account to the Facebook Page. Instagram is only reachable through the Page it is linked to. |
+| **Business portfolio** | Meta's container for a company's Pages and accounts (formerly "Business Manager"). Meta may create one for you during linking; you do not need to set it up yourself. |
+| **Meta app** | A record in Meta's developer site with an **App ID** and **App Secret**. Conductor logs in *as this app* to post on your behalf. |
+| **App roles** | People allowed to use a Meta app while it is in **Development mode**. Anyone who authorizes in Conductor must have one. |
+| **TikTok app** | The same idea on TikTok's developer site, with a **Client key** and **Client secret**. |
+| **Sandbox** | TikTok's way to test an app before it is reviewed: a copy of the app with its own key and secret that only named test accounts can use. |
 
 ---
 
-## Part 3 — Set up TikTok (20 minutes)
+## Part 2 — Set up Instagram and Facebook (30 minutes)
 
-14. [ ] Go to https://developers.tiktok.com → **Manage apps** → **Connect an app**. Name it
-    `Conductor Publishing Lab`.
-15. [ ] **Add products**: **Login Kit** and **Content Posting API**. In Content Posting API, enable
-    **Direct Post**.
-16. [ ] Login Kit → **Redirect URI**: paste the redirect URI from step 4 → Save.
-17. [ ] **Scopes**: make sure `user.info.basic`, `video.publish`, `video.upload` and `video.list` are
-    enabled for the app.
-18. [ ] Copy the **Client key** and **Client secret**. Keep them for Part 4.
-19. [ ] Optional, only for **photo posts**: under **URL properties**, add and verify the storage host.
-    Find it by opening any uploaded image in Conductor and copying the host of its URL (it is a Google
-    Cloud Storage host). *Skip this if you only test video posts.*
+### 2A. Make the Instagram account a professional account
 
-> Until TikTok audits the app, it can only post **privately** (`SELF_ONLY`). That is expected. Every
-> TikTok test below uses `SELF_ONLY`; the post shows on the creator's profile, visible only to them.
+Do this on your phone in the Instagram app, logged in as the account you will post to.
+
+5. [ ] Tap your profile picture (bottom right).
+6. [ ] Tap the **☰** menu (top right) → **Settings and activity**.
+7. [ ] Scroll to **For professionals** → tap **Account type and tools**.
+8. [ ] Tap **Switch to professional account** → **Continue**.
+9. [ ] Pick a category (anything, e.g. *Local business*) → **Done**.
+10. [ ] Choose **Business** (or **Creator**; both work) → **Next**. Skip the contact details if asked.
+    *You should see:* your profile now shows the category under your name, and the menu has a
+    **Professional dashboard** entry.
+
+### 2B. Have a Facebook Page
+
+Do this on a computer at facebook.com, logged in as the person who will authorize Conductor.
+
+11. [ ] If you already administer a Page, skip to 2C.
+12. [ ] Otherwise: left menu → **Pages** → **Create new Page** → name it (e.g. *Publishing Lab*),
+    pick a category → **Create Page**. Skip every optional step.
+    *You should see:* the new Page open, with your name as its admin.
+
+### 2C. Link the Instagram account to the Page
+
+Still at facebook.com.
+
+13. [ ] Open the Page. If the top of the screen offers **Switch now**, click it, so you are acting as
+    the Page rather than as yourself.
+14. [ ] Click **Settings** (left menu, near the bottom of the Page's menu).
+15. [ ] In the settings menu click **Linked accounts**.
+16. [ ] Next to **Instagram** click **Connect account**.
+17. [ ] Log in to Instagram with the account from 2A. If Meta says the account must be added to a
+    business portfolio, click **Continue** and let it create one.
+    *You should see:* the Instagram username listed under **Linked accounts**. That is the check that
+    matters. If it says the account is personal, go back to 2A.
+
+### 2D. Create the Meta app
+
+Do this at https://developers.facebook.com, logged in as the same person. If it asks you to register
+as a developer, accept the terms.
+
+18. [ ] Top right → **My Apps** → **Create App**.
+19. [ ] **App name**: `Conductor Publishing Lab`. **Contact email**: yours. → **Next**.
+20. [ ] **Use cases**: tick the use case for managing a Page (named like **Manage everything on your
+    Page**) and the one for Instagram content. If the screen instead offers app *types*, choose
+    **Business**. → **Next**.
+21. [ ] **Business**: pick the business portfolio Meta created in step 17, or **I don't want to connect
+    a business portfolio yet**. → **Next**.
+22. [ ] **Requirements**: read, → **Next**. **Overview** → **Go to dashboard**.
+    *You should see:* the app dashboard with **App Mode: Development** at the top. Leave it in
+    Development mode for this whole test.
+
+### 2E. Tell the app where Conductor is, and what it may do
+
+23. [ ] In the dashboard's left menu find **Facebook Login for Business** → **Settings**. If it is not
+    there: **Use cases** → your Page use case → **Customize** → **Settings**.
+24. [ ] In **Valid OAuth Redirect URIs** paste the redirect URI from step 4 → **Save changes**.
+25. [ ] Still under the use case → **Customize** → **Permissions**: make sure these six are added
+    (click **Add** next to any that are missing):
+    `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`,
+    `instagram_content_publish`, `business_management`.
+    *Why:* these are exactly what Conductor asks for at consent. A missing one makes consent fail
+    or the Instagram row disappear.
+
+### 2F. Copy the keys and add yourself to the app
+
+26. [ ] Left menu → **App settings** → **Basic**.
+27. [ ] Copy **App ID**. Next to **App secret** click **Show**, re-enter your Facebook password, copy
+    it. Keep both for Part 4.
+28. [ ] Left menu → **App roles** → **Roles**. Confirm the person who will click **Authorize** in
+    Conductor is listed under **Administrators**, **Developers** or **Testers**. If it is someone
+    else, click **Add people**, add them as a Tester, and have them accept the invite (Facebook →
+    Settings → Apps and websites).
+    *Why:* in Development mode only people with a role can log in through the app. Their posts are
+    still real.
+
+That is the whole Meta side. You do **not** need App Review for this test.
+
+---
+
+## Part 3 — Set up TikTok (25 minutes)
+
+### 3A. The account
+
+29. [ ] Have a TikTok account you can log in to on this computer. Any account type works. Note its
+    username; you will need it in 3E.
+
+### 3B. Create the developer app
+
+Do this at https://developers.tiktok.com.
+
+30. [ ] **Log in** (top right) with a TikTok account or email. If asked, create a developer account
+    and verify the email.
+31. [ ] Click your profile icon (top right) → **Manage apps** → **Connect an app**.
+32. [ ] If it asks for an owner, pick or create an **Organization** → **Confirm**.
+33. [ ] **App details**: name `Conductor Publishing Lab`, a category, a one-line description. Under
+    **Platforms** tick **Web** and enter your Conductor frontend URL as the website. Add **Terms of
+    Service URL** and **Privacy Policy URL** if the form requires them (any page of yours will do
+    for a sandbox test). → **Save**.
+    *You should see:* the app page with **Credentials**, **Products**, **Scopes** and **Sandbox**
+    in the left panel.
+
+### 3C. Add the three products
+
+34. [ ] **Products** → **Add products** → tick **Login Kit** → **Add**.
+35. [ ] **Add products** → tick **Content Posting API** → **Add**. In its settings tick **Direct Post**.
+36. [ ] **Add products** → tick **Display API** → **Add**.
+    *Why:* Conductor asks for the `video.list` scope to read your videos' view counts, and that scope
+    comes from Display API. Without it consent fails with an invalid-scope error.
+
+### 3D. Redirect URI and scopes
+
+37. [ ] **Login Kit** → **Redirect URI** (Web): paste the redirect URI from step 4 → **Save**.
+38. [ ] **Scopes**: confirm all four are listed: `user.info.basic`, `video.publish`, `video.upload`,
+    `video.list`. Each appears once its product is added.
+
+### 3E. Make a sandbox and add your account to it
+
+Until TikTok reviews an app, only a sandbox can be used to log in and post. Posts made from a
+sandbox are **visible only to the account that posted them**. That is what this test expects.
+
+39. [ ] Left panel → **Sandbox** → **Create sandbox** → name `Lab` → **Create**.
+40. [ ] In the sandbox, **Target users** → **Add** → enter the username from step 29. Have that
+    account accept if TikTok sends it a prompt.
+41. [ ] Make sure the sandbox lists the same products and scopes as 3C and 3D (they are copied in;
+    add any that are missing).
+
+### 3F. Copy the keys
+
+42. [ ] Inside the **sandbox**, open **Credentials**. Copy **Client key** and **Client secret** (click
+    the eye icon to reveal). Keep them for Part 4.
+    *Careful:* the production app has its own key and secret. Use the **sandbox** pair now; switch
+    Conductor to the production pair only after TikTok's review passes.
+
+### 3G. Only if you will test photo posts
+
+43. [ ] In Conductor, open any uploaded image and copy the **host** of its URL (it is a Google Cloud
+    Storage host, e.g. `storage.googleapis.com`).
+44. [ ] In the TikTok app page → **URL properties** → **Add property** → **URL prefix** → enter
+    `https://<that host>/` → follow the verification it asks for.
+    *Why:* TikTok fetches photos by URL and refuses hosts it has not verified. Video posts upload
+    their bytes and do not need this.
 
 ---
 
@@ -83,16 +197,16 @@ Conductor will ask for these permissions at consent; grant all of them:
 
 You must be an ADMIN of the Publishing Lab workspace.
 
-20. [ ] In Conductor open **Integrations** → **Meta**.
-21. [ ] Under **Platform app credentials** click **Set a credential for this workspace**. Paste the
-    App ID and App Secret from step 12 → Save. *You should see:* the badge change to **Configured**.
-22. [ ] Click **Verify**. *You should see:* a green report saying the credentials are valid.
-23. [ ] Click **Authorize**. Log in to Facebook as the account from step 13, grant every permission,
+45. [ ] In Conductor open **Integrations** → **Meta**.
+46. [ ] Under **Platform app credentials** click **Set a credential for this workspace**. Paste the
+    App ID and App Secret from step 27 → Save. *You should see:* the badge change to **Configured**.
+47. [ ] Click **Verify**. *You should see:* a green report saying the credentials are valid.
+48. [ ] Click **Authorize**. Log in to Facebook as the account from step 28, grant every permission,
     pick your Page. *You should see:* a connection card with the Page name and the Instagram
-    username from step 7.
-24. [ ] Open **Integrations** → **TikTok**. Repeat steps 21–23 with the Client key and Client secret
-    from step 18, logging in as the creator. *You should see:* a card with the creator's nickname.
-25. [ ] Open **Marketing → Posts** → **New Post**. Under **Publish to** you should see: your Page
+    username from step 17.
+49. [ ] Open **Integrations** → **TikTok**. Repeat steps 46–48 with the sandbox Client key and Client secret
+    from step 42, logging in as the creator. *You should see:* a card with the creator's nickname.
+50. [ ] Open **Marketing → Posts** → **New Post**. Under **Publish to** you should see: your Page
     under FACEBOOK, `@yourhandle` under INSTAGRAM, the creator under TIKTOK, plus a "(manual)" row
     under each platform. Cancel the modal.
 
@@ -133,18 +247,18 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 ## Part 6 — Facebook tests (about 40 minutes of waiting)
 
-26. [ ] **Feed photo.** One JPEG, a caption, destination = your Page, format **Feed**.
+51. [ ] **Feed photo.** One JPEG, a caption, destination = your Page, format **Feed**.
     *Expect:* row `HANDED_OFF` right after approval; the post appears under the Page's
     **Scheduled posts**; at the time it goes live and the row turns `PUBLISHED` with a link.
-27. [ ] **Several photos.** Three JPEGs, same destination and format. *Expect:* one multi-photo post,
-    same lifecycle as 26.
-28. [ ] **Reel.** One vertical MP4 between 3 and 90 seconds, format **Reel**. *Expect:* it publishes as
+52. [ ] **Several photos.** Three JPEGs, same destination and format. *Expect:* one multi-photo post,
+    same lifecycle as 51.
+53. [ ] **Reel.** One vertical MP4 between 3 and 90 seconds, format **Reel**. *Expect:* it publishes as
     a Reel. (A Facebook video with format Feed also becomes a Reel; Facebook no longer accepts other
     Page videos.)
-29. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* the readiness card warns that the caption
+54. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* the readiness card warns that the caption
     will be dropped; the row stays `PENDING` until the time, then turns `PUBLISHED`; the story is on
     the Page. A story can be scheduled as little as 1 minute out.
-30. [ ] **Unschedule.** Create one more feed photo Post, get it to Scheduled, then change its status
+55. [ ] **Unschedule.** Create one more feed photo Post, get it to Scheduled, then change its status
     back to **Approved**. *Expect:* the row turns `REVOKED` and the post disappears from the Page's
     scheduled posts.
 
@@ -152,15 +266,15 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 ## Part 7 — Instagram tests (about 30 minutes of waiting)
 
-31. [ ] **Feed image.** One JPEG with aspect between 4:5 and 1.91:1 (a square is fine), destination =
+56. [ ] **Feed image.** One JPEG with aspect between 4:5 and 1.91:1 (a square is fine), destination =
     `@yourhandle`, format **Feed**. *Expect:* `PENDING` until the time, then `PUBLISHED` with a link.
-32. [ ] **Carousel.** Two to ten files, JPEG and MP4 mixed. *Expect:* one carousel; if the aspects
+57. [ ] **Carousel.** Two to ten files, JPEG and MP4 mixed. *Expect:* one carousel; if the aspects
     differ the readiness card warns they will be cropped to the first one.
-33. [ ] **Reel with options.** One vertical MP4, format **Reel**. Click **Customize for this
+58. [ ] **Reel with options.** One vertical MP4, format **Reel**. Click **Customize for this
     destination** and set: cover image (one of the Post's images), **Share to feed** on, up to three
     collaborator usernames, an audio name. *Expect:* the Reel uses your cover; collaborators get an
     invite.
-34. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* caption-dropped warning, `PENDING` then
+59. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* caption-dropped warning, `PENDING` then
     `PUBLISHED`; the story is on the account.
 
 > Instagram allows 100 API posts per account per 24 hours. If you hit it, the readiness card says so
@@ -170,26 +284,26 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 ## Part 8 — TikTok tests (about 20 minutes of waiting)
 
-35. [ ] **Video.** One MP4 shorter than the creator's cap (the card shows it), destination = the
+60. [ ] **Video.** One MP4 shorter than the creator's cap (the card shows it), destination = the
     creator. Under the TikTok options set **Who can view** = `SELF_ONLY`, leave duet/stitch/comments
     as you like, turn **AI-generated** on, set a cover frame time. *Expect:* the readiness card asks
     for the creator's **consent**; click through the consent step as the creator. After approval:
     `PENDING`, then at the time `PUBLISHED`; the video is on the profile, private, with the AI label
     and your cover frame.
-36. [ ] **Refusal check.** Make a second video Post and set **Who can view** = `PUBLIC_TO_EVERYONE`.
+61. [ ] **Refusal check.** Make a second video Post and set **Who can view** = `PUBLIC_TO_EVERYONE`.
     *Expect:* the readiness card blocks it and names the levels the account may use. Delete or fix it.
-37. [ ] **Photo post** (only if you did step 19). Two or more JPEGs, pick the cover index and
-    **Auto add music**. *Expect:* a photo post on the profile with your cover. Without step 19 the row
+62. [ ] **Photo post** (only if you did step 44). Two or more JPEGs, pick the cover index and
+    **Auto add music**. *Expect:* a photo post on the profile with your cover. Without step 44 the row
     fails with a message about the verified URL prefix; that is the expected message.
 
 ---
 
 ## Part 9 — Retry and metrics (10 minutes)
 
-38. [ ] **Retry.** Take any `FAILED` row (step 37 without step 19 is a convenient one, or unplug a
+63. [ ] **Retry.** Take any `FAILED` row (step 62 without step 44 is a convenient one, or unplug a
     permission on purpose), fix the cause, click **Retry** on the Post. *Expect:* the row goes back to
     `PENDING` and fires again.
-39. [ ] **Metrics.** On each connection card there is a **post_metrics** feed that pulls every 6 hours.
+64. [ ] **Metrics.** On each connection card there is a **post_metrics** feed that pulls every 6 hours.
     Run it now with:
 
     ```bash
@@ -199,7 +313,7 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
     (The feed id is on the connection's Feeds panel.) *Expect:* the published Posts show views, likes
     and comments under **What happened afterwards**, or via the MCP tool `get_post_analytics`. TikTok
-    metrics need the `video.list` scope from step 17; if the connection was made before that scope
+    metrics need the `video.list` scope from step 38; if the connection was made before that scope
     existed, Authorize again.
 
 ---
@@ -208,16 +322,16 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 The feature is proven when all of these are ticked:
 
-- [ ] 26 Facebook feed photo published and went live at the time
-- [ ] 28 Facebook Reel published
-- [ ] 29 Facebook story published
-- [ ] 30 Unschedule removed the scheduled post from Facebook
-- [ ] 31 Instagram feed image published
-- [ ] 33 Instagram Reel published with cover and options
-- [ ] 34 Instagram story published
-- [ ] 35 TikTok video published privately with the AI label
-- [ ] 38 A failed row was retried successfully
-- [ ] 39 A metrics pull filled at least one Post's counts
+- [ ] 51 Facebook feed photo published and went live at the time
+- [ ] 53 Facebook Reel published
+- [ ] 54 Facebook story published
+- [ ] 55 Unschedule removed the scheduled post from Facebook
+- [ ] 56 Instagram feed image published
+- [ ] 58 Instagram Reel published with cover and options
+- [ ] 59 Instagram story published
+- [ ] 60 TikTok video published privately with the AI label
+- [ ] 63 A failed row was retried successfully
+- [ ] 64 A metrics pull filled at least one Post's counts
 
 Paste each published row's link into a comment on its Post so the run can be audited later.
 
@@ -227,10 +341,10 @@ Paste each published row's link into a comment on its Post so the run can be aud
 
 | You see | Do |
 |---|---|
-| **Authorize** is greyed out | Step 21 was skipped or the credential was cleared. Only an ADMIN can set it. |
-| Consent page says the redirect URI is invalid | Step 11 or 16: the URI must match step 4 exactly. |
-| Instagram row missing after connecting Meta | Step 7: the Instagram account is not linked to the Page, or `instagram_basic` was not granted. |
+| **Authorize** is greyed out | Step 46 was skipped or the credential was cleared. Only an ADMIN can set it. |
+| Consent page says the redirect URI is invalid | Step 24 or 37: the URI must match step 4 exactly. |
+| Instagram row missing after connecting Meta | Step 17: the Instagram account is not linked to the Page, or `instagram_basic` was not granted. |
 | TikTok row blocks on privacy level | Expected on an unaudited app. Use `SELF_ONLY`. |
-| TikTok photo post fails naming a "verified URL prefix" | Step 19. |
+| TikTok photo post fails naming a "verified URL prefix" | Step 44. |
 | Readiness card says the time is too soon | Facebook needs 10 minutes' notice for feed posts and reels. Move it out. |
 | Row `FAILED` with a platform message about the media URL | Retry. The storage link expired before the platform fetched it. |
