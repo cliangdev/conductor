@@ -192,8 +192,10 @@ Do this at https://developers.tiktok.com.
     **App details**: a category and a description of at most 120 characters, e.g. *Publishes
     Rexipe's own scheduled, approved recipe videos and photos to the Rexipe TikTok account and reads
     their stats.* Under **Platforms** tick **Web**. Put the **website**, **Terms of Service URL** and
-    **Privacy Policy URL** on a domain the brand owns (e.g. pages on `rexipe.com`), not on a
-    Conductor address. Each shows *This URL is not verified* until 3G-a below; in the sandbox that
+    **Privacy Policy URL** on a domain the brand owns (e.g. `https://rexipe.io/`,
+    `https://rexipe.io/terms/`, `https://rexipe.io/privacy/`), not on a Conductor address. The
+    brand's existing public terms and privacy pages are fine even if they were written for another
+    product; TikTok only checks that they are set, and reads them at production review. Each shows *This URL is not verified* until 3G-a below; in the sandbox that
     is only a warning, so carry on. → **Save**.
     *You should see:* the app page with **Credentials**, **Products**, **Scopes** and **Sandbox**
     in the left panel.
