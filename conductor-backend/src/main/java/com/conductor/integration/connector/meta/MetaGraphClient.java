@@ -177,10 +177,16 @@ public class MetaGraphClient {
      * appear here — a user with no Pages gets an empty list.
      */
     public List<PageAccount> listPages(String userAccessToken) {
+        // The nested-field syntax uses braces, which UriComponentsBuilder reads as template
+        // placeholders and leaves unencoded — the URI then cannot even be constructed. Passing the
+        // value as a template variable instead makes the builder encode it strictly (%7B ... %7D),
+        // which Graph accepts.
         URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/me/accounts")
-                .queryParam("fields", "id,name,access_token,instagram_business_account{id,username}")
+                .queryParam("fields", "{fields}")
                 .queryParam("limit", 200)
-                .encode().build().toUri());
+                .encode()
+                .buildAndExpand("id,name,access_token,instagram_business_account{id,username}")
+                .toUri());
         ResponseEntity<AccountsResponse> response = restTemplate.exchange(
                 uri, HttpMethod.GET, new HttpEntity<>(bearer(userAccessToken)), AccountsResponse.class);
         AccountsResponse body = response.getBody();
