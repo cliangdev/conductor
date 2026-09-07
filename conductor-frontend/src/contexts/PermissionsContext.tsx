@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { can as canFn, type Capability } from '@/lib/permissions'
-import { fetchMembersCached, getMembersCacheEntry, invalidateMembersCache } from '@/lib/workflows'
+import { fetchMembersFresh, getMembersCacheEntry, invalidateMembersCache } from '@/lib/workflows'
 import type { MemberRole } from '@/types'
 
 interface PermissionsContextValue {
@@ -41,7 +41,10 @@ export function PermissionsProvider({ projectId, children }: { projectId: string
     }
     let cancelled = false
     setLoading(true)
-    fetchMembersCached(projectId, accessToken)
+    // Always ask the server. The cached list seeded the role above so nothing flashes, but a role
+    // granted since that list was stored (from another browser, or by another admin) would otherwise
+    // never reach this browser: the stored list has no expiry and nothing else refreshes it.
+    fetchMembersFresh(projectId, accessToken)
       .then((members) => {
         if (!cancelled) setRole(members.find((m) => m.userId === user?.id)?.role)
       })
