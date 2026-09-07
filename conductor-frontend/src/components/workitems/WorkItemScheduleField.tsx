@@ -19,6 +19,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { CalendarClock, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPatch } from '@/lib/api'
 
@@ -208,16 +209,13 @@ export function WorkItemScheduleField({
 
   return (
     <div className="space-y-2">
-      <label htmlFor={`sched-${issueId}`} className="sr-only">
-        Scheduled date and time
-      </label>
-      <input
+      <DateTimePicker
         id={`sched-${issueId}`}
-        type="datetime-local"
+        label="Scheduled date and time"
         value={local}
-        autoFocus
-        onChange={(e) => setLocal(e.target.value)}
-        className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        onChange={setLocal}
+        defaultOpen
+        align="end"
       />
       <label htmlFor={`tz-${issueId}`} className="sr-only">
         Schedule timezone

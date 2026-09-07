@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
 import { Select } from '@/components/ui/select'
@@ -449,7 +450,7 @@ export function ComposePostModal({
             <Label htmlFor="compose-when">
               When <span className="text-muted-foreground">(optional; the next slot the destinations accept otherwise)</span>
             </Label>
-            <Input id="compose-when" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+            <DateTimePicker id="compose-when" label="When" value={when} onChange={setWhen} clearable />
           </div>
           <div className="space-y-1">
             <Label htmlFor="compose-zone">Time zone</Label>

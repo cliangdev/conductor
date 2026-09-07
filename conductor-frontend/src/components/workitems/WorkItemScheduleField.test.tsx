@@ -95,6 +95,16 @@ describe('wall clock ↔ instant, read in a named zone', () => {
   })
 })
 
+/** The editor opens with the picker expanded; choose 4 July 2026 at 09:00 through it. */
+async function pickJuly4th2026At9() {
+  await userEvent.selectOptions(screen.getByLabelText('Month'), '7')
+  await userEvent.selectOptions(screen.getByLabelText('Year'), '2026')
+  await userEvent.click(screen.getByRole('gridcell', { name: 'July 4, 2026' }))
+  await userEvent.selectOptions(screen.getByLabelText('Hour'), '9')
+  await userEvent.selectOptions(screen.getByLabelText('Minute'), '0')
+  await userEvent.selectOptions(screen.getByLabelText('AM or PM'), 'AM')
+}
+
 describe('WorkItemScheduleField', () => {
   it('says an unscheduled item is unscheduled, and offers to set one', () => {
     renderField()
@@ -107,8 +117,7 @@ describe('WorkItemScheduleField', () => {
     // back as the wall-clock time its author meant.
     const { onChanged } = renderField()
     await userEvent.click(screen.getByRole('button', { name: 'Set' }))
-    await userEvent.clear(screen.getByLabelText(/Scheduled date and time/i))
-    await userEvent.type(screen.getByLabelText(/Scheduled date and time/i), '2026-07-04T09:00')
+    await pickJuly4th2026At9()
     await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -148,7 +157,7 @@ describe('WorkItemScheduleField', () => {
     patchRejection = { status: 422, detail: 'the fire time is less than 10 minutes in the future' }
     const { onChanged } = renderField()
     await userEvent.click(screen.getByRole('button', { name: 'Set' }))
-    await userEvent.type(screen.getByLabelText(/Scheduled date and time/i), '2026-07-04T09:00')
+    await pickJuly4th2026At9()
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled())

@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ExternalLink, RotateCw } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { statusHue, statusHueClasses, type StatusHue } from '@/components/ui/status-badge'
@@ -455,16 +456,8 @@ function ManualPublishForm({
         />
       </div>
       <div className="space-y-1">
-        <label htmlFor={timeId} className="block text-xs font-medium text-foreground">
-          When it went out
-        </label>
-        <input
-          id={timeId}
-          type="datetime-local"
-          value={publishedAt}
-          onChange={(e) => setPublishedAt(e.target.value)}
-          className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
+        <span className="block text-xs font-medium text-foreground">When it went out</span>
+        <DateTimePicker id={timeId} label="When it went out" value={publishedAt} onChange={setPublishedAt} />
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={saving}>
