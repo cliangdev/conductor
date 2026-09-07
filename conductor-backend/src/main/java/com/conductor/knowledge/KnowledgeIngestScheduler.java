@@ -138,11 +138,19 @@ public class KnowledgeIngestScheduler {
             if (sourceRepository.existsProcessingInLane(projectId, domain)) {
                 continue; // this lane is busy; other lanes are unaffected
             }
-            List<String> claimedIds = self.claimBatchInNewTx(projectId, domain, now);
-            if (claimedIds.isEmpty()) {
-                continue;
+            try {
+                List<String> claimedIds = self.claimBatchInNewTx(projectId, domain, now);
+                if (claimedIds.isEmpty()) {
+                    continue;
+                }
+                dispatchService.dispatch(projectId, domain, claimedIds);
+            } catch (Exception e) {
+                // One lane's failure is that lane's alone. The sources it claimed stay PROCESSING with
+                // no run behind them, which is exactly what the stale-PROCESSING sweep resurrects (with
+                // backoff) or dead-letters; the lanes after it in this project still get their turn.
+                log.error("Knowledge ingest dispatch failed for project {} lane {}: {}",
+                        projectId, domain == null ? "(none)" : domain, e.getMessage(), e);
             }
-            dispatchService.dispatch(projectId, domain, claimedIds);
         }
     }
 
