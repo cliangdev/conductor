@@ -130,7 +130,12 @@ it is your own Facebook login, registered once on Meta's developer site. Free, i
 
 24. [ ] Left menu → **Facebook Login for Business** → **Settings**. (If that entry is missing:
     **Use cases** → next to **Manage everything on your Page** click **Customize** → **Settings**.)
-25. [ ] In **Valid OAuth Redirect URIs** paste the redirect URI from step 4 → **Save changes**.
+25. [ ] Scroll to **Client OAuth settings**. Make sure **Client OAuth login** and **Web OAuth login**
+    are **Yes**. In the **Valid OAuth Redirect URIs** box just below them, paste the redirect URI
+    from step 4 and press **Enter** so it becomes a chip → **Save changes** (bottom right).
+    *Careful:* the **Redirect URI Validator** box at the bottom of the page looks the same but only
+    *tests* a URL. Pasting there shows "This is an invalid redirect URI" until the list above is
+    saved. After saving, paste the URI into the validator once: it should say it is valid.
 26. [ ] On the dashboard click **Customize the Manage everything on your Page use case** (or left
     menu → **Use cases** → **Customize**) → **Permissions**: make sure these six are added
     (click **Add** next to any that are missing):
