@@ -176,7 +176,9 @@ That is the whole Meta side. You do **not** need App Review for this test.
 
 Do this at https://developers.tiktok.com.
 
-32. [ ] **Log in** (top right) with a TikTok account or email. If asked, create a developer account
+32. [ ] **Log in** (top right) with the **brand's TikTok account** (the one you will post to), not a
+    personal one: whoever logs in here owns the app, its keys, the sandbox and the review
+    submission, so it should be a login the business keeps. If asked, create a developer account
     and verify the email.
 33. [ ] Click your profile icon (top right) → **Manage apps** → **Connect an app**.
 34. [ ] If it asks for an owner, pick or create an **Organization** → **Confirm**.
