@@ -72,17 +72,28 @@ Do this on a computer at facebook.com, logged in as the person who will authoriz
 
 ### 2C. Link the Instagram account to the Page
 
-Still at facebook.com.
+**Why this step exists.** Instagram has no way for an app to post to an account on its own. Meta only
+lets an app post to an Instagram account *through a Facebook Page that the account is attached to*.
+Conductor therefore never talks to Instagram directly: it talks to your Page, and the Page passes
+the post to the Instagram account linked to it. With no link, Conductor cannot see the Instagram
+account at all and shows no Instagram row.
+
+**What linking does.** It records, once, in Meta's system that this Instagram account belongs with
+this Page. Your Instagram followers see nothing. Posts are not copied between the two automatically.
+
+Do this on a computer at facebook.com, logged in as the person who administers the Page.
 
 13. [ ] Open the Page. If the top of the screen offers **Switch now**, click it, so you are acting as
     the Page rather than as yourself.
 14. [ ] Click **Settings** (left menu, near the bottom of the Page's menu).
 15. [ ] In the settings menu click **Linked accounts**.
 16. [ ] Next to **Instagram** click **Connect account**.
-17. [ ] Log in to Instagram with the account from 2A. If Meta says the account must be added to a
-    business portfolio, click **Continue** and let it create one.
+17. [ ] A login box appears. Log in with the Instagram account from 2A (the one you will post to).
+    If Meta says the account must be added to a business portfolio, click **Continue** and let it
+    create one.
     *You should see:* the Instagram username listed under **Linked accounts**. That is the check that
-    matters. If it says the account is personal, go back to 2A.
+    matters. Later, in Conductor, this is what makes an `@yourhandle` row appear under INSTAGRAM.
+    If Meta says the account is personal, go back to 2A and switch it to a professional account.
 
 ### 2D. Create the Meta app
 
