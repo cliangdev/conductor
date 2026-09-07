@@ -12,6 +12,7 @@
 // publishable platform, so an engineering list never sees it.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -196,6 +197,12 @@ export function ComposePostModal({
   }
 
   const canSubmit = caption.trim().length > 0 && selected.size > 0 && types.length > 0 && !saving
+  // A disabled button with no reason is a dead end; say what is still missing, in the order the
+  // form asks for it.
+  const missing = [
+    caption.trim().length === 0 ? 'a caption' : null,
+    selected.size === 0 ? 'at least one destination' : null,
+  ].filter((m): m is string => m !== null)
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -304,7 +311,9 @@ export function ComposePostModal({
       description={`Say what it says, show what it shows, pick where it goes and when. Everything can be changed on the ${noun.toLowerCase()} afterwards.`}
       footer={
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">{step ?? ''}</span>
+          <span className="text-xs text-muted-foreground" aria-live="polite">
+            {step ?? (missing.length > 0 && !saving ? `Needs ${missing.join(' and ')}.` : '')}
+          </span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
               Cancel
@@ -397,6 +406,18 @@ export function ComposePostModal({
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium text-foreground">Publish to</legend>
+          {grouped.length > 0 && options.every((o) => o.lane === 'MANUAL') && (
+            // Every platform always offers a by-hand destination, so a list of only those means no
+            // account has been connected yet — say so, or the by-hand rows read as the only way it works.
+            <p className="text-xs text-muted-foreground">
+              No accounts are connected yet, so every destination here is posted by hand. Connect a
+              Facebook Page, Instagram account, YouTube channel or TikTok creator under{' '}
+              <Link href={`/app/projects/${projectId}/integrations`} className="text-primary underline-offset-2 hover:underline">
+                Integrations
+              </Link>{' '}
+              and it will appear here as a destination Conductor publishes to itself.
+            </p>
+          )}
           {grouped.length === 0 ? (
             <p className="text-xs text-muted-foreground">Loading accounts…</p>
           ) : (

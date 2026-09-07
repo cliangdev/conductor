@@ -1,10 +1,12 @@
 'use client'
 // A date and time picker that expands in place: a month grid, then hour, minute and AM/PM. It works on
 // the same wall-clock string a `datetime-local` input does (`YYYY-MM-DDTHH:mm`, no zone) so every
-// caller keeps its zone handling and only swaps the control. The panel floats below the field at its
-// own width: the fields it serves sit in a narrow sidebar and a half-width dialog column, neither of
-// which can hold a month grid plus a time row inline.
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+// caller keeps its zone handling and only swaps the control. The panel is rendered into the document
+// body and fixed to the viewport beside the field, flipping above it when there is no room below: the
+// fields it serves sit in a narrow sidebar and inside a scrolling dialog whose footer would otherwise
+// clip anything positioned within it.
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CalendarClock, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -115,13 +117,47 @@ export function DateTimePicker({
   }, [chosen?.y, chosen?.m]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const rootRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ top?: number; bottom?: number; left: number }>({ left: 0 })
+
+  // Place the panel next to the field, below it when it fits and above it otherwise, and follow the
+  // field while anything scrolls or the window resizes.
+  const place = useCallback(() => {
+    const trigger = rootRef.current
+    if (!trigger || typeof window === 'undefined') return
+    const rect = trigger.getBoundingClientRect()
+    const panelHeight = panelRef.current?.offsetHeight ?? 340
+    const width = 288
+    const gap = 4
+    const left = Math.max(8, Math.min(align === 'end' ? rect.right - width : rect.left, window.innerWidth - width - 8))
+    const fitsBelow = rect.bottom + gap + panelHeight <= window.innerHeight
+    if (fitsBelow || rect.top - gap - panelHeight < 0) {
+      setPosition({ top: rect.bottom + gap, left })
+    } else {
+      setPosition({ bottom: window.innerHeight - rect.top + gap, left })
+    }
+  }, [align])
+  useLayoutEffect(() => {
+    if (!open) return
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [open, place])
+
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
     const onPointerDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      const inField = rootRef.current?.contains(target) ?? false
+      const inPanel = panelRef.current?.contains(target) ?? false
+      if (!inField && !inPanel) setOpen(false)
     }
     document.addEventListener('keydown', onKey)
     document.addEventListener('mousedown', onPointerDown)
@@ -203,14 +239,13 @@ export function DateTimePicker({
         <span className="min-w-0 flex-1 truncate">{chosen ? describeWallClock(value) : 'Pick a date and time'}</span>
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
+          ref={panelRef}
           role="group"
           aria-label={`${label} picker`}
-          className={cn(
-            'absolute top-full z-50 mt-1 w-72 rounded-md border border-border bg-background p-3 shadow-md',
-            align === 'end' ? 'right-0' : 'left-0'
-          )}
+          style={{ position: 'fixed', top: position.top, bottom: position.bottom, left: position.left, width: 288 }}
+          className="z-[60] rounded-md border border-border bg-background p-3 shadow-md"
         >
           <div className="mb-2 flex items-center gap-1">
             <button
@@ -339,7 +374,8 @@ export function DateTimePicker({
             )}
             <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Done</Button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
