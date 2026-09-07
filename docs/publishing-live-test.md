@@ -106,7 +106,9 @@ it is your own Facebook login, registered once on Meta's developer site. Free, i
       and confirm the email address or phone number it asks for. *You should see:* your name in the
       top right and a **My Apps** menu.
 19. [ ] Top right → **My Apps** → **Create App**.
-20. [ ] **App name**: `Conductor Publishing Lab`. **Contact email**: yours. → **Next**.
+20. [ ] **App name**: the brand that will be posting, e.g. `Rexipe` — this is what people see on the
+    consent screen, and Meta forbids "Facebook", "Instagram" or "Meta" in the name. **Contact
+    email**: yours. → **Next**.
 21. [ ] **Use cases**: tick the use case for managing a Page (named like **Manage everything on your
     Page**) and the one for Instagram content. If the screen instead offers app *types*, choose
     **Business**. → **Next**.
@@ -159,7 +161,8 @@ Do this at https://developers.tiktok.com.
     and verify the email.
 32. [ ] Click your profile icon (top right) → **Manage apps** → **Connect an app**.
 33. [ ] If it asks for an owner, pick or create an **Organization** → **Confirm**.
-34. [ ] **App details**: name `Conductor Publishing Lab`, a category, a one-line description. Under
+34. [ ] **App details**: name it after the brand that will be posting (e.g. `Rexipe`), a category, a
+    one-line description. Under
     **Platforms** tick **Web** and enter your Conductor frontend URL as the website. Add **Terms of
     Service URL** and **Privacy Policy URL** if the form requires them (any page of yours will do
     for a sandbox test). → **Save**.
