@@ -221,7 +221,16 @@ public class ConnectorAppCredentialVerificationService {
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
         try {
-            restTemplate.postForEntity(connector.tokenUrl(), new HttpEntity<>(form, headers), String.class);
+            ResponseEntity<String> response = restTemplate.postForEntity(connector.tokenUrl(),
+                    new HttpEntity<>(form, headers), String.class);
+            // TikTok's token endpoint answers HTTP 200 with the failure in the body
+            // ({"error": "invalid_grant", ...}), where Google answers 400. Read the body before
+            // concluding anything from the status: a 200 that names an error is the same evidence as a
+            // 400 that does.
+            Map<String, Object> body = parse(response.getBody());
+            if (body.get("error") instanceof String) {
+                return List.of(classifyOAuthError(provider, body, response.getStatusCode().value()));
+            }
             // A deliberately impossible grant must not succeed; something answered that isn't the token
             // endpoint this probe reasons about.
             return List.of(indeterminate(provider + " accepted a grant that cannot be valid, so this probe "
