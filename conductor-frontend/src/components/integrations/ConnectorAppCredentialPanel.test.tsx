@@ -249,6 +249,9 @@ describe('ConnectorAppCredentialPanel — permissions', () => {
 
     expect(screen.queryByRole('button', { name: /credential for this workspace/i })).not.toBeInTheDocument()
     expect(screen.getByText(/belong to the workspace that registered them/i)).toBeInTheDocument()
+    // It says who can, rather than telling a CREATOR to use a form that is not there.
+    expect(screen.getByText(/only a workspace admin can enter/i)).toBeInTheDocument()
+    expect(screen.queryByText(/secret below/i)).not.toBeInTheDocument()
   })
 })
 

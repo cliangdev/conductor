@@ -844,6 +844,26 @@ export function fetchMembersCached(projectId: string, token: string): Promise<Me
   return promise
 }
 
+/**
+ * Fetch the member list from the server regardless of what is cached, and refresh both cache tiers
+ * with the answer. This is what a permission check must use: the cache is only a seed to avoid a
+ * "no permission" flash on revisit, and a role granted from another browser, or by someone else,
+ * never reaches a browser that keeps trusting its stored list. Concurrent callers share one request.
+ */
+export function fetchMembersFresh(projectId: string, token: string): Promise<Member[]> {
+  const pending = membersInFlight.get(projectId)
+  if (pending) return pending
+  const promise = apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, token)
+    .then((list) => {
+      membersCache.set(projectId, list)
+      try { localStorage.setItem(membersLsKey(projectId), JSON.stringify(list)) } catch { /* */ }
+      return list
+    })
+    .finally(() => { membersInFlight.delete(projectId) })
+  membersInFlight.set(projectId, promise)
+  return promise
+}
+
 /** Clear cached members so the next call re-fetches (e.g. after a role change or member removal). */
 export function invalidateMembersCache(projectId: string): void {
   membersCache.delete(projectId)

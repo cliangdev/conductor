@@ -290,8 +290,10 @@ export function ConnectorAppCredentialPanel({
                 ) : (
                   <p className="mt-1">
                     {connectorName} apps belong to the workspace that registered them, so there is no
-                    deployment credential to fall back on. Enter this workspace&apos;s client ID and
-                    secret below.
+                    deployment credential to fall back on.{' '}
+                    {canManage
+                      ? 'Enter this workspace\u2019s client ID and secret below.'
+                      : 'Only a workspace admin can enter this workspace\u2019s client ID and secret.'}
                   </p>
                 )}
               </Alert>
