@@ -121,17 +121,18 @@ it is your own Facebook login, registered once on Meta's developer site. Free, i
 22. [ ] **Business**: pick the business portfolio Meta created in step 17, or **I don't want to connect
     a business portfolio yet**. → **Next**.
 23. [ ] **Requirements**: read, → **Next**. **Overview** → **Go to dashboard**.
-    *You should see:* the app dashboard with **App Mode: Development** at the top. Leave it in
-    Development mode for this whole test.
+    *You should see:* the app dashboard. In the left menu, **Publish** carries an **Unpublished**
+    badge (older dashboards show **App Mode: Development** at the top instead). Both mean the same
+    thing: only people with a role on the app can use it, and their posts are real. Leave it
+    unpublished for this whole test.
 
 ### 2E. Tell the app where Conductor is, and what it may do
 
-24. [ ] Left menu → **Use cases** → next to **Manage everything on your Page** click **Customize** →
-    **Settings**. This is the *Facebook Login for Business* settings page. (Older dashboards show it
-    as **Facebook Login for Business** → **Settings** in the left menu instead.)
+24. [ ] Left menu → **Facebook Login for Business** → **Settings**. (If that entry is missing:
+    **Use cases** → next to **Manage everything on your Page** click **Customize** → **Settings**.)
 25. [ ] In **Valid OAuth Redirect URIs** paste the redirect URI from step 4 → **Save changes**.
-26. [ ] **Use cases** → next to **Manage everything on your Page** click **Customize** →
-    **Permissions**: make sure these six are added
+26. [ ] On the dashboard click **Customize the Manage everything on your Page use case** (or left
+    menu → **Use cases** → **Customize**) → **Permissions**: make sure these six are added
     (click **Add** next to any that are missing):
     `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`,
     `instagram_content_publish`, `business_management`.
