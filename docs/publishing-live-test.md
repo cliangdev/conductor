@@ -189,10 +189,12 @@ Do this at https://developers.tiktok.com.
 35. [ ] **Create app**: **App name** = the brand that will be posting (e.g. `Rexipe`; TikTok shows it
     to users), **App type** = **Other** (its description names Login with TikTok and the Content
     Posting API; the type cannot be changed later) → **Create app**. On the app page fill in
-    **App details**: a category and a one-line description. Under
-    **Platforms** tick **Web** and enter your Conductor frontend URL as the website. Add **Terms of
-    Service URL** and **Privacy Policy URL** if the form requires them (any page of yours will do
-    for a sandbox test). → **Save**.
+    **App details**: a category and a description of at most 120 characters, e.g. *Publishes
+    Rexipe's own scheduled, approved recipe videos and photos to the Rexipe TikTok account and reads
+    their stats.* Under **Platforms** tick **Web**. Put the **website**, **Terms of Service URL** and
+    **Privacy Policy URL** on a domain the brand owns (e.g. pages on `rexipe.com`), not on a
+    Conductor address. Each shows *This URL is not verified* until 3G-a below; in the sandbox that
+    is only a warning, so carry on. → **Save**.
     *You should see:* the app page with **Credentials**, **Products**, **Scopes** and **Sandbox**
     in the left panel.
 
@@ -228,14 +230,31 @@ sandbox are **visible only to the account that posted them**. That is what this 
     *Careful:* the production app has its own key and secret. Use the **sandbox** pair now; switch
     Conductor to the production pair only after TikTok's review passes.
 
-### 3G. Only if you will test photo posts
+### 3G. Verifying URLs (two different reasons)
 
-45. [ ] In Conductor, open any uploaded image and copy the **host** of its URL (it is a Google Cloud
-    Storage host, e.g. `storage.googleapis.com`).
-46. [ ] In the TikTok app page → **URL properties** → **Add property** → **URL prefix** → enter
-    `https://<that host>/` → follow the verification it asks for.
-    *Why:* TikTok fetches photos by URL and refuses hosts it has not verified. Video posts upload
-    their bytes and do not need this.
+TikTok wants proof that you own the domains an app names. Verification is per domain and takes a
+few minutes. Redirect URIs are exempt in the sandbox.
+
+**3G-a. Before production review only.** The website, terms and privacy URLs from step 35 must be
+verified before **Submit for review**; a sandbox test does not need it. When you do it:
+1. On the app page click **URL properties** → **Add property** → **Domain** → the brand's domain.
+2. Prove it one of two ways: **DNS** (add the TXT record TikTok shows at your DNS provider) or
+   **File** (put the file TikTok shows, `tiktok-developers-site-verification.txt`, at the site root
+   so it answers with 200 and no redirect).
+3. Click **Verify**.
+
+**3G-b. Only if you will test photo posts.** TikTok fetches photos by URL and refuses hosts it has
+not verified. Conductor's media lives on Google Cloud Storage, a domain you cannot verify as a
+whole, so:
+1. In Conductor, open any uploaded image and copy its URL up to and including the bucket name,
+   e.g. `https://storage.googleapis.com/<bucket>/`.
+2. **URL properties** → **Add property** → **URL prefix** → paste that prefix → **File** method.
+3. Upload the verification file TikTok shows into the bucket at that prefix and make that one
+   object publicly readable, so `https://storage.googleapis.com/<bucket>/tiktok-developers-site-verification.txt`
+   returns it → **Verify**.
+4. If TikTok will not accept the prefix, photo posts need a custom domain in front of the bucket.
+   Video posts upload their bytes and are unaffected either way, so everything in this test except
+   the photo-post row works without 3G-b.
 
 ---
 
@@ -243,16 +262,16 @@ sandbox are **visible only to the account that posted them**. That is what this 
 
 You must be an ADMIN of the Publishing Lab workspace.
 
-47. [ ] In Conductor open **Integrations** → **Meta**.
-48. [ ] Under **Platform app credentials** click **Set a credential for this workspace**. Paste the
+45. [ ] In Conductor open **Integrations** → **Meta**.
+46. [ ] Under **Platform app credentials** click **Set a credential for this workspace**. Paste the
     App ID and App Secret from step 29 → Save. *You should see:* the badge change to **Configured**.
-49. [ ] Click **Verify**. *You should see:* a green report saying the credentials are valid.
-50. [ ] Click **Authorize**. Log in to Facebook as the account from step 30, grant every permission,
+47. [ ] Click **Verify**. *You should see:* a green report saying the credentials are valid.
+48. [ ] Click **Authorize**. Log in to Facebook as the account from step 30, grant every permission,
     pick your Page. *You should see:* a connection card with the Page name and the Instagram
     username from step 17.
-51. [ ] Open **Integrations** → **TikTok**. Repeat steps 48–50 with the sandbox Client key and Client secret
+49. [ ] Open **Integrations** → **TikTok**. Repeat steps 46–48 with the sandbox Client key and Client secret
     from step 44, logging in as the creator. *You should see:* a card with the creator's nickname.
-52. [ ] Open **Marketing → Posts** → **New Post**. Under **Publish to** you should see: your Page
+50. [ ] Open **Marketing → Posts** → **New Post**. Under **Publish to** you should see: your Page
     under FACEBOOK, `@yourhandle` under INSTAGRAM, the creator under TIKTOK, plus a "(manual)" row
     under each platform. Cancel the modal.
 
@@ -293,18 +312,18 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 ## Part 6 — Facebook tests (about 40 minutes of waiting)
 
-53. [ ] **Feed photo.** One JPEG, a caption, destination = your Page, format **Feed**.
+51. [ ] **Feed photo.** One JPEG, a caption, destination = your Page, format **Feed**.
     *Expect:* row `HANDED_OFF` right after approval; the post appears under the Page's
     **Scheduled posts**; at the time it goes live and the row turns `PUBLISHED` with a link.
-54. [ ] **Several photos.** Three JPEGs, same destination and format. *Expect:* one multi-photo post,
-    same lifecycle as 53.
-55. [ ] **Reel.** One vertical MP4 between 3 and 90 seconds, format **Reel**. *Expect:* it publishes as
+52. [ ] **Several photos.** Three JPEGs, same destination and format. *Expect:* one multi-photo post,
+    same lifecycle as 51.
+53. [ ] **Reel.** One vertical MP4 between 3 and 90 seconds, format **Reel**. *Expect:* it publishes as
     a Reel. (A Facebook video with format Feed also becomes a Reel; Facebook no longer accepts other
     Page videos.)
-56. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* the readiness card warns that the caption
+54. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* the readiness card warns that the caption
     will be dropped; the row stays `PENDING` until the time, then turns `PUBLISHED`; the story is on
     the Page. A story can be scheduled as little as 1 minute out.
-57. [ ] **Unschedule.** Create one more feed photo Post, get it to Scheduled, then change its status
+55. [ ] **Unschedule.** Create one more feed photo Post, get it to Scheduled, then change its status
     back to **Approved**. *Expect:* the row turns `REVOKED` and the post disappears from the Page's
     scheduled posts.
 
@@ -312,15 +331,15 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 ## Part 7 — Instagram tests (about 30 minutes of waiting)
 
-58. [ ] **Feed image.** One JPEG with aspect between 4:5 and 1.91:1 (a square is fine), destination =
+56. [ ] **Feed image.** One JPEG with aspect between 4:5 and 1.91:1 (a square is fine), destination =
     `@yourhandle`, format **Feed**. *Expect:* `PENDING` until the time, then `PUBLISHED` with a link.
-59. [ ] **Carousel.** Two to ten files, JPEG and MP4 mixed. *Expect:* one carousel; if the aspects
+57. [ ] **Carousel.** Two to ten files, JPEG and MP4 mixed. *Expect:* one carousel; if the aspects
     differ the readiness card warns they will be cropped to the first one.
-60. [ ] **Reel with options.** One vertical MP4, format **Reel**. Click **Customize for this
+58. [ ] **Reel with options.** One vertical MP4, format **Reel**. Click **Customize for this
     destination** and set: cover image (one of the Post's images), **Share to feed** on, up to three
     collaborator usernames, an audio name. *Expect:* the Reel uses your cover; collaborators get an
     invite.
-61. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* caption-dropped warning, `PENDING` then
+59. [ ] **Story.** One 9:16 JPEG, format **Story**. *Expect:* caption-dropped warning, `PENDING` then
     `PUBLISHED`; the story is on the account.
 
 > Instagram allows 100 API posts per account per 24 hours. If you hit it, the readiness card says so
@@ -330,26 +349,26 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 ## Part 8 — TikTok tests (about 20 minutes of waiting)
 
-62. [ ] **Video.** One MP4 shorter than the creator's cap (the card shows it), destination = the
+60. [ ] **Video.** One MP4 shorter than the creator's cap (the card shows it), destination = the
     creator. Under the TikTok options set **Who can view** = `SELF_ONLY`, leave duet/stitch/comments
     as you like, turn **AI-generated** on, set a cover frame time. *Expect:* the readiness card asks
     for the creator's **consent**; click through the consent step as the creator. After approval:
     `PENDING`, then at the time `PUBLISHED`; the video is on the profile, private, with the AI label
     and your cover frame.
-63. [ ] **Refusal check.** Make a second video Post and set **Who can view** = `PUBLIC_TO_EVERYONE`.
+61. [ ] **Refusal check.** Make a second video Post and set **Who can view** = `PUBLIC_TO_EVERYONE`.
     *Expect:* the readiness card blocks it and names the levels the account may use. Delete or fix it.
-64. [ ] **Photo post** (only if you did step 46). Two or more JPEGs, pick the cover index and
-    **Auto add music**. *Expect:* a photo post on the profile with your cover. Without step 46 the row
+62. [ ] **Photo post** (only if you did 3G-b). Two or more JPEGs, pick the cover index and
+    **Auto add music**. *Expect:* a photo post on the profile with your cover. Without 3G-b the row
     fails with a message about the verified URL prefix; that is the expected message.
 
 ---
 
 ## Part 9 — Retry and metrics (10 minutes)
 
-65. [ ] **Retry.** Take any `FAILED` row (step 64 without step 46 is a convenient one, or unplug a
+63. [ ] **Retry.** Take any `FAILED` row (step 62 without 3G-b is a convenient one, or unplug a
     permission on purpose), fix the cause, click **Retry** on the Post. *Expect:* the row goes back to
     `PENDING` and fires again.
-66. [ ] **Metrics.** On each connection card there is a **post_metrics** feed that pulls every 6 hours.
+64. [ ] **Metrics.** On each connection card there is a **post_metrics** feed that pulls every 6 hours.
     Run it now with:
 
     ```bash
@@ -368,16 +387,16 @@ export CONDUCTOR_GCP_PROJECT=ai-conductor-prod
 
 The feature is proven when all of these are ticked:
 
-- [ ] 53 Facebook feed photo published and went live at the time
-- [ ] 55 Facebook Reel published
-- [ ] 56 Facebook story published
-- [ ] 57 Unschedule removed the scheduled post from Facebook
-- [ ] 58 Instagram feed image published
-- [ ] 60 Instagram Reel published with cover and options
-- [ ] 61 Instagram story published
-- [ ] 62 TikTok video published privately with the AI label
-- [ ] 65 A failed row was retried successfully
-- [ ] 66 A metrics pull filled at least one Post's counts
+- [ ] 51 Facebook feed photo published and went live at the time
+- [ ] 53 Facebook Reel published
+- [ ] 54 Facebook story published
+- [ ] 55 Unschedule removed the scheduled post from Facebook
+- [ ] 56 Instagram feed image published
+- [ ] 58 Instagram Reel published with cover and options
+- [ ] 59 Instagram story published
+- [ ] 60 TikTok video published privately with the AI label
+- [ ] 63 A failed row was retried successfully
+- [ ] 64 A metrics pull filled at least one Post's counts
 
 Paste each published row's link into a comment on its Post so the run can be audited later.
 
@@ -387,10 +406,10 @@ Paste each published row's link into a comment on its Post so the run can be aud
 
 | You see | Do |
 |---|---|
-| **Authorize** is greyed out | Step 48 was skipped or the credential was cleared. Only an ADMIN can set it. |
+| **Authorize** is greyed out | Step 46 was skipped or the credential was cleared. Only an ADMIN can set it. |
 | Consent page says the redirect URI is invalid | Step 25 or 39: the URI must match step 4 exactly. |
 | Instagram row missing after connecting Meta | Step 17: the Instagram account is not linked to the Page, or `instagram_basic` was not granted. |
 | TikTok row blocks on privacy level | Expected on an unaudited app. Use `SELF_ONLY`. |
-| TikTok photo post fails naming a "verified URL prefix" | Step 46. |
+| TikTok photo post fails naming a "verified URL prefix" | Section 3G-b. |
 | Readiness card says the time is too soon | Facebook needs 10 minutes' notice for feed posts and reels. Move it out. |
 | Row `FAILED` with a platform message about the media URL | Retry. The storage link expired before the platform fetched it. |
