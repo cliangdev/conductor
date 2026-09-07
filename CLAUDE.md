@@ -170,6 +170,7 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/memory.md`](docs/memory.md) — Agent memory: dual-phase extraction/consolidation write path, retrieval scoring, bi-temporal lifecycle, memory-vs-knowledge promotion.
 - [`docs/ai-providers.md`](docs/ai-providers.md) — AI Providers: BYO-key model, registered providers, connection states, model discovery, extending with a new provider.
 - [`docs/publishing.md`](docs/publishing.md) — Publishing pipeline: the approval gate's rules, publish targets and lanes (including the MANUAL lane for projects with no integration), outcomes and retries.
+- [`docs/publishing-live-test.md`](docs/publishing-live-test.md) — Checklist for proving publishing against real Facebook, Instagram and TikTok accounts: app setup, scopes, redirect URI, test matrix, log signatures.
 - [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
 - [`docs/design-system.md`](docs/design-system.md) — Frontend design system: tokens (light + dark), typography, status ramp, required primitives, page-chrome patterns, anti-patterns. **Read before any UI work.**
 - [`docs/dev-workflow.md`](docs/dev-workflow.md) — PR branch deploy/test/debug loop: deploy labels, skip-tests, live MCP testing, log access.

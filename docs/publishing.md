@@ -403,6 +403,12 @@ project has not configured one**, so adding this took nothing away from a projec
 notifications. A manual-publish alert has no fallback — there is nothing sensible to say about it in an
 Issues channel — so it is simply silent until a Publishing channel exists.
 
+## Testing against the real platforms
+
+Nothing above has been run against a live Page, Instagram account or TikTok creator yet. The checklist
+for doing that — app setup, scopes, the redirect URI, a test matrix per platform and format, and what
+each step looks like in the logs — is [`publishing-live-test.md`](publishing-live-test.md).
+
 ## Known gaps
 
 - **Facebook's first comment** isn't set by the pipeline — a Post's caption goes on the post itself,
