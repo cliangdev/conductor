@@ -203,6 +203,38 @@ class ConnectorAppCredentialVerificationServiceTest {
         assertThat(report.status()).isEqualTo(ConnectorAppCredentialVerificationService.ReportStatus.VERIFIED);
     }
 
+    // --- TikTok answers HTTP 200 with the failure in the body, unlike Google's 400 ---
+
+    @Test
+    void readsTikToksInvalidGrantOutOfA200Body_andReportsVerified() {
+        StubConnector tiktok = tiktokConnector();
+        resolves(tiktok, CredentialSource.PROJECT, "tiktok-key", SECRET);
+        server.expect(requestTo("https://open.tiktokapis.com/v2/oauth/token/"))
+                .andRespond(withSuccess("{\"error\":\"invalid_grant\",\"error_description\":\"Refresh token is "
+                        + "invalid or expired.\",\"log_id\":\"x\"}", MediaType.APPLICATION_JSON));
+
+        var report = service.verify(PROJECT_ID, tiktok);
+
+        assertThat(report.status()).isEqualTo(ConnectorAppCredentialVerificationService.ReportStatus.VERIFIED);
+        assertThat(report.checks()).anySatisfy(check ->
+                assertThat(check.message()).contains("rejected only the deliberately invalid grant"));
+    }
+
+    @Test
+    void readsTikToksInvalidClientOutOfA200Body_andReportsFailed() {
+        StubConnector tiktok = tiktokConnector();
+        resolves(tiktok, CredentialSource.PROJECT, "tiktok-key", SECRET);
+        server.expect(requestTo("https://open.tiktokapis.com/v2/oauth/token/"))
+                .andRespond(withSuccess("{\"error\":\"invalid_client\",\"error_description\":\"Client key or "
+                        + "secret is incorrect.\",\"log_id\":\"x\"}", MediaType.APPLICATION_JSON));
+
+        var report = service.verify(PROJECT_ID, tiktok);
+
+        assertThat(report.status()).isEqualTo(ConnectorAppCredentialVerificationService.ReportStatus.ERROR);
+        assertThat(report.checks()).anySatisfy(check ->
+                assertThat(check.message()).contains("client id or secret is wrong"));
+    }
+
     // --- Nothing configured at all, and the never-echo-the-secret guarantee ---
 
     @Test
