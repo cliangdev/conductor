@@ -109,9 +109,15 @@ it is your own Facebook login, registered once on Meta's developer site. Free, i
 20. [ ] **App name**: the brand that will be posting, e.g. `Rexipe` — this is what people see on the
     consent screen, and Meta forbids "Facebook", "Instagram" or "Meta" in the name. **Contact
     email**: yours. → **Next**.
-21. [ ] **Use cases**: tick the use case for managing a Page (named like **Manage everything on your
-    Page**) and the one for Instagram content. If the screen instead offers app *types*, choose
-    **Business**. → **Next**.
+21. [ ] **Use cases**. The six "Featured" cards are not the ones you need:
+    - Under **Filter by** click **Content management**.
+    - Tick **Manage everything on your Page**. This covers publishing to the Page, and Instagram
+      rides on it because Conductor reaches Instagram through the Page.
+    - Click **Featured** and also tick **Authenticate and request data from users with Facebook
+      Login**. That adds the Facebook Login product where the redirect URI goes.
+    - Leave everything else unticked. Skip any Instagram card that mentions **Instagram Login** or
+      **Business Login for Instagram**; that is a different login flow Conductor does not use.
+    → **Next**.
 22. [ ] **Business**: pick the business portfolio Meta created in step 17, or **I don't want to connect
     a business portfolio yet**. → **Next**.
 23. [ ] **Requirements**: read, → **Next**. **Overview** → **Go to dashboard**.
@@ -120,10 +126,12 @@ it is your own Facebook login, registered once on Meta's developer site. Free, i
 
 ### 2E. Tell the app where Conductor is, and what it may do
 
-24. [ ] In the dashboard's left menu find **Facebook Login for Business** → **Settings**. If it is not
-    there: **Use cases** → your Page use case → **Customize** → **Settings**.
+24. [ ] Left menu → **Use cases** → next to **Authenticate and request data from users with Facebook
+    Login** click **Customize** → **Settings**. (Older dashboards show this as **Facebook Login for
+    Business** → **Settings** in the left menu instead.)
 25. [ ] In **Valid OAuth Redirect URIs** paste the redirect URI from step 4 → **Save changes**.
-26. [ ] Still under the use case → **Customize** → **Permissions**: make sure these six are added
+26. [ ] **Use cases** → next to **Manage everything on your Page** click **Customize** →
+    **Permissions**: make sure these six are added
     (click **Add** next to any that are missing):
     `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`,
     `instagram_content_publish`, `business_management`.
