@@ -232,4 +232,29 @@ class MetaGraphClientTest {
         assertThat(status.published()).isTrue();
         assertThat(status.permalink()).contains("/reel/9");
     }
+
+    // ---- listing Pages: the nested-field syntax has braces, which the URI builder must encode ----
+
+    @Test
+    void listPages_encodesTheNestedFieldBraces_andReadsTheLinkedInstagramAccount() {
+        // Strict template encoding also encodes the commas; Graph decodes both, and what matters is that
+        // the braces no longer break the URI.
+        server.expect(requestTo("https://graph.facebook.com/v21.0/me/accounts?fields=id%2Cname%2Caccess_token%2C"
+                        + "instagram_business_account%7Bid%2Cusername%7D&limit=200"))
+                .andExpect(method(org.springframework.http.HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer user-token"))
+                .andRespond(withSuccess("{\"data\":[{\"id\":\"page-1\",\"name\":\"Rexipe\",\"access_token\":\"page-token\","
+                        + "\"instagram_business_account\":{\"id\":\"ig-1\",\"username\":\"rexipe\"}},"
+                        + "{\"id\":\"page-2\",\"name\":\"Other\",\"access_token\":\"t2\"}]}", MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PageAccount> pages = client.listPages("user-token");
+
+        server.verify();
+        assertThat(pages).hasSize(2);
+        assertThat(pages.get(0).id()).isEqualTo("page-1");
+        assertThat(pages.get(0).accessToken()).isEqualTo("page-token");
+        assertThat(pages.get(0).instagramBusinessAccountId()).isEqualTo("ig-1");
+        assertThat(pages.get(0).instagramUsername()).isEqualTo("rexipe");
+        assertThat(pages.get(1).instagramBusinessAccountId()).isNull();
+    }
 }
