@@ -111,12 +111,12 @@ it is your own Facebook login, registered once on Meta's developer site. Free, i
     email**: yours. → **Next**.
 21. [ ] **Use cases**. The six "Featured" cards are not the ones you need:
     - Under **Filter by** click **Content management**.
-    - Tick **Manage everything on your Page**. This covers publishing to the Page, and Instagram
-      rides on it because Conductor reaches Instagram through the Page.
-    - Click **Featured** and also tick **Authenticate and request data from users with Facebook
-      Login**. That adds the Facebook Login product where the redirect URI goes.
-    - Leave everything else unticked. Skip any Instagram card that mentions **Instagram Login** or
-      **Business Login for Instagram**; that is a different login flow Conductor does not use.
+    - Tick **Manage everything on your Page**, and nothing else. It covers publishing to the Page,
+      brings its own login product (*Facebook Login for Business*, the one Conductor uses), and
+      Instagram rides on it because Conductor reaches Instagram through the Page.
+    - Other cards go grey once it is ticked, including the Featured **Facebook Login** card. That is
+      Meta hiding what conflicts with it; you do not need them. Skip any Instagram card that
+      mentions **Instagram Login**; that is a different login flow Conductor does not use.
     → **Next**.
 22. [ ] **Business**: pick the business portfolio Meta created in step 17, or **I don't want to connect
     a business portfolio yet**. → **Next**.
@@ -126,9 +126,9 @@ it is your own Facebook login, registered once on Meta's developer site. Free, i
 
 ### 2E. Tell the app where Conductor is, and what it may do
 
-24. [ ] Left menu → **Use cases** → next to **Authenticate and request data from users with Facebook
-    Login** click **Customize** → **Settings**. (Older dashboards show this as **Facebook Login for
-    Business** → **Settings** in the left menu instead.)
+24. [ ] Left menu → **Use cases** → next to **Manage everything on your Page** click **Customize** →
+    **Settings**. This is the *Facebook Login for Business* settings page. (Older dashboards show it
+    as **Facebook Login for Business** → **Settings** in the left menu instead.)
 25. [ ] In **Valid OAuth Redirect URIs** paste the redirect URI from step 4 → **Save changes**.
 26. [ ] **Use cases** → next to **Manage everything on your Page** click **Customize** →
     **Permissions**: make sure these six are added
