@@ -181,7 +181,11 @@ Do this at https://developers.tiktok.com.
     submission, so it should be a login the business keeps. If asked, create a developer account
     and verify the email.
 33. [ ] Click your profile icon (top right) → **Manage apps** → **Connect an app**.
-34. [ ] If it asks for an owner, pick or create an **Organization** → **Confirm**.
+34. [ ] The dialog asks for an **owner** and lists your organizations. If the list is empty, cancel,
+    click your profile icon → **Manage organizations** → **Create organization**, name it after the
+    brand (e.g. `Rexipe`), fill in what it requires → **Create**. Then reopen **Manage apps** →
+    **Connect an app**, pick the organization → **Confirm**. (An **Individual developer** owner also
+    works for a sandbox test, but an organization lets others be added later.)
 35. [ ] **App details**: name it after the brand that will be posting (e.g. `Rexipe`), a category, a
     one-line description. Under
     **Platforms** tick **Web** and enter your Conductor frontend URL as the website. Add **Terms of
