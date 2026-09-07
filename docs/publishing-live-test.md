@@ -186,8 +186,10 @@ Do this at https://developers.tiktok.com.
     brand (e.g. `Rexipe`), fill in what it requires → **Create**. Then reopen **Manage apps** →
     **Connect an app**, pick the organization → **Confirm**. (An **Individual developer** owner also
     works for a sandbox test, but an organization lets others be added later.)
-35. [ ] **App details**: name it after the brand that will be posting (e.g. `Rexipe`), a category, a
-    one-line description. Under
+35. [ ] **Create app**: **App name** = the brand that will be posting (e.g. `Rexipe`; TikTok shows it
+    to users), **App type** = **Other** (its description names Login with TikTok and the Content
+    Posting API; the type cannot be changed later) → **Create app**. On the app page fill in
+    **App details**: a category and a one-line description. Under
     **Platforms** tick **Web** and enter your Conductor frontend URL as the website. Add **Terms of
     Service URL** and **Privacy Policy URL** if the form requires them (any page of yours will do
     for a sandbox test). → **Save**.
