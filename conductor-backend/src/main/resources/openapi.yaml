@@ -6621,6 +6621,12 @@ components:
           type: string
           format: date-time
           nullable: true
+        awaitingAccountSelection:
+          type: boolean
+          description: >
+            True when the OAuth grant was stored but nobody chose which of its accounts this
+            connection acts as (the picker failed, or the tab was closed), so the connection is
+            ACTIVE yet cannot be used. Finish it through the connection's oauth/accounts endpoints.
 
     CreateConnectionRequest:
       type: object

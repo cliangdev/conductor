@@ -820,7 +820,8 @@ public class IntegrationController implements IntegrationsApi {
                 .label(conn.getDisplayLabel())
                 .status(conn.getStatus())
                 .authType(conn.getAuthType())
-                .tokenExpiresAt(conn.getTokenExpiresAt());
+                .tokenExpiresAt(conn.getTokenExpiresAt())
+                .awaitingAccountSelection(oAuthFlowService.awaitingAccountSelection(conn));
         cacheRepository.findByConnectionId(conn.getId()).ifPresent(cache -> {
             summary.setHealthStatus(cache.getHealthStatus());
             summary.setFetchedAt(cache.getFetchedAt());

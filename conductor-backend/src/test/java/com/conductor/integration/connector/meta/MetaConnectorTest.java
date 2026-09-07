@@ -94,6 +94,15 @@ class MetaConnectorTest {
     // --- [auto] The OAuth callback stores a long-lived Page token plus Page and IG account ids ---
 
     @Test
+    void accountSelected_onlyOnceThePageIdIsStored() {
+        assertThat(connector.requiresAccountSelection()).isTrue();
+        assertThat(connector.accountSelected(null)).isFalse();
+        assertThat(connector.accountSelected(Map.of())).isFalse();
+        assertThat(connector.accountSelected(Map.of("pageId", " "))).isFalse();
+        assertThat(connector.accountSelected(Map.of("pageId", "page-1", "pageName", "Acme"))).isTrue();
+    }
+
+    @Test
     void completeAuthorization_exchangesShortLivedTokenAndStoresPageAndInstagramIds() {
         when(graphClient.exchangeForLongLivedUserToken("app-id", "app-secret", SHORT_LIVED))
                 .thenReturn(new LongLivedToken(LONG_LIVED, 5184000L));

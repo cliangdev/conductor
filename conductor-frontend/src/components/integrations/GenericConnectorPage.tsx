@@ -196,6 +196,7 @@ export default function GenericConnectorPage({
               canMutate={canMutate}
               disconnecting={disconnecting === conn.id}
               onDisconnect={handleDisconnect}
+              onChooseAccount={setPendingAccountConnectionId}
             />
           ))}
         </div>

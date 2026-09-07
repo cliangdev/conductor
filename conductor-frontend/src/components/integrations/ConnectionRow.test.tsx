@@ -99,4 +99,25 @@ describe('ConnectionRow', () => {
 
     expect(screen.queryByRole('button', { name: 'Disconnect' })).not.toBeInTheDocument()
   })
+
+  it('offers the account picker for a grant whose selection never happened', async () => {
+    const onChooseAccount = vi.fn()
+    renderRow(connection({ awaitingAccountSelection: true }), { canMutate: true, onChooseAccount })
+
+    expect(screen.getByText('Choose an account')).toBeInTheDocument()
+    expect(screen.getByText(/no account was chosen/)).toBeInTheDocument()
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Choose account' }))
+    expect(onChooseAccount).toHaveBeenCalledWith('conn-1')
+  })
+
+  it('does not offer the picker to a viewer, or for a finished connection', () => {
+    renderRow(connection({ awaitingAccountSelection: true }), { canMutate: false, onChooseAccount: vi.fn() })
+    expect(screen.queryByRole('button', { name: 'Choose account' })).not.toBeInTheDocument()
+
+    renderRow(connection({ awaitingAccountSelection: false }), { canMutate: true, onChooseAccount: vi.fn() })
+    expect(screen.queryByRole('button', { name: 'Choose account' })).not.toBeInTheDocument()
+    expect(screen.getByText('Connected')).toBeInTheDocument()
+  })
 })
