@@ -389,10 +389,13 @@ Publishing rides the same notification system everything else does, with its own
 Discord channel is not the engineering one.
 
 Configure it at **Settings → Notifications → Publishing**: a webhook URL and which events it carries.
-Two things arrive there:
+Three kinds of thing arrive there:
 
 - **A Post's status changing** — the same Workflow-agnostic `WORK_ITEM_STATUS_CHANGED` an Issue fires,
   including the Published/Failed roll-up once every destination has landed.
+- **An approval request and its verdict** — `REVIEWER_ASSIGNED` when a Post is handed to a reviewer, and
+  `REVIEW_SUBMITTED` when they answer. These are the same events an Issue fires; on a Post they carry the
+  publishing marker, so the marketing channel sees who has to approve what, not the engineering one.
 - **A destination coming due that publishes by hand** (`POST_AWAITING_MANUAL`) — the one publishing event
   that is not a status change, because the Post itself stays Scheduled while a destination waits on a
   person. Without it the manual lane would depend on someone happening to open the Post.
