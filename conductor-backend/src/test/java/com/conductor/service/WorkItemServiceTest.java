@@ -141,6 +141,27 @@ class WorkItemServiceTest {
         }
     }
 
+    /**
+     * Re-sending the current status is a no-op, not an invalid transition. A file sync or a retried request
+     * carries whatever status it last saw; a 400 here made the daemon queue and replay it, and a replayed
+     * "DRAFT" against a Post that had since been scheduled was accepted as an Unschedule.
+     */
+    @Test
+    void patchingTheCurrentStatusIsANoOp() {
+        testIssue.setCurrentStatus("SCHEDULED");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+
+        WorkItem result = workItemService.patchWorkItem(
+                "proj-1", "issue-1", "New title", null, "SCHEDULED", null, null, null, caller);
+
+        assertThat(result.getCurrentStatus()).isEqualTo("SCHEDULED");
+        assertThat(result.getTitle()).isEqualTo("New title");
+        verify(workItemWorkflowService, never()).validateTransition(any(), any(), any());
+        verify(nativeHandoffService, never()).unschedule(any());
+        verify(nativeHandoffService, never()).handoffForPost(any());
+    }
+
     // --- native-lane handoff wiring (T4.5) ---
 
     /**
@@ -223,6 +244,9 @@ class WorkItemServiceTest {
         verify(workItemRepository).save(captor.capture());
         WorkItem saved = captor.getValue();
 
+        // The project row is locked before the sequence is read, so concurrent creates cannot both take
+        // MAX+1 and collide on uq_work_items_project_sequence.
+        verify(projectRepository).lockForSequence("proj-1");
         assertThat(saved.getCurrentStatus()).isEqualTo("DRAFT");
         assertThat(saved.getType()).isEqualTo("PRD");
         assertThat(saved.getTitle()).isEqualTo("My PRD");

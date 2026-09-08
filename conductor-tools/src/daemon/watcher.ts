@@ -148,6 +148,49 @@ export function resolveProjectIdForFile(filePath: string, config: Config): strin
   return null
 }
 
+/** A non-2xx reply, with the status kept so a caller can tell a rejection (4xx) from an outage. */
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+/** Rejected by the server: replaying the same request later cannot succeed, so it must not be queued. */
+function isRejection(err: unknown): boolean {
+  return err instanceof ApiError && err.status >= 400 && err.status < 500
+}
+
+/**
+ * The status each issue.md carried when the daemon last looked at it. Status leaves this machine only when
+ * the file's status CHANGES between two looks: a freshly written file (the MCP server and the CLI write one
+ * for every Work Item they create) already has its status on the server, and the file lags the server the
+ * moment anything else moves the item. Sending its status regardless is how a Post that had just been
+ * scheduled got a "DRAFT" patch and was unscheduled. Seeded from disk at start-up so an edit to a file that
+ * existed before the daemon started still counts as a change.
+ */
+const knownStatus = new Map<string, string>()
+
+export function seedKnownStatuses(watchPaths: string[]): void {
+  for (const watchPath of watchPaths) {
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(watchPath)
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const issueMd = path.join(watchPath, entry, 'issue.md')
+      try {
+        const { status } = parseFrontmatter(fs.readFileSync(issueMd, 'utf8'))
+        if (status !== undefined) knownStatus.set(issueMd, status)
+      } catch {
+        // Not an issue directory, or no issue.md yet — nothing to remember.
+      }
+    }
+  }
+}
+
 async function callApi(
   method: string,
   apiPath: string,
@@ -166,7 +209,7 @@ async function callApi(
   })
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText)
-    throw new Error(`${method} ${apiPath} failed with status ${response.status}: ${text}`)
+    throw new ApiError(`${method} ${apiPath} failed with status ${response.status}: ${text}`, response.status)
   }
 }
 
@@ -254,8 +297,12 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
   const { title, status, body } = parseFrontmatter(content)
   const patchBody: Record<string, string> = {}
   if (title !== undefined) patchBody['title'] = title
-  if (status !== undefined) patchBody['status'] = status
   if (body !== undefined) patchBody['description'] = body
+  if (status !== undefined) {
+    const previous = knownStatus.get(filePath)
+    knownStatus.set(filePath, status)
+    if (previous !== undefined && previous !== status) patchBody['status'] = status
+  }
 
   if (Object.keys(patchBody).length === 0) return
 
@@ -272,10 +319,17 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
     dequeueChange(apiPath)
     console.log(`Synced issue.md: ${filePath}`)
   } catch (err) {
+    if (isRejection(err)) {
+      console.error(`Issue sync rejected, not queued: ${filePath} — ${(err as Error).message}`)
+      return
+    }
+    // A queued status is stale by definition — by the time it replays, the item may well have moved on —
+    // so only the content travels. Queue with the SAME verb the endpoint accepts (PATCH): the resource is
+    // PATCH-only, so a queued PUT replays as a 500 and jams the queue on every retry.
+    const { status: _stale, ...replayable } = patchBody
+    if (Object.keys(replayable).length === 0) return
     console.error(`Issue sync failed, queuing: ${filePath} — ${(err as Error).message}`)
-    // Queue with the SAME verb the endpoint accepts (PATCH) — the resource is PATCH-only, so a queued PUT
-    // replays as a 500 and jams the queue on every retry.
-    queueChange({ method: 'PATCH', path: apiPath, body: patchBody })
+    queueChange({ method: 'PATCH', path: apiPath, body: replayable })
   }
 }
 
@@ -412,6 +466,7 @@ export function startWatcher(getConfig: () => Config): void {
   for (const watchPath of watchPaths) {
     console.log(`Watching: ${watchPath}`)
   }
+  seedKnownStatuses(watchPaths)
 
   const watcher = chokidar.watch(watchPaths, { ignoreInitial: true, persistent: true, depth: 2 })
 
