@@ -170,6 +170,9 @@ public class WorkItemService {
         workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
         workItem.setTags(normalizeTags(tags));
 
+        // Serialise display-id allocation per project: without the row lock, concurrent creates read the
+        // same maximum and the later one fails the unique index (seen with twelve Posts created at once).
+        projectRepository.lockForSequence(projectId);
         Integer nextSeq = workItemRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
         workItem.setSequenceNumber(nextSeq);
 
@@ -255,7 +258,10 @@ public class WorkItemService {
         }
         String previousStatus = workItem.getCurrentStatus();
         boolean statusChanged = false;
-        if (status != null) {
+        // The current status re-sent is a no-op, not an invalid transition: a file sync or a retried request
+        // carries whatever status it last saw, and rejecting it with a 400 only makes clients queue and
+        // replay it — which is how a stale DRAFT came to unschedule a Post.
+        if (status != null && !status.equals(previousStatus)) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
             workItemWorkflowService.validateTransition(projectId, workItem, status);
             String scheduledStatus = scheduledStatusFor(projectId, workItem);

@@ -387,9 +387,12 @@ describe('syncIssueMd', () => {
     vi.resetAllMocks()
   })
 
-  it('sends PATCH with title and status from frontmatter', async () => {
-    const content = `---\nid: iss_abc\ntype: PRD\ntitle: My PRD\nstatus: DRAFT\n---\n\nDescription body`
-    mockFs.readFileSync.mockReturnValue(content)
+  it('sends PATCH with title and description, and status only once it changes on disk', async () => {
+    const draft = `---\nid: iss_abc\ntype: PRD\ntitle: My PRD\nstatus: DRAFT\n---\n\nDescription body`
+    const inReview = draft.replace('status: DRAFT', 'status: IN_REVIEW')
+    // The queue file is read through the same mock after every successful sync, so answer by path.
+    let onDisk = draft
+    mockFs.readFileSync.mockImplementation((p) => (String(p).endsWith('sync-queue.json') ? '[]' : onDisk))
 
     const mockFetch = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', mockFetch)
@@ -400,19 +403,68 @@ describe('syncIssueMd', () => {
 
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:8080/api/v2/projects/proj_123/work-items/iss_abc',
-      expect.objectContaining({
-        method: 'PATCH',
-        body: expect.stringContaining('My PRD'),
-      })
+      expect.objectContaining({ method: 'PATCH', body: expect.stringContaining('My PRD') })
     )
+    // First sight: whoever wrote the file already put its status on the server, and the file may
+    // already lag it — so the status stays home.
+    const first = JSON.parse(mockFetch.mock.calls[0][1].body as string)
+    expect(first).toEqual({ title: 'My PRD', description: 'Description body' })
 
-    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body as string)
-    expect(callBody).toMatchObject({
-      title: 'My PRD',
-      status: 'DRAFT',
-      description: 'Description body',
+    // Same content again: still no status.
+    await syncIssueMd(filePath, () => mockConfig)
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body as string)).not.toHaveProperty('status')
+
+    // The status on disk changed: that is an edit, and it travels.
+    onDisk = inReview
+    await syncIssueMd(filePath, () => mockConfig)
+    expect(JSON.parse(mockFetch.mock.calls[2][1].body as string)).toMatchObject({ status: 'IN_REVIEW' })
+
+    vi.unstubAllGlobals()
+  })
+
+  it('seeds the known status from disk so an edit to a pre-existing file counts as a change', async () => {
+    const draft = `---\nid: iss_abc\ntitle: My PRD\nstatus: DRAFT\n---\n\nBody`
+    const done = draft.replace('status: DRAFT', 'status: DONE')
+    mockFs.readdirSync.mockReturnValue(['iss_abc'] as never)
+    let onDisk = draft
+    mockFs.readFileSync.mockImplementation((p) => (String(p).endsWith('sync-queue.json') ? '[]' : onDisk))
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { seedKnownStatuses, syncIssueMd } = await import('../daemon/watcher.js')
+    const issuesDir = path.join('/home/user/myproject', '.conductor', 'issues')
+    seedKnownStatuses([issuesDir])
+    onDisk = done
+    await syncIssueMd(path.join(issuesDir, 'iss_abc', 'issue.md'), () => mockConfig)
+
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body as string)).toMatchObject({ status: 'DONE' })
+    vi.unstubAllGlobals()
+  })
+
+  it('does not queue a change the server rejected', async () => {
+    const content = `---\nid: iss_abc\ntitle: My PRD\nstatus: DRAFT\n---\n\nBody`
+    mockFs.readFileSync.mockReturnValueOnce(content)
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => 'Invalid status transition',
+      statusText: 'Bad Request',
     })
+    vi.stubGlobal('fetch', mockFetch)
 
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { syncIssueMd } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncIssueMd(filePath, () => mockConfig)
+
+    // A rejection replayed later is the same rejection; worse, replayed against a moved item it can be
+    // accepted as a real transition. It is logged and dropped.
+    expect(mockFs.writeFileSync).not.toHaveBeenCalled()
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('rejected, not queued'))
+
+    consoleSpy.mockRestore()
     vi.unstubAllGlobals()
   })
 
@@ -442,6 +494,9 @@ describe('syncIssueMd', () => {
       expect.stringContaining('iss_abc'),
       'utf8'
     )
+    // What is queued replays minutes later, against an item that may have moved: no status rides along.
+    const queued = mockFs.writeFileSync.mock.calls.find((c) => String(c[0]).endsWith('sync-queue.json'))
+    expect(String(queued?.[1])).not.toContain('"status"')
 
     consoleSpy.mockRestore()
     vi.unstubAllGlobals()
