@@ -13,6 +13,8 @@ import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.view.ReviewWithUser;
+import com.conductor.notification.ChannelGroup;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalBus;
 import com.conductor.signal.SignalOrigin;
@@ -54,6 +56,7 @@ public class ReviewService {
     private final WorkItemWorkflowService workItemWorkflowService;
     private final WorkItemService workItemService;
     private final PublishBundleHasher publishBundleHasher;
+    private final PublishingWorkflow publishingWorkflow;
 
     public ReviewService(
             ReviewRepository reviewRepository,
@@ -65,7 +68,8 @@ public class ReviewService {
             WorkItemWorkflowService workItemWorkflowService,
             WorkItemService workItemService,
             PublishBundleHasher publishBundleHasher,
-            LifecycleTriggerDispatcher lifecycleTriggerDispatcher) {
+            LifecycleTriggerDispatcher lifecycleTriggerDispatcher,
+            PublishingWorkflow publishingWorkflow) {
         this.lifecycleTriggerDispatcher = lifecycleTriggerDispatcher;
         this.reviewRepository = reviewRepository;
         this.workItemReviewerRepository = workItemReviewerRepository;
@@ -76,6 +80,7 @@ public class ReviewService {
         this.workItemWorkflowService = workItemWorkflowService;
         this.workItemService = workItemService;
         this.publishBundleHasher = publishBundleHasher;
+        this.publishingWorkflow = publishingWorkflow;
     }
 
     /**
@@ -129,10 +134,13 @@ public class ReviewService {
         reviewRepository.save(review);
 
         String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
+        // A verdict on a Post belongs where its approval request went — see ReviewerService.assignReviewer.
+        Map<String, Object> meta = new java.util.HashMap<>(Map.of(
+                "workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict));
+        meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(publishingWorkflow.publishes(workItem)));
         signalBus.publish(Signal.of(
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEW_SUBMITTED, projectId, workItemId, Instant.now(),
-                Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict),
-                new SignalOrigin("work_item", workItemId)));
+                meta, new SignalOrigin("work_item", workItemId)));
 
         Optional<LifecycleTriggerDispatcher.AutoTransition> autoTransition = routeOnVerdict(projectId, workItem, verdict);
 

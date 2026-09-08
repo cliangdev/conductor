@@ -66,6 +66,9 @@ class ReviewServiceTest {
     @Mock
     private WorkItemWorkflowService workItemWorkflowService;
 
+    @Mock
+    private com.conductor.service.publish.PublishingWorkflow publishingWorkflow;
+
     @InjectMocks
     private ReviewService reviewService;
 
@@ -148,6 +151,28 @@ class ReviewServiceTest {
         assertThat(saved.getWorkItemId()).isEqualTo(ISSUE_ID);
         assertThat(saved.getReviewerId()).isEqualTo(reviewerUser.getId());
         assertThat(response.getVerdict()).isEqualTo("APPROVED");
+    }
+
+    /** A verdict on a Post is routed like its approval request: marked as publishing. */
+    @Test
+    void submitReviewOnAPostMarksTheSignalAsPublishing() {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(reviewerMember));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(issueReviewer));
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.empty());
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+        when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(publishingWorkflow.publishes(workItem)).thenReturn(true);
+
+        reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "Ship it", reviewerUser);
+
+        ArgumentCaptor<com.conductor.signal.Signal> signal = ArgumentCaptor.forClass(com.conductor.signal.Signal.class);
+        verify(signalBus).publish(signal.capture());
+        assertThat(signal.getValue().payload())
+                .containsEntry("publishes", "true")
+                .containsEntry("verdict", "APPROVED");
     }
 
     @Test

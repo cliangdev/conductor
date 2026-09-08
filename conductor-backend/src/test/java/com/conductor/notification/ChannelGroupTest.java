@@ -86,6 +86,19 @@ class ChannelGroupTest {
     }
 
     @Test
+    void anApprovalRequestOnAPostGoesToThePublishingChannelFirst() {
+        // "Who has to approve this Post" is marketing's question; the engineering Issues channel only
+        // sees it when no Publishing channel exists.
+        assertThat(ChannelGroup.forEvent(EventType.REVIEWER_ASSIGNED, Map.of(ChannelGroup.META_PUBLISHES, "true")))
+                .containsExactly(ChannelGroup.PUBLISHING, ChannelGroup.ISSUES);
+        assertThat(ChannelGroup.forEvent(EventType.REVIEW_SUBMITTED, Map.of(ChannelGroup.META_PUBLISHES, "true")))
+                .containsExactly(ChannelGroup.PUBLISHING, ChannelGroup.ISSUES);
+        // An Issue's approval request never touches the marketing channel.
+        assertThat(ChannelGroup.forEvent(EventType.REVIEWER_ASSIGNED, Map.of()))
+                .containsExactly(ChannelGroup.ISSUES);
+    }
+
+    @Test
     void aManualPublishAlertHasNowhereToGoButThePublishingChannel() {
         // It belongs to no general group, so a project with no Publishing channel simply does not get it —
         // there is no sensible fallback for an event only publishing produces.

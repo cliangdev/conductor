@@ -12,7 +12,9 @@ import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.service.view.ReviewerView;
+import com.conductor.notification.ChannelGroup;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalBus;
 import com.conductor.signal.SignalOrigin;
@@ -34,6 +36,7 @@ public class ReviewerService {
     private final ProjectSecurityService projectSecurityService;
     private final UserRepository userRepository;
     private final SignalBus signalBus;
+    private final PublishingWorkflow publishingWorkflow;
 
     public ReviewerService(
             WorkItemReviewerRepository workItemReviewerRepository,
@@ -41,13 +44,15 @@ public class ReviewerService {
             ProjectMemberRepository projectMemberRepository,
             ProjectSecurityService projectSecurityService,
             UserRepository userRepository,
-            SignalBus signalBus) {
+            SignalBus signalBus,
+            PublishingWorkflow publishingWorkflow) {
         this.workItemReviewerRepository = workItemReviewerRepository;
         this.workItemRepository = workItemRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
         this.userRepository = userRepository;
         this.signalBus = signalBus;
+        this.publishingWorkflow = publishingWorkflow;
     }
 
     @Transactional
@@ -76,10 +81,15 @@ public class ReviewerService {
                 .orElse(targetUserId);
         WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
         String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
+        // An approval request on a Post is marketing's to act on: the marker sends it to the Publishing
+        // channel when one exists, and to Issues otherwise — the same routing a status change gets.
+        Map<String, Object> meta = new java.util.HashMap<>(Map.of(
+                "workItemId", workItemId, "workItemTitle", workItemTitle,
+                "reviewerId", targetUserId, "reviewerName", reviewerName));
+        meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(publishingWorkflow.publishes(workItem)));
         signalBus.publish(Signal.of(
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEWER_ASSIGNED, projectId, workItemId, Instant.now(),
-                Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "reviewerId", targetUserId, "reviewerName", reviewerName),
-                new SignalOrigin("work_item", workItemId)));
+                meta, new SignalOrigin("work_item", workItemId)));
 
         return reviewer;
     }

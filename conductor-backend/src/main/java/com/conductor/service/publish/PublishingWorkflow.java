@@ -59,6 +59,20 @@ public class PublishingWorkflow {
     }
 
     /**
+     * Whether {@code item} lives on a publishing Workflow — the marker a notification carries so an approval
+     * request or a verdict on a Post reaches the marketing channel rather than the engineering one. False
+     * for an item whose Workflow cannot be resolved: it then routes like any other item, never nowhere.
+     */
+    public boolean publishes(WorkItem item) {
+        if (item == null || item.getProject() == null || item.getWorkflow() == null) {
+            return false;
+        }
+        return resolver.resolve(item.getProject().getId(), item.getWorkflow(), item.getWorkflowVersion())
+                .map(this::declaresPublishing)
+                .orElse(false);
+    }
+
+    /**
      * The status a Post waits in for its fire time: the chart's {@code publishes_from}, or the legacy
      * {@code SCHEDULED} when the chart predates the marker and has such a status. Empty for a chart that
      * has neither, which no publishing chart can be — the definition validator refuses to publish one.

@@ -52,6 +52,9 @@ class ReviewerServiceTest {
     private SignalBus signalBus;
 
     @Mock
+    private com.conductor.service.publish.PublishingWorkflow publishingWorkflow;
+
+    @Mock
     private ProjectSecurityService projectSecurityService;
 
     @InjectMocks
@@ -119,6 +122,26 @@ class ReviewerServiceTest {
 
         assertThat(response.getWorkItemId()).isEqualTo(ISSUE_ID);
         assertThat(response.getUserId()).isEqualTo(reviewerUser.getId());
+    }
+
+    /** An approval request on a Post carries the publishing marker, so it lands in the marketing channel. */
+    @Test
+    void assignReviewerOnAPostMarksTheSignalAsPublishing() {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(reviewerMember));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.empty());
+        when(workItemReviewerRepository.save(any(WorkItemReviewer.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(publishingWorkflow.publishes(any())).thenReturn(true);
+
+        reviewerService.assignReviewer(PROJECT_ID, ISSUE_ID, reviewerUser.getId(), adminUser);
+
+        ArgumentCaptor<com.conductor.signal.Signal> signal = ArgumentCaptor.forClass(com.conductor.signal.Signal.class);
+        verify(signalBus).publish(signal.capture());
+        assertThat(signal.getValue().payload())
+                .containsEntry("publishes", "true")
+                .containsEntry("reviewerId", reviewerUser.getId());
     }
 
     @Test
