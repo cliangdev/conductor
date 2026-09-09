@@ -45,9 +45,11 @@ Keep the workspace to the people doing the test. Every automated destination pub
 2. Scopes Conductor requests: `user.info.basic`, `video.publish`, `video.upload`, `video.list`.
    `video.list` is what the metrics feed reads with; a connection made before it was requested has to
    be reconnected before metrics arrive.
-3. **An unaudited app can only post privately.** Until TikTok's audit passes, the creator's allowed
-   privacy levels come back as `SELF_ONLY` and Conductor refuses anything else at the gate. Test with
-   `SELF_ONLY` first; the post appears on the creator's profile visible to them alone.
+3. **An unaudited app can only post to a private account.** Until TikTok's audit passes, the target
+   TikTok account itself must be set to private (TikTok app → Settings → Privacy → Private account), or
+   every publish is refused with `unaudited_client_can_only_post_to_private_accounts` — regardless of the
+   `privacyLevel` chosen. The creator's allowed levels may still list all three; pick `SELF_ONLY` for the
+   first test anyway, so the post is visible to the creator alone.
 4. **Photo posts need a verified URL prefix.** TikTok fetches images by URL, so the storage host
    (the signed-URL host of `GCP_STORAGE_BUCKET_NAME`) must be registered under *URL properties* in the
    developer portal. Without it every photo post fails with a message naming this; video posts upload

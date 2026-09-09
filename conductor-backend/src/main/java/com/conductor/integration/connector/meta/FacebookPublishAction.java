@@ -220,14 +220,25 @@ class FacebookPublishAction {
                 // Reels don't answer the Page-post fields readPost asks for; status.video_status is the
                 // Reel's own answer to "has it gone live yet?", shaped here into the same is_published
                 // output key so PlatformLiveness#facebookIsLive reads it exactly as a feed post's answer.
-                MetaGraphClient.VideoStatus status = graphClient.readVideoStatus(postId, token);
-                Map<String, Object> output = new LinkedHashMap<>();
-                output.put("post_id", status.id());
-                output.put("is_published", status.published());
-                if (status.permalink() != null) {
-                    output.put("permalink", status.permalink());
+                //
+                // The id shape is only a guess: a scheduled single-photo post also comes back as a bare
+                // number. Graph answers the video read on such an id with "(#100) Tried accessing
+                // nonexisting field (status)" — that is the signal to read it as the Page post it is,
+                // rather than fail twenty checks in a row against a post that is already live.
+                try {
+                    MetaGraphClient.VideoStatus status = graphClient.readVideoStatus(postId, token);
+                    Map<String, Object> output = new LinkedHashMap<>();
+                    output.put("post_id", status.id());
+                    output.put("is_published", status.published());
+                    if (status.permalink() != null) {
+                        output.put("permalink", status.permalink());
+                    }
+                    return ActionResult.ok(output);
+                } catch (HttpClientErrorException e) {
+                    if (!isNotAVideo(e)) {
+                        throw e;
+                    }
                 }
-                return ActionResult.ok(output);
             }
 
             MetaGraphClient.PagePost post = graphClient.readPost(postId, token);
@@ -391,6 +402,12 @@ class FacebookPublishAction {
      */
     private static boolean isReelId(String id) {
         return id != null && id.indexOf('_') < 0;
+    }
+
+    /** Graph's answer when a video field is asked of a node that is not a video. */
+    private static boolean isNotAVideo(HttpClientErrorException e) {
+        String body = e.getResponseBodyAsString();
+        return e.getStatusCode().value() == 400 && body != null && body.contains("nonexisting field");
     }
 
     /**
