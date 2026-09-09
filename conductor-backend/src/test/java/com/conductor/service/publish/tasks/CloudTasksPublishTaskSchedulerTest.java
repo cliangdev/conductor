@@ -68,6 +68,33 @@ class CloudTasksPublishTaskSchedulerTest {
         assertThat(task.getHttpRequest().getHttpMethod()).isEqualTo(HttpMethod.POST);
         assertThat(task.getHttpRequest().getHeadersMap()).containsEntry("Authorization", "Bearer tok");
         assertThat(task.getScheduleTime().getSeconds()).isEqualTo(notBefore.toEpochSecond());
+        // Named after the step and the delivery minute, so a duplicate arm is refused by the queue itself.
+        assertThat(task.getName()).isEqualTo(
+                "projects/test-project/locations/us-central1/queues/publish-tasks/tasks/dispatch-t-1-f"
+                        + FIRE.toEpochSecond() + "-m" + (notBefore.toEpochSecond() / 60));
+    }
+
+    @Test
+    void taskName_isTheSameForTwoArmsOfOneStepInTheSameMinute_andDiffersAcrossAttempts() {
+        OffsetDateTime a = OffsetDateTime.parse("2026-09-09T00:20:02Z");
+        OffsetDateTime b = OffsetDateTime.parse("2026-09-09T00:20:41Z");
+        assertThat(CloudTasksPublishTaskScheduler.taskName(PublishTask.confirm("t-1", FIRE, a, 5), a))
+                .isEqualTo(CloudTasksPublishTaskScheduler.taskName(PublishTask.confirm("t-1", FIRE, b, 5), b))
+                .isEqualTo("confirm-t-1-a5-m" + (a.toEpochSecond() / 60));
+        assertThat(CloudTasksPublishTaskScheduler.taskName(PublishTask.confirm("t-1", FIRE, a, 6), a))
+                .isNotEqualTo(CloudTasksPublishTaskScheduler.taskName(PublishTask.confirm("t-1", FIRE, a, 5), a));
+    }
+
+    @Test
+    void schedule_whenTheQueueAlreadyHoldsTheTask_keepsItWithoutAnError() {
+        when(runTokenService.generatePublishTaskToken(eq("t-1"), any(Instant.class))).thenReturn("tok");
+        when(tasksClient.createTask(anyString(), any(Task.class))).thenThrow(
+                new com.google.api.gax.rpc.AlreadyExistsException("exists", null,
+                        com.google.api.gax.grpc.GrpcStatusCode.of(io.grpc.Status.Code.ALREADY_EXISTS), false));
+
+        scheduler("https://b").schedule(PublishTask.confirm("t-1", FIRE, OffsetDateTime.now().plusMinutes(1), 2));
+
+        verify(tasksClient).createTask(anyString(), any(Task.class));
     }
 
     @Test

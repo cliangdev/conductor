@@ -230,11 +230,31 @@ class PublishTaskHandlerTest {
         verify(scheduler, never()).scheduleAfterCommit(any());
     }
 
+    /**
+     * The in-process sweep checked the row after this task was armed. Ending the chain here would leave the
+     * row to a sweep that, on Cloud Run, stops the moment the instance idles — which is how a Facebook post
+     * sat at HANDED_OFF for good. The task adopts the row's attempt and carries on, timed from the row's own
+     * last check so a second stale delivery names the same Cloud Task.
+     */
     @Test
-    void confirmOwnedByAnotherChain_isDropped_soChainsNeverFork() {
+    void confirmBehindTheRow_adoptsTheChainFromTheRowsAttempt() {
         OffsetDateTime fire = now.minusSeconds(10);
         PostPublishTarget target = row("youtube", PublishLane.NATIVE, PostPublishTargetState.HANDED_OFF, fire);
         target.setAttempts(5);
+        target.setUpdatedAt(now.minusSeconds(20));
+
+        handler.handle(PublishTask.confirm("t-1", fire, fire, 4), now);
+
+        verifyNoInteractions(confirmationPoller);
+        verify(scheduler).scheduleAfterCommit(
+                PublishTask.confirm("t-1", fire, now.minusSeconds(20).plus(PublishTaskHandler.CONFIRM_INTERVAL), 5));
+    }
+
+    @Test
+    void confirmAheadOfTheRow_isDropped() {
+        OffsetDateTime fire = now.minusSeconds(10);
+        PostPublishTarget target = row("youtube", PublishLane.NATIVE, PostPublishTargetState.HANDED_OFF, fire);
+        target.setAttempts(3);
 
         handler.handle(PublishTask.confirm("t-1", fire, fire, 4), now);
 
