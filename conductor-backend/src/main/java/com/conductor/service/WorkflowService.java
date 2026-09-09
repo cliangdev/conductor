@@ -97,6 +97,7 @@ public class WorkflowService {
         if (slug != null && workflowRepository.existsByProjectIdAndDefinitionSlug(projectId, slug)) {
             throw new BusinessException("A lifecycle workflow '" + slug + "' already exists in this project");
         }
+        rejectDuplicateRoute(projectId, null, request.getArea(), definitionNoun(request.getDefinition()));
 
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)
@@ -154,6 +155,7 @@ public class WorkflowService {
                         throw new BusinessException("A lifecycle workflow '" + slug + "' already exists in this project");
                     });
         }
+        rejectDuplicateRoute(projectId, workflowId, request.getArea(), definitionNoun(request.getDefinition()));
 
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)
@@ -205,6 +207,41 @@ public class WorkflowService {
     }
 
     /** The statechart slug (its {@code definition.id}) from a persisted definition, or null if absent. */
+    /**
+     * The sidebar and the Work Item list route key a lifecycle on {@code {area}/{plural noun}}. Two
+     * lifecycles on the same pair are two sidebar entries pointing at one page, and only the first is ever
+     * reachable — seen live when a second "Post" lifecycle was imported beside the marketing one and every
+     * Post on it vanished from the UI. Refused here, next to the slug check, with the fix in the message.
+     */
+    private void rejectDuplicateRoute(String projectId, String selfId, String area, String noun) {
+        if (area == null || area.isBlank() || noun == null || noun.isBlank()) {
+            return;
+        }
+        for (WorkflowDefinition other : workflowRepository.findByProjectId(projectId)) {
+            if (!other.isLifecycle() || other.getId().equals(selfId)) {
+                continue;
+            }
+            if (area.equalsIgnoreCase(other.getArea()) && noun.equalsIgnoreCase(extractNoun(other))) {
+                throw new BusinessException("A lifecycle workflow for " + area + "/" + noun + " already exists ('"
+                        + other.getName() + "'). Two lifecycles cannot share a sidebar entry; give this one a "
+                        + "different noun");
+            }
+        }
+    }
+
+    private static String definitionNoun(Map<String, Object> definition) {
+        if (definition == null) return null;
+        Object noun = definition.get("noun");
+        return noun == null ? null : noun.toString();
+    }
+
+    private static String extractNoun(WorkflowDefinition def) {
+        JsonNode definition = def.getDefinition();
+        if (definition == null) return null;
+        JsonNode noun = definition.get("noun");
+        return noun != null && noun.isTextual() ? noun.asText() : null;
+    }
+
     private static String extractSlug(WorkflowDefinition def) {
         JsonNode definition = def.getDefinition();
         if (definition == null) return null;
