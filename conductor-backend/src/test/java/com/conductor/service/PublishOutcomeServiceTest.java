@@ -399,6 +399,23 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(reloadConnection().getHealthStatus()).isEqualTo(ConnectionHealthService.UNHEALTHY);
     }
 
+    /** Meta calls every Graph error an OAuthException; only its token and permission codes mean reconnect. */
+    @Test
+    void aGraphFieldErrorLabelledOAuthExceptionIsNotAnAuthFailure() {
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "Facebook could not read post 1: 400 {\"error\":{\"message\":\"(#100) Tried accessing nonexisting field (status)\","
+                        + "\"type\":\"OAuthException\",\"code\":100}}"))
+                .isFalse();
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "Facebook rejected the publish: 400 {\"error\":{\"message\":\"Error validating access token: Session has expired\","
+                        + "\"type\":\"OAuthException\",\"code\":190}}"))
+                .isTrue();
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "Facebook rejected the publish: 400 {\"error\":{\"message\":\"(#200) Requires pages_manage_posts\","
+                        + "\"type\":\"OAuthException\",\"code\":200}}"))
+                .isTrue();
+    }
+
     /** TikTok's 403 for an unaudited app posting to a public account is the account owner's to fix, not a reconnect. */
     @Test
     void aPlatformPolicyRefusalPhrasedAs403IsNotAnAuthFailure() {

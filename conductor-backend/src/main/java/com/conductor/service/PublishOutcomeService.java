@@ -133,7 +133,9 @@ public class PublishOutcomeService {
             "\\b(401|403)\\b"
                     + "|unauthori[sz]ed|forbidden"
                     + "|invalid[ _-]?(grant|token|credential|oauth)"
-                    + "|oauth ?exception"
+                    // Meta labels EVERY Graph error "OAuthException", a bad field name included, so the word
+                    // alone proves nothing; its numeric codes do: 190 (token), 10 and 200-299 (permissions).
+                    + "|\\\"code\\\"\\s*:\\s*(190|10|2\\d\\d)\\b"
                     + "|(access[ _-]?token|credential|session|grant|permission|authorization)s?"
                     + "[^.;\\n]{0,40}?(expired|revoked|invalid|denied)"
                     + "|expired[ _-]?(access[ _-]?)?token"
@@ -780,6 +782,11 @@ public class PublishOutcomeService {
         targetRepository.save(target);
 
         recordDestinationAsset(target, permalink);
+        // The platform just accepted a publish with these credentials: whatever marked the connection
+        // unhealthy is over, and the Integrations page should stop asking for a reconnect.
+        if (target.getConnectionId() != null) {
+            connectionHealthService.markHealthy(target.getConnectionId());
+        }
         log.info("Target {} published on {} (platform post {})",
                 target.getId(), target.getPlatform(), target.getPlatformPostId());
         rollUp(target);
