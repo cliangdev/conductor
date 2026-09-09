@@ -12,7 +12,7 @@ import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
-import { apiDelete, apiPatch, apiErrorMessage } from '@/lib/api'
+import { apiDelete, apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { settingsBreadcrumbs } from '@/lib/navigation'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { Project } from '@/types'
@@ -30,6 +30,13 @@ export default function GeneralSettingsPage() {
   const [name, setName] = useState(activeProject?.name ?? '')
   const [saving, setSaving] = useState(false)
 
+  // Publishing: the host TikTok is handed for photo-post images. Loaded separately from the
+  // workspace record because it lives on project settings, and shown to everyone so a non-admin
+  // can see whether it is set; only an admin can change it.
+  const [mediaHost, setMediaHost] = useState('')
+  const [savedMediaHost, setSavedMediaHost] = useState('')
+  const [mediaHostSaving, setMediaHostSaving] = useState(false)
+
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [dangerError, setDangerError] = useState<string | null>(null)
@@ -38,6 +45,51 @@ export default function GeneralSettingsPage() {
   useEffect(() => {
     if (activeProject?.id === projectId) setName(activeProject.name)
   }, [activeProject?.id, activeProject?.name, projectId])
+
+  useEffect(() => {
+    if (!accessToken) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const settings = await apiGet<{ publicMediaBaseUrl?: string | null }>(
+          `/api/v1/projects/${projectId}/settings`,
+          accessToken,
+        )
+        if (cancelled) return
+        const current = settings?.publicMediaBaseUrl ?? ''
+        setMediaHost(current)
+        setSavedMediaHost(current)
+      } catch {
+        // The field simply starts empty; saving still works and reports its own errors.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, projectId])
+
+  const mediaHostDirty = mediaHost.trim() !== savedMediaHost
+
+  async function handleSaveMediaHost(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !mediaHostDirty || !isAdmin) return
+    setMediaHostSaving(true)
+    try {
+      const updated = await apiPatch<{ publicMediaBaseUrl?: string | null }>(
+        `/api/v1/projects/${projectId}/settings`,
+        { publicMediaBaseUrl: mediaHost.trim() },
+        accessToken,
+      )
+      const current = updated?.publicMediaBaseUrl ?? ''
+      setMediaHost(current)
+      setSavedMediaHost(current)
+      showToast(current ? 'Public media host saved' : 'Public media host cleared')
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Failed to save the public media host.'), 'error')
+    } finally {
+      setMediaHostSaving(false)
+    }
+  }
 
   const isAdmin = can('workspace.manage')
   const dirty = name.trim() !== '' && name.trim() !== (activeProject?.name ?? '')
@@ -118,6 +170,35 @@ export default function GeneralSettingsPage() {
           {isAdmin && (
             <Button type="submit" size="sm" disabled={!dirty || saving}>
               {saving ? 'Saving…' : 'Save'}
+            </Button>
+          )}
+        </form>
+      </div>
+
+      <div>
+        <h2 className="text-sm font-semibold text-foreground mb-1">Publishing</h2>
+        <p className="text-xs text-muted-foreground mb-3">
+          TikTok fetches the images of a photo post itself, and only from a host you own and have verified in
+          the TikTok developer portal. Enter that host and Conductor hands TikTok links under it at{' '}
+          <code>/media/</code>, which must proxy to Conductor&apos;s storage. Leave it empty and TikTok photo
+          posts are refused; videos are unaffected.
+        </p>
+        <form onSubmit={handleSaveMediaHost} className="space-y-4">
+          <div>
+            <Label htmlFor="public-media-host">Public media host</Label>
+            <Input
+              id="public-media-host"
+              type="url"
+              placeholder="https://rexipe.io"
+              value={mediaHost}
+              onChange={(e) => setMediaHost(e.target.value)}
+              disabled={!isAdmin}
+              className="max-w-sm"
+            />
+          </div>
+          {isAdmin && (
+            <Button type="submit" size="sm" disabled={!mediaHostDirty || mediaHostSaving}>
+              {mediaHostSaving ? 'Saving…' : 'Save host'}
             </Button>
           )}
         </form>

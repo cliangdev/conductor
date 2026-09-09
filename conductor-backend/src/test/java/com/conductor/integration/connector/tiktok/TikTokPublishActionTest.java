@@ -632,6 +632,38 @@ class TikTokPublishActionTest {
         assertThat(postInfo.getValue().videoCoverTimestampMs()).isEqualTo(1500L);
     }
 
+    /**
+     * TikTok fetches photo-post images itself and only from a host the app owner has verified. With the
+     * workspace's public media host in the input, every image URL handed to TikTok is that host's /media/
+     * path carrying the storage link encoded; without it, the storage link goes out as is.
+     */
+    @Test
+    void photoPost_withAPublicMediaHost_handsTikTokThatHostNotTheStorageLink() {
+        givenPhotos("photo-a", "photo-b");
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(eq(ACCESS_TOKEN), eq(PUBLISH_ID)))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280009", null, null));
+        Map<String, Object> input = photoInput("photo-a", "photo-b");
+        input.put(com.conductor.service.PublishInputBuilder.INPUT_PUBLIC_MEDIA_BASE_URL, "https://rexipe.io/");
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isTrue();
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<String>> urls = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(client).initPhotoPost(anyString(), any(), urls.capture(), anyInt());
+        assertThat(urls.getValue()).hasSize(2).allSatisfy(u -> assertThat(u).startsWith("https://rexipe.io/media/"));
+        String encoded = urls.getValue().get(0).substring("https://rexipe.io/media/".length());
+        assertThat(new String(java.util.Base64.getUrlDecoder().decode(encoded), java.nio.charset.StandardCharsets.UTF_8))
+                .isEqualTo("https://signed/photo-a");
+    }
+
+    @Test
+    void publicMediaUrl_isTheStorageLinkItselfWithoutAHost() {
+        assertThat(TikTokPublishAction.publicMediaUrl("https://signed/x", null)).isEqualTo("https://signed/x");
+        assertThat(TikTokPublishAction.publicMediaUrl("https://signed/x", "  ")).isEqualTo("https://signed/x");
+    }
+
     // --- [new] TikTok's new photo-post options: auto_add_music and photo_cover_index ---
 
     @Test

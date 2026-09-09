@@ -271,10 +271,14 @@ A carousel of mixed aspect ratios is a warning, not a refusal: Instagram will pu
 item to the first one's shape, which may well be what was wanted. Selecting a format a platform doesn't
 offer (`FORMAT_UNSUPPORTED`) is refused outright, at selection rather than at the gate.
 
-> **TikTok photo posts need one piece of setup.** TikTok has no chunked upload for images, so a photo
-> post hands over URLs for TikTok to fetch — which requires the storage host to be registered as a
-> verified URL prefix for the app in the TikTok developer portal. Without it every photo post fails with
-> a message naming this; video posts are unaffected, since they upload their bytes.
+> **TikTok photo posts need one piece of setup.** TikTok has no upload for images: a photo post hands over
+> URLs and TikTok fetches them, and it fetches only from a host whose ownership the app's owner has
+> verified — which Conductor's storage host can never be. The workspace therefore sets a **public media
+> host** it owns (Settings → General → Publishing, e.g. `https://rexipe.io`), verified once in the TikTok
+> developer portal, and puts a proxy behind `{host}/media/` that decodes the storage link carried in the
+> path, checks it points at Conductor's bucket, and streams the bytes. TikTok is then handed
+> `{host}/media/…` links. Without the setting every photo post fails naming this; video posts are
+> unaffected, since they upload their bytes.
 
 ## Options
 

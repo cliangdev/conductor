@@ -75,6 +75,24 @@ class ProjectSettingsServiceTest {
     }
 
     @Test
+    void updateSettingsStoresAnHttpsOriginAsThePublicMediaHost_andRefusesAnythingElse() {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+        when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ProjectSettingsResponse response = projectSettingsService.updateSettings(
+                PROJECT_ID, null, null, null, null, null, null, "https://rexipe.io/", adminUser);
+        assertThat(response.getPublicMediaBaseUrl()).isEqualTo("https://rexipe.io");
+
+        assertThatThrownBy(() -> projectSettingsService.updateSettings(
+                PROJECT_ID, null, null, null, null, null, null, "http://rexipe.io", adminUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("https");
+        assertThatThrownBy(() -> projectSettingsService.updateSettings(
+                PROJECT_ID, null, null, null, null, null, null, "https://rexipe.io/media", adminUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("no path");
+    }
+
+    @Test
     void getSettingsReturnsMaskedUrl() {
         ProjectSettings settings = new ProjectSettings();
         settings.setProjectId(PROJECT_ID);

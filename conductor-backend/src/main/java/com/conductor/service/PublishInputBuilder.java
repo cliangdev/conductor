@@ -37,15 +37,26 @@ public class PublishInputBuilder {
     public static final String INPUT_ASSET_IDS = "asset_ids";
     /** The target's {@link PostFormat}, lowercase: {@code feed}, {@code reel} or {@code story}. */
     public static final String INPUT_FORMAT = "format";
+    /** The workspace's verified public media host, for platforms that fetch media by URL. */
+    public static final String INPUT_PUBLIC_MEDIA_BASE_URL = "public_media_base_url";
     private static final Logger log = LoggerFactory.getLogger(PublishInputBuilder.class);
     private static final ObjectMapper OPTIONS_MAPPER = new ObjectMapper();
 
     private final PublishPlatformRegistry platformRegistry;
     private final PublishTargetMediaResolver mediaResolver;
+    private final com.conductor.repository.ProjectSettingsRepository projectSettingsRepository;
 
+    /** Without project settings: no public media host is ever handed to a platform. */
     public PublishInputBuilder(PublishPlatformRegistry platformRegistry, PublishTargetMediaResolver mediaResolver) {
+        this(platformRegistry, mediaResolver, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public PublishInputBuilder(PublishPlatformRegistry platformRegistry, PublishTargetMediaResolver mediaResolver,
+                               com.conductor.repository.ProjectSettingsRepository projectSettingsRepository) {
         this.platformRegistry = platformRegistry;
         this.mediaResolver = mediaResolver;
+        this.projectSettingsRepository = projectSettingsRepository;
     }
 
     /**
@@ -88,6 +99,7 @@ public class PublishInputBuilder {
                 input.putAll(publishOptions(target, platform)));
         input.put("work_item_id", post.getId());
         input.put("target_id", target.getId());
+        publicMediaBaseUrl(post).ifPresent(base -> input.put(INPUT_PUBLIC_MEDIA_BASE_URL, base));
         return input;
     }
 
@@ -118,5 +130,14 @@ public class PublishInputBuilder {
             }
         });
         return mapped;
+    }
+
+    private java.util.Optional<String> publicMediaBaseUrl(WorkItem post) {
+        if (projectSettingsRepository == null || post.getProject() == null) {
+            return java.util.Optional.empty();
+        }
+        return projectSettingsRepository.findByProjectId(post.getProject().getId())
+                .map(com.conductor.entity.ProjectSettings::getPublicMediaBaseUrl)
+                .filter(base -> base != null && !base.isBlank());
     }
 }

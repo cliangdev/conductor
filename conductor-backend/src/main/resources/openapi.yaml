@@ -7249,6 +7249,12 @@ components:
           minimum: 1
           maximum: 1440
           nullable: true
+        publicMediaBaseUrl:
+          type: string
+          nullable: true
+          description: >
+            A host the workspace owns and has verified with platforms that fetch media by URL (TikTok photo
+            posts), e.g. https://rexipe.io, fronting Conductor's storage at {base}/media/. Empty clears it.
 
     ProjectSettingsResponse:
       type: object
@@ -7267,6 +7273,9 @@ components:
           type: boolean
         knowledgeIngestIntervalMinutes:
           type: integer
+        publicMediaBaseUrl:
+          type: string
+          nullable: true
 
     DiscordTestResponse:
       type: object

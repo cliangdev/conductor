@@ -101,6 +101,26 @@ describe('GeneralSettingsPage', () => {
     expect(mockShowToast).toHaveBeenCalledWith('Workspace renamed')
   })
 
+  it('admin can set the public media host TikTok is handed for photo posts', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue({ publicMediaBaseUrl: null })
+    vi.mocked(api.apiPatch).mockResolvedValue({ publicMediaBaseUrl: 'https://rexipe.io' })
+
+    render(<GeneralSettingsPage />)
+    const input = await screen.findByLabelText(/public media host/i)
+    fireEvent.change(input, { target: { value: 'https://rexipe.io/' } })
+    fireEvent.click(screen.getByRole('button', { name: /save host/i }))
+
+    await waitFor(() => {
+      expect(api.apiPatch).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/settings',
+        { publicMediaBaseUrl: 'https://rexipe.io/' },
+        'test-token',
+      )
+    })
+    expect(mockShowToast).toHaveBeenCalledWith('Public media host saved')
+    expect((input as HTMLInputElement).value).toBe('https://rexipe.io')
+  })
+
   it('admin sees both Leave and Delete in the danger zone', async () => {
     render(<GeneralSettingsPage />)
     await waitFor(() => {
