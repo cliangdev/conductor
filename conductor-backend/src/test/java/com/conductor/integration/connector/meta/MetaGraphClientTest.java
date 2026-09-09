@@ -238,7 +238,8 @@ class MetaGraphClientTest {
         MetaGraphClient.VideoStatus status = client.readVideoStatus("vid-9", "page-token");
 
         assertThat(status.published()).isTrue();
-        assertThat(status.permalink()).contains("/reel/9");
+        // Graph hands a Reel's permalink back as a bare path; it must come out as a link that leaves Conductor.
+        assertThat(status.permalink()).isEqualTo("https://www.facebook.com/reel/9");
     }
 
     // ---- listing Pages: the nested-field syntax has braces, which the URI builder must encode ----

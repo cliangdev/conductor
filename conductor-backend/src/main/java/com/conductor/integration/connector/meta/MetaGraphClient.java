@@ -387,7 +387,8 @@ public class MetaGraphClient {
         boolean published = (statusCode != null && ("ready".equalsIgnoreCase(statusCode)
                 || "published".equalsIgnoreCase(statusCode)))
                 || (body.hasNonNull("published") && body.path("published").asBoolean(false));
-        String permalink = body.path("permalink_url").isTextual() ? body.path("permalink_url").asText() : null;
+        String permalink = absoluteFacebookUrl(
+                body.path("permalink_url").isTextual() ? body.path("permalink_url").asText() : null);
         String id = body.path("id").isTextual() ? body.path("id").asText() : videoId;
         return new VideoStatus(id, published, permalink);
     }
@@ -408,8 +409,20 @@ public class MetaGraphClient {
         }
         return new PagePost(body.id() != null ? body.id() : postId,
                 Boolean.TRUE.equals(body.isPublished()),
-                body.permalinkUrl(),
+                absoluteFacebookUrl(body.permalinkUrl()),
                 body.scheduledPublishTime() != null ? Instant.ofEpochSecond(body.scheduledPublishTime()) : null);
+    }
+
+    /**
+     * Graph answers a Reel's {@code permalink_url} as a bare path ({@code /reel/123/}) where a Page post's
+     * is absolute. A path stored as the row's permalink renders as a link into Conductor itself, so it is
+     * anchored to facebook.com here, once, where every permalink is read.
+     */
+    static String absoluteFacebookUrl(String permalink) {
+        if (permalink == null || permalink.isBlank()) {
+            return null;
+        }
+        return permalink.startsWith("/") ? "https://www.facebook.com" + permalink : permalink;
     }
 
     /** One published post's counts, as Graph reports them; {@code unavailable} when Graph no longer knows the id. */
