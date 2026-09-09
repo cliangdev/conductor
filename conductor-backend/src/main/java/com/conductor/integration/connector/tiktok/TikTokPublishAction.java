@@ -121,6 +121,15 @@ public class TikTokPublishAction {
     static final String OUTPUT_POST_ID = "post_id";
     static final String OUTPUT_PERMALINK = "permalink";
     static final String OUTPUT_PUBLISH_ID = "publish_id";
+    /**
+     * Set when the content reached the creator's inbox rather than their profile: TikTok refused a Direct
+     * Post because this app has not passed its audit and the account is not private, and the inbox upload
+     * — which carries no such restriction — was used instead. The destination then waits on the creator
+     * to finish the post in the TikTok app, exactly like a manual destination; {@link #OUTPUT_HANDOFF_NOTE}
+     * tells them so.
+     */
+    public static final String OUTPUT_AWAITING_HUMAN = "awaiting_human";
+    public static final String OUTPUT_HANDOFF_NOTE = "handoff_note";
 
     private static final String UPLOAD_STATUS_UPLOADED = "UPLOADED";
     private static final String ASSET_KIND_FILE = "file";
@@ -281,7 +290,20 @@ public class TikTokPublishAction {
 
         UploadCheckpoint checkpoint = resumableCheckpoint(idempotencyKey, video, plan);
         if (checkpoint == null) {
-            UploadSession session = client.initFileUpload(accessToken, buildPostInfo(input, ctx), plan);
+            UploadSession session;
+            try {
+                session = client.initFileUpload(accessToken, buildPostInfo(input, ctx), plan);
+            } catch (TikTokApiException e) {
+                if (!TikTokClient.ERROR_UNAUDITED_PRIVATE_ONLY.equalsIgnoreCase(e.code())) {
+                    throw e;
+                }
+                // Pre-audit, TikTok lets an app post directly only to private accounts — and a Business
+                // account can never be private. The inbox upload is the path TikTok leaves open: the
+                // video lands as a draft in the creator's inbox and they finish it in the app.
+                log.info("TikTok refused a direct post ({}); sending the video to the creator's inbox instead",
+                        e.code());
+                session = client.initInboxUpload(accessToken, plan);
+            }
             checkpoint = new UploadCheckpoint(video.assetId(), session.publishId(), session.uploadUrl(),
                     plan.videoSize(), plan.chunkSize(), plan.totalChunkCount(), 0);
             saveCheckpoint(idempotencyKey, checkpoint);
@@ -328,7 +350,7 @@ public class TikTokPublishAction {
         for (int attempt = 1; attempt <= maxPollAttempts; attempt++) {
             PublishStatus status = client.fetchPublishStatus(accessToken, publishId);
             lastStatus = status.status();
-            if (status.complete()) {
+            if (status.complete() || status.sentToInbox()) {
                 return status;
             }
             if (status.failed()) {
@@ -357,6 +379,15 @@ public class TikTokPublishAction {
     private Map<String, Object> publishOutput(String publishId, PublishStatus status, ConnectionContext ctx) {
         Map<String, Object> output = new LinkedHashMap<>();
         output.put(OUTPUT_PUBLISH_ID, publishId);
+        if (status.sentToInbox()) {
+            String username = ctx == null ? null : text(ctx.configValue(TikTokConnector.CONFIG_CREATOR_USERNAME));
+            output.put(OUTPUT_AWAITING_HUMAN, Boolean.TRUE);
+            output.put(OUTPUT_HANDOFF_NOTE, "TikTok will not let this app post directly until it passes "
+                    + "TikTok's audit (until then only private accounts qualify, and a Business account cannot "
+                    + "be private). The video is waiting in " + (username == null ? "the creator's" : "@" + username + "'s")
+                    + " TikTok inbox: open TikTok, finish the post there, then record its link here.");
+            return output;
+        }
         if (status.postId() != null && !status.postId().isBlank()) {
             output.put(OUTPUT_POST_ID, status.postId());
         }
@@ -410,7 +441,13 @@ public class TikTokPublishAction {
             try {
                 publishId = client.initPhotoPost(accessToken, buildPhotoPostInfo(input, ctx), urls, coverIndex);
             } catch (TikTokApiException e) {
-                if (TikTokClient.ERROR_URL_OWNERSHIP_UNVERIFIED.equalsIgnoreCase(e.code())) {
+                if (TikTokClient.ERROR_UNAUDITED_PRIVATE_ONLY.equalsIgnoreCase(e.code())) {
+                    // Same pre-audit rule as for video; a photo post has an inbox mode of its own.
+                    log.info("TikTok refused a direct photo post ({}); sending it to the creator's inbox instead",
+                            e.code());
+                    publishId = client.initPhotoPost(accessToken, buildPhotoPostInfo(input, ctx), urls, coverIndex,
+                            TikTokClient.POST_MODE_MEDIA_UPLOAD);
+                } else if (TikTokClient.ERROR_URL_OWNERSHIP_UNVERIFIED.equalsIgnoreCase(e.code())) {
                     // Permanent, and not the creator's fault: photo posts are PULL_FROM_URL only, so this
                     // app has to have the media host registered as a verified URL prefix. Retrying cannot
                     // help, and the message has to name the one thing that does.
@@ -418,8 +455,9 @@ public class TikTokPublishAction {
                             + "the media host is not a verified URL prefix for this TikTok app. Add the "
                             + "storage host under URL properties in the TikTok developer portal, then retry. "
                             + "(Video posts are unaffected — they upload their bytes.)");
+                } else {
+                    throw e;
                 }
-                throw e;
             }
             saveCheckpoint(idempotencyKey, UploadCheckpoint.forPhotoPost(publishId,
                     photos.stream().map(Asset::getId).toList()));

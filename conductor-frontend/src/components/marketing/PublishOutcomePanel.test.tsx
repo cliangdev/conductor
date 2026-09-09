@@ -324,6 +324,22 @@ describe('PublishOutcomePanel', () => {
     expect(screen.getByText('Post it now')).toBeInTheDocument()
   })
 
+  it('treats an automated destination the platform handed back as waiting on the reader', async () => {
+    currentTargets = [
+      manualTarget('AWAITING_MANUAL', {
+        platformAccountLabel: 'Rexipe',
+        lane: 'APP_MANAGED',
+        connectionId: 'conn-tiktok',
+        errorMessage: "The video is waiting in @rexipe's TikTok inbox: finish the post there, then record its link here.",
+      }),
+    ]
+    renderPanel()
+
+    expect(await screen.findByText(/waiting in @rexipe's TikTok inbox/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Mark published/i })).toBeInTheDocument()
+    expect(screen.queryByText(/post it yourself/i)).not.toBeInTheDocument()
+  })
+
   it('shows the copy and the file count this destination actually needs', async () => {
     currentTargets = [
       manualTarget('AWAITING_MANUAL', {

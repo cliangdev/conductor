@@ -884,7 +884,7 @@ const TOOLS = [
   },
   {
     name: 'complete_manual_publish',
-    description: 'Record that a MANUAL-lane target (state AWAITING_MANUAL in list_publish_targets) was posted by hand, storing its live URL. Refused for an automated target, whose poller reports the real outcome. Returns the target as stored.',
+    description: 'Record that a target in state AWAITING_MANUAL (a MANUAL-lane one, or an automated one the platform handed back to a person, e.g. TikTok\'s pre-audit inbox upload) was posted by hand, storing its live URL. Refused for any other automated target, whose poller reports the real outcome. Returns the target as stored.',
     inputSchema: {
       type: 'object',
       properties: {

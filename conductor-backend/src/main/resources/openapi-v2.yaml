@@ -3717,8 +3717,9 @@ components:
           type: string
           description: >-
             One of PENDING, HANDED_OFF, PUBLISHING, AWAITING_MANUAL, PUBLISHED, FAILED, REVOKED.
-            AWAITING_MANUAL is a MANUAL target whose fire time has passed and which is waiting on a person
-            to publish it by hand.
+            AWAITING_MANUAL is a target waiting on a person: a MANUAL one whose fire time has passed, or an
+            automated one the platform handed back (TikTok's pre-audit inbox upload, explained in
+            errorMessage). Either is finished with the manual-publish call.
         platformPostId:
           type: string
           nullable: true

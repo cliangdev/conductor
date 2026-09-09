@@ -164,6 +164,14 @@ public class PublishOutcomeService {
             PostPublishTargetState.AWAITING_MANUAL);
 
     /**
+     * Output keys a connector sets when the platform accepted the content but did not publish it — it
+     * handed the last step to a person (TikTok's pre-audit inbox upload). The row then waits like a manual
+     * destination: {@code AWAITING_MANUAL}, the note shown in place of an error, the link recorded by hand.
+     */
+    static final String AWAITING_HUMAN_OUTPUT_KEY = "awaiting_human";
+    static final String HANDOFF_NOTE_OUTPUT_KEY = "handoff_note";
+
+    /**
      * What a stranded row records. Every word is load-bearing: the dispatch reached the platform, so the
      * post may be live, and a human has to look before re-firing it.
      */
@@ -292,6 +300,9 @@ public class PublishOutcomeService {
             return applyFailure(target, message, isPermanentAuthFailure(message));
         }
         Map<String, Object> output = result.output() == null ? Map.of() : result.output();
+        if (Boolean.TRUE.equals(output.get(AWAITING_HUMAN_OUTPUT_KEY))) {
+            return applyAwaitingHuman(target, stringValue(output, HANDOFF_NOTE_OUTPUT_KEY));
+        }
         PublishPlatform platform = platformFor(target.getPlatform());
         String platformPostId = platform == null ? null : stringValue(output, platform.publish().postIdOutputKey());
         return applySuccess(target, platformPostId, stringValue(output, PERMALINK_OUTPUT_KEY));
@@ -376,7 +387,9 @@ public class PublishOutcomeService {
                 .filter(t -> t.getWorkItem() != null && post.getId().equals(t.getWorkItem().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Publish target not found"));
 
-        if (target.getLane() != PublishLane.MANUAL) {
+        // An automated destination qualifies only once the platform itself handed the last step to a person
+        // (AWAITING_MANUAL); otherwise its outcome is the platform's to report, not a human's to assert.
+        if (target.getLane() != PublishLane.MANUAL && target.getState() != PostPublishTargetState.AWAITING_MANUAL) {
             throw new BusinessException("This destination publishes automatically, so it cannot be marked"
                     + " published by hand — its outcome is recorded when the platform reports it.");
         }
@@ -755,6 +768,25 @@ public class PublishOutcomeService {
         return errorMessage != null
                 && PERMANENT_AUTH_FAILURE.matcher(errorMessage).find()
                 && !PLATFORM_POLICY_REFUSAL.matcher(errorMessage).find();
+    }
+
+    /**
+     * The platform took the content but left publishing to a person. Not a failure — nothing is wrong and
+     * nothing will be retried — and not a success either: no post exists yet. The row parks in
+     * {@code AWAITING_MANUAL}, which the roll-up already counts as in-flight, carrying the connector's note
+     * where an error would go so the person reading the Post knows what to do.
+     */
+    private boolean applyAwaitingHuman(PostPublishTarget target, String note) {
+        if (target.getState() == PostPublishTargetState.REVOKED
+                || target.getState() == PostPublishTargetState.PUBLISHED) {
+            log.warn("Target {} is {}; ignoring a late hand-off to a person", target.getId(), target.getState());
+            return false;
+        }
+        target.setState(PostPublishTargetState.AWAITING_MANUAL);
+        target.setErrorMessage(note);
+        targetRepository.save(target);
+        log.info("Target {} on {} is waiting on a person to finish it: {}", target.getId(), target.getPlatform(), note);
+        return true;
     }
 
     private boolean applySuccess(PostPublishTarget target, String platformPostId, String permalink) {

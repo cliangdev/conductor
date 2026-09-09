@@ -119,9 +119,13 @@ function isManual(target: PublishOutcome): boolean {
   return target.lane === 'MANUAL'
 }
 
-/** A manual destination whose fire time has passed: it is waiting on the person reading this. */
+/**
+ * A destination waiting on the person reading this: a manual one whose fire time has passed, or an
+ * automated one the platform handed back (TikTok's pre-audit inbox upload). Either way the next step is a
+ * human's, and the link they record is the outcome.
+ */
 function awaitsAHuman(target: PublishOutcome): boolean {
-  return isManual(target) && target.state === 'AWAITING_MANUAL'
+  return target.state === 'AWAITING_MANUAL'
 }
 
 /** Strip the scheme so a permalink reads as a destination rather than a wall of URL. */
@@ -361,7 +365,10 @@ function OutcomeRow({ target, open, onOpen, onCancel, onComplete }: OutcomeRowPr
           {awaiting && !open && (
             <>
               <p className="mt-0.5 ml-3.5 text-xs text-muted-foreground">
-                Nothing is publishing this one — post it yourself, then record the link.
+                {isManual(target)
+                  ? 'Nothing is publishing this one — post it yourself, then record the link.'
+                  : (target.errorMessage ??
+                    'The platform handed this one to a person — finish it there, then record the link.')}
               </p>
               {/* What to post, not just that something must be posted: this destination may carry copy
                   and media of its own, and a person told only "post it" would go looking for them. */}
@@ -379,7 +386,7 @@ function OutcomeRow({ target, open, onOpen, onCancel, onComplete }: OutcomeRowPr
               )}
             </>
           )}
-          {target.errorMessage && (
+          {target.errorMessage && !awaiting && (
             <p className={cn('mt-0.5 ml-3.5 text-xs', statusHueClasses('red').text)}>
               {target.errorMessage}
             </p>
