@@ -428,6 +428,12 @@ export function ComposePostModal({
                   const key = targetKey(option)
                   const unhealthy = option.healthStatus === 'UNHEALTHY'
                   const checked = selected.has(key)
+                  // Same rule as the Post page's picker: an account ticked on this platform hides the
+                  // by-hand row unless that row is itself ticked.
+                  const accountPicked = list.some((o) => o.lane !== 'MANUAL' && selected.has(targetKey(o)))
+                  if (option.lane === 'MANUAL' && !checked && accountPicked) {
+                    return null
+                  }
                   return (
                     <div key={key}>
                       <label className="flex items-center gap-2 text-sm">

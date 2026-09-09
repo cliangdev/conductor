@@ -188,6 +188,33 @@ function lastSelectionFor(platform: string) {
   return putBodies.at(-1)!.targets.find((t) => t.platform === platform)!
 }
 
+describe('PostTargetPicker — the by-hand row', () => {
+  it('is hidden once an account on the same platform is selected, and back when none is', async () => {
+    availableTargets = [
+      option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' }),
+      manualOption('facebook'),
+    ]
+    selectedTargets = [selection(option({ platform: 'facebook', connectionId: 'conn-meta' }))]
+    renderPicker({ assets: POST_ASSETS, caption: 'c' })
+    await loaded()
+
+    expect(screen.getByText('Acme Page')).toBeInTheDocument()
+    expect(screen.queryByText(manualOption('facebook').label)).not.toBeInTheDocument()
+  })
+
+  it('stays while nothing automated is selected', async () => {
+    availableTargets = [
+      option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' }),
+      manualOption('facebook'),
+    ]
+    selectedTargets = []
+    renderPicker({ assets: POST_ASSETS, caption: 'c' })
+    await loaded()
+
+    expect(screen.getByText(manualOption('facebook').label)).toBeInTheDocument()
+  })
+})
+
 describe('PostTargetPicker — per-destination caption and media', () => {
   it('sends a caption written for one destination, and nothing for the others', async () => {
     availableTargets = [

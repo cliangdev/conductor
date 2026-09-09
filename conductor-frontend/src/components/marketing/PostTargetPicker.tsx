@@ -174,6 +174,11 @@ function isManual(option: PublishTargetOption | SelectedPublishTarget): boolean 
   return option.lane === 'MANUAL'
 }
 
+/** Whether any automated account in this platform group is currently selected. */
+function accountPicked(targets: PublishTargetOption[], selectedKeys: Set<string>): boolean {
+  return targets.some((o) => !isManual(o) && selectedKeys.has(targetKey(o.platform, o.connectionId)))
+}
+
 function isUnhealthy(option: PublishTargetOption): boolean {
   return option.healthStatus === 'UNHEALTHY'
 }
@@ -682,6 +687,13 @@ export function PostTargetPicker({
                 </div>
                 {group.targets.map((option) => {
                   const key = targetKey(option.platform, option.connectionId)
+                  // Once an account on this platform is ticked, the by-hand row is noise: read as a
+                  // duplicate by almost everyone, and the rare "Page by API plus a personal profile by
+                  // hand" is still reachable by ticking the by-hand row first. A ticked by-hand row
+                  // always stays, so it can be unticked.
+                  if (isManual(option) && !selectedKeys.has(key) && accountPicked(group.targets, selectedKeys)) {
+                    return null
+                  }
                   return (
                     <TargetRow
                       key={key}

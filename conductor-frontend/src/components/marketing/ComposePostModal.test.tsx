@@ -113,8 +113,9 @@ describe('ComposePostModal', () => {
     await screen.findByLabelText('@acme')
 
     await userEvent.type(screen.getByLabelText('Caption'), 'Launch day!\nMore below.')
-    await userEvent.click(screen.getByLabelText('@acme'))
+    // By-hand first: once an account on the platform is ticked, an unticked by-hand row is hidden.
     await userEvent.click(screen.getByLabelText('Instagram (manual)'))
+    await userEvent.click(screen.getByLabelText('@acme'))
     // An unhealthy account is offered disabled rather than hidden.
     expect(screen.getByLabelText('Acme Page')).toBeDisabled()
     await userEvent.selectOptions(screen.getByLabelText('Time zone'), 'UTC')
@@ -194,6 +195,18 @@ describe('ComposePostModal', () => {
     await screen.findByLabelText('Instagram (manual)')
     expect(screen.getByText(/No accounts are connected yet/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Integrations' })).toHaveAttribute('href', '/app/projects/project-1/integrations')
+  })
+
+  it('hides the by-hand row for a platform once one of its accounts is ticked', async () => {
+    renderModal()
+    await screen.findByLabelText('@acme')
+    expect(screen.getByLabelText('Instagram (manual)')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByLabelText('@acme'))
+    expect(screen.queryByLabelText('Instagram (manual)')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByLabelText('@acme'))
+    expect(screen.getByLabelText('Instagram (manual)')).toBeInTheDocument()
   })
 
   it('says nothing about connecting when an account is connected', async () => {
