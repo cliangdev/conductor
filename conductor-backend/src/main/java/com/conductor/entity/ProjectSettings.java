@@ -36,6 +36,14 @@ public class ProjectSettings {
     @Column(name = "knowledge_enabled", nullable = false)
     private boolean knowledgeEnabled = false;
 
+    /**
+     * A host the workspace owns, verified with platforms that fetch media by URL (TikTok's photo posts),
+     * fronting Conductor's storage: {@code https://rexipe.io}. TikTok is handed
+     * {@code {base}/media/{encoded storage link}} instead of the storage link itself, which it refuses.
+     */
+    @Column(name = "public_media_base_url", length = 512)
+    private String publicMediaBaseUrl;
+
     /** Minutes between {@link com.conductor.knowledge.KnowledgeIngestScheduler} dispatch cycles for a
      *  newly-accumulating lane -- see {@code KnowledgeIngestionService}'s idle-lane stamping. */
     @Column(name = "knowledge_ingest_interval_minutes", nullable = false)
@@ -93,4 +101,7 @@ public class ProjectSettings {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getPublicMediaBaseUrl() { return publicMediaBaseUrl; }
+    public void setPublicMediaBaseUrl(String publicMediaBaseUrl) { this.publicMediaBaseUrl = publicMediaBaseUrl; }
 }

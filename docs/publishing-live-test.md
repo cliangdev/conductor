@@ -51,10 +51,11 @@ Keep the workspace to the people doing the test. Every automated destination pub
    **Post it now** with an explanation, the creator opens TikTok, finishes the draft there, and records
    the link on the Post with **Mark published**. Direct publishing starts working once the app passes
    TikTok's audit (or, for a private personal account, immediately).
-4. **Photo posts need a verified URL prefix.** TikTok fetches images by URL, so the storage host
-   (the signed-URL host of `GCP_STORAGE_BUCKET_NAME`) must be registered under *URL properties* in the
-   developer portal. Without it every photo post fails with a message naming this; video posts upload
-   their bytes and are unaffected.
+4. **Photo posts need a public media host.** TikTok fetches images by URL and only from a domain you have
+   verified under *URL properties* in the developer portal — Conductor's storage host cannot be. Verify
+   your own domain there (one DNS record), put a proxy behind `https://<your domain>/media/` (see
+   `docs/publishing.md`), and enter the origin under Settings → General → Publishing. Without it every
+   photo post fails with a message naming this; video posts upload their bytes and are unaffected.
 
 ## Connect the accounts in Conductor
 

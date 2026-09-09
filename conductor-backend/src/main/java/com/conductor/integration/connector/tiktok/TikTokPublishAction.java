@@ -1,6 +1,7 @@
 package com.conductor.integration.connector.tiktok;
 
 import com.conductor.entity.Asset;
+import com.conductor.service.PublishInputBuilder;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.integration.ActionResult;
 import com.conductor.integration.ConnectionContext;
@@ -116,7 +117,8 @@ public class TikTokPublishAction {
      * Signed-read lifetime for a photo post's images. TikTok fetches them during the init call, so this
      * only has to outlive that one request with room for a slow fetch.
      */
-    private static final int PHOTO_URL_EXPIRY_MINUTES = 60;
+    /** TikTok may take up to an hour after init to fetch; the link outlives that with room to spare. */
+    private static final int PHOTO_URL_EXPIRY_MINUTES = 90;
 
     static final String OUTPUT_POST_ID = "post_id";
     static final String OUTPUT_PERMALINK = "permalink";
@@ -434,8 +436,9 @@ public class TikTokPublishAction {
                 : null;
 
         if (publishId == null) {
+            String publicBase = text(input.get(PublishInputBuilder.INPUT_PUBLIC_MEDIA_BASE_URL));
             List<String> urls = photos.stream()
-                    .map(photo -> signedUrl(photo))
+                    .map(photo -> publicMediaUrl(signedUrl(photo), publicBase))
                     .toList();
             int coverIndex = resolvePhotoCoverIndex(input, photos.size());
             try {
@@ -468,6 +471,23 @@ public class TikTokPublishAction {
 
         PublishStatus status = awaitPublish(accessToken, publishId);
         return ActionResult.ok(publishOutput(publishId, status, ctx));
+    }
+
+    /**
+     * The URL TikTok is handed for one image. TikTok fetches photo-post images itself and only from a host
+     * whose ownership the app's owner has verified, which Conductor's storage host can never be. A
+     * workspace that has verified its own host — {@code https://rexipe.io}, fronting the storage link at
+     * {@code /media/} — gets {@code {base}/media/{url-safe base64 of the storage link}}; the proxy behind
+     * that path decodes it, checks the link points at Conductor's bucket, and streams the bytes. Without a
+     * base the storage link goes out as is, and TikTok answers {@code url_ownership_unverified}.
+     */
+    static String publicMediaUrl(String storageUrl, String publicBase) {
+        if (publicBase == null || publicBase.isBlank()) {
+            return storageUrl;
+        }
+        String encoded = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(storageUrl.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return publicBase.replaceAll("/+$", "") + "/media/" + encoded;
     }
 
     /** A read URL for one image, minted now — TikTok fetches it during the init call. */

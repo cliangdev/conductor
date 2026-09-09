@@ -45,7 +45,26 @@ public class ProjectSettingsService {
     public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours,
             String githubWebhookSecret, String githubRepoUrl, Boolean knowledgeEnabled,
             Integer knowledgeIngestIntervalMinutes, User caller) {
+        return updateSettings(projectId, discordWebhookUrl, runTokenTtlHours, githubWebhookSecret, githubRepoUrl,
+                knowledgeEnabled, knowledgeIngestIntervalMinutes, null, caller);
+    }
+
+    /**
+     * {@code publicMediaBaseUrl}: null leaves it unchanged, blank clears it, anything else must be an
+     * https origin with no path or query — the platform-facing URL is built as {@code {base}/media/...}.
+     */
+    @Transactional
+    public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours,
+            String githubWebhookSecret, String githubRepoUrl, Boolean knowledgeEnabled,
+            Integer knowledgeIngestIntervalMinutes, String publicMediaBaseUrl, User caller) {
         verifyAdmin(projectId, caller.getId());
+        if (publicMediaBaseUrl != null && !publicMediaBaseUrl.isBlank()) {
+            String trimmed = publicMediaBaseUrl.trim();
+            if (!trimmed.matches("https://[A-Za-z0-9.-]+(:[0-9]+)?/?")) {
+                throw new BusinessException("Public media base URL must be an https origin such as "
+                        + "https://rexipe.io, with no path");
+            }
+        }
 
         if (discordWebhookUrl != null && !discordWebhookUrl.isBlank()) {
             if (!discordWebhookUrl.startsWith(DISCORD_WEBHOOK_PREFIX)) {
@@ -70,6 +89,10 @@ public class ProjectSettingsService {
                 });
 
         settings.setDiscordWebhookUrl(discordWebhookUrl);
+        if (publicMediaBaseUrl != null) {
+            String trimmed = publicMediaBaseUrl.trim().replaceAll("/+$", "");
+            settings.setPublicMediaBaseUrl(trimmed.isEmpty() ? null : trimmed);
+        }
         if (runTokenTtlHours != null) {
             settings.setRunTokenTtlHours(runTokenTtlHours);
         }
@@ -177,6 +200,7 @@ public class ProjectSettingsService {
         response.setGithubRepoUrl(settings.getGithubRepoUrl());
         response.setKnowledgeEnabled(settings.isKnowledgeEnabled());
         response.setKnowledgeIngestIntervalMinutes(settings.getKnowledgeIngestIntervalMinutes());
+        response.setPublicMediaBaseUrl(settings.getPublicMediaBaseUrl());
         return response;
     }
 
