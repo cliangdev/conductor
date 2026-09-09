@@ -739,6 +739,9 @@ public class WorkItemService {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         // Deleting a scheduled Post must not leave a live post behind on the platform.
         nativeHandoffService.unschedule(workItem);
+        // Then its destinations, before the Post: the revoke loaded them, and Hibernate refuses to flush
+        // managed rows whose Work Item was removed underneath them.
+        publishTargetService.deleteAllForWorkItem(workItem.getId());
         workItemRepository.delete(workItem);
     }
 

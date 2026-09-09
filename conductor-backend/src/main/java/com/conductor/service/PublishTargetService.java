@@ -281,6 +281,19 @@ public class PublishTargetService {
      * {@link #restampFireTimes}, for the same reason: the hand-off that follows claims each row in its own
      * transaction and must not wait on a lock its caller holds.
      */
+    /**
+     * Removes every destination of a Work Item that is about to be deleted. Done explicitly, and flushed,
+     * because the delete would otherwise fail in Hibernate: revoking the hand-off first loads the rows into
+     * the session, and removing the Work Item underneath managed rows that still reference it is refused at
+     * flush ("references an unsaved transient instance") — a 500 for any Post with a destination still in
+     * flight. The database cascade would have handled rows the session never saw; this handles the rest.
+     */
+    @Transactional
+    public void deleteAllForWorkItem(String workItemId) {
+        targetRepository.deleteAll(targetRepository.findAllByWorkItemId(workItemId));
+        targetRepository.flush();
+    }
+
     /** States in which a destination still expects its connection to do something. */
     private static final Set<PostPublishTargetState> STILL_TO_PUBLISH = Set.of(
             PostPublishTargetState.PENDING, PostPublishTargetState.HANDED_OFF,

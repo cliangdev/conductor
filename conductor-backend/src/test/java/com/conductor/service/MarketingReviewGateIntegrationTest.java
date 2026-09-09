@@ -333,6 +333,22 @@ class MarketingReviewGateIntegrationTest {
         addUploadedAsset("teaser.png");
     }
 
+    /**
+     * Deleting a Post whose destination is still in flight used to fail with a Hibernate transient-reference
+     * error, because the revoke loaded the rows and the Post was removed underneath them.
+     */
+    @Test
+    void deletingAPostWithADestinationStillInFlightRemovesBoth() {
+        addTarget("tiktok", "tiktok", null);
+        String postId = reload().getId();
+        assertThat(postPublishTargetRepository.findAllByWorkItemId(postId)).isNotEmpty();
+
+        workItemService.deleteWorkItem(project.getId(), postId);
+
+        assertThat(workItemRepository.findById(postId)).isEmpty();
+        assertThat(postPublishTargetRepository.findAllByWorkItemId(postId)).isEmpty();
+    }
+
     /** A publish target plus the {@code connection} row {@code post_publish_target.connection_id} points at. */
     private void addTarget(String connectorId, String platform, String captionOverride) {
         Connection connection = new Connection();
