@@ -30,8 +30,11 @@ import java.time.OffsetDateTime;
  *   <li><b>Early</b>: the row's fire time is still ahead. Either the task was created at Cloud Tasks'
  *       30-day cap ({@link CloudTasksPublishTaskScheduler#MAX_SCHEDULE_AHEAD}) or a platform's hand-off
  *       window has not opened. Re-armed for the right moment, not acted on.</li>
- *   <li><b>Owned elsewhere</b>: a CONFIRM whose attempt number is not the row's — another chain is
- *       polling this row. Dropped so the two never fork.</li>
+ *   <li><b>Behind the row</b>: a CONFIRM whose attempt number is below the row's — the in-process sweep
+ *       checked the row since this task was armed. Adopted, not dropped: the chain continues from the
+ *       row's own attempt count, because on Cloud Run that sweep only runs while a request is being
+ *       served and a row left to it alone is stranded once the instance idles. One ahead of the row is
+ *       impossible in a healthy chain and is dropped.</li>
  * </ol>
  *
  * <p>Everything past those checks is a conditional claim in the poller it delegates to, so a task and
@@ -169,8 +172,20 @@ public class PublishTaskHandler {
             rearm(PublishTask.confirm(target.getId(), target.getFireTime(), target.getFireTime(), task.attempt()));
             return;
         }
-        if (target.getAttempts() != task.attempt()) {
-            log.debug("CONFIRM for publish target {} carries attempt {} but the row is on {}; another chain owns it",
+        if (target.getAttempts() > task.attempt()) {
+            // The sweep got here first. Continue from where the row actually is rather than ending the only
+            // timed chain this row has. The re-arm time derives from the row's last check, not from this
+            // request's clock, so two stale deliveries adopting at once name the same Cloud Task and the
+            // queue keeps one.
+            OffsetDateTime lastChecked = target.getUpdatedAt() == null ? now : target.getUpdatedAt();
+            log.debug("CONFIRM for publish target {} carries attempt {} but the row is on {}; adopting the chain",
+                    target.getId(), task.attempt(), target.getAttempts());
+            rearm(PublishTask.confirm(target.getId(), target.getFireTime(),
+                    later(now, lastChecked.plus(CONFIRM_INTERVAL)), target.getAttempts()));
+            return;
+        }
+        if (target.getAttempts() < task.attempt()) {
+            log.warn("CONFIRM for publish target {} carries attempt {} but the row is only on {}; dropped",
                     target.getId(), task.attempt(), target.getAttempts());
             return;
         }

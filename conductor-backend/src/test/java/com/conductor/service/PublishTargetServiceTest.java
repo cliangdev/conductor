@@ -655,6 +655,44 @@ class PublishTargetServiceTest {
     private static ArgumentCaptor<List<PostPublishTarget>> captor() {
         return ArgumentCaptor.forClass(List.class);
     }
+    // --- reviveRevokedTargets: unschedule then schedule again must publish again ---
+
+    @Test
+    void reviveRevokedTargetsReturnsThemToPendingUnderAFreshIdempotencyKey() {
+        WorkItem post = new WorkItem();
+        post.setId("wi-revive");
+        OffsetDateTime rescheduled = OffsetDateTime.parse("2026-09-10T17:30:00Z");
+        post.setScheduledFor(rescheduled);
+
+        PostPublishTarget revoked = new PostPublishTarget();
+        revoked.setId("t-revoked");
+        revoked.setPlatform("facebook");
+        revoked.setConnectionId("conn-fb");
+        revoked.setState(PostPublishTargetState.REVOKED);
+        revoked.setPlatformPostId("fb-post-1");
+        revoked.setPermalink("https://facebook.com/1/posts/1");
+        revoked.setErrorMessage("revoked");
+        revoked.setResumeCheckpoint("{\"child\":1}");
+        revoked.setIdempotencyKey("pub:wi-revive:facebook:conn-fb:old");
+        revoked.setFireTime(OffsetDateTime.parse("2026-09-01T09:00:00Z"));
+        when(targetRepository.findAllByWorkItemIdAndState("wi-revive", PostPublishTargetState.REVOKED))
+                .thenReturn(List.of(revoked));
+
+        assertThat(service.reviveRevokedTargets(post)).isEqualTo(1);
+
+        assertThat(revoked.getState()).isEqualTo(PostPublishTargetState.PENDING);
+        assertThat(revoked.getPlatformPostId()).isNull();
+        assertThat(revoked.getPermalink()).isNull();
+        assertThat(revoked.getErrorMessage()).isNull();
+        assertThat(revoked.getResumeCheckpoint()).isNull();
+        assertThat(revoked.getFireTime()).isEqualTo(rescheduled);
+        // The old key names the publish that was taken down; at-most-once would refuse to run it twice.
+        assertThat(revoked.getIdempotencyKey())
+                .startsWith("pub:wi-revive:facebook:conn-fb:")
+                .isNotEqualTo("pub:wi-revive:facebook:conn-fb:old");
+        verify(targetRepository).save(revoked);
+    }
+
     // --- restampFireTimes: a rescheduled Post must not fire its targets at the old time ---
 
     @Test

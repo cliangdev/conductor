@@ -573,7 +573,7 @@ class FacebookPublishActionTest {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             ActionInvocationService invocations = new ActionInvocationService(repository, registry,
-                    connectionService, new ObjectMapper(), executor);
+                    connectionService, new ObjectMapper(), executor, passthroughOAuth());
             // No Spring proxy in a unit test: point the REQUIRES_NEW self-reference at the instance. The
             // field is package-private to com.conductor.service, hence reflection from this package.
             Field self = ActionInvocationService.class.getDeclaredField("self");
@@ -826,5 +826,13 @@ class FacebookPublishActionTest {
         public byte[] download(PublishMedia item) {
             return bytes;
         }
+    }
+
+    /** An {@link com.conductor.service.OAuthFlowService} that hands every context back untouched. */
+    private static com.conductor.service.OAuthFlowService passthroughOAuth() {
+        com.conductor.service.OAuthFlowService flow = org.mockito.Mockito.mock(com.conductor.service.OAuthFlowService.class);
+        org.mockito.Mockito.lenient().when(flow.withFreshToken(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        return flow;
     }
 }

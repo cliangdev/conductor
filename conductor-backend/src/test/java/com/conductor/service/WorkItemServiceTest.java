@@ -178,8 +178,11 @@ class WorkItemServiceTest {
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, "SCHEDULED", null, null, null, caller);
 
-        verify(publishTargetService).restampFireTimes(testIssue);
-        verify(nativeHandoffService).handoffForPost(testIssue);
+        // Revoked rows come back before the re-stamp and the hand-off, so both see them as PENDING.
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(publishTargetService, nativeHandoffService);
+        inOrder.verify(publishTargetService).reviveRevokedTargets(testIssue);
+        inOrder.verify(publishTargetService).restampFireTimes(testIssue);
+        inOrder.verify(nativeHandoffService).handoffForPost(testIssue);
         verify(nativeHandoffService, never()).unschedule(any());
     }
 

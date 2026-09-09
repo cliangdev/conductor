@@ -84,6 +84,7 @@ public class ActionInvocationService {
     private final ConnectionService connectionService;
     private final ObjectMapper objectMapper;
     private final ExecutorService actionExecutor;
+    private final OAuthFlowService oAuthFlowService;
 
     /**
      * Self-reference so {@code @Transactional(REQUIRES_NEW)} helpers run through the Spring proxy —
@@ -98,11 +99,13 @@ public class ActionInvocationService {
                                    ConnectorRegistry connectorRegistry,
                                    ConnectionService connectionService,
                                    ObjectMapper objectMapper,
-                                   @Qualifier("actionInvocationExecutor") ExecutorService actionExecutor) {
+                                   @Qualifier("actionInvocationExecutor") ExecutorService actionExecutor,
+                                   OAuthFlowService oAuthFlowService) {
         this.repository = repository;
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
         this.objectMapper = objectMapper;
+        this.oAuthFlowService = oAuthFlowService;
         this.actionExecutor = actionExecutor;
     }
 
@@ -175,7 +178,14 @@ public class ActionInvocationService {
             return ActionResult.error(msg);
         }
         ActionConnector connector = connectorOpt.get();
-        ConnectionContext ctx = connectionService.toContext(conn);
+        ConnectionContext ctx;
+        try {
+            ctx = oAuthFlowService.withFreshToken(conn, connectionService.toContext(conn));
+        } catch (com.conductor.integration.OAuthReauthRequiredException e) {
+            // The platform refused to refresh: no attempt can succeed until a human reconnects.
+            self.persistDeadInNewTx(invocation.getId(), e.getMessage());
+            return ActionResult.error(e.getMessage());
+        }
         long timeoutSeconds = resolveTimeoutSeconds(connector);
 
         String lastError = null;
@@ -333,7 +343,13 @@ public class ActionInvocationService {
         }
 
         self.recordAttemptInNewTx(invocation.getId());
-        ConnectionContext ctx = connectionService.toContext(conn.get());
+        ConnectionContext ctx;
+        try {
+            ctx = oAuthFlowService.withFreshToken(conn.get(), connectionService.toContext(conn.get()));
+        } catch (com.conductor.integration.OAuthReauthRequiredException e) {
+            self.persistFailureInNewTx(invocation.getId(), e.getMessage());
+            return;
+        }
         Map<String, Object> input = parseInput(invocation.getInputJson());
         long timeoutSeconds = resolveTimeoutSeconds(connector.get());
         try {

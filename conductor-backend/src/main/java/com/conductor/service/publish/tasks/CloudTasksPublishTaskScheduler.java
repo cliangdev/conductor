@@ -82,6 +82,7 @@ public class CloudTasksPublishTaskScheduler implements PublishTaskScheduler {
                 .putHeaders("Authorization", "Bearer " + token)
                 .build();
         Task cloudTask = Task.newBuilder()
+                .setName(queuePath + "/tasks/" + taskName(task, deliverAt))
                 .setHttpRequest(request)
                 .setScheduleTime(Timestamp.newBuilder().setSeconds(deliverAt.toEpochSecond()).build())
                 .build();
@@ -89,10 +90,30 @@ public class CloudTasksPublishTaskScheduler implements PublishTaskScheduler {
             tasksClient.createTask(queuePath, cloudTask);
             log.info("Armed {} for publish target {} at {}{}", task.kind(), task.targetId(), deliverAt,
                     deliverAt.isBefore(task.notBefore()) ? " (capped; re-armed on arrival)" : "");
+        } catch (com.google.api.gax.rpc.AlreadyExistsException e) {
+            // Same step, same target, same minute: a duplicate arm (a re-entered status, two adopters of one
+            // confirmation chain). The queue already holds it; one timed request is exactly what we want.
+            log.info("{} for publish target {} at {} is already armed; keeping the existing task",
+                    task.kind(), task.targetId(), deliverAt);
         } catch (Exception e) {
             log.error("Failed to create Cloud Task ({} for publish target {} at {}): {}", task.kind(),
                     task.targetId(), deliverAt, e.getMessage(), e);
         }
+    }
+
+    /**
+     * A name that is the same for two arms of the same step: the kind, the row, the step (a CONFIRM's
+     * attempt number, otherwise the fire time it was armed for) and the delivery minute. Cloud Tasks refuses
+     * a second task with a name it already holds, which is the dedupe that lets a task be re-armed by
+     * whoever notices it is missing without ever forking a chain. Minute granularity because two callers
+     * computing "a minute from now" a second apart must still agree.
+     */
+    static String taskName(PublishTask task, OffsetDateTime deliverAt) {
+        String step = task.kind() == PublishTaskKind.CONFIRM
+                ? "a" + task.attempt()
+                : "f" + task.fireTime().toEpochSecond();
+        return task.kind().name().toLowerCase(java.util.Locale.ROOT) + "-" + task.targetId() + "-" + step
+                + "-m" + (deliverAt.toEpochSecond() / 60);
     }
 
     static OffsetDateTime clamp(OffsetDateTime notBefore, OffsetDateTime now) {

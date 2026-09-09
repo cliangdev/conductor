@@ -88,7 +88,8 @@ freezes nothing.
 Everything after approval is bound to what was approved. `reviews.bundle_hash` is a SHA-256 over the
 caption, fire time, targets and uploaded assets; changing any of them reverts the Post to review and
 revokes anything already handed to a platform. That is why editing a schedule after approval sends the
-Post back — it is working, not misbehaving.
+Post back — it is working, not misbehaving. A revoked destination is not lost: the next entry into the
+scheduled status returns it to `PENDING` under a fresh idempotency key and hands it off again.
 
 ## App credentials
 

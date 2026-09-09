@@ -606,6 +606,9 @@ public class WorkItemService {
         if (!scheduledStatusFor(projectId, workItem).equals(workItem.getCurrentStatus())) {
             return;
         }
+        // A destination revoked on the way out of the scheduled status comes back first, so the re-stamp
+        // and the hand-off below see it as the fresh PENDING row it now is.
+        publishTargetService.reviveRevokedTargets(workItem);
         publishTargetService.restampFireTimes(workItem);
         nativeHandoffService.handoffForPost(workItem);
         // Each target now gets a timed request for its next step (dispatch, hand-off, or confirmation) so it
