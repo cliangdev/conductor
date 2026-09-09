@@ -496,8 +496,27 @@ public class TikTokClient {
         } catch (HttpStatusCodeException e) {
             HttpStatusCode status = e.getStatusCode();
             boolean retryable = !status.is4xxClientError() || status.value() == 408 || status.value() == 429;
+            String body = e.getResponseBodyAsString();
+            // TikTok puts its real verdict in the body ({"error":{"code":"url_ownership_unverified"}}) and
+            // the HTTP status is just 403. Callers branch on that code — the pre-audit inbox fallback, the
+            // verified-URL-prefix explanation — so it must be the exception's code, not the status line.
+            String code = errorCodeIn(body);
             throw new TikTokApiException("TikTok " + operation + " failed with HTTP " + status.value()
-                    + ": " + truncate(e.getResponseBodyAsString()), "http_" + status.value(), retryable);
+                    + ": " + truncate(body), code != null ? code : "http_" + status.value(), retryable);
+        }
+    }
+
+    /** The {@code error.code} of a TikTok error body, or null when the body is not one. */
+    private String errorCodeIn(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode code = parseJson(body).path("error").path("code");
+            return code.isTextual() && !code.asText().isBlank() && !ERROR_CODE_OK.equalsIgnoreCase(code.asText())
+                    ? code.asText() : null;
+        } catch (Exception e) {
+            return null;
         }
     }
 

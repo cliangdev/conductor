@@ -48,4 +48,28 @@ class TikTokClientMetricsTest {
         assertThat(metrics.get(1).unavailable()).isTrue();
         server.verify();
     }
+
+    /**
+     * A 403's verdict lives in the body. The code is what callers branch on (the pre-audit inbox fallback,
+     * the verified-URL-prefix explanation), so it has to be the exception's code rather than "http_403".
+     */
+    @org.junit.jupiter.api.Test
+    void aFourOhThreeCarriesTikToksOwnErrorCode() {
+        server.expect(requestTo(TikTokClient.API_BASE + TikTokClient.VIDEO_INIT_PATH))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .body("{\"error\":{\"code\":\"unaudited_client_can_only_post_to_private_accounts\","
+                                + "\"message\":\"Please review our integration guidelines\"}}"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.initFileUpload("tok",
+                        new TikTokClient.VideoPostInfo("t", "SELF_ONLY", false, false, false, false, false, false, null),
+                        TikTokClient.planChunks(1000L)))
+                .isInstanceOf(TikTokClient.TikTokApiException.class)
+                .satisfies(e -> {
+                    TikTokClient.TikTokApiException api = (TikTokClient.TikTokApiException) e;
+                    org.assertj.core.api.Assertions.assertThat(api.code()).isEqualTo(TikTokClient.ERROR_UNAUDITED_PRIVATE_ONLY);
+                    org.assertj.core.api.Assertions.assertThat(api.isTransient()).isFalse();
+                });
+    }
 }

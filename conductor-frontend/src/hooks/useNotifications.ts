@@ -54,7 +54,7 @@ export const EVENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   ISSUE_IN_CODE_REVIEW: 'Issue moved to Code Review',
   ISSUE_COMPLETED: 'Issue marked as Done',
   WORK_ITEM_STATUS_CHANGED: 'Any work item status change',
-  REVIEWER_ASSIGNED: 'Reviewer assigned to a PRD',
+  REVIEWER_ASSIGNED: 'Reviewer assigned',
   REVIEW_SUBMITTED: 'Review submitted (approved/changes requested)',
   COMMENT_ADDED: 'Comment added to a PRD',
   COMMENT_REPLY: 'Reply added to a comment',
@@ -73,7 +73,7 @@ export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
   ISSUE_IN_CODE_REVIEW: 'When an issue is submitted for code review',
   ISSUE_COMPLETED: 'When an issue is marked as Done',
   WORK_ITEM_STATUS_CHANGED: 'Fires on every status transition (includes from/to status)',
-  REVIEWER_ASSIGNED: 'When a reviewer is added to an issue',
+  REVIEWER_ASSIGNED: 'When a reviewer is asked to approve a work item',
   REVIEW_SUBMITTED: 'When a reviewer submits an approval or change request',
   COMMENT_ADDED: 'When a new comment is posted on an issue',
   COMMENT_REPLY: 'When someone replies to an existing comment',
@@ -113,7 +113,13 @@ export const CHANNEL_GROUPS: { value: string; label: string; eventTypes: string[
     // adding it takes nothing away from a project that already had notifications.
     value: 'PUBLISHING',
     label: 'Publishing',
-    eventTypes: ['WORK_ITEM_STATUS_CHANGED', 'POST_AWAITING_MANUAL', 'AUTO_TRANSITION_BLOCKED'],
+    eventTypes: [
+      'WORK_ITEM_STATUS_CHANGED',
+      'REVIEWER_ASSIGNED',
+      'REVIEW_SUBMITTED',
+      'POST_AWAITING_MANUAL',
+      'AUTO_TRANSITION_BLOCKED',
+    ],
   },
   {
     value: 'MEMBERS',
