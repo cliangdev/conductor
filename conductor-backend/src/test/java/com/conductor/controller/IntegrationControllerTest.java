@@ -85,6 +85,7 @@ class IntegrationControllerTest {
     @MockitoBean private ConnectionService connectionService;
     @MockitoBean private IntegrationFetchService fetchService;
     @MockitoBean private OAuthFlowService oAuthFlowService;
+    @MockitoBean private com.conductor.service.PublishTargetService publishTargetService;
     @MockitoBean private ConnectionDataCacheRepository cacheRepository;
     @MockitoBean private WebhookEventRepository webhookEventRepository;
     @MockitoBean private ProjectMemberRepository projectMemberRepository;
@@ -407,9 +408,35 @@ class IntegrationControllerTest {
 
         // Order matters: targets must be flipped while connection_id is still set (FK is
         // ON DELETE SET NULL — after the delete they'd no longer be findable by connection id).
-        var inOrder = org.mockito.Mockito.inOrder(runtimeTargetService, connectionService);
+        var inOrder = org.mockito.Mockito.inOrder(publishTargetService, runtimeTargetService, connectionService);
+        inOrder.verify(publishTargetService).detachFromConnection("conn-9");
         inOrder.verify(runtimeTargetService).onConnectionDeleted("conn-9");
         inOrder.verify(connectionService).delete("conn-9");
+    }
+
+    /** A Post still waiting on the account refuses the disconnect by name, as a 409, not a 500. */
+    @Test
+    void deleteConnection_stillADestinationOnAScheduledPost_returns409AndDeletesNothing() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        Connection conn = new Connection();
+        conn.setId("conn-9");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId(GCP_SA_CONNECTOR_ID);
+        when(connectionService.getById("conn-9", GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+        org.mockito.Mockito.doThrow(new com.conductor.exception.ConflictException(
+                        "This account is still a destination on 1 Post that has not gone out yet (RE-71)."))
+                .when(publishTargetService).detachFromConnection("conn-9");
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                                + GCP_SA_CONNECTOR_ID + "/connections/conn-9")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("RE-71")));
+
+        org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.anyString());
     }
 
     // ---- ProjectSecurityService gating on a plain read endpoint ----

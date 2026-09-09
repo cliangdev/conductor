@@ -655,6 +655,53 @@ class PublishTargetServiceTest {
     private static ArgumentCaptor<List<PostPublishTarget>> captor() {
         return ArgumentCaptor.forClass(List.class);
     }
+    // --- detachFromConnection: disconnecting an account must not strand a scheduled Post ---
+
+    private PostPublishTarget onConnection(String connectionId, PostPublishTargetState state, int sequence) {
+        Project project = new Project();
+        project.setKey("RE");
+        WorkItem post = new WorkItem();
+        post.setId("wi-" + sequence);
+        post.setProject(project);
+        post.setSequenceNumber(sequence);
+        PostPublishTarget target = new PostPublishTarget();
+        target.setId("t-" + sequence);
+        target.setWorkItem(post);
+        target.setPlatform("tiktok");
+        target.setConnectionId(connectionId);
+        target.setPlatformAccountLabel("Bryan");
+        target.setState(state);
+        return target;
+    }
+
+    @Test
+    void detachFromConnectionRefusesWhileAPostStillWaitsOnTheAccount_namingIt() {
+        when(targetRepository.findAllByConnectionId("conn-tt")).thenReturn(List.of(
+                onConnection("conn-tt", PostPublishTargetState.PENDING, 71),
+                onConnection("conn-tt", PostPublishTargetState.PUBLISHED, 70)));
+
+        assertThatThrownBy(() -> service.detachFromConnection("conn-tt"))
+                .isInstanceOf(com.conductor.exception.ConflictException.class)
+                .hasMessageContaining("RE-71")
+                .hasMessageContaining("Unschedule");
+        verify(targetRepository, never()).save(any());
+    }
+
+    @Test
+    void detachFromConnectionLetsSettledDestinationsKeepTheirHistoryWithoutTheRow() {
+        PostPublishTarget published = onConnection("conn-tt", PostPublishTargetState.PUBLISHED, 70);
+        PostPublishTarget failed = onConnection("conn-tt", PostPublishTargetState.FAILED, 71);
+        when(targetRepository.findAllByConnectionId("conn-tt")).thenReturn(List.of(published, failed));
+
+        service.detachFromConnection("conn-tt");
+
+        assertThat(published.getConnectionId()).isNull();
+        assertThat(published.getPlatformAccountLabel()).isEqualTo("Bryan");
+        assertThat(failed.getConnectionId()).isNull();
+        verify(targetRepository).save(published);
+        verify(targetRepository).save(failed);
+    }
+
     // --- reviveRevokedTargets: unschedule then schedule again must publish again ---
 
     @Test

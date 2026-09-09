@@ -13,6 +13,9 @@ import java.util.List;
 @Repository
 public interface PostPublishTargetRepository extends JpaRepository<PostPublishTarget, String> {
 
+    /** Every destination that publishes (or published) through one connection, in any state. */
+    List<PostPublishTarget> findAllByConnectionId(String connectionId);
+
     List<PostPublishTarget> findAllByWorkItemId(String workItemId);
 
     List<PostPublishTarget> findAllByWorkItemIdAndState(String workItemId, PostPublishTargetState state);
