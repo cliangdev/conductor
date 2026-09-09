@@ -92,6 +92,7 @@ class ConnectorAppCredentialControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+    @MockitoBean private com.conductor.service.PublishTargetService publishTargetService;
 
     @MockitoBean private ConnectorRegistry connectorRegistry;
     @MockitoBean private ConnectionService connectionService;
