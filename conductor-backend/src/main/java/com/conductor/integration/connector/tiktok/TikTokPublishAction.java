@@ -386,7 +386,7 @@ public class TikTokPublishAction {
             output.put(OUTPUT_AWAITING_HUMAN, Boolean.TRUE);
             output.put(OUTPUT_HANDOFF_NOTE, "TikTok will not let this app post directly until it passes "
                     + "TikTok's audit (until then only private accounts qualify, and a Business account cannot "
-                    + "be private). The video is waiting in " + (username == null ? "the creator's" : "@" + username + "'s")
+                    + "be private). The post is waiting in " + (username == null ? "the creator's" : "@" + username + "'s")
                     + " TikTok inbox: open TikTok, finish the post there, then record its link here.");
             return output;
         }
