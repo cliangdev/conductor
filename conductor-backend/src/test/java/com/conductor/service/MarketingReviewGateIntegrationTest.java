@@ -94,6 +94,7 @@ class MarketingReviewGateIntegrationTest {
     private static final String MARKETING = "MARKETING";
 
     @Autowired private WorkItemService workItemService;
+    @Autowired private PublishTargetService publishTargetService;
     @Autowired private WorkItemWorkflowService workItemWorkflowService;
     @Autowired private ReviewService reviewService;
     @Autowired private WorkflowSeeder workflowSeeder;
@@ -349,6 +350,33 @@ class MarketingReviewGateIntegrationTest {
         assertThat(postPublishTargetRepository.findAllByWorkItemId(postId)).isEmpty();
     }
 
+    /**
+     * Disconnecting an account: a destination still to publish refuses by name; a settled one keeps its
+     * label and link and lets go of the connection row — which V133's check constraint has to permit.
+     */
+    @Test
+    void disconnectingAnAccountRefusesWhileAPostWaitsOnIt_andReleasesSettledDestinations() {
+        addTarget("tiktok", "tiktok", null);
+        PostPublishTarget pending = postPublishTargetRepository.findAllByWorkItemId(reload().getId()).stream()
+                .filter(t -> "tiktok".equals(t.getPlatform())).findFirst().orElseThrow();
+        String connectionId = pending.getConnectionId();
+
+        assertThatThrownBy(() -> publishTargetService.detachFromConnection(connectionId))
+                .isInstanceOf(com.conductor.exception.ConflictException.class)
+                .hasMessageContaining(project.getKey() + "-");
+
+        pending.setState(PostPublishTargetState.PUBLISHED);
+        pending.setPermalink("https://www.tiktok.com/@acme/video/1");
+        postPublishTargetRepository.saveAndFlush(pending);
+
+        publishTargetService.detachFromConnection(connectionId);
+
+        PostPublishTarget settled = postPublishTargetRepository.findById(pending.getId()).orElseThrow();
+        assertThat(settled.getConnectionId()).isNull();
+        assertThat(settled.getPermalink()).isEqualTo("https://www.tiktok.com/@acme/video/1");
+        assertThat(settled.getPlatformAccountLabel()).isNotNull();
+    }
+
     /** A publish target plus the {@code connection} row {@code post_publish_target.connection_id} points at. */
     private void addTarget(String connectorId, String platform, String captionOverride) {
         Connection connection = new Connection();
@@ -363,6 +391,7 @@ class MarketingReviewGateIntegrationTest {
         target.setConnectorId(connectorId);
         target.setConnectionId(connection.getId());
         target.setPlatform(platform);
+        target.setPlatformAccountLabel("Acme " + platform);
         // The lane a connected account really publishes this platform on: a Facebook Page is handed to
         // Facebook's own scheduler (NATIVE) and so needs its ten-minute floor; Instagram and TikTok are
         // dispatched by Conductor. A held story is the one Facebook case that is APP_MANAGED, and it is
