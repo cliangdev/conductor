@@ -62,8 +62,10 @@ public class ReviewerService {
         ProjectMember targetMember = projectMemberRepository.findByProjectIdAndUserId(projectId, targetUserId)
                 .orElseThrow(() -> new BusinessException("User is not a project member"));
 
-        if (targetMember.getRole() != MemberRole.REVIEWER) {
-            throw new BusinessException("Only REVIEWER role members can be assigned");
+        // An ADMIN already outranks every review role at the gate (WorkItemWorkflowService); refusing to
+        // assign one only meant a workspace with no dedicated reviewer could never approve anything.
+        if (targetMember.getRole() != MemberRole.REVIEWER && targetMember.getRole() != MemberRole.ADMIN) {
+            throw new BusinessException("Only REVIEWER or ADMIN members can be assigned as reviewers");
         }
 
         if (workItemReviewerRepository.findByWorkItemIdAndUserId(workItemId, targetUserId).isPresent()) {

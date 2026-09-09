@@ -52,7 +52,7 @@ export const ReviewerCell = forwardRef<
 >(function ReviewerCell({ issueId, projectId, reviewers, members, token, onChanged }, ref) {
   const [saving, setSaving] = useState<string | null>(null)
 
-  const reviewerMembers = members.filter((m) => m.role === 'REVIEWER')
+  const reviewerMembers = members.filter((m) => m.role === 'REVIEWER' || m.role === 'ADMIN')
   const assignedIds = new Set(reviewers.map((r) => r.userId))
 
   async function toggleReviewer(member: Member) {

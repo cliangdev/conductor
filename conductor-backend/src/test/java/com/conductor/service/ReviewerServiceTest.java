@@ -175,7 +175,24 @@ class ReviewerServiceTest {
         assertThatThrownBy(() -> reviewerService.assignReviewer(
                 PROJECT_ID, ISSUE_ID, reviewerUser.getId(), adminUser))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Only REVIEWER role members can be assigned");
+                .hasMessageContaining("Only REVIEWER or ADMIN members can be assigned");
+    }
+
+    /** An ADMIN outranks every review role at the gate, so a workspace of admins must be able to approve. */
+    @Test
+    void assignReviewerAcceptsAnAdmin() {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        ProjectMember otherAdmin = new ProjectMember();
+        otherAdmin.setRole(MemberRole.ADMIN);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "admin-2"))
+                .thenReturn(Optional.of(otherAdmin));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, "admin-2"))
+                .thenReturn(Optional.empty());
+        when(workItemReviewerRepository.save(any(WorkItemReviewer.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        WorkItemReviewer assigned = reviewerService.assignReviewer(PROJECT_ID, ISSUE_ID, "admin-2", adminUser);
+
+        assertThat(assigned.getUserId()).isEqualTo("admin-2");
     }
 
     @Test
