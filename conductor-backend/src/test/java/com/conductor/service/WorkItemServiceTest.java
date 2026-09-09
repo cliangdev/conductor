@@ -213,8 +213,10 @@ class WorkItemServiceTest {
 
         workItemService.deleteWorkItem("proj-1", "issue-1");
 
-        InOrder inOrder = Mockito.inOrder(nativeHandoffService, workItemRepository);
+        InOrder inOrder = Mockito.inOrder(nativeHandoffService, publishTargetService, workItemRepository);
         inOrder.verify(nativeHandoffService).unschedule(testIssue);
+        // Destinations go before the Post, or Hibernate refuses the flush for a Post still in flight.
+        inOrder.verify(publishTargetService).deleteAllForWorkItem("issue-1");
         inOrder.verify(workItemRepository).delete(testIssue);
     }
 
