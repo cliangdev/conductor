@@ -206,6 +206,37 @@ class WorkflowServiceTest {
         verify(workflowRepository, never()).save(any());
     }
 
+    /**
+     * The sidebar and the list route key a lifecycle on area + noun. A second "Post" lifecycle beside the
+     * marketing one is two entries on one page, and only the first is reachable — refused with the fix named.
+     */
+    @Test
+    void createWorkflowRejectsASecondLifecycleOnTheSameAreaAndNoun() throws Exception {
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
+        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.findByProjectIdAndName("proj-1", "Marketing autopilot")).thenReturn(Optional.empty());
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "MARKETING_AUTOPILOT")).thenReturn(false);
+        WorkflowDefinition marketing = new WorkflowDefinition();
+        marketing.setId("wf-marketing");
+        marketing.setName("MARKETING");
+        marketing.setArea("MARKETING");
+        marketing.setDefinition(new ObjectMapper().readTree("{\"id\":\"MARKETING\",\"noun\":\"Post\"}"));
+        when(workflowRepository.findByProjectId("proj-1")).thenReturn(List.of(marketing));
+
+        WorkflowCreateRequest request = new WorkflowCreateRequest("Marketing autopilot");
+        request.setArea("marketing");
+        request.setDefinition(java.util.Map.of("id", "MARKETING_AUTOPILOT", "noun", "post",
+                "statuses", java.util.List.of()));
+
+        assertThatThrownBy(() -> service.createWorkflow("proj-1", "user-1", request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("marketing/post")
+                .hasMessageContaining("MARKETING")
+                .hasMessageContaining("different noun");
+        verify(workflowRepository, never()).save(any());
+    }
+
     @Test
     void createWorkflowRejectsDuplicateSlug() {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
