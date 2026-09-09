@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -423,17 +424,13 @@ public class MetaGraphClient {
         if (postIds == null || postIds.isEmpty()) {
             return List.of();
         }
-        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/")
-                .queryParam("ids", String.join(",", postIds))
-                .queryParam("fields", "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)")
-                .encode().build().toUri());
-        ResponseEntity<String> response = restTemplate.exchange(
-                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), String.class);
-        JsonNode body = parseJson(response.getBody());
+        // One read per post rather than a ?ids= batch: Meta refuses the batch form for apps pinned to Graph
+        // v26+ ("The ids query parameter is deprecated"), and a new app is pinned there from day one.
         List<PostMetrics> metrics = new ArrayList<>();
         for (String id : postIds) {
-            JsonNode node = body == null ? null : body.get(id);
-            if (node == null || node.has("error")) {
+            JsonNode node = readNodeOrNull(id,
+                    "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)", pageToken);
+            if (node == null) {
                 metrics.add(new PostMetrics(id, null, null, null, true));
                 continue;
             }
@@ -447,6 +444,30 @@ public class MetaGraphClient {
     }
 
     /**
+     * One node's fields, or null when Graph refuses the read for that node alone (deleted, or a post the
+     * token cannot see) — the per-node error a batch used to carry inline. Anything else (a rate limit,
+     * a 5xx, an invalid token) propagates so the whole pull is reported as degraded rather than as a row
+     * of quietly missing counts.
+     */
+    private JsonNode readNodeOrNull(String id, String fields, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + id)
+                .queryParam("fields", fields)
+                .encode().build().toUri());
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+            JsonNode node = parseJson(response.getBody());
+            return node == null || node.has("error") ? null : node;
+        } catch (HttpClientErrorException e) {
+            int status = e.getStatusCode().value();
+            if (status == 400 || status == 404) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /**
      * Reads the like and comment counts of up to fifty Instagram media in one call. Views, reach and saves
      * live behind the insights edge, whose availability varies by media type and permission; they are
      * left null here rather than risking the whole batch on a field one media type refuses.
@@ -455,17 +476,10 @@ public class MetaGraphClient {
         if (mediaIds == null || mediaIds.isEmpty()) {
             return List.of();
         }
-        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/")
-                .queryParam("ids", String.join(",", mediaIds))
-                .queryParam("fields", "id,like_count,comments_count")
-                .encode().build().toUri());
-        ResponseEntity<String> response = restTemplate.exchange(
-                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
-        JsonNode body = parseJson(response.getBody());
         List<PostMetrics> metrics = new ArrayList<>();
         for (String id : mediaIds) {
-            JsonNode node = body == null ? null : body.get(id);
-            if (node == null || node.has("error")) {
+            JsonNode node = readNodeOrNull(id, "id,like_count,comments_count", token);
+            if (node == null) {
                 metrics.add(new PostMetrics(id, null, null, null, true));
                 continue;
             }

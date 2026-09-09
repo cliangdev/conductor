@@ -301,6 +301,27 @@ class FacebookPublishActionTest {
         assertThat(result.output()).containsEntry("permalink", "https://fb/reels/vid-9");
     }
 
+    /**
+     * A scheduled single-photo post's id is a bare number too. Graph refuses the video read on it with
+     * "nonexisting field (status)"; the post is then read as the Page post it is, instead of failing
+     * every check against a post that is live.
+     */
+    @Test
+    void getFacebookPost_bareIdThatIsAPhotoPost_fallsBackToThePageRead() {
+        onGetThrow("id,status,permalink_url", HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request",
+                new HttpHeaders(),
+                "{\"error\":{\"message\":\"(#100) Tried accessing nonexisting field (status)\",\"code\":100}}".getBytes(),
+                null));
+        onGet("is_published", new MetaGraphClient.PostResponse("122136896193347721", true,
+                "https://www.facebook.com/page-1/posts/122136896193347721", null));
+
+        ActionResult result = connector.invoke("get_facebook_post", Map.of("post_id", "122136896193347721"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("is_published", true);
+        assertThat(result.output()).containsEntry("permalink", "https://www.facebook.com/page-1/posts/122136896193347721");
+    }
+
     @Test
     void getFacebookPost_reelIdStillProcessing_reportsNotYetLive() {
         onGet("id,status,permalink_url", videoStatusNode("vid-9", "processing", null));

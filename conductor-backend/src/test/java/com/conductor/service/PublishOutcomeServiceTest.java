@@ -399,6 +399,18 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(reloadConnection().getHealthStatus()).isEqualTo(ConnectionHealthService.UNHEALTHY);
     }
 
+    /** TikTok's 403 for an unaudited app posting to a public account is the account owner's to fix, not a reconnect. */
+    @Test
+    void aPlatformPolicyRefusalPhrasedAs403IsNotAnAuthFailure() {
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "TikTok video init failed with HTTP 403: {\"error\":{\"code\":\"unaudited_client_can_only_post_to_private_accounts\","
+                        + "\"message\":\"Please review our integration guidelines at https://developers.tiktok.com/doc/content-sharing-guidelines/\"}}"))
+                .isFalse();
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "TikTok video init failed with HTTP 401: {\"error\":{\"code\":\"access_token_invalid\"}}"))
+                .isTrue();
+    }
+
     @Test
     void permanentAuthFailuresAreRecognisedAndTransientOnesAreNot() {
         assertThat(PublishOutcomeService.isPermanentAuthFailure(

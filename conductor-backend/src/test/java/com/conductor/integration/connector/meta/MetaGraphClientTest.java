@@ -184,15 +184,23 @@ class MetaGraphClientTest {
     // These three reads used to ask the template for a Jackson 2 JsonNode. The converters on this classpath
     // are Jackson 3, which cannot produce one, so a mocked template hid a read that failed against Graph.
 
+    /**
+     * One read per post, not a {@code ?ids=} batch: Meta refuses the batch form for apps pinned to Graph
+     * v26+ and every new app is. A post Graph will not read (deleted, or invisible to the token) is
+     * reported unavailable on its own; the others still come back.
+     */
     @Test
-    void readPostMetrics_parsesABatch_overTheRealConverters() {
-        server.expect(requestTo(containsString("/v21.0/?ids=p1,p2")))
+    void readPostMetrics_readsEachPost_overTheRealConverters() {
+        server.expect(requestTo(containsString("/v21.0/p1?fields=")))
                 .andExpect(method(org.springframework.http.HttpMethod.GET))
-                .andRespond(withSuccess("{\"p1\":{\"id\":\"p1\",\"shares\":{\"count\":4},"
+                .andRespond(withSuccess("{\"id\":\"p1\",\"shares\":{\"count\":4},"
                         + "\"likes\":{\"summary\":{\"total_count\":10}},"
-                        + "\"comments\":{\"summary\":{\"total_count\":2}}},"
-                        + "\"p2\":{\"error\":{\"message\":\"Unsupported get request\",\"code\":100}}}",
+                        + "\"comments\":{\"summary\":{\"total_count\":2}}}",
                         MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/p2?fields=")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body("{\"error\":{\"message\":\"Unsupported get request\",\"code\":100}}")
+                        .contentType(MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("p1", "p2"), "page-token");
 
@@ -207,9 +215,9 @@ class MetaGraphClientTest {
     }
 
     @Test
-    void readMediaMetrics_parsesABatch_overTheRealConverters() {
-        server.expect(requestTo(containsString("/v21.0/?ids=m1")))
-                .andRespond(withSuccess("{\"m1\":{\"id\":\"m1\",\"like_count\":7,\"comments_count\":1}}",
+    void readMediaMetrics_readsEachMedia_overTheRealConverters() {
+        server.expect(requestTo(containsString("/v21.0/m1?fields=")))
+                .andRespond(withSuccess("{\"id\":\"m1\",\"like_count\":7,\"comments_count\":1}",
                         MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m1"), "token");

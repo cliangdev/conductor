@@ -738,8 +738,21 @@ public class PublishOutcomeService {
      * revoked grant, a missing scope — rather than something worth trying again. Conservative by design:
      * anything it does not recognise is treated as transient and leaves the connection's health alone.
      */
+    /**
+     * Refusals a platform phrases as 403 that say nothing about our credentials: TikTok answers an
+     * unaudited app posting to a public account, an unverified media URL or a rate cap this way. The
+     * account owner fixes those on the platform; making them "reconnect" would not help and hides the
+     * real message behind a health badge.
+     */
+    private static final Pattern PLATFORM_POLICY_REFUSAL = Pattern.compile(
+            "unaudited_client|content-sharing-guidelines|url_ownership_unverified|spam_risk|reached_active_user_cap"
+                    + "|invalid_publish_type|privacy_level_option_mismatch",
+            Pattern.CASE_INSENSITIVE);
+
     static boolean isPermanentAuthFailure(String errorMessage) {
-        return errorMessage != null && PERMANENT_AUTH_FAILURE.matcher(errorMessage).find();
+        return errorMessage != null
+                && PERMANENT_AUTH_FAILURE.matcher(errorMessage).find()
+                && !PLATFORM_POLICY_REFUSAL.matcher(errorMessage).find();
     }
 
     private boolean applySuccess(PostPublishTarget target, String platformPostId, String permalink) {
