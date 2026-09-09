@@ -221,8 +221,8 @@ function errorText(err: unknown): string {
 }
 
 /**
- * Assigns reviewers by name, email or id. Only members holding the REVIEWER role can be assigned — the
- * backend refuses anyone else — so a wrong role is reported by name rather than as a bare 4xx.
+ * Assigns reviewers by name, email or id. Only members holding the REVIEWER or ADMIN role can be assigned —
+ * the backend refuses anyone else — so a wrong role is reported by name rather than as a bare 4xx.
  */
 export async function assignReviewers(
   config: Config,
@@ -244,9 +244,9 @@ export async function assignReviewers(
       problems.push(`No project member matches "${wanted}".`)
       continue
     }
-    if (match.role !== 'REVIEWER') {
+    if (match.role !== 'REVIEWER' && match.role !== 'ADMIN') {
       problems.push(
-        `${match.name ?? match.userId} holds the ${match.role} role; only REVIEWER-role members can be assigned.`
+        `${match.name ?? match.userId} holds the ${match.role} role; only REVIEWER or ADMIN members can be assigned.`
       )
       continue
     }
@@ -543,7 +543,7 @@ export async function listPosts(
 
 /**
  * Records a review verdict as the caller's user. The backend requires an assigned reviewer holding the
- * REVIEWER role (or an ADMIN who was assigned) — a project API key cannot review, and a user key without
+ * REVIEWER or ADMIN role — a project API key cannot review, and a user key without
  * the role is refused; both come back as the server's own message. Approval on MARKETING schedules the
  * Post in the same request; `autoTransition` says how far it got.
  */

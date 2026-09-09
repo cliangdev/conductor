@@ -455,7 +455,7 @@ export function WorkItemDetailView({
 
   const assignedIds = new Set(reviewers.map((r) => r.userId))
   const assignableReviewers = allMembers.filter(
-    (m) => m.role === 'REVIEWER' && !assignedIds.has(m.userId)
+    (m) => (m.role === 'REVIEWER' || m.role === 'ADMIN') && !assignedIds.has(m.userId)
   )
 
   // Hydrate any in-progress review draft for this Work Item + user (localStorage) once the data

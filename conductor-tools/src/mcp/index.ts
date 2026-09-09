@@ -950,7 +950,7 @@ const TOOLS = [
         scheduledFor: { type: 'string', description: 'ISO-8601 fire time (optional — defaults to the next quarter-hour the chosen destinations accept)' },
         timezone: { type: 'string', description: 'IANA zone the schedule is authored in (optional — defaults to this machine\'s)' },
         submit: { type: 'boolean', description: 'Submit for review once ready (default true). false leaves it in Draft.' },
-        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the REVIEWER role)' },
+        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the REVIEWER or ADMIN role)' },
         workflow: { type: 'string', description: 'Workflow slug (optional — required only when more than one Workflow publishes)' },
       },
       required: ['text', 'targets'],
@@ -1020,7 +1020,7 @@ const TOOLS = [
   },
   {
     name: 'submit_review',
-    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned reviewer holding the REVIEWER role. "approve" on a reviewed Workflow schedules the Post in the same request (autoTransition says how far it got); "request_changes" sends it back to its author. Does not record TikTok consent — a human (the creator) does that in the Conductor UI.',
+    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned reviewer holding the REVIEWER or ADMIN role. "approve" on a reviewed Workflow schedules the Post in the same request (autoTransition says how far it got); "request_changes" sends it back to its author. Does not record TikTok consent — a human (the creator) does that in the Conductor UI.',
     inputSchema: {
       type: 'object',
       properties: {
