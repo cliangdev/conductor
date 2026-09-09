@@ -9,6 +9,7 @@ import com.conductor.entity.PublishLane;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetAssetRepository;
@@ -280,6 +281,51 @@ public class PublishTargetService {
      * {@link #restampFireTimes}, for the same reason: the hand-off that follows claims each row in its own
      * transaction and must not wait on a lock its caller holds.
      */
+    /** States in which a destination still expects its connection to do something. */
+    private static final Set<PostPublishTargetState> STILL_TO_PUBLISH = Set.of(
+            PostPublishTargetState.PENDING, PostPublishTargetState.HANDED_OFF,
+            PostPublishTargetState.PUBLISHING, PostPublishTargetState.AWAITING_MANUAL);
+
+    /**
+     * Prepares a connection's destinations for the connection to be deleted. A destination that has not
+     * gone out yet is a reason to refuse — silently orphaning it would strand a scheduled Post with a
+     * row nothing can ever publish — so the refusal names the Posts and what to do. Settled destinations
+     * (published, failed, taken down) are history: they keep their account label and link and merely
+     * stop pointing at a row that is about to vanish, which is what the database would otherwise refuse
+     * with a foreign-key error dressed up as "an unexpected error".
+     */
+    @Transactional
+    public void detachFromConnection(String connectionId) {
+        List<PostPublishTarget> targets = targetRepository.findAllByConnectionId(connectionId);
+        List<String> stillToPublish = targets.stream()
+                .filter(t -> STILL_TO_PUBLISH.contains(t.getState()))
+                .map(PublishTargetService::displayIdOf)
+                .distinct()
+                .sorted()
+                .toList();
+        if (!stillToPublish.isEmpty()) {
+            throw new ConflictException("This account is still a destination on " + stillToPublish.size()
+                    + (stillToPublish.size() == 1 ? " Post" : " Posts") + " that " + (stillToPublish.size() == 1 ? "has" : "have")
+                    + " not gone out yet (" + String.join(", ", stillToPublish)
+                    + "). Unschedule them or remove the account from them first, then disconnect.");
+        }
+        for (PostPublishTarget target : targets) {
+            target.setConnectionId(null);
+            targetRepository.save(target);
+        }
+    }
+
+    private static String displayIdOf(PostPublishTarget target) {
+        WorkItem item = target.getWorkItem();
+        if (item == null) {
+            return target.getId();
+        }
+        if (item.getProject() != null && item.getProject().getKey() != null && item.getSequenceNumber() != null) {
+            return item.getProject().getKey() + "-" + item.getSequenceNumber();
+        }
+        return item.getId();
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int reviveRevokedTargets(WorkItem workItem) {
         if (workItem == null) {
