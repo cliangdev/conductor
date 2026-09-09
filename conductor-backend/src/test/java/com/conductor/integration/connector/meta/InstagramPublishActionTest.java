@@ -417,11 +417,13 @@ class InstagramPublishActionTest {
 
     @Test
     void metrics_unavailableIdDoesNotFailTheBatch() {
-        onGet("ids=", call -> {
-            com.fasterxml.jackson.databind.node.ObjectNode root = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
-            root.putObject("media-ok").put("like_count", 5).put("comments_count", 1);
-            root.putObject("media-bad").putObject("error").put("message", "Unsupported request");
-            return root;
+        // One read per media (Graph refuses the ?ids= batch for apps pinned to v26+); the bad one 400s alone.
+        onGet("media-ok?fields=", call -> new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("id", "media-ok").put("like_count", 5).put("comments_count", 1));
+        onGet("media-bad?fields=", call -> {
+            throw org.springframework.web.client.HttpClientErrorException.create(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "Bad Request", new org.springframework.http.HttpHeaders(),
+                    "{\"error\":{\"message\":\"Unsupported request\"}}".getBytes(), null);
         });
 
         ActionResult result = connector.invoke("get_instagram_media_metrics",
