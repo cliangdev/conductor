@@ -113,8 +113,6 @@ describe('ComposePostModal', () => {
     await screen.findByLabelText('@acme')
 
     await userEvent.type(screen.getByLabelText('Caption'), 'Launch day!\nMore below.')
-    // By-hand first: once an account on the platform is ticked, an unticked by-hand row is hidden.
-    await userEvent.click(screen.getByLabelText('Instagram (manual)'))
     await userEvent.click(screen.getByLabelText('@acme'))
     // An unhealthy account is offered disabled rather than hidden.
     expect(screen.getByLabelText('Acme Page')).toBeDisabled()
@@ -127,10 +125,7 @@ describe('ComposePostModal', () => {
     expect(create?.body).toEqual({ type: 'POST', title: 'Launch day!', description: 'Launch day!\nMore below.', workflow: 'MARKETING' })
     const targets = calls.find((c) => c.method === 'PUT')
     expect(targets?.body).toEqual({
-      targets: [
-        { platform: 'instagram', connectionId: 'c-ig', format: 'feed' },
-        { platform: 'instagram', format: 'feed' },
-      ],
+      targets: [{ platform: 'instagram', connectionId: 'c-ig', format: 'feed' }],
     })
     const schedule = calls.find((c) => c.method === 'PATCH')
     expect(schedule?.body).toEqual({ scheduledFor: '2026-09-04T12:15:00.000Z', scheduleTimezone: 'UTC' })
@@ -197,16 +192,13 @@ describe('ComposePostModal', () => {
     expect(screen.getByRole('link', { name: 'Integrations' })).toHaveAttribute('href', '/app/projects/project-1/integrations')
   })
 
-  it('hides the by-hand row for a platform once one of its accounts is ticked', async () => {
+  it('never offers the by-hand row for a platform with a connected account', async () => {
     renderModal()
     await screen.findByLabelText('@acme')
-    expect(screen.getByLabelText('Instagram (manual)')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByLabelText('@acme'))
     expect(screen.queryByLabelText('Instagram (manual)')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByLabelText('@acme'))
-    expect(screen.getByLabelText('Instagram (manual)')).toBeInTheDocument()
+    // Facebook's account is unhealthy but connected: still no by-hand row.
+    expect(screen.queryByLabelText('Facebook (manual)')).not.toBeInTheDocument()
   })
 
   it('says nothing about connecting when an account is connected', async () => {

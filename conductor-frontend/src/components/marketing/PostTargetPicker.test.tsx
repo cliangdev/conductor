@@ -189,20 +189,7 @@ function lastSelectionFor(platform: string) {
 }
 
 describe('PostTargetPicker — the by-hand row', () => {
-  it('is hidden once an account on the same platform is selected, and back when none is', async () => {
-    availableTargets = [
-      option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' }),
-      manualOption('facebook'),
-    ]
-    selectedTargets = [selection(option({ platform: 'facebook', connectionId: 'conn-meta' }))]
-    renderPicker({ assets: POST_ASSETS, caption: 'c' })
-    await loaded()
-
-    expect(screen.getByText('Acme Page')).toBeInTheDocument()
-    expect(screen.queryByText(manualOption('facebook').label)).not.toBeInTheDocument()
-  })
-
-  it('stays while nothing automated is selected', async () => {
+  it('is not offered for a platform that has a connected account', async () => {
     availableTargets = [
       option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' }),
       manualOption('facebook'),
@@ -211,6 +198,21 @@ describe('PostTargetPicker — the by-hand row', () => {
     renderPicker({ assets: POST_ASSETS, caption: 'c' })
     await loaded()
 
+    expect(screen.getByText('Acme Page')).toBeInTheDocument()
+    expect(screen.queryByText(manualOption('facebook').label)).not.toBeInTheDocument()
+  })
+
+  it('stays for a platform with no account, and when it is already on the Post', async () => {
+    availableTargets = [
+      manualOption('youtube'),
+      option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' }),
+      manualOption('facebook'),
+    ]
+    selectedTargets = [selection(manualOption('facebook'))]
+    renderPicker({ assets: POST_ASSETS, caption: 'c' })
+    await loaded()
+
+    expect(screen.getByText(manualOption('youtube').label)).toBeInTheDocument()
     expect(screen.getByText(manualOption('facebook').label)).toBeInTheDocument()
   })
 })
