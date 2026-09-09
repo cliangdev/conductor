@@ -75,6 +75,15 @@ public class TikTokClient {
     static final String CONTENT_INIT_PATH = "/post/publish/content/init/";
     static final String MEDIA_TYPE_PHOTO = "PHOTO";
     static final String POST_MODE_DIRECT_POST = "DIRECT_POST";
+    /** Photo-post mode that lands in the creator's inbox as a draft instead of publishing. */
+    static final String POST_MODE_MEDIA_UPLOAD = "MEDIA_UPLOAD";
+    /** Video upload that lands in the creator's inbox as a draft: no post_info, the creator finishes in the app. */
+    static final String INBOX_VIDEO_INIT_PATH = "/post/publish/inbox/video/init/";
+    /**
+     * TikTok's refusal of a Direct Post from an app that has not passed its audit, to an account that is
+     * not private. The inbox upload carries no such restriction, which is what makes it the pre-audit path.
+     */
+    public static final String ERROR_UNAUDITED_PRIVATE_ONLY = "unaudited_client_can_only_post_to_private_accounts";
 
     /** TikTok's error code when the media host has not been verified for this app. */
     public static final String ERROR_URL_OWNERSHIP_UNVERIFIED = "url_ownership_unverified";
@@ -105,6 +114,8 @@ public class TikTokClient {
 
     /** Publish status TikTok reports once the post is live. */
     public static final String STATUS_PUBLISH_COMPLETE = "PUBLISH_COMPLETE";
+    /** Terminal status of an inbox upload: the draft is in the creator's inbox, waiting on them. */
+    public static final String STATUS_SENT_TO_INBOX = "SEND_TO_USER_INBOX";
     /** Publish status TikTok reports when it has given up on the post. */
     public static final String STATUS_FAILED = "FAILED";
 
@@ -222,6 +233,10 @@ public class TikTokClient {
             return STATUS_PUBLISH_COMPLETE.equalsIgnoreCase(status);
         }
 
+        public boolean sentToInbox() {
+            return STATUS_SENT_TO_INBOX.equalsIgnoreCase(status);
+        }
+
         public boolean failed() {
             return STATUS_FAILED.equalsIgnoreCase(status);
         }
@@ -316,6 +331,38 @@ public class TikTokClient {
      */
     public String initPhotoPost(String accessToken, PhotoPostInfo postInfo, List<String> photoUrls,
                                 int photoCoverIndex) {
+        return initPhotoPost(accessToken, postInfo, photoUrls, photoCoverIndex, POST_MODE_DIRECT_POST);
+    }
+
+    /**
+     * Opens a video upload that lands in the creator's TikTok inbox as a draft rather than publishing:
+     * no caption or privacy level travels (the creator sets those in the app), only the upload plan. The
+     * bytes go up exactly as for a direct post, and {@link #fetchPublishStatus} reports
+     * {@link #STATUS_SENT_TO_INBOX} once the draft is there. This is the path an app that has not passed
+     * TikTok's audit can use against any account, private or not.
+     */
+    public UploadSession initInboxUpload(String accessToken, ChunkPlan plan) {
+        InboxInitRequest request = new InboxInitRequest(
+                new SourceInfoPayload(SOURCE_FILE_UPLOAD, plan.videoSize(), plan.chunkSize(),
+                        plan.totalChunkCount()));
+
+        ResponseEntity<VideoInitResponse> response = exchangeClassifying("inbox video init", () ->
+                restTemplate.exchange(URI.create(API_BASE + INBOX_VIDEO_INIT_PATH), HttpMethod.POST,
+                        new HttpEntity<>(request, jsonHeaders(accessToken)), VideoInitResponse.class));
+
+        VideoInitResponse body = response.getBody();
+        requireOk("inbox video init", body != null ? body.error() : null);
+        if (body == null || body.data() == null
+                || body.data().publishId() == null || body.data().publishId().isBlank()
+                || body.data().uploadUrl() == null || body.data().uploadUrl().isBlank()) {
+            throw new TikTokApiException("TikTok inbox video init returned no publish_id/upload_url", null, false);
+        }
+        return new UploadSession(body.data().publishId(), body.data().uploadUrl());
+    }
+
+    /** {@link #initPhotoPost(String, PhotoPostInfo, List, int)} with the post mode chosen by the caller. */
+    public String initPhotoPost(String accessToken, PhotoPostInfo postInfo, List<String> photoUrls,
+                                int photoCoverIndex, String postMode) {
         if (photoUrls == null || photoUrls.isEmpty()) {
             throw new TikTokApiException("A TikTok photo post needs at least one image", null, false);
         }
@@ -324,7 +371,7 @@ public class TikTokClient {
                         postInfo.disableComment(), postInfo.brandContentToggle(),
                         postInfo.brandOrganicToggle(), postInfo.autoAddMusic()),
                 new PhotoSourceInfoPayload(SOURCE_PULL_FROM_URL, photoCoverIndex, List.copyOf(photoUrls)),
-                POST_MODE_DIRECT_POST,
+                postMode,
                 MEDIA_TYPE_PHOTO);
 
         ResponseEntity<VideoInitResponse> response = exchangeClassifying("photo init", () ->
@@ -497,6 +544,8 @@ public class TikTokClient {
     }
 
     // ---- wire shapes ----
+
+    record InboxInitRequest(@JsonProperty("source_info") SourceInfoPayload sourceInfo) {}
 
     record VideoInitRequest(@JsonProperty("post_info") PostInfoPayload postInfo,
                             @JsonProperty("source_info") SourceInfoPayload sourceInfo) {}

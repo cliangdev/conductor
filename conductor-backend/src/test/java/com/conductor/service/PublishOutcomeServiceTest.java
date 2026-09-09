@@ -509,6 +509,37 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(statusOf(sharedPost)).isEqualTo("FAILED");
     }
 
+    /**
+     * TikTok's pre-audit inbox upload: the platform took the video but left publishing to the creator. Not
+     * a failure and not a success — the row parks as waiting on a person, with the connector's note where
+     * an error would go, and the Post stays in flight rather than rolling up either way.
+     */
+    @Test
+    void aPublishHandedToAPersonParksTheTargetAsAwaitingManual() {
+        PostPublishTarget target = publishing("tiktok");
+
+        service.recordOutcome(target.getId(), ActionResult.ok(Map.of(
+                "publish_id", "v_pub_file~1",
+                "awaiting_human", true,
+                "handoff_note", "The video is waiting in @acme's TikTok inbox: finish the post there, then record its link here.")));
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.AWAITING_MANUAL);
+        assertThat(reload(target).getErrorMessage()).contains("TikTok inbox");
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("SCHEDULED");
+    }
+
+    @Test
+    void anAutomatedTargetThePlatformHandedBackCanBeFinishedByHand() {
+        PostPublishTarget target = publishing("tiktok");
+        service.recordOutcome(target.getId(), ActionResult.ok(Map.of("awaiting_human", true, "handoff_note", "in the inbox")));
+
+        assertThat(complete(target, "https://www.tiktok.com/@acme/video/7", null)).isTrue();
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(reload(target).getPermalink()).isEqualTo("https://www.tiktok.com/@acme/video/7");
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("PUBLISHED");
+    }
+
     @Test
     void aSoleFailedTargetRollsThePostUpToFailed() {
         PostPublishTarget target = publishing("instagram");

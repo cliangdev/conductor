@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -208,6 +209,29 @@ class TikTokPublishActionTest {
         verify(client, times(plan.totalChunkCount()))
                 .uploadChunk(eq(UPLOAD_URL), any(InputStream.class), anyLong(), anyLong(),
                         eq(VIDEO_SIZE), eq("video/mp4"));
+    }
+
+    /**
+     * Pre-audit, TikTok refuses a Direct Post to any account that is not private — and a Business account
+     * never is. The inbox upload has no such rule: the bytes go up the same way, the draft lands in the
+     * creator's inbox, and the row waits on them rather than failing.
+     */
+    @Test
+    void publish_unauditedApp_fallsBackToTheCreatorsInbox_andWaitsOnThem() {
+        when(client.initFileUpload(anyString(), any(), any())).thenThrow(new TikTokApiException(
+                "TikTok video init failed with HTTP 403", TikTokClient.ERROR_UNAUDITED_PRIVATE_ONLY, false));
+        when(client.initInboxUpload(eq(ACCESS_TOKEN), any())).thenReturn(new UploadSession(PUBLISH_ID, UPLOAD_URL));
+        when(client.fetchPublishStatus(eq(ACCESS_TOKEN), eq(PUBLISH_ID)))
+                .thenReturn(new PublishStatus("SEND_TO_USER_INBOX", null, null, null));
+
+        ActionResult result = action.publish(schedulerInput(), context());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry(TikTokPublishAction.OUTPUT_AWAITING_HUMAN, true);
+        assertThat(result.output()).doesNotContainKey(TikTokPublishAction.OUTPUT_POST_ID);
+        assertThat(String.valueOf(result.output().get(TikTokPublishAction.OUTPUT_HANDOFF_NOTE)))
+                .contains("inbox").contains("audit");
+        verify(client, atLeastOnce()).uploadChunk(eq(UPLOAD_URL), any(), anyLong(), anyLong(), anyLong(), any());
     }
 
     @Test

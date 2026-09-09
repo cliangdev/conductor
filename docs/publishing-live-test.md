@@ -45,11 +45,12 @@ Keep the workspace to the people doing the test. Every automated destination pub
 2. Scopes Conductor requests: `user.info.basic`, `video.publish`, `video.upload`, `video.list`.
    `video.list` is what the metrics feed reads with; a connection made before it was requested has to
    be reconnected before metrics arrive.
-3. **An unaudited app can only post to a private account.** Until TikTok's audit passes, the target
-   TikTok account itself must be set to private (TikTok app → Settings → Privacy → Private account), or
-   every publish is refused with `unaudited_client_can_only_post_to_private_accounts` — regardless of the
-   `privacyLevel` chosen. The creator's allowed levels may still list all three; pick `SELF_ONLY` for the
-   first test anyway, so the post is visible to the creator alone.
+3. **Before the audit, TikTok posts land in the creator's inbox.** An unaudited app may post directly
+   only to private accounts, and a Business account can never be private. When TikTok refuses the direct
+   post, Conductor uploads the video to the creator's TikTok inbox instead; the destination shows
+   **Post it now** with an explanation, the creator opens TikTok, finishes the draft there, and records
+   the link on the Post with **Mark published**. Direct publishing starts working once the app passes
+   TikTok's audit (or, for a private personal account, immediately).
 4. **Photo posts need a verified URL prefix.** TikTok fetches images by URL, so the storage host
    (the signed-URL host of `GCP_STORAGE_BUCKET_NAME`) must be registered under *URL properties* in the
    developer portal. Without it every photo post fails with a message naming this; video posts upload

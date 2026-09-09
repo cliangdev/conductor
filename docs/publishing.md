@@ -179,6 +179,10 @@ Two rules worth knowing:
 - **An automated target cannot be marked published by hand.** It has a poller that will publish it and
   report the real outcome; declaring it published would strand a post still queued to go out. Drop it
   with `set_publish_targets` instead.
+- **Before TikTok's audit, an automated TikTok target may end up waiting on a person too.** TikTok lets
+  an unaudited app post directly only to private accounts; when it refuses, Conductor uploads to the
+  creator's TikTok inbox instead and the row moves to `AWAITING_MANUAL` with the reason, finished the same
+  way as a manual target once the creator has posted the draft from the app.
 - **TikTok's privacy-level and consent gates do not apply to a manual target**, and only to a manual
   one. Both exist because Conductor would be posting on the creator's behalf; on this lane the creator
   is in TikTok's own composer, seeing TikTok's own preview. An `APP_MANAGED` TikTok target alongside a
