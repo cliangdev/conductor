@@ -8,11 +8,13 @@
       ]
     },
     "conductor": {
-      "command": "node",
+      "command": "conductor",
       "args": [
-        "/Users/cliang/workspace/specflux_workspace/conductor/conductor-tools/dist/index.js",
         "mcp"
-      ]
+      ],
+      "env": {
+        "CONDUCTOR_PROJECT_ID": "2be53229-3538-4f72-8477-01563ea80efc"
+      }
     }
   }
 }

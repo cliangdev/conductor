@@ -49,6 +49,7 @@ class ActionInvocationServiceTest {
     @Mock private ActionInvocationRepository repository;
     @Mock private ConnectorRegistry connectorRegistry;
     @Mock private ConnectionService connectionService;
+    @Mock private OAuthFlowService oAuthFlowService;
     @Mock private ActionConnector connector;
 
     private ExecutorService executor;
@@ -68,7 +69,7 @@ class ActionInvocationServiceTest {
     void setUp() {
         executor = Executors.newSingleThreadExecutor();
         service = new ActionInvocationService(repository, connectorRegistry, connectionService,
-                new ObjectMapper(), executor);
+                new ObjectMapper(), executor, oAuthFlowService);
         // No real Spring proxy in a unit test — point the self-reference at the instance itself so
         // the @Transactional(REQUIRES_NEW) helper calls just run as plain method calls.
         service.self = service;
@@ -84,11 +85,48 @@ class ActionInvocationServiceTest {
         lenient().when(repository.findById(anyString())).thenAnswer(invocationOnMock -> Optional.ofNullable(stored.get()));
         lenient().when(connectionService.toContext(any())).thenReturn(
                 new ConnectionContext("proj-1", CONNECTOR_ID, "conn-1", "https://discord/webhook", null, null, Map.of(), null));
+        lenient().when(oAuthFlowService.withFreshToken(any(), any())).thenAnswer(inv -> inv.getArgument(1));
     }
 
     @AfterEach
     void tearDown() {
         executor.shutdownNow();
+    }
+
+    /**
+     * A timed publish fires long after the token it was authorized with expired (TikTok's live a day); the
+     * connector must be handed the refreshed one, or the platform answers 401 for a reason nobody can see.
+     */
+    @Test
+    void expiredOAuthToken_isRefreshedBeforeTheConnectorIsInvoked() {
+        ConnectionContext stale = new ConnectionContext("proj-1", CONNECTOR_ID, "conn-1", "stale", "refresh",
+                java.time.Instant.now().minusSeconds(3600), Map.of(), null);
+        ConnectionContext fresh = new ConnectionContext("proj-1", CONNECTOR_ID, "conn-1", "fresh", "refresh",
+                null, Map.of(), null);
+        when(connectionService.toContext(any())).thenReturn(stale);
+        when(oAuthFlowService.withFreshToken(any(), eq(stale))).thenReturn(fresh);
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        when(connector.invoke(eq(ACTION_ID), any(), any())).thenReturn(ActionResult.ok(Map.of("id", "v1")));
+
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
+
+        assertThat(result.success()).isTrue();
+        verify(connector).invoke(eq(ACTION_ID), any(), eq(fresh));
+    }
+
+    /** A refresh the platform refuses outright is dead on arrival: no attempt, a DEAD row, a clear message. */
+    @Test
+    void refreshRefusedByThePlatform_failsTheInvocationWithoutCallingTheConnector() {
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        when(oAuthFlowService.withFreshToken(any(), any())).thenThrow(
+                new com.conductor.integration.OAuthReauthRequiredException("reconnect the account", null));
+
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("reconnect the account");
+        verify(connector, never()).invoke(any(), any(), any());
+        assertThat(stored.get().getStatus()).isEqualTo(ActionInvocationStatus.DEAD);
     }
 
     @Test

@@ -268,6 +268,41 @@ public class PublishTargetService {
      * the row's fire time is only read once the Post is in the scheduled status, and every entry into that
      * status re-stamps again.
      */
+    /**
+     * Returns every {@code REVOKED} destination of {@code workItem} to {@code PENDING} so the Post's next entry
+     * into the scheduled status publishes it again. Leaving the scheduled status (Unschedule, an edit-revert,
+     * a delete) revokes native rows — the platform-side scheduled post is taken down — and nothing else ever
+     * moved them back, so a Post unscheduled once and scheduled again silently never reached that platform.
+     *
+     * <p>The row is reset to what a fresh selection would be: no platform id, permalink, error or checkpoint,
+     * the Post's current fire time, and a <b>new</b> idempotency key — the old key names the publish that
+     * was revoked, and at-most-once would refuse to run it twice. Same {@code REQUIRES_NEW} propagation as
+     * {@link #restampFireTimes}, for the same reason: the hand-off that follows claims each row in its own
+     * transaction and must not wait on a lock its caller holds.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int reviveRevokedTargets(WorkItem workItem) {
+        if (workItem == null) {
+            return 0;
+        }
+        int revived = 0;
+        for (PostPublishTarget target : targetRepository.findAllByWorkItemIdAndState(
+                workItem.getId(), PostPublishTargetState.REVOKED)) {
+            target.setState(PostPublishTargetState.PENDING);
+            target.setPlatformPostId(null);
+            target.setPermalink(null);
+            target.setErrorMessage(null);
+            target.setResumeCheckpoint(null);
+            target.setFireTime(workItem.getScheduledFor());
+            target.setIdempotencyKey("pub:" + workItem.getId() + ":" + target.getPlatform() + ":"
+                    + (target.getConnectionId() == null ? MANUAL_KEY : target.getConnectionId())
+                    + ":" + UUID.randomUUID());
+            targetRepository.save(target);
+            revived++;
+        }
+        return revived;
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int restampFireTimes(WorkItem workItem) {
         if (workItem == null || workItem.getScheduledFor() == null) {

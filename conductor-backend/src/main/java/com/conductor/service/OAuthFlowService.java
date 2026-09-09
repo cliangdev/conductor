@@ -4,6 +4,7 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
+import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.OAuthReauthRequiredException;
@@ -27,6 +28,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -317,6 +319,47 @@ public class OAuthFlowService {
         applyCompletion(conn, completion, creds.accessToken(), creds.refreshToken(), conn.getTokenExpiresAt());
         log.info("OAuth account selection completed for connection={} account={}", conn.getId(), accountId);
         return conn;
+    }
+
+    /** A token this close to expiry is refreshed rather than used — an in-flight upload must outlive it. */
+    public static final int TOKEN_REFRESH_BUFFER_MINUTES = 5;
+
+    /**
+     * {@code ctx} carrying an access token that is good for at least the next few minutes: the stored
+     * token when it still is, a freshly refreshed one (persisted to the connection) when it is expired or
+     * about to be. Non-OAuth connections and tokens with no known expiry pass through untouched.
+     *
+     * <p>This is what every timed publish must go through. A TikTok access token lives 24 hours and a
+     * Post is routinely scheduled further out than that, so the token a connection was authorized with
+     * is expired by the time the Post fires; without this the platform answers 401 and the row fails
+     * permanently for a reason the account owner cannot see. A refresh the platform refuses outright
+     * ({@link OAuthReauthRequiredException}) propagates, because the token is dead and the human has to
+     * reconnect; any other refresh failure logs and falls back to the stored token, which may still work.
+     */
+    public ConnectionContext withFreshToken(Connection conn, ConnectionContext ctx) {
+        if (ctx == null || conn == null || !AuthType.OAUTH2.name().equals(conn.getAuthType())
+                || ctx.expiresAt() == null) {
+            return ctx;
+        }
+        OffsetDateTime expiresAt = OffsetDateTime.ofInstant(ctx.expiresAt(), ZoneOffset.UTC);
+        if (!OffsetDateTime.now().plusMinutes(TOKEN_REFRESH_BUFFER_MINUTES).isAfter(expiresAt)) {
+            return ctx;
+        }
+        if (ctx.refreshToken() == null || ctx.refreshToken().isBlank()) {
+            throw new OAuthReauthRequiredException("Connection " + conn.getId()
+                    + " has an expired access token and no refresh token — reconnect the account", null);
+        }
+        try {
+            String newToken = refreshAccessToken(conn, ctx.refreshToken());
+            // The real expiry is on the connection now; null here so nobody treats the new token as stale.
+            return new ConnectionContext(ctx.projectId(), ctx.connectorId(), ctx.connectionId(),
+                    newToken, ctx.refreshToken(), null, ctx.config(), ctx.webhookSecret());
+        } catch (OAuthReauthRequiredException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Token refresh failed for connection={}: {}", conn.getId(), e.getMessage());
+            return ctx;
+        }
     }
 
     /**

@@ -429,4 +429,54 @@ class OAuthFlowServiceTest {
         assertThat(service.awaitingAccountSelection(apiKey)).isFalse();
         verify(connectorRegistry, never()).findOAuth2("other");
     }
+
+    // ---- withFreshToken ----
+
+    private static com.conductor.integration.ConnectionContext context(String token, java.time.Instant expiresAt) {
+        return new com.conductor.integration.ConnectionContext("proj-1", "acme", "conn-1", token, "refresh-456",
+                expiresAt, Map.of(), null);
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void withFreshToken_refreshesATokenThatIsExpiredOrAboutTo() {
+        Connection conn = oauthConnection("acme", null);
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new FakeOAuth2Connector()));
+        when(environment.getProperty("ACME_OAUTH_CLIENT_ID", "")).thenReturn("acme-client-id");
+        when(environment.getProperty("ACME_OAUTH_CLIENT_SECRET", "")).thenReturn("acme-client-secret");
+        when(restTemplate.exchange(eq("https://acme.example.com/oauth/token"), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(Map.class)))
+                .thenReturn((ResponseEntity) ResponseEntity.ok(Map.of("access_token", "new-access", "expires_in", 3600)));
+
+        com.conductor.integration.ConnectionContext fresh = service.withFreshToken(
+                conn, context("stale", java.time.Instant.now().minusSeconds(60)));
+
+        assertThat(fresh.accessToken()).isEqualTo("new-access");
+        assertThat(fresh.expiresAt()).isNull();
+        assertThat(fresh.refreshToken()).isEqualTo("refresh-456");
+        verify(connectionService).updateAccessToken(eq(conn), eq("new-access"), any(OffsetDateTime.class));
+    }
+
+    @Test
+    void withFreshToken_leavesAStillValidTokenAndNonOAuthConnectionsAlone() {
+        com.conductor.integration.ConnectionContext valid = context("ok", java.time.Instant.now().plusSeconds(3600));
+        assertThat(service.withFreshToken(oauthConnection("acme", null), valid)).isSameAs(valid);
+
+        Connection apiKey = oauthConnection("acme", null);
+        apiKey.setAuthType("API_KEY");
+        com.conductor.integration.ConnectionContext expired = context("k", java.time.Instant.now().minusSeconds(60));
+        assertThat(service.withFreshToken(apiKey, expired)).isSameAs(expired);
+
+        assertThat(service.withFreshToken(oauthConnection("acme", null), context("t", null)).accessToken()).isEqualTo("t");
+        verify(connectorRegistry, never()).findOAuth2(any());
+    }
+
+    @Test
+    void withFreshToken_withNoRefreshTokenDemandsReauthorization() {
+        com.conductor.integration.ConnectionContext orphan = new com.conductor.integration.ConnectionContext(
+                "proj-1", "acme", "conn-1", "stale", null, java.time.Instant.now().minusSeconds(60), Map.of(), null);
+        assertThatThrownBy(() -> service.withFreshToken(oauthConnection("acme", null), orphan))
+                .isInstanceOf(OAuthReauthRequiredException.class)
+                .hasMessageContaining("reconnect");
+    }
 }

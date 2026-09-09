@@ -109,7 +109,7 @@ class ActionInvocationCheckpointTest {
     void setUp() {
         executor = Executors.newSingleThreadExecutor();
         service = new ActionInvocationService(repository, connectorRegistry, connectionService,
-                new ObjectMapper(), executor);
+                new ObjectMapper(), executor, passthroughOAuth());
         service.self = service;
 
         lenient().when(repository.save(any())).thenAnswer(call -> {
@@ -249,5 +249,13 @@ class ActionInvocationCheckpointTest {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** An {@link com.conductor.service.OAuthFlowService} that hands every context back untouched. */
+    private static com.conductor.service.OAuthFlowService passthroughOAuth() {
+        com.conductor.service.OAuthFlowService flow = org.mockito.Mockito.mock(com.conductor.service.OAuthFlowService.class);
+        org.mockito.Mockito.lenient().when(flow.withFreshToken(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        return flow;
     }
 }
