@@ -11,6 +11,7 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.service.publish.PublishGateEvaluator;
+import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.lifecycle.SystemTriggerRegistry;
@@ -59,6 +60,10 @@ public class WorkItemWorkflowService {
     private final SystemTriggerRegistry systemTriggerRegistry;
     private final PublishBundleHasher publishBundleHasher;
     private final PublishGateEvaluator publishGateEvaluator;
+
+    /** What a person hears when they try to take an edge that belongs to the pipeline. */
+    static final String PIPELINE_EDGE_REFUSAL = "Conductor moves a post to Published or Publish failed itself,"
+            + " once each destination reports back. A by-hand destination is finished from its own row.";
 
     public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
@@ -132,6 +137,9 @@ public class WorkItemWorkflowService {
             throw new UnprocessableEntityException(
                     "Transition to " + newStatus + " requires an approved review");
         }
+        if (PublishingWorkflow.isPipelineOutcomeEdge(statechart, workItem.getCurrentStatus(), newStatus)) {
+            throw new BusinessException(PIPELINE_EDGE_REFUSAL);
+        }
         // Publishing workflows additionally require a complete, schedulable publish bundle on their gate
         // edges (fire time + timezone, at least one target, media every destination accepts, every publish
         // option chosen, the creator's consent). The evaluator is a no-op for every transition it does not
@@ -161,6 +169,10 @@ public class WorkItemWorkflowService {
             for (StatechartTransition t : statechart.transitionsFrom(currentStatus)) {
                 // Doer projection: a review-gated edge stays hidden until its Review is satisfied.
                 if (t.requiresReview() && !isReviewSatisfied(projectId, workItem, t)) {
+                    continue;
+                }
+                // The pipeline's own outcomes are not a person's moves; see PIPELINE_EDGE_REFUSAL.
+                if (PublishingWorkflow.isPipelineOutcomeEdge(statechart, currentStatus, t.to())) {
                     continue;
                 }
                 transitions.add(new AvailableTransitionsView.Transition(t.to(), t.label(), t.requiresReview()));

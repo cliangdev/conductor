@@ -101,7 +101,11 @@ class WorkItemWorkflowServiceTest {
     }
 
     private WorkflowDefinitionVersion engineeringSnapshot() {
-        try (InputStream in = getClass().getResourceAsStream("/schema/examples/engineering.workflow.json")) {
+        return snapshot("/schema/examples/engineering.workflow.json");
+    }
+
+    private WorkflowDefinitionVersion snapshot(String resource) {
+        try (InputStream in = getClass().getResourceAsStream(resource)) {
             WorkflowDefinitionVersion v = new WorkflowDefinitionVersion();
             v.setVersion(1);
             v.setDefinition(new ObjectMapper().readTree(in));
@@ -313,6 +317,49 @@ class WorkItemWorkflowServiceTest {
         assertThat(response.noun()).isEqualTo("Issue");
         assertThat(response.transitions()).extracting(AvailableTransitionsView.Transition::toStatus)
                 .containsExactlyInAnyOrder("IN_REVIEW", "CLOSED");
+    }
+
+    // --- the pipeline's outcome edges are not a person's moves ---
+
+    @Test
+    void availableTransitionsHideThePipelinesOwnOutcomes() {
+        givenMarketing();
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(marketingPostAt("SCHEDULED")));
+        ProjectMember member = new ProjectMember();
+        member.setRole(MemberRole.ADMIN);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
+
+        AvailableTransitionsView response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
+
+        // Unschedule stays; Published and Publish failed are what the roll-up sets, not a menu item.
+        assertThat(response.transitions()).extracting(AvailableTransitionsView.Transition::toStatus)
+                .containsExactly("APPROVED");
+    }
+
+    @Test
+    void aPersonCannotTakeThePipelinesOwnOutcome() {
+        givenMarketing();
+
+        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, marketingPostAt("SCHEDULED"), "PUBLISHED"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Conductor moves a post to Published or Publish failed itself");
+        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, marketingPostAt("SCHEDULED"), "FAILED"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Conductor moves a post to Published or Publish failed itself");
+    }
+
+    private void givenMarketing() {
+        WorkflowDefinitionVersion snapshot = snapshot("/schema/examples/marketing.workflow.json");
+        when(versionRepository.findLatestPublished(any(), eq("MARKETING"))).thenReturn(Optional.of(snapshot));
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("MARKETING"), eq(1)))
+                .thenReturn(Optional.of(snapshot));
+    }
+
+    private WorkItem marketingPostAt(String status) {
+        WorkItem post = workItemAt(status);
+        post.setWorkflow("MARKETING");
+        return post;
     }
 
     // --- role-scoped Review gate (Wave 4): CODE_REVIEW -> DONE has reviewerRole REVIEWER ---
