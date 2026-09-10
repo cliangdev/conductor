@@ -15,6 +15,7 @@ import com.conductor.generated.v2.model.WorkItemResponse;
 import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkItemWorkflowService;
 import com.conductor.service.view.AvailableTransitionsView;
+import com.conductor.workflow.lifecycle.Statechart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -67,7 +69,7 @@ public class WorkItemController implements WorkItemsApi {
         WorkItem created = workItemService.createWorkItem(
                 projectId, request.getType(), request.getTitle(), request.getDescription(),
                 request.getWorkflow(), request.getTags(), caller);
-        return ResponseEntity.status(201).body(toResponse(created, 0L));
+        return ResponseEntity.status(201).body(toResponse(created, 0L).statusLabel(statusLabel(projectId, created)));
     }
 
     @Override
@@ -84,7 +86,8 @@ public class WorkItemController implements WorkItemsApi {
         Map<String, List<Asset>> links = workItemService.externalLinks(ids);
         List<WorkItemResponse> responses = items.stream()
                 .map(item -> toResponse(item, counts.getOrDefault(item.getId(), 0L),
-                        links.getOrDefault(item.getId(), List.of())))
+                        links.getOrDefault(item.getId(), List.of()))
+                        .statusLabel(statusLabel(projectId, item)))
                 .toList();
         return ResponseEntity.ok(responses);
     }
@@ -95,7 +98,7 @@ public class WorkItemController implements WorkItemsApi {
         User caller = currentUser();
         WorkItem item = workItemService.getWorkItemEntity(projectId, workItemId, caller);
         return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
-                linksFor(item)));
+                linksFor(item)).statusLabel(statusLabel(projectId, item)));
     }
 
     @Override
@@ -104,7 +107,7 @@ public class WorkItemController implements WorkItemsApi {
         User caller = currentUser();
         WorkItem item = workItemService.resolveByDisplayId(projectId, displayId, caller);
         return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
-                linksFor(item)));
+                linksFor(item)).statusLabel(statusLabel(projectId, item)));
     }
 
     @Override
@@ -119,7 +122,7 @@ public class WorkItemController implements WorkItemsApi {
         // Resolved here too: a client that refreshes its row from a patch response would otherwise see an
         // item's links vanish on an unrelated edit.
         return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
-                linksFor(item)));
+                linksFor(item)).statusLabel(statusLabel(projectId, item)));
     }
 
     @Override
@@ -141,6 +144,41 @@ public class WorkItemController implements WorkItemsApi {
     private List<Asset> linksFor(WorkItem item) {
         return workItemService.externalLinks(List.of(item.getId()))
                 .getOrDefault(item.getId(), List.of());
+    }
+
+    /**
+     * The human word for {@code status}: the item's own resolved Workflow statechart's display label for
+     * its current status, or a humanized form of the raw id when the statechart sets none. A Workflow that
+     * cannot be resolved (deleted since, say) never breaks the read — it falls back the same way.
+     */
+    private String statusLabel(String projectId, WorkItem item) {
+        try {
+            Statechart statechart = workItemWorkflowService.resolveFor(projectId, item);
+            return statechart.status(item.getCurrentStatus())
+                    .map(status -> status.displayLabel())
+                    .orElseGet(() -> humanizeStatusId(item.getCurrentStatus()));
+        } catch (RuntimeException e) {
+            return humanizeStatusId(item.getCurrentStatus());
+        }
+    }
+
+    /** "READY_FOR_DEV" -> "Ready For Dev": the fallback for a status id with no declared label. */
+    private static String humanizeStatusId(String statusId) {
+        if (statusId == null || statusId.isBlank()) {
+            return statusId;
+        }
+        String[] words = statusId.toLowerCase(Locale.ROOT).split("_");
+        StringBuilder label = new StringBuilder();
+        for (String word : words) {
+            if (word.isEmpty()) {
+                continue;
+            }
+            if (label.length() > 0) {
+                label.append(' ');
+            }
+            label.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return label.toString();
     }
 
     /** Map a {@link WorkItem} entity to the v2 response, with no external links resolved. */
