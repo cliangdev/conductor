@@ -239,6 +239,14 @@ describe('PublishReadinessCard + PublishReadinessAction', () => {
     expect(await screen.findByText('1 thing to fix before it can be approved. Send it back to the author.')).toBeInTheDocument()
   })
 
+  it('shows nothing in the header once there is no next move; the status chip already says where it is', async () => {
+    current = preflight({ nextTransition: null })
+    renderCard({ status: 'SCHEDULED' })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(screen.queryByText(/nothing left to check/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Submit|Resubmit|Schedule/ })).not.toBeInTheDocument()
+  })
+
   it('re-asks the server when refreshKey changes', async () => {
     const { rerender } = render(<Harness refreshKey={1} />)
     await screen.findByText(/Everything checks out/)

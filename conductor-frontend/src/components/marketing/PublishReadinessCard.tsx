@@ -287,6 +287,11 @@ export function PublishReadinessAction({
   if (!preflight || !preflight.publishing) {
     return null
   }
+  // No next move means nothing to press and nothing to explain: the status chip already says where the
+  // item is, and a sentence like "there is nothing left to check" is chrome in the action slot.
+  if (!preflight.nextTransition) {
+    return null
+  }
 
   const blockerCount = preflight.blockers.length
   const summaryText = forReviewer
