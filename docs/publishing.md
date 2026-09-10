@@ -52,6 +52,20 @@ soon as possible" for the current destinations, which a client sets as `schedule
 guessing a lead. The 422 a refused transition throws is the same list, so what a client shows beforehand
 and what the transition says cannot disagree.
 
+### Publish as soon as it's approved
+
+A Post does not have to carry a date. With `publishOnApproval: true` (`PATCH …/work-items/{id}`, the
+compose card's checkbox, or `create_post`'s flag) the gate skips its two fire-time checks
+(`NO_FIRE_TIME`, `FIRE_TIME_TOO_SOON`), and the moment the Post enters its scheduled status the server
+stamps `scheduledFor` with `earliestFireTime` for its destinations at that instant — the same number the
+preflight would have reported. Leaving the scheduled status (an unschedule, an edit-revert) forgets the
+stamped time again, so a re-approval computes a fresh one rather than re-using a slot that is now in the
+past. The flag is part of the approved bundle: turning it on or off after approval reverts the Post to
+review like a caption edit would. The stamped time is *derived* and therefore not in the bundle hash, so
+the stamp itself does not void the approval that caused it. On a Workflow whose approval takes the Post
+straight through to scheduled (`"trigger": "review_approved"` on both edges, as in the seeded MARKETING
+lifecycle), the reviewer's approval is the publish button.
+
 ### Which status is "scheduled"
 
 A publishing Workflow names the status its Posts wait in with `publishes_from` (MARKETING:

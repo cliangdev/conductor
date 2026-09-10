@@ -134,6 +134,26 @@ describe('ComposePostModal', () => {
     expect(toastErrorSpy).not.toHaveBeenCalled()
   })
 
+  it('sends the publish-on-approval flag instead of a date when asked, and skips the preflight', async () => {
+    renderModal()
+    await screen.findByLabelText('@acme')
+
+    await userEvent.type(screen.getByLabelText('Caption'), 'Whenever it is ready')
+    await userEvent.click(screen.getByLabelText('@acme'))
+    await userEvent.selectOptions(screen.getByLabelText('Time zone'), 'UTC')
+    await userEvent.click(screen.getByLabelText(/Publish as soon as it.s approved/))
+    // The date is not asked for at all once the answer is "when it is approved".
+    expect(screen.queryByLabelText('When')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+
+    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/app/projects/project-1/marketing/posts/MK-9'))
+    const schedule = calls.find((c) => c.method === 'PATCH')
+    expect(schedule?.body).toEqual({ publishOnApproval: true, scheduleTimezone: 'UTC' })
+    expect(calls.some((c) => c.url.endsWith('/publish-preflight'))).toBe(false)
+    expect(toastErrorSpy).not.toHaveBeenCalled()
+  })
+
   it('offers a format selector only for a destination with more than feed, and sends the choice', async () => {
     renderModal()
     await screen.findByLabelText('@acme')

@@ -130,9 +130,14 @@ export interface WorkItemScheduleFieldProps {
   token: string
   scheduledFor?: string | null
   scheduleTimezone?: string | null
+  /**
+   * The item goes out as soon as it is approved: no date is needed, and the status that puts it on a
+   * clock stamps one. Shown in place of the date while there is none; the editor can turn it on or off.
+   */
+  publishOnApproval?: boolean
   /** False for a reader — a REVIEWER sees the schedule but cannot move it. */
   canEdit: boolean
-  onChanged: (scheduledFor: string | null, scheduleTimezone: string | null) => void
+  onChanged: (scheduledFor: string | null, scheduleTimezone: string | null, publishOnApproval?: boolean) => void
 }
 
 export function WorkItemScheduleField({
@@ -141,6 +146,7 @@ export function WorkItemScheduleField({
   token,
   scheduledFor,
   scheduleTimezone,
+  publishOnApproval = false,
   canEdit,
   onChanged,
 }: WorkItemScheduleFieldProps) {
@@ -149,24 +155,32 @@ export function WorkItemScheduleField({
   const [saving, setSaving] = useState(false)
   const [local, setLocal] = useState('')
   const [tz, setTz] = useState(zone)
+  const [onApproval, setOnApproval] = useState(publishOnApproval)
   const zones = useMemo(() => timeZones(tz), [tz])
+  const hasSchedule = Boolean(scheduledFor) || publishOnApproval
 
   const open = useCallback(() => {
     setTz(zone)
     setLocal(scheduledFor ? instantToWallClock(scheduledFor, zone) : '')
+    setOnApproval(publishOnApproval)
     setEditing(true)
-  }, [scheduledFor, zone])
+  }, [scheduledFor, zone, publishOnApproval])
 
   const save = useCallback(
-    async (nextIso: string | null, nextTz: string | null) => {
+    async (nextIso: string | null, nextTz: string | null, nextOnApproval: boolean) => {
       setSaving(true)
       try {
+        // The flag travels only when it changes, so an item that never had it keeps a body of exactly
+        // the two schedule fields.
+        const flag = nextOnApproval !== publishOnApproval ? { publishOnApproval: nextOnApproval } : {}
         await apiPatch(
           `/api/v2/projects/${projectId}/work-items/${issueId}`,
-          { scheduledFor: nextIso, scheduleTimezone: nextTz },
+          nextOnApproval
+            ? { scheduleTimezone: nextTz, ...flag }
+            : { scheduledFor: nextIso, scheduleTimezone: nextTz, ...flag },
           token
         )
-        onChanged(nextIso, nextTz)
+        onChanged(nextIso, nextTz, nextOnApproval)
         setEditing(false)
       } catch (err) {
         // Never swallow: the stored schedule is unchanged and the reason is said out loud. Editing a
@@ -177,7 +191,7 @@ export function WorkItemScheduleField({
         setSaving(false)
       }
     },
-    [projectId, issueId, token, onChanged]
+    [projectId, issueId, token, onChanged, publishOnApproval]
   )
 
   if (!editing) {
@@ -189,9 +203,9 @@ export function WorkItemScheduleField({
             // The panel is narrow enough to truncate a full date-time-plus-zone, so the untruncated
             // value has to stay reachable without opening the editor.
             title={scheduledFor ? describe(scheduledFor, zone) : undefined}
-            className={scheduledFor ? 'truncate text-sm text-foreground' : 'text-sm text-muted-foreground'}
+            className={hasSchedule ? 'truncate text-sm text-foreground' : 'text-sm text-muted-foreground'}
           >
-            {scheduledFor ? describe(scheduledFor, zone) : 'Not scheduled'}
+            {scheduledFor ? describe(scheduledFor, zone) : publishOnApproval ? 'As soon as approved' : 'Not scheduled'}
           </span>
         </div>
         {canEdit && (
@@ -200,7 +214,7 @@ export function WorkItemScheduleField({
             onClick={open}
             className="shrink-0 text-xs text-primary hover:underline"
           >
-            {scheduledFor ? 'Change' : 'Set'}
+            {hasSchedule ? 'Change' : 'Set'}
           </button>
         )}
       </div>
@@ -209,14 +223,25 @@ export function WorkItemScheduleField({
 
   return (
     <div className="space-y-2">
-      <DateTimePicker
-        id={`sched-${issueId}`}
-        label="Scheduled date and time"
-        value={local}
-        onChange={setLocal}
-        defaultOpen
-        align="end"
-      />
+      <label className="flex items-center gap-2 text-sm text-foreground">
+        <input
+          type="checkbox"
+          checked={onApproval}
+          disabled={saving}
+          onChange={(e) => setOnApproval(e.target.checked)}
+        />
+        As soon as approved
+      </label>
+      {!onApproval && (
+        <DateTimePicker
+          id={`sched-${issueId}`}
+          label="Scheduled date and time"
+          value={local}
+          onChange={setLocal}
+          defaultOpen
+          align="end"
+        />
+      )}
       <label htmlFor={`tz-${issueId}`} className="sr-only">
         Schedule timezone
       </label>
@@ -233,11 +258,11 @@ export function WorkItemScheduleField({
         ))}
       </select>
       <div className="flex items-center justify-between gap-2">
-        {scheduledFor ? (
+        {hasSchedule ? (
           <button
             type="button"
             disabled={saving}
-            onClick={() => void save(null, null)}
+            onClick={() => void save(null, null, false)}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             <X className="h-3 w-3" aria-hidden="true" />
@@ -252,10 +277,14 @@ export function WorkItemScheduleField({
           </Button>
           <Button
             size="sm"
-            disabled={saving || !local}
+            disabled={saving || (!onApproval && !local)}
             onClick={() => {
+              if (onApproval) {
+                void save(null, tz, true)
+                return
+              }
               const iso = wallClockToInstant(local, tz)
-              if (iso) void save(iso, tz)
+              if (iso) void save(iso, tz, false)
             }}
           >
             {saving ? 'Saving…' : 'Save'}

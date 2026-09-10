@@ -17,6 +17,12 @@ Pages and accounts you control. Two reasons it cannot be a laptop:
 
 Do not use a PR preview deploy for this: its migrations and rows land in the production database.
 
+Browser uploads go straight from the page to the storage bucket over a signed URL, so the bucket needs a
+CORS policy that allows `PUT` from the frontend's origin(s). Without one the compose card's upload fails
+in under a second with "could not reach storage" and the backend logs nothing at all. Apply
+`scripts/gcs-cors.json` (add your frontend hostnames to it) with
+`gcloud storage buckets update gs://<bucket> --cors-file=scripts/gcs-cors.json`.
+
 Keep the workspace to the people doing the test. Every automated destination publishes for real.
 
 ## Before you start: the platform side

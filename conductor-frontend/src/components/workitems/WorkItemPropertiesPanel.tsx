@@ -112,6 +112,7 @@ export function WorkItemPropertiesPanel({
   assets,
   scheduledFor,
   scheduleTimezone,
+  publishOnApproval,
   onScheduleChanged,
   tags,
   knownTags,
@@ -144,7 +145,8 @@ export function WorkItemPropertiesPanel({
   /** ISO instant this item is due, or null. A generic Work Item field — see WorkItemScheduleField. */
   scheduledFor?: string | null
   scheduleTimezone?: string | null
-  onScheduleChanged: (scheduledFor: string | null, scheduleTimezone: string | null) => void
+  publishOnApproval?: boolean
+  onScheduleChanged: (scheduledFor: string | null, scheduleTimezone: string | null, publishOnApproval?: boolean) => void
   /** Freeform labels on this item. */
   tags: string[]
   /** Tags already in use in this project, offered as suggestions so a vocabulary converges. */
@@ -205,6 +207,7 @@ export function WorkItemPropertiesPanel({
           token={token}
           scheduledFor={scheduledFor}
           scheduleTimezone={scheduleTimezone}
+          publishOnApproval={publishOnApproval}
           canEdit={userRole !== 'REVIEWER'}
           onChanged={onScheduleChanged}
         />

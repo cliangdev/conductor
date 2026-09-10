@@ -148,6 +148,7 @@ export function ComposePostModal({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [formats, setFormats] = useState<Record<string, PostFormat>>({})
   const [when, setWhen] = useState('')
+  const [onApproval, setOnApproval] = useState(false)
   const [timeZone, setTimeZone] = useState(browserTimeZone)
   const [saving, setSaving] = useState(false)
   const [step, setStep] = useState<string | null>(null)
@@ -161,6 +162,7 @@ export function ComposePostModal({
     setSelected(new Set())
     setFormats({})
     setWhen('')
+    setOnApproval(false)
     setStep(null)
     let cancelled = false
     apiGet<PublishTargetOption[]>(`/api/v2/projects/${projectId}/publish-targets`, token)
@@ -275,16 +277,22 @@ export function ComposePostModal({
 
     try {
       setStep('Scheduling…')
-      let scheduledFor = toInstant(when, timeZone)
-      if (!scheduledFor) {
-        // No time given: the server says the earliest the chosen destinations accept.
-        const preflight = await apiGet<PreflightSummary>(`${base}/publish-preflight`, token)
-        const earliest = preflight.earliestFireTime
-          ? new Date(preflight.earliestFireTime)
-          : new Date(Date.now() + 15 * 60_000)
-        scheduledFor = nextQuarterHour(earliest).toISOString()
+      if (onApproval) {
+        // No date at all: approval puts it on the earliest slot every destination accepts, and the
+        // server works that out when the Post enters its scheduled status, not now.
+        await apiPatch(base, { publishOnApproval: true, scheduleTimezone: timeZone }, token)
+      } else {
+        let scheduledFor = toInstant(when, timeZone)
+        if (!scheduledFor) {
+          // No time given: the server says the earliest the chosen destinations accept.
+          const preflight = await apiGet<PreflightSummary>(`${base}/publish-preflight`, token)
+          const earliest = preflight.earliestFireTime
+            ? new Date(preflight.earliestFireTime)
+            : new Date(Date.now() + 15 * 60_000)
+          scheduledFor = nextQuarterHour(earliest).toISOString()
+        }
+        await apiPatch(base, { scheduledFor, scheduleTimezone: timeZone }, token)
       }
-      await apiPatch(base, { scheduledFor, scheduleTimezone: timeZone }, token)
     } catch (err) {
       problems.push(apiErrorMessage(err, 'Could not set the schedule'))
     }
@@ -472,13 +480,29 @@ export function ComposePostModal({
           )}
         </fieldset>
 
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={onApproval}
+            disabled={saving}
+            onChange={(e) => setOnApproval(e.target.checked)}
+          />
+          Publish as soon as it&rsquo;s approved
+        </label>
+
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="compose-when">
-              When <span className="text-muted-foreground">(optional; the next slot the destinations accept otherwise)</span>
-            </Label>
-            <DateTimePicker id="compose-when" label="When" value={when} onChange={setWhen} clearable />
-          </div>
+          {onApproval ? (
+            <p className="text-xs text-muted-foreground sm:self-end sm:pb-2">
+              No date needed: approval puts it on the earliest slot every destination accepts.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              <Label htmlFor="compose-when">
+                When <span className="text-muted-foreground">(optional; the next slot the destinations accept otherwise)</span>
+              </Label>
+              <DateTimePicker id="compose-when" label="When" value={when} onChange={setWhen} clearable />
+            </div>
+          )}
           <div className="space-y-1">
             <Label htmlFor="compose-zone">Time zone</Label>
             <Select id="compose-zone" value={timeZone} onChange={(e) => setTimeZone(e.target.value)}>

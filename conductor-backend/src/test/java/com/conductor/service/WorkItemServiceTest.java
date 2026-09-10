@@ -186,6 +186,30 @@ class WorkItemServiceTest {
         verify(nativeHandoffService, never()).unschedule(any());
     }
 
+    /** Publish-on-approval: entering the scheduled status is what sets the time, and leaving it forgets it. */
+    @Test
+    void publishOnApprovalStampsTheEarliestFireTimeOnEnteringScheduled_andClearsItOnLeaving() {
+        testIssue.setCurrentStatus("APPROVED");
+        testIssue.setPublishOnApproval(true);
+        testIssue.setScheduledFor(null);
+        OffsetDateTime earliest = OffsetDateTime.parse("2026-09-10T10:11:00Z");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
+                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
+        when(publishTargetService.earliestFireTime(testIssue)).thenReturn(earliest);
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, "SCHEDULED", null, null, null, caller);
+        assertThat(testIssue.getScheduledFor()).isEqualTo(earliest);
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(publishTargetService, nativeHandoffService);
+        inOrder.verify(publishTargetService).earliestFireTime(testIssue);
+        inOrder.verify(publishTargetService).restampFireTimes(testIssue);
+        inOrder.verify(nativeHandoffService).handoffForPost(testIssue);
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, "APPROVED", null, null, null, caller);
+        assertThat(testIssue.getScheduledFor()).isNull();
+    }
+
     /**
      * Leaving the scheduled status must revoke first. A handed-off post already exists on the platform, so an
      * unschedule/edit-revert that skipped revocation would still go live.

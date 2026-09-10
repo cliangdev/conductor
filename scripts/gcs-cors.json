@@ -1,0 +1,19 @@
+[
+  {
+    "origin": [
+      "https://conductor-frontend-199707291514.us-central1.run.app",
+      "https://conductor-frontend-x6setx6tpa-uc.a.run.app",
+      "http://localhost:3000"
+    ],
+    "method": [
+      "GET",
+      "PUT",
+      "HEAD"
+    ],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

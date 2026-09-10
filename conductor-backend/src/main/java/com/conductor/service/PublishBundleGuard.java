@@ -118,10 +118,26 @@ public class PublishBundleGuard {
     @Transactional
     public Optional<Revert> revertForCaptionOrScheduleEdit(String projectId, WorkItem post, String caption,
                                                            OffsetDateTime fireTime, String scheduleTimezone) {
-        if (!changesCaptionOrSchedule(post, caption, fireTime, scheduleTimezone)) {
+        return revertForCaptionOrScheduleEdit(projectId, post, caption, fireTime, scheduleTimezone, null);
+    }
+
+    /**
+     * As above, with the publish-on-approval flag: it is part of the approved bundle (the reviewer approved
+     * "as soon as approved", not a time), so flipping it is a schedule edit. {@code null} means unchanged.
+     */
+    @Transactional
+    public Optional<Revert> revertForCaptionOrScheduleEdit(String projectId, WorkItem post, String caption,
+                                                           OffsetDateTime fireTime, String scheduleTimezone,
+                                                           Boolean publishOnApproval) {
+        if (!changesCaptionOrSchedule(post, caption, fireTime, scheduleTimezone)
+                && !changesPublishOnApproval(post, publishOnApproval)) {
             return Optional.empty();
         }
         return revertForBundleEdit(projectId, post);
+    }
+
+    private static boolean changesPublishOnApproval(WorkItem post, Boolean publishOnApproval) {
+        return post != null && publishOnApproval != null && publishOnApproval != post.isPublishOnApproval();
     }
 
     /**
@@ -263,6 +279,13 @@ public class PublishBundleGuard {
     public void refuseEditWhileFrozen(String projectId, WorkItem workItem, String description,
                                            OffsetDateTime scheduledFor, String scheduleTimezone,
                                            java.util.Collection<String> tags) {
+        refuseEditWhileFrozen(projectId, workItem, description, scheduledFor, scheduleTimezone, tags, null);
+    }
+
+    /** As above, with the publish-on-approval flag ({@code null} means unchanged). */
+    public void refuseEditWhileFrozen(String projectId, WorkItem workItem, String description,
+                                           OffsetDateTime scheduledFor, String scheduleTimezone,
+                                           java.util.Collection<String> tags, Boolean publishOnApproval) {
         Statechart statechart = statechartOrNull(projectId, workItem);
         if (statechart == null
                 || !AssetUploadPolicy.isFrozen(statechart, workItem.getCurrentStatus())) {
@@ -270,7 +293,8 @@ public class PublishBundleGuard {
         }
         // Past the gate the existing revert path owns this: an edit there takes the approval back rather
         // than being refused, which is the behaviour COND-23 specified and clients rely on.
-        if (!changesAnything(workItem, description, scheduledFor, scheduleTimezone, tags)) {
+        if (!changesAnything(workItem, description, scheduledFor, scheduleTimezone, tags)
+                && !changesPublishOnApproval(workItem, publishOnApproval)) {
             return;
         }
         String noun = statechart.noun();

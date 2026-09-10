@@ -151,6 +151,32 @@ describe('create_post', () => {
     expect(preflightCalls).toBeGreaterThanOrEqual(2)
   })
 
+  it('sends the publish-on-approval flag instead of a fire time when asked, and reads it back', async () => {
+    serve({
+      '/api/v2/projects/proj-1/publish-targets': ACCOUNTS,
+      '/api/v1/projects/proj-1/workflows': WORKFLOWS,
+      '/api/v2/projects/proj-1/work-items/w1/publish-preflight': readyPreflight({ earliestFireTime: null }),
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+        { id: 't-ig', platform: 'instagram', label: '@acme', lane: 'APP_MANAGED', state: 'PENDING' },
+      ],
+      '/api/v2/projects/proj-1/work-items/w1/assets': [],
+      '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-8', status: 'DRAFT', scheduledFor: null, scheduleTimezone: 'UTC', publishOnApproval: true },
+    })
+    mocked(apiPost).mockResolvedValue({ id: 'w1', displayId: 'MK-8', status: 'DRAFT' })
+    mocked(apiPut).mockResolvedValue([])
+    mocked(apiPatch).mockResolvedValue({})
+
+    const result = await createPost(
+      { text: 'Whenever it is ready', targets: [{ platform: 'instagram', account: '@acme' }], publishOnApproval: true, timezone: 'UTC', submit: false },
+      config
+    )
+
+    // No fire time is chosen here: the flag travels with the zone, and nothing is derived from the preflight.
+    expect(mocked(apiPatch).mock.calls[0]![1]).toEqual({ publishOnApproval: true, scheduleTimezone: 'UTC' })
+    expect(result['publishOnApproval']).toBe(true)
+    expect(result['scheduledFor']).toBeNull()
+  })
+
   it('refuses an unknown account before creating anything, naming the ones it knows', async () => {
     serve({ '/api/v2/projects/proj-1/publish-targets': ACCOUNTS, '/api/v1/projects/proj-1/workflows': WORKFLOWS })
 
