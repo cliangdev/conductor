@@ -148,12 +148,20 @@ export function humanizeTriggerType(triggerType: string): string {
 // ── WorkflowView cache ──────────────────────────────────────────────────────
 //
 // Two-tier: module-scope Map (fast within session) + localStorage (instant on page refresh).
-// WorkflowViews change only when a workflow is published, so explicit invalidation is sufficient —
-// no TTL needed. Invalidation clears both tiers. Version-pinned lookups are never persisted to
-// localStorage because they are immutable snapshots rather than "latest" live state.
+// Invalidation clears both tiers. Version-pinned lookups are never persisted to localStorage because
+// they are immutable snapshots rather than "latest" live state.
+//
+// The localStorage copy is a seed, not a source of truth: a "latest" view is re-read from the server
+// once per session, and the fresh answer replaces the seed. Anything that changes a view without
+// going through this browser — a version published over the API, a server release that adds a field
+// to the view — would otherwise be invisible here until somebody cleared site data. That is how a
+// review bar came to render nothing for weeks: its outcomes arrived in a field the stored view had
+// never seen.
 
 const viewCache = new Map<string, WorkflowView>()
 const inFlight = new Map<string, Promise<WorkflowView>>()
+/** 'latest' cache keys the server has answered for during this session; the rest are seeds. */
+const verified = new Set<string>()
 
 function viewLsKey(projectId: string, slug: string): string {
   return `wfv_${projectId}::${slug}`
@@ -194,7 +202,7 @@ export function fetchWorkflowView(
 ): Promise<WorkflowView> {
   const key = cacheKey(projectId, slug, version)
   const cached = viewCache.get(key)
-  if (cached) return Promise.resolve(cached)
+  if (cached && (version != null || verified.has(key))) return Promise.resolve(cached)
 
   const pending = inFlight.get(key)
   if (pending) return pending
@@ -209,6 +217,7 @@ export function fetchWorkflowView(
       // Persist the 'latest' view to localStorage so getCachedWorkflowView() can pre-seed
       // synchronously on the next page load (eliminates the status-label flash on refresh).
       if (version == null) {
+        verified.add(key)
         try { localStorage.setItem(viewLsKey(projectId, slug), JSON.stringify(view)) } catch { /* */ }
       }
       return view
@@ -224,6 +233,7 @@ export function fetchWorkflowView(
 /** Drop a cached view so the next read re-fetches (e.g. after publishing a new version). */
 export function invalidateWorkflowView(projectId: string, slug: string, version?: number): void {
   viewCache.delete(cacheKey(projectId, slug, version))
+  verified.delete(cacheKey(projectId, slug, version))
   if (version == null) {
     try { localStorage.removeItem(viewLsKey(projectId, slug)) } catch { /* */ }
   }

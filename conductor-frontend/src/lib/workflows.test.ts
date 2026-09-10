@@ -3,6 +3,8 @@ import {
   cancelWorkflowRun,
   categoriesForView,
   dispatchWorkflow,
+  fetchWorkflowView,
+  getCachedWorkflowView,
   humanizeId,
   isLifecycleWorkflow,
   pluralizeNoun,
@@ -107,6 +109,36 @@ describe('categoriesForView', () => {
     expect(categoriesForView('active')).toEqual(['open', 'in_progress'])
     expect(categoriesForView('done')).toEqual(['terminal'])
     expect(categoriesForView('all')).toEqual(['open', 'in_progress', 'terminal'])
+  })
+})
+
+describe('fetchWorkflowView cache', () => {
+  const stale: WorkflowView = {
+    slug: 'MARKETING', noun: 'Post', area: 'MARKETING', defaultView: 'calendar', version: 1, types: ['POST'],
+    statuses: [{ id: 'IN_REVIEW', label: 'In Review', category: 'in_progress' }],
+    transitions: [{ from: 'IN_REVIEW', to: 'APPROVED', label: 'Approve', requiresReview: true }],
+    assetTypes: [],
+  }
+  const fresh: WorkflowView = {
+    ...stale,
+    version: 2,
+    transitions: [{ from: 'IN_REVIEW', to: 'APPROVED', label: 'Approve', requiresReview: true, reviewOutcomes: ['approve', 'request_changes'] }],
+  }
+
+  it('treats the localStorage copy as a seed: the first read of a session goes to the server, later ones do not', async () => {
+    // A view stored by an earlier session, from before the server learned to send reviewOutcomes.
+    localStorage.setItem('wfv_p-cache::MARKETING', JSON.stringify(stale))
+    expect(getCachedWorkflowView('p-cache', 'MARKETING')?.version).toBe(1)
+    vi.mocked(apiGet).mockResolvedValueOnce(fresh)
+
+    const first = await fetchWorkflowView('p-cache', 'MARKETING', 'tok')
+    expect(first.transitions[0]?.reviewOutcomes).toEqual(['approve', 'request_changes'])
+    expect(JSON.parse(localStorage.getItem('wfv_p-cache::MARKETING')!).version).toBe(2)
+
+    vi.mocked(apiGet).mockClear()
+    const second = await fetchWorkflowView('p-cache', 'MARKETING', 'tok')
+    expect(second.version).toBe(2)
+    expect(apiGet).not.toHaveBeenCalled()
   })
 })
 
