@@ -3,6 +3,7 @@
 import { ArrowDown, ArrowUp, RotateCcw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { isVideoContentType, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 
 /** What one destination publishes, as the picker holds it while it is being edited. */
@@ -75,7 +76,7 @@ export function TargetContentEditor({
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <label
-            className="text-xs font-medium text-foreground"
+            className="text-sm font-medium text-foreground"
             htmlFor={`caption-override-${assets.length}`}
           >
             Caption for this destination
@@ -106,13 +107,13 @@ export function TargetContentEditor({
           }
         />
         {inheritsCaption && (
-          <p className="text-xs text-muted-foreground">Using the Post&apos;s caption.</p>
+          <p className="text-sm text-muted-foreground">Using the Post&apos;s caption.</p>
         )}
       </div>
 
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-foreground">Media for this destination</span>
+          <span className="text-sm font-medium text-foreground">Media for this destination</span>
           {!inheritsMedia && (
             <Button
               type="button"
@@ -128,7 +129,7 @@ export function TargetContentEditor({
         </div>
 
         {assets.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Upload media to the Post first, then choose which files go here.
           </p>
         ) : (
@@ -142,12 +143,12 @@ export function TargetContentEditor({
                     key={asset.id}
                     className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5"
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={included}
                       disabled={disabled}
-                      onChange={() => toggle(asset.id)}
+                      onCheckedChange={() => toggle(asset.id)}
                       aria-label={`Publish ${asset.label || asset.type} here`}
+                      label={<span className="sr-only">{`Publish ${asset.label || asset.type} here`}</span>}
                     />
                     <MediaThumb asset={asset} />
                     <span className="min-w-0 flex-1 truncate text-xs">
@@ -181,7 +182,7 @@ export function TargetContentEditor({
                 )
               })}
             </ul>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               {inheritsMedia
                 ? `Using all Post media (${assets.length}).`
                 : selectedIds.length === 0

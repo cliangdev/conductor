@@ -23,6 +23,7 @@ import { Modal } from '@/components/ui/modal'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPatch } from '@/lib/api'
 import { statusMeta, statusHasReviewGate } from '@/lib/workflows'
@@ -301,7 +302,7 @@ export function PublishReadinessAction({ state }: { state: PublishReadinessState
           description={`Pick the people to approve this ${(workflowView?.noun ?? 'item').toLowerCase()}. Only members with the ${state.gateRole ? state.gateRole.toLowerCase() : 'reviewer'} or admin role can.`}
           footer={
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground" aria-live="polite">
+              <span className="text-sm text-muted-foreground" aria-live="polite">
                 {state.chosen.size === 0 ? 'Pick at least one reviewer.' : ''}
               </span>
               <div className="flex gap-2">
@@ -326,23 +327,24 @@ export function PublishReadinessAction({ state }: { state: PublishReadinessState
             <ul className="space-y-2" aria-label="Reviewers">
               {state.choices.map((m) => (
                 <li key={m.userId}>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={state.chosen.has(m.userId)}
-                      disabled={state.moving}
-                      onChange={(e) =>
-                        state.setChosen((prev) => {
-                          const nextSet = new Set(prev)
-                          if (e.target.checked) nextSet.add(m.userId)
-                          else nextSet.delete(m.userId)
-                          return nextSet
-                        })
-                      }
-                    />
-                    <span>{m.name}</span>
-                    {m.email && <span className="text-xs text-muted-foreground">{m.email}</span>}
-                  </label>
+                  <Checkbox
+                    checked={state.chosen.has(m.userId)}
+                    disabled={state.moving}
+                    onCheckedChange={(checked) =>
+                      state.setChosen((prev) => {
+                        const nextSet = new Set(prev)
+                        if (checked) nextSet.add(m.userId)
+                        else nextSet.delete(m.userId)
+                        return nextSet
+                      })
+                    }
+                    label={
+                      <span className="flex items-center gap-2">
+                        <span>{m.name}</span>
+                        {m.email && <span className="text-xs text-muted-foreground">{m.email}</span>}
+                      </span>
+                    }
+                  />
                 </li>
               ))}
             </ul>
@@ -385,7 +387,7 @@ export function PublishReadinessCard({ state }: { state: PublishReadinessState }
           </ul>
         )}
         {preflight.consent.required && preflight.consent.verdict === 'VALID' && (
-          <p className="text-xs text-muted-foreground">You&rsquo;ve consented to this post as it is now.</p>
+          <p className="text-sm text-muted-foreground">You&rsquo;ve consented to this post as it is now.</p>
         )}
       </CardContent>
     </Card>

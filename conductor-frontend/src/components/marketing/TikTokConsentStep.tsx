@@ -22,6 +22,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { AtSign, ImageOff } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Card, CardHeader } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
 import { isVideoContentType } from '@/components/workitems/MediaUploadPanel'
 import {
@@ -351,19 +352,19 @@ function TikTokConsentStepBody({
           })}
         </ul>
 
-        <label className="flex items-start gap-2.5">
-          <input
-            type="checkbox"
-            className="mt-0.5 rounded border-border"
-            checked={given}
-            disabled={disabled || unresolved || saving}
-            onChange={(e) => changeConsent(e.target.checked)}
-          />
-          <span className="text-sm text-foreground">
-            I have reviewed this preview and the destination account, and I consent to publishing
-            this post to TikTok.
-          </span>
-        </label>
+        <Checkbox
+          checked={given}
+          disabled={disabled || unresolved || saving}
+          onCheckedChange={changeConsent}
+          label="I have reviewed this preview and the destination account, and I consent to publishing this post to TikTok."
+          disabledReason={
+            unresolved
+              ? 'Resolve the option problem above before you can consent.'
+              : disabled
+                ? 'Editing is locked while this post is under review.'
+                : undefined
+          }
+        />
 
         {given && server?.consentedAt && (
           <p className="text-xs text-muted-foreground">
@@ -372,7 +373,7 @@ function TikTokConsentStepBody({
           </p>
         )}
 
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           {anyPaidPartnership
             ? 'By posting, you agree to TikTok’s Branded Content Policy and Music Usage Confirmation.'
             : 'By posting, you agree to TikTok’s Music Usage Confirmation.'}
