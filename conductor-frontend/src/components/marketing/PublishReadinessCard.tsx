@@ -267,7 +267,18 @@ export function usePublishReadiness({
  * actions slot. Renders nothing until the preflight answer is in, or for a Work Item whose Workflow
  * doesn't publish, or for a REVIEWER (whose move is a verdict on the review bar, not this button).
  */
-export function PublishReadinessAction({ state }: { state: PublishReadinessState }) {
+export function PublishReadinessAction({
+  state,
+  forReviewer = false,
+}: {
+  state: PublishReadinessState
+  /**
+   * The viewer is the assigned reviewer with Approve / Request changes beside this. Then "waiting on a
+   * reviewer" is about them and says nothing, so the sentence is dropped while the gate is satisfied;
+   * while it is not, it says what has to change before an approval would take.
+   */
+  forReviewer?: boolean
+}) {
   const { preflight, error, workflowView } = state
 
   if (error) {
@@ -277,11 +288,16 @@ export function PublishReadinessAction({ state }: { state: PublishReadinessState
     return null
   }
 
+  const blockerCount = preflight.blockers.length
+  const summaryText = forReviewer
+    ? preflight.ready
+      ? null
+      : `${blockerCount} thing${blockerCount === 1 ? '' : 's'} to fix before it can be approved. Send it back to the author.`
+    : state.summaryText
+
   return (
     <div className="flex flex-wrap items-center justify-end gap-3">
-      {state.summaryText && (
-        <p className="text-sm text-muted-foreground">{state.summaryText}</p>
-      )}
+      {summaryText && <p className="text-sm text-muted-foreground">{summaryText}</p>}
       {state.offersButton && (
         <Button
           size="sm"

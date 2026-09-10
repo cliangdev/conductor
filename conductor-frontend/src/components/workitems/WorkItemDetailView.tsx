@@ -823,22 +823,28 @@ export function WorkItemDetailView({
       </Button>
     )
   )
-  const noDocReviewActions = reviewActive && isAssignedReviewer && !hasDocuments && (
+  // Approving behind an unmet gate records a verdict the Workflow cannot act on, so it waits until the
+  // gate is satisfied; the readiness sentence beside it says what has to change. Request changes is
+  // exactly what an unmet gate calls for and stays available.
+  const gateReady = !publishing || readiness.preflight?.ready !== false
+  const reviewerActs = reviewActive && isAssignedReviewer && !hasDocuments
+  const noDocReviewActions = reviewerActs && (
     <>
       <Button variant="outline" size="sm" onClick={() => setChangesModalOpen(true)} disabled={reviewSubmitting}>
         Request changes
       </Button>
-      <Button size="sm" onClick={() => void handleSubmitReview('APPROVED', '')} disabled={reviewSubmitting}>
+      <Button size="sm" onClick={() => void handleSubmitReview('APPROVED', '')} disabled={reviewSubmitting || !gateReady}>
         Approve
       </Button>
     </>
   )
   const hasHeaderActions = Boolean(docReviewAction) || Boolean(noDocReviewActions) || publishing
+  // The sentence about the gate reads first, then the buttons it is about.
   const headerActions = hasHeaderActions ? (
     <div className="flex flex-wrap items-center gap-2">
+      {publishing && <PublishReadinessAction state={readiness} forReviewer={Boolean(reviewerActs)} />}
       {docReviewAction}
       {noDocReviewActions}
-      {publishing && <PublishReadinessAction state={readiness} />}
     </div>
   ) : undefined
 
