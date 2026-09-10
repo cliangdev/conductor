@@ -57,6 +57,7 @@ public class ConnectionHealthService {
             conn.setHealthStatus(UNHEALTHY);
             conn.setHealthCheckedAt(OffsetDateTime.now());
             conn.setHealthMessage(readableReason(reason));
+            conn.setHealthDetail(cap(PlatformErrorText.detail(reason)));
             connectionRepository.save(conn);
             log.warn("Connection {} ({}) marked UNHEALTHY: {}",
                     conn.getId(), conn.getConnectorId(), conn.getHealthMessage());
@@ -71,6 +72,7 @@ public class ConnectionHealthService {
             conn.setHealthStatus(HEALTHY);
             conn.setHealthCheckedAt(OffsetDateTime.now());
             conn.setHealthMessage(null);
+            conn.setHealthDetail(null);
             connectionRepository.save(conn);
             if (recovered) {
                 log.info("Connection {} ({}) recovered to HEALTHY", conn.getId(), conn.getConnectorId());
@@ -98,12 +100,14 @@ public class ConnectionHealthService {
     }
 
     private static String readableReason(String reason) {
-        if (reason == null || reason.isBlank()) {
-            return DEFAULT_REASON;
+        String humanized = PlatformErrorText.humanize(reason);
+        return humanized == null ? DEFAULT_REASON : cap(humanized);
+    }
+
+    private static String cap(String text) {
+        if (text == null) {
+            return null;
         }
-        String trimmed = reason.trim();
-        return trimmed.length() <= MAX_MESSAGE_LENGTH
-                ? trimmed
-                : trimmed.substring(0, MAX_MESSAGE_LENGTH - 1) + "…";
+        return text.length() <= MAX_MESSAGE_LENGTH ? text : text.substring(0, MAX_MESSAGE_LENGTH - 1) + "…";
     }
 }

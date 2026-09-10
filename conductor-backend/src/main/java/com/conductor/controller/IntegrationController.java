@@ -841,6 +841,7 @@ public class IntegrationController implements IntegrationsApi {
         }
         summary.setHealthCheckedAt(conn.getHealthCheckedAt());
         summary.setHealthMessage(conn.getHealthMessage());
+        summary.setHealthDetail(conn.getHealthDetail());
         return summary;
     }
 

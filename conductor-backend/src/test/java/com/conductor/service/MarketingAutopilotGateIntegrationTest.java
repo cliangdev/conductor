@@ -98,8 +98,8 @@ class MarketingAutopilotGateIntegrationTest extends AbstractNoneWebIntegrationTe
 
         assertThatThrownBy(() -> moveTo("SCHEDULED"))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("Cannot move Post to SCHEDULED")
-                .hasMessageContaining("no fire time is set");
+                .hasMessageContaining("Cannot move Post to Scheduled")
+                .hasMessageContaining("This post has no date");
         assertThat(reload().getCurrentStatus()).isEqualTo("DRAFT");
     }
 

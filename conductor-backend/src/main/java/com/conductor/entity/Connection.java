@@ -89,6 +89,10 @@ public class Connection implements EnvelopeEncrypted {
     @Column(name = "health_message", columnDefinition = "TEXT")
     private String healthMessage;
 
+    /** The platform's full error behind {@link #healthMessage} — JSON body and all; null while healthy. */
+    @Column(name = "health_detail", columnDefinition = "TEXT")
+    private String healthDetail;
+
     @Column(name = "config_json", columnDefinition = "JSONB", nullable = false)
     @ColumnTransformer(write = "?::jsonb")
     private String configJson;
@@ -178,6 +182,9 @@ public class Connection implements EnvelopeEncrypted {
 
     public String getHealthMessage() { return healthMessage; }
     public void setHealthMessage(String healthMessage) { this.healthMessage = healthMessage; }
+
+    public String getHealthDetail() { return healthDetail; }
+    public void setHealthDetail(String healthDetail) { this.healthDetail = healthDetail; }
 
     public String getConfigJson() { return configJson; }
     public void setConfigJson(String configJson) { this.configJson = configJson; }

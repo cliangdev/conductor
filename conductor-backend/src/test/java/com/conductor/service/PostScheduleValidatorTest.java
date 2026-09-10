@@ -74,8 +74,8 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no fire time is set")
-                .hasMessageContaining("scheduledFor");
+                .hasMessageContaining("This post has no date")
+                .hasMessageContaining("As soon as approved");
     }
 
     /** "Publish as soon as approved": no fire time is authored, so none is demanded at the gate. */
@@ -99,8 +99,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no schedule timezone is set")
-                .hasMessageContaining("scheduleTimezone");
+                .hasMessageContaining("This post has no timezone");
     }
 
     @Test
@@ -112,7 +111,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no schedule timezone is set");
+                .hasMessageContaining("This post has no timezone");
     }
 
     @Test
@@ -125,7 +124,7 @@ class PostScheduleValidatorTest {
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("Mars/Olympus_Mons")
-                .hasMessageContaining("not a known IANA timezone");
+                .hasMessageContaining("isn't a timezone we recognize");
     }
 
     @Test
@@ -136,7 +135,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no publish target is selected");
+                .hasMessageContaining("This post has no destinations");
     }
 
     @Test
@@ -147,7 +146,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no uploaded media file is attached");
+                .hasMessageContaining("This post has no uploaded media");
     }
 
     @Test
@@ -158,7 +157,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no uploaded media file is attached");
+                .hasMessageContaining("This post has no uploaded media");
     }
 
     @Test
@@ -169,7 +168,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no uploaded media file is attached");
+                .hasMessageContaining("This post has no uploaded media");
     }
 
     @Test
@@ -182,10 +181,10 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no fire time is set")
-                .hasMessageContaining("no schedule timezone is set")
-                .hasMessageContaining("no publish target is selected")
-                .hasMessageContaining("no uploaded media file is attached");
+                .hasMessageContaining("This post has no date")
+                .hasMessageContaining("This post has no timezone")
+                .hasMessageContaining("This post has no destinations")
+                .hasMessageContaining("This post has no uploaded media");
     }
 
     @Test
@@ -197,7 +196,7 @@ class PostScheduleValidatorTest {
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("Post")
-                .hasMessageContaining("APPROVED");
+                .hasMessageContaining("Approved");
     }
 
     // --- the ten-minute floor ---
@@ -211,7 +210,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("less than 10 minutes in the future");
+                .hasMessageContaining("is too soon: Facebook needs at least 10 minutes' notice");
     }
 
     @Test
@@ -223,7 +222,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("less than 10 minutes in the future");
+                .hasMessageContaining("is too soon: Facebook needs at least 10 minutes' notice");
     }
 
     @Test
@@ -267,8 +266,7 @@ class PostScheduleValidatorTest {
         // Add a Facebook Page and its native scheduler's ten minutes become the Post's floor, by name.
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("less than 10 minutes in the future")
-                .hasMessageContaining("facebook (Acme Page) needs at least 10 minutes' notice");
+                .hasMessageContaining("is too soon: Facebook (Acme Page) needs at least 10 minutes' notice");
     }
 
     @Test
@@ -280,7 +278,7 @@ class PostScheduleValidatorTest {
         post.setScheduledFor(NOW.plusSeconds(30));
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("less than 1 minute in the future");
+                .hasMessageContaining("is too soon: Instagram needs at least 1 minute' notice");
 
         post.setScheduledFor(NOW.plusMinutes(2));
         assertThatCode(() -> approve(post)).doesNotThrowAnyException();
@@ -300,7 +298,7 @@ class PostScheduleValidatorTest {
         post.setScheduledFor(NOW.minusSeconds(5));
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("is not in the future");
+                .hasMessageContaining("is in the past. Move it to a future time.");
     }
 
     @Test
@@ -312,7 +310,7 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("less than 10 minutes in the future");
+                .hasMessageContaining("is too soon. Move it out at least 10 minutes.");
     }
 
     @Test
@@ -400,8 +398,8 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> validator.validateForTransition(post, marketing, "SCHEDULED"))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("Cannot move Post to SCHEDULED")
-                .hasMessageContaining("less than 10 minutes in the future");
+                .hasMessageContaining("Cannot move Post to Scheduled")
+                .hasMessageContaining("is too soon: Facebook needs at least 10 minutes' notice");
     }
 
     @Test
@@ -413,9 +411,9 @@ class PostScheduleValidatorTest {
 
         assertThatThrownBy(() -> validator.validateForTransition(post, autopilot, "SCHEDULED"))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("no fire time is set")
-                .hasMessageContaining("no publish target is selected")
-                .hasMessageContaining("no uploaded media file is attached");
+                .hasMessageContaining("This post has no date")
+                .hasMessageContaining("This post has no destinations")
+                .hasMessageContaining("This post has no uploaded media");
         assertThatCode(() -> validator.validateForTransition(
                 workItem("MARKETING_AUTOPILOT", "SCHEDULED"), autopilot, "DRAFT")).doesNotThrowAnyException();
     }

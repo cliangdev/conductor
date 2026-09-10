@@ -203,7 +203,7 @@ public class WorkItemWorkflowService {
     }
 
     /** Resolve the {@link Statechart} for the workflow a Work Item is bound to, honoring its pinned version. */
-    Statechart resolveFor(String projectId, WorkItem workItem) {
+    public Statechart resolveFor(String projectId, WorkItem workItem) {
         String slug = workItem.getWorkflow() != null ? workItem.getWorkflow() : DEFAULT_WORKFLOW;
         return resolver.resolveRequired(projectId, slug, workItem.getWorkflowVersion());
     }

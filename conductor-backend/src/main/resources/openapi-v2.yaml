@@ -2384,6 +2384,12 @@ components:
         status:
           type: string
           description: Current status — a Workflow-defined status id (e.g. DRAFT).
+        statusLabel:
+          type: string
+          readOnly: true
+          description: >-
+            The status's human display label from the item's resolved Workflow statechart (e.g. "In
+            Review" for IN_REVIEW), or a humanized form of the id when the statechart sets none.
         workflow:
           type: string
           description: The bound Workflow definition id (slug, e.g. ENGINEERING).
@@ -3394,7 +3400,14 @@ components:
         healthMessage:
           type: string
           nullable: true
-          description: The platform's own explanation of an UNHEALTHY verdict; null while healthy.
+          description: The platform's own explanation of an UNHEALTHY verdict, in a human sentence; null while healthy.
+        healthDetail:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >-
+            The platform's full error behind healthMessage — JSON body and all — for support and
+            debugging. Null while healthy.
         privacyLevelOptions:
           type: array
           nullable: true
@@ -3730,6 +3743,12 @@ components:
             AWAITING_MANUAL is a target waiting on a person: a MANUAL one whose fire time has passed, or an
             automated one the platform handed back (TikTok's pre-audit inbox upload, explained in
             errorMessage). Either is finished with the manual-publish call.
+        stateLabel:
+          type: string
+          readOnly: true
+          description: >-
+            The human label for `state` (Waiting, Handed off, Publishing, Post it now, Published, Failed,
+            Taken back), for direct display — the same words the UI's own status pill uses.
         platformPostId:
           type: string
           nullable: true
@@ -3744,8 +3763,15 @@ components:
           type: string
           nullable: true
           description: >-
-            The platform's own failure text, preserved verbatim for a human to read. Null unless the target
-            is FAILED.
+            The first human sentence of the platform's failure, with any JSON body, trace id and HTTP
+            status prefix stripped. Null unless the target is FAILED or AWAITING_MANUAL.
+        errorDetail:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >-
+            The platform's full failure text behind errorMessage — JSON body and all — for support and
+            debugging. Null unless the target is FAILED or AWAITING_MANUAL.
         fireTime:
           type: string
           format: date-time
