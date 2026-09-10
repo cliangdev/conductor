@@ -3,6 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig, resolveProject } from './config.js'
+import { ApiError } from './api.js'
 import {
   createWorkItem,
   updateWorkItem,
@@ -1057,12 +1058,18 @@ function successResponse(data: unknown) {
   }
 }
 
-function errorResponse(message: string) {
+/**
+ * A shorthand string keeps every existing call site working; the richer object form lets the dispatch
+ * catch hand back the server's own status/code/title alongside its message, without changing the
+ * top-level `{ error: ... }` JSON shape callers and tests already rely on.
+ */
+function errorResponse(error: string | { error: string; status?: number; code?: string; title?: string }) {
+  const payload = typeof error === 'string' ? { error } : error
   return {
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify({ error: message }),
+        text: JSON.stringify(payload),
       },
     ],
     isError: true,
@@ -1788,6 +1795,9 @@ export async function runMcpServer(): Promise<void> {
           return errorResponse(`Unknown tool: ${name}`)
       }
     } catch (err) {
+      if (err instanceof ApiError) {
+        return errorResponse({ error: err.message, status: err.status, code: err.code, title: err.title })
+      }
       const message = err instanceof Error ? err.message : String(err)
       return errorResponse(message)
     }
