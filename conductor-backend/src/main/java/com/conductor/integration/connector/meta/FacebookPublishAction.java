@@ -157,12 +157,13 @@ class FacebookPublishAction {
             // A single generic DELETE /{id} takes back a feed post, a Reel video or a Story alike — Meta
             // does not need to be told which shape the id names.
             graphClient.deletePost(postId, token);
-        } catch (HttpClientErrorException.NotFound e) {
+        } catch (HttpClientErrorException e) {
+            if (!isGone(e)) {
+                return MetaActions.permanentOrRethrow(e, "Facebook refused to delete post " + postId);
+            }
             // Already gone — the caller's goal (this post must not go live) is satisfied, and reporting a
             // failure would strand a Work Item that is in fact revoked.
             log.info("Facebook post {} was already deleted", postId);
-        } catch (HttpClientErrorException e) {
-            return MetaActions.permanentOrRethrow(e, "Facebook refused to delete post " + postId);
         }
 
         Map<String, Object> output = new LinkedHashMap<>();
@@ -405,6 +406,22 @@ class FacebookPublishAction {
     }
 
     /** Graph's answer when a video field is asked of a node that is not a video. */
+    /**
+     * Whether Graph is saying the object no longer exists. A plain 404 is the documented answer; the one
+     * Graph actually gives for a post somebody deleted from Facebook itself is a 400 with error code 100
+     * and subcode 33 ("Object with ID … does not exist, cannot be loaded due to missing permissions, or
+     * does not support this operation"). Either way there is nothing left to take down.
+     */
+    private static boolean isGone(HttpClientErrorException e) {
+        if (e.getStatusCode().value() == 404) {
+            return true;
+        }
+        String body = e.getResponseBodyAsString();
+        return e.getStatusCode().value() == 400 && body != null
+                && body.replace(" ", "").contains("\"code\":100")
+                && body.replace(" ", "").contains("\"error_subcode\":33");
+    }
+
     private static boolean isNotAVideo(HttpClientErrorException e) {
         String body = e.getResponseBodyAsString();
         return e.getStatusCode().value() == 400 && body != null && body.contains("nonexisting field");
