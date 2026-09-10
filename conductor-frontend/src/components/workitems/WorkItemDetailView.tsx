@@ -934,6 +934,10 @@ export function WorkItemDetailView({
                     setIssue((prev) => (prev ? { ...prev, status: s } : prev))
                     void refreshIssueStatus()
                   }}
+                  reviewers={reviewers.map((r) => ({ userId: r.userId, name: r.name, email: r.email }))}
+                  eligibleReviewers={assignableReviewers.map((m) => ({ userId: m.userId, name: m.name, email: m.email }))}
+                  onAssignReviewer={handleAssignReviewer}
+                  onUnassignReviewer={handleUnassignReviewer}
                 />
               )}
               {/* Where the Post goes. Sits with the creative for the same reason: the accounts are part
