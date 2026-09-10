@@ -86,7 +86,7 @@ import java.util.stream.Collectors;
  * Approved-or-later Post to its review status before a single row moves. A revocation that fails throws,
  * and the selection edit rolls back with it rather than committing behind a post that is still scheduled
  * on a platform (AC-P0-1.5). The guard is invoked only when the selection actually differs, mirroring
- * {@link PublishBundleGuard#revertForCaptionOrScheduleEdit}: a client re-sending the current selection
+ * {@link PublishBundleGuard#revertForCaptionEdit}: a client re-sending the current selection
  * unchanged must never knock a Post out of Approved.
  *
  * <p>Changing a target's options is a bundle change on exactly the same terms — what would go out is no
@@ -366,6 +366,26 @@ public class PublishTargetService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int reviveRevokedTargets(WorkItem workItem) {
+        return reviveRevokedTargetsNow(workItem);
+    }
+
+    /**
+     * As {@link #reviveRevokedTargets}, but joins the caller's own transaction instead of forcing a new
+     * one.
+     *
+     * <p>Needed for a re-time in place (moving the schedule of an already-Scheduled Post): the revoke that
+     * put a row into {@code REVOKED} runs in that same transaction, still uncommitted, and a {@code
+     * REQUIRES_NEW} transaction reads only committed data under the default isolation level — it would
+     * never see the row as {@code REVOKED} at all and silently strand it there forever, invisible to the
+     * dispatch poller. Same body, different propagation: this is the one call site where the two writes
+     * belong in one commit.
+     */
+    @Transactional
+    public int reviveRevokedTargetsInSameTransaction(WorkItem workItem) {
+        return reviveRevokedTargetsNow(workItem);
+    }
+
+    private int reviveRevokedTargetsNow(WorkItem workItem) {
         if (workItem == null) {
             return 0;
         }
@@ -389,6 +409,21 @@ public class PublishTargetService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int restampFireTimes(WorkItem workItem) {
+        return restampFireTimesNow(workItem);
+    }
+
+    /**
+     * As {@link #restampFireTimes}, but joins the caller's own transaction — see
+     * {@link #reviveRevokedTargetsInSameTransaction} for why a re-time in place needs this rather than the
+     * {@code REQUIRES_NEW} form: a row this same transaction just revived to {@code PENDING} is invisible
+     * to a fresh transaction until this one commits.
+     */
+    @Transactional
+    public int restampFireTimesInSameTransaction(WorkItem workItem) {
+        return restampFireTimesNow(workItem);
+    }
+
+    private int restampFireTimesNow(WorkItem workItem) {
         if (workItem == null || workItem.getScheduledFor() == null) {
             return 0;
         }

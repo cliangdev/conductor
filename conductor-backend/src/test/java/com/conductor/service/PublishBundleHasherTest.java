@@ -71,11 +71,12 @@ class PublishBundleHasherTest {
         assertThat(hasher.hash(post("Launch teaser"))).hasSize(64).matches("[0-9a-f]{64}");
     }
 
-    // [auto] A bundle change produces a different hash
+    // [auto] The schedule is not part of the bundle: an approval binds caption, media and destinations,
+    // not the time.
 
-    /** A publish-on-approval fire time is derived at scheduling, so stamping it must not void the approval. */
+    /** Stamping (or clearing) a publish-on-approval fire time must never touch the hash. */
     @Test
-    void aDerivedFireTimeIsNotPartOfAPublishOnApprovalBundle_butTheFlagIs() {
+    void aDerivedFireTimeIsNotPartOfAPublishOnApprovalBundle_andNeitherIsTheFlag() {
         WorkItem post = post("Launch teaser");
         givenTargets(target("meta", "conn-a", "hello"));
         givenAssets(uploaded("asset-1", "posts/a.mp4"));
@@ -87,7 +88,7 @@ class PublishBundleHasherTest {
         assertThat(hasher.hash(post)).isEqualTo(unstamped);
 
         post.setPublishOnApproval(false);
-        assertThat(hasher.hash(post)).isNotEqualTo(unstamped);
+        assertThat(hasher.hash(post)).isEqualTo(unstamped);
     }
 
     @Test
@@ -128,7 +129,7 @@ class PublishBundleHasherTest {
     }
 
     @Test
-    void changingTheFireTimeOrTimezoneChangesTheHash() {
+    void changingTheFireTimeOrTimezoneDoesNotChangeTheHash() {
         givenTargets(target("meta", "conn-a", null));
         givenAssets();
 
@@ -137,23 +138,24 @@ class PublishBundleHasherTest {
 
         WorkItem moved = post("Launch teaser");
         moved.setScheduledFor(post.getScheduledFor().plusHours(1));
-        assertThat(hasher.hash(moved)).isNotEqualTo(original);
+        assertThat(hasher.hash(moved)).isEqualTo(original);
 
         WorkItem rezoned = post("Launch teaser");
         rezoned.setScheduleTimezone("Europe/Berlin");
-        assertThat(hasher.hash(rezoned)).isNotEqualTo(original);
+        assertThat(hasher.hash(rezoned)).isEqualTo(original);
     }
 
     @Test
-    void readsTheFireTimeAsAnInstantSoAnEquivalentOffsetHashesTheSame() {
+    void aMissingFireTimeAlsoDoesNotChangeTheHash() {
         givenTargets(target("meta", "conn-a", null));
         givenAssets();
 
         WorkItem post = post("Launch teaser");
-        WorkItem sameInstant = post("Launch teaser");
-        sameInstant.setScheduledFor(post.getScheduledFor().withOffsetSameInstant(ZoneOffset.ofHours(2)));
+        WorkItem noSchedule = post("Launch teaser");
+        noSchedule.setScheduledFor(null);
+        noSchedule.setScheduleTimezone(null);
 
-        assertThat(hasher.hash(sameInstant)).isEqualTo(hasher.hash(post));
+        assertThat(hasher.hash(noSchedule)).isEqualTo(hasher.hash(post));
     }
 
     @Test

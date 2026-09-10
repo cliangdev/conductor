@@ -27,18 +27,22 @@ import java.util.TreeMap;
 
 /**
  * Hashes a Work Item's <em>publish bundle</em> — everything a reviewer is approving when they approve a
- * Post (COND-23): the caption, the accounts it goes out to, when it fires, and the media that goes with it.
+ * Post (COND-23): the caption, the accounts it goes out to, and the media that goes with it.
  *
  * <p>The hash is what binds an approval to a specific bundle. {@code ReviewService} stamps it on the review
  * row at approval time and {@code WorkItemWorkflowService} re-computes it at gate time, so any edit to the
- * bundle — a reworded caption, an added account, a moved fire time, swapped media — silently revokes the
- * approval instead of publishing something no one signed off on.
+ * bundle — a reworded caption, an added account, swapped media — silently revokes the approval instead of
+ * publishing something no one signed off on.
+ *
+ * <p><b>The schedule is deliberately not in the bundle.</b> An approval binds the caption, the media and the
+ * destinations — not the time. {@code scheduledFor}, {@code scheduleTimezone} and {@code publishOnApproval}
+ * may all change while a Post is In Review, Approved or Scheduled without touching this hash, so moving a
+ * Post's date never voids its approval. See {@code docs/publishing.md} ("Content freezes when it goes for
+ * review").
  *
  * <p>Canonical by construction, so the same bundle always hashes to the same value: keys are sorted
- * (a {@link TreeMap} plus {@link SerializationFeature#ORDER_MAP_ENTRIES_BY_KEYS}), collections are sorted by
- * their own canonical serialization rather than trusted in row order, and the fire time is reduced to a UTC
- * instant so an equivalent offset is not mistaken for a change. Timezone is hashed separately from the
- * instant because a Post's local wall-clock intent is part of what was approved.
+ * (a {@link TreeMap} plus {@link SerializationFeature#ORDER_MAP_ENTRIES_BY_KEYS}), and collections are sorted
+ * by their own canonical serialization rather than trusted in row order.
  *
  * <p>{@link #appliesTo} is the switch that keeps this mechanism scoped to publishing. A Work Item with no
  * {@code post_publish_target} rows has no publish bundle at all, so its approvals are never hash-bound and
@@ -82,14 +86,6 @@ public class PublishBundleHasher {
     public String hash(WorkItem workItem) {
         Map<String, Object> bundle = new TreeMap<>();
         bundle.put("caption", workItem.getDescription());
-        // A publish-on-approval fire time is derived at scheduling, not authored, so it is not what the
-        // reviewer approved; the flag itself is.
-        bundle.put("fireTime", workItem.getScheduledFor() == null || workItem.isPublishOnApproval()
-                ? null : workItem.getScheduledFor().toInstant().toString());
-        if (workItem.isPublishOnApproval()) {
-            bundle.put("publishOnApproval", true);
-        }
-        bundle.put("fireTimezone", workItem.getScheduleTimezone());
         bundle.put("targets", targets(workItem.getId()));
         bundle.put("assets", assets(workItem.getId()));
         return sha256(canonicalJson(bundle));

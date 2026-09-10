@@ -13,15 +13,20 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
  * The approval invariant (COND-23, AC-P0-1.5): <b>nothing publishes under an approval that no longer
  * describes what would go out</b>. Editing the publish bundle of an Approved-or-later Post — its caption,
- * its fire time, the accounts it goes to, or a per-target caption override — sends the Post back to the
- * review status, voids the approval standing on it, and gives back any native-lane hand-off first.
+ * the accounts it goes to, or a per-target caption override — sends the Post back to the review status,
+ * voids the approval standing on it, and gives back any native-lane hand-off first.
+ *
+ * <p><b>The schedule is not part of the bundle.</b> An approval binds the caption, the media and the
+ * destinations — not the time. {@code scheduledFor}, {@code scheduleTimezone} and {@code publishOnApproval}
+ * may all change while a Post is In Review, Approved or Scheduled without reverting it or touching its
+ * approval; see {@code WorkItemService#patchWorkItem} for what a schedule change on an already-scheduled
+ * Post does instead (re-timing it in place).
  *
  * <h2>Why this exists on top of the bundle hash</h2>
  * {@link PublishBundleHasher} plus the gate in {@code WorkItemWorkflowService} already make a stale approval
@@ -104,40 +109,24 @@ public class PublishBundleGuard {
     }
 
     /**
-     * The caption/fire-time shaped entry point, for the Work Item patch path. Applies PATCH semantics
-     * ({@code null} means "field absent — unchanged"; a blank timezone clears the stored zone) and reverts
-     * only when one of those fields would actually take a different value, so a client that re-sends the
-     * whole object unchanged never knocks a Post out of Approved.
+     * The caption-shaped entry point, for the Work Item patch path. Applies PATCH semantics ({@code null}
+     * means "field absent — unchanged") and reverts only when the caption would actually take a different
+     * value, so a client that re-sends the whole object unchanged never knocks a Post out of Approved.
      *
-     * <p>Call it <b>before</b> applying the edit, and pass the incoming values, not the applied ones.
+     * <p>Call it <b>before</b> applying the edit, and pass the incoming value, not the applied one.
      *
-     * @param scheduleTimezone the incoming zone; may be the raw or the already-validated value — blank and
-     *                         {@code null} are normalized the same way the patch path normalizes them
+     * <p>The schedule is deliberately not a parameter here: {@code scheduledFor}, {@code scheduleTimezone}
+     * and {@code publishOnApproval} are not part of the approved bundle and never revert a Post. See
+     * {@code WorkItemService#patchWorkItem} for what a schedule edit does instead.
+     *
      * @return the revert that happened, or empty when nothing changed status
      */
     @Transactional
-    public Optional<Revert> revertForCaptionOrScheduleEdit(String projectId, WorkItem post, String caption,
-                                                           OffsetDateTime fireTime, String scheduleTimezone) {
-        return revertForCaptionOrScheduleEdit(projectId, post, caption, fireTime, scheduleTimezone, null);
-    }
-
-    /**
-     * As above, with the publish-on-approval flag: it is part of the approved bundle (the reviewer approved
-     * "as soon as approved", not a time), so flipping it is a schedule edit. {@code null} means unchanged.
-     */
-    @Transactional
-    public Optional<Revert> revertForCaptionOrScheduleEdit(String projectId, WorkItem post, String caption,
-                                                           OffsetDateTime fireTime, String scheduleTimezone,
-                                                           Boolean publishOnApproval) {
-        if (!changesCaptionOrSchedule(post, caption, fireTime, scheduleTimezone)
-                && !changesPublishOnApproval(post, publishOnApproval)) {
+    public Optional<Revert> revertForCaptionEdit(String projectId, WorkItem post, String caption) {
+        if (!changesCaption(post, caption)) {
             return Optional.empty();
         }
         return revertForBundleEdit(projectId, post);
-    }
-
-    private static boolean changesPublishOnApproval(WorkItem post, Boolean publishOnApproval) {
-        return post != null && publishOnApproval != null && publishOnApproval != post.isPublishOnApproval();
     }
 
     /**
@@ -207,36 +196,13 @@ public class PublishBundleGuard {
         return Optional.of(new Revert(fromStatus, reviewStatus));
     }
 
-    /**
-     * Whether a patch carrying these values would actually change one of the bundle's caption/schedule
-     * fields. The fire time is compared as an instant, not as an offset-bearing value, so re-sending the same
-     * moment in a different offset is not a change — the same reduction {@link PublishBundleHasher} makes.
-     */
-    static boolean changesCaptionOrSchedule(WorkItem post, String caption, OffsetDateTime fireTime,
-                                            String scheduleTimezone) {
-        if (post == null) {
-            return false;
-        }
-        if (caption != null && !Objects.equals(caption, post.getDescription())) {
-            return true;
-        }
-        if (fireTime != null && !sameInstant(fireTime, post.getScheduledFor())) {
-            return true;
-        }
-        return scheduleTimezone != null
-                && !Objects.equals(blankToNull(scheduleTimezone), blankToNull(post.getScheduleTimezone()));
-    }
-
-    private static boolean sameInstant(OffsetDateTime left, OffsetDateTime right) {
-        return left != null && right != null && left.toInstant().equals(right.toInstant());
+    /** Whether a patch carrying this value would actually change the bundle's caption. */
+    private static boolean changesCaption(WorkItem post, String caption) {
+        return post != null && caption != null && !Objects.equals(caption, post.getDescription());
     }
 
     private static String statusLabel(Statechart statechart, String statusId) {
         return statechart.status(statusId).map(StatechartStatus::displayLabel).orElse(statusId);
-    }
-
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
     }
 
     private Statechart resolveStatechart(String projectId, WorkItem post) {
@@ -274,18 +240,13 @@ public class PublishBundleGuard {
      * <p>Applies to every Workflow with a review gate, not just publishing ones: an Issue under review is
      * being read by somebody too.
      *
+     * <p>The schedule is deliberately not checked here: {@code scheduledFor}, {@code scheduleTimezone} and
+     * {@code publishOnApproval} may change while an item is frozen — see {@code WorkItemService#patchWorkItem}.
+     *
      * @throws BusinessException naming the move that reopens it, since the author cannot revert it
      */
     public void refuseEditWhileFrozen(String projectId, WorkItem workItem, String description,
-                                           OffsetDateTime scheduledFor, String scheduleTimezone,
                                            java.util.Collection<String> tags) {
-        refuseEditWhileFrozen(projectId, workItem, description, scheduledFor, scheduleTimezone, tags, null);
-    }
-
-    /** As above, with the publish-on-approval flag ({@code null} means unchanged). */
-    public void refuseEditWhileFrozen(String projectId, WorkItem workItem, String description,
-                                           OffsetDateTime scheduledFor, String scheduleTimezone,
-                                           java.util.Collection<String> tags, Boolean publishOnApproval) {
         Statechart statechart = statechartOrNull(projectId, workItem);
         if (statechart == null
                 || !AssetUploadPolicy.isFrozen(statechart, workItem.getCurrentStatus())) {
@@ -293,8 +254,7 @@ public class PublishBundleGuard {
         }
         // Past the gate the existing revert path owns this: an edit there takes the approval back rather
         // than being refused, which is the behaviour COND-23 specified and clients rely on.
-        if (!changesAnything(workItem, description, scheduledFor, scheduleTimezone, tags)
-                && !changesPublishOnApproval(workItem, publishOnApproval)) {
+        if (!changesAnything(workItem, description, tags)) {
             return;
         }
         String noun = statechart.noun();
@@ -328,16 +288,8 @@ public class PublishBundleGuard {
 
     /** Whether the patch actually differs from what is stored — re-sending the same values is not an edit. */
     private static boolean changesAnything(WorkItem workItem, String description,
-                                           OffsetDateTime scheduledFor, String scheduleTimezone,
                                            java.util.Collection<String> tags) {
         if (description != null && !description.equals(workItem.getDescription())) {
-            return true;
-        }
-        if (scheduledFor != null && !scheduledFor.isEqual(
-                workItem.getScheduledFor() == null ? scheduledFor.minusYears(1) : workItem.getScheduledFor())) {
-            return true;
-        }
-        if (scheduleTimezone != null && !scheduleTimezone.equals(workItem.getScheduleTimezone())) {
             return true;
         }
         return tags != null && !new java.util.LinkedHashSet<>(tags).equals(workItem.getTags());

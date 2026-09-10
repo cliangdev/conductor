@@ -8,10 +8,12 @@ import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
+import com.conductor.exception.UnprocessableEntityException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.publish.PublishFinding;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishingWorkflow;
@@ -42,6 +44,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -68,6 +71,7 @@ public class WorkItemService {
     private final PublishBundleGuard publishBundleGuard;
     private final PublishTargetService publishTargetService;
     private final PublishPlatformRegistry platformRegistry;
+    private final PostScheduleValidator postScheduleValidator;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -84,8 +88,10 @@ public class WorkItemService {
             PublishBundleGuard publishBundleGuard,
             PublishTargetService publishTargetService,
             AssetRepository assetRepository,
-            PublishPlatformRegistry platformRegistry) {
+            PublishPlatformRegistry platformRegistry,
+            PostScheduleValidator postScheduleValidator) {
         this.platformRegistry = platformRegistry;
+        this.postScheduleValidator = postScheduleValidator;
         this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
@@ -220,28 +226,60 @@ public class WorkItemService {
 
         String validatedTimezone = validateTimezone(scheduleTimezone);
 
-        // COND-23 AC-P0-1.5: editing the publish bundle of an Approved-or-later Post revokes any native-lane
-        // hand-off, reverts the Post to its review status and voids the standing approval — all BEFORE the
-        // edit is applied, in this transaction. A failed revocation throws here, so the patch never commits.
-        // Placement matters: `previousStatus` is read below, AFTER this, so on a revert it already reads
-        // IN_REVIEW and the exit-from-scheduled unschedule further down does not fire a second time.
-        // Frozen while somebody is reading it. An author who could still rewrite the caption, move the
-        // schedule or swap the media out from under a reviewer would be handing them an approval for
-        // something else — so the reviewer decides when the pen comes back, by sending it back.
-        publishBundleGuard.refuseEditWhileFrozen(projectId, workItem, description, scheduledFor,
-                validatedTimezone, tags, publishOnApproval);
+        // COND-23 AC-P0-1.5, revised: an approval binds the caption, the media and the destinations — not
+        // the time. Only a caption edit on an Approved-or-later Post revokes any native-lane hand-off,
+        // reverts the Post to its review status and voids the standing approval; the schedule is handled
+        // entirely separately below, in place, without touching the approval. Both run BEFORE the edit is
+        // applied, in this transaction, so a failed revocation throws here and the patch never commits.
+        // Frozen while somebody is reading it. An author who could still rewrite the caption or swap the
+        // media out from under a reviewer would be handing them an approval for something else — so the
+        // reviewer decides when the pen comes back, by sending it back. The schedule is exempt: it may
+        // change freely while an item is frozen.
+        publishBundleGuard.refuseEditWhileFrozen(projectId, workItem, description, tags);
 
-        Optional<PublishBundleGuard.Revert> bundleRevert = publishBundleGuard.revertForCaptionOrScheduleEdit(
-                projectId, workItem, description, scheduledFor, validatedTimezone, publishOnApproval);
+        Optional<PublishBundleGuard.Revert> bundleRevert =
+                publishBundleGuard.revertForCaptionEdit(projectId, workItem, description);
 
-        if (scheduledFor != null) {
-            workItem.setScheduledFor(scheduledFor);
-        }
-        if (scheduleTimezone != null) {
-            workItem.setScheduleTimezone(validatedTimezone);
-        }
-        if (publishOnApproval != null) {
-            workItem.setPublishOnApproval(publishOnApproval);
+        // The schedule — scheduledFor, scheduleTimezone, publishOnApproval — is never a bundle field: it may
+        // change while a Post is In Review, Approved or Scheduled without touching its approval. In every
+        // status but the item's own scheduled one, the new values are simply applied below like any other
+        // field. In the scheduled status itself the Post is already live on its destinations, so a genuine
+        // schedule change re-times it in place: the new time is validated with the same gate a transition
+        // into that status uses, the current hand-offs are revoked, and the status is re-entered so revoked
+        // destinations revive, fire times restamp, hand-offs go out again and publish tasks re-arm.
+        boolean scheduleChanges = schedulePatchChanges(workItem, scheduledFor, scheduleTimezone, publishOnApproval);
+        boolean reTimedInPlace = false;
+        if (scheduleChanges) {
+            Statechart statechart = resolveStatechartOrNull(projectId, workItem);
+            String currentStatus = workItem.getCurrentStatus();
+            if (statechart != null && statechart.isTerminal(currentStatus)) {
+                throw new BusinessException("This " + statechart.noun().toLowerCase(Locale.ROOT)
+                        + " is already published; its time cannot change.");
+            }
+            if (scheduledStatusFor(projectId, workItem).equals(currentStatus)) {
+                OffsetDateTime previousScheduledFor = workItem.getScheduledFor();
+                String previousTimezone = workItem.getScheduleTimezone();
+                boolean previousPublishOnApproval = workItem.isPublishOnApproval();
+                applyScheduleFields(workItem, scheduledFor, scheduleTimezone, validatedTimezone, publishOnApproval);
+                try {
+                    // Validated with the same gate a transition into the scheduled status uses, so a new
+                    // time that has crept inside a destination's floor is refused with that gate's own
+                    // message rather than silently accepted.
+                    enforceScheduleValidity(workItem);
+                } catch (UnprocessableEntityException e) {
+                    // Leave the entity exactly as it was found: nothing revoked, nothing persisted.
+                    workItem.setScheduledFor(previousScheduledFor);
+                    workItem.setScheduleTimezone(previousTimezone);
+                    workItem.setPublishOnApproval(previousPublishOnApproval);
+                    throw e;
+                }
+                // Revoke FIRST, inside this transaction. A failure throws here, so nothing below runs and
+                // the whole patch rolls back with the fields it already set on this managed entity.
+                nativeHandoffService.unschedule(workItem);
+                reTimedInPlace = true;
+            } else {
+                applyScheduleFields(workItem, scheduledFor, scheduleTimezone, validatedTimezone, publishOnApproval);
+            }
         }
 
         // Sent whole: the stored set becomes exactly what was sent, so omitting the field leaves tags
@@ -297,6 +335,11 @@ public class WorkItemService {
 
         if (statusChanged) {
             applyScheduledEntry(projectId, workItem);
+        } else if (reTimedInPlace) {
+            // Not applyScheduledEntry: that revives and restamps in a REQUIRES_NEW transaction, which reads
+            // only committed data and would never see the revoke this same transaction just made. See
+            // reenterScheduledStatusInPlace.
+            reenterScheduledStatusInPlace(projectId, workItem);
         }
 
         if (statusChanged) {
@@ -552,14 +595,79 @@ public class WorkItemService {
      * when the definition cannot be resolved, so a status change is never refused over a lookup failure.
      */
     private String scheduledStatusFor(String projectId, WorkItem workItem) {
-        Statechart statechart;
-        try {
-            statechart = workItemWorkflowService.resolveFor(projectId, workItem);
-        } catch (RuntimeException e) {
-            statechart = null;
-        }
+        Statechart statechart = resolveStatechartOrNull(projectId, workItem);
         return statechart == null ? PublishingWorkflow.LEGACY_SCHEDULED_STATUS
                 : PublishingWorkflow.scheduledStatus(statechart).orElse(PublishingWorkflow.LEGACY_SCHEDULED_STATUS);
+    }
+
+    /** The item's own bound statechart, or null when it cannot be resolved (an unseeded project's Workflow). */
+    private Statechart resolveStatechartOrNull(String projectId, WorkItem workItem) {
+        try {
+            return workItemWorkflowService.resolveFor(projectId, workItem);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Whether a patch carrying these values would actually change the Post's schedule — the same rules
+     * {@link PublishBundleGuard} used to use to decide whether to revert an edit, now used only to decide
+     * whether a re-time is needed at all. The fire time is compared as an instant, so re-sending the same
+     * moment in a different offset is not a change; a blank timezone clears a zone that was set.
+     */
+    private static boolean schedulePatchChanges(WorkItem post, OffsetDateTime fireTime, String scheduleTimezone,
+                                                Boolean publishOnApproval) {
+        if (fireTime != null && !sameInstant(fireTime, post.getScheduledFor())) {
+            return true;
+        }
+        if (scheduleTimezone != null
+                && !Objects.equals(blankToNull(scheduleTimezone), blankToNull(post.getScheduleTimezone()))) {
+            return true;
+        }
+        return publishOnApproval != null && publishOnApproval != post.isPublishOnApproval();
+    }
+
+    private static boolean sameInstant(OffsetDateTime left, OffsetDateTime right) {
+        return left != null && right != null && left.toInstant().equals(right.toInstant());
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    /** Applies PATCH semantics to the schedule fields alone: {@code null} means "field absent — unchanged". */
+    private static void applyScheduleFields(WorkItem workItem, OffsetDateTime scheduledFor,
+                                            String rawScheduleTimezone, String validatedTimezone,
+                                            Boolean publishOnApproval) {
+        if (scheduledFor != null) {
+            workItem.setScheduledFor(scheduledFor);
+        }
+        if (rawScheduleTimezone != null) {
+            workItem.setScheduleTimezone(validatedTimezone);
+        }
+        if (publishOnApproval != null) {
+            workItem.setPublishOnApproval(publishOnApproval);
+        }
+    }
+
+    /**
+     * Validates a re-time of an already-scheduled Post with the same {@link PostScheduleValidator} the
+     * approval gate uses, so a new fire time that has crept inside a destination's floor — or any other
+     * schedule problem — is refused with the gate's own plain-language message rather than silently
+     * accepted. Reads the Work Item's own (already-mutated) schedule fields.
+     *
+     * @throws UnprocessableEntityException naming every schedule problem found, mirroring the 422 a refused
+     *                                      transition throws
+     */
+    private void enforceScheduleValidity(WorkItem workItem) {
+        List<String> problems = postScheduleValidator.inspect(workItem).stream()
+                .filter(PublishFinding::blocks)
+                .map(PublishFinding::message)
+                .toList();
+        if (!problems.isEmpty()) {
+            throw new UnprocessableEntityException(
+                    "Cannot reschedule this post: " + String.join(" ", problems));
+        }
     }
 
     /**
@@ -641,6 +749,34 @@ public class WorkItemService {
         nativeHandoffService.handoffForPost(workItem);
         // Each target now gets a timed request for its next step (dispatch, hand-off, or confirmation) so it
         // fires on the minute even on a Cloud Run instance that is asleep; the pollers remain as a sweep.
+        publishTaskArmer.armPost(workItem);
+    }
+
+    /**
+     * As {@link #applyScheduledEntry}, but for a schedule change made <b>in the same transaction</b> as the
+     * revoke that preceded it — a re-time in place on a Post that is already in its scheduled status.
+     *
+     * <p>Not a call to {@link #applyScheduledEntry}: that method revives and restamps through {@link
+     * PublishTargetService#reviveRevokedTargets} / {@link PublishTargetService#restampFireTimes}, both
+     * {@code REQUIRES_NEW}. A fresh transaction reads only committed data, so it would never see the revoke
+     * this same transaction just made — the row would stay {@code REVOKED} forever, invisible to every
+     * poller. This uses the same-transaction variants instead, so the revival is part of this commit.
+     *
+     * <p>{@link NativeHandoffService#handoffForPost} is still called for symmetry with a fresh entry, but is
+     * best-effort here: its own claim runs in its own fresh transaction (it is, by design, meant to run
+     * standalone as a poller/task handler) and so cannot see this transaction's uncommitted revival either —
+     * it safely finds nothing to do. What actually delivers the hand-off is {@link PublishTaskArmer#armPost},
+     * which re-reads the row through this same persistence context and schedules its task for <em>after</em>
+     * this transaction commits, when the new {@code PENDING} row and fire time are visible to everyone.
+     */
+    private void reenterScheduledStatusInPlace(String projectId, WorkItem workItem) {
+        if (workItem.isPublishOnApproval()) {
+            workItem.setScheduledFor(publishTargetService.earliestFireTime(workItem));
+            workItemRepository.save(workItem);
+        }
+        publishTargetService.reviveRevokedTargetsInSameTransaction(workItem);
+        publishTargetService.restampFireTimesInSameTransaction(workItem);
+        nativeHandoffService.handoffForPost(workItem);
         publishTaskArmer.armPost(workItem);
     }
 
