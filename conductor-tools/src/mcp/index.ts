@@ -3,6 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig, resolveProject } from './config.js'
+import { ApiError } from './api.js'
 import {
   createWorkItem,
   updateWorkItem,
@@ -811,7 +812,7 @@ const TOOLS = [
   },
   {
     name: 'list_publish_targets',
-    description: 'Accounts a project can publish to (platform, connectionId, label, lane, health, the publishOptions keys that platform accepts, and the post formats — feed/reel/story — it offers), plus a manual destination per platform. With issueId, also that Work Item\'s selected targets with state, permalink, errorMessage, effectiveCaption and effectiveAssetIds — the status read-back after set_publish_targets, a scheduled publish or a retry.',
+    description: 'Accounts a project can publish to: platform, connectionId, label, lane, health, accepted options and post formats, plus a manual destination per platform. With issueId, also that Work Item\'s selected targets and their outcomes. Call before set_publish_targets or create_post.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -821,7 +822,7 @@ const TOOLS = [
   },
   {
     name: 'set_publish_targets',
-    description: 'Choose the accounts a Work Item publishes to, each with an optional format, caption override, ordered media subset and platform options. Set-replace: send the complete selection every time (a target re-sent without captionOverride or assetIds loses them; [] clears all). Editing an approved item sends it back for review. Verify with list_publish_targets; read get_post_status for what the gate still wants. TikTok consent is recorded by a human — the creator, in the Conductor UI — and no tool can.',
+    description: 'Choose the accounts a Work Item publishes to, each with an optional format, caption override, media subset and platform options. Replaces the complete selection every time. Verify with list_publish_targets, then read get_post_status for what the gate still wants.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -885,7 +886,7 @@ const TOOLS = [
   },
   {
     name: 'complete_manual_publish',
-    description: 'Record that a target in state AWAITING_MANUAL (a MANUAL-lane one, or an automated one the platform handed back to a person, e.g. TikTok\'s pre-audit inbox upload) was posted by hand, storing its live URL. Refused for any other automated target, whose poller reports the real outcome. Returns the target as stored.',
+    description: 'Record that a manual-lane (or hand-off) publish target was posted by hand, storing its live URL. Refused for any other automated target. Returns the target as stored — call get_post_status to verify.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -911,7 +912,7 @@ const TOOLS = [
   // --- Posts: the publishing pipeline in one call each ---
   {
     name: 'create_post',
-    description: 'Create, schedule and submit a Post in one call: writes the caption, uploads media (paths or URLs, video measured here), picks destinations by account name and format (omit account for the manual lane, format for feed), schedules at the server\'s earliest acceptable time when none is given, then submits for review with the named reviewers unless submit is false. A story target given several media resolves to the first, and drops a captionOverride — both noted in warnings. Returns the confirmation table — postId, status, time, each destination — plus blockers, warnings and nextStep. Poll get_post_status afterwards.',
+    description: 'Create, schedule and submit a Post in one call: caption, media, destinations, schedule, review. Returns the confirmation table (postId, status, time, destinations) plus blockers, warnings and nextStep. Poll get_post_status after.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -960,7 +961,7 @@ const TOOLS = [
   },
   {
     name: 'get_post_status',
-    description: 'Where a Post stands, live from the server: status, schedule (publishOnApproval: true when approval will stamp the time), every destination with state, permalink, errorMessage and format (shown only when not feed), the gate\'s blockers and warnings, review state, whether the TikTok consent a human records in the UI stands, and nextStep. The read-back after create_post, submit_post, an approval, a scheduled publish or a retry.',
+    description: 'Where a Post stands, live from the server: status, schedule, every destination\'s state/permalink/errorMessage, the gate\'s blockers and warnings, review state and nextStep. The read-back after create_post, submit_post, an approval, a scheduled publish or a retry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1022,7 +1023,7 @@ const TOOLS = [
   },
   {
     name: 'submit_review',
-    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned reviewer holding the REVIEWER or ADMIN role. "approve" on a reviewed Workflow schedules the Post in the same request (autoTransition says how far it got); "request_changes" sends it back to its author. Does not record TikTok consent — a human (the creator) does that in the Conductor UI.',
+    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned REVIEWER or ADMIN. Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step, done in the Conductor UI, not this tool. Returns the confirmation table.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1057,12 +1058,18 @@ function successResponse(data: unknown) {
   }
 }
 
-function errorResponse(message: string) {
+/**
+ * A shorthand string keeps every existing call site working; the richer object form lets the dispatch
+ * catch hand back the server's own status/code/title alongside its message, without changing the
+ * top-level `{ error: ... }` JSON shape callers and tests already rely on.
+ */
+function errorResponse(error: string | { error: string; status?: number; code?: string; title?: string }) {
+  const payload = typeof error === 'string' ? { error } : error
   return {
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify({ error: message }),
+        text: JSON.stringify(payload),
       },
     ],
     isError: true,
@@ -1788,6 +1795,9 @@ export async function runMcpServer(): Promise<void> {
           return errorResponse(`Unknown tool: ${name}`)
       }
     } catch (err) {
+      if (err instanceof ApiError) {
+        return errorResponse({ error: err.message, status: err.status, code: err.code, title: err.title })
+      }
       const message = err instanceof Error ? err.message : String(err)
       return errorResponse(message)
     }

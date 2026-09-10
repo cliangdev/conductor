@@ -45,7 +45,23 @@ offers all three:
   drops it even if you send one) — do not treat a story caption as lost work, it was never going
   to show. `create_post` and `set_publish_targets` fire a story at its scheduled time themselves,
   since neither Facebook nor Instagram can schedule one, so its lead time is short (about a
-  minute) rather than the platform's own scheduling window.
+  minute) rather than the platform's own scheduling window. Give a story exactly one `assetIds`
+  entry when several media are attached — omitted, `create_post` resolves it to the first of the
+  attached media and says so in `warnings`, which is a fallback worth naming rather than relying on.
+
+### Scheduling with no time given
+
+When nobody names a time, `create_post` schedules for the next quarter-hour at or after the
+server's own `earliestFireTime` (from the publish preflight) — never sooner, and never "now". This
+is the one instance of "ask rather than guess" that still has to produce *something*: the server,
+not the client, knows the earliest slot every chosen destination can accept.
+
+### Editing an already-targeted Post
+
+`set_publish_targets` replaces the complete destination list every time it is called — it is not a
+patch. Re-sending a target without `captionOverride` or `assetIds` drops whatever it had; passing
+`targets: []` clears every destination. Editing the targets on a Post that already cleared review
+sends it back for review, since the approval no longer covers what will actually go out.
 
 ## Step 2 — Look before you post
 

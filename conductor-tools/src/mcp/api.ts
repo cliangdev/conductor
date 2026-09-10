@@ -1,6 +1,52 @@
 import { Blob } from 'node:buffer'
 import type { Config } from './config.js'
 
+/**
+ * An HTTP error from the Conductor API. `message` is the server's own sentence — an RFC 7807
+ * problem's `detail`, falling back to `title`, falling back to the raw response body — so a caller
+ * can relay it to a person without re-parsing JSON. `status`, `code`, `detail` and `title` are kept
+ * as fields for callers that need to branch on more than the message.
+ */
+export class ApiError extends Error {
+  readonly status: number
+  readonly code?: string
+  readonly detail?: string
+  readonly title?: string
+
+  constructor(status: number, message: string, opts: { code?: string; detail?: string; title?: string } = {}) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = opts.code
+    this.detail = opts.detail
+    this.title = opts.title
+  }
+}
+
+/**
+ * Parses a non-ok response body as an RFC 7807 problem (`{ type, title, status, detail, code? }`) when
+ * possible, otherwise treats it as plain text. Never throws — a body that is neither is just "no detail".
+ */
+async function parseProblem(
+  response: Response
+): Promise<{ message: string; code?: string; detail?: string; title?: string }> {
+  const text = await response.text().catch(() => '')
+  if (text) {
+    try {
+      const body = JSON.parse(text) as Record<string, unknown>
+      const detail = typeof body['detail'] === 'string' ? body['detail'] : undefined
+      const title = typeof body['title'] === 'string' ? body['title'] : undefined
+      const code = typeof body['code'] === 'string' ? body['code'] : undefined
+      const message = detail || title || text
+      return { message, code, detail, title }
+    } catch {
+      // Not JSON — the raw text is the only detail there is.
+      return { message: text }
+    }
+  }
+  return { message: `${response.status} ${response.statusText}`.trim() }
+}
+
 async function requestWithStatus<T>(
   method: string,
   urlPath: string,
@@ -20,8 +66,8 @@ async function requestWithStatus<T>(
   })
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`API error ${response.status}: ${text}`)
+    const problem = await parseProblem(response)
+    throw new ApiError(response.status, problem.message, problem)
   }
 
   // 204 as well as DELETE: an endpoint that answers "done, nothing to say" (e.g. confirming an upload)
@@ -48,6 +94,8 @@ async function request<T>(
  * offline replay; surface the message instead.
  */
 export function isClientError(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status >= 400 && err.status < 500
+  // Fallback for an error that didn't come through requestWithStatus (e.g. a caller-constructed Error).
   return err instanceof Error && /API error 4\d\d\b/.test(err.message)
 }
 
