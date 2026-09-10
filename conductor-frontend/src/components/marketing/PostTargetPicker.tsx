@@ -35,6 +35,7 @@ import { ExternalLink, RotateCw, Share2 } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -99,6 +100,8 @@ export interface PublishTargetOption {
   lane: PublishLane
   healthStatus?: string | null
   healthMessage?: string | null
+  /** Extra detail behind `healthMessage` — the platform's own words, shown only on request. */
+  healthDetail?: string | null
   /**
    * TIK-2. TikTok reports a different set of privacy levels per creator (a private account is
    * offered fewer than a public one), so the choices come from the connection rather than from a
@@ -145,6 +148,10 @@ export interface SelectedPublishTarget {
   permalink?: string | null
   /** The platform's own words, verbatim, when `state` is FAILED — or the hand-off note on AWAITING_MANUAL. */
   errorMessage?: string | null
+  /** Extra detail behind `errorMessage` — shown only on request, via a "Show details" disclosure. */
+  errorDetail?: string | null
+  /** Human words for `state`, from the server. Falls back to the local STATE_LABELS map when absent. */
+  stateLabel?: string | null
   fireTime?: string | null
 }
 
@@ -211,8 +218,9 @@ function stateHue(state: string): StatusHue {
   return STATE_HUES[state] ?? statusHue(state)
 }
 
-function stateLabel(state: string): string {
-  return STATE_LABELS[state] ?? state
+/** The server's own `stateLabel` wins when present; the local map is the fallback for an older backend. */
+function stateLabelFor(target: SelectedPublishTarget): string {
+  return target.stateLabel ?? STATE_LABELS[target.state] ?? target.state
 }
 
 /**
@@ -1026,6 +1034,7 @@ function TargetRow({
       : isManual(option) && !settled
         ? "Conductor won't post this one. It still goes through review and onto the calendar; when it's due you'll be asked to post it yourself and paste the link back."
         : null
+  const noteDetail = unhealthy ? option.healthDetail : undefined
 
   // Platform options are only meaningful for an API target: they are the payload we send the
   // platform, and on the manual lane the creator sets all of it in the platform's own composer.
@@ -1040,52 +1049,55 @@ function TargetRow({
 
   return (
     <div>
-      <label
+      <div
         className={cn(
-          'flex items-start gap-2.5 px-4 py-2',
-          disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-muted/50'
+          'px-4 py-2',
+          disabled ? 'opacity-60' : 'hover:bg-muted/50'
         )}
       >
-        <input
-          type="checkbox"
-          className="mt-0.5 rounded border-border"
+        <Checkbox
           checked={checked}
           disabled={disabled}
+          onCheckedChange={onToggle}
           aria-describedby={note ? noteId : undefined}
-          onChange={onToggle}
-        />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="text-sm text-foreground">
-              {option.label}
-              <FormatBadge format={format} />
+          label={
+            <span className="flex items-center gap-2">
+              <span className="text-sm text-foreground">
+                {option.label}
+                <FormatBadge format={format} />
+              </span>
+              {settled && (
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-xs font-medium',
+                    statusHueClasses(stateHue(selectedTarget!.state)).bg,
+                    statusHueClasses(stateHue(selectedTarget!.state)).text
+                  )}
+                >
+                  {stateLabelFor(selectedTarget!)}
+                </span>
+              )}
             </span>
-            {settled && (
+          }
+        />
+        <div className="pl-[26px]">
+          {note && (
+            <>
               <span
+                id={noteId}
                 className={cn(
-                  'rounded-full px-2 py-0.5 text-xs font-medium',
-                  statusHueClasses(stateHue(selectedTarget!.state)).bg,
-                  statusHueClasses(stateHue(selectedTarget!.state)).text
+                  'block text-sm',
+                  // A manual destination is a normal choice, not a problem to warn about — amber is
+                  // reserved for the two rows a human has to do something about.
+                  isManual(option) && !unavailable && !unhealthy
+                    ? 'text-muted-foreground'
+                    : statusHueClasses('amber').text
                 )}
               >
-                {stateLabel(selectedTarget!.state)}
+                {note}
               </span>
-            )}
-          </span>
-          {note && (
-            <span
-              id={noteId}
-              className={cn(
-                'block text-xs',
-                // A manual destination is a normal choice, not a problem to warn about — amber is
-                // reserved for the two rows a human has to do something about.
-                isManual(option) && !unavailable && !unhealthy
-                  ? 'text-muted-foreground'
-                  : statusHueClasses('amber').text
-              )}
-            >
-              {note}
-            </span>
+              <ShowDetails detail={noteDetail} message={note} />
+            </>
           )}
           {settled && selectedTarget!.permalink && (
             <a
@@ -1099,8 +1111,8 @@ function TargetRow({
               <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
             </a>
           )}
-        </span>
-      </label>
+        </div>
+      </div>
       {settled ? (
         <SettledOutcomeRow
           target={selectedTarget!}
@@ -1183,6 +1195,27 @@ function TargetRow({
 }
 
 /**
+ * A "Show details" disclosure beside a message, for the extra detail the server sends alongside it —
+ * only rendered when there is one and it says more than the message already does.
+ */
+function ShowDetails({ message, detail }: { message: string | null | undefined; detail?: string | null }) {
+  const [open, setOpen] = useState(false)
+  if (!detail || detail === message) return null
+  return (
+    <div>
+      <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide details' : 'Show details'}
+      </Button>
+      {open && (
+        <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs text-foreground">
+          {detail}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+/**
  * What happened to one destination, plus the actions that belong to it: nothing for a plain success or
  * an in-flight state (the chip and permalink in the row header already say it), a "Mark published" form
  * for one waiting on a human, and the platform's own error verbatim for one that failed.
@@ -1206,7 +1239,7 @@ function SettledOutcomeRow({
     <div className={cn('px-4 pb-2', awaiting && 'bg-muted/40')}>
       {awaiting && !open && (
         <>
-          <p className="ml-6 text-xs text-muted-foreground">
+          <p className="ml-6 text-sm text-muted-foreground">
             {isManual(target)
               ? 'Nothing is publishing this one — post it yourself, then record the link.'
               : (target.errorMessage ??
@@ -1215,12 +1248,12 @@ function SettledOutcomeRow({
           {/* What to post, not just that something must be posted: this destination may carry copy
               and media of its own, and a person told only "post it" would go looking for them. */}
           {target.effectiveCaption && (
-            <p className="ml-6 mt-1 whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs text-foreground">
+            <p className="ml-6 mt-1 whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-foreground">
               {target.effectiveCaption}
             </p>
           )}
           {target.effectiveAssetIds && target.effectiveAssetIds.length > 0 && (
-            <p className="ml-6 mt-1 text-xs text-muted-foreground">
+            <p className="ml-6 mt-1 text-sm text-muted-foreground">
               {target.effectiveAssetIds.length === 1
                 ? 'Post the file attached to this Post.'
                 : `Post ${target.effectiveAssetIds.length} files, in the order shown on the Post.`}
@@ -1234,7 +1267,10 @@ function SettledOutcomeRow({
         </>
       )}
       {target.errorMessage && !awaiting && (
-        <p className={cn('ml-6 text-xs', statusHueClasses('red').text)}>{target.errorMessage}</p>
+        <div className="ml-6">
+          <p className={cn('text-sm', statusHueClasses('red').text)}>{target.errorMessage}</p>
+          <ShowDetails detail={target.errorDetail} message={target.errorMessage} />
+        </div>
       )}
       {open && <ManualPublishForm target={target} onCancel={onCancel} onComplete={onComplete} />}
     </div>
@@ -1281,7 +1317,7 @@ function ManualPublishForm({
   return (
     <form onSubmit={submit} className="ml-6 space-y-2.5 border-t border-border pt-3">
       <div className="space-y-1">
-        <label htmlFor={linkId} className="block text-xs font-medium text-foreground">
+        <label htmlFor={linkId} className="block text-sm font-medium text-foreground">
           Link to the published post
         </label>
         <input
@@ -1296,10 +1332,13 @@ function ManualPublishForm({
         />
       </div>
       <div className="space-y-1">
-        <span className="block text-xs font-medium text-foreground">When it went out</span>
+        <span className="block text-sm font-medium text-foreground">When it went out</span>
         <DateTimePicker id={timeId} label="When it went out" value={publishedAt} onChange={setPublishedAt} />
       </div>
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        {!permalink.trim() && !saving && (
+          <span className="text-sm text-muted-foreground">Paste the link first.</span>
+        )}
         <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={saving}>
           Cancel
         </Button>
