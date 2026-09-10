@@ -1051,6 +1051,7 @@ export function WorkItemDetailView({
         {reviewMode && (
           <ReviewBar
             pendingCount={pendingComments.length}
+            commentable={documents.length > 0}
             reviewOutcomes={reviewOutcomes}
             submitting={reviewSubmitting}
             onSubmit={handleSubmitReview}
