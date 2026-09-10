@@ -5,6 +5,7 @@ import com.conductor.entity.PublishLane;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
@@ -226,6 +227,34 @@ class PostScheduleValidatorTest {
     }
 
     @Test
+    void aTimeThatAlreadyFiredIsARecordNotAPlan() {
+        // Two hours after a post went out, its date is history: every destination is past PENDING, so
+        // nothing is waiting to fire and there is nothing "too soon" to warn about.
+        WorkItem post = workItem("MARKETING", "SCHEDULED");
+        post.setScheduledFor(NOW.minusHours(2));
+        post.setScheduleTimezone("America/Los_Angeles");
+        PostPublishTarget inbox = target("tiktok");
+        inbox.setState(PostPublishTargetState.AWAITING_MANUAL);
+        when(postPublishTargetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(inbox));
+        givenUploadedMedia();
+
+        assertThat(validator.inspect(post)).extracting(PublishFinding::code)
+                .doesNotContain(PostScheduleValidator.FIRE_TIME_TOO_SOON);
+    }
+
+    @Test
+    void aPastTimeWithADestinationStillWaitingIsStillTooSoon() {
+        WorkItem post = workItem("MARKETING", "SCHEDULED");
+        post.setScheduledFor(NOW.minusHours(2));
+        post.setScheduleTimezone("America/Los_Angeles");
+        givenTargets(1);
+        givenUploadedMedia();
+
+        assertThat(validator.inspect(post)).extracting(PublishFinding::code)
+                .contains(PostScheduleValidator.FIRE_TIME_TOO_SOON);
+    }
+
+    @Test
     void acceptsAFireTimeFifteenMinutesOut() {
         WorkItem post = postInReview();
         post.setScheduledFor(NOW.plusMinutes(15));
@@ -278,7 +307,7 @@ class PostScheduleValidatorTest {
         post.setScheduledFor(NOW.plusSeconds(30));
         assertThatThrownBy(() -> approve(post))
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("is too soon: Instagram needs at least 1 minute' notice");
+                .hasMessageContaining("is too soon: Instagram needs at least 1 minute's notice");
 
         post.setScheduledFor(NOW.plusMinutes(2));
         assertThatCode(() -> approve(post)).doesNotThrowAnyException();
