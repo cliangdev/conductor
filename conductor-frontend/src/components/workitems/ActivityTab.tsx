@@ -46,6 +46,18 @@ function buildTimeline(comments: Comment[], reviews: DetailReview[]): ActivityIt
   return items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 }
 
+/** The icon alone left a row reading as a name and a time; the verdict is the event. */
+function verdictVerb(verdict: DetailReview['verdict']): string {
+  switch (verdict) {
+    case 'APPROVED':
+      return 'approved'
+    case 'CHANGES_REQUESTED':
+      return 'requested changes'
+    default:
+      return 'commented'
+  }
+}
+
 export function ActivityTab({ comments, reviews }: { comments: Comment[]; reviews: DetailReview[] }) {
   const items = buildTimeline(comments, reviews)
 
@@ -72,7 +84,12 @@ export function ActivityTab({ comments, reviews }: { comments: Comment[]; review
               <span className="font-medium text-foreground">
                 {item.kind === 'review' ? item.name : item.authorName}
               </span>
-              {item.kind === 'review' && <VerdictIcon verdict={item.verdict} />}
+              {item.kind === 'review' && (
+                <>
+                  <VerdictIcon verdict={item.verdict} />
+                  <span className="text-xs text-muted-foreground">{verdictVerb(item.verdict)}</span>
+                </>
+              )}
               {item.kind === 'reply' && <span className="text-xs text-muted-foreground">replied</span>}
               {item.kind === 'comment' && item.resolved && (
                 <span className="text-xs text-status-approved font-medium">Resolved</span>
