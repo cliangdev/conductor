@@ -60,11 +60,12 @@ compose card's checkbox, or `create_post`'s flag) the gate skips its two fire-ti
 stamps `scheduledFor` with `earliestFireTime` for its destinations at that instant — the same number the
 preflight would have reported. Leaving the scheduled status (an unschedule, an edit-revert) forgets the
 stamped time again, so a re-approval computes a fresh one rather than re-using a slot that is now in the
-past. The flag is part of the approved bundle: turning it on or off after approval reverts the Post to
-review like a caption edit would. The stamped time is *derived* and therefore not in the bundle hash, so
-the stamp itself does not void the approval that caused it. On a Workflow whose approval takes the Post
-straight through to scheduled (`"trigger": "review_approved"` on both edges, as in the seeded MARKETING
-lifecycle), the reviewer's approval is the publish button.
+past. The flag is part of the *schedule*, not the bundle: turning it on or off — like moving `scheduledFor`
+itself — never reverts the Post or voids its approval, in review, once approved, or once scheduled (see
+"Content freezes when it goes for review" below). The stamped time was never in the bundle hash to begin
+with; now neither is anything else about the schedule. On a Workflow whose approval takes the Post straight
+through to scheduled (`"trigger": "review_approved"` on both edges, as in the seeded MARKETING lifecycle),
+the reviewer's approval is the publish button.
 
 ### Which status is "scheduled"
 
@@ -85,25 +86,43 @@ to publish without a human in the loop. It is not seeded by default.
 
 ## Content freezes when it goes for review
 
-Everything a review is about — the caption, the media, the schedule, the destinations — is frozen from
-the moment the item enters its review status, and stays frozen through Approved, Scheduled and
-Published. The only way to change any of it is for a reviewer to send it back; from Changes Requested
-the author has the pen again.
+Everything a review is actually about — the caption, the media, the destinations — is frozen from the
+moment the item enters its review status, and stays frozen through Approved, Scheduled and Published.
+The only way to change any of it is for a reviewer to send it back; from Changes Requested the author has
+the pen again.
+
+**The schedule is not part of that freeze.** `scheduledFor`, `scheduleTimezone` and `publishOnApproval`
+may all change while a Post is In Review, Approved or Scheduled, without sending it back for changes and
+without touching its approval — a reviewer signs off on what goes out and where, not on when. Moving a
+Post's time is a normal, always-available edit at every one of those statuses.
 
 This is not merely tidiness. It was briefly the other way, and the gap was real: an author could rewrite
 the caption while a reviewer was reading, and the approval that reviewer then gave — for what they had
 read — attached to something else. Freezing at submit means an approval always describes the thing that
-was approved, and "send it back" is the reviewer's decision rather than the author's.
+was approved, and "send it back" is the reviewer's decision rather than the author's. The same logic never
+applied to the schedule — a reviewer approves the post going out, not the clock it goes out on — so it was
+carved back out.
 
 The rule is derived from the Workflow, not hardcoded: the freeze covers the review status and everything
 reachable past the gate, so Draft and Changes Requested stay editable and a Workflow with no review gate
-freezes nothing.
+freezes nothing. Within that freeze, the schedule is the one field that is always exempt.
 
 Everything after approval is bound to what was approved. `reviews.bundle_hash` is a SHA-256 over the
-caption, fire time, targets and uploaded assets; changing any of them reverts the Post to review and
-revokes anything already handed to a platform. That is why editing a schedule after approval sends the
-Post back — it is working, not misbehaving. A revoked destination is not lost: the next entry into the
-scheduled status returns it to `PENDING` under a fresh idempotency key and hands it off again.
+caption, targets and uploaded assets — deliberately not the schedule — so changing the caption, adding or
+dropping a destination, or swapping media reverts the Post to review and revokes anything already handed
+to a platform; moving the schedule touches none of it.
+
+**Re-timing a Scheduled Post moves it in place.** A Post already in its scheduled status is live on its
+destinations — a native-lane target may already be `HANDED_OFF` to Facebook or YouTube. Changing its
+schedule there re-times it rather than reverting it: the new time is validated with the same gate a
+transition into the scheduled status uses (so a time that has crept inside a destination's floor is
+refused, 422, with the gate's own message), the current hand-offs are revoked, and the Post re-enters its
+scheduled status — reviving revoked destinations, restamping every target's fire time, and re-arming
+publish tasks, all inside the one request. A revoked destination is not lost: it comes back to `PENDING`
+under a fresh idempotency key and is handed off again once the request commits. Outside the scheduled
+status (Draft, In Review, Changes Requested, Approved), a schedule change just applies — there is nothing
+live to re-time yet. A **terminal** Post (Published) refuses a schedule change outright, the same way it
+refuses every other edit: its record is done.
 
 ## App credentials
 
