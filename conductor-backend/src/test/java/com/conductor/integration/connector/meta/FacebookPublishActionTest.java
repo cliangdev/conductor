@@ -534,6 +534,34 @@ class FacebookPublishActionTest {
     }
 
     @Test
+    void deleteFacebookPost_deletedOnFacebookItself_succeeds_becauseGraphSaysSoWithA400() {
+        // Graph does not answer 404 for a post a person deleted in Facebook; it answers 400 with error
+        // code 100 / subcode 33. Refusing here stranded a Work Item behind a post that was already gone.
+        String body = "{\"error\":{\"message\":\"Unsupported delete request. Object with ID '777' does not exist,"
+                + " cannot be loaded due to missing permissions, or does not support this operation.\","
+                + "\"type\":\"GraphMethodException\",\"code\":100,\"error_subcode\":33}}";
+        onDeleteThrow("/page-1_777", HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request",
+                new HttpHeaders(), body.getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+
+        ActionResult result = connector.invoke("delete_facebook_post", Map.of("post_id", "page-1_777"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("deleted", true);
+    }
+
+    @Test
+    void deleteFacebookPost_otherGraphRefusal_staysAnError() {
+        String body = "{\"error\":{\"message\":\"(#200) Permissions error\",\"type\":\"OAuthException\",\"code\":200}}";
+        onDeleteThrow("/page-1_777", HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request",
+                new HttpHeaders(), body.getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+
+        ActionResult result = connector.invoke("delete_facebook_post", Map.of("post_id", "page-1_777"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("Facebook refused to delete post page-1_777");
+    }
+
+    @Test
     void deleteFacebookPost_withoutAPostId_returnsPermanentError() {
         ActionResult result = connector.invoke("delete_facebook_post", Map.of(), CTX);
 
