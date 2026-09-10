@@ -7540,6 +7540,13 @@ components:
         reviewerRole:
           type: string
           nullable: true
+        reviewOutcomes:
+          type: array
+          description: >-
+            The verdicts a reviewer may give on this edge (approve, request_changes, comment), as the
+            Workflow declares them. Present only when requiresReview; the review bar offers exactly these.
+          items:
+            type: string
         trigger:
           type: string
           nullable: true

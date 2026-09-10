@@ -416,6 +416,21 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
                 .isTrue();
     }
 
+    /** Graph's "does not exist … missing permissions" is what it says for any deleted object, not a token verdict. */
+    @Test
+    void aGraphObjectThatIsGoneIsNotAnAuthFailure() {
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "Handed off to facebook as post 1, but it was never confirmed live after 20 checks — the check itself"
+                        + " failed: Facebook could not read post 1: 400 {\"error\":{\"message\":\"Unsupported get request."
+                        + " Object with ID '1' does not exist, cannot be loaded due to missing permissions, or does not"
+                        + " support this operation.\",\"type\":\"GraphMethodException\",\"code\":100,\"error_subcode\":33}}"))
+                .isFalse();
+        // A genuine missing scope still counts.
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "Facebook rejected the publish: 400 missing permission pages_manage_posts"))
+                .isTrue();
+    }
+
     /** TikTok's 403 for an unaudited app posting to a public account is the account owner's to fix, not a reconnect. */
     @Test
     void aPlatformPolicyRefusalPhrasedAs403IsNotAnAuthFailure() {

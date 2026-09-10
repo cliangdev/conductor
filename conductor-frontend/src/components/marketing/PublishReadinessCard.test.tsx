@@ -128,6 +128,52 @@ describe('PublishReadinessCard', () => {
     expect(screen.getByText(/Waiting on 1 reviewer/)).toBeInTheDocument()
   })
 
+  it('asks who should review before submitting into a review-gated status, and assigns them first', async () => {
+    const gated: WorkflowView = {
+      ...VIEW,
+      transitions: [{ from: 'IN_REVIEW', to: 'APPROVED', label: 'Approve', requiresReview: true, reviewOutcomes: ['approve', 'request_changes'] }],
+    }
+    const onAssignReviewer = vi.fn(async () => {})
+    const onUnassignReviewer = vi.fn(async () => {})
+    const { onStatusChanged } = renderCard({
+      workflowView: gated,
+      reviewers: [{ userId: 'u-old', name: 'Olga Old' }],
+      eligibleReviewers: [{ userId: 'u-rev', name: 'Rita Reviewer', email: 'rita@x.test' }],
+      onAssignReviewer,
+      onUnassignReviewer,
+    })
+    await userEvent.click(await screen.findByRole('button', { name: 'Submit for review' }))
+
+    // Nothing moved yet: the dialog is up, with the current reviewer already ticked.
+    expect(patches).toEqual([])
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('Who should review it?')
+    expect(screen.getByRole('checkbox', { name: /Olga Old/ })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /Rita Reviewer/ })).not.toBeChecked()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /Olga Old/ }))
+    // With nobody picked the submit is withheld and says why.
+    expect(screen.getByRole('button', { name: 'Submit for review' })).toBeDisabled()
+    expect(dialog).toHaveTextContent('Pick at least one reviewer.')
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /Rita Reviewer/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Submit for review' }))
+
+    await waitFor(() => expect(patches).toEqual([{ status: 'IN_REVIEW' }]))
+    expect(onAssignReviewer).toHaveBeenCalledWith('u-rev')
+    expect(onUnassignReviewer).toHaveBeenCalledWith('u-old')
+    expect(onStatusChanged).toHaveBeenCalledWith('IN_REVIEW')
+  })
+
+  it('moves at once when the next status has no review gate, even with reviewers to offer', async () => {
+    const ungated: WorkflowView = { ...VIEW, transitions: [{ from: 'IN_REVIEW', to: 'SCHEDULED', label: 'Schedule' }] }
+    renderCard({ workflowView: ungated, reviewers: [], eligibleReviewers: [{ userId: 'u-rev', name: 'Rita Reviewer' }] })
+    await userEvent.click(await screen.findByRole('button', { name: 'Submit for review' }))
+
+    await waitFor(() => expect(patches).toEqual([{ status: 'IN_REVIEW' }]))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('surfaces a refused move as a toast and stays on the server’s answer', async () => {
     patchRejection = { status: 422, detail: 'Cannot move Post to IN_REVIEW: the fire time is less than 10 minutes in the future' }
     renderCard()

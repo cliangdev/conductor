@@ -764,10 +764,23 @@ public class PublishOutcomeService {
                     + "|invalid_publish_type|privacy_level_option_mismatch",
             Pattern.CASE_INSENSITIVE);
 
+    /**
+     * Graph's answer for an object that is simply gone — a post somebody deleted on Facebook itself — is
+     * error code 100 with subcode 33 and the sentence "does not exist, cannot be loaded due to missing
+     * permissions, or does not support this operation". The "missing permissions" in it is Graph hedging,
+     * not a verdict on our token; marking the connection unhealthy on it told a human to reconnect an
+     * account that was fine.
+     */
+    private static final Pattern GRAPH_OBJECT_GONE = Pattern.compile(
+            "\\\"error_subcode\\\"\\s*:\\s*33\\b"
+                    + "|does not exist, cannot be loaded due to missing permissions",
+            Pattern.CASE_INSENSITIVE);
+
     static boolean isPermanentAuthFailure(String errorMessage) {
         return errorMessage != null
                 && PERMANENT_AUTH_FAILURE.matcher(errorMessage).find()
-                && !PLATFORM_POLICY_REFUSAL.matcher(errorMessage).find();
+                && !PLATFORM_POLICY_REFUSAL.matcher(errorMessage).find()
+                && !GRAPH_OBJECT_GONE.matcher(errorMessage).find();
     }
 
     /**
