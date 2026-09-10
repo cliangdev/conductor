@@ -302,7 +302,7 @@ class MarketingReviewGateIntegrationTest {
         assertThat(submission.autoTransition()).isPresent();
         assertThat(submission.autoTransition().get().blocked()).isTrue();
         assertThat(submission.autoTransition().get().applied()).isFalse();
-        assertThat(submission.autoTransition().get().blockedReason()).contains("less than 10 minutes");
+        assertThat(submission.autoTransition().get().blockedReason()).contains("is too soon");
         assertThat(reload().getCurrentStatus()).isEqualTo("IN_REVIEW");
         // The approval stands: once the schedule is fixed the gate opens without a second review.
         assertThat(reviewRepository.findAllByWorkItemId(post.getId()))
