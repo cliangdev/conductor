@@ -33,6 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -148,7 +149,8 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
     void movingTheFireTimeOfAnApprovedPostKeepsItApprovedAndItsApprovalCurrent() {
         approvedPost();
 
-        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3);
+        // Microseconds: Postgres stores no finer, and Linux clocks hand out nanoseconds.
+        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3).truncatedTo(ChronoUnit.MICROS);
         workItemService.patchWorkItem(project.getId(), post.getId(), null, null, null, null,
                 moved, "America/New_York", admin);
 
@@ -169,7 +171,8 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
         moveTo("SCHEDULED");
         org.mockito.Mockito.clearInvocations(actionInvocationService);
 
-        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(5);
+        // Microseconds: Postgres stores no finer, and Linux clocks hand out nanoseconds.
+        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(5).truncatedTo(ChronoUnit.MICROS);
         workItemService.patchWorkItem(project.getId(), post.getId(), null, null, null, null,
                 moved, "America/New_York", admin);
 

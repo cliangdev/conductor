@@ -30,6 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -148,7 +149,8 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         // Scheduled (MARKETING's review_approved trigger on both edges).
         assertThat(reload(post).getCurrentStatus()).isEqualTo("SCHEDULED");
 
-        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3);
+        // Microseconds: Postgres stores no finer, and Linux clocks hand out nanoseconds.
+        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3).truncatedTo(ChronoUnit.MICROS);
         schedule(moved);
 
         WorkItem reloaded = reload(post);
