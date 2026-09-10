@@ -179,6 +179,11 @@ interface TikTokConsentStepProps {
   /** Told the current answer whenever it changes, including the first read back from the server. */
   onConsentChange?: (consented: boolean) => void
   disabled?: boolean
+  /**
+   * Renders as a plain disclosure (no Card/heading) for embedding directly under the TikTok row in
+   * PostTargetPicker, which already carries the "Publishing to" card and its own row heading.
+   */
+  bare?: boolean
 }
 
 /**
@@ -200,6 +205,7 @@ function TikTokConsentStepBody({
   consented = false,
   onConsentChange,
   disabled,
+  bare,
 }: TikTokConsentStepProps) {
   const persisted = Boolean(projectId && workItemId && token)
 
@@ -268,14 +274,9 @@ function TikTokConsentStepBody({
   const unresolved = targets.some((t) => t.problem)
   const anyPaidPartnership = targets.some((t) => t.options.brandContentToggle)
 
-  return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
-      </CardHeader>
-
-      <div className="space-y-4 p-4">
-        <ul className="space-y-3">
+  const body = (
+    <div className="space-y-4">
+      <ul className="space-y-3">
           {targets.map((target) => {
             // What this account actually receives: its own selection, or the Post's whole set when it
             // inherits. Rendering the Post's set for a destination that chose a subset would ask the
@@ -380,6 +381,22 @@ function TikTokConsentStepBody({
         {error && <Alert variant="destructive">{error}</Alert>}
         {blockedReason && <Alert variant="warning">{blockedReason}</Alert>}
       </div>
+  )
+
+  if (bare) {
+    return (
+      <div className="space-y-3 border-t border-border bg-surface-raised px-4 py-3">
+        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
+        {body}
+      </div>
+    )
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
+      </CardHeader>
+      <div className="p-4">{body}</div>
     </Card>
   )
 }

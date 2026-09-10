@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
-import { PublishReadinessCard, type PublishPreflight } from './PublishReadinessCard'
+import {
+  usePublishReadiness,
+  PublishReadinessAction,
+  PublishReadinessCard,
+  type PublishPreflight,
+  type UsePublishReadinessArgs,
+} from './PublishReadinessCard'
 
 const { toastErrorSpy } = vi.hoisted(() => ({ toastErrorSpy: vi.fn() }))
 vi.mock('@/components/ui/toast', async () => {
@@ -73,24 +79,32 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
 })
 
-function renderCard(props: Partial<React.ComponentProps<typeof PublishReadinessCard>> = {}) {
-  const onStatusChanged = vi.fn()
-  render(
-    <PublishReadinessCard
-      projectId={PROJECT}
-      workItemId={WORK_ITEM}
-      token="t"
-      status="DRAFT"
-      userRole="ADMIN"
-      workflowView={VIEW}
-      onStatusChanged={onStatusChanged}
-      {...props}
-    />
+/** Mirrors how WorkItemDetailView wires the hook: one call, fed to both the header action and the card. */
+function Harness(props: Partial<UsePublishReadinessArgs> = {}) {
+  const state = usePublishReadiness({
+    projectId: PROJECT,
+    workItemId: WORK_ITEM,
+    token: 't',
+    status: 'DRAFT',
+    userRole: 'ADMIN',
+    workflowView: VIEW,
+    ...props,
+  })
+  return (
+    <>
+      <PublishReadinessAction state={state} />
+      <PublishReadinessCard state={state} />
+    </>
   )
+}
+
+function renderCard(props: Partial<UsePublishReadinessArgs> = {}) {
+  const onStatusChanged = vi.fn()
+  render(<Harness onStatusChanged={onStatusChanged} {...props} />)
   return { onStatusChanged }
 }
 
-describe('PublishReadinessCard', () => {
+describe('PublishReadinessCard + PublishReadinessAction', () => {
   it('shows every blocker verbatim and offers the next move disabled with the first as its reason', async () => {
     current = preflight({
       ready: false,
@@ -102,14 +116,19 @@ describe('PublishReadinessCard', () => {
     })
     renderCard()
 
-    expect(await screen.findByText('Not ready yet')).toBeInTheDocument()
-    expect(screen.getByText(/2 things to fix/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 things to fix/)).toBeInTheDocument()
     expect(screen.getByText(/no uploaded media file is attached/)).toBeInTheDocument()
     expect(screen.getByText(/no publish target is selected/)).toBeInTheDocument()
     expect(screen.getByText(/YouTube will treat this as a Short/)).toBeInTheDocument()
     const button = screen.getByRole('button', { name: 'Submit for review' })
     expect(button).toBeDisabled()
     expect(button).toHaveAttribute('title', expect.stringContaining('no uploaded media file'))
+  })
+
+  it('renders nothing in the findings card when there is nothing to fix or note', async () => {
+    renderCard()
+    await screen.findByRole('button', { name: 'Submit for review' })
+    expect(screen.queryByTestId('publish-readiness')).not.toBeInTheDocument()
   })
 
   it('takes the next move when ready, reports the new status, and re-asks the server', async () => {
@@ -185,29 +204,24 @@ describe('PublishReadinessCard', () => {
 
   it('renders nothing for a Work Item whose Workflow does not publish, and no button for a reviewer', async () => {
     current = preflight({ publishing: false, nextTransition: null })
-    const { container } = render(
-      <PublishReadinessCard projectId={PROJECT} workItemId={WORK_ITEM} token="t" status="DRAFT" userRole="ADMIN" workflowView={VIEW} />
-    )
+    const { container } = render(<Harness />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(container.querySelector('[data-testid="publish-readiness"]')).toBeNull()
+    expect(container.textContent).toBe('')
 
     current = preflight()
     renderCard({ userRole: 'REVIEWER' })
-    expect(await screen.findByText('Ready to publish')).toBeInTheDocument()
+    await screen.findByText(/Everything checks out/)
     expect(screen.queryByRole('button', { name: 'Submit for review' })).not.toBeInTheDocument()
   })
 
   it('re-asks the server when refreshKey changes', async () => {
-    const { rerender } = render(
-      <PublishReadinessCard projectId={PROJECT} workItemId={WORK_ITEM} token="t" status="DRAFT" userRole="ADMIN" workflowView={VIEW} refreshKey={1} />
-    )
-    await screen.findByText('Ready to publish')
+    const { rerender } = render(<Harness refreshKey={1} />)
+    await screen.findByText(/Everything checks out/)
     const before = fetchMock.mock.calls.length
     current = preflight({ ready: false, blockers: [{ code: 'NO_MEDIA', message: 'no uploaded media file is attached' }] })
-    rerender(
-      <PublishReadinessCard projectId={PROJECT} workItemId={WORK_ITEM} token="t" status="DRAFT" userRole="ADMIN" workflowView={VIEW} refreshKey={2} />
-    )
-    await screen.findByText('Not ready yet')
+    rerender(<Harness refreshKey={2} />)
+    await screen.findByText(/1 thing to fix/)
     expect(fetchMock.mock.calls.length).toBeGreaterThan(before)
   })
 })

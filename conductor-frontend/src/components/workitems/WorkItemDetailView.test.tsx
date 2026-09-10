@@ -684,4 +684,62 @@ describe('WorkItemDetailView', () => {
       )
     })
   })
+
+  describe('reviewing a Work Item with no documents', () => {
+    it('offers Approve and Request changes in the header instead of Start review', async () => {
+      DOCS = []
+      await renderView()
+
+      expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /start review/i })).not.toBeInTheDocument()
+    })
+
+    it('records an approval straight from the header', async () => {
+      DOCS = []
+      await renderView()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+
+      await waitFor(() => {
+        expect(apiPost).toHaveBeenCalledWith(
+          expect.stringContaining('/reviews'),
+          expect.objectContaining({ verdict: 'APPROVED' }),
+          'token'
+        )
+      })
+      expect(screen.queryByTestId('review-bar')).not.toBeInTheDocument()
+    })
+
+    it('asks what needs to change, and submits it as the verdict body', async () => {
+      DOCS = []
+      await renderView()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Request changes' }))
+      const modal = await screen.findByTestId('modal')
+      expect(within(modal).getByText('What needs to change?')).toBeInTheDocument()
+
+      const submit = within(modal).getByRole('button', { name: 'Request changes' })
+      expect(submit).toBeDisabled()
+
+      await userEvent.type(within(modal).getByLabelText(/what needs to change/i), 'Fix the caption')
+      expect(submit).toBeEnabled()
+      await userEvent.click(submit)
+
+      await waitFor(() => {
+        expect(apiPost).toHaveBeenCalledWith(
+          expect.stringContaining('/reviews'),
+          expect.objectContaining({ verdict: 'CHANGES_REQUESTED', body: 'Fix the caption' }),
+          'token'
+        )
+      })
+    })
+
+    it('keeps Start review and the ReviewBar for a Work Item that has documents', async () => {
+      await renderView()
+      expect(screen.getByRole('button', { name: /start review/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument()
+    })
+  })
 })
