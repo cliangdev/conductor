@@ -335,7 +335,7 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
     // --- [auto] Failures preserve the platform error text -----------------------------------------
 
     @Test
-    void aFailedResultStoresThePlatformErrorVerbatimAndRecordsNoAsset() {
+    void aFailedResultStoresAHumanMessageAndKeepsThePlatformErrorVerbatimAsTheDetail() {
         PostPublishTarget target = publishing("instagram");
         String platformError = "(#100) The parameter image_url is required — "
                 + "Instagram Graph API error, code 100, subcode 2207003";
@@ -345,13 +345,14 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(moved).isTrue();
         PostPublishTarget stored = reload(target);
         assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
-        assertThat(stored.getErrorMessage()).isEqualTo(platformError);
+        assertThat(stored.getErrorMessage()).isEqualTo(PlatformErrorText.humanize(platformError));
+        assertThat(stored.getErrorDetail()).isEqualTo(platformError);
         assertThat(stored.getAttempts()).isEqualTo(1);
         assertThat(assetsOn(target)).isEmpty();
     }
 
     @Test
-    void aRepeatedFailureBumpsAttemptsAndKeepsTheLatestPlatformErrorVerbatim() {
+    void aRepeatedFailureBumpsAttemptsAndKeepsTheLatestPlatformErrorAsTheDetail() {
         PostPublishTarget target = publishing("instagram");
 
         service.recordFailure(target.getId(), "Media upload timed out");
@@ -359,7 +360,8 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
 
         PostPublishTarget stored = reload(target);
         assertThat(stored.getAttempts()).isEqualTo(2);
-        assertThat(stored.getErrorMessage()).isEqualTo("(#4) Application request limit reached");
+        assertThat(stored.getErrorMessage()).isEqualTo(PlatformErrorText.humanize("(#4) Application request limit reached"));
+        assertThat(stored.getErrorDetail()).isEqualTo("(#4) Application request limit reached");
     }
 
     // --- [auto] A permanent auth failure surfaces on the connection --------------------------------
@@ -374,10 +376,12 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
 
         Connection stored = reloadConnection();
         assertThat(stored.getHealthStatus()).isEqualTo(ConnectionHealthService.UNHEALTHY);
-        assertThat(stored.getHealthMessage()).isEqualTo(authError);
+        assertThat(stored.getHealthMessage()).isEqualTo(PlatformErrorText.humanize(authError));
+        assertThat(stored.getHealthDetail()).isEqualTo(authError);
         // Health is not status: the connection stays connected, it just needs reconnecting.
         assertThat(stored.getStatus()).isEqualTo("ACTIVE");
-        assertThat(reload(target).getErrorMessage()).isEqualTo(authError);
+        assertThat(reload(target).getErrorMessage()).isEqualTo(PlatformErrorText.humanize(authError));
+        assertThat(reload(target).getErrorDetail()).isEqualTo(authError);
     }
 
     @Test
@@ -505,7 +509,7 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(assetRepository.findAllByWorkItemId(sharedPost.getId()))
                 .extracting(Asset::getType, Asset::getRef)
                 .containsExactly(tuple("facebook_post", "https://facebook.com/1/posts/7"));
-        assertThat(reload(instagram).getErrorMessage()).isEqualTo("(#100) Unsupported aspect ratio");
+        assertThat(reload(instagram).getErrorMessage()).isEqualTo("(#100) Unsupported aspect ratio.");
     }
 
     @Test
@@ -830,7 +834,7 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
 
         PostPublishTarget stored = reload(target);
         assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
-        assertThat(stored.getErrorMessage()).isEqualTo("(#100) Unsupported aspect ratio");
+        assertThat(stored.getErrorMessage()).isEqualTo("(#100) Unsupported aspect ratio.");
     }
 
     @Test

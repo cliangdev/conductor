@@ -165,6 +165,7 @@ public class PublishTargetService {
                                PublishLane lane,
                                String healthStatus,
                                String healthMessage,
+                               String healthDetail,
                                List<String> privacyLevelOptions,
                                String creatorNickname,
                                List<String> optionKeys,
@@ -809,7 +810,7 @@ public class PublishTargetService {
         // connection to derive anything from.
         for (PublishPlatform platform : platformRegistry.all()) {
             options.add(new TargetOption(platform.id(), null, null, platform.manualLabel(),
-                    PublishLane.MANUAL, null, null, null, null, optionKeys(platform), formats(platform)));
+                    PublishLane.MANUAL, null, null, null, null, null, optionKeys(platform), formats(platform)));
         }
         return List.copyOf(options);
     }
@@ -823,6 +824,7 @@ public class PublishTargetService {
         return new TargetOption(platform.id(), connection.getConnectorId(), connection.getId(),
                 label != null ? label : fallbackLabel(connection),
                 platform.automatedLane(), connection.getHealthStatus(), connection.getHealthMessage(),
+                connection.getHealthDetail(),
                 privacyLevelOptions, creatorNickname, optionKeys(platform), formats(platform));
     }
 
