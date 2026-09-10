@@ -197,6 +197,21 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not record your approval'))
   })
 
+  it('disables a move the publish gate refuses, with the gate’s own reason, and does not PATCH it', async () => {
+    mockView = MARKETING_VIEW
+    vi.mocked(apiGet).mockResolvedValueOnce({ workflow: 'MARKETING', currentStatus: 'CHANGES_REQUESTED', transitions: [{ toStatus: 'IN_REVIEW', label: 'Resubmit' }] })
+    const reason = 'the fire time is less than 1 minute in the future — schedule it at least 1 minute out'
+    render(
+      <StatusDropdown {...baseProps} currentStatus="CHANGES_REQUESTED" userRole="ADMIN" blockedMoves={{ IN_REVIEW: reason }} />
+    )
+    const item = await waitFor(() => itemFor('Resubmit'))
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(item).toHaveTextContent(reason)
+    fireEvent.click(item)
+    expect(apiPatch).not.toHaveBeenCalled()
+    expect(toastError).toHaveBeenCalledWith(reason)
+  })
+
   it('renders a read-only badge for REVIEWER and does not fetch transitions', () => {
     render(<StatusDropdown {...baseProps} userRole="REVIEWER" />)
     expect(screen.getByText('Draft')).toBeInTheDocument()

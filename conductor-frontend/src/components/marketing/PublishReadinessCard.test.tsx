@@ -197,6 +197,14 @@ describe('PublishReadinessCard', () => {
     expect(screen.queryByRole('button', { name: 'Submit for review' })).not.toBeInTheDocument()
   })
 
+  it('hands every answer to the page, so the status menu can refuse the same move', async () => {
+    current = preflight({ ready: false, blockers: [{ code: 'FIRE_TIME_TOO_SOON', message: 'the fire time is too soon' }] })
+    const onPreflight = vi.fn()
+    renderCard({ onPreflight })
+    await screen.findByText('Not ready yet')
+    expect(onPreflight).toHaveBeenCalledWith(expect.objectContaining({ ready: false, nextTransition: expect.objectContaining({ to: 'IN_REVIEW' }) }))
+  })
+
   it('re-asks the server when refreshKey changes', async () => {
     const { rerender } = render(
       <PublishReadinessCard projectId={PROJECT} workItemId={WORK_ITEM} token="t" status="DRAFT" userRole="ADMIN" workflowView={VIEW} refreshKey={1} />

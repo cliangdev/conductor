@@ -23,8 +23,15 @@ export function ReviewBar({
   submitting,
   onSubmit,
   onCancel,
+  commentable = true,
 }: {
   pendingCount: number
+  /**
+   * Whether this item has documents to leave line comments on. A Post has a caption and media, not a
+   * document, so counting "pending comments" there names something the reviewer cannot do; the bar
+   * says what they can do instead.
+   */
+  commentable?: boolean
   /** The review-gated transition's allowed outcomes (from the Workflow). Only those verdicts are
    * offered; when absent or empty (no review gate on the current status), the bar renders nothing —
    * it never falls back to offering all three. */
@@ -41,6 +48,9 @@ export function ReviewBar({
   // Tracks which verdict button was clicked so only that one switches to "Submitting…" — the other
   // two stay labeled (just disabled) instead of all three going ambiguously blank/busy at once.
   const [clickedVerdict, setClickedVerdict] = useState<Verdict | null>(null)
+  // Set when "Request changes" was pressed with nothing written: the author has to be told what to
+  // change, so the summary opens and the verdict waits for it.
+  const [needsReason, setNeedsReason] = useState(false)
 
   const barRef = useRef<HTMLDivElement>(null)
 
@@ -51,6 +61,11 @@ export function ReviewBar({
   }, [])
 
   function handleSubmit(verdict: Verdict) {
+    if (verdict === 'CHANGES_REQUESTED' && summary.trim().length === 0) {
+      setSummaryOpen(true)
+      setNeedsReason(true)
+      return
+    }
     setClickedVerdict(verdict)
     onSubmit(verdict, summary)
   }
@@ -67,7 +82,9 @@ export function ReviewBar({
       role="region"
       aria-label="Review in progress"
       tabIndex={-1}
-      className="sticky bottom-0 z-30 border-t border-border bg-surface focus:outline-none"
+      // The same shape as the list's bulk-action bar: a bordered card that floats just off the bottom
+      // of the scrollport, rather than a full-width strip cutting across the page.
+      className="sticky bottom-4 z-30 mt-6 rounded-md border border-border bg-surface focus:outline-none"
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation()
@@ -79,18 +96,29 @@ export function ReviewBar({
         <div className="px-4 pt-3">
           <Textarea
             value={summary}
-            onChange={(e) => setSummary(e.target.value)}
-            placeholder="Add a summary (optional)"
+            onChange={(e) => {
+              setSummary(e.target.value)
+              if (e.target.value.trim().length > 0) setNeedsReason(false)
+            }}
+            placeholder={needsReason ? 'What needs to change?' : 'Add a summary (optional)'}
             aria-label="Review summary"
+            aria-invalid={needsReason || undefined}
             rows={2}
             disabled={submitting}
             autoFocus
           />
+          {needsReason && (
+            <p className="mt-1 text-xs text-destructive" role="alert">
+              Say what needs to change before sending it back.
+            </p>
+          )}
         </div>
       )}
       <div className="flex items-center gap-3 px-4 py-3">
         <span className="text-sm text-foreground flex-1 min-w-0">
-          Reviewing — {pendingCount} pending comment{pendingCount !== 1 ? 's' : ''}
+          {commentable
+            ? `Reviewing — ${pendingCount} pending comment${pendingCount !== 1 ? 's' : ''}`
+            : 'Reviewing — approve, or request changes and say why in the summary.'}
         </span>
         {!summaryOpen && (
           <Button variant="link" size="sm" onClick={() => setSummaryOpen(true)} disabled={submitting}>

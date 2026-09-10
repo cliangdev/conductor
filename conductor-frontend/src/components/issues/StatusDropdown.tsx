@@ -45,6 +45,13 @@ interface StatusDropdownProps {
    * theirs to make. Choosing it records an approval; the Workflow then takes the edge itself.
    */
   reviewVerdict?: ReviewVerdictOption
+  /**
+   * Moves the publish gate would refuse right now, keyed by target status, each with the gate's own
+   * reason. The server's available-transitions is structural — what the Workflow allows from here —
+   * while the gate's checks (fire time, media, consent) run at move time; without this the menu
+   * offered a move the readiness card beside it was saying is blocked.
+   */
+  blockedMoves?: Record<string, string>
 }
 
 export interface ReviewVerdictOption {
@@ -86,6 +93,7 @@ export function StatusDropdown({
   trigger = 'badge',
   triggerRef,
   reviewVerdict,
+  blockedMoves,
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
   const [transitions, setTransitions] = useState<AvailableTransition[]>([])
@@ -99,7 +107,8 @@ export function StatusDropdown({
 
   /** A move into a review-gated status is the submit-for-approval move the consent gate guards. */
   function blockedReason(toStatus: string): string | null {
-    return tiktokBlock && statusHasReviewGate(view, toStatus) ? tiktokBlock : null
+    if (tiktokBlock && statusHasReviewGate(view, toStatus)) return tiktokBlock
+    return blockedMoves?.[toStatus] ?? null
   }
 
   useEffect(() => {

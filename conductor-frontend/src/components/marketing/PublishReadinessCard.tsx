@@ -12,7 +12,7 @@
 // Nothing here decides anything. The card renders what the server said; the server is asked again after
 // every edit (the parent bumps `refreshKey`) and after the button lands.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal } from '@/components/ui/modal'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -49,6 +49,8 @@ export interface PublishReadinessCardProps {
   /** Change it to make the card ask the server again — after any edit that touches the bundle. */
   refreshKey?: number | string
   onStatusChanged?: (status: string) => void
+  /** Every answer the server gives, so the page can keep the status menu honest about the same move. */
+  onPreflight?: (preflight: PublishPreflight) => void
   /**
    * Who may review this item, and who already does. When given and the next status is review-gated,
    * "Submit for review" first asks which of them should review it, so nobody submits into a review
@@ -98,6 +100,7 @@ export function PublishReadinessCard({
   workflowView,
   refreshKey,
   onStatusChanged,
+  onPreflight,
   reviewers,
   eligibleReviewers,
   onAssignReviewer,
@@ -107,6 +110,11 @@ export function PublishReadinessCard({
   const [error, setError] = useState<string | null>(null)
   const [moving, setMoving] = useState(false)
   const [picking, setPicking] = useState(false)
+  // The parent's handler is an inline arrow; a ref keeps it out of load's dependencies.
+  const onPreflightRef = useRef(onPreflight)
+  useEffect(() => {
+    onPreflightRef.current = onPreflight
+  }, [onPreflight])
   const [chosen, setChosen] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
@@ -117,6 +125,7 @@ export function PublishReadinessCard({
       )
       setPreflight(data)
       setError(null)
+      onPreflightRef.current?.(data)
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not check whether this is ready to publish'))
     }
