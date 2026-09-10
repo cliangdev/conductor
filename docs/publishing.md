@@ -69,6 +69,10 @@ the reviewer's approval is the publish button.
 
 ### Which status is "scheduled"
 
+The two edges out of it into the published and the failed status are the pipeline's own: the roll-up
+takes them once every destination has reported. They are not offered in a status menu and a person
+cannot take them; a by-hand destination is finished from its own row, and that roll-up moves the Post.
+
 A publishing Workflow names the status its Posts wait in with `publishes_from` (MARKETING:
 `"publishes_from": "SCHEDULED"`). The pollers dispatch from it, the validators guard every entry into it,
 and everything from it onward is frozen. A snapshot pinned before the field existed falls back to a status

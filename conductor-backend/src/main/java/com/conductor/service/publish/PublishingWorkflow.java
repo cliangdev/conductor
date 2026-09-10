@@ -114,6 +114,20 @@ public class PublishingWorkflow {
      * transitions to. Publishing is the one way out of the pipeline that ends the item's life, so
      * "terminal" is what identifies it — no status name is assumed.
      */
+    /**
+     * Whether the edge {@code from → to} is one the pipeline takes on its own: out of the scheduled status
+     * into the published or the failed status, which the roll-up sets once every destination has reported.
+     * A person never takes it — a by-hand destination is finished from its row, and that roll-up moves
+     * the Post — so it is neither offered in a status menu nor accepted from one.
+     */
+    public static boolean isPipelineOutcomeEdge(Statechart chart, String from, String to) {
+        if (chart == null || from == null || to == null || !isScheduledStatus(chart, from)) {
+            return false;
+        }
+        return publishedStatus(chart).filter(to::equals).isPresent()
+                || failedStatus(chart).filter(to::equals).isPresent();
+    }
+
     public static Optional<String> publishedStatus(Statechart chart) {
         return scheduledStatus(chart).flatMap(scheduled -> chart.transitionsFrom(scheduled).stream()
                 .map(StatechartTransition::to)
