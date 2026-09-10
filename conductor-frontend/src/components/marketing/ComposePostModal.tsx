@@ -15,11 +15,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
-import { Select } from '@/components/ui/select'
+import { TimeZonePicker } from '@/components/ui/time-zone-picker'
 import { Textarea } from '@/components/ui/textarea'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api'
@@ -58,21 +59,6 @@ function browserTimeZone(): string {
   } catch {
     return 'UTC'
   }
-}
-
-function timeZones(current: string): string[] {
-  let all: string[] = []
-  try {
-    all = (Intl as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? []
-  } catch {
-    all = []
-  }
-  if (all.length === 0) {
-    all = ['UTC', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Tokyo']
-  }
-  // Some runtimes list only Etc/UTC; a bare UTC is the one zone everybody expects to find.
-  const withUtc = all.includes('UTC') ? all : ['UTC', ...all]
-  return withUtc.includes(current) ? withUtc : [current, ...withUtc]
 }
 
 /** How far `timeZone` is from UTC at `ts`, in milliseconds — read out of Intl, the one source that knows DST. */
@@ -177,7 +163,6 @@ export function ComposePostModal({
     }
   }, [open, projectId, token])
 
-  const zones = useMemo(() => timeZones(timeZone), [timeZone])
   const grouped = useMemo(() => {
     const byPlatform = new Map<string, PublishTargetOption[]>()
     for (const option of options) {
@@ -319,7 +304,7 @@ export function ComposePostModal({
       description={`Say what it says, show what it shows, pick where it goes and when. Everything can be changed on the ${noun.toLowerCase()} afterwards.`}
       footer={
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground" aria-live="polite">
+          <span className="text-sm text-muted-foreground" aria-live="polite">
             {step ?? (missing.length > 0 && !saving ? `Needs ${missing.join(' and ')}.` : '')}
           </span>
           <div className="flex gap-2">
@@ -382,7 +367,7 @@ export function ComposePostModal({
               {files.length === 0 ? 'Choose files' : 'Add another'}
             </Button>
             {files.length === 0 && (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-sm text-muted-foreground">
                 Images and video. Every destination gets all of them unless you customise it on the{' '}
                 {noun.toLowerCase()}.
               </span>
@@ -417,7 +402,7 @@ export function ComposePostModal({
           {grouped.length > 0 && options.every((o) => o.lane === 'MANUAL') && (
             // Every platform always offers a by-hand destination, so a list of only those means no
             // account has been connected yet — say so, or the by-hand rows read as the only way it works.
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               No accounts are connected yet, so every destination here is posted by hand. Connect a
               Facebook Page, Instagram account, YouTube channel or TikTok creator under{' '}
               <Link href={`/app/projects/${projectId}/integrations`} className="text-primary underline-offset-2 hover:underline">
@@ -427,7 +412,7 @@ export function ComposePostModal({
             </p>
           )}
           {grouped.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Loading accounts…</p>
+            <p className="text-sm text-muted-foreground">Loading accounts…</p>
           ) : (
             grouped.map(([platform, list]) => (
               <div key={platform} className="space-y-1">
@@ -444,22 +429,17 @@ export function ComposePostModal({
                   }
                   return (
                     <div key={key}>
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={unhealthy || saving}
-                          onChange={() => toggle(option)}
-                          aria-label={option.label}
-                        />
-                        <span className={unhealthy ? 'text-muted-foreground' : undefined}>{option.label}</span>
-                        {option.lane === 'MANUAL' && (
-                          <span className="text-xs text-muted-foreground">a person posts it by hand</span>
-                        )}
-                        {unhealthy && (
-                          <span className="text-xs text-muted-foreground">reconnect this account first</span>
-                        )}
-                      </label>
+                      <Checkbox
+                        checked={checked}
+                        disabled={unhealthy || saving}
+                        onCheckedChange={() => toggle(option)}
+                        aria-label={option.label}
+                        label={<span className={unhealthy ? 'text-muted-foreground' : undefined}>{option.label}</span>}
+                        description={
+                          option.lane === 'MANUAL' ? 'a person posts it by hand' : undefined
+                        }
+                        disabledReason={unhealthy ? 'reconnect this account first' : undefined}
+                      />
                       {checked && (
                         <div className="ml-6 mt-1">
                           <PostFormatSelector
@@ -480,19 +460,16 @@ export function ComposePostModal({
           )}
         </fieldset>
 
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={onApproval}
-            disabled={saving}
-            onChange={(e) => setOnApproval(e.target.checked)}
-          />
-          Publish as soon as it&rsquo;s approved
-        </label>
+        <Checkbox
+          checked={onApproval}
+          disabled={saving}
+          onCheckedChange={setOnApproval}
+          label="Publish as soon as it’s approved"
+        />
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {onApproval ? (
-            <p className="text-xs text-muted-foreground sm:self-end sm:pb-2">
+            <p className="text-sm text-muted-foreground sm:self-end sm:pb-2">
               No date needed: approval puts it on the earliest slot every destination accepts.
             </p>
           ) : (
@@ -505,13 +482,7 @@ export function ComposePostModal({
           )}
           <div className="space-y-1">
             <Label htmlFor="compose-zone">Time zone</Label>
-            <Select id="compose-zone" value={timeZone} onChange={(e) => setTimeZone(e.target.value)}>
-              {zones.map((zone) => (
-                <option key={zone} value={zone}>
-                  {zone}
-                </option>
-              ))}
-            </Select>
+            <TimeZonePicker id="compose-zone" value={timeZone} onChange={setTimeZone} disabled={saving} />
           </div>
         </div>
       </form>

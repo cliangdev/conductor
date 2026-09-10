@@ -16,10 +16,12 @@
 // `datetime-local` (wall clock, no zone) paired with an explicit zone, and why the conversion below goes
 // through the zone rather than through the viewer's own.
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { CalendarClock, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
+import { TimeZonePicker } from '@/components/ui/time-zone-picker'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPatch } from '@/lib/api'
 
@@ -30,24 +32,6 @@ function browserTimeZone(): string {
   } catch {
     return 'UTC'
   }
-}
-
-/**
- * Every IANA zone the JS runtime knows, so the list is the runtime's rather than a hardcoded shortlist
- * that would omit somebody's. Falls back to a handful plus whatever is already in use, so a zone the
- * item was scheduled in never disappears from the control that edits it.
- */
-function timeZones(current: string): string[] {
-  let all: string[] = []
-  try {
-    all = (Intl as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? []
-  } catch {
-    all = []
-  }
-  if (all.length === 0) {
-    all = ['UTC', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Tokyo']
-  }
-  return all.includes(current) ? all : [current, ...all]
 }
 
 /**
@@ -163,7 +147,6 @@ export function WorkItemScheduleField({
   const [local, setLocal] = useState('')
   const [tz, setTz] = useState(zone)
   const [onApproval, setOnApproval] = useState(publishOnApproval)
-  const zones = useMemo(() => timeZones(tz), [tz])
   const hasSchedule = Boolean(scheduledFor) || publishOnApproval
 
   const open = useCallback(() => {
@@ -234,15 +217,12 @@ export function WorkItemScheduleField({
 
   return (
     <div className="space-y-2">
-      <label className="flex items-center gap-2 text-sm text-foreground">
-        <input
-          type="checkbox"
-          checked={onApproval}
-          disabled={saving}
-          onChange={(e) => setOnApproval(e.target.checked)}
-        />
-        As soon as approved
-      </label>
+      <Checkbox
+        checked={onApproval}
+        disabled={saving}
+        onCheckedChange={setOnApproval}
+        label="As soon as approved"
+      />
       {!onApproval && (
         <DateTimePicker
           id={`sched-${issueId}`}
@@ -256,18 +236,7 @@ export function WorkItemScheduleField({
       <label htmlFor={`tz-${issueId}`} className="sr-only">
         Schedule timezone
       </label>
-      <select
-        id={`tz-${issueId}`}
-        value={tz}
-        onChange={(e) => setTz(e.target.value)}
-        className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-      >
-        {zones.map((z) => (
-          <option key={z} value={z}>
-            {z}
-          </option>
-        ))}
-      </select>
+      <TimeZonePicker id={`tz-${issueId}`} value={tz} onChange={setTz} disabled={saving} />
       <div className="flex items-center justify-between gap-2">
         {hasSchedule ? (
           <button
@@ -282,24 +251,29 @@ export function WorkItemScheduleField({
         ) : (
           <span />
         )}
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" disabled={saving} onClick={() => setEditing(false)}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            disabled={saving || (!onApproval && !local)}
-            onClick={() => {
-              if (onApproval) {
-                void save(null, tz, true)
-                return
-              }
-              const iso = wallClockToInstant(local, tz)
-              if (iso) void save(iso, tz, false)
-            }}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
+        <div className="flex flex-col items-end gap-1">
+          {!onApproval && !local && !saving && (
+            <span className="text-sm text-muted-foreground">Pick a date and time first.</span>
+          )}
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" disabled={saving} onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={saving || (!onApproval && !local)}
+              onClick={() => {
+                if (onApproval) {
+                  void save(null, tz, true)
+                  return
+                }
+                const iso = wallClockToInstant(local, tz)
+                if (iso) void save(iso, tz, false)
+              }}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>

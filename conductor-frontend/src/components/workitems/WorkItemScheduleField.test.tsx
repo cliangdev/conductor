@@ -118,7 +118,9 @@ describe('WorkItemScheduleField', () => {
     const { onChanged } = renderField()
     await userEvent.click(screen.getByRole('button', { name: 'Set' }))
     await pickJuly4th2026At9()
-    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByLabelText(/Schedule timezone/i))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'New York')
+    await userEvent.click(screen.getByRole('option', { name: /New York/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(patchBodies).toHaveLength(1))
@@ -194,7 +196,9 @@ describe('WorkItemScheduleField', () => {
     await userEvent.click(screen.getByLabelText('As soon as approved'))
     // No date is asked for once the answer is "when it is approved".
     expect(screen.queryByLabelText('Scheduled date and time')).not.toBeInTheDocument()
-    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByLabelText(/Schedule timezone/i))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'New York')
+    await userEvent.click(screen.getByRole('option', { name: /New York/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(patchBodies).toHaveLength(1))
@@ -209,7 +213,9 @@ describe('WorkItemScheduleField', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Change' }))
     await userEvent.click(screen.getByLabelText('As soon as approved'))
     await pickJuly4th2026At9()
-    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByLabelText(/Schedule timezone/i))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'New York')
+    await userEvent.click(screen.getByRole('option', { name: /New York/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(patchBodies).toHaveLength(1))
