@@ -56,9 +56,11 @@ import java.util.regex.Pattern;
  * idempotent on {@code (workItem, type, ref)}, so re-applying a result never doubles an Asset.
  *
  * <h2>A failure is a message a human has to read</h2>
- * The platform's error text is stored <b>verbatim</b>: "(#100) The parameter image_url is required" is
- * what lets someone fix the post, and no amount of rewording improves it. When the failure is a permanent
- * auth/permission problem rather than a transient one, the connection is additionally marked unhealthy via
+ * The platform's error text arrives as whatever the connector handed back — an HTTP status, a JSON body,
+ * sometimes a trace id — and {@link PlatformErrorText} splits it: {@code errorMessage} gets the first
+ * human sentence, {@code errorDetail} keeps the whole original for anyone who needs it. When the failure
+ * is a permanent auth/permission problem rather than a transient one, the connection is additionally
+ * marked unhealthy via
  * {@link ConnectionHealthService#reportPublishAuthFailure} so it surfaces on the Integrations page instead
  * of quietly failing again at the next fire time. Transient failures — rate limits, 5xx, timeouts — never
  * cost a connection its health; see {@link #isPermanentAuthFailure}.
@@ -492,6 +494,7 @@ public class PublishOutcomeService {
         for (PostPublishTarget target : failed) {
             target.setState(PostPublishTargetState.PENDING);
             target.setErrorMessage(null);
+            target.setErrorDetail(null);
             target.setIdempotencyKey(freshIdempotencyKey(post.getId(), target));
             target.setFireTime(retryFireTime(target, now));
             targetRepository.save(target);
@@ -824,6 +827,7 @@ public class PublishOutcomeService {
             target.setPermalink(permalink);
         }
         target.setErrorMessage(null);
+        target.setErrorDetail(null);
         targetRepository.save(target);
 
         recordDestinationAsset(target, permalink);
@@ -849,7 +853,8 @@ public class PublishOutcomeService {
         }
 
         target.setState(PostPublishTargetState.FAILED);
-        target.setErrorMessage(errorMessage);
+        target.setErrorMessage(PlatformErrorText.humanize(errorMessage));
+        target.setErrorDetail(PlatformErrorText.detail(errorMessage));
         target.setAttempts(target.getAttempts() + 1);
         targetRepository.save(target);
 

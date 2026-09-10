@@ -354,7 +354,7 @@ class PostPublishSchedulerIntegrationTest extends AbstractNoneWebIntegrationTest
 
         PostPublishTarget stored = reload(target);
         assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
-        assertThat(stored.getErrorMessage()).isEqualTo("(#100) The parameter image_url is required");
+        assertThat(stored.getErrorMessage()).isEqualTo("(#100) The parameter image_url is required.");
         assertThat(stored.getAttempts()).isEqualTo(1);
     }
 

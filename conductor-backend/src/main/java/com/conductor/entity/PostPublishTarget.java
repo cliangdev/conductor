@@ -95,6 +95,10 @@ public class PostPublishTarget {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    /** The platform's error in full — JSON body, trace ids and all — for support and debugging. */
+    @Column(name = "error_detail", columnDefinition = "TEXT")
+    private String errorDetail;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -205,6 +209,9 @@ public class PostPublishTarget {
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public String getErrorDetail() { return errorDetail; }
+    public void setErrorDetail(String errorDetail) { this.errorDetail = errorDetail; }
 
     public int getAttempts() { return attempts; }
     public void setAttempts(int attempts) { this.attempts = attempts; }

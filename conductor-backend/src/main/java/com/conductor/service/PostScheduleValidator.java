@@ -20,9 +20,13 @@ import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -130,9 +134,10 @@ public class PostScheduleValidator {
                 .map(PublishFinding::message)
                 .toList();
         if (!problems.isEmpty()) {
+            String toLabel = statechart.status(toStatus).map(s -> s.displayLabel()).orElse(toStatus);
             throw new UnprocessableEntityException(
-                    "Cannot move " + statechart.noun() + " to " + toStatus + ": "
-                            + String.join("; ", problems));
+                    "Cannot move " + statechart.noun() + " to " + toLabel + ": "
+                            + String.join(" ", problems));
         }
     }
 
@@ -156,7 +161,7 @@ public class PostScheduleValidator {
         appendScheduleProblems(workItem, targets, findings);
         if (targets.isEmpty()) {
             findings.add(PublishFinding.blocker(NO_TARGETS,
-                    "no publish target is selected — pick at least one account to publish to"));
+                    "This post has no destinations. Pick at least one account to publish to."));
         }
         appendMediaProblems(workItem, targets, findings);
         return findings;
@@ -199,7 +204,7 @@ public class PostScheduleValidator {
                                      List<PublishFinding> findings) {
         if (!hasUploadedFileAsset(workItem)) {
             findings.add(PublishFinding.blocker(NO_MEDIA,
-                    "no uploaded media file is attached — upload at least one image or video"));
+                    "This post has no uploaded media. Add at least one image or video."));
             return;
         }
         if (targets.isEmpty()) {
@@ -212,58 +217,76 @@ public class PostScheduleValidator {
                     target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
             if (media.isEmpty()) {
                 findings.add(PublishFinding.blocker(TARGET_MEDIA_MISSING,
-                        platformLabel(target) + " has no media — the files chosen for it are no longer "
-                                + "on this Post; pick media for it or reset it to the Post's",
+                        platformLabel(target) + " has no media. The files chosen for it were removed "
+                                + "from this post. Pick media for it or use the post's own.",
                         target.getId()));
             }
         }
     }
 
+    /** How a human reads a destination: the platform's proper name, with its account label in parentheses. */
     private String platformLabel(PostPublishTarget target) {
-        String platform = target.getPlatform() == null ? "" : target.getPlatform();
+        String raw = target.getPlatform();
+        String platform = platformRegistry.find(raw).map(PublishPlatform::label)
+                .orElseGet(() -> capitalize(raw));
         String account = target.getPlatformAccountLabel();
         return account == null || account.isBlank() ? platform : platform + " (" + account + ")";
+    }
+
+    private static String capitalize(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        return Character.toUpperCase(raw.charAt(0)) + raw.substring(1);
+    }
+
+    /** "10:30 PM PDT on 9 Sep" in the Post's own timezone, falling back to UTC when it has none. */
+    private String formatFireTime(OffsetDateTime fireTime, String timezone) {
+        ZoneId zone = (timezone != null && isKnownZone(timezone)) ? ZoneId.of(timezone) : ZoneOffset.UTC;
+        ZonedDateTime zoned = fireTime.atZoneSameInstant(zone);
+        return zoned.format(DateTimeFormatter.ofPattern("h:mm a zzz 'on' d MMM", Locale.US));
     }
 
     private void appendScheduleProblems(WorkItem workItem, List<PostPublishTarget> targets,
                                         List<PublishFinding> findings) {
         OffsetDateTime fireTime = workItem.getScheduledFor();
+        String timezone = workItem.getScheduleTimezone();
         // Publish-on-approval carries no fire time until the scheduled status stamps one, and that stamp is
         // the earliest every destination accepts by construction — nothing here can find it wanting.
         if (workItem.isPublishOnApproval()) {
             fireTime = null;
         } else if (fireTime == null) {
             findings.add(PublishFinding.blocker(NO_FIRE_TIME,
-                    "no fire time is set — set a scheduled publish time (scheduledFor)"));
+                    "This post has no date. Pick when it goes out, or choose As soon as approved."));
         }
-        String timezone = workItem.getScheduleTimezone();
         if (timezone == null || timezone.isBlank()) {
             findings.add(PublishFinding.blocker(NO_TIMEZONE,
-                    "no schedule timezone is set — set an IANA timezone (scheduleTimezone)"));
+                    "This post has no timezone. Pick one so its date is clear."));
         } else if (!isKnownZone(timezone)) {
             findings.add(PublishFinding.blocker(UNKNOWN_TIMEZONE,
-                    "the schedule timezone '" + timezone + "' is not a known IANA timezone"));
+                    "'" + timezone + "' isn't a timezone we recognize. Pick one from the list."));
         }
         if (fireTime == null) {
             return;
         }
         LeadTime lead = leadTimeFor(targets);
         OffsetDateTime now = OffsetDateTime.now(clock);
+        String when = formatFireTime(fireTime, timezone);
         if (lead.lead().isZero()) {
             if (!fireTime.isAfter(now)) {
                 findings.add(PublishFinding.blocker(FIRE_TIME_TOO_SOON,
-                        "the fire time " + fireTime + " is not in the future — schedule it later than now"));
+                        when + " is in the past. Move it to a future time."));
             }
             return;
         }
         if (fireTime.isBefore(now.plus(lead.lead()))) {
             long minutes = Math.max(1, lead.lead().toMinutes());
             String unit = minutes == 1 ? " minute" : " minutes";
-            String demand = lead.demandedBy() == null ? ""
-                    : " (" + platformLabel(lead.demandedBy()) + " needs at least " + minutes + unit + "' notice)";
-            findings.add(PublishFinding.blocker(FIRE_TIME_TOO_SOON,
-                    "the fire time " + fireTime + " is less than " + minutes + unit
-                            + " in the future — schedule it at least " + minutes + unit + " out" + demand,
+            String message = lead.demandedBy() == null
+                    ? when + " is too soon. Move it out at least " + minutes + unit + "."
+                    : when + " is too soon: " + platformLabel(lead.demandedBy()) + " needs at least "
+                            + minutes + unit + "' notice. Move it later.";
+            findings.add(PublishFinding.blocker(FIRE_TIME_TOO_SOON, message,
                     lead.demandedBy() == null ? null : lead.demandedBy().getId()));
         }
     }

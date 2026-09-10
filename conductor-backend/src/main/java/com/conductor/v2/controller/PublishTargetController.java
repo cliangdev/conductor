@@ -150,6 +150,7 @@ public class PublishTargetController implements PublishTargetsApi {
                 .connectionId(option.connectionId())
                 .healthStatus(option.healthStatus())
                 .healthMessage(option.healthMessage())
+                .healthDetail(option.healthDetail())
                 .formats(option.formats().stream().map(PostFormat::fromValue).toList())
                 // Null, not an empty list, when a TikTok connection never cached the creator's levels: the
                 // picker has to tell "reconnect this account" apart from a genuinely empty set of choices.

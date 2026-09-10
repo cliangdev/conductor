@@ -142,9 +142,11 @@ describe('create_post', () => {
     expect(result['postId']).toBe('w1')
     expect(result['displayId']).toBe('MK-7')
     expect(result['status']).toBe('IN_REVIEW')
+    // No status declared for IN_REVIEW in the fixture Workflow, so statusLabel falls back to Title Case.
+    expect(result['statusLabel']).toBe('In Review')
     expect(result['targets']).toEqual([
-      { targetId: 't-ig', platform: 'instagram', account: '@acme', lane: 'APP_MANAGED', state: 'PENDING', permalink: null, errorMessage: null },
-      { targetId: 't-tt', platform: 'tiktok', account: 'manual', lane: 'MANUAL', state: 'PENDING', permalink: null, errorMessage: null },
+      { targetId: 't-ig', platform: 'instagram', account: '@acme', lane: 'APP_MANAGED', state: 'PENDING', stateLabel: 'Waiting', permalink: null, errorMessage: null },
+      { targetId: 't-tt', platform: 'tiktok', account: 'manual', lane: 'MANUAL', state: 'PENDING', stateLabel: 'Waiting', permalink: null, errorMessage: null },
     ])
     expect(result['reviewers']).toEqual([{ userId: 'u-rev', name: 'Rita Reviewer' }])
     expect(String(result['nextStep'])).toContain('Waiting for a reviewer')
@@ -342,8 +344,25 @@ describe('get_post_status / submit_post / list_posts / submit_review', () => {
     const result = await getPostStatus({ postId: 'w1' }, config)
 
     expect(result['status']).toBe('FAILED')
-    expect((result['targets'] as Array<Record<string, unknown>>)[1]).toMatchObject({ state: 'FAILED', errorMessage: 'token expired' })
+    expect(result['statusLabel']).toBe('Failed')
+    expect((result['targets'] as Array<Record<string, unknown>>)[1]).toMatchObject({ state: 'FAILED', stateLabel: 'Failed', errorMessage: 'token expired' })
     expect(String(result['nextStep'])).toContain('Scheduled')
+  })
+
+  it('get_post_status prefers a stateLabel/statusLabel the server already sends over a computed one', async () => {
+    serve({
+      '/api/v2/projects/proj-1/work-items/w1/publish-preflight': readyPreflight({ nextTransition: null }),
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+        { id: 't1', platform: 'facebook', label: 'Acme Page', lane: 'NATIVE', state: 'PUBLISHED', stateLabel: 'Live' },
+      ],
+      '/api/v2/projects/proj-1/work-items/w1/assets': [],
+      '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-7', status: 'FAILED', statusLabel: 'Send failed' },
+    })
+
+    const result = await getPostStatus({ postId: 'w1' }, config)
+
+    expect(result['statusLabel']).toBe('Send failed')
+    expect((result['targets'] as Array<Record<string, unknown>>)[0]).toMatchObject({ stateLabel: 'Live' })
   })
 
   it('get_post_status shows format only when it is not feed', async () => {
@@ -385,6 +404,7 @@ describe('get_post_status / submit_post / list_posts / submit_review', () => {
     const result = await submitPost({ postId: 'w1', reviewers: ['rita@x.test', 'Carl Creator'] }, config)
 
     expect(result['status']).toBe('IN_REVIEW')
+    expect(result['statusLabel']).toBe('In Review')
     expect(result['reviewers']).toEqual([{ userId: 'u-r', name: 'Rita' }])
     expect((result['warnings'] as string[]).join(' ')).toContain('Carl Creator holds the CREATOR role')
   })
@@ -405,6 +425,8 @@ describe('get_post_status / submit_post / list_posts / submit_review', () => {
 
     const all = await listPosts({}, config)
     expect((all['posts'] as Array<Record<string, unknown>>).map((p) => p['displayId'])).toEqual(['MK-2', 'MK-1', 'MK-3'])
+    expect((all['posts'] as Array<Record<string, unknown>>).map((p) => p['statusLabel'])).toEqual(['Scheduled', 'Published', 'Draft'])
+    expect(((all['posts'] as Array<Record<string, unknown>>)[1]!['targets'] as Array<Record<string, unknown>>)[0]).toMatchObject({ state: 'PUBLISHED', stateLabel: 'Published' })
 
     const windowed = await listPosts({ since: '2026-09-05T00:00:00Z' }, config)
     expect((windowed['posts'] as Array<Record<string, unknown>>).map((p) => p['displayId'])).toEqual(['MK-2'])

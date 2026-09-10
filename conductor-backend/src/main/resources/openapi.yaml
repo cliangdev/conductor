@@ -6617,6 +6617,13 @@ components:
           description: >
             The platform's explanation of an UNHEALTHY verdict, for display to the human who has
             to fix it. Null while healthy.
+        healthDetail:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >
+            The platform's full error behind healthMessage — JSON body and all — for support and
+            debugging. Null while healthy.
         fetchedAt:
           type: string
           format: date-time

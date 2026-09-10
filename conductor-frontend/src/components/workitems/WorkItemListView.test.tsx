@@ -451,6 +451,31 @@ describe('empty states', () => {
     render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
     expect(await screen.findByText('No issues yet')).toBeInTheDocument()
   })
+
+  it('offers a first-run empty state with a Connect-an-account link for a publishing Workflow with no items at all', async () => {
+    issues = []
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByText('No posts yet')).toBeInTheDocument()
+    expect(
+      screen.getByText('Connect a Facebook Page, Instagram account or TikTok creator, then write your first post.')
+    ).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'Connect an account' })
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations')
+    // The header keeps its own "New Post" action; the empty state offers a second one so the primary
+    // action doesn't require scrolling back up.
+    expect(screen.getAllByRole('button', { name: /New Post/ }).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('keeps the generic empty state for a publishing Workflow on a non-empty tab', async () => {
+    // Items exist overall, just none in the active tab — the first-run state is for a Workflow with
+    // no items at all, not for an ordinary "nothing active right now".
+    issues = [{ ...baseIssues()[3]! }]
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByText('No active posts — nice work!')).toBeInTheDocument()
+    expect(screen.queryByText('No posts yet')).not.toBeInTheDocument()
+  })
 })
 
 describe('display mode', () => {

@@ -1,6 +1,7 @@
 package com.conductor.v2.controller;
 
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetState;
 import com.conductor.generated.v2.model.PostFormat;
 import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.service.PublishTargetService.TargetView;
@@ -46,9 +47,11 @@ final class PublishTargetResponses {
                 .connectorId(target.getConnectorId())
                 .connectionId(target.getConnectionId())
                 .label(target.getPlatformAccountLabel())
+                .stateLabel(stateLabel(target.getState()))
                 .platformPostId(target.getPlatformPostId())
                 .permalink(target.getPermalink())
                 .errorMessage(target.getErrorMessage())
+                .errorDetail(target.getErrorDetail())
                 .fireTime(target.getFireTime())
                 .publishOptions(readOptions(target.getPublishOptions()))
                 .captionOverride(target.getCaptionOverride())
@@ -58,6 +61,23 @@ final class PublishTargetResponses {
                 // "using all Post media" instead of a selection that merely happens to match today.
                 .assetIds(view.assetIds())
                 .effectiveCaption(view.effectiveCaption());
+    }
+
+    /**
+     * The human word for a target's state — exactly what the UI's own status pill already shows
+     * ({@code PublishOutcomePanel.tsx}), so a client that only reads the wire never has to keep its own
+     * copy of this map.
+     */
+    private static String stateLabel(PostPublishTargetState state) {
+        return switch (state) {
+            case PENDING -> "Waiting";
+            case HANDED_OFF -> "Handed off";
+            case PUBLISHING -> "Publishing";
+            case AWAITING_MANUAL -> "Post it now";
+            case PUBLISHED -> "Published";
+            case FAILED -> "Failed";
+            case REVOKED -> "Taken back";
+        };
     }
 
     /**

@@ -1,6 +1,16 @@
 'use client'
 
-// COND-23 T3.6: which accounts a Post goes out to.
+// COND-23 T3.6, T6.3: one card about where a Post goes — what is picked, and what happened.
+//
+// This used to be three cards on the page: this picker (choosing accounts), the TikTok consent step
+// (a separate card directly under it), and a "Publishing results" panel showing outcomes — all about
+// the same set of destinations, all visible on screen at once regardless of whether the Post had even
+// been scheduled yet. They are one card now: a row is a destination, full stop. Before anything has
+// gone out, a row is checkbox + format + options. Once its state leaves PENDING (the backend hands a
+// target off only at or after scheduling — see PostPublishTargetState), the row switches to its outcome:
+// a status chip, its permalink if it has one, the platform's own error verbatim, and the actions that
+// belong to that destination (retry, or record a manual publish). A TikTok row additionally carries the
+// audit-required consent step as a disclosure directly beneath it.
 //
 // The list of choices is derived by the backend from the project's ACTIVE social connections
 // (GET /projects/{id}/publish-targets) — a platform with no connection is simply absent, because
@@ -15,16 +25,23 @@
 //   * a selected account whose connection has since gone away is shown checked with a note, and is
 //     dropped from the payload on the next save rather than being sent back to a server that would
 //     refuse it.
+//
+// The error text on a failed row is rendered verbatim. It is written by the platform ("The user has
+// exceeded the number of videos they may upload"), and paraphrasing it into house language would lose
+// the one detail that tells a human whether to retry now, retry tomorrow, or go fix something.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Share2 } from 'lucide-react'
+import { ExternalLink, RotateCw, Share2 } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
-import { statusHueClasses } from '@/components/ui/status-badge'
+import { statusHue, statusHueClasses, type StatusHue } from '@/components/ui/status-badge'
 import { toastError } from '@/components/ui/toast'
-import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
+import { apiErrorMessage, apiGet, apiPost, apiPut } from '@/lib/api'
 import {
   INHERITED_CONTENT,
   TargetContentEditor,
@@ -45,6 +62,7 @@ import {
   tiktokOptionsProblem,
   type TikTokPublishOptionValues,
 } from '@/components/marketing/TikTokPublishOptions'
+import { TikTokConsentStep, type TikTokConsentTarget } from '@/components/marketing/TikTokConsentStep'
 import {
   InstagramPublishOptions,
   isSingleImageTarget,
@@ -61,7 +79,6 @@ import {
   PostFormatSelector,
   type PostFormat,
 } from '@/components/marketing/PostFormatSelector'
-import type { TikTokConsentTarget } from '@/components/marketing/TikTokConsentStep'
 import type { WorkflowView } from '@/types/workItem'
 
 export type PublishPlatform = 'facebook' | 'instagram' | 'youtube' | 'tiktok'
@@ -83,6 +100,8 @@ export interface PublishTargetOption {
   lane: PublishLane
   healthStatus?: string | null
   healthMessage?: string | null
+  /** Extra detail behind `healthMessage` — the platform's own words, shown only on request. */
+  healthDetail?: string | null
   /**
    * TIK-2. TikTok reports a different set of privacy levels per creator (a private account is
    * offered fewer than a public one), so the choices come from the connection rather than from a
@@ -125,6 +144,15 @@ export interface SelectedPublishTarget {
   /** What will actually go out here, whichever of the two above applies. */
   effectiveAssetIds?: string[]
   effectiveCaption?: string | null
+  /** Set once the platform (or a human) confirms this went live. */
+  permalink?: string | null
+  /** The platform's own words, verbatim, when `state` is FAILED — or the hand-off note on AWAITING_MANUAL. */
+  errorMessage?: string | null
+  /** Extra detail behind `errorMessage` — shown only on request, via a "Show details" disclosure. */
+  errorDetail?: string | null
+  /** Human words for `state`, from the server. Falls back to the local STATE_LABELS map when absent. */
+  stateLabel?: string | null
+  fireTime?: string | null
 }
 
 /** What a selection sends back. `publishOptions` rides along only where the platform has any. */
@@ -138,6 +166,13 @@ interface PublishTargetSelectionPayload {
   assetIds?: string[]
 }
 
+interface RetryPublishResponse {
+  workItemId: string
+  status: string
+  retriedCount: number
+  targets: SelectedPublishTarget[]
+}
+
 /** Render order, so the groups don't reshuffle as connections come and go. */
 const PLATFORM_ORDER: PublishPlatform[] = ['facebook', 'instagram', 'youtube', 'tiktok']
 
@@ -146,6 +181,60 @@ const PLATFORM_LABELS: Record<PublishPlatform, string> = {
   instagram: 'Instagram',
   youtube: 'YouTube',
   tiktok: 'TikTok',
+}
+
+/**
+ * Publish state → status-ramp hue. Explicit rather than left to `statusHue`, which only knows
+ * PENDING and FAILED out of the six; the rest would silently land on gray and stop being
+ * distinguishable. REVOKED is deliberately **slate** (the ramp's Closed/Skipped hue), not red: a
+ * revocation is Conductor taking the post back off a platform after an approval stopped applying,
+ * which is a withdrawal, not a failure — colouring it red would send someone hunting for a platform
+ * error that never happened.
+ */
+const STATE_HUES: Record<string, StatusHue> = {
+  PENDING: 'gray',
+  HANDED_OFF: 'blue',
+  PUBLISHING: 'blue',
+  // Amber, not blue: this is the one state that is waiting on the person reading the screen. Every
+  // other in-flight state is waiting on a machine and needs nothing from anybody.
+  AWAITING_MANUAL: 'amber',
+  PUBLISHED: 'green',
+  FAILED: 'red',
+  REVOKED: 'slate',
+}
+
+/** Human words for the wire states — the design system's "translate at the UI boundary" rule. */
+const STATE_LABELS: Record<string, string> = {
+  PENDING: 'Waiting',
+  HANDED_OFF: 'Handed off',
+  PUBLISHING: 'Publishing',
+  AWAITING_MANUAL: 'Post it now',
+  PUBLISHED: 'Published',
+  FAILED: 'Failed',
+  REVOKED: 'Taken back',
+}
+
+function stateHue(state: string): StatusHue {
+  return STATE_HUES[state] ?? statusHue(state)
+}
+
+/** The server's own `stateLabel` wins when present; the local map is the fallback for an older backend. */
+function stateLabelFor(target: SelectedPublishTarget): string {
+  return target.stateLabel ?? STATE_LABELS[target.state] ?? target.state
+}
+
+/**
+ * A destination waiting on the person reading this: a manual one whose fire time has passed, or an
+ * automated one the platform handed back (TikTok's pre-audit inbox upload). Either way the next step is a
+ * human's, and the link they record is the outcome.
+ */
+function awaitsAHuman(target: SelectedPublishTarget): boolean {
+  return target.state === 'AWAITING_MANUAL'
+}
+
+/** Strip the scheme so a permalink reads as a destination rather than a wall of URL. */
+function permalinkText(permalink: string): string {
+  return permalink.replace(/^https?:\/\//, '')
 }
 
 /**
@@ -181,6 +270,38 @@ function hasAccount(targets: PublishTargetOption[]): boolean {
 
 function isUnhealthy(option: PublishTargetOption): boolean {
   return option.healthStatus === 'UNHEALTHY'
+}
+
+/**
+ * A TikTok target's options, with a missing privacy level backfilled from the account's own first
+ * allowed level — the same default TikTokPublishOptions shows pre-selected, so the picker never saves
+ * (or gates approval on) "no privacy level chosen" for a row the audience select already shows as
+ * decided. Applied at save time, in one place, rather than as a per-row effect on mount: two TikTok
+ * rows defaulting in the same tick would otherwise race each other's save.
+ */
+function withTikTokDefault(
+  option: PublishTargetOption,
+  values: TikTokPublishOptionValues
+): TikTokPublishOptionValues {
+  if (values.privacyLevel) return values
+  const fallback = option.privacyLevelOptions?.[0]
+  return fallback ? { ...values, privacyLevel: fallback } : values
+}
+
+/**
+ * Whether this selected target's row shows its outcome (chip, permalink, error, actions) instead of the
+ * editable checkbox/format/options UI: "the item has been scheduled or published" (`approvedOrLater` —
+ * a Post commits its bundle at approval, the step right before scheduling, so a target here is done
+ * being edited even if it hasn't fired yet), or this particular target already has — a retry resets a
+ * FAILED target back to PENDING, the same wire value an unscheduled selection carries, so `state` alone
+ * cannot tell the two apart; the item-level signal can.
+ */
+function isSettled(
+  target: SelectedPublishTarget | undefined,
+  approvedOrLater: boolean
+): target is SelectedPublishTarget {
+  if (!target) return false
+  return approvedOrLater || target.state !== 'PENDING'
 }
 
 /**
@@ -285,14 +406,19 @@ interface PostTargetPickerProps {
   onChanged?: (targets: SelectedPublishTarget[]) => void
   /**
    * Every selected TikTok destination with the options it currently carries, whenever that changes.
-   * The consent step lives beside the creative rather than in here (it needs the Post's media), so
-   * the picker publishes what it knows instead of owning that surface.
+   * Reported upward so a status control elsewhere (StatusDropdown) can gate on it without owning this
+   * whole picker.
    */
   onTikTokChange?: (targets: TikTokConsentTarget[]) => void
   /** The Post's uploaded media, so a destination can choose which of it to publish. */
   assets?: MediaAsset[]
   /** The Post's caption, shown as what a destination falls back to. */
   caption?: string | null
+  /**
+   * Told the TikTok disclosure's consent answer whenever it changes — consent is one of the gate's
+   * inputs, so the caller (the readiness state) has to ask the server again when it moves.
+   */
+  onTikTokConsentChange?: (consented: boolean) => void
 }
 
 export function PostTargetPicker({
@@ -305,6 +431,7 @@ export function PostTargetPicker({
   onTikTokChange,
   assets = [],
   caption = null,
+  onTikTokConsentChange,
 }: PostTargetPickerProps) {
   const [options, setOptions] = useState<PublishTargetOption[]>([])
   const [selected, setSelected] = useState<SelectedPublishTarget[]>([])
@@ -326,6 +453,9 @@ export function PostTargetPicker({
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  /** The one target whose "mark published" form is open, if any — one at a time. */
+  const [completingKey, setCompletingKey] = useState<string | null>(null)
 
   // Both lists in one pass: the choices are project-scoped and the selection is item-scoped, but a
   // picker that rendered one before the other would flash rows as unchecked before checking them.
@@ -375,6 +505,10 @@ export function PostTargetPicker({
   )
   const selectedKeys = useMemo(
     () => new Set(selected.map((t) => targetKey(t.platform, t.connectionId))),
+    [selected]
+  )
+  const selectedByKey = useMemo(
+    () => new Map(selected.map((t) => [targetKey(t.platform, t.connectionId), t])),
     [selected]
   )
 
@@ -444,7 +578,7 @@ export function PostTargetPicker({
         if (isManual(o)) return {}
         const key = targetKey(o.platform, o.connectionId)
         if (o.platform === 'tiktok') {
-          return { publishOptions: nextTiktok[key] ?? EMPTY_TIKTOK_OPTIONS }
+          return { publishOptions: withTikTokDefault(o, nextTiktok[key] ?? EMPTY_TIKTOK_OPTIONS) }
         }
         if (o.platform === 'instagram') {
           const values = nextInstagram[key]
@@ -575,6 +709,48 @@ export function PostTargetPicker({
     [contentByKey, save]
   )
 
+  /**
+   * Records that a human posted a manual destination by hand.
+   *
+   * The response is the target as the server now holds it, so it is also the refresh — the same
+   * reasoning as retry: no second GET, and no window where the row shows a state already moved past.
+   * The Post's own status can roll up on this call (the last outstanding target settling it), so the
+   * parent is told to refresh exactly as it is after a retry.
+   */
+  const completeManual = useCallback(
+    async (targetId: string, permalink: string, publishedAt: string | null) => {
+      const updated = await apiPost<SelectedPublishTarget>(
+        `/api/v2/projects/${projectId}/work-items/${workItemId}/publish-targets/${targetId}/manual-publish`,
+        { permalink, publishedAt },
+        token
+      )
+      setSelected((current) => current.map((t) => (t.id === updated.id ? updated : t)))
+      setCompletingKey(null)
+      onChanged?.(selected.map((t) => (t.id === updated.id ? updated : t)))
+    },
+    [projectId, workItemId, token, onChanged, selected]
+  )
+
+  const retry = useCallback(async () => {
+    setRetrying(true)
+    try {
+      // The response carries every target, so the retry is also the refresh — no second GET, and no
+      // window where the picker shows a state the server has already moved past.
+      const result = await apiPost<RetryPublishResponse>(
+        `/api/v2/projects/${projectId}/work-items/${workItemId}/publish-targets/retry`,
+        {},
+        token
+      )
+      setSelected(result.targets)
+      onChanged?.(result.targets)
+    } catch (err) {
+      // Never swallow: the outcomes stay exactly as they were and the reason is said out loud.
+      toastError(apiErrorMessage(err, 'Could not retry the failed accounts'))
+    } finally {
+      setRetrying(false)
+    }
+  }, [projectId, workItemId, token, onChanged])
+
   /** Every selected TikTok destination, with the options it carries and why it isn't postable yet. */
   const tiktokTargets = useMemo<TikTokConsentTarget[]>(
     () =>
@@ -617,6 +793,9 @@ export function PostTargetPicker({
   const frozen = isUnderReviewOrLater(workflowView, status) && !revertsOnEdit
   const noun = workflowView?.noun ?? 'Post'
 
+  const failedCount = selected.filter((t) => t.state === 'FAILED').length
+  const awaitingCount = selected.filter(awaitsAHuman).length
+
   if (loading) {
     return (
       <Card>
@@ -634,17 +813,45 @@ export function PostTargetPicker({
   return (
     <Card>
       <CardHeader>
-        <h2 className="text-sm font-medium text-foreground">Publishing to</h2>
-        <span className="text-xs text-muted-foreground">
-          {selected.length === 0
-            ? 'No accounts selected'
-            : `${selected.length} account${selected.length === 1 ? '' : 's'} selected`}
-        </span>
+        <div>
+          <h2 className="text-sm font-medium text-foreground">Publishing to</h2>
+          <span className="text-xs text-muted-foreground">
+            {selected.length === 0
+              ? 'No accounts selected'
+              : `${selected.length} account${selected.length === 1 ? '' : 's'} selected`}
+          </span>
+        </div>
+        {failedCount > 0 && (
+          <Button variant="outline" size="sm" onClick={() => void retry()} disabled={retrying}>
+            <RotateCw className={cn('mr-1.5 h-3.5 w-3.5', retrying && 'animate-spin')} />
+            {retrying ? 'Retrying…' : 'Retry failed'}
+          </Button>
+        )}
       </CardHeader>
 
       {loadError && (
         <div className="px-4 py-3">
           <Alert variant="destructive">{loadError}</Alert>
+        </div>
+      )}
+
+      {!loadError && awaitingCount > 0 && (
+        <div className="px-4 pt-3">
+          <Alert variant="warning">
+            {awaitingCount === 1
+              ? 'One destination is due and publishes by hand. Post it, then paste the link back below.'
+              : `${awaitingCount} destinations are due and publish by hand. Post each one, then paste its link back below.`}
+          </Alert>
+        </div>
+      )}
+
+      {!loadError && failedCount > 0 && (
+        <div className="px-4 pt-3">
+          <Alert variant="warning">
+            {failedCount === 1
+              ? '1 account could not publish. Retrying re-sends only that one — what is already live stays live.'
+              : `${failedCount} accounts could not publish. Retrying re-sends only the failed ones — what is already live stays live.`}
+          </Alert>
         </div>
       )}
 
@@ -709,6 +916,16 @@ export function PostTargetPicker({
                       content={contentByKey[key] ?? INHERITED_CONTENT}
                       customizing={customizing.has(key)}
                       frozen={frozen}
+                      approvedOrLater={revertsOnEdit}
+                      selectedTarget={selectedByKey.get(key)}
+                      completing={completingKey === key}
+                      onOpenComplete={() => setCompletingKey(key)}
+                      onCancelComplete={() => setCompletingKey(null)}
+                      onCompleteManual={(permalink, publishedAt) => {
+                        const target = selectedByKey.get(key)
+                        if (target) return completeManual(target.id, permalink, publishedAt)
+                        return Promise.resolve()
+                      }}
                       onToggle={() => toggle(option)}
                       onFormatChange={(next) => changeFormat(option, next)}
                       onTikTokOptionsChange={(next) => changeTikTokOptions(option, next)}
@@ -719,6 +936,18 @@ export function PostTargetPicker({
                     />
                   )
                 })}
+                {group.platform === 'tiktok' && tiktokTargets.length > 0 && (
+                  <TikTokConsentStep
+                    bare
+                    targets={tiktokTargets}
+                    assets={assets}
+                    projectId={projectId}
+                    workItemId={workItemId}
+                    token={token}
+                    disabled={frozen}
+                    onConsentChange={onTikTokConsentChange}
+                  />
+                )}
               </div>
             ))}
           </fieldset>
@@ -746,6 +975,15 @@ interface TargetRowProps {
   customizing: boolean
   /** Editing is refused past the review gate, so the controls are disabled rather than 400ing. */
   frozen: boolean
+  /** The Post has committed its bundle (approved or later) — see `isSettled`. */
+  approvedOrLater: boolean
+  /** The persisted row, once the Post has one — carries the outcome once state leaves PENDING. */
+  selectedTarget?: SelectedPublishTarget
+  /** Whether this row's "mark published" form is the open one. */
+  completing: boolean
+  onOpenComplete: () => void
+  onCancelComplete: () => void
+  onCompleteManual: (permalink: string, publishedAt: string | null) => Promise<void>
   onToggle: () => void
   onFormatChange: (next: PostFormat) => void
   onTikTokOptionsChange: (next: TikTokPublishOptionValues) => void
@@ -769,6 +1007,12 @@ function TargetRow({
   content,
   customizing,
   frozen,
+  approvedOrLater,
+  selectedTarget,
+  completing,
+  onOpenComplete,
+  onCancelComplete,
+  onCompleteManual,
   onToggle,
   onFormatChange,
   onTikTokOptionsChange,
@@ -782,17 +1026,19 @@ function TargetRow({
   // Post stays actionable, or a human could never take it back off.
   const disabled = unhealthy && !checked
   const noteId = `${option.platform}-${option.connectionId ?? 'manual'}-note`
+  const settled = checked && isSettled(selectedTarget, approvedOrLater)
   const note = unavailable
     ? 'This account is no longer connected — it will be removed when you change the selection.'
     : unhealthy
       ? (option.healthMessage ?? 'This account needs to be reconnected before it can publish.')
-      : isManual(option)
+      : isManual(option) && !settled
         ? "Conductor won't post this one. It still goes through review and onto the calendar; when it's due you'll be asked to post it yourself and paste the link back."
         : null
+  const noteDetail = unhealthy ? option.healthDetail : undefined
 
   // Platform options are only meaningful for an API target: they are the payload we send the
   // platform, and on the manual lane the creator sets all of it in the platform's own composer.
-  const showOptions = checked && !unavailable && !isManual(option)
+  const showOptions = checked && !unavailable && !isManual(option) && !settled
   const customized = content.captionOverride !== null || content.assetIds !== null
   const idPrefix = `${option.platform}-${option.connectionId ?? 'manual'}`
 
@@ -803,55 +1049,93 @@ function TargetRow({
 
   return (
     <div>
-      <label
+      <div
         className={cn(
-          'flex items-start gap-2.5 px-4 py-2',
-          disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-muted/50'
+          'px-4 py-2',
+          disabled ? 'opacity-60' : 'hover:bg-muted/50'
         )}
       >
-        <input
-          type="checkbox"
-          className="mt-0.5 rounded border-border"
+        <Checkbox
           checked={checked}
           disabled={disabled}
+          onCheckedChange={onToggle}
           aria-describedby={note ? noteId : undefined}
-          onChange={onToggle}
-        />
-        <span className="min-w-0">
-          <span className="block text-sm text-foreground">
-            {option.label}
-            <FormatBadge format={format} />
-          </span>
-          {note && (
-            <span
-              id={noteId}
-              className={cn(
-                'block text-xs',
-                // A manual destination is a normal choice, not a problem to warn about — amber is
-                // reserved for the two rows a human has to do something about.
-                isManual(option) && !unavailable && !unhealthy
-                  ? 'text-muted-foreground'
-                  : statusHueClasses('amber').text
+          label={
+            <span className="flex items-center gap-2">
+              <span className="text-sm text-foreground">
+                {option.label}
+                <FormatBadge format={format} />
+              </span>
+              {settled && (
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-xs font-medium',
+                    statusHueClasses(stateHue(selectedTarget!.state)).bg,
+                    statusHueClasses(stateHue(selectedTarget!.state)).text
+                  )}
+                >
+                  {stateLabelFor(selectedTarget!)}
+                </span>
               )}
-            >
-              {note}
             </span>
+          }
+        />
+        <div className="pl-[26px]">
+          {note && (
+            <>
+              <span
+                id={noteId}
+                className={cn(
+                  'block text-sm',
+                  // A manual destination is a normal choice, not a problem to warn about — amber is
+                  // reserved for the two rows a human has to do something about.
+                  isManual(option) && !unavailable && !unhealthy
+                    ? 'text-muted-foreground'
+                    : statusHueClasses('amber').text
+                )}
+              >
+                {note}
+              </span>
+              <ShowDetails detail={noteDetail} message={note} />
+            </>
           )}
-        </span>
-      </label>
-      {checked && !unavailable && (
-        <div className="px-4 pb-3">
-          <button
-            type="button"
-            // Outside the <label>, like the option editors below: a click here must not also un-pick
-            // the destination it belongs to.
-            className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline"
-            onClick={onCustomizeToggle}
-          >
-            {customized ? 'Customized for this destination' : 'Customize for this destination'}
-          </button>
-          {/* TikTok's options stay visible whenever the account is picked, not behind "Customize": the
-              privacy level is mandatory for approval, so hiding it would only move the blocker. */}
+          {settled && selectedTarget!.permalink && (
+            <a
+              href={selectedTarget!.permalink}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <span className="truncate">{permalinkText(selectedTarget!.permalink)}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
+            </a>
+          )}
+        </div>
+      </div>
+      {settled ? (
+        <SettledOutcomeRow
+          target={selectedTarget!}
+          open={completing}
+          onOpen={onOpenComplete}
+          onCancel={onCancelComplete}
+          onComplete={onCompleteManual}
+        />
+      ) : (
+        checked &&
+        !unavailable && (
+          <div className="px-4 pb-3">
+            <button
+              type="button"
+              // Outside the <label>, like the option editors below: a click here must not also un-pick
+              // the destination it belongs to.
+              className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline"
+              onClick={onCustomizeToggle}
+            >
+              {customized ? 'Customized for this destination' : 'Customize for this destination'}
+            </button>
+            {/* TikTok's options stay visible whenever the account is picked, not behind "Customize": the
+                privacy level is mandatory for approval, so hiding it would only move the blocker. */}
             {showOptions && option.platform === 'tiktok' && (
               <TikTokPublishOptions
                 idPrefix={`tiktok-${option.connectionId}`}
@@ -864,47 +1148,213 @@ function TargetRow({
                 onChange={onTikTokOptionsChange}
               />
             )}
-          {customizing && (
-            <div className="mt-2 space-y-3">
-              <PostFormatSelector
-                idPrefix={idPrefix}
-                platform={option.platform}
-                formats={option.formats}
-                value={format}
-                disabled={saving || frozen}
-                onChange={onFormatChange}
-              />
-              {showOptions && option.platform === 'instagram' && (
-                <InstagramPublishOptions
+            {customizing && (
+              <div className="mt-2 space-y-3">
+                <PostFormatSelector
                   idPrefix={idPrefix}
-                  format={format}
-                  images={postImages}
-                  isSingleImage={isSingleImageTarget(effectiveAssets)}
-                  value={instagramOptions}
-                  disabled={saving}
-                  onChange={onInstagramOptionsChange}
+                  platform={option.platform}
+                  formats={option.formats}
+                  value={format}
+                  disabled={saving || frozen}
+                  onChange={onFormatChange}
                 />
-              )}
-              {showOptions && option.platform === 'youtube' && (
-                <YouTubePublishOptions
-                  idPrefix={idPrefix}
-                  images={postImages}
-                  value={youtubeOptions}
-                  disabled={saving}
-                  onChange={onYouTubeOptionsChange}
+                {showOptions && option.platform === 'instagram' && (
+                  <InstagramPublishOptions
+                    idPrefix={idPrefix}
+                    format={format}
+                    images={postImages}
+                    isSingleImage={isSingleImageTarget(effectiveAssets)}
+                    value={instagramOptions}
+                    disabled={saving}
+                    onChange={onInstagramOptionsChange}
+                  />
+                )}
+                {showOptions && option.platform === 'youtube' && (
+                  <YouTubePublishOptions
+                    idPrefix={idPrefix}
+                    images={postImages}
+                    value={youtubeOptions}
+                    disabled={saving}
+                    onChange={onYouTubeOptionsChange}
+                  />
+                )}
+                <TargetContentEditor
+                  assets={assets}
+                  postCaption={postCaption}
+                  value={content}
+                  disabled={saving || frozen}
+                  onChange={onContentChange}
                 />
-              )}
-              <TargetContentEditor
-                assets={assets}
-                postCaption={postCaption}
-                value={content}
-                disabled={saving || frozen}
-                onChange={onContentChange}
-              />
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        )
       )}
     </div>
   )
+}
+
+/**
+ * A "Show details" disclosure beside a message, for the extra detail the server sends alongside it —
+ * only rendered when there is one and it says more than the message already does.
+ */
+function ShowDetails({ message, detail }: { message: string | null | undefined; detail?: string | null }) {
+  const [open, setOpen] = useState(false)
+  if (!detail || detail === message) return null
+  return (
+    <div>
+      <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide details' : 'Show details'}
+      </Button>
+      {open && (
+        <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs text-foreground">
+          {detail}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+/**
+ * What happened to one destination, plus the actions that belong to it: nothing for a plain success or
+ * an in-flight state (the chip and permalink in the row header already say it), a "Mark published" form
+ * for one waiting on a human, and the platform's own error verbatim for one that failed.
+ */
+function SettledOutcomeRow({
+  target,
+  open,
+  onOpen,
+  onCancel,
+  onComplete,
+}: {
+  target: SelectedPublishTarget
+  open: boolean
+  onOpen: () => void
+  onCancel: () => void
+  onComplete: (permalink: string, publishedAt: string | null) => Promise<void>
+}) {
+  const awaiting = awaitsAHuman(target)
+
+  return (
+    <div className={cn('px-4 pb-2', awaiting && 'bg-muted/40')}>
+      {awaiting && !open && (
+        <>
+          <p className="ml-6 text-sm text-muted-foreground">
+            {isManual(target)
+              ? 'Nothing is publishing this one — post it yourself, then record the link.'
+              : (target.errorMessage ??
+                'The platform handed this one to a person — finish it there, then record the link.')}
+          </p>
+          {/* What to post, not just that something must be posted: this destination may carry copy
+              and media of its own, and a person told only "post it" would go looking for them. */}
+          {target.effectiveCaption && (
+            <p className="ml-6 mt-1 whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5 text-sm text-foreground">
+              {target.effectiveCaption}
+            </p>
+          )}
+          {target.effectiveAssetIds && target.effectiveAssetIds.length > 0 && (
+            <p className="ml-6 mt-1 text-sm text-muted-foreground">
+              {target.effectiveAssetIds.length === 1
+                ? 'Post the file attached to this Post.'
+                : `Post ${target.effectiveAssetIds.length} files, in the order shown on the Post.`}
+            </p>
+          )}
+          <div className="ml-6 mt-1.5">
+            <Button variant="outline" size="sm" onClick={onOpen}>
+              Mark published
+            </Button>
+          </div>
+        </>
+      )}
+      {target.errorMessage && !awaiting && (
+        <div className="ml-6">
+          <p className={cn('text-sm', statusHueClasses('red').text)}>{target.errorMessage}</p>
+          <ShowDetails detail={target.errorDetail} message={target.errorMessage} />
+        </div>
+      )}
+      {open && <ManualPublishForm target={target} onCancel={onCancel} onComplete={onComplete} />}
+    </div>
+  )
+}
+
+/**
+ * Records what a human already did: the link to the post they published by hand, and when.
+ *
+ * The link is required and the reason is not pedantry — there is no platform to ask, so it is the only
+ * record this destination ever went out, and the thing the calendar, the Asset library and any later
+ * reader all read. The time defaults to now but is editable, because the common case for filling this
+ * in is a few hours after the fact and a wrong timestamp on a published post is quietly misleading.
+ */
+function ManualPublishForm({
+  target,
+  onCancel,
+  onComplete,
+}: {
+  target: SelectedPublishTarget
+  onCancel: () => void
+  onComplete: (permalink: string, publishedAt: string | null) => Promise<void>
+}) {
+  const [permalink, setPermalink] = useState('')
+  const [publishedAt, setPublishedAt] = useState(() => localDateTimeValue(new Date()))
+  const [saving, setSaving] = useState(false)
+  const linkId = `manual-link-${target.id}`
+  const timeId = `manual-time-${target.id}`
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!permalink.trim() || saving) return
+    setSaving(true)
+    try {
+      await onComplete(permalink.trim(), publishedAt ? new Date(publishedAt).toISOString() : null)
+    } catch (err) {
+      // Never swallow: the row stays exactly as it was and the reason is said out loud.
+      toastError(apiErrorMessage(err, 'Could not record this as published'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="ml-6 space-y-2.5 border-t border-border pt-3">
+      <div className="space-y-1">
+        <label htmlFor={linkId} className="block text-sm font-medium text-foreground">
+          Link to the published post
+        </label>
+        <input
+          id={linkId}
+          type="url"
+          required
+          autoFocus
+          value={permalink}
+          onChange={(e) => setPermalink(e.target.value)}
+          placeholder="https://…"
+          className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <div className="space-y-1">
+        <span className="block text-sm font-medium text-foreground">When it went out</span>
+        <DateTimePicker id={timeId} label="When it went out" value={publishedAt} onChange={setPublishedAt} />
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        {!permalink.trim() && !saving && (
+          <span className="text-sm text-muted-foreground">Paste the link first.</span>
+        )}
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={saving || !permalink.trim()}>
+          {saving ? 'Recording…' : 'Record as published'}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+/**
+ * `new Date()` as the value a `datetime-local` input accepts: local wall-clock, no zone, no seconds.
+ * `toISOString` would be wrong here — it is UTC, and the input would show a time the user did not mean.
+ */
+function localDateTimeValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }

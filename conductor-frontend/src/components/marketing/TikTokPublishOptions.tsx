@@ -82,6 +82,17 @@ export const BRANDED_PRIVATE_EXPLANATION =
 
 const NO_PRIVACY_LEVEL_EXPLANATION = 'Choose who can see this TikTok post.'
 
+/** Milliseconds a `videoCoverTimestampMs` value converts to/from, for a person who thinks in seconds. */
+function msToSeconds(ms: number | null | undefined): number | '' {
+  return ms == null ? '' : ms / 1000
+}
+
+function secondsToMs(seconds: string): number | undefined {
+  if (seconds === '') return undefined
+  const parsed = Number(seconds)
+  return Number.isNaN(parsed) ? undefined : Math.round(parsed * 1000)
+}
+
 /**
  * Why this target isn't ready to post, in the creator's words — null when it is. The same rules the
  * connector enforces at approval time, so a human hears about them while they can still act.
@@ -182,6 +193,15 @@ export function TikTokPublishOptions({
 
   const set = (patch: Partial<TikTokPublishOptionValues>) => onChange({ ...value, ...patch })
 
+  // Nobody has to make an audience choice before they even see the field: shown pre-selected on the
+  // first level TikTok allows this account, rather than a "Select who can view…" placeholder that
+  // reads as nothing having been decided yet. The choice is only actually reported (and saved) once
+  // the row is next saved — see PostTargetPicker's backfill in `optionsFor`, which folds this same
+  // default into whatever save happens to fire next, rather than firing one here per row on mount and
+  // racing every other TikTok row doing the same thing in the same tick.
+  const firstAllowed = privacyLevelOptions[0]
+  const displayedPrivacyLevel = value.privacyLevel ?? firstAllowed ?? ''
+
   function toggleDisclosure(next: boolean) {
     setOpened(next)
     if (!next) set({ brandContentToggle: false, brandOrganicToggle: false })
@@ -201,11 +221,10 @@ export function TikTokPublishOptions({
         ) : (
           <Select
             id={`${idPrefix}-privacy`}
-            value={value.privacyLevel ?? ''}
+            value={displayedPrivacyLevel}
             disabled={disabled}
             onChange={(e) => set({ privacyLevel: e.target.value || null })}
           >
-            <option value="">Select who can view this video…</option>
             {privacyLevelOptions.map((level) => (
               <option key={level} value={level}>
                 {privacyLevelLabel(level)}
@@ -288,17 +307,14 @@ export function TikTokPublishOptions({
             id={`${idPrefix}-cover-timestamp`}
             type="number"
             min={0}
-            step={100}
-            placeholder="Milliseconds from the start"
+            step={0.1}
+            placeholder="Seconds from the start"
             disabled={disabled}
-            value={value.videoCoverTimestampMs ?? ''}
-            onChange={(e) => {
-              const parsed = e.target.value === '' ? undefined : Number(e.target.value)
-              set({ videoCoverTimestampMs: parsed === undefined || Number.isNaN(parsed) ? undefined : parsed })
-            }}
+            value={msToSeconds(value.videoCoverTimestampMs)}
+            onChange={(e) => set({ videoCoverTimestampMs: secondsToMs(e.target.value) })}
           />
           <p className="text-xs text-muted-foreground">
-            Where TikTok freezes the cover, in milliseconds from the start of the video.
+            Which second of the video TikTok freezes as the cover.
           </p>
         </div>
       ) : (

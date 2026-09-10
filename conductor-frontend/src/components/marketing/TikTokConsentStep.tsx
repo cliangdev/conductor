@@ -22,6 +22,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { AtSign, ImageOff } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Card, CardHeader } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
 import { isVideoContentType } from '@/components/workitems/MediaUploadPanel'
 import {
@@ -179,6 +180,11 @@ interface TikTokConsentStepProps {
   /** Told the current answer whenever it changes, including the first read back from the server. */
   onConsentChange?: (consented: boolean) => void
   disabled?: boolean
+  /**
+   * Renders as a plain disclosure (no Card/heading) for embedding directly under the TikTok row in
+   * PostTargetPicker, which already carries the "Publishing to" card and its own row heading.
+   */
+  bare?: boolean
 }
 
 /**
@@ -200,6 +206,7 @@ function TikTokConsentStepBody({
   consented = false,
   onConsentChange,
   disabled,
+  bare,
 }: TikTokConsentStepProps) {
   const persisted = Boolean(projectId && workItemId && token)
 
@@ -268,14 +275,9 @@ function TikTokConsentStepBody({
   const unresolved = targets.some((t) => t.problem)
   const anyPaidPartnership = targets.some((t) => t.options.brandContentToggle)
 
-  return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
-      </CardHeader>
-
-      <div className="space-y-4 p-4">
-        <ul className="space-y-3">
+  const body = (
+    <div className="space-y-4">
+      <ul className="space-y-3">
           {targets.map((target) => {
             // What this account actually receives: its own selection, or the Post's whole set when it
             // inherits. Rendering the Post's set for a destination that chose a subset would ask the
@@ -350,19 +352,19 @@ function TikTokConsentStepBody({
           })}
         </ul>
 
-        <label className="flex items-start gap-2.5">
-          <input
-            type="checkbox"
-            className="mt-0.5 rounded border-border"
-            checked={given}
-            disabled={disabled || unresolved || saving}
-            onChange={(e) => changeConsent(e.target.checked)}
-          />
-          <span className="text-sm text-foreground">
-            I have reviewed this preview and the destination account, and I consent to publishing
-            this post to TikTok.
-          </span>
-        </label>
+        <Checkbox
+          checked={given}
+          disabled={disabled || unresolved || saving}
+          onCheckedChange={changeConsent}
+          label="I have reviewed this preview and the destination account, and I consent to publishing this post to TikTok."
+          disabledReason={
+            unresolved
+              ? 'Resolve the option problem above before you can consent.'
+              : disabled
+                ? 'Editing is locked while this post is under review.'
+                : undefined
+          }
+        />
 
         {given && server?.consentedAt && (
           <p className="text-xs text-muted-foreground">
@@ -371,7 +373,7 @@ function TikTokConsentStepBody({
           </p>
         )}
 
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           {anyPaidPartnership
             ? 'By posting, you agree to TikTok’s Branded Content Policy and Music Usage Confirmation.'
             : 'By posting, you agree to TikTok’s Music Usage Confirmation.'}
@@ -380,6 +382,22 @@ function TikTokConsentStepBody({
         {error && <Alert variant="destructive">{error}</Alert>}
         {blockedReason && <Alert variant="warning">{blockedReason}</Alert>}
       </div>
+  )
+
+  if (bare) {
+    return (
+      <div className="space-y-3 border-t border-border bg-surface-raised px-4 py-3">
+        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
+        {body}
+      </div>
+    )
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
+      </CardHeader>
+      <div className="p-4">{body}</div>
     </Card>
   )
 }

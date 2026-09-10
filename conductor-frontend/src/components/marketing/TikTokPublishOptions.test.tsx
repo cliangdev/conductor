@@ -94,14 +94,22 @@ describe('TikTokPublishOptions', () => {
 
     const select = screen.getByLabelText(/who can view this video/i)
     const rendered = Array.from(select.querySelectorAll('option')).map((o) => o.textContent)
-    expect(rendered).toEqual(['Select who can view this video…', 'Everyone', 'Only me (private)'])
+    expect(rendered).toEqual(['Everyone', 'Only me (private)'])
     expect(screen.queryByRole('option', { name: 'Friends' })).not.toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Followers' })).not.toBeInTheDocument()
   })
 
-  it('preselects no privacy level', () => {
-    renderOptions()
-    expect(screen.getByLabelText(/who can view this video/i)).toHaveValue('')
+  it('preselects the first privacy level the account allows, without reporting it until an edit', () => {
+    const { onChange } = renderOptions()
+    expect(screen.getByLabelText(/who can view this video/i)).toHaveValue(ALL_LEVELS[0])
+    // Shown, not yet saved — the caller folds this same default into whatever save happens next
+    // (PostTargetPicker's `withTikTokDefault`) rather than this component firing one itself.
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('shows a privacy level already saved on the target rather than the default', () => {
+    renderOptions({ value: values({ privacyLevel: 'SELF_ONLY' }) })
+    expect(screen.getByLabelText(/who can view this video/i)).toHaveValue('SELF_ONLY')
   })
 
   it('says so when TikTok reported no privacy options for this account', () => {
@@ -215,14 +223,25 @@ describe('TikTokPublishOptions', () => {
     expect(onChange).toHaveBeenCalledWith(values({ isAigc: true }))
   })
 
-  it('offers a cover timestamp for a video post', async () => {
-    const { onChange } = renderOptions({ isVideo: true })
+  it('offers a cover frame in seconds for a video post, converting to milliseconds', async () => {
+    const { onChange } = renderOptions({ isVideo: true, value: values({ privacyLevel: 'PUBLIC_TO_EVERYONE' }) })
     expect(screen.queryByLabelText(/add tiktok music automatically/i)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/cover image/i)).not.toBeInTheDocument()
 
     const cover = screen.getByLabelText(/cover frame/i)
-    fireEvent.change(cover, { target: { value: '1500' } })
-    expect(onChange).toHaveBeenLastCalledWith(values({ videoCoverTimestampMs: 1500 }))
+    expect(cover).toHaveAttribute('placeholder', 'Seconds from the start')
+    fireEvent.change(cover, { target: { value: '1.5' } })
+    expect(onChange).toHaveBeenLastCalledWith(
+      values({ privacyLevel: 'PUBLIC_TO_EVERYONE', videoCoverTimestampMs: 1500 })
+    )
+  })
+
+  it('shows a saved cover timestamp back as seconds', () => {
+    renderOptions({
+      isVideo: true,
+      value: values({ privacyLevel: 'PUBLIC_TO_EVERYONE', videoCoverTimestampMs: 2500 }),
+    })
+    expect(screen.getByLabelText(/cover frame/i)).toHaveValue(2.5)
   })
 
   it('offers auto-music and a cover picker for a photo post', async () => {

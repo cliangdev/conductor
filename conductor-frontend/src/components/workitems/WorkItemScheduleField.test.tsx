@@ -45,7 +45,7 @@ beforeEach(() => {
 
 function renderField(props: Partial<React.ComponentProps<typeof WorkItemScheduleField>> = {}) {
   const onChanged = vi.fn()
-  render(
+  const result = render(
     <WorkItemScheduleField
       projectId="project-1"
       issueId="post-1"
@@ -57,7 +57,7 @@ function renderField(props: Partial<React.ComponentProps<typeof WorkItemSchedule
       {...props}
     />
   )
-  return { onChanged }
+  return { onChanged, ...result }
 }
 
 describe('wall clock ↔ instant, read in a named zone', () => {
@@ -118,7 +118,9 @@ describe('WorkItemScheduleField', () => {
     const { onChanged } = renderField()
     await userEvent.click(screen.getByRole('button', { name: 'Set' }))
     await pickJuly4th2026At9()
-    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByLabelText(/Schedule timezone/i))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'New York')
+    await userEvent.click(screen.getByRole('option', { name: /New York/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(patchBodies).toHaveLength(1))
@@ -133,6 +135,16 @@ describe('WorkItemScheduleField', () => {
     renderField({ scheduledFor: '2026-07-04T13:00:00.000Z', scheduleTimezone: 'America/New_York' })
     expect(screen.getByRole('button', { name: 'Change' })).toBeInTheDocument()
     expect(screen.getByText(/America\/New_York/)).toBeInTheDocument()
+  })
+
+  it('shows the date and the time-with-zone on two separate lines, never truncated', () => {
+    const { container } = renderField({
+      scheduledFor: '2026-07-04T13:00:00.000Z',
+      scheduleTimezone: 'America/New_York',
+    })
+    expect(screen.getByText(/Jul 4, 2026/)).toBeInTheDocument()
+    expect(screen.getByText(/America\/New_York/)).toBeInTheDocument()
+    expect(container.querySelector('.truncate')).toBeNull()
   })
 
   it('clears a schedule by sending nulls, not by sending an empty string', async () => {
@@ -184,7 +196,9 @@ describe('WorkItemScheduleField', () => {
     await userEvent.click(screen.getByLabelText('As soon as approved'))
     // No date is asked for once the answer is "when it is approved".
     expect(screen.queryByLabelText('Scheduled date and time')).not.toBeInTheDocument()
-    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByLabelText(/Schedule timezone/i))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'New York')
+    await userEvent.click(screen.getByRole('option', { name: /New York/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(patchBodies).toHaveLength(1))
@@ -199,7 +213,9 @@ describe('WorkItemScheduleField', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Change' }))
     await userEvent.click(screen.getByLabelText('As soon as approved'))
     await pickJuly4th2026At9()
-    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByLabelText(/Schedule timezone/i))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'New York')
+    await userEvent.click(screen.getByRole('option', { name: /New York/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(patchBodies).toHaveLength(1))

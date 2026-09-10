@@ -3,6 +3,7 @@ import { apiGet, apiPost, isClientError } from '../api.js'
 import { createWorkItem, updateWorkItem, listWorkItems } from './issues.js'
 import { listWorkflows, transitionWorkItem } from './workflows.js'
 import { listPublishTargets, setPublishTargets, uploadAsset, PublishTargetSelection } from './marketing.js'
+import { stateLabel, statusLabel } from './labels.js'
 
 /**
  * The publishing pipeline the way an agent wants to drive it: one call to create, schedule and submit a
@@ -93,6 +94,8 @@ interface WorkItemRow {
   displayId?: string
   title?: string
   status?: string
+  /** The status in words, when the server already sends one — preferred over computing it locally. */
+  statusLabel?: string
   workflow?: string
   scheduledFor?: string | null
   scheduleTimezone?: string | null
@@ -106,6 +109,8 @@ interface TargetRow {
   label?: string | null
   lane?: string
   state?: string
+  /** The state in words, when the server already sends one — preferred over computing it locally. */
+  stateLabel?: string
   permalink?: string | null
   errorMessage?: string | null
   fireTime?: string | null
@@ -419,6 +424,7 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
     warnings,
     reviewers: reviewerReport?.assigned,
     assets,
+    workflowStatuses: workflow.statuses,
   })
 }
 
@@ -432,6 +438,9 @@ async function confirmation(
     warnings?: string[]
     reviewers?: Array<{ userId: string; name: string | null }>
     assets?: Array<Record<string, unknown>>
+    /** The publishing Workflow's declared statuses, when the caller already has them (create_post
+     *  does) — gives statusLabel the same words the web app shows for this Workflow. */
+    workflowStatuses?: unknown[]
   }
 ): Promise<Record<string, unknown>> {
   const item = await apiGet<WorkItemRow>(workItemBase(config, postId), config)
@@ -442,6 +451,7 @@ async function confirmation(
     postId,
     displayId: item.displayId,
     status: item.status,
+    statusLabel: item.statusLabel ?? statusLabel(item.status, extra.workflowStatuses),
     scheduledFor: item.scheduledFor,
     timezone: item.scheduleTimezone,
     ...(item.publishOnApproval ? { publishOnApproval: true } : {}),
@@ -451,6 +461,7 @@ async function confirmation(
       account: t.label ?? (t.lane === 'MANUAL' ? 'manual' : null),
       lane: t.lane,
       state: t.state,
+      stateLabel: t.stateLabel ?? stateLabel(t.state),
       permalink: t.permalink ?? null,
       errorMessage: t.errorMessage ?? null,
       ...(t.format && t.format !== 'feed' ? { format: t.format } : {}),
@@ -514,20 +525,20 @@ export async function listPosts(
   )
   const since = params.since ? new Date(params.since).getTime() : null
   const until = params.until ? new Date(params.until).getTime() : null
-  const rows: WorkItemRow[] = []
+  const rows: Array<{ item: WorkItemRow; workflowStatuses: unknown[] }> = []
   for (const workflow of publishing) {
     const items = (await listWorkItems({ workflow: workflow.slug, status: params.status }, config)) as WorkItemRow[]
     for (const item of items) {
       const at = item.scheduledFor ? new Date(item.scheduledFor).getTime() : null
       if (since !== null && (at === null || at < since)) continue
       if (until !== null && (at === null || at > until)) continue
-      rows.push(item)
+      rows.push({ item, workflowStatuses: workflow.statuses })
     }
   }
-  rows.sort((a, b) => (b.scheduledFor ?? '').localeCompare(a.scheduledFor ?? ''))
+  rows.sort((a, b) => (b.item.scheduledFor ?? '').localeCompare(a.item.scheduledFor ?? ''))
   const limit = Math.max(1, Math.min(params.limit ?? 50, 50))
   const posts: Array<Record<string, unknown>> = []
-  for (const row of rows.slice(0, limit)) {
+  for (const { item: row, workflowStatuses } of rows.slice(0, limit)) {
     const selected = (await apiGet<TargetRow[]>(`${workItemBase(config, row.id)}/publish-targets`, config)) ?? []
     const targets = selected
       .filter((t) => !params.platform || String(t.platform).toLowerCase() === params.platform.toLowerCase())
@@ -535,6 +546,7 @@ export async function listPosts(
         platform: t.platform,
         account: t.label ?? null,
         state: t.state,
+        stateLabel: t.stateLabel ?? stateLabel(t.state),
         permalink: t.permalink ?? null,
         ...(t.format && t.format !== 'feed' ? { format: t.format } : {}),
       }))
@@ -544,6 +556,7 @@ export async function listPosts(
       displayId: row.displayId,
       title: row.title,
       status: row.status,
+      statusLabel: row.statusLabel ?? statusLabel(row.status, workflowStatuses),
       scheduledFor: row.scheduledFor ?? null,
       timezone: row.scheduleTimezone ?? null,
       targets,

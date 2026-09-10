@@ -323,7 +323,7 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
         PostPublishTarget stored = reload(target);
         assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
         assertThat(stored.getErrorMessage())
-                .isEqualTo("(#100) The parameter scheduled_publish_time is required");
+                .isEqualTo("(#100) The parameter scheduled_publish_time is required.");
         assertThat(stored.getAttempts()).isEqualTo(1);
     }
 

@@ -99,6 +99,13 @@ let putBodies: Array<{
   }>
 }> = []
 let putRejection: { status: number; detail: string } | null = null
+let retryResult: { workItemId: string; status: string; retriedCount: number; targets: SelectedPublishTarget[] } | null = null
+let retryRejection: { status: number; detail: string } | null = null
+let retryCalls = 0
+let manualCalls: Array<{ url: string; body: { permalink: string; publishedAt: string | null } }> = []
+let manualRejection: { status: number; detail: string } | null = null
+let consentServed: Record<string, unknown> | null = null
+let consentPutBodies: Array<{ consented: boolean }> = []
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -113,6 +120,62 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const method = init?.method ?? 'GET'
   if (method === 'GET' && url.endsWith(`/projects/${PROJECT}/publish-targets`)) {
     return jsonResponse(200, availableTargets)
+  }
+  if (method === 'GET' && url.endsWith('/publish-consent')) {
+    return jsonResponse(
+      200,
+      consentServed ?? {
+        workItemId: WORK_ITEM,
+        required: true,
+        valid: false,
+        verdict: 'NEVER_GIVEN',
+        consentedAt: null,
+        consentedByUserId: null,
+        consentedByName: null,
+      }
+    )
+  }
+  if (method === 'PUT' && url.endsWith('/publish-consent')) {
+    const body = JSON.parse(init!.body as string)
+    consentPutBodies.push(body)
+    consentServed = body.consented
+      ? {
+          workItemId: WORK_ITEM,
+          required: true,
+          valid: true,
+          verdict: 'VALID',
+          consentedAt: '2026-08-30T12:00:00Z',
+          consentedByUserId: 'user-1',
+          consentedByName: 'Ada Creator',
+        }
+      : {
+          workItemId: WORK_ITEM,
+          required: true,
+          valid: false,
+          verdict: 'NEVER_GIVEN',
+          consentedAt: null,
+          consentedByUserId: null,
+          consentedByName: null,
+        }
+    return jsonResponse(200, consentServed)
+  }
+  if (method === 'POST' && url.includes('/manual-publish')) {
+    manualCalls.push({ url, body: JSON.parse(String(init?.body ?? '{}')) })
+    if (manualRejection) return jsonResponse(manualRejection.status, { detail: manualRejection.detail })
+    const targetId = url.split('/publish-targets/')[1].replace('/manual-publish', '')
+    const updated: SelectedPublishTarget = {
+      ...selectedTargets.find((t) => t.id === targetId)!,
+      state: 'PUBLISHED',
+      permalink: manualCalls[manualCalls.length - 1].body.permalink,
+    }
+    selectedTargets = selectedTargets.map((t) => (t.id === targetId ? updated : t))
+    return jsonResponse(200, updated)
+  }
+  if (method === 'POST' && url.endsWith(`/work-items/${WORK_ITEM}/publish-targets/retry`)) {
+    retryCalls += 1
+    if (retryRejection) return jsonResponse(retryRejection.status, { detail: retryRejection.detail })
+    selectedTargets = retryResult!.targets
+    return jsonResponse(200, retryResult)
   }
   if (method === 'GET' && url.endsWith(`/work-items/${WORK_ITEM}/publish-targets`)) {
     return jsonResponse(200, selectedTargets)
@@ -150,6 +213,13 @@ beforeEach(() => {
   selectedTargets = []
   putBodies = []
   putRejection = null
+  retryResult = null
+  retryRejection = null
+  retryCalls = 0
+  manualCalls = []
+  manualRejection = null
+  consentServed = null
+  consentPutBodies = []
   fetchMock.mockClear()
   vi.stubEnv('NEXT_PUBLIC_API_URL', API)
   vi.stubGlobal('fetch', fetchMock)
@@ -603,20 +673,19 @@ describe('PostTargetPicker — TikTok publish options', () => {
 
     const select = await screen.findByLabelText(/who can view this video/i)
     expect(Array.from(select.querySelectorAll('option')).map((o) => o.textContent)).toEqual([
-      'Select who can view this video…',
       'Everyone',
       'Only me (private)',
     ])
   })
 
-  it('preselects no privacy level', async () => {
+  it('preselects the first privacy level the account allows', async () => {
     const tiktok = tiktokOption('acme')
     availableTargets = [tiktok]
     selectedTargets = [selection(tiktok)]
     renderPicker()
     await loaded()
 
-    expect(await screen.findByLabelText(/who can view this video/i)).toHaveValue('')
+    expect(await screen.findByLabelText(/who can view this video/i)).toHaveValue('PUBLIC_TO_EVERYONE')
   })
 
   it('sends the chosen options alongside the whole selection', async () => {
@@ -673,7 +742,7 @@ describe('PostTargetPicker — TikTok publish options', () => {
     const selects = await screen.findAllByLabelText(/who can view this video/i)
     expect(selects).toHaveLength(2)
     // The second creator reports fewer levels, and gets only those.
-    expect(Array.from(selects[1].querySelectorAll('option'))).toHaveLength(2)
+    expect(Array.from(selects[1].querySelectorAll('option'))).toHaveLength(1)
 
     await userEvent.selectOptions(selects[0], 'SELF_ONLY')
 
@@ -685,7 +754,10 @@ describe('PostTargetPicker — TikTok publish options', () => {
     expect(first.connectionId).toBe('acme')
     expect(first.publishOptions.privacyLevel).toBe('SELF_ONLY')
     expect(second.connectionId).toBe('acme_uk')
-    expect(second.publishOptions.privacyLevel).toBeNull()
+    // The untouched second account still saves with its own default (its only reported level) rather
+    // than a blank privacy level — the picker never sends "nobody chose" once the audience select is
+    // shown pre-selected.
+    expect(second.publishOptions.privacyLevel).toBe('PUBLIC_TO_EVERYONE')
   })
 
   it('hydrates the options already saved on the Post', async () => {
@@ -720,8 +792,11 @@ describe('PostTargetPicker — TikTok publish options', () => {
     renderPicker()
     await loaded()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/branded content/i)
-    expect(screen.getByRole('alert')).toHaveTextContent(/can.t be posted privately/i)
+    // The options panel explains it right at the toggle; the embedded consent disclosure also flags
+    // it as blocking, so both alerts carry the same explanation.
+    const alerts = await screen.findAllByRole('alert')
+    const brandedAlert = alerts.find((a) => /can.t be posted privately/i.test(a.textContent ?? ''))
+    expect(brandedAlert).toHaveTextContent(/branded content/i)
   })
 
   it('reports each TikTok target upward so the consent step can name it', async () => {
@@ -832,5 +907,175 @@ describe('PostTargetPicker — post formats', () => {
     expect(screen.getByText('Reel')).toBeInTheDocument()
     expect(screen.queryByText('Story')).not.toBeInTheDocument()
     expect(screen.queryByText('Feed')).not.toBeInTheDocument()
+  })
+})
+
+// ── outcomes: once a target leaves PENDING, its row shows what happened ────────
+
+describe('PostTargetPicker — outcomes', () => {
+  const retryButton = () => screen.queryByRole('button', { name: /retry failed/i })
+
+  it('shows a clickable permalink and no retry button for a fully published Post', async () => {
+    const ig = option({ platform: 'instagram', connectionId: 'conn-ig', label: '@acme' })
+    const yt = option({ platform: 'youtube', connectionId: 'conn-yt', label: 'Acme Channel' })
+    availableTargets = [ig, yt]
+    selectedTargets = [
+      { ...selection(ig), state: 'PUBLISHED', permalink: 'https://instagram.com/p/abc' },
+      { ...selection(yt), state: 'PUBLISHED', permalink: 'https://youtube.com/watch?v=xyz' },
+    ]
+    renderPicker()
+    await loaded()
+
+    const igLink = await screen.findByRole('link', { name: /instagram\.com\/p\/abc/i })
+    expect(igLink).toHaveAttribute('href', 'https://instagram.com/p/abc')
+    expect(screen.getAllByText('Published')).toHaveLength(2)
+    expect(retryButton()).not.toBeInTheDocument()
+  })
+
+  it('shows the successful permalink, the failed error verbatim, and a retry button on a mixed Post', async () => {
+    const ig = option({ platform: 'instagram', connectionId: 'conn-ig', label: '@acme' })
+    const yt = option({ platform: 'youtube', connectionId: 'conn-yt', label: 'Acme Channel' })
+    availableTargets = [ig, yt]
+    selectedTargets = [
+      { ...selection(ig), state: 'PUBLISHED', permalink: 'https://instagram.com/p/abc' },
+      {
+        ...selection(yt),
+        state: 'FAILED',
+        errorMessage: 'The user has exceeded the number of videos they may upload.',
+      },
+    ]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByRole('link', { name: /instagram\.com\/p\/abc/i })).toBeVisible()
+    expect(
+      screen.getByText('The user has exceeded the number of videos they may upload.')
+    ).toBeVisible()
+    expect(screen.getByText('Failed')).toBeVisible()
+    expect(retryButton()).toBeInTheDocument()
+  })
+
+  it('calls the retry endpoint once and refreshes the row', async () => {
+    const yt = option({ platform: 'youtube', connectionId: 'conn-yt', label: 'Acme Channel' })
+    const failed = { ...selection(yt), state: 'FAILED', errorMessage: 'Quota exceeded' }
+    availableTargets = [yt]
+    selectedTargets = [failed]
+    retryResult = {
+      workItemId: WORK_ITEM,
+      status: 'SCHEDULED',
+      retriedCount: 1,
+      targets: [{ ...failed, state: 'PENDING', errorMessage: null }],
+    }
+    const onChanged = vi.fn()
+    // The retry resets this target's wire state to PENDING — the same value an unscheduled selection
+    // carries — so the item-level status is what says this Post has already been scheduled.
+    renderPicker({ onChanged, status: 'APPROVED' })
+    await loaded()
+
+    await userEvent.click(await screen.findByRole('button', { name: /retry failed/i }))
+
+    await waitFor(() => expect(screen.queryByText('Quota exceeded')).not.toBeInTheDocument())
+    expect(retryCalls).toBe(1)
+    expect(screen.getByText('Waiting')).toBeVisible()
+    expect(retryButton()).not.toBeInTheDocument()
+    expect(onChanged).toHaveBeenCalled()
+  })
+
+  it('shows in-flight state and no retry button when nothing has failed yet', async () => {
+    const ig = option({ platform: 'instagram', connectionId: 'conn-ig', label: '@acme' })
+    const yt = option({ platform: 'youtube', connectionId: 'conn-yt', label: 'Acme Channel' })
+    availableTargets = [ig, yt]
+    selectedTargets = [
+      { ...selection(ig), state: 'PENDING' },
+      { ...selection(yt), state: 'HANDED_OFF' },
+    ]
+    renderPicker()
+    await loaded()
+
+    expect(screen.queryByText('Waiting')).not.toBeInTheDocument()
+    expect(await screen.findByText('Handed off')).toBeVisible()
+    expect(retryButton()).not.toBeInTheDocument()
+  })
+
+  it('renders a REVOKED target distinctly from a failure', async () => {
+    const ig = option({ platform: 'instagram', connectionId: 'conn-ig', label: '@acme' })
+    availableTargets = [ig]
+    selectedTargets = [{ ...selection(ig), state: 'REVOKED' }]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByText('Taken back')).toBeVisible()
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument()
+    expect(retryButton()).not.toBeInTheDocument()
+  })
+
+  it('asks the reader to post a manual destination that has come due, and records the link', async () => {
+    const manual = manualOption('tiktok')
+    availableTargets = [manual]
+    selectedTargets = [{ ...selection(manual), state: 'AWAITING_MANUAL' }]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByText('Post it now')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /Mark published/i }))
+    await userEvent.type(
+      screen.getByLabelText(/Link to the published post/i),
+      'https://tiktok.com/@acme/video/1'
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Record as published/i }))
+
+    await waitFor(() => expect(manualCalls).toHaveLength(1))
+    expect(manualCalls[0].body.permalink).toBe('https://tiktok.com/@acme/video/1')
+    expect(await screen.findByText('Published')).toBeInTheDocument()
+  })
+
+  it('offers no manual controls on a target that is still pending', async () => {
+    const ig = option({ platform: 'instagram', connectionId: 'conn-ig', label: '@acme' })
+    availableTargets = [ig]
+    selectedTargets = [{ ...selection(ig), state: 'PENDING' }]
+    renderPicker()
+    await loaded()
+
+    expect(screen.queryByRole('button', { name: /Mark published/i })).not.toBeInTheDocument()
+  })
+})
+
+// ── the TikTok consent disclosure, embedded directly under the TikTok row ──────
+
+describe('PostTargetPicker — TikTok consent disclosure', () => {
+  it('shows the consent disclosure under the TikTok row once a TikTok account is selected', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok]
+    selectedTargets = [selection(tiktok)]
+    renderPicker({ caption: 'Launch copy' })
+    await loaded()
+
+    expect(await screen.findByText('Confirm your TikTok post')).toBeInTheDocument()
+    expect(screen.getByText(/you are posting to/i)).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /consent/i })).toBeInTheDocument()
+  })
+
+  it('renders no consent disclosure when no TikTok account is selected', async () => {
+    availableTargets = [option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })]
+    renderPicker()
+    await loaded()
+
+    expect(screen.queryByText('Confirm your TikTok post')).not.toBeInTheDocument()
+  })
+
+  it('records consent through the API and reports it upward', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok]
+    // A resolved privacy level — the consent checkbox stays disabled until this account has one.
+    selectedTargets = [{ ...selection(tiktok), publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE' } }]
+    const onTikTokConsentChange = vi.fn()
+    renderPicker({ onTikTokConsentChange })
+    await loaded()
+
+    const checkbox = await screen.findByRole('checkbox', { name: /consent/i })
+    await userEvent.click(checkbox)
+
+    await waitFor(() => expect(consentPutBodies).toEqual([{ consented: true }]))
+    expect(onTikTokConsentChange).toHaveBeenLastCalledWith(true)
   })
 })

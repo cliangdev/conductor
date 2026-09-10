@@ -116,7 +116,9 @@ describe('ComposePostModal', () => {
     await userEvent.click(screen.getByLabelText('@acme'))
     // An unhealthy account is offered disabled rather than hidden.
     expect(screen.getByLabelText('Acme Page')).toBeDisabled()
-    await userEvent.selectOptions(screen.getByLabelText('Time zone'), 'UTC')
+    await userEvent.click(screen.getByLabelText('Time zone'))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'UTC')
+    await userEvent.click(screen.getByRole('option', { name: /UTC/ }))
 
     await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
 
@@ -140,7 +142,9 @@ describe('ComposePostModal', () => {
 
     await userEvent.type(screen.getByLabelText('Caption'), 'Whenever it is ready')
     await userEvent.click(screen.getByLabelText('@acme'))
-    await userEvent.selectOptions(screen.getByLabelText('Time zone'), 'UTC')
+    await userEvent.click(screen.getByLabelText('Time zone'))
+    await userEvent.type(screen.getByLabelText('Search time zones'), 'UTC')
+    await userEvent.click(screen.getByRole('option', { name: /UTC/ }))
     await userEvent.click(screen.getByLabelText(/Publish as soon as it.s approved/))
     // The date is not asked for at all once the answer is "when it is approved".
     expect(screen.queryByLabelText('When')).not.toBeInTheDocument()
