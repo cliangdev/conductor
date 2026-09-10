@@ -166,16 +166,22 @@ const apiDelete = vi.fn(async (url: string, _token: string) => {
   if (userId) REVIEWERS = REVIEWERS.filter((r) => r.userId !== userId)
 })
 
+// Toggled per-test to exercise the "couldn't load" notices for the role and reviews loaders — both
+// otherwise fail silently (a role read defaults to REVIEWER, an unreadable reviews list just stays
+// empty), so a test has to force the underlying fetch to reject to see the notice at all.
+let failMembers = false
+let failReviews = false
+
 vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
     if (url.includes('/documents')) return Promise.resolve(DOCS)
     if (url.includes('/comments')) return Promise.resolve(COMMENTS)
     if (url.includes('/reviewers')) return Promise.resolve(REVIEWERS)
-    if (url.includes('/reviews')) return Promise.resolve(REVIEWS)
+    if (url.includes('/reviews')) return failReviews ? Promise.reject(new Error('reviews down')) : Promise.resolve(REVIEWS)
     if (url.includes('/assets')) return Promise.resolve([])
     if (url.includes('/available-transitions')) return Promise.resolve({ workflow: 'ENGINEERING', transitions: TRANSITIONS })
-    if (url.includes('/members')) return Promise.resolve(MEMBERS)
+    if (url.includes('/members')) return failMembers ? Promise.reject(new Error('members down')) : Promise.resolve(MEMBERS)
     return Promise.resolve([])
   },
   apiPost: (...args: Parameters<typeof apiPost>) => apiPost(...args),
@@ -216,6 +222,40 @@ describe('WorkItemDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetFixtures()
+    failMembers = false
+    failReviews = false
+  })
+
+  it('shows a quiet notice and a Retry when the member/role lookup fails, and clears it on success', async () => {
+    failMembers = true
+    await renderView()
+
+    expect(await screen.findByText('Couldn’t load your role, so some actions are hidden.')).toBeInTheDocument()
+
+    failMembers = false
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() =>
+      expect(screen.queryByText('Couldn’t load your role, so some actions are hidden.')).not.toBeInTheDocument()
+    )
+  })
+
+  it('shows a quiet notice and a Retry when the reviews fail to load, and clears it on success', async () => {
+    failReviews = true
+    await renderView()
+
+    expect(await screen.findByText('Couldn’t load the reviews.')).toBeInTheDocument()
+
+    failReviews = false
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => expect(screen.queryByText('Couldn’t load the reviews.')).not.toBeInTheDocument())
+  })
+
+  it('shows no gate-load notices when both loaders succeed', async () => {
+    await renderView()
+    expect(screen.queryByText('Couldn’t load your role, so some actions are hidden.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Couldn’t load the reviews.')).not.toBeInTheDocument()
   })
 
   it('renders document tabs and switches between them', async () => {

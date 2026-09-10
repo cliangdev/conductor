@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
+import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
@@ -237,6 +238,11 @@ export function WorkItemDetailView({
   const [reviewers, setReviewers] = useState<DetailReviewer[]>([])
   const [reviews, setReviews] = useState<DetailReview[]>([])
   const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
+  // Non-fatal on their own — the page still renders — but a role read that silently fell back to
+  // REVIEWER, or a reviews list that silently stayed empty, would hide actions with no visible reason.
+  // Both get a quiet inline notice at the top of the reading column instead.
+  const [roleLoadError, setRoleLoadError] = useState(false)
+  const [reviewsLoadError, setReviewsLoadError] = useState(false)
   const [allMembers, setAllMembers] = useState<Member[]>([])
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<string>('')
@@ -326,8 +332,11 @@ export function WorkItemDetailView({
         accessToken
       )
       setReviews(data)
+      setReviewsLoadError(false)
     } catch {
-      // Non-fatal
+      // Non-fatal — the page still renders — but say so, since a silently empty reviews list would
+      // otherwise read as "nobody has reviewed this" rather than "this couldn't be read".
+      setReviewsLoadError(true)
     }
   }, [accessToken, projectId, issueId])
 
@@ -362,6 +371,23 @@ export function WorkItemDetailView({
     setPreflightVersion((v) => v + 1)
   }, [accessToken, projectId, issueId, fetchReviews])
 
+  // Also the retry target for the "Couldn't load your role" notice — pulled out of the mount effect so
+  // it can be re-run on its own without re-fetching everything else.
+  const fetchMemberRole = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const members = await apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken)
+      setAllMembers(members)
+      const currentMember = members.find((m) => m.userId === user?.id)
+      if (currentMember) setUserRole(currentMember.role)
+      setRoleLoadError(false)
+    } catch {
+      // Defaults to REVIEWER — the narrowest role — but that fallback hides actions with no visible
+      // reason unless it is said out loud.
+      setRoleLoadError(true)
+    }
+  }, [accessToken, projectId, user?.id])
+
   useEffect(() => {
     if (!accessToken) return
 
@@ -377,19 +403,14 @@ export function WorkItemDetailView({
         setIssue(issueData)
         setReviewers(reviewerData)
 
-        await Promise.all([fetchDocuments(), fetchComments(), fetchReviews(), fetchAssets(), fetchKnownTags()])
-
-        try {
-          const members = await apiGet<Member[]>(
-            `/api/v1/projects/${projectId}/members`,
-            accessToken!
-          )
-          setAllMembers(members)
-          const currentMember = members.find((m) => m.userId === user?.id)
-          if (currentMember) setUserRole(currentMember.role)
-        } catch {
-          // Default to REVIEWER
-        }
+        await Promise.all([
+          fetchDocuments(),
+          fetchComments(),
+          fetchReviews(),
+          fetchAssets(),
+          fetchKnownTags(),
+          fetchMemberRole(),
+        ])
       } catch (err) {
         setError(apiErrorMessage(err, 'Failed to load work item'))
       } finally {
@@ -398,7 +419,7 @@ export function WorkItemDetailView({
     }
 
     fetchAll()
-  }, [accessToken, projectId, issueId, fetchDocuments, fetchComments, fetchReviews, fetchAssets, user?.id])
+  }, [accessToken, projectId, issueId, fetchDocuments, fetchComments, fetchReviews, fetchAssets, fetchMemberRole, user?.id])
 
   useEffect(() => {
     if (documents.length === 0) return
@@ -946,6 +967,29 @@ export function WorkItemDetailView({
             className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
           >
             <div className="max-w-[45rem] mx-auto space-y-6">
+              {/* Quiet, inline notices for the two loaders that gate which actions show: a role read
+                  that silently fell back to REVIEWER, or a reviews list that silently stayed empty,
+                  would otherwise hide actions with no visible reason. */}
+              {roleLoadError && (
+                <Alert variant="warning">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Couldn&rsquo;t load your role, so some actions are hidden.</span>
+                    <Button variant="link" size="sm" className="h-auto p-0" onClick={() => void fetchMemberRole()}>
+                      Retry
+                    </Button>
+                  </div>
+                </Alert>
+              )}
+              {reviewsLoadError && (
+                <Alert variant="warning">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Couldn&rsquo;t load the reviews.</span>
+                    <Button variant="link" size="sm" className="h-auto p-0" onClick={() => void fetchReviews()}>
+                      Retry
+                    </Button>
+                  </div>
+                </Alert>
+              )}
               {/* "What is still in the way?" — the gate's own findings, read from the server. At the top
                   of the column because it is the first thing an author looks for after any edit; the
                   move itself and its one-line summary live in the header (PublishReadinessAction), so

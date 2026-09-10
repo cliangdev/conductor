@@ -15,7 +15,7 @@ import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, P
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { CommentCount } from '@/components/ui/comment-count'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
@@ -446,21 +446,48 @@ export function WorkItemListView({
           onStatusChanged={updateIssueStatus}
         />
       ) : issuesInView.length === 0 ? (
-        <EmptyState
-          icon={view === 'done' ? CheckCircle2 : Inbox}
-          title={
-            view === 'done'
-              ? `No completed ${lowerNoun} yet`
-              : view === 'active'
-                ? `No active ${lowerNoun} — nice work!`
-                : `No ${lowerNoun} yet`
-          }
-          description={
-            view === 'all'
-              ? `${title} are created by agents via MCP — they'll show up here once created.`
-              : undefined
-          }
-        />
+        counts.all === 0 && workflowDeclaresPublishTargets(workflowView) ? (
+          // First run of a publishing Workflow: nothing has ever been posted here, so lead with
+          // connecting an account rather than the generic "created via MCP" line, which assumes an
+          // audience this page's non-technical reader may not be.
+          <EmptyState
+            icon={Inbox}
+            title="No posts yet"
+            description="Connect a Facebook Page, Instagram account or TikTok creator, then write your first post."
+            action={
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/app/projects/${projectId}/integrations`}
+                  className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                >
+                  Connect an account
+                </Link>
+                {canEdit && (
+                  <Button size="sm" onClick={() => setCreating(true)}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                    New {noun}
+                  </Button>
+                )}
+              </div>
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={view === 'done' ? CheckCircle2 : Inbox}
+            title={
+              view === 'done'
+                ? `No completed ${lowerNoun} yet`
+                : view === 'active'
+                  ? `No active ${lowerNoun} — nice work!`
+                  : `No ${lowerNoun} yet`
+            }
+            description={
+              view === 'all'
+                ? `${title} are created by agents via MCP — they'll show up here once created.`
+                : undefined
+            }
+          />
+        )
       ) : listState.groups.length === 0 ? (
         <EmptyState
           icon={SearchX}
