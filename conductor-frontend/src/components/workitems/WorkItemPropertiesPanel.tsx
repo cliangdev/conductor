@@ -4,7 +4,7 @@ import { WorkItemScheduleField } from '@/components/workitems/WorkItemScheduleFi
 import { WorkItemTagsField } from '@/components/workitems/WorkItemTagsField'
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink, Plus, XIcon } from 'lucide-react'
-import { StatusDropdown } from '@/components/issues/StatusDropdown'
+import { StatusDropdown, type ReviewVerdictOption } from '@/components/issues/StatusDropdown'
 import { TaskProgressPanel } from '@/components/issues/TaskProgressPanel'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
 import { EmptyAvatarSlot, UserAvatar } from '@/components/workitems/UserAvatar'
@@ -98,6 +98,7 @@ export function WorkItemPropertiesPanel({
   workflowSlug,
   onStatusChanged,
   statusTriggerRef,
+  reviewVerdict,
   assignee,
   members,
   onAssigneeChanged,
@@ -129,6 +130,8 @@ export function WorkItemPropertiesPanel({
    * page (the page header shows a read-only StatusBadge instead), so the command palette's
    * "Change status" action opens this trigger. */
   statusTriggerRef?: React.Ref<HTMLButtonElement>
+  /** An assigned reviewer's own approve move, offered in the status menu. See StatusDropdown. */
+  reviewVerdict?: ReviewVerdictOption
   assignee?: IssueAssignee | null
   members: Member[]
   onAssigneeChanged: (assignee: IssueAssignee | null) => void
@@ -185,6 +188,7 @@ export function WorkItemPropertiesPanel({
           workflowSlug={workflowSlug}
           onStatusChanged={onStatusChanged}
           triggerRef={statusTriggerRef}
+          reviewVerdict={reviewVerdict}
         />
       </PanelSection>
 

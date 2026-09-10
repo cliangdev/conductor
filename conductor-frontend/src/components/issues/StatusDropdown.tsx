@@ -38,6 +38,21 @@ interface StatusDropdownProps {
   trigger?: 'badge' | 'ring'
   /** Forwarded to the trigger `<button>` so keyboard nav (list "S" shortcut, bulk-bar palette action) can open it programmatically. No-op on the read-only (REVIEWER / no transitions) branch. */
   triggerRef?: React.Ref<HTMLButtonElement>
+  /**
+   * The review-gated move out of the current status, offered to an assigned reviewer as their own
+   * verdict. The server withholds a gated transition from available-transitions until a review
+   * satisfies it, so without this a reviewer opening the menu saw every move but the one that is
+   * theirs to make. Choosing it records an approval; the Workflow then takes the edge itself.
+   */
+  reviewVerdict?: ReviewVerdictOption
+}
+
+export interface ReviewVerdictOption {
+  toStatus: string
+  /** What the menu says, e.g. "Approve". */
+  label: string
+  /** Records the approval (and whatever the Workflow does with it). Rejections surface as a toast. */
+  submit: () => Promise<void>
 }
 
 interface AvailableTransition {
@@ -70,6 +85,7 @@ export function StatusDropdown({
   workflowSlug = DEFAULT_WORKFLOW_SLUG,
   trigger = 'badge',
   triggerRef,
+  reviewVerdict,
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
   const [transitions, setTransitions] = useState<AvailableTransition[]>([])
@@ -104,13 +120,26 @@ export function StatusDropdown({
     }
   }, [projectId, issueId, currentStatus, userRole, token])
 
-  // REVIEWERs (and any state with no available moves) see a read-only indicator.
-  if (userRole === 'REVIEWER' || transitions.length === 0) {
+  // REVIEWERs (and any state with no available moves) see a read-only indicator — unless there is a
+  // verdict of theirs to give, which is the one move a reviewer owns.
+  if ((userRole === 'REVIEWER' || transitions.length === 0) && !reviewVerdict) {
     return trigger === 'ring' ? (
       <StatusRing status={currentStatus} category={category} label={displayLabel} />
     ) : (
       <StatusBadge status={currentStatus} category={category} label={displayLabel} />
     )
+  }
+
+  async function handleVerdict() {
+    if (!reviewVerdict) return
+    setLoading(true)
+    try {
+      await reviewVerdict.submit()
+    } catch (err) {
+      toastError(apiErrorMessage(err, 'Could not record your approval'))
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleSelect(newStatus: string) {
@@ -161,6 +190,21 @@ export function StatusDropdown({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {reviewVerdict && (
+          <DropdownMenuItem
+            key={`verdict-${reviewVerdict.toStatus}`}
+            onClick={() => void handleVerdict()}
+            className="cursor-pointer"
+          >
+            <StatusBadge
+              status={reviewVerdict.toStatus}
+              category={statusMeta(view, reviewVerdict.toStatus).category}
+              label={reviewVerdict.label}
+              className="mr-2"
+            />
+            <span className="text-xs opacity-60">your approval</span>
+          </DropdownMenuItem>
+        )}
         {transitions.map((t) => {
           const meta = statusMeta(view, t.toStatus)
           const blocked = blockedReason(t.toStatus)

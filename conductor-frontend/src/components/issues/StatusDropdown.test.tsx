@@ -151,6 +151,52 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     expect(apiPatch).not.toHaveBeenCalled()
   })
 
+  it('offers an assigned reviewer their Approve beside the other moves, and records it on click', async () => {
+    mockView = MARKETING_VIEW
+    vi.mocked(apiGet).mockResolvedValueOnce({ workflow: 'MARKETING', currentStatus: 'IN_REVIEW', transitions: [{ toStatus: 'CHANGES_REQUESTED', label: 'Request changes' }] })
+    const submit = vi.fn(async () => {})
+    render(
+      <StatusDropdown
+        {...baseProps}
+        currentStatus="IN_REVIEW"
+        userRole="ADMIN"
+        reviewVerdict={{ toStatus: 'SCHEDULED', label: 'Approve', submit }}
+      />
+    )
+    await screen.findByText('Request changes')
+    // Approve is the reviewer's own move: it records a verdict rather than PATCHing a status.
+    fireEvent.click(itemFor('Approve'))
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
+    expect(apiPatch).not.toHaveBeenCalled()
+  })
+
+  it('gives a REVIEWER-role reviewer the menu with their Approve, instead of the read-only badge', async () => {
+    mockView = MARKETING_VIEW
+    const submit = vi.fn(async () => {})
+    render(
+      <StatusDropdown
+        {...baseProps}
+        currentStatus="IN_REVIEW"
+        userRole="REVIEWER"
+        reviewVerdict={{ toStatus: 'SCHEDULED', label: 'Approve', submit }}
+      />
+    )
+    expect(apiGet).not.toHaveBeenCalled()
+    fireEvent.click(itemFor('Approve'))
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
+  })
+
+  it('says why when the approval is refused, and stays put', async () => {
+    mockView = MARKETING_VIEW
+    vi.mocked(apiGet).mockResolvedValueOnce({ workflow: 'MARKETING', currentStatus: 'IN_REVIEW', transitions: [] })
+    const submit = vi.fn(async () => { throw new Error('nope') })
+    render(
+      <StatusDropdown {...baseProps} currentStatus="IN_REVIEW" userRole="ADMIN" reviewVerdict={{ toStatus: 'SCHEDULED', label: 'Approve', submit }} />
+    )
+    fireEvent.click(itemFor('Approve'))
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not record your approval'))
+  })
+
   it('renders a read-only badge for REVIEWER and does not fetch transitions', () => {
     render(<StatusDropdown {...baseProps} userRole="REVIEWER" />)
     expect(screen.getByText('Draft')).toBeInTheDocument()

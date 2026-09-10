@@ -449,9 +449,8 @@ export function WorkItemDetailView({
   // Review is only relevant when the current status has an outgoing review-gated transition. When it
   // doesn't, the review bar and the assign-reviewer affordance are both hidden.
   const reviewActive = issue ? statusHasReviewGate(workflowView, issue.status) : false
-  const reviewOutcomes = issue
-    ? reviewGateForStatus(workflowView, issue.status)?.reviewOutcomes
-    : undefined
+  const reviewGate = issue ? reviewGateForStatus(workflowView, issue.status) : undefined
+  const reviewOutcomes = reviewGate?.reviewOutcomes
 
   const assignedIds = new Set(reviewers.map((r) => r.userId))
   const assignableReviewers = allMembers.filter(
@@ -1008,6 +1007,13 @@ export function WorkItemDetailView({
               token={accessToken!}
               workflowSlug={workflowSlug}
               onStatusChanged={(s) => setIssue((prev) => (prev ? { ...prev, status: s } : prev))}
+              reviewVerdict={
+                // The reviewer's approve, where the doer's moves are. Outside review mode only: in it
+                // the bar at the bottom is the place, with the pending comments and the summary.
+                reviewActive && isAssignedReviewer && !reviewMode && reviewGate && reviewOutcomes?.includes('approve')
+                  ? { toStatus: reviewGate.to, label: 'Approve', submit: () => handleSubmitReview('APPROVED', '') }
+                  : undefined
+              }
               statusTriggerRef={statusTriggerRef}
               assignee={issue.assignee}
               members={allMembers}
