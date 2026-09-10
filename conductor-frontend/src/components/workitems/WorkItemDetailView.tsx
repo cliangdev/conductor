@@ -215,6 +215,9 @@ export function WorkItemDetailView({
   // Bumped on every bundle-affecting change so the readiness card re-asks the server. The card reads a
   // derived answer (the gate's verdict), so it cannot know from props alone when that answer moved.
   const [preflightVersion, setPreflightVersion] = useState(0)
+  // The publish gate's current refusal of the next move, from the readiness card, so the status menu
+  // disables that move with the same reason instead of offering something the server will 422.
+  const [gateBlock, setGateBlock] = useState<Record<string, string>>({})
   // TIK-2. TikTok's Content Sharing Guidelines require the creator to see the content and the
   // account nickname it posts to, and to consent, before anything is uploaded — so consent is held
   // here, beside the media the preview is built from, and published as a gate the status control
@@ -936,6 +939,13 @@ export function WorkItemDetailView({
                     setIssue((prev) => (prev ? { ...prev, status: s } : prev))
                     void refreshIssueStatus()
                   }}
+                  onPreflight={(p) =>
+                    setGateBlock(
+                      !p.ready && p.nextTransition && p.blockers[0]
+                        ? { [p.nextTransition.to]: p.blockers[0].message }
+                        : {}
+                    )
+                  }
                   reviewers={reviewers.map((r) => ({ userId: r.userId, name: r.name, email: r.email }))}
                   eligibleReviewers={assignableReviewers.map((m) => ({ userId: m.userId, name: m.name, email: m.email }))}
                   onAssignReviewer={handleAssignReviewer}
@@ -1010,6 +1020,7 @@ export function WorkItemDetailView({
               token={accessToken!}
               workflowSlug={workflowSlug}
               onStatusChanged={(s) => setIssue((prev) => (prev ? { ...prev, status: s } : prev))}
+              blockedMoves={gateBlock}
               reviewVerdict={
                 // The reviewer's approve, where the doer's moves are. Outside review mode only: in it
                 // the bar at the bottom is the place, with the pending comments and the summary.

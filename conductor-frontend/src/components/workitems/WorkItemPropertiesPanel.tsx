@@ -99,6 +99,7 @@ export function WorkItemPropertiesPanel({
   onStatusChanged,
   statusTriggerRef,
   reviewVerdict,
+  blockedMoves,
   assignee,
   members,
   onAssigneeChanged,
@@ -132,6 +133,8 @@ export function WorkItemPropertiesPanel({
   statusTriggerRef?: React.Ref<HTMLButtonElement>
   /** An assigned reviewer's own approve move, offered in the status menu. See StatusDropdown. */
   reviewVerdict?: ReviewVerdictOption
+  /** Moves the publish gate would refuse right now, with its reason. See StatusDropdown. */
+  blockedMoves?: Record<string, string>
   assignee?: IssueAssignee | null
   members: Member[]
   onAssigneeChanged: (assignee: IssueAssignee | null) => void
@@ -189,6 +192,7 @@ export function WorkItemPropertiesPanel({
           onStatusChanged={onStatusChanged}
           triggerRef={statusTriggerRef}
           reviewVerdict={reviewVerdict}
+          blockedMoves={blockedMoves}
         />
       </PanelSection>
 
