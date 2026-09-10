@@ -173,9 +173,9 @@ export function WorkItemScheduleField({
         onChanged(nextIso, nextTz, nextOnApproval)
         setEditing(false)
       } catch (err) {
-        // Never swallow: the stored schedule is unchanged and the reason is said out loud. Editing a
-        // schedule can also be refused outright — it reverts an approved item's bundle — so the server's
-        // own words matter more here than a house message would.
+        // Never swallow: the stored schedule is unchanged and the reason is said out loud. A schedule
+        // can still be refused — a time too soon for a destination, or a post that has already gone
+        // out — so the server's own words matter more here than a house message would.
         toastError(apiErrorMessage(err, 'Could not update the schedule'))
       } finally {
         setSaving(false)

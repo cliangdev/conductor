@@ -1103,9 +1103,9 @@ export function WorkItemDetailView({
                     ? { ...prev, scheduledFor, scheduleTimezone, ...(publishOnApproval === undefined ? {} : { publishOnApproval }) }
                     : prev
                 )
-                // A schedule edit is a publish-bundle edit, so the server may have reverted the item out
-                // of Approved and revoked anything already handed to a platform. Re-read rather than
-                // assume, exactly as the target picker does.
+                // The schedule is not frozen content: a change keeps the approval, and on a scheduled Post
+                // re-times its destinations in place. Re-read so the readiness card and the outcome rows
+                // show the re-issued hand-offs rather than assuming.
                 void refreshIssueStatus()
               }}
               assignableReviewers={assignableReviewers}
