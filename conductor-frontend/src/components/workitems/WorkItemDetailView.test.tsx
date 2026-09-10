@@ -130,6 +130,9 @@ const apiPost = vi.fn(async (url: string, body: Record<string, unknown>, _token?
   if (url.includes('/reviewers')) {
     REVIEWERS = [...REVIEWERS, { userId: body.userId as string, name: 'Rita Reviewer', email: 'rita@x.com' }]
   } else if (url.includes('/reviews')) {
+    // The server moves the item on a verdict (approval schedules, request-changes sends back); the
+    // page has to notice without a reload.
+    if (ISSUE.status === 'IN_REVIEW') ISSUE = { ...ISSUE, status: 'DONE' }
     REVIEWS = [
       ...REVIEWS,
       {
@@ -448,6 +451,8 @@ describe('WorkItemDetailView', () => {
         expect(screen.queryByTestId('review-bar')).not.toBeInTheDocument()
       })
       expect(toastSuccessSpy).toHaveBeenCalled()
+      // The verdict moved the item; the page re-read it rather than waiting for a reload.
+      expect((await screen.findAllByText('Done')).length).toBeGreaterThan(0)
     })
 
     it('persists the in-progress review draft across a remount', async () => {

@@ -608,7 +608,10 @@ export function WorkItemDetailView({
       setReviewMode(false)
       if (draftKey) removePersisted(draftKey)
       toastSuccess('Review submitted')
-      await Promise.all([fetchReviewers(), fetchReviews()])
+      // The verdict may have moved the item — approval schedules a Post, a request for changes sends
+      // it back — so re-read the item, not just the reviews, or the status chip and its menu stay on
+      // the old status until a reload. refreshIssueStatus re-reads the reviews too.
+      await Promise.all([fetchReviewers(), refreshIssueStatus()])
     } catch (err) {
       toastError(apiErrorMessage(err, 'Failed to submit review'))
     } finally {
