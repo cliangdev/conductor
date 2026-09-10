@@ -45,6 +45,8 @@ export interface Issue {
   workflow?: string
   scheduledFor?: string | null
   scheduleTimezone?: string | null
+  /** Publish as soon as approved: no date is needed, entering the scheduled status stamps one. */
+  publishOnApproval?: boolean
   /** Oldest first. Empty until something is recorded. */
   externalLinks?: WorkItemExternalLink[]
   /** Freeform labels, stored lower-cased. Empty until something is tagged. */

@@ -108,6 +108,7 @@ const TOOLS = [
         description: { type: 'string', description: 'New description (optional)' },
         scheduledFor: { type: 'string', description: 'ISO-8601 date-time this Work Item is due to fire (optional). On a Post this is when its publish targets go out.' },
         scheduleTimezone: { type: 'string', description: 'IANA zone id the schedule is authored in, e.g. Europe/Berlin (optional). Empty string clears it; an unknown zone is rejected.' },
+        publishOnApproval: { type: 'boolean', description: 'Publish as soon as approved (optional). true means no scheduledFor is needed: entering the scheduled status stamps the earliest time every destination accepts. false returns to an explicit scheduledFor.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
       },
       required: ['issueId'],
@@ -947,7 +948,8 @@ const TOOLS = [
           },
           description: 'Where it goes. At least one.',
         },
-        scheduledFor: { type: 'string', description: 'ISO-8601 fire time (optional — defaults to the next quarter-hour the chosen destinations accept)' },
+        scheduledFor: { type: 'string', description: 'ISO-8601 fire time (optional — defaults to the next quarter-hour the chosen destinations accept; ignored when publishOnApproval is true)' },
+        publishOnApproval: { type: 'boolean', description: 'Publish as soon as approved (optional, default false). No fire time is chosen here: entering the scheduled status stamps the earliest time every destination accepts.' },
         timezone: { type: 'string', description: 'IANA zone the schedule is authored in (optional — defaults to this machine\'s)' },
         submit: { type: 'boolean', description: 'Submit for review once ready (default true). false leaves it in Draft.' },
         reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the REVIEWER or ADMIN role)' },
@@ -958,7 +960,7 @@ const TOOLS = [
   },
   {
     name: 'get_post_status',
-    description: 'Where a Post stands, live from the server: status, schedule, every destination with state, permalink, errorMessage and format (shown only when not feed), the gate\'s blockers and warnings, review state, whether the TikTok consent a human records in the UI stands, and nextStep. The read-back after create_post, submit_post, an approval, a scheduled publish or a retry.',
+    description: 'Where a Post stands, live from the server: status, schedule (publishOnApproval: true when approval will stamp the time), every destination with state, permalink, errorMessage and format (shown only when not feed), the gate\'s blockers and warnings, review state, whether the TikTok consent a human records in the UI stands, and nextStep. The read-back after create_post, submit_post, an approval, a scheduled publish or a retry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1404,6 +1406,7 @@ export async function runMcpServer(): Promise<void> {
               description: params['description'] as string | undefined,
               scheduledFor: params['scheduledFor'] as string | undefined,
               scheduleTimezone: params['scheduleTimezone'] as string | undefined,
+              publishOnApproval: params['publishOnApproval'] as boolean | undefined,
               tags: params['tags'] as string[] | undefined,
             },
             config

@@ -78,6 +78,18 @@ class PostScheduleValidatorTest {
                 .hasMessageContaining("scheduledFor");
     }
 
+    /** "Publish as soon as approved": no fire time is authored, so none is demanded at the gate. */
+    @Test
+    void publishOnApprovalNeedsNoFireTimeAtTheGate() {
+        WorkItem post = postInReview();
+        post.setScheduledFor(null);
+        post.setPublishOnApproval(true);
+        givenTargets(1);
+        givenUploadedMedia();
+
+        org.assertj.core.api.Assertions.assertThatCode(() -> approve(post)).doesNotThrowAnyException();
+    }
+
     @Test
     void blocksApprovalWhenScheduleTimezoneIsMissing() {
         WorkItem post = postInReview();

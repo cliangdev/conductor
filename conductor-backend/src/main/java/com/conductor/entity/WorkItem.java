@@ -124,6 +124,14 @@ public class WorkItem {
     private String scheduleTimezone;
 
     /**
+     * Publish as soon as approved: no fire time is required before the scheduled status, and entering it
+     * stamps {@link #scheduledFor} with the earliest moment every destination accepts. Leaving it clears
+     * the stamp again, so the next approval re-derives it.
+     */
+    @Column(name = "publish_on_approval", nullable = false)
+    private boolean publishOnApproval = false;
+
+    /**
      * Freeform labels, for grouping work across type, status and Workflow.
      *
      * <p>An {@code @ElementCollection} rather than an entity: a tag has no identity beyond its own text,
@@ -217,6 +225,9 @@ public class WorkItem {
 
     public OffsetDateTime getScheduledFor() { return scheduledFor; }
     public void setScheduledFor(OffsetDateTime scheduledFor) { this.scheduledFor = scheduledFor; }
+
+    public boolean isPublishOnApproval() { return publishOnApproval; }
+    public void setPublishOnApproval(boolean publishOnApproval) { this.publishOnApproval = publishOnApproval; }
 
     public String getScheduleTimezone() { return scheduleTimezone; }
     public void setScheduleTimezone(String scheduleTimezone) { this.scheduleTimezone = scheduleTimezone; }

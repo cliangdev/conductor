@@ -655,6 +655,29 @@ class PublishTargetServiceTest {
     private static ArgumentCaptor<List<PostPublishTarget>> captor() {
         return ArgumentCaptor.forClass(List.class);
     }
+    // --- earliestFireTime: what a publish-on-approval Post is stamped with ---
+
+    @Test
+    void earliestFireTimeTakesTheLongestNoticeAmongTheDestinations_roundedUpToTheMinute() {
+        WorkItem post = new WorkItem();
+        post.setId("wi-asap");
+        PostPublishTarget instagram = new PostPublishTarget();
+        instagram.setPlatform("instagram");
+        instagram.setLane(PublishLane.APP_MANAGED);
+        PostPublishTarget facebook = new PostPublishTarget();
+        facebook.setPlatform("facebook");
+        facebook.setLane(PublishLane.NATIVE);
+        when(targetRepository.findAllByWorkItemId("wi-asap")).thenReturn(List.of(instagram, facebook));
+
+        OffsetDateTime before = OffsetDateTime.now();
+        OffsetDateTime fire = service.earliestFireTime(post);
+
+        // Facebook's native hand-off wants ten minutes; Instagram's one minute does not shorten that.
+        assertThat(fire).isAfterOrEqualTo(before.plusMinutes(10).truncatedTo(java.time.temporal.ChronoUnit.MINUTES));
+        assertThat(fire).isBefore(before.plusMinutes(12));
+        assertThat(fire.getSecond()).isZero();
+    }
+
     // --- detachFromConnection: disconnecting an account must not strand a scheduled Post ---
 
     private PostPublishTarget onConnection(String connectionId, PostPublishTargetState state, int sequence) {

@@ -134,6 +134,8 @@ async function updateWorkItemImpl(
     description?: string
     scheduledFor?: string
     scheduleTimezone?: string
+    /** Publish as soon as approved: no date is needed, entering the scheduled status stamps one. */
+    publishOnApproval?: boolean
     tags?: string[]
   },
   config: Config,
@@ -146,6 +148,7 @@ async function updateWorkItemImpl(
   // editing a title can never silently unschedule a Post.
   if (params.scheduledFor !== undefined) body['scheduledFor'] = params.scheduledFor
   if (params.scheduleTimezone !== undefined) body['scheduleTimezone'] = params.scheduleTimezone
+  if (params.publishOnApproval !== undefined) body['publishOnApproval'] = params.publishOnApproval
   // Sent whole: the stored set becomes exactly this list. Omitted leaves existing tags alone, an empty
   // array clears them — same rule as every other field here, so editing a title never drops a tag.
   if (params.tags !== undefined) body['tags'] = params.tags
@@ -294,6 +297,8 @@ export async function updateWorkItem(
     description?: string
     scheduledFor?: string
     scheduleTimezone?: string
+    /** Publish as soon as approved: no date is needed, entering the scheduled status stamps one. */
+    publishOnApproval?: boolean
     tags?: string[]
   },
   config: Config

@@ -364,6 +364,27 @@ class PublishBundleGuardTest {
     }
 
     @Test
+    void revertsWhenThePublishOnApprovalFlagFlips() {
+        // The reviewer approved "as soon as approved", not a time; flipping that is a schedule edit.
+        WorkItem post = marketingPost("APPROVED");
+
+        Optional<PublishBundleGuard.Revert> revert =
+                guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, null, null, true);
+
+        assertThat(revert).isPresent();
+        assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
+    }
+
+    @Test
+    void doesNotRevertWhenThePublishOnApprovalFlagIsResent() {
+        WorkItem post = marketingPost("APPROVED");
+        post.setPublishOnApproval(true);
+
+        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, null, null, true)).isEmpty();
+        assertThat(post.getCurrentStatus()).isEqualTo("APPROVED");
+    }
+
+    @Test
     void revertsWhenABlankTimezoneClearsAZoneThatWasSet() {
         WorkItem post = marketingPost("APPROVED");
 

@@ -228,7 +228,11 @@ public class PostScheduleValidator {
     private void appendScheduleProblems(WorkItem workItem, List<PostPublishTarget> targets,
                                         List<PublishFinding> findings) {
         OffsetDateTime fireTime = workItem.getScheduledFor();
-        if (fireTime == null) {
+        // Publish-on-approval carries no fire time until the scheduled status stamps one, and that stamp is
+        // the earliest every destination accepts by construction — nothing here can find it wanting.
+        if (workItem.isPublishOnApproval()) {
+            fireTime = null;
+        } else if (fireTime == null) {
             findings.add(PublishFinding.blocker(NO_FIRE_TIME,
                     "no fire time is set — set a scheduled publish time (scheduledFor)"));
         }

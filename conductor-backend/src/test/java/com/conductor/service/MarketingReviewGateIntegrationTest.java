@@ -243,6 +243,27 @@ class MarketingReviewGateIntegrationTest {
         assertThat(workflowRunRepository.findByWorkflowIdOrderByStartedAtDesc(onPublished.getId())).isEmpty();
     }
 
+    /** "Publish as soon as approved": no date on the Post, and one approval schedules it for the earliest slot. */
+    @Test
+    void publishOnApprovalPostIsScheduledByTheApprovalItself_atTheEarliestTimeItsDestinationsAccept() {
+        WorkItem draft = reload();
+        draft.setPublishOnApproval(true);
+        draft.setScheduledFor(null);
+        workItemRepository.saveAndFlush(draft);
+        moveTo("IN_REVIEW");
+        assignReviewer(reviewer);
+        java.time.OffsetDateTime before = java.time.OffsetDateTime.now();
+
+        reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewer);
+
+        WorkItem scheduled = reload();
+        assertThat(scheduled.getCurrentStatus()).isEqualTo("SCHEDULED");
+        assertThat(scheduled.getScheduledFor()).isNotNull();
+        assertThat(scheduled.getScheduledFor()).isAfterOrEqualTo(before.plusMinutes(10).truncatedTo(java.time.temporal.ChronoUnit.MINUTES));
+        assertThat(postPublishTargetRepository.findAllByWorkItemId(post.getId()))
+                .allSatisfy(t -> assertThat(t.getFireTime()).isEqualTo(scheduled.getScheduledFor()));
+    }
+
     // [auto] One approval schedules the Post; a refused hop leaves the approval standing and says why
 
     @Test

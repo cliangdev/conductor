@@ -82,8 +82,13 @@ public class PublishBundleHasher {
     public String hash(WorkItem workItem) {
         Map<String, Object> bundle = new TreeMap<>();
         bundle.put("caption", workItem.getDescription());
-        bundle.put("fireTime", workItem.getScheduledFor() == null
+        // A publish-on-approval fire time is derived at scheduling, not authored, so it is not what the
+        // reviewer approved; the flag itself is.
+        bundle.put("fireTime", workItem.getScheduledFor() == null || workItem.isPublishOnApproval()
                 ? null : workItem.getScheduledFor().toInstant().toString());
+        if (workItem.isPublishOnApproval()) {
+            bundle.put("publishOnApproval", true);
+        }
         bundle.put("fireTimezone", workItem.getScheduleTimezone());
         bundle.put("targets", targets(workItem.getId()));
         bundle.put("assets", assets(workItem.getId()));

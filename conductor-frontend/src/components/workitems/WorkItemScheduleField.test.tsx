@@ -126,7 +126,7 @@ describe('WorkItemScheduleField', () => {
       scheduledFor: '2026-07-04T13:00:00.000Z',
       scheduleTimezone: 'America/New_York',
     })
-    expect(onChanged).toHaveBeenCalledWith('2026-07-04T13:00:00.000Z', 'America/New_York')
+    expect(onChanged).toHaveBeenCalledWith('2026-07-04T13:00:00.000Z', 'America/New_York', false)
   })
 
   it('shows an existing schedule in its own zone and offers to change it', () => {
@@ -163,6 +163,60 @@ describe('WorkItemScheduleField', () => {
     await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled())
     expect(toastErrorSpy.mock.calls[0][0]).toContain('10 minutes')
     expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it('says an item with no date but the approval flag goes out as soon as approved', () => {
+    renderField({ publishOnApproval: true })
+    expect(screen.getByText('As soon as approved')).toBeInTheDocument()
+    expect(screen.queryByText('Not scheduled')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Change' })).toBeInTheDocument()
+  })
+
+  it('shows the stamped date once there is one, even with the flag on', () => {
+    renderField({ publishOnApproval: true, scheduledFor: '2026-07-04T13:00:00.000Z', scheduleTimezone: 'UTC' })
+    expect(screen.getByText(/2026/)).toBeInTheDocument()
+    expect(screen.queryByText('As soon as approved')).not.toBeInTheDocument()
+  })
+
+  it('turns the flag on without a date, and keeps the zone', async () => {
+    const { onChanged } = renderField()
+    await userEvent.click(screen.getByRole('button', { name: 'Set' }))
+    await userEvent.click(screen.getByLabelText('As soon as approved'))
+    // No date is asked for once the answer is "when it is approved".
+    expect(screen.queryByLabelText('Scheduled date and time')).not.toBeInTheDocument()
+    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(patchBodies).toHaveLength(1))
+    expect(patchBodies[0]).toEqual({ publishOnApproval: true, scheduleTimezone: 'America/New_York' })
+    expect(onChanged).toHaveBeenCalledWith(null, 'America/New_York', true)
+  })
+
+  it('turns the flag off when a date is chosen instead', async () => {
+    // With the flag on, an explicit date would be ignored in favour of the stamped one; choosing a date
+    // therefore means "not on approval any more", and the server is told so in the same request.
+    renderField({ publishOnApproval: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Change' }))
+    await userEvent.click(screen.getByLabelText('As soon as approved'))
+    await pickJuly4th2026At9()
+    await userEvent.selectOptions(screen.getByLabelText(/Schedule timezone/i), 'America/New_York')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(patchBodies).toHaveLength(1))
+    expect(patchBodies[0]).toEqual({
+      scheduledFor: '2026-07-04T13:00:00.000Z',
+      scheduleTimezone: 'America/New_York',
+      publishOnApproval: false,
+    })
+  })
+
+  it('clearing an on-approval item turns the flag off too', async () => {
+    renderField({ publishOnApproval: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Change' }))
+    await userEvent.click(screen.getByRole('button', { name: /Clear/i }))
+
+    await waitFor(() => expect(patchBodies).toHaveLength(1))
+    expect(patchBodies[0]).toEqual({ scheduledFor: null, scheduleTimezone: null, publishOnApproval: false })
   })
 
   it('offers no edit control to someone who cannot edit', () => {

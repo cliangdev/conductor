@@ -294,6 +294,30 @@ public class PublishTargetService {
         targetRepository.flush();
     }
 
+    /**
+     * The earliest moment every one of {@code workItem}'s destinations accepts, from now: the largest minimum
+     * notice over the selection (Facebook's ten minutes for a native hand-off, a minute for an app-managed
+     * platform), rounded up to the next whole minute so the calendar shows a clean time. What a
+     * publish-on-approval Post is stamped with when it enters its scheduled status.
+     */
+    @Transactional(readOnly = true)
+    public OffsetDateTime earliestFireTime(WorkItem workItem) {
+        java.time.Duration lead = PostScheduleValidator.MINIMUM_LEAD_TIME;
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItem.getId());
+        if (!targets.isEmpty()) {
+            lead = java.time.Duration.ZERO;
+            for (PostPublishTarget target : targets) {
+                java.time.Duration platformLead = platformRegistry.find(target.getPlatform())
+                        .map(platform -> platform.minLead(target.getLane()))
+                        .orElse(PostScheduleValidator.MINIMUM_LEAD_TIME);
+                if (platformLead.compareTo(lead) > 0) {
+                    lead = platformLead;
+                }
+            }
+        }
+        return OffsetDateTime.now().plus(lead).plusSeconds(59).truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
+    }
+
     /** States in which a destination still expects its connection to do something. */
     private static final Set<PostPublishTargetState> STILL_TO_PUBLISH = Set.of(
             PostPublishTargetState.PENDING, PostPublishTargetState.HANDED_OFF,

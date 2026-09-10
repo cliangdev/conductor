@@ -53,6 +53,8 @@ export interface CreatePostParams {
   media?: MediaInput[]
   targets: TargetInput[]
   scheduledFor?: string
+  /** Publish as soon as approved: no fire time is chosen here, the scheduled status stamps one. */
+  publishOnApproval?: boolean
   timezone?: string
   submit?: boolean
   reviewers?: string[]
@@ -94,6 +96,7 @@ interface WorkItemRow {
   workflow?: string
   scheduledFor?: string | null
   scheduleTimezone?: string | null
+  publishOnApproval?: boolean
   description?: string | null
 }
 
@@ -379,12 +382,19 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
   // Schedule: the server knows what the chosen destinations can accept; nothing here guesses a lead time.
   let preflight = await getPreflight(config, postId)
   const timezone = params.timezone ?? localTimezone()
-  let scheduledFor = params.scheduledFor
-  if (!scheduledFor) {
-    const earliest = preflight.earliestFireTime ? new Date(preflight.earliestFireTime) : new Date(Date.now() + 15 * 60_000)
-    scheduledFor = nextQuarterHour(earliest).toISOString()
+  let scheduled: Record<string, unknown>
+  if (params.publishOnApproval) {
+    // No fire time at all: approval puts it on the earliest slot every destination accepts, worked out by
+    // the server when the Post enters its scheduled status.
+    scheduled = await updateWorkItem({ issueId: postId, publishOnApproval: true, scheduleTimezone: timezone }, config)
+  } else {
+    let scheduledFor = params.scheduledFor
+    if (!scheduledFor) {
+      const earliest = preflight.earliestFireTime ? new Date(preflight.earliestFireTime) : new Date(Date.now() + 15 * 60_000)
+      scheduledFor = nextQuarterHour(earliest).toISOString()
+    }
+    scheduled = await updateWorkItem({ issueId: postId, scheduledFor, scheduleTimezone: timezone }, config)
   }
-  const scheduled = await updateWorkItem({ issueId: postId, scheduledFor, scheduleTimezone: timezone }, config)
   if (scheduled['error']) return { ...scheduled, postId }
 
   preflight = await getPreflight(config, postId)
@@ -434,6 +444,7 @@ async function confirmation(
     status: item.status,
     scheduledFor: item.scheduledFor,
     timezone: item.scheduleTimezone,
+    ...(item.publishOnApproval ? { publishOnApproval: true } : {}),
     targets: (selected ?? []).map((t) => ({
       targetId: t.id,
       platform: t.platform,

@@ -73,6 +73,23 @@ class PublishBundleHasherTest {
 
     // [auto] A bundle change produces a different hash
 
+    /** A publish-on-approval fire time is derived at scheduling, so stamping it must not void the approval. */
+    @Test
+    void aDerivedFireTimeIsNotPartOfAPublishOnApprovalBundle_butTheFlagIs() {
+        WorkItem post = post("Launch teaser");
+        givenTargets(target("meta", "conn-a", "hello"));
+        givenAssets(uploaded("asset-1", "posts/a.mp4"));
+        post.setPublishOnApproval(true);
+        post.setScheduledFor(null);
+        String unstamped = hasher.hash(post);
+
+        post.setScheduledFor(java.time.OffsetDateTime.parse("2026-09-10T10:00:00Z"));
+        assertThat(hasher.hash(post)).isEqualTo(unstamped);
+
+        post.setPublishOnApproval(false);
+        assertThat(hasher.hash(post)).isNotEqualTo(unstamped);
+    }
+
     @Test
     void changingTheCaptionChangesTheHash() {
         givenTargets(target("meta", "conn-a", null));

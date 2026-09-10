@@ -115,7 +115,7 @@ public class WorkItemController implements WorkItemsApi {
         WorkItem item = workItemService.patchWorkItem(
                 projectId, workItemId, request.getTitle(), request.getDescription(),
                 request.getStatus(), request.getAssigneeId(), request.getScheduledFor(),
-                request.getScheduleTimezone(), request.getTags(), caller);
+                request.getScheduleTimezone(), request.getTags(), request.getPublishOnApproval(), caller);
         // Resolved here too: a client that refreshes its row from a patch response would otherwise see an
         // item's links vanish on an unrelated edit.
         return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
@@ -179,6 +179,7 @@ public class WorkItemController implements WorkItemsApi {
                 .createdByLabel(item.getCreatedByLabel())
                 .scheduledFor(item.getScheduledFor())
                 .scheduleTimezone(item.getScheduleTimezone())
+                .publishOnApproval(item.isPublishOnApproval())
                 .tags(List.copyOf(item.getTags()))
                 .externalLinks(externalLinks.stream()
                         .map(asset -> new WorkItemExternalLink(asset.getRef(), asset.getType())

@@ -205,6 +205,16 @@ public class WorkItemService {
     public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
                                   String status, String assigneeId, OffsetDateTime scheduledFor,
                                   String scheduleTimezone, Collection<String> tags, User caller) {
+        return patchWorkItem(projectId, workItemId, title, description, status, assigneeId, scheduledFor,
+                scheduleTimezone, tags, null, caller);
+    }
+
+    /** {@code publishOnApproval}: null leaves it unchanged; see {@link WorkItem#isPublishOnApproval()}. */
+    @Transactional
+    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
+                                  String status, String assigneeId, OffsetDateTime scheduledFor,
+                                  String scheduleTimezone, Collection<String> tags, Boolean publishOnApproval,
+                                  User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
@@ -219,16 +229,19 @@ public class WorkItemService {
         // schedule or swap the media out from under a reviewer would be handing them an approval for
         // something else — so the reviewer decides when the pen comes back, by sending it back.
         publishBundleGuard.refuseEditWhileFrozen(projectId, workItem, description, scheduledFor,
-                validatedTimezone, tags);
+                validatedTimezone, tags, publishOnApproval);
 
         Optional<PublishBundleGuard.Revert> bundleRevert = publishBundleGuard.revertForCaptionOrScheduleEdit(
-                projectId, workItem, description, scheduledFor, validatedTimezone);
+                projectId, workItem, description, scheduledFor, validatedTimezone, publishOnApproval);
 
         if (scheduledFor != null) {
             workItem.setScheduledFor(scheduledFor);
         }
         if (scheduleTimezone != null) {
             workItem.setScheduleTimezone(validatedTimezone);
+        }
+        if (publishOnApproval != null) {
+            workItem.setPublishOnApproval(publishOnApproval);
         }
 
         // Sent whole: the stored set becomes exactly what was sent, so omitting the field leaves tags
@@ -271,6 +284,7 @@ public class WorkItemService {
             // commits and we never strand a live scheduled post.
             if (scheduledStatus.equals(previousStatus) && !scheduledStatus.equals(status)) {
                 nativeHandoffService.unschedule(workItem);
+                clearDerivedFireTime(workItem);
             }
             workItem.setCurrentStatus(status);
             statusChanged = true;
@@ -560,6 +574,14 @@ public class WorkItemService {
         String scheduledStatus = scheduledStatusFor(projectId, workItem);
         if (scheduledStatus.equals(fromStatus) && !scheduledStatus.equals(workItem.getCurrentStatus())) {
             nativeHandoffService.unschedule(workItem);
+            clearDerivedFireTime(workItem);
+        }
+    }
+
+    /** A publish-on-approval fire time was derived at scheduling; leaving that status forgets it. */
+    private static void clearDerivedFireTime(WorkItem workItem) {
+        if (workItem.isPublishOnApproval()) {
+            workItem.setScheduledFor(null);
         }
     }
 
@@ -605,6 +627,12 @@ public class WorkItemService {
     public void applyScheduledEntry(String projectId, WorkItem workItem) {
         if (!scheduledStatusFor(projectId, workItem).equals(workItem.getCurrentStatus())) {
             return;
+        }
+        // Publish-on-approval: this moment is the schedule. The earliest every destination accepts, so the
+        // re-stamp and hand-off below carry a time no platform will refuse.
+        if (workItem.isPublishOnApproval()) {
+            workItem.setScheduledFor(publishTargetService.earliestFireTime(workItem));
+            workItemRepository.save(workItem);
         }
         // A destination revoked on the way out of the scheduled status comes back first, so the re-stamp
         // and the hand-off below see it as the fresh PENDING row it now is.

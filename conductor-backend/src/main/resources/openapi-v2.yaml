@@ -2424,6 +2424,11 @@ components:
           description: >-
             IANA zone id the schedule was authored in (e.g. America/New_York), retained alongside the
             absolute instant so a local-wall-clock reading survives DST. Null when unscheduled.
+        publishOnApproval:
+          type: boolean
+          description: >-
+            Publish as soon as approved. The Post needs no fire time before its scheduled status; entering
+            it stamps scheduledFor with the earliest time every destination accepts.
         tags:
           type: array
           description: >-
@@ -2544,6 +2549,11 @@ components:
           description: >-
             IANA zone id the schedule is authored in (e.g. America/New_York). Omit to leave unchanged, or
             send an empty string to clear it. An unrecognized zone is rejected with a 400.
+        publishOnApproval:
+          type: boolean
+          nullable: true
+          description: >-
+            Publish as soon as approved (see WorkItemResponse.publishOnApproval). Omit to leave unchanged.
         tags:
           type: array
           description: >-
