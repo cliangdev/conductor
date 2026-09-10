@@ -44,6 +44,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -144,19 +145,70 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
-    void movingTheFireTimeOfAnApprovedPostRevertsIt() {
+    void movingTheFireTimeOfAnApprovedPostKeepsItApprovedAndItsApprovalCurrent() {
         approvedPost();
 
-        tx.executeWithoutResult(status -> {
-            WorkItem editing = reload(post);
-            OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3);
-            guard.revertForCaptionOrScheduleEdit(project.getId(), editing, null, moved, null);
-            editing.setScheduledFor(moved);
-            workItemRepository.save(editing);
-        });
+        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3);
+        workItemService.patchWorkItem(project.getId(), post.getId(), null, null, null, null,
+                moved, "America/New_York", admin);
 
-        assertThat(reload(post).getCurrentStatus()).isEqualTo("IN_REVIEW");
-        assertThat(availableTransitions(post)).doesNotContain("APPROVED");
+        WorkItem reloaded = reload(post);
+        assertThat(reloaded.getCurrentStatus()).isEqualTo("APPROVED");
+        assertThat(reloaded.getScheduledFor()).isEqualTo(moved);
+        assertThat(reloaded.getCurrentReviewRound()).isZero();
+        // Still approved: the standing approval was never voided, so the gate to Scheduled is still open.
+        assertThat(availableTransitions(post)).contains("SCHEDULED");
+        assertThat(reviewRepository.findByWorkItemIdAndReviewerId(post.getId(), reviewer.getId())
+                .orElseThrow().getReviewRound()).isEqualTo(reloaded.getCurrentReviewRound());
+    }
+
+    @Test
+    void retimingAScheduledPostRevokesItsFacebookHandoffAndRevivesTheTargetForTheNewTime() {
+        approvedPost();
+        PostPublishTarget handedOff = handOffTheFacebookTarget();
+        moveTo("SCHEDULED");
+        org.mockito.Mockito.clearInvocations(actionInvocationService);
+
+        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(5);
+        workItemService.patchWorkItem(project.getId(), post.getId(), null, null, null, null,
+                moved, "America/New_York", admin);
+
+        // The old platform post is taken back under its old fire time.
+        verify(actionInvocationService).invoke(any(), eq("delete_facebook_post"), any(), anyString(), any());
+
+        WorkItem reloaded = reload(post);
+        assertThat(reloaded.getCurrentStatus()).isEqualTo("SCHEDULED");
+        assertThat(reloaded.getScheduledFor()).isEqualTo(moved);
+
+        // Revived to PENDING under the new fire time, with a fresh idempotency key: this is a genuinely
+        // new hand-off waiting to go out, not a reuse of the revoked one's. (The publishing pollers and
+        // the Cloud Tasks scheduler are off in this profile — see docs/publishing.md "Firing on time" —
+        // so the actual re-delivery to Facebook happens once they run, not synchronously in this test.)
+        PostPublishTarget revived = reloadTarget(handedOff);
+        assertThat(revived.getState()).isEqualTo(PostPublishTargetState.PENDING);
+        assertThat(revived.getFireTime()).isEqualTo(moved);
+        assertThat(revived.getPlatformPostId()).isNull();
+        assertThat(revived.getIdempotencyKey()).isNotEqualTo(handedOff.getIdempotencyKey());
+    }
+
+    @Test
+    void reschedulingAScheduledPostToAnInvalidTimeIsRefusedAndRevokesNothing() {
+        approvedPost();
+        PostPublishTarget handedOff = handOffTheFacebookTarget();
+        moveTo("SCHEDULED");
+        org.mockito.Mockito.clearInvocations(actionInvocationService);
+
+        OffsetDateTime tooSoon = OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(1);
+
+        assertThatThrownBy(() -> workItemService.patchWorkItem(project.getId(), post.getId(), null, null,
+                null, null, tooSoon, "America/New_York", admin))
+                .isInstanceOf(com.conductor.exception.UnprocessableEntityException.class);
+
+        verifyNoInteractions(actionInvocationService);
+        WorkItem unchanged = reload(post);
+        assertThat(unchanged.getCurrentStatus()).isEqualTo("SCHEDULED");
+        assertThat(unchanged.getScheduledFor()).isNotEqualTo(tooSoon);
+        assertThat(reloadTarget(handedOff).getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
     }
 
     @Test
@@ -346,8 +398,7 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
 
         tx.executeWithoutResult(status -> {
             WorkItem editing = reload(issue);
-            assertThat(guard.revertForCaptionOrScheduleEdit(project.getId(), editing, "Reworded spec body",
-                    null, null)).isEmpty();
+            assertThat(guard.revertForCaptionEdit(project.getId(), editing, "Reworded spec body")).isEmpty();
             editing.setDescription("Reworded spec body");
             workItemRepository.save(editing);
         });
@@ -365,8 +416,7 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
 
         tx.executeWithoutResult(status -> {
             WorkItem editing = reload(post);
-            assertThat(guard.revertForCaptionOrScheduleEdit(project.getId(), editing,
-                    editing.getDescription(), editing.getScheduledFor(), editing.getScheduleTimezone()))
+            assertThat(guard.revertForCaptionEdit(project.getId(), editing, editing.getDescription()))
                     .isEmpty();
         });
 
@@ -380,8 +430,7 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
 
         tx.executeWithoutResult(status -> {
             WorkItem editing = reload(post);
-            assertThat(guard.revertForCaptionOrScheduleEdit(project.getId(), editing, null, null, null))
-                    .isEmpty();
+            assertThat(guard.revertForCaptionEdit(project.getId(), editing, null)).isEmpty();
             editing.setTitle("A snappier headline");
             workItemRepository.save(editing);
         });
@@ -398,7 +447,7 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
     private void editCaption(String caption) {
         tx.executeWithoutResult(status -> {
             WorkItem editing = reload(post);
-            guard.revertForCaptionOrScheduleEdit(project.getId(), editing, caption, null, null);
+            guard.revertForCaptionEdit(project.getId(), editing, caption);
             editing.setDescription(caption);
             workItemRepository.save(editing);
         });

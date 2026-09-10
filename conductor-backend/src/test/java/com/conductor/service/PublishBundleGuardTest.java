@@ -14,7 +14,6 @@ import org.mockito.Mockito;
 
 import java.io.InputStream;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -126,8 +125,7 @@ class PublishBundleGuardTest {
     void refusesACaptionEditOnAPublishedPostThroughThePatchEntryPointToo() {
         WorkItem post = marketingPost("PUBLISHED");
 
-        assertThatThrownBy(() -> guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post,
-                "Rewritten after the fact", null, null))
+        assertThatThrownBy(() -> guard.revertForCaptionEdit(PROJECT_ID, post, "Rewritten after the fact"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("immutable");
 
@@ -138,8 +136,7 @@ class PublishBundleGuardTest {
     void aPatchThatChangesNoBundleFieldOnAPublishedPostIsStillANoOpRatherThanARefusal() {
         WorkItem post = marketingPost("PUBLISHED");
 
-        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, post.getDescription(), FIRE_TIME,
-                "America/New_York")).isEmpty();
+        assertThat(guard.revertForCaptionEdit(PROJECT_ID, post, post.getDescription())).isEmpty();
         assertThat(post.getCurrentStatus()).isEqualTo("PUBLISHED");
     }
 
@@ -181,7 +178,7 @@ class PublishBundleGuardTest {
         WorkItem post = marketingPost("FAILED");
 
         Optional<PublishBundleGuard.Revert> revert =
-                guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, "Fixed caption", null, null);
+                guard.revertForCaptionEdit(PROJECT_ID, post, "Fixed caption");
 
         assertThat(revert).contains(new PublishBundleGuard.Revert("FAILED", "IN_REVIEW"));
         assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
@@ -328,97 +325,36 @@ class PublishBundleGuardTest {
         assertThat(post.getCurrentReviewRound()).isEqualTo(3);
     }
 
-    // --- [auto] Only a real change to a bundle field triggers the revert -------------------------
+    // --- [auto] Only a real change to the caption triggers the revert -----------------------------
 
     @Test
     void revertsWhenTheCaptionActuallyChanges() {
         WorkItem post = marketingPost("APPROVED");
 
         Optional<PublishBundleGuard.Revert> revert =
-                guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, "Rewritten caption", null, null);
+                guard.revertForCaptionEdit(PROJECT_ID, post, "Rewritten caption");
 
         assertThat(revert).isPresent();
         assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
     }
 
     @Test
-    void revertsWhenTheFireTimeMoves() {
+    void doesNotRevertWhenThePatchTouchesNoCaption() {
         WorkItem post = marketingPost("APPROVED");
 
-        Optional<PublishBundleGuard.Revert> revert = guard.revertForCaptionOrScheduleEdit(
-                PROJECT_ID, post, null, FIRE_TIME.plusDays(1), null);
-
-        assertThat(revert).isPresent();
-        assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
-    }
-
-    @Test
-    void revertsWhenTheScheduleTimezoneChanges() {
-        WorkItem post = marketingPost("APPROVED");
-
-        Optional<PublishBundleGuard.Revert> revert =
-                guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, null, "Europe/Berlin");
-
-        assertThat(revert).isPresent();
-        assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
-    }
-
-    @Test
-    void revertsWhenThePublishOnApprovalFlagFlips() {
-        // The reviewer approved "as soon as approved", not a time; flipping that is a schedule edit.
-        WorkItem post = marketingPost("APPROVED");
-
-        Optional<PublishBundleGuard.Revert> revert =
-                guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, null, null, true);
-
-        assertThat(revert).isPresent();
-        assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
-    }
-
-    @Test
-    void doesNotRevertWhenThePublishOnApprovalFlagIsResent() {
-        WorkItem post = marketingPost("APPROVED");
-        post.setPublishOnApproval(true);
-
-        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, null, null, true)).isEmpty();
-        assertThat(post.getCurrentStatus()).isEqualTo("APPROVED");
-    }
-
-    @Test
-    void revertsWhenABlankTimezoneClearsAZoneThatWasSet() {
-        WorkItem post = marketingPost("APPROVED");
-
-        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, null, "")).isPresent();
-    }
-
-    @Test
-    void doesNotRevertWhenThePatchTouchesNoBundleField() {
-        WorkItem post = marketingPost("APPROVED");
-
-        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, null, null)).isEmpty();
+        assertThat(guard.revertForCaptionEdit(PROJECT_ID, post, null)).isEmpty();
         assertThat(post.getCurrentStatus()).isEqualTo("APPROVED");
         verifyNoInteractions(nativeHandoffService, resolver, publishBundleHasher);
     }
 
     @Test
-    void doesNotRevertWhenThePatchResendsTheSameValues() {
+    void doesNotRevertWhenThePatchResendsTheSameCaption() {
         WorkItem post = marketingPost("APPROVED");
 
-        Optional<PublishBundleGuard.Revert> revert = guard.revertForCaptionOrScheduleEdit(
-                PROJECT_ID, post, post.getDescription(), FIRE_TIME, "America/New_York");
+        Optional<PublishBundleGuard.Revert> revert =
+                guard.revertForCaptionEdit(PROJECT_ID, post, post.getDescription());
 
         assertThat(revert).isEmpty();
-        assertThat(post.getCurrentStatus()).isEqualTo("APPROVED");
-    }
-
-    @Test
-    void treatsAnEquivalentOffsetAsTheSameFireTime() {
-        WorkItem post = marketingPost("APPROVED");
-        OffsetDateTime sameInstantOtherOffset =
-                FIRE_TIME.withOffsetSameInstant(ZoneOffset.ofHours(-4));
-
-        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, sameInstantOtherOffset, null))
-                .isEmpty();
         assertThat(post.getCurrentStatus()).isEqualTo("APPROVED");
     }
 
@@ -426,17 +362,23 @@ class PublishBundleGuardTest {
     void doesNotRevertAPreApprovalPostEvenWhenTheCaptionChanges() {
         WorkItem post = marketingPost("DRAFT");
 
-        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, "Rewritten caption", null, null))
-                .isEmpty();
+        assertThat(guard.revertForCaptionEdit(PROJECT_ID, post, "Rewritten caption")).isEmpty();
         assertThat(post.getCurrentStatus()).isEqualTo("DRAFT");
     }
 
-    @Test
-    void treatsAFirstFireTimeOnAPostThatHadNoneAsAChange() {
-        WorkItem post = marketingPost("APPROVED");
-        post.setScheduledFor(null);
+    // --- [auto] The schedule is never a bundle field: moving it never reverts an Approved Post ----
 
-        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, null, FIRE_TIME, null)).isPresent();
+    @Test
+    void movingTheFireTimeNeverRevertsAnApprovedPostThroughTheCaptionEntryPoint() {
+        // The schedule is not part of what revertForCaptionEdit checks at all — a caller that moves the
+        // fire time (WorkItemService.patchWorkItem, via schedulePatchChanges + retimeScheduledPost) never
+        // routes through here, so passing an unrelated caption (or none) never reverts the Post.
+        WorkItem post = marketingPost("APPROVED");
+        post.setScheduledFor(FIRE_TIME.plusDays(1));
+
+        assertThat(guard.revertForCaptionEdit(PROJECT_ID, post, null)).isEmpty();
+        assertThat(post.getCurrentStatus()).isEqualTo("APPROVED");
+        verifyNoInteractions(nativeHandoffService);
     }
 
     // --- null tolerance -------------------------------------------------------------------------

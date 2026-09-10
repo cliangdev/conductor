@@ -45,6 +45,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -92,6 +93,9 @@ class WorkItemServiceTest {
 
     @Mock
     private PublishTaskArmer publishTaskArmer;
+
+    @Mock
+    private PostScheduleValidator postScheduleValidator;
 
     @InjectMocks
     private WorkItemService workItemService;
@@ -228,6 +232,93 @@ class WorkItemServiceTest {
         inOrder.verify(nativeHandoffService).unschedule(testIssue);
         inOrder.verify(workItemRepository).save(testIssue);
         verify(nativeHandoffService, never()).handoffForPost(any());
+    }
+
+    // --- the schedule is editable through review, approval and scheduling itself (re-timing) -----
+
+    /** (a) A terminal Post's time cannot change at all — its publish record is done and immutable. */
+    @Test
+    void reschedulingATerminalPostIsRefused() {
+        testIssue.setCurrentStatus("DONE");
+        OffsetDateTime original = OffsetDateTime.parse("2026-09-01T10:00:00Z");
+        testIssue.setScheduledFor(original);
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, null, null,
+                OffsetDateTime.parse("2026-09-02T10:00:00Z"), null, caller))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already published")
+                .hasMessageContaining("its time cannot change");
+
+        assertThat(testIssue.getScheduledFor()).isEqualTo(original);
+        verifyNoInteractions(nativeHandoffService, publishTargetService, postScheduleValidator);
+        verify(workItemRepository, never()).save(any());
+    }
+
+    /** (b) A valid re-time of a Scheduled Post revokes its hand-offs, then re-enters the status. */
+    @Test
+    void reschedulingAScheduledPostRevokesAndReenters() {
+        testIssue.setCurrentStatus("SCHEDULED");
+        testIssue.setScheduledFor(OffsetDateTime.parse("2026-09-01T10:00:00Z"));
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(postScheduleValidator.inspect(testIssue)).thenReturn(List.of());
+        OffsetDateTime moved = OffsetDateTime.parse("2026-09-05T10:00:00Z");
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, null, null, moved, null, caller);
+
+        assertThat(testIssue.getScheduledFor()).isEqualTo(moved);
+        InOrder inOrder = Mockito.inOrder(postScheduleValidator, nativeHandoffService, publishTargetService);
+        inOrder.verify(postScheduleValidator).inspect(testIssue);
+        inOrder.verify(nativeHandoffService).unschedule(testIssue);
+        // The same-transaction variants, not the REQUIRES_NEW ones: the revoke just above is still
+        // uncommitted in this same transaction, and a REQUIRES_NEW read would never see it.
+        inOrder.verify(publishTargetService).reviveRevokedTargetsInSameTransaction(testIssue);
+        inOrder.verify(publishTargetService).restampFireTimesInSameTransaction(testIssue);
+        inOrder.verify(nativeHandoffService).handoffForPost(testIssue);
+        verify(publishTargetService, never()).reviveRevokedTargets(any());
+        verify(publishTargetService, never()).restampFireTimes(any());
+    }
+
+    /** (b) An invalid re-time is refused with the gate's own message; nothing is revoked or changed. */
+    @Test
+    void reschedulingAScheduledPostToAnInvalidTimeIsRefusedAndChangesNothing() {
+        testIssue.setCurrentStatus("SCHEDULED");
+        OffsetDateTime original = OffsetDateTime.parse("2026-09-01T10:00:00Z");
+        testIssue.setScheduledFor(original);
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(postScheduleValidator.inspect(testIssue)).thenReturn(
+                List.of(com.conductor.service.publish.PublishFinding.blocker(
+                        PostScheduleValidator.FIRE_TIME_TOO_SOON, "That time is too soon.")));
+        OffsetDateTime tooSoon = OffsetDateTime.parse("2026-09-01T10:05:00Z");
+
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, null, null,
+                tooSoon, null, caller))
+                .isInstanceOf(com.conductor.exception.UnprocessableEntityException.class)
+                .hasMessageContaining("That time is too soon.");
+
+        assertThat(testIssue.getScheduledFor()).isEqualTo(original);
+        verify(nativeHandoffService, never()).unschedule(any());
+        verify(workItemRepository, never()).save(any());
+    }
+
+    /** (c) In every other status a schedule change just applies — no gate, no revert. */
+    @Test
+    void reschedulingAnApprovedPostJustAppliesTheNewTime() {
+        testIssue.setCurrentStatus("APPROVED");
+        testIssue.setScheduledFor(OffsetDateTime.parse("2026-09-01T10:00:00Z"));
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        OffsetDateTime moved = OffsetDateTime.parse("2026-09-08T10:00:00Z");
+
+        WorkItem result = workItemService.patchWorkItem("proj-1", "issue-1", null, null, null, null,
+                moved, null, caller);
+
+        assertThat(result.getCurrentStatus()).isEqualTo("APPROVED");
+        assertThat(result.getScheduledFor()).isEqualTo(moved);
+        verifyNoInteractions(nativeHandoffService, postScheduleValidator);
     }
 
     /** Deleting a scheduled Post must not leave a live post behind on the platform. */

@@ -134,17 +134,29 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
-    void movingTheFireTimeAfterApprovalInvalidatesTheApproval() {
-        addTarget("meta", "facebook", null);
-        schedule(OffsetDateTime.of(2026, 9, 1, 14, 0, 0, 0, ZoneOffset.UTC));
+    void movingTheFireTimeAfterApprovalKeepsTheApprovalCurrent() {
+        // An approval binds the caption, the media and the destinations — not the time. Moving the
+        // schedule after approval does not touch the bundle hash and does not revert the Post.
+        completePublishBundle();
         moveTo(post, "IN_REVIEW");
         assignReviewer(reviewerA);
+        String hashBeforeReschedule = publishBundleHasher.hash(reload(post));
+
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
-        assertThat(targetStatuses(post)).contains("APPROVED");
 
-        reopenEditAndResubmit(() -> schedule(OffsetDateTime.of(2026, 9, 2, 14, 0, 0, 0, ZoneOffset.UTC)));
+        // Completing the bundle before review lets the approval cascade the Post straight through to
+        // Scheduled (MARKETING's review_approved trigger on both edges).
+        assertThat(reload(post).getCurrentStatus()).isEqualTo("SCHEDULED");
 
-        assertThat(targetStatuses(post)).doesNotContain("APPROVED");
+        OffsetDateTime moved = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3);
+        schedule(moved);
+
+        WorkItem reloaded = reload(post);
+        assertThat(reloaded.getCurrentStatus()).isEqualTo("SCHEDULED");
+        assertThat(reloaded.getScheduledFor()).isEqualTo(moved);
+        assertThat(reloaded.getCurrentReviewRound()).isZero();
+        assertThat(publishBundleHasher.hash(reloaded)).isEqualTo(hashBeforeReschedule);
+        assertThat(approvalOf(reviewerA).getVerdict()).isEqualTo("APPROVED");
     }
 
     @Test
