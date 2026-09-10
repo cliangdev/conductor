@@ -111,16 +111,23 @@ export function instantToWallClock(iso: string, timeZone: string): string {
   )
 }
 
-/** What the panel shows when it is not being edited. */
-function describe(iso: string, timeZone: string): string {
+/** What the panel shows when it is not being edited: the date on its own line, the time and zone below. */
+function describeDate(iso: string, timeZone: string): string {
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      timeZone,
-    }).format(new Date(iso)) + ` (${timeZone})`
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone }).format(new Date(iso))
   } catch {
     return iso
+  }
+}
+
+function describeTime(iso: string, timeZone: string): string {
+  try {
+    return (
+      new Intl.DateTimeFormat(undefined, { timeStyle: 'short', timeZone }).format(new Date(iso)) +
+      ` ${timeZone}`
+    )
+  } catch {
+    return timeZone
   }
 }
 
@@ -197,16 +204,20 @@ export function WorkItemScheduleField({
   if (!editing) {
     return (
       <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span
-            // The panel is narrow enough to truncate a full date-time-plus-zone, so the untruncated
-            // value has to stay reachable without opening the editor.
-            title={scheduledFor ? describe(scheduledFor, zone) : undefined}
-            className={hasSchedule ? 'truncate text-sm text-foreground' : 'text-sm text-muted-foreground'}
-          >
-            {scheduledFor ? describe(scheduledFor, zone) : publishOnApproval ? 'As soon as approved' : 'Not scheduled'}
-          </span>
+        <div className="flex min-w-0 items-start gap-2">
+          <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          {scheduledFor ? (
+            // Two lines, neither truncated: a schedule is something a person has to be able to read
+            // in full without opening the editor, not just recognise the shape of.
+            <span className="text-sm text-foreground">
+              <span className="block">{describeDate(scheduledFor, zone)}</span>
+              <span className="block text-muted-foreground">{describeTime(scheduledFor, zone)}</span>
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {publishOnApproval ? 'As soon as approved' : 'Not scheduled'}
+            </span>
+          )}
         </div>
         {canEdit && (
           <button
