@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
@@ -269,8 +270,15 @@ public class PostScheduleValidator {
         if (fireTime == null) {
             return;
         }
-        LeadTime lead = leadTimeFor(targets);
         OffsetDateTime now = OffsetDateTime.now(clock);
+        // A time that has already come and gone, with every destination already dispatched on it, is a
+        // record, not a plan: nothing is waiting to fire, so there is nothing "too soon" about it. Only a
+        // destination still PENDING behind a past time is a problem worth naming.
+        if (!fireTime.isAfter(now) && !targets.isEmpty()
+                && targets.stream().allMatch(t -> t.getState() != null && t.getState() != PostPublishTargetState.PENDING)) {
+            return;
+        }
+        LeadTime lead = leadTimeFor(targets);
         String when = formatFireTime(fireTime, timezone);
         if (lead.lead().isZero()) {
             if (!fireTime.isAfter(now)) {
@@ -282,10 +290,11 @@ public class PostScheduleValidator {
         if (fireTime.isBefore(now.plus(lead.lead()))) {
             long minutes = Math.max(1, lead.lead().toMinutes());
             String unit = minutes == 1 ? " minute" : " minutes";
+            String notice = minutes == 1 ? " minute's notice" : " minutes' notice";
             String message = lead.demandedBy() == null
                     ? when + " is too soon. Move it out at least " + minutes + unit + "."
                     : when + " is too soon: " + platformLabel(lead.demandedBy()) + " needs at least "
-                            + minutes + unit + "' notice. Move it later.";
+                            + minutes + notice + ". Move it later.";
             findings.add(PublishFinding.blocker(FIRE_TIME_TOO_SOON, message,
                     lead.demandedBy() == null ? null : lead.demandedBy().getId()));
         }
