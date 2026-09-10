@@ -698,7 +698,9 @@ export function WorkItemDetailView({
   if (activeTab === 'activity') {
     mainContent = <ActivityTab comments={comments} reviews={reviews} />
   } else if (documents.length === 0) {
-    mainContent = (
+    // On a publishing Workflow the caption card below is the content; a document placeholder above it
+    // would be announcing the absence of something a Post never has.
+    mainContent = workflowDeclaresPublishTargets(workflowView) ? null : (
       <EmptyState
         icon={FileX2}
         title="No documents attached yet"
