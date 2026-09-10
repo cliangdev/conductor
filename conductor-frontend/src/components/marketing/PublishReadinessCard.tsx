@@ -157,7 +157,9 @@ export function PublishReadinessCard({
         </div>
       </CardHeader>
       {(preflight.blockers.length > 0 || preflight.warnings.length > 0 || preflight.consent.required) && (
-        <CardContent className="space-y-2">
+        // CardContent is a padless divide-y list for row-shaped children; these are prose and alerts, so
+        // they carry the header's inset themselves.
+        <CardContent className="space-y-2 divide-y-0 px-4 py-3">
           {preflight.blockers.length > 0 && (
             <ul className="space-y-1" aria-label="Blockers">
               {preflight.blockers.map((finding, index) => (
