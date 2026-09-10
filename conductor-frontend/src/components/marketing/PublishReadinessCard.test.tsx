@@ -223,6 +223,22 @@ describe('PublishReadinessCard + PublishReadinessAction', () => {
     expect(onPreflight).toHaveBeenCalledWith(expect.objectContaining({ ready: false, nextTransition: expect.objectContaining({ to: 'IN_REVIEW' }) }))
   })
 
+  it('speaks to the reviewer when asked to: silent while the gate is met, the blocker count otherwise', async () => {
+    function ReviewerHarness() {
+      const state = usePublishReadiness({ projectId: PROJECT, workItemId: WORK_ITEM, token: 't', status: 'IN_REVIEW', userRole: 'ADMIN', workflowView: VIEW })
+      return <PublishReadinessAction state={state} forReviewer />
+    }
+    current = preflight({ nextTransition: { to: 'APPROVED', label: 'Approve', requiresReview: true } })
+    const { unmount } = render(<ReviewerHarness />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(screen.queryByText(/Waiting on|Everything checks out/)).not.toBeInTheDocument()
+    unmount()
+
+    current = preflight({ ready: false, nextTransition: { to: 'APPROVED', label: 'Approve', requiresReview: true }, blockers: [{ code: 'NO_MEDIA', message: 'This post has no uploaded media.' }] })
+    render(<ReviewerHarness />)
+    expect(await screen.findByText('1 thing to fix before it can be approved. Send it back to the author.')).toBeInTheDocument()
+  })
+
   it('re-asks the server when refreshKey changes', async () => {
     const { rerender } = render(<Harness refreshKey={1} />)
     await screen.findByText(/Everything checks out/)
