@@ -19,11 +19,13 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
-import { PublishReadinessCard } from '@/components/marketing/PublishReadinessCard'
-import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
-import { PublishOutcomePanel } from '@/components/marketing/PublishOutcomePanel'
 import {
-  TikTokConsentStep,
+  usePublishReadiness,
+  PublishReadinessAction,
+  PublishReadinessCard,
+} from '@/components/marketing/PublishReadinessCard'
+import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
+import {
   TikTokPublishGateProvider,
   tiktokSubmissionBlockedReason,
   type TikTokConsentTarget,
@@ -38,6 +40,8 @@ import { CommentCount } from '@/components/ui/comment-count'
 import { HtmlViewer } from '@/components/markdown/HtmlViewer'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
+import { Modal } from '@/components/ui/modal'
+import { Textarea } from '@/components/ui/textarea'
 import { registerPaletteActions } from '@/components/layout/CommandPalette'
 import { openMenuTrigger } from '@/components/workitems/useWorkItemListState'
 import { timeAgo } from '@/lib/format'
@@ -223,7 +227,10 @@ export function WorkItemDetailView({
   // here, beside the media the preview is built from, and published as a gate the status control
   // reads. It is deliberately not persisted: it is this person, agreeing to this content, now.
   const [tiktokTargets, setTikTokTargets] = useState<TikTokConsentTarget[]>([])
-  const [consentedTo, setConsentedTo] = useState<string | null>(null)
+  // Told directly by the TikTok consent disclosure embedded in PostTargetPicker (see
+  // onTikTokConsentChange below) — it owns reading and writing the consent itself now, this is only
+  // the last answer it reported, for the status control's gate.
+  const [tiktokConsented, setTikTokConsented] = useState(false)
   // Tags already in use in this project, for the editor's suggestions. Read from the Work Item list —
   // there is no separate tag registry, and a project's tags are exactly the ones on its items.
   const [knownTags, setKnownTags] = useState<string[]>([])
@@ -242,6 +249,10 @@ export function WorkItemDetailView({
   const [pendingComments, setPendingComments] = useState<PendingCommentDraft[]>([])
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
+  // A Post has no document to comment on, so a reviewer's verdict is Approve/Request changes straight
+  // from the header rather than the document-review flow (batch comments, Start review, ReviewBar).
+  const [changesModalOpen, setChangesModalOpen] = useState(false)
+  const [changesText, setChangesText] = useState('')
 
   const statusTriggerRef = useRef<HTMLButtonElement>(null)
   const assigneeTriggerRef = useRef<HTMLButtonElement>(null)
@@ -434,16 +445,6 @@ export function WorkItemDetailView({
 
   const mediaAssets = useMemo(() => assets.filter((a) => a.kind === 'file'), [assets])
 
-  // Consent is to *this* content going to *these* accounts under *these* options, so it is stored
-  // as the thing consented to rather than as a bare flag. Swap an account, edit a privacy level or
-  // upload a different cut and it stops matching — which is the point: what was agreed to no longer
-  // exists, so it has to be agreed to again before the Post can move.
-  const consentSubject = useMemo(
-    () => JSON.stringify([tiktokTargets, mediaAssets.map((a) => a.id)]),
-    [tiktokTargets, mediaAssets]
-  )
-  const tiktokConsented = consentedTo === consentSubject
-
   const tiktokBlockedReason = tiktokSubmissionBlockedReason(tiktokTargets, tiktokConsented)
 
   const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id)
@@ -459,6 +460,30 @@ export function WorkItemDetailView({
   const assignableReviewers = allMembers.filter(
     (m) => (m.role === 'REVIEWER' || m.role === 'ADMIN') && !assignedIds.has(m.userId)
   )
+
+  // The Post's one primary action — lifted here so the header (PublishReadinessAction) and the top of
+  // the reading column (PublishReadinessCard) read the one poll of the server and share the one
+  // reviewer-picker dialog, instead of each asking on its own.
+  const readiness = usePublishReadiness({
+    projectId,
+    workItemId: issueId,
+    token: accessToken ?? '',
+    status: issue?.status ?? '',
+    userRole,
+    workflowView,
+    refreshKey: preflightVersion,
+    onStatusChanged: (s) => {
+      setIssue((prev) => (prev ? { ...prev, status: s } : prev))
+      void refreshIssueStatus()
+    },
+    // The gate's refusal of the next move, so the status menu disables that move with the same reason.
+    onPreflight: (p) =>
+      setGateBlock(!p.ready && p.nextTransition && p.blockers[0] ? { [p.nextTransition.to]: p.blockers[0].message } : {}),
+    reviewers: reviewers.map((r) => ({ userId: r.userId, name: r.name, email: r.email })),
+    eligibleReviewers: assignableReviewers.map((m) => ({ userId: m.userId, name: m.name, email: m.email })),
+    onAssignReviewer: handleAssignReviewer,
+    onUnassignReviewer: handleUnassignReviewer,
+  })
 
   // Hydrate any in-progress review draft for this Work Item + user (localStorage) once the data
   // needed to judge it has actually loaded — a page refresh mid-review doesn't lose pending comments,
@@ -656,13 +681,15 @@ export function WorkItemDetailView({
               },
             ]
           : []),
-        ...(reviewActive && isAssignedReviewer && !reviewMode
+        // Start review only exists for a Work Item that has documents to comment on — a Post with none
+        // gets Approve/Request changes in the header instead (see headerActions below).
+        ...(reviewActive && isAssignedReviewer && !reviewMode && documents.length > 0
           ? [{ id: 'wi-start-review', label: 'Start review', perform: startReview }]
           : []),
       ],
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [issue, userRole, reviewActive, isAssignedReviewer, reviewMode])
+  }, [issue, userRole, reviewActive, isAssignedReviewer, reviewMode, documents.length])
 
   const creatorName = issue?.createdBy
     ? allMembers.find((m) => m.userId === issue.createdBy)?.name
@@ -761,7 +788,12 @@ export function WorkItemDetailView({
   const itemLevelCommentCount = unresolvedItemLevelCount(comments)
   const contentTabId = activeTab === 'details' || activeTab === '' ? (selectedDocId ?? 'activity') : activeTab
 
-  const headerActions = reviewActive && isAssignedReviewer && (
+  const publishing = workflowDeclaresPublishTargets(workflowView)
+  const hasDocuments = documents.length > 0
+  // A Work Item with documents keeps the document-review flow (Start review, the batch comment bar).
+  // One with none — a Post — has nothing to comment on, so its reviewer's verdict is Approve/Request
+  // changes right in the header instead.
+  const docReviewAction = reviewActive && isAssignedReviewer && hasDocuments && (
     reviewMode ? (
       <span className="text-sm text-muted-foreground">Reviewing…</span>
     ) : (
@@ -770,6 +802,33 @@ export function WorkItemDetailView({
       </Button>
     )
   )
+  const noDocReviewActions = reviewActive && isAssignedReviewer && !hasDocuments && (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setChangesModalOpen(true)} disabled={reviewSubmitting}>
+        Request changes
+      </Button>
+      <Button size="sm" onClick={() => void handleSubmitReview('APPROVED', '')} disabled={reviewSubmitting}>
+        Approve
+      </Button>
+    </>
+  )
+  const hasHeaderActions = Boolean(docReviewAction) || Boolean(noDocReviewActions) || publishing
+  const headerActions = hasHeaderActions ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {docReviewAction}
+      {noDocReviewActions}
+      {publishing && <PublishReadinessAction state={readiness} />}
+    </div>
+  ) : undefined
+
+  function submitRequestedChanges() {
+    // handleSubmitReview reports its own failure by toast and leaves everything as it was — the modal
+    // closes here regardless so the reviewer isn't left staring at a submitted form, and can reopen it
+    // to try again if the toast said it did not go through.
+    void handleSubmitReview('CHANGES_REQUESTED', changesText)
+    setChangesModalOpen(false)
+    setChangesText('')
+  }
 
   return (
     <TikTokPublishGateProvider reason={tiktokBlockedReason}>
@@ -779,7 +838,7 @@ export function WorkItemDetailView({
           title={issue.title}
           status={<StatusBadge status={issue.status} {...statusMeta(workflowView, issue.status)} />}
           description={byline}
-          actions={headerActions || undefined}
+          actions={headerActions}
         />
 
         {/* Document tabs + Activity (+ Details on mobile). TODO: not migrated to the shared <Tabs>
@@ -887,6 +946,11 @@ export function WorkItemDetailView({
             className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
           >
             <div className="max-w-[45rem] mx-auto space-y-6">
+              {/* "What is still in the way?" — the gate's own findings, read from the server. At the top
+                  of the column because it is the first thing an author looks for after any edit; the
+                  move itself and its one-line summary live in the header (PublishReadinessAction), so
+                  this renders nothing when there is nothing to fix or note. */}
+              {activeTab !== 'activity' && publishing && <PublishReadinessCard state={readiness} />}
               {mainContent}
               {/* The description, which on a publishing Workflow is the caption that actually goes out.
                   Above the media for the same reason the media sits above the accounts: it is the thing
@@ -899,7 +963,7 @@ export function WorkItemDetailView({
                   description={issue.description}
                   status={issue.status}
                   workflowView={workflowView}
-                  isCaption={workflowDeclaresPublishTargets(workflowView)}
+                  isCaption={publishing}
                   canEdit={userRole !== 'REVIEWER'}
                   onSaved={(description) => {
                     setIssue((prev) => (prev ? { ...prev, description } : prev))
@@ -923,39 +987,11 @@ export function WorkItemDetailView({
                   onUploaded={fetchAssets}
                 />
               )}
-              {/* "What is still in the way?" — the gate's own answer, read from the server, with the one
-                  move that is next. Above the picker because it is the first thing an author looks for
-                  after any edit, and it names which panel below needs attention. */}
-              {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
-                <PublishReadinessCard
-                  projectId={projectId}
-                  workItemId={issueId}
-                  token={accessToken!}
-                  status={issue.status}
-                  userRole={userRole}
-                  workflowView={workflowView}
-                  refreshKey={preflightVersion}
-                  onStatusChanged={(s) => {
-                    setIssue((prev) => (prev ? { ...prev, status: s } : prev))
-                    void refreshIssueStatus()
-                  }}
-                  onPreflight={(p) =>
-                    setGateBlock(
-                      !p.ready && p.nextTransition && p.blockers[0]
-                        ? { [p.nextTransition.to]: p.blockers[0].message }
-                        : {}
-                    )
-                  }
-                  reviewers={reviewers.map((r) => ({ userId: r.userId, name: r.name, email: r.email }))}
-                  eligibleReviewers={assignableReviewers.map((m) => ({ userId: m.userId, name: m.name, email: m.email }))}
-                  onAssignReviewer={handleAssignReviewer}
-                  onUnassignReviewer={handleUnassignReviewer}
-                />
-              )}
-              {/* Where the Post goes. Sits with the creative for the same reason: the accounts are part
-                  of what a reviewer approves, not metadata. Offered only where the bound Workflow's
-                  asset types name a publishable platform, so engineering items never see it. */}
-              {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
+              {/* Where the Post goes, what happened once it did, and — for a TikTok destination — the
+                  consent TikTok's audit requires, all in this one card: a row is a destination, full
+                  stop. Offered only where the bound Workflow's asset types name a publishable platform,
+                  so engineering items never see it. */}
+              {activeTab !== 'activity' && publishing && (
                 <PostTargetPicker
                   projectId={projectId}
                   workItemId={issueId}
@@ -966,38 +1002,12 @@ export function WorkItemDetailView({
                   onTikTokChange={setTikTokTargets}
                   assets={mediaAssets}
                   caption={issue.description ?? null}
-                />
-              )}
-              {/* The consent TikTok's audit requires. Renders nothing unless the Post actually carries
-                  a TikTok target, and sits directly under the picker because the accounts it names are
-                  the ones just chosen there. */}
-              {activeTab !== 'activity' && (
-                <TikTokConsentStep
-                  targets={tiktokTargets}
-                  assets={mediaAssets}
-                  projectId={projectId}
-                  workItemId={issueId}
-                  token={accessToken!}
-                  onConsentChange={(given) => {
-                    setConsentedTo(given ? consentSubject : null)
-                    // Consent is one of the gate's inputs, so the readiness card has to ask again;
-                    // without this it kept saying "consent first" until the page was reloaded. Only on
-                    // a change — the step also reports on its first read, which the card already has.
-                    if (given !== tiktokConsented) setPreflightVersion((v) => v + 1)
+                  onTikTokConsentChange={(given) => {
+                    setTikTokConsented(given)
+                    // Consent is one of the gate's inputs, so the readiness state has to ask again;
+                    // without this it kept saying "consent first" until the page was reloaded.
+                    setPreflightVersion((v) => v + 1)
                   }}
-                />
-              )}
-              {/* What came back from each platform. Directly under the picker, because a permalink and
-                  the error next to it answer the same question the account list raises — "did this
-                  actually go out?" — and a mixed result has to read as "needs attention" rather than
-                  as the roll-up status alone. Renders nothing until the Post has targets. */}
-              {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
-                <PublishOutcomePanel
-                  projectId={projectId}
-                  workItemId={issueId}
-                  token={accessToken!}
-                  workflowView={workflowView}
-                  onRetried={refreshIssueStatus}
                 />
               )}
             </div>
@@ -1084,6 +1094,37 @@ export function WorkItemDetailView({
         >
           <p className="text-sm text-muted-foreground">This can&apos;t be undone.</p>
         </ConfirmModal>
+
+        <Modal
+          open={changesModalOpen}
+          onOpenChange={(open) => {
+            if (!reviewSubmitting) setChangesModalOpen(open)
+          }}
+          title="What needs to change?"
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setChangesModalOpen(false)} disabled={reviewSubmitting}>
+                Cancel
+              </Button>
+              <Button
+                onClick={submitRequestedChanges}
+                disabled={reviewSubmitting || changesText.trim().length === 0}
+              >
+                {reviewSubmitting ? 'Submitting…' : 'Request changes'}
+              </Button>
+            </div>
+          }
+        >
+          <Textarea
+            autoFocus
+            required
+            rows={4}
+            value={changesText}
+            onChange={(e) => setChangesText(e.target.value)}
+            placeholder={`What needs to change before this ${(workflowView?.noun ?? 'item').toLowerCase()} can be approved?`}
+            aria-label="What needs to change"
+          />
+        </Modal>
       </PageContainer>
     </TikTokPublishGateProvider>
   )
