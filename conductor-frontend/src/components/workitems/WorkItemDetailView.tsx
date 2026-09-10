@@ -962,7 +962,13 @@ export function WorkItemDetailView({
                   projectId={projectId}
                   workItemId={issueId}
                   token={accessToken!}
-                  onConsentChange={(given) => setConsentedTo(given ? consentSubject : null)}
+                  onConsentChange={(given) => {
+                    setConsentedTo(given ? consentSubject : null)
+                    // Consent is one of the gate's inputs, so the readiness card has to ask again;
+                    // without this it kept saying "consent first" until the page was reloaded. Only on
+                    // a change — the step also reports on its first read, which the card already has.
+                    if (given !== tiktokConsented) setPreflightVersion((v) => v + 1)
+                  }}
                 />
               )}
               {/* What came back from each platform. Directly under the picker, because a permalink and
