@@ -498,7 +498,7 @@ export function ComposePostModal({
           ) : (
             <div className="space-y-1">
               <Label htmlFor="compose-when">
-                When <span className="text-muted-foreground">(optional; the next slot the destinations accept otherwise)</span>
+                When <span className="text-muted-foreground">(optional — we&rsquo;ll pick the earliest time that works)</span>
               </Label>
               <DateTimePicker id="compose-when" label="When" value={when} onChange={setWhen} clearable />
             </div>
