@@ -814,6 +814,23 @@ describe('PostTargetPicker — TikTok publish options', () => {
       label: '@acme',
       creatorNickname: 'acme',
     })
+    // A fresh row carries the account's first allowed level — the one the audience select already shows
+    // pre-selected and the first save writes — so the consent step has nothing to ask for.
+    expect(reported[0].options.privacyLevel).toBe('PUBLIC_TO_EVERYONE')
+    expect(reported[0].problem).toBeNull()
+  })
+
+  it('still asks who can see it when the account has no cached privacy levels to default from', async () => {
+    const tiktok = tiktokOption('acme', { privacyLevelOptions: [] })
+    availableTargets = [tiktok]
+    selectedTargets = [selection(tiktok)]
+    const onTikTokChange = vi.fn()
+    renderPicker({ onTikTokChange })
+
+    await loaded()
+    await waitFor(() => expect(onTikTokChange.mock.calls.at(-1)![0]).toHaveLength(1))
+    const reported = onTikTokChange.mock.calls.at(-1)![0]
+    expect(reported[0].options.privacyLevel).toBeNull()
     expect(reported[0].problem).toMatch(/who can see/i)
   })
 

@@ -766,7 +766,10 @@ export function PostTargetPicker({
         )
         .map((o) => {
           const key = targetKey(o.platform, o.connectionId)
-          const values = optionsByKey[key] ?? EMPTY_TIKTOK_OPTIONS
+          // The same default the audience select shows pre-selected and the save applies, so the
+          // consent step describes the row as it will be saved rather than asking for a choice the
+          // select already shows as made.
+          const values = withTikTokDefault(o, optionsByKey[key] ?? EMPTY_TIKTOK_OPTIONS)
           const content = contentByKey[key] ?? INHERITED_CONTENT
           return {
             connectionId: o.connectionId ?? '',
