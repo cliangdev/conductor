@@ -119,6 +119,8 @@ export function WorkItemPropertiesPanel({
   tags,
   knownTags,
   onTagsChanged,
+  onDelete,
+  noun = 'item',
 }: {
   projectId: string
   issueId: string
@@ -158,6 +160,10 @@ export function WorkItemPropertiesPanel({
   /** Tags already in use in this project, offered as suggestions so a vocabulary converges. */
   knownTags: string[]
   onTagsChanged: (tags: string[]) => void
+  /** Offered at the foot of the panel, to anyone who may change the item. The confirmation is the caller's. */
+  onDelete?: () => void
+  /** The Workflow's word for this item, for the delete label. */
+  noun?: string
 }) {
   // Counted from `reviews`, not from `reviewers`. The reviewers endpoint returns assignment only —
   // userId, email, name — and carries no verdict, so filtering it on reviewVerdict matched nothing and
@@ -332,6 +338,14 @@ export function WorkItemPropertiesPanel({
       )}
 
       <TaskProgressPanel issueId={issueId} projectId={projectId} />
+
+      {onDelete && userRole !== 'REVIEWER' && (
+        <PanelSection label="Remove">
+          <button type="button" onClick={onDelete} className="text-sm text-destructive hover:underline">
+            Delete this {noun.toLowerCase()}
+          </button>
+        </PanelSection>
+      )}
     </div>
   )
 }

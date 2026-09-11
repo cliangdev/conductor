@@ -10,6 +10,7 @@
 // batch model — see ReviewBar and the pending-comment state below.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Alert } from '@/components/ui/alert'
@@ -223,6 +224,9 @@ export function WorkItemDetailView({
   // The publish gate's current refusal of the next move, from the readiness card, so the status menu
   // disables that move with the same reason instead of offering something the server will 422.
   const [gateBlock, setGateBlock] = useState<Record<string, string>>({})
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const router = useRouter()
   // TIK-2. TikTok's Content Sharing Guidelines require the creator to see the content and the
   // account nickname it posts to, and to consent, before anything is uploaded — so consent is held
   // here, beside the media the preview is built from, and published as a gate the status control
@@ -848,6 +852,20 @@ export function WorkItemDetailView({
     </div>
   ) : undefined
 
+  async function deleteItem() {
+    if (!accessToken || !issue) return
+    setDeleting(true)
+    try {
+      await apiDelete(`/api/v2/projects/${projectId}/work-items/${issueId}`, accessToken)
+      toastSuccess(`${workflowView?.noun ?? 'Item'} deleted`)
+      router.push(workItemListPath(projectId, workflowView?.area ?? slug, workflowView?.noun ?? 'items'))
+    } catch (err) {
+      toastError(apiErrorMessage(err, `Could not delete this ${(workflowView?.noun ?? 'item').toLowerCase()}`))
+      setDeleting(false)
+      setDeleteOpen(false)
+    }
+  }
+
   function submitRequestedChanges() {
     // handleSubmitReview reports its own failure by toast and leaves everything as it was — the modal
     // closes here regardless so the reviewer isn't left staring at a submitted form, and can reopen it
@@ -1118,6 +1136,8 @@ export function WorkItemDetailView({
               onAssignReviewer={handleAssignReviewer}
               onUnassignReviewer={handleUnassignReviewer}
               assets={assets}
+              noun={workflowView?.noun ?? 'item'}
+              onDelete={() => setDeleteOpen(true)}
             />
           </aside>
         </div>
@@ -1132,6 +1152,24 @@ export function WorkItemDetailView({
             onCancel={handleCancelReview}
           />
         )}
+
+        <ConfirmModal
+          open={deleteOpen}
+          title={`Delete this ${(workflowView?.noun ?? 'item').toLowerCase()}?`}
+          description={
+            publishing
+              ? 'This removes it from Conductor only. Anything already published stays live on the platform; a post handed to Facebook or YouTube for a later time is taken back.'
+              : 'This removes it from Conductor, with its documents and comments.'
+          }
+          confirmLabel="Delete"
+          busyLabel="Deleting…"
+          busy={deleting}
+          cancelLabel="Keep it"
+          onConfirm={() => void deleteItem()}
+          onCancel={() => {
+            if (!deleting) setDeleteOpen(false)
+          }}
+        />
 
         <ConfirmModal
           open={cancelConfirmOpen}

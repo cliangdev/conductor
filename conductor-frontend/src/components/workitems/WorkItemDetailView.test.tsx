@@ -3,6 +3,9 @@ import { render, screen, waitFor, within, fireEvent } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
 
+const { pushSpy } = vi.hoisted(() => ({ pushSpy: vi.fn() }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushSpy }) }))
+
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'token', user: { id: 'user-1' } }),
 }))
@@ -224,6 +227,20 @@ describe('WorkItemDetailView', () => {
     resetFixtures()
     failMembers = false
     failReviews = false
+  })
+
+  it('deletes the item after a confirmation that says what it means, then returns to the list', async () => {
+    await renderView()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this prd' }))
+    // Nothing is gone yet: the confirmation is up and names the consequence.
+    expect(apiDelete).not.toHaveBeenCalledWith(expect.stringContaining('/work-items/wi-1'), expect.anything())
+    // (The test's Modal stub renders the title but not the description.)
+    expect(await screen.findByText('Delete this prd?')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith(expect.stringMatching(/\/work-items\/wi-1$/), 'token'))
+    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith(expect.stringContaining('/app/projects/proj-1/engineering/prds')))
   })
 
   it('shows a quiet notice and a Retry when the member/role lookup fails, and clears it on success', async () => {
