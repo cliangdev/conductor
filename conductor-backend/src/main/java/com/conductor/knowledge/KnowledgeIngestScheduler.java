@@ -111,7 +111,14 @@ public class KnowledgeIngestScheduler {
 
     // ---- dispatch: PENDING -> PROCESSING + librarian run ----
 
-    private void dispatchDueProjects() {
+    /**
+     * The dispatch half of a tick on its own. Package-private as a test seam: a dispatched run starts at
+     * once on the in-process engine, and under test (no agent provider) it fails within milliseconds — so
+     * a test that runs the whole {@link #poll()} races the sweep below against that engine thread, and
+     * whichever source's run has already FAILED by the time the sweep reads it is bounced straight back
+     * to PENDING. A test asserting "this lane dispatched" runs only this pass.
+     */
+    void dispatchDueProjects() {
         OffsetDateTime now = OffsetDateTime.now();
         for (String projectId : sourceRepository.findProjectIdsWithDuePending(now)) {
             try {
