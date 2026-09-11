@@ -11,6 +11,7 @@ import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PermalinkPostIds;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -410,7 +411,10 @@ public class PublishOutcomeService {
         if (target.getState() != PostPublishTargetState.PUBLISHED) {
             target.setFireTime(publishedAt == null ? OffsetDateTime.now() : publishedAt);
         }
-        return applySuccess(target, null, permalink.trim());
+        // The platform never told Conductor this post's id, so the link is the only place it can come from;
+        // with it the metrics feed can read the post's counters like any other destination's.
+        String platformPostId = PermalinkPostIds.parse(target.getPlatform(), permalink).orElse(null);
+        return applySuccess(target, platformPostId, permalink.trim());
     }
 
     /**
