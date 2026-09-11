@@ -49,11 +49,27 @@ import static org.awaitility.Awaitility.await;
  * conductor.knowledge.ingest-scheduler.enabled} back on for just this context -- see {@code
  * src/test/resources/application.properties} for why it defaults off. Each test still uses its own
  * random project so this test class's own tests don't collide with each other; the private database is
- * what stops the live 30s tick from colliding with every *other* test class's shared-context data.
+ * what stops this context's data from colliding with every *other* test class's shared-context data, and
+ * {@code conductor.scheduling.enabled=false} is what stops the 30s timer from ever firing in it (every
+ * tick here is a direct call).
+ *
+ * <p>Tests that assert a lane <em>dispatched</em> call {@link KnowledgeIngestScheduler#dispatchDueProjects()}
+ * rather than {@code poll()}. A full tick also runs the stale sweep, and the run a dispatch fires starts
+ * immediately on the in-process engine and fails within milliseconds here (there is no agent provider);
+ * if that FAILED status lands before the sweep reads the run, the sweep resurrects the freshly claimed
+ * source back to PENDING and the test times out waiting for PROCESSING — the flake that made this class
+ * fail roughly one run in three. Tests of the sweep itself, and of the gates that stop a dispatch, still
+ * run the whole tick.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("local")
-@TestPropertySource(properties = "conductor.knowledge.ingest-scheduler.enabled=true")
+@TestPropertySource(properties = {
+        "conductor.knowledge.ingest-scheduler.enabled=true",
+        // The tick is driven by hand ({@code scheduler.poll()}); the live 30s timer must not also run in
+        // this context, or its first firing — immediately at startup, on its own thread — can claim a
+        // source a test has just inserted but not yet finished arranging (see SchedulingConfig).
+        "conductor.scheduling.enabled=false"
+})
 @Testcontainers
 class KnowledgeIngestSchedulerIntegrationTest {
 
@@ -168,7 +184,7 @@ class KnowledgeIngestSchedulerIntegrationTest {
         String id1 = submitPending(projectId, "note://1");
         String id2 = submitPending(projectId, "note://2");
 
-        scheduler.poll();
+        scheduler.dispatchDueProjects();
 
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             KnowledgeSource s1 = reload(id1);
@@ -270,7 +286,7 @@ class KnowledgeIngestSchedulerIntegrationTest {
         String nullLaneId = submitPending(projectId, "note://free-null");
         String productLaneId = submitPendingInDomain(projectId, "note://free-product", "product");
 
-        scheduler.poll();
+        scheduler.dispatchDueProjects();
 
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             assertThat(reload(queuedInBusyLaneId).getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
@@ -287,7 +303,7 @@ class KnowledgeIngestSchedulerIntegrationTest {
         String engineeringId = submitPendingInDomain(projectId, "note://eng", "engineering");
         String productId = submitPendingInDomain(projectId, "note://product", "product");
 
-        scheduler.poll();
+        scheduler.dispatchDueProjects();
 
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             KnowledgeSource eng = reload(engineeringId);
@@ -309,7 +325,7 @@ class KnowledgeIngestSchedulerIntegrationTest {
         String nullId = submitPending(projectId, "note://unclassified");
         String engineeringId = submitPendingInDomain(projectId, "note://tagged-eng", "engineering");
 
-        scheduler.poll();
+        scheduler.dispatchDueProjects();
 
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             KnowledgeSource nullSource = reload(nullId);

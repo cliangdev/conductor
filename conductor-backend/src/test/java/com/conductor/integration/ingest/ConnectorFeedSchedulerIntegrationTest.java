@@ -51,7 +51,12 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("local")
-@TestPropertySource(properties = "conductor.connector-feed.enabled=true")
+@TestPropertySource(properties = {
+        "conductor.connector-feed.enabled=true",
+        // Every tick here is a direct scheduler.poll() call; the live 60s timer stays off so its startup
+        // firing cannot claim a row mid-arrangement (see SchedulingConfig).
+        "conductor.scheduling.enabled=false"
+})
 @Testcontainers
 class ConnectorFeedSchedulerIntegrationTest {
 
