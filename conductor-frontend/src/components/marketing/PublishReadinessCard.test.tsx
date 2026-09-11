@@ -215,6 +215,13 @@ describe('PublishReadinessCard + PublishReadinessAction', () => {
     expect(screen.queryByRole('button', { name: 'Submit for review' })).not.toBeInTheDocument()
   })
 
+  it('never asks the server when the page already knows the Workflow does not publish', async () => {
+    const { container } = render(<Harness enabled={false} />)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(container.textContent).toBe('')
+  })
+
   it('hands every answer to the page, so the status menu can refuse the same move', async () => {
     current = preflight({ ready: false, blockers: [{ code: 'FIRE_TIME_TOO_SOON', message: 'the fire time is too soon' }] })
     const onPreflight = vi.fn()

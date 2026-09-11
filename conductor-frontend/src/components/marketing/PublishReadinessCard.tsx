@@ -59,6 +59,12 @@ export interface UsePublishReadinessArgs {
   status: string
   userRole: 'ADMIN' | 'CREATOR' | 'REVIEWER'
   workflowView?: WorkflowView
+  /**
+   * Whether the item's Workflow publishes at all. False means the server is never asked: a preflight on
+   * an engineering issue only ever answers `publishing: false`, and the page already knows that from the
+   * Workflow's own declaration. Defaults to true. Flip it once the Workflow view has loaded.
+   */
+  enabled?: boolean
   /** Change it to make the state ask the server again — after any edit that touches the bundle. */
   refreshKey?: number | string
   onStatusChanged?: (status: string) => void
@@ -137,6 +143,7 @@ export function usePublishReadiness({
   status,
   userRole,
   workflowView,
+  enabled = true,
   refreshKey,
   onStatusChanged,
   onPreflight,
@@ -171,9 +178,10 @@ export function usePublishReadiness({
   }, [projectId, workItemId, token])
 
   useEffect(() => {
+    if (!enabled) return
     void load()
     // `status` and `refreshKey` are the parent's signals that the answer may have moved.
-  }, [load, status, refreshKey])
+  }, [enabled, load, status, refreshKey])
 
   const next = preflight?.nextTransition ?? undefined
   const canMove = userRole !== 'REVIEWER' && next !== null && next !== undefined

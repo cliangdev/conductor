@@ -487,6 +487,10 @@ export function WorkItemDetailView({
     (m) => (m.role === 'REVIEWER' || m.role === 'ADMIN') && !assignedIds.has(m.userId)
   )
 
+  // Whether this Workflow publishes anywhere. Decided from the Workflow's own declaration, so the page
+  // never asks the server a question (the preflight) whose answer it already holds for every issue.
+  const publishing = workflowDeclaresPublishTargets(workflowView)
+
   // The Post's one primary action — lifted here so the header (PublishReadinessAction) and the top of
   // the reading column (PublishReadinessCard) read the one poll of the server and share the one
   // reviewer-picker dialog, instead of each asking on its own.
@@ -497,6 +501,7 @@ export function WorkItemDetailView({
     status: issue?.status ?? '',
     userRole,
     workflowView,
+    enabled: publishing,
     refreshKey: preflightVersion,
     onStatusChanged: (s) => {
       setIssue((prev) => (prev ? { ...prev, status: s } : prev))
@@ -814,7 +819,6 @@ export function WorkItemDetailView({
   const itemLevelCommentCount = unresolvedItemLevelCount(comments)
   const contentTabId = activeTab === 'details' || activeTab === '' ? (selectedDocId ?? 'activity') : activeTab
 
-  const publishing = workflowDeclaresPublishTargets(workflowView)
   const hasDocuments = documents.length > 0
   // A Work Item with documents keeps the document-review flow (Start review, the batch comment bar).
   // One with none — a Post — has nothing to comment on, so its reviewer's verdict is Approve/Request
