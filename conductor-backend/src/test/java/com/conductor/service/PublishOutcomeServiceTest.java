@@ -974,6 +974,23 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void recordingTheSameLinkAgainFillsInAnIdTheRowNeverHad() {
+        // Rows recorded before ids were read out of links have a link and no id, and the metrics feed
+        // only queries rows with an id. Recording the same link again is the repair, and nothing else moves.
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+        String link = "https://www.tiktok.com/@rexipe2/video/7684131367378095374";
+        assertThat(complete(target, link, null)).isTrue();
+        PostPublishTarget stored = reload(target);
+        stored.setPlatformPostId(null);
+        targetRepository.save(stored);
+
+        assertThat(complete(target, link, null)).isFalse();
+
+        assertThat(reload(target).getPlatformPostId()).isEqualTo("7684131367378095374");
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+    }
+
+    @Test
     void aSecondCallCannotRewriteWhenThePostWentOut() {
         // Re-stamping on a duplicate would let a double-clicked button quietly move the recorded time.
         PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
