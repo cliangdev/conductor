@@ -949,7 +949,7 @@ const TOOLS = [
           },
           description: 'Where it goes. At least one.',
         },
-        scheduledFor: { type: 'string', description: 'ISO-8601 fire time (optional — defaults to the next quarter-hour the chosen destinations accept; ignored when publishOnApproval is true)' },
+        scheduledFor: { type: 'string', description: 'ISO-8601 fire time (optional — defaults to the next five-minute mark the chosen destinations accept; ignored when publishOnApproval is true)' },
         publishOnApproval: { type: 'boolean', description: 'Publish as soon as approved (optional, default false). No fire time is chosen here: entering the scheduled status stamps the earliest time every destination accepts.' },
         timezone: { type: 'string', description: 'IANA zone the schedule is authored in (optional — defaults to this machine\'s)' },
         submit: { type: 'boolean', description: 'Submit for review once ready (default true). false leaves it in Draft.' },

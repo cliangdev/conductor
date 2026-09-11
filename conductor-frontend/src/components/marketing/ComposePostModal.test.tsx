@@ -9,7 +9,7 @@ vi.mock('@/components/workitems/MediaUploadPanel', async (importOriginal) => ({
   putToSignedUrl: vi.fn(async () => {}),
 }))
 import type { WorkflowView } from '@/types/workItem'
-import { ComposePostModal, nextQuarterHour, toInstant } from './ComposePostModal'
+import { ComposePostModal, nextSlot, toInstant } from './ComposePostModal'
 
 const { pushSpy, toastErrorSpy } = vi.hoisted(() => ({ pushSpy: vi.fn(), toastErrorSpy: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushSpy }) }))
@@ -130,7 +130,7 @@ describe('ComposePostModal', () => {
       targets: [{ platform: 'instagram', connectionId: 'c-ig', format: 'feed' }],
     })
     const schedule = calls.find((c) => c.method === 'PATCH')
-    expect(schedule?.body).toEqual({ scheduledFor: '2026-09-04T12:15:00.000Z', scheduleTimezone: 'UTC' })
+    expect(schedule?.body).toEqual({ scheduledFor: '2026-09-04T12:05:00.000Z', scheduleTimezone: 'UTC' })
     expect(onCreated).toHaveBeenCalled()
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(toastErrorSpy).not.toHaveBeenCalled()
@@ -279,9 +279,9 @@ describe('ComposePostModal', () => {
 })
 
 describe('schedule helpers', () => {
-  it('nextQuarterHour rounds up to the next slot at or after the instant', () => {
-    expect(nextQuarterHour(new Date('2026-09-04T12:01:01Z')).toISOString()).toBe('2026-09-04T12:15:00.000Z')
-    expect(nextQuarterHour(new Date('2026-09-04T12:15:00Z')).toISOString()).toBe('2026-09-04T12:15:00.000Z')
+  it('nextSlot rounds up to the next five-minute mark at or after the instant', () => {
+    expect(nextSlot(new Date('2026-09-04T12:01:01Z')).toISOString()).toBe('2026-09-04T12:05:00.000Z')
+    expect(nextSlot(new Date('2026-09-04T12:15:00Z')).toISOString()).toBe('2026-09-04T12:15:00.000Z')
   })
 
   it('toInstant reads a wall-clock time in its zone, DST included', () => {
