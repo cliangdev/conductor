@@ -27,6 +27,7 @@ import {
   PublishReadinessCard,
 } from '@/components/marketing/PublishReadinessCard'
 import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
+import { PostPerformanceCard } from '@/components/marketing/PostPerformanceCard'
 import {
   TikTokPublishGateProvider,
   tiktokSubmissionBlockedReason,
@@ -1076,6 +1077,18 @@ export function WorkItemDetailView({
                     // without this it kept saying "consent first" until the page was reloaded.
                     setPreflightVersion((v) => v + 1)
                   }}
+                />
+              )}
+              {/* What the published destinations did: the counters the metrics feed files. Under the
+                  destinations because it is the same rows, one step later. */}
+              {activeTab !== 'activity' && publishing && (
+                <PostPerformanceCard
+                  projectId={projectId}
+                  workItemId={issueId}
+                  token={accessToken!}
+                  status={issue.status}
+                  workflowView={workflowView}
+                  refreshKey={preflightVersion}
                 />
               )}
             </div>
