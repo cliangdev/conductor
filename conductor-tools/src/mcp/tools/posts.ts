@@ -205,14 +205,14 @@ function resolveAccount(accounts: AccountOption[], target: TargetInput): Account
   )
 }
 
-/** The next quarter-hour at or after `earliest`, so "no time given" lands on a tidy calendar slot. */
-export function nextQuarterHour(earliest: Date): Date {
+/** The next five-minute mark at or after `earliest` — a tidy calendar slot rather than 14:07. */
+export function nextSlot(earliest: Date): Date {
   const slot = new Date(earliest.getTime())
-  slot.setSeconds(0, 0)
-  const minutes = slot.getMinutes()
-  const rounded = Math.ceil(minutes / 15) * 15
-  slot.setMinutes(rounded)
-  if (slot.getTime() < earliest.getTime()) slot.setMinutes(slot.getMinutes() + 15)
+  slot.setUTCSeconds(0, 0)
+  const minutes = slot.getUTCMinutes()
+  const rounded = Math.ceil(minutes / 5) * 5
+  slot.setUTCMinutes(rounded)
+  if (slot.getTime() < earliest.getTime()) slot.setUTCMinutes(slot.getUTCMinutes() + 5)
   return slot
 }
 
@@ -396,7 +396,7 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
     let scheduledFor = params.scheduledFor
     if (!scheduledFor) {
       const earliest = preflight.earliestFireTime ? new Date(preflight.earliestFireTime) : new Date(Date.now() + 15 * 60_000)
-      scheduledFor = nextQuarterHour(earliest).toISOString()
+      scheduledFor = nextSlot(earliest).toISOString()
     }
     scheduled = await updateWorkItem({ issueId: postId, scheduledFor, scheduleTimezone: timezone }, config)
   }

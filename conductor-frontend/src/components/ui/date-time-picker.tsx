@@ -84,7 +84,9 @@ const MONTHS = Array.from({ length: 12 }, (_, i) =>
 const WEEKDAYS = Array.from({ length: 7 }, (_, i) =>
   new Intl.DateTimeFormat(undefined, { weekday: 'narrow', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 1, 1 + i)))
 )
-const MINUTES = [0, 15, 30, 45]
+/** Five-minute steps: fine enough to mean a time, coarse enough to stay a list. An odd minute an
+ * existing value carries (or "Now" produces) is added to the list so it never disappears. */
+const MINUTES = Array.from({ length: 12 }, (_, i) => i * 5)
 
 export function DateTimePicker({
   id,
@@ -194,7 +196,7 @@ export function DateTimePicker({
     const now = new Date()
     const slot = new Date(now.getTime())
     slot.setSeconds(0, 0)
-    slot.setMinutes(Math.ceil(slot.getMinutes() / 15) * 15)
+    slot.setMinutes(Math.ceil(slot.getMinutes() / 5) * 5)
     emit({ y: slot.getFullYear(), m: slot.getMonth() + 1, d: slot.getDate(), h: slot.getHours(), mi: slot.getMinutes() })
   }
 

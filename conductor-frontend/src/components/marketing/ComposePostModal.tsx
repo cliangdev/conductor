@@ -104,12 +104,12 @@ export function toInstant(local: string, timeZone: string): string | null {
   return new Date(instant).toISOString()
 }
 
-/** The next quarter-hour at or after `earliest` — a tidy calendar slot rather than 14:07. */
-export function nextQuarterHour(earliest: Date): Date {
+/** The next five-minute mark at or after `earliest` — a tidy calendar slot rather than 14:07. */
+export function nextSlot(earliest: Date): Date {
   const slot = new Date(earliest.getTime())
   slot.setSeconds(0, 0)
-  slot.setMinutes(Math.ceil(slot.getMinutes() / 15) * 15)
-  if (slot.getTime() < earliest.getTime()) slot.setMinutes(slot.getMinutes() + 15)
+  slot.setMinutes(Math.ceil(slot.getMinutes() / 5) * 5)
+  if (slot.getTime() < earliest.getTime()) slot.setMinutes(slot.getMinutes() + 5)
   return slot
 }
 
@@ -274,7 +274,7 @@ export function ComposePostModal({
           const earliest = preflight.earliestFireTime
             ? new Date(preflight.earliestFireTime)
             : new Date(Date.now() + 15 * 60_000)
-          scheduledFor = nextQuarterHour(earliest).toISOString()
+          scheduledFor = nextSlot(earliest).toISOString()
         }
         await apiPatch(base, { scheduledFor, scheduleTimezone: timeZone }, token)
       }

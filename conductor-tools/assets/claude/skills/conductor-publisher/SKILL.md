@@ -25,7 +25,7 @@ the platform names as examples.
    platforms, ask; never assume "everywhere".
 3. **The timing** — a specific time in a named timezone, "as soon as possible", or "next free slot".
    With nothing said, default to scheduling (the earliest time the destinations accept, rounded to
-   the quarter-hour), never to publishing immediately.
+   the five-minute mark), never to publishing immediately.
 
 Also note any media the person handed you: local paths or public URLs, in the order they should
 appear. Media that must be measured (video) is measured by the tool; you do not need dimensions.
@@ -51,7 +51,7 @@ offers all three:
 
 ### Scheduling with no time given
 
-When nobody names a time, `create_post` schedules for the next quarter-hour at or after the
+When nobody names a time, `create_post` schedules for the next five-minute mark at or after the
 server's own `earliestFireTime` (from the publish preflight) — never sooner, and never "now". This
 is the one instance of "ask rather than guess" that still has to produce *something*: the server,
 not the client, knows the earliest slot every chosen destination can accept.

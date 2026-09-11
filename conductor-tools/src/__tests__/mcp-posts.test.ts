@@ -22,7 +22,7 @@ vi.mock('../lib/mp4-probe.js', () => ({
 }))
 
 import { apiGet, apiPost, apiPatch, apiPut } from '../mcp/api.js'
-import { createPost, getPostStatus, submitPost, listPosts, submitReview, nextQuarterHour, getPostAnalytics, listTopPosts } from '../mcp/tools/posts.js'
+import { createPost, getPostStatus, submitPost, listPosts, submitReview, nextSlot, getPostAnalytics, listTopPosts } from '../mcp/tools/posts.js'
 
 const config: Config = {
   apiKey: 'k',
@@ -92,7 +92,7 @@ describe('create_post', () => {
         { id: 't-tt', platform: 'tiktok', label: null, lane: 'MANUAL', state: 'PENDING' },
       ],
       '/api/v2/projects/proj-1/work-items/w1/assets': [{ id: 'a1', label: 'clip.mp4', contentType: 'video/mp4' }],
-      '/api/v2/projects/proj-1/work-items/w1': () => ({ id: 'w1', displayId: 'MK-7', status, scheduledFor: '2026-09-04T12:15:00.000Z', scheduleTimezone: 'Europe/Berlin' }),
+      '/api/v2/projects/proj-1/work-items/w1': () => ({ id: 'w1', displayId: 'MK-7', status, scheduledFor: '2026-09-04T12:05:00.000Z', scheduleTimezone: 'Europe/Berlin' }),
       '/api/v1/projects/proj-1/members': [{ userId: 'u-rev', name: 'Rita Reviewer', email: 'rita@x.test', role: 'REVIEWER' }],
     })
     mocked(apiPost).mockImplementation(async (path: string, body: unknown) => {
@@ -133,8 +133,8 @@ describe('create_post', () => {
         { platform: 'tiktok', connectionId: null, captionOverride: null, assetIds: [], publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE' } },
       ],
     })
-    // Scheduled on the quarter-hour at or after the server's earliest, in the given zone.
-    expect(mocked(apiPatch).mock.calls[0]![1]).toEqual({ scheduledFor: '2026-09-04T12:15:00.000Z', scheduleTimezone: 'Europe/Berlin' })
+    // Scheduled on the five-minute mark at or after the server's earliest, in the given zone.
+    expect(mocked(apiPatch).mock.calls[0]![1]).toEqual({ scheduledFor: '2026-09-04T12:05:00.000Z', scheduleTimezone: 'Europe/Berlin' })
     // Reviewer assigned by name, then submitted.
     expect(mocked(apiPost).mock.calls.some((c) => String(c[0]).endsWith('/reviewers') && (c[1] as { userId: string }).userId === 'u-rev')).toBe(true)
     expect(mocked(apiPatch).mock.calls[1]![1]).toEqual({ status: 'IN_REVIEW' })
@@ -479,11 +479,11 @@ describe('get_post_status / submit_post / list_posts / submit_review', () => {
   })
 })
 
-describe('nextQuarterHour', () => {
-  it('rounds up to the next quarter-hour at or after the given instant', () => {
-    expect(nextQuarterHour(new Date('2026-09-04T12:01:01Z')).toISOString()).toBe('2026-09-04T12:15:00.000Z')
-    expect(nextQuarterHour(new Date('2026-09-04T12:15:00Z')).toISOString()).toBe('2026-09-04T12:15:00.000Z')
-    expect(nextQuarterHour(new Date('2026-09-04T12:46:00Z')).toISOString()).toBe('2026-09-04T13:00:00.000Z')
+describe('nextSlot', () => {
+  it('rounds up to the next five-minute mark at or after the given instant', () => {
+    expect(nextSlot(new Date('2026-09-04T12:01:01Z')).toISOString()).toBe('2026-09-04T12:05:00.000Z')
+    expect(nextSlot(new Date('2026-09-04T12:15:00Z')).toISOString()).toBe('2026-09-04T12:15:00.000Z')
+    expect(nextSlot(new Date('2026-09-04T12:46:00Z')).toISOString()).toBe('2026-09-04T12:50:00.000Z')
   })
 })
 
