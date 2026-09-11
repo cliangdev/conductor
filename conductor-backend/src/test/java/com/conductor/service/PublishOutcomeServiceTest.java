@@ -881,6 +881,8 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
 
         assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
         assertThat(reload(target).getPermalink()).isEqualTo("https://tiktok.com/@acme/video/1");
+        // The link is where the platform's id comes from, so the metrics feed can read this post too.
+        assertThat(reload(target).getPlatformPostId()).isEqualTo("1");
         // The point of the lane is that a manual publish is not a second class of result: it records the
         // same typed destination Asset an API publish does, which is what puts it in the Asset library and
         // makes the link findable outside the Post.
