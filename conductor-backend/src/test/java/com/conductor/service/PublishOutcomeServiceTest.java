@@ -991,6 +991,22 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aConnectedAccountsInboxPostCanBeRecordedAgainToTakeItsId() {
+        // The inbox fallback parks a connected TikTok account's row as AWAITING_MANUAL; once a person
+        // finished it, a repeat record must still be allowed, or a row without an id could never get one.
+        PostPublishTarget target = target(post(), "tiktok", PostPublishTargetState.AWAITING_MANUAL, "Rexipe");
+        String link = "https://www.tiktok.com/@rexipe2/video/7684131367378095374";
+        assertThat(complete(target, link, null)).isTrue();
+        PostPublishTarget stored = reload(target);
+        stored.setPlatformPostId(null);
+        targetRepository.save(stored);
+
+        assertThat(complete(target, link, null)).isFalse();
+
+        assertThat(reload(target).getPlatformPostId()).isEqualTo("7684131367378095374");
+    }
+
+    @Test
     void aSecondCallCannotRewriteWhenThePostWentOut() {
         // Re-stamping on a duplicate would let a double-clicked button quietly move the recorded time.
         PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);

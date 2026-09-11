@@ -391,8 +391,12 @@ public class PublishOutcomeService {
                 .orElseThrow(() -> new EntityNotFoundException("Publish target not found"));
 
         // An automated destination qualifies only once the platform itself handed the last step to a person
-        // (AWAITING_MANUAL); otherwise its outcome is the platform's to report, not a human's to assert.
-        if (target.getLane() != PublishLane.MANUAL && target.getState() != PostPublishTargetState.AWAITING_MANUAL) {
+        // (AWAITING_MANUAL); otherwise its outcome is the platform's to report, not a human's to assert. A
+        // row a person already finished stays open to a repeat: that path changes nothing but an id the
+        // row never had, and the inbox case is exactly where such rows come from.
+        if (target.getLane() != PublishLane.MANUAL
+                && target.getState() != PostPublishTargetState.AWAITING_MANUAL
+                && target.getState() != PostPublishTargetState.PUBLISHED) {
             throw new BusinessException("This destination publishes automatically, so it cannot be marked"
                     + " published by hand — its outcome is recorded when the platform reports it.");
         }
