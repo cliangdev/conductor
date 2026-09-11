@@ -817,7 +817,16 @@ public class PublishOutcomeService {
         }
         if (target.getState() == PostPublishTargetState.PUBLISHED) {
             // A duplicate result. The Asset write below is idempotent on (workItem, type, ref), so
-            // re-running it converges rather than doubling; the row itself is left untouched.
+            // re-running it converges rather than doubling; the row itself is left untouched — except
+            // that an id it never had is taken: a link recorded before ids were read out of links left
+            // rows the metrics feed could not query, and recording the same link again is the repair.
+            if ((target.getPlatformPostId() == null || target.getPlatformPostId().isBlank())
+                    && platformPostId != null && !platformPostId.isBlank()) {
+                target.setPlatformPostId(platformPostId);
+                targetRepository.save(target);
+                log.info("Target {} was PUBLISHED without a platform post id; took {} from the recorded link",
+                        target.getId(), platformPostId);
+            }
             recordDestinationAsset(target, permalink);
             log.debug("Target {} is already PUBLISHED; outcome re-applied without moving the row", target.getId());
             return false;
