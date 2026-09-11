@@ -46,6 +46,31 @@ const COLUMNS: { key: keyof PublishMetricSnapshot; label: string }[] = [
   { key: 'shares', label: 'Shares' },
 ]
 
+/**
+ * What each platform hands out through its public API without extra permissions. A dash in the table is
+ * the platform not reporting it, never a zero, and this is what lets the card say so in words.
+ */
+const REPORTED: Record<string, ReadonlySet<keyof PublishMetricSnapshot>> = {
+  tiktok: new Set(['views', 'likes', 'comments', 'shares']),
+  youtube: new Set(['views', 'likes', 'comments']),
+  facebook: new Set(['likes', 'comments', 'shares']),
+  instagram: new Set(['likes', 'comments']),
+}
+
+/** "Facebook doesn't report views; Instagram doesn't report views or shares." for the platforms present. */
+export function unreportedNote(platforms: string[]): string | null {
+  const parts: string[] = []
+  for (const platform of [...new Set(platforms.map((p) => p.toLowerCase()))]) {
+    const reported = REPORTED[platform]
+    if (!reported) continue
+    const missing = COLUMNS.filter((c) => !reported.has(c.key)).map((c) => c.label.toLowerCase())
+    if (missing.length === 0) continue
+    const list = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(', ')} or ${missing.at(-1)}`
+    parts.push(`${humanizeId(platform)} doesn't report ${list}`)
+  }
+  return parts.length === 0 ? null : parts.join('; ') + '.'
+}
+
 function count(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—'
   return new Intl.NumberFormat().format(value)
@@ -92,6 +117,7 @@ export function PostPerformanceCard({
   // Before anything has published there is nothing to count; the card would only say "nothing yet".
   if (!finished && targets.length === 0 && !error) return null
 
+  const note = unreportedNote(targets.map((t) => t.platform))
   const newest = targets
     .map((t) => t.latest?.observedAt)
     .filter((v): v is string => Boolean(v))
@@ -154,6 +180,7 @@ export function PostPerformanceCard({
                 )}
               </tbody>
             </table>
+            {note && <p className="mt-2 text-sm text-muted-foreground">{note} A dash means the platform doesn&rsquo;t report that number.</p>}
           </div>
         )}
       </CardContent>

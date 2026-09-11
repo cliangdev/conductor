@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import type { WorkflowView } from '@/types/workItem'
-import { PostPerformanceCard, type PublishMetricsResponse } from './PostPerformanceCard'
+import { PostPerformanceCard, unreportedNote, type PublishMetricsResponse } from './PostPerformanceCard'
 
 const API = 'https://api.test'
 const VIEW: WorkflowView = {
@@ -63,6 +63,23 @@ describe('PostPerformanceCard', () => {
     renderCard('SCHEDULED')
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(screen.queryByTestId('post-performance')).not.toBeInTheDocument()
+  })
+
+  it('says in words which numbers a platform does not hand out', async () => {
+    expect(unreportedNote(['tiktok'])).toBeNull()
+    expect(unreportedNote(['facebook'])).toBe("Facebook doesn't report views.")
+    expect(unreportedNote(['instagram', 'facebook', 'instagram'])).toBe(
+      "Instagram doesn't report views or shares; Facebook doesn't report views."
+    )
+    expect(unreportedNote(['mastodon'])).toBeNull()
+
+    current = {
+      workItemId: 'post-1',
+      targets: [{ targetId: 't2', platform: 'facebook', accountLabel: 'Rexipe', latest: { observedAt: '2026-09-10T20:00:00Z', likes: 4, comments: 1, shares: 1 }, series: [] }],
+      totals: null,
+    }
+    renderCard('PUBLISHED')
+    expect(await screen.findByText(/Facebook doesn't report views\. A dash means/)).toBeInTheDocument()
   })
 
   it('marks a post the platform no longer returns', async () => {
