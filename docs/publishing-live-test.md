@@ -72,9 +72,9 @@ Only a workspace **ADMIN** can do the first two steps.
 2. **Authorize** → consent as the account that holds the app role → pick the Page. The connection
    card should show the Page and, if linked, the Instagram username. For TikTok the card shows the
    creator's nickname and caches the privacy levels the account may use.
-3. Open a Post's *Publishing to* list. You should see one row per platform: the Page, the linked
-   Instagram account, the TikTok creator, and each platform's manual destination. The format control
-   (Feed / Reel / Story) shows for the Meta rows only.
+3. Open a Post's *Destinations* panel. You should see one row per account: the Page, the linked
+   Instagram account, the TikTok creator, and a by-hand destination for any platform with no account.
+   Open a row (the chevron) for its format control (Feed / Reel / Story), on the Meta rows only.
 
 ## The test matrix
 
@@ -82,7 +82,7 @@ Use the seeded MARKETING workflow (with review) for the first pass so nothing go
 approval, or import `marketing-autopilot.workflow.json` to go straight from Draft to Scheduled.
 Schedule every Post at least **15 minutes** out (Facebook's native floor is 10; the extra is slack).
 
-Watch two places while it runs: the Post's readiness card and destination rows in the UI, and the
+Watch two places while it runs: the Post's Destinations panel (its header line and each row) in the UI, and the
 backend log:
 
 ```bash
