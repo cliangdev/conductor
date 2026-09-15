@@ -35,12 +35,12 @@ import {
   statusMeta,
   useWorkflowView,
   workItemDetailPath,
+  workItemListPath,
 } from '@/lib/workflows'
 import { WorkItemBoardView } from '@/components/workitems/WorkItemBoardView'
 import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarView'
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
-import { ComposePostModal } from '@/components/marketing/ComposePostModal'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
@@ -237,6 +237,11 @@ export function WorkItemListView({
   }
 
   const detailArea = workflowView?.area ?? slug
+  // A publishing Workflow composes on its own page (caption, media, destinations and schedule laid out
+  // like the Post's); everything else keeps the generic title-and-description modal.
+  const opensComposePage = workflowDeclaresPublishTargets(workflowView)
+  const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
+  const startCreating = () => (opensComposePage ? router.push(composePath) : setCreating(true))
 
   const bulkStatusTriggerRef = useRef<HTMLButtonElement>(null)
   const bulkAssignTriggerRef = useRef<HTMLButtonElement>(null)
@@ -332,7 +337,7 @@ export function WorkItemListView({
         breadcrumbs={crumbs}
         actions={
           canEdit ? (
-            <Button size="sm" onClick={() => setCreating(true)}>
+            <Button size="sm" onClick={startCreating}>
               <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               New {noun}
             </Button>
@@ -340,21 +345,7 @@ export function WorkItemListView({
         }
       />
 
-      {/* A publishing Workflow gets the compose card (caption, media, destinations, time in one go);
-          everything else keeps the generic title-and-description modal. */}
-      {workflowDeclaresPublishTargets(workflowView) ? (
-        <ComposePostModal
-          open={creating}
-          onOpenChange={setCreating}
-          projectId={projectId}
-          workflowSlug={slug}
-          workflowView={workflowView}
-          detailArea={detailArea}
-          noun={noun}
-          token={accessToken!}
-          onCreated={() => void loadIssues()}
-        />
-      ) : (
+      {!opensComposePage && (
         <CreateWorkItemModal
           open={creating}
           onOpenChange={setCreating}
@@ -463,7 +454,7 @@ export function WorkItemListView({
                   Connect an account
                 </Link>
                 {canEdit && (
-                  <Button size="sm" onClick={() => setCreating(true)}>
+                  <Button size="sm" onClick={startCreating}>
                     <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                     New {noun}
                   </Button>
