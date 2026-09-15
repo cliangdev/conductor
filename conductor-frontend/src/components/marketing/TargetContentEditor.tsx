@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, RotateCcw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { isVideoContentType, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
+import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { MediaThumb } from './MediaThumb'
 
 /** What one destination publishes, as the picker holds it while it is being edited. */
@@ -112,6 +112,8 @@ export function TargetContentEditor({
         )}
       </div>
 
+      {/* Nothing to choose from until the Post has media (the compose page, before the upload). */}
+      {assets.length > 0 && (
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-medium text-foreground">Media for this destination</span>
@@ -193,6 +195,7 @@ export function TargetContentEditor({
           </>
         )}
       </div>
+      )}
     </div>
   )
 }
