@@ -121,6 +121,7 @@ export function WorkItemPropertiesPanel({
   onTagsChanged,
   onDelete,
   noun = 'item',
+  showSchedule = true,
 }: {
   projectId: string
   issueId: string
@@ -164,6 +165,8 @@ export function WorkItemPropertiesPanel({
   onDelete?: () => void
   /** The Workflow's word for this item, for the delete label. */
   noun?: string
+  /** False when the page shows the schedule elsewhere (a Post carries it in its Destinations panel). */
+  showSchedule?: boolean
 }) {
   // Counted from `reviews`, not from `reviewers`. The reviewers endpoint returns assignment only —
   // userId, email, name — and carries no verdict, so filtering it on reviewVerdict matched nothing and
@@ -214,6 +217,7 @@ export function WorkItemPropertiesPanel({
         />
       </PanelSection>
 
+      {showSchedule && (
       <PanelSection label="Schedule">
         <WorkItemScheduleField
           projectId={projectId}
@@ -226,6 +230,7 @@ export function WorkItemPropertiesPanel({
           onChanged={onScheduleChanged}
         />
       </PanelSection>
+      )}
 
       <PanelSection label="Assignee">
         {userRole === 'REVIEWER' ? (

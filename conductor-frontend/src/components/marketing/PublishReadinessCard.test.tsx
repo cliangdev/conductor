@@ -5,7 +5,6 @@ import type { WorkflowView } from '@/types/workItem'
 import {
   usePublishReadiness,
   PublishReadinessAction,
-  PublishReadinessCard,
   type PublishPreflight,
   type UsePublishReadinessArgs,
 } from './PublishReadinessCard'
@@ -90,12 +89,7 @@ function Harness(props: Partial<UsePublishReadinessArgs> = {}) {
     workflowView: VIEW,
     ...props,
   })
-  return (
-    <>
-      <PublishReadinessAction state={state} />
-      <PublishReadinessCard state={state} />
-    </>
-  )
+  return <PublishReadinessAction state={state} />
 }
 
 function renderCard(props: Partial<UsePublishReadinessArgs> = {}) {
@@ -104,8 +98,8 @@ function renderCard(props: Partial<UsePublishReadinessArgs> = {}) {
   return { onStatusChanged }
 }
 
-describe('PublishReadinessCard + PublishReadinessAction', () => {
-  it('shows every blocker verbatim and offers the next move disabled with the first as its reason', async () => {
+describe('usePublishReadiness + PublishReadinessAction', () => {
+  it('counts the blockers and offers the next move disabled with the first as its reason', async () => {
     current = preflight({
       ready: false,
       blockers: [
@@ -117,18 +111,9 @@ describe('PublishReadinessCard + PublishReadinessAction', () => {
     renderCard()
 
     expect(await screen.findByText(/2 things to fix/)).toBeInTheDocument()
-    expect(screen.getByText(/no uploaded media file is attached/)).toBeInTheDocument()
-    expect(screen.getByText(/no publish target is selected/)).toBeInTheDocument()
-    expect(screen.getByText(/YouTube will treat this as a Short/)).toBeInTheDocument()
     const button = screen.getByRole('button', { name: 'Submit for review' })
     expect(button).toBeDisabled()
     expect(button).toHaveAttribute('title', expect.stringContaining('no uploaded media file'))
-  })
-
-  it('renders nothing in the findings card when there is nothing to fix or note', async () => {
-    renderCard()
-    await screen.findByRole('button', { name: 'Submit for review' })
-    expect(screen.queryByTestId('publish-readiness')).not.toBeInTheDocument()
   })
 
   it('takes the next move when ready, reports the new status, and re-asks the server', async () => {
@@ -206,7 +191,6 @@ describe('PublishReadinessCard + PublishReadinessAction', () => {
     current = preflight({ publishing: false, nextTransition: null })
     const { container } = render(<Harness />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(container.querySelector('[data-testid="publish-readiness"]')).toBeNull()
     expect(container.textContent).toBe('')
 
     current = preflight()
