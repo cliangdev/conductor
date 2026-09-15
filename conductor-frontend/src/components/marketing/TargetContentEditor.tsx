@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { isVideoContentType, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
+import { MediaThumb } from './MediaThumb'
 
 /** What one destination publishes, as the picker holds it while it is being edited. */
 export interface TargetContent {
@@ -206,28 +207,4 @@ function orderedForDisplay(assets: MediaAsset[], selectedIds: string[]): MediaAs
   const chosen = selectedIds.map((id) => byId.get(id)).filter((a): a is MediaAsset => Boolean(a))
   const rest = assets.filter((asset) => !selectedIds.includes(asset.id))
   return [...chosen, ...rest]
-}
-
-/** A small preview, or a neutral placeholder while an upload has not finished. */
-function MediaThumb({ asset }: { asset: MediaAsset }) {
-  if (!asset.previewUrl) {
-    return <span className="h-8 w-8 shrink-0 rounded bg-surface-3" aria-hidden />
-  }
-  if (isVideoContentType(asset.contentType)) {
-    return (
-      <video
-        src={asset.previewUrl}
-        className="h-8 w-8 shrink-0 rounded bg-surface-3 object-cover"
-        aria-label={asset.label || asset.type}
-      />
-    )
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={asset.previewUrl}
-      alt={asset.label || asset.type}
-      className="h-8 w-8 shrink-0 rounded bg-surface-3 object-cover"
-    />
-  )
 }

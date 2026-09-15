@@ -41,7 +41,7 @@ import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarVie
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
 import { ComposePostModal } from '@/components/marketing/ComposePostModal'
-import { workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
+import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
