@@ -21,19 +21,14 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
-import {
-  usePublishReadiness,
-  PublishReadinessAction,
-  PublishReadinessCard,
-} from '@/components/marketing/PublishReadinessCard'
-import { PostTargetPicker } from '@/components/marketing/PostTargetPicker'
+import { usePublishReadiness } from '@/components/marketing/PublishReadinessCard'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
-import { PostPerformanceCard } from '@/components/marketing/PostPerformanceCard'
-import {
-  TikTokPublishGateProvider,
-  tiktokSubmissionBlockedReason,
-  type TikTokConsentTarget,
-} from '@/components/marketing/TikTokConsentStep'
+import { usePostDestinations } from '@/components/marketing/destinations/usePostDestinations'
+import { PostDetailBody } from '@/components/marketing/post-detail/PostDetailBody'
+import { PostHeaderActions } from '@/components/marketing/post-detail/PostHeaderActions'
+import { WorkItemMoreMenu } from '@/components/workitems/WorkItemMoreMenu'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { TikTokPublishGateProvider } from '@/components/marketing/TikTokConsentStep'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { ExternalLink, FileText, FileX2 } from 'lucide-react'
@@ -229,15 +224,6 @@ export function WorkItemDetailView({
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const router = useRouter()
-  // TIK-2. TikTok's Content Sharing Guidelines require the creator to see the content and the
-  // account nickname it posts to, and to consent, before anything is uploaded — so consent is held
-  // here, beside the media the preview is built from, and published as a gate the status control
-  // reads. It is deliberately not persisted: it is this person, agreeing to this content, now.
-  const [tiktokTargets, setTikTokTargets] = useState<TikTokConsentTarget[]>([])
-  // Told directly by the TikTok consent disclosure embedded in PostTargetPicker (see
-  // onTikTokConsentChange below) — it owns reading and writing the consent itself now, this is only
-  // the last answer it reported, for the status control's gate.
-  const [tiktokConsented, setTikTokConsented] = useState(false)
   // Tags already in use in this project, for the editor's suggestions. Read from the Work Item list —
   // there is no separate tag registry, and a project's tags are exactly the ones on its items.
   const [knownTags, setKnownTags] = useState<string[]>([])
@@ -472,8 +458,6 @@ export function WorkItemDetailView({
 
   const mediaAssets = useMemo(() => assets.filter((a) => a.kind === 'file'), [assets])
 
-  const tiktokBlockedReason = tiktokSubmissionBlockedReason(tiktokTargets, tiktokConsented)
-
   const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id)
   const canManage = userRole === 'CREATOR' || userRole === 'ADMIN'
 
@@ -492,9 +476,9 @@ export function WorkItemDetailView({
   // never asks the server a question (the preflight) whose answer it already holds for every issue.
   const publishing = workflowDeclaresPublishTargets(workflowView)
 
-  // The Post's one primary action — lifted here so the header (PublishReadinessAction) and the top of
-  // the reading column (PublishReadinessCard) read the one poll of the server and share the one
-  // reviewer-picker dialog, instead of each asking on its own.
+  // The Post's one primary action — lifted here so the header (PublishReadinessAction) and the
+  // Destinations panel read the one poll of the server and share the one reviewer-picker dialog,
+  // instead of each asking on its own.
   const readiness = usePublishReadiness({
     projectId,
     workItemId: issueId,
@@ -515,6 +499,25 @@ export function WorkItemDetailView({
     eligibleReviewers: assignableReviewers.map((m) => ({ userId: m.userId, name: m.name, email: m.email })),
     onAssignReviewer: handleAssignReviewer,
     onUnassignReviewer: handleUnassignReviewer,
+  })
+
+  // Where the Post goes and where each destination is: the Destinations panel's state, consuming the
+  // preflight above rather than polling its own. Called unconditionally (hooks), fetching nothing for a
+  // Workflow that does not publish. It also feeds the TikTok consent gate the status controls read.
+  const destinations = usePostDestinations({
+    projectId,
+    workItemId: issueId,
+    token: accessToken ?? '',
+    enabled: publishing,
+    status: issue?.status ?? '',
+    workflowView,
+    assets: mediaAssets,
+    caption: issue?.description ?? null,
+    preflight: readiness.preflight,
+    refreshKey: preflightVersion,
+    onChanged: refreshIssueStatus,
+    // Consent is one of the gate's inputs, so the readiness state has to ask again.
+    onConsentChanged: () => setPreflightVersion((v) => v + 1),
   })
 
   // Hydrate any in-progress review draft for this Work Item + user (localStorage) once the data
@@ -848,11 +851,47 @@ export function WorkItemDetailView({
       </Button>
     </>
   )
-  const hasHeaderActions = Boolean(docReviewAction) || Boolean(noDocReviewActions) || publishing
-  // The sentence about the gate reads first, then the buttons it is about.
-  const headerActions = hasHeaderActions ? (
+  // A Post's header: the readiness sentence and the one primary move (or the reviewer's verdict pair),
+  // then a More menu with every other move the Workflow allows from here, and Delete. Everything else
+  // keeps the header it had.
+  const moreMenu = publishing ? (
+    <WorkItemMoreMenu
+      projectId={projectId}
+      issueId={issueId}
+      currentStatus={issue.status}
+      userRole={userRole}
+      token={accessToken!}
+      workflowView={workflowView}
+      blockedMoves={gateBlock}
+      excludeStatus={readiness.next?.to ?? null}
+      onStatusChanged={(s) => {
+        setIssue((prev) => (prev ? { ...prev, status: s } : prev))
+        void refreshIssueStatus()
+      }}
+      onDelete={userRole !== 'REVIEWER' ? () => setDeleteOpen(true) : undefined}
+      noun={workflowView?.noun ?? 'item'}
+      extraItems={
+        destinations.failedCount > 0 ? (
+          <DropdownMenuItem onClick={() => void destinations.actions.retry()} className="cursor-pointer">
+            Retry failed destinations
+          </DropdownMenuItem>
+        ) : undefined
+      }
+    />
+  ) : null
+  const hasHeaderActions = Boolean(docReviewAction) || Boolean(noDocReviewActions)
+  const headerActions = publishing ? (
+    <PostHeaderActions
+      readiness={readiness}
+      reviewerActs={Boolean(reviewerActs)}
+      reviewSubmitting={reviewSubmitting}
+      gateReady={gateReady}
+      onApprove={() => void handleSubmitReview('APPROVED', '')}
+      onRequestChanges={() => setChangesModalOpen(true)}
+      menu={moreMenu}
+    />
+  ) : hasHeaderActions ? (
     <div className="flex flex-wrap items-center gap-2">
-      {publishing && <PublishReadinessAction state={readiness} forReviewer={Boolean(reviewerActs)} />}
       {docReviewAction}
       {noDocReviewActions}
     </div>
@@ -882,7 +921,7 @@ export function WorkItemDetailView({
   }
 
   return (
-    <TikTokPublishGateProvider reason={tiktokBlockedReason}>
+    <TikTokPublishGateProvider reason={destinations.tiktokBlockedReason}>
       <PageContainer>
         <PageHeader
           breadcrumbs={crumbs}
@@ -1020,81 +1059,75 @@ export function WorkItemDetailView({
                   </div>
                 </Alert>
               )}
-              {/* "What is still in the way?" — the gate's own findings, read from the server. At the top
-                  of the column because it is the first thing an author looks for after any edit; the
-                  move itself and its one-line summary live in the header (PublishReadinessAction), so
-                  this renders nothing when there is nothing to fix or note. */}
-              {activeTab !== 'activity' && publishing && <PublishReadinessCard state={readiness} />}
               {mainContent}
-              {/* The description, which on a publishing Workflow is the caption that actually goes out.
-                  Above the media for the same reason the media sits above the accounts: it is the thing
-                  being reviewed, in the order someone writes it. */}
-              {activeTab !== 'activity' && (
-                <WorkItemDescriptionCard
+              {/* A Post: where it goes and where each destination is, then what it says and shows.
+                  Everything Post-specific lives in PostDetailBody; the engineering column below is
+                  untouched by it. */}
+              {activeTab !== 'activity' && publishing && (
+                <PostDetailBody
                   projectId={projectId}
                   workItemId={issueId}
                   token={accessToken!}
-                  description={issue.description}
                   status={issue.status}
                   workflowView={workflowView}
-                  isCaption={publishing}
-                  canEdit={userRole !== 'REVIEWER'}
-                  onSaved={(description) => {
+                  userRole={userRole}
+                  description={issue.description}
+                  scheduledFor={issue.scheduledFor}
+                  scheduleTimezone={issue.scheduleTimezone}
+                  publishOnApproval={issue.publishOnApproval}
+                  assets={mediaAssets}
+                  destinations={destinations}
+                  onCaptionSaved={(description) => {
                     setIssue((prev) => (prev ? { ...prev, description } : prev))
                     // A caption edit is a bundle edit, so the server may have reverted the item and
-                    // revoked a hand-off. Re-read rather than assume, as the picker and schedule do.
+                    // revoked a hand-off. Re-read rather than assume.
+                    void refreshIssueStatus()
+                  }}
+                  onAssetsChanged={fetchAssets}
+                  onScheduleChanged={(scheduledFor, scheduleTimezone, publishOnApproval) => {
+                    setIssue((prev) =>
+                      prev
+                        ? { ...prev, scheduledFor, scheduleTimezone, ...(publishOnApproval === undefined ? {} : { publishOnApproval }) }
+                        : prev
+                    )
+                    // The schedule is not frozen content: a change keeps the approval, and on a scheduled
+                    // Post re-times its destinations in place. Re-read so the rows show the re-issued
+                    // hand-offs rather than assuming.
                     void refreshIssueStatus()
                   }}
                 />
               )}
-              {/* File assets live with the copy they ship alongside, not in the properties rail — a
-                  Post's creative is content, not metadata. Offered only where the bound Workflow
-                  declares asset types, since the mint validates `type` against exactly that list. */}
-              {activeTab !== 'activity' && (workflowView?.assetTypes?.length ?? 0) > 0 && (
-                <MediaUploadPanel
-                  projectId={projectId}
-                  workItemId={issueId}
-                  token={accessToken!}
-                  status={issue.status}
-                  workflowView={workflowView}
-                  assets={assets}
-                  onUploaded={fetchAssets}
-                />
-              )}
-              {/* Where the Post goes, what happened once it did, and — for a TikTok destination — the
-                  consent TikTok's audit requires, all in this one card: a row is a destination, full
-                  stop. Offered only where the bound Workflow's asset types name a publishable platform,
-                  so engineering items never see it. */}
-              {activeTab !== 'activity' && publishing && (
-                <PostTargetPicker
-                  projectId={projectId}
-                  workItemId={issueId}
-                  token={accessToken!}
-                  status={issue.status}
-                  workflowView={workflowView}
-                  onChanged={refreshIssueStatus}
-                  onTikTokChange={setTikTokTargets}
-                  assets={mediaAssets}
-                  caption={issue.description ?? null}
-                  onTikTokConsentChange={(given) => {
-                    setTikTokConsented(given)
-                    // Consent is one of the gate's inputs, so the readiness state has to ask again;
-                    // without this it kept saying "consent first" until the page was reloaded.
-                    setPreflightVersion((v) => v + 1)
-                  }}
-                />
-              )}
-              {/* What the published destinations did: the counters the metrics feed files. Under the
-                  destinations because it is the same rows, one step later. */}
-              {activeTab !== 'activity' && publishing && (
-                <PostPerformanceCard
-                  projectId={projectId}
-                  workItemId={issueId}
-                  token={accessToken!}
-                  status={issue.status}
-                  workflowView={workflowView}
-                  refreshKey={preflightVersion}
-                />
+              {/* The description, and the file assets that live with the copy they ship alongside — offered
+                  only where the bound Workflow declares asset types, since the mint validates `type`
+                  against exactly that list. */}
+              {activeTab !== 'activity' && !publishing && (
+                <>
+                  <WorkItemDescriptionCard
+                    projectId={projectId}
+                    workItemId={issueId}
+                    token={accessToken!}
+                    description={issue.description}
+                    status={issue.status}
+                    workflowView={workflowView}
+                    isCaption={false}
+                    canEdit={userRole !== 'REVIEWER'}
+                    onSaved={(description) => {
+                      setIssue((prev) => (prev ? { ...prev, description } : prev))
+                      void refreshIssueStatus()
+                    }}
+                  />
+                  {(workflowView?.assetTypes?.length ?? 0) > 0 && (
+                    <MediaUploadPanel
+                      projectId={projectId}
+                      workItemId={issueId}
+                      token={accessToken!}
+                      status={issue.status}
+                      workflowView={workflowView}
+                      assets={assets}
+                      onUploaded={fetchAssets}
+                    />
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -1156,6 +1189,7 @@ export function WorkItemDetailView({
               assets={assets}
               noun={workflowView?.noun ?? 'item'}
               onDelete={() => setDeleteOpen(true)}
+              showSchedule={!publishing}
             />
           </aside>
         </div>

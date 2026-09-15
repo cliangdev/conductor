@@ -22,7 +22,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal } from '@/components/ui/modal'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPatch } from '@/lib/api'
@@ -381,44 +380,5 @@ export function PublishReadinessAction({
         </Modal>
       )}
     </div>
-  )
-}
-
-/**
- * The blocker/warning list and the consent footnote, at the top of the reading column. Renders nothing
- * when there is nothing to fix or note — the header's summary already says it is ready.
- */
-export function PublishReadinessCard({ state }: { state: PublishReadinessState }) {
-  const { preflight, error } = state
-  if (error) return null
-  if (!preflight || !preflight.publishing) return null
-  if (preflight.blockers.length === 0 && preflight.warnings.length === 0) return null
-
-  return (
-    <Card data-testid="publish-readiness">
-      <CardContent className="space-y-2 divide-y-0 px-4 py-3">
-        {preflight.blockers.length > 0 && (
-          <ul className="space-y-1" aria-label="Blockers">
-            {preflight.blockers.map((finding, index) => (
-              <li key={`${finding.code}-${index}`}>
-                <Alert variant="destructive">{finding.message}</Alert>
-              </li>
-            ))}
-          </ul>
-        )}
-        {preflight.warnings.length > 0 && (
-          <ul className="space-y-1" aria-label="Warnings">
-            {preflight.warnings.map((finding, index) => (
-              <li key={`${finding.code}-${index}`}>
-                <Alert variant="warning">{finding.message}</Alert>
-              </li>
-            ))}
-          </ul>
-        )}
-        {preflight.consent.required && preflight.consent.verdict === 'VALID' && (
-          <p className="text-sm text-muted-foreground">You&rsquo;ve consented to this post as it is now.</p>
-        )}
-      </CardContent>
-    </Card>
   )
 }
