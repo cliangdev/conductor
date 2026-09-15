@@ -164,10 +164,10 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                   {previews.map(({ file, url }, index) => (
                     <div key={`${file.name}-${index}`} className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-md bg-surface-3">
                       {isVideoContentType(file.type) ? (
-                        <video src={url} className="h-full w-full object-cover" aria-label={file.name} />
+                        <video src={url} className="h-full w-full object-cover" aria-label={`Video ${index + 1}`} />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={url} alt={file.name} className="h-full w-full object-cover" />
+                        <img src={url} alt={`Image ${index + 1}`} className="h-full w-full object-cover" />
                       )}
                       <span className="absolute bottom-1 left-1 inline-flex items-center gap-1 rounded bg-foreground/70 px-1 py-0.5 text-[10px] text-background">
                         {isVideoContentType(file.type) ? <Film className="h-3 w-3" aria-hidden /> : <ImageIcon className="h-3 w-3" aria-hidden />}
@@ -176,7 +176,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                       <button
                         type="button"
                         onClick={() => removeFile(index)}
-                        aria-label={`Remove ${file.name}`}
+                        aria-label={`Remove media ${index + 1}`}
                         disabled={saving}
                         className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-foreground/70 text-background opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
                       >

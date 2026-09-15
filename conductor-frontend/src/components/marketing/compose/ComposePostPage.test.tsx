@@ -176,7 +176,8 @@ describe('ComposePostPage', () => {
 
     const file = new File([new Uint8Array([1, 2, 3])], 'story.jpg', { type: 'image/jpeg' })
     await userEvent.upload(document.getElementById('compose-media') as HTMLInputElement, file)
-    expect(await screen.findByAltText('story.jpg')).toBeInTheDocument()
+    expect(await screen.findByText('story.jpg')).toBeInTheDocument()
+    expect(screen.getByAltText('Image 1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Add another' })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
