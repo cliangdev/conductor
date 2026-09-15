@@ -33,9 +33,34 @@ const VIEW: WorkflowView = {
   ],
 }
 
+// A publishing Workflow, for the Post page's own block at the end. Set `viewOverride` per test.
+const MARKETING: WorkflowView = {
+  slug: 'MARKETING',
+  noun: 'Post',
+  area: 'MARKETING',
+  defaultView: 'calendar',
+  version: 1,
+  types: ['POST'],
+  assetTypes: ['facebook_post', 'instagram_post'],
+  statuses: [
+    { id: 'DRAFT', label: 'Draft', category: 'open' },
+    { id: 'IN_REVIEW', label: 'In review', category: 'in_progress' },
+    { id: 'APPROVED', label: 'Approved', category: 'in_progress' },
+    { id: 'SCHEDULED', label: 'Scheduled', category: 'in_progress' },
+    { id: 'PUBLISHED', label: 'Published', category: 'terminal' },
+  ],
+  transitions: [
+    { from: 'DRAFT', to: 'IN_REVIEW', label: 'Submit for review' },
+    { from: 'IN_REVIEW', to: 'APPROVED', label: 'Approve', requiresReview: true, reviewOutcomes: ['approve', 'request_changes'] },
+    { from: 'APPROVED', to: 'SCHEDULED', label: 'Schedule' },
+    { from: 'SCHEDULED', to: 'APPROVED', label: 'Unschedule' },
+  ],
+}
+let viewOverride: WorkflowView | null = null
+
 vi.mock('@/lib/workflows', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/workflows')>()
-  return { ...actual, useWorkflowView: () => VIEW }
+  return { ...actual, useWorkflowView: () => viewOverride ?? VIEW }
 })
 
 vi.mock('@/components/markdown/MarkdownRenderer', () => ({
@@ -175,6 +200,14 @@ const apiDelete = vi.fn(async (url: string, _token: string) => {
 let failMembers = false
 let failReviews = false
 
+// The Post page's own traffic. Plain objects; the shapes are the server's.
+const PUBLISH_OPTIONS = [
+  { platform: 'facebook', connectorId: 'meta', connectionId: 'fb', label: 'Rexipe', lane: 'NATIVE' },
+  { platform: 'instagram', connectorId: 'meta', connectionId: 'ig', label: '@rexipeio', lane: 'APP_MANAGED' },
+]
+let PUBLISH_SELECTION: unknown[] = []
+let PREFLIGHT: Record<string, unknown> = {}
+
 vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
@@ -184,6 +217,11 @@ vi.mock('@/lib/api', () => ({
     if (url.includes('/reviews')) return failReviews ? Promise.reject(new Error('reviews down')) : Promise.resolve(REVIEWS)
     if (url.includes('/assets')) return Promise.resolve([])
     if (url.includes('/available-transitions')) return Promise.resolve({ workflow: 'ENGINEERING', transitions: TRANSITIONS })
+    if (url.endsWith('/projects/proj-1/publish-targets')) return Promise.resolve(PUBLISH_OPTIONS)
+    if (url.endsWith('/work-items/wi-1/publish-targets')) return Promise.resolve(PUBLISH_SELECTION)
+    if (url.includes('/publish-preflight')) return Promise.resolve(PREFLIGHT)
+    if (url.includes('/publish-metrics')) return Promise.resolve({ workItemId: 'wi-1', targets: [], totals: null })
+    if (url.includes('/publish-consent')) return Promise.resolve({ workItemId: 'wi-1', required: false, valid: false, verdict: 'NOT_REQUIRED' })
     if (url.includes('/members')) return failMembers ? Promise.reject(new Error('members down')) : Promise.resolve(MEMBERS)
     return Promise.resolve([])
   },
@@ -212,6 +250,17 @@ function resetFixtures() {
   COMMENTS = []
   REVIEWERS = [{ userId: 'user-1', name: 'Ada Admin', email: 'ada@x.com' }]
   REVIEWS = []
+  viewOverride = null
+  PUBLISH_SELECTION = []
+  PREFLIGHT = {
+    publishing: true,
+    ready: true,
+    blockers: [],
+    warnings: [],
+    nextTransition: { to: 'IN_REVIEW', label: 'Submit for review', requiresReview: false },
+    consent: { required: false, verdict: 'NOT_REQUIRED' },
+    review: { gated: false, assignedReviewers: 0, satisfied: false },
+  }
   localStorage.clear()
 }
 
@@ -803,5 +852,73 @@ describe('WorkItemDetailView', () => {
       expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('a Post on a publishing Workflow', () => {
+  function asPost(status = 'DRAFT') {
+    viewOverride = MARKETING
+    DOCS = []
+    ISSUE = { ...ISSUE, title: 'Weeknight lemon chicken', status, workflow: 'MARKETING', description: 'Crispy in 20 minutes.' }
+    PUBLISH_SELECTION = [
+      { id: 't-fb', workItemId: 'wi-1', platform: 'facebook', connectorId: 'meta', connectionId: 'fb', label: 'Rexipe', lane: 'NATIVE', state: 'PENDING' },
+    ]
+  }
+
+  async function renderPost() {
+    const utils = render(<WorkItemDetailView projectId="proj-1" workItemId="wi-1" slug="MARKETING" />)
+    await screen.findByText('Weeknight lemon chicken')
+    return utils
+  }
+
+  it('reads destinations first, then the content, with the schedule in the panel and not in the rail', async () => {
+    asPost()
+    await renderPost()
+    const panel = await screen.findByTestId('destinations-panel')
+    const content = screen.getByTestId('post-content')
+    expect(panel.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await within(panel).findByText('Rexipe')
+    expect(within(panel).getByTestId('schedule-line')).toHaveTextContent('Not scheduled')
+    const rail = screen.getByTestId('properties-panel')
+    expect(within(rail).queryByText('Schedule')).not.toBeInTheDocument()
+    expect(within(rail).getByText('Status')).toBeInTheDocument()
+    expect(within(content).getByText('Crispy in 20 minutes.')).toBeInTheDocument()
+    expect(within(content).getByTestId('media-strip')).toBeInTheDocument()
+  })
+
+  it('offers one primary move and a More menu in the header, and no old cards', async () => {
+    asPost()
+    await renderPost()
+    const actions = await screen.findByTestId('post-header-actions')
+    expect(await within(actions).findByRole('button', { name: 'Submit for review' })).toBeInTheDocument()
+    expect(within(actions).getByRole('button', { name: 'More actions' })).toBeInTheDocument()
+    expect(screen.queryByText('Publishing to')).not.toBeInTheDocument()
+    expect(screen.queryByText('Performance')).not.toBeInTheDocument()
+  })
+
+  it('puts a Post-level blocker in the panel header and a row’s own under its row', async () => {
+    asPost()
+    PREFLIGHT = {
+      ...PREFLIGHT,
+      ready: false,
+      blockers: [
+        { code: 'NO_MEDIA', message: 'Add at least one image or video', targetId: null },
+        { code: 'FIRE_TIME_TOO_SOON', message: 'Facebook (Rexipe) needs 15 minutes', targetId: 't-fb' },
+      ],
+    }
+    await renderPost()
+    expect(await screen.findByTestId('publish-readiness')).toHaveTextContent('Add at least one image or video')
+    const row = await screen.findByTestId('destination-row-facebook-fb')
+    expect(within(row).getByText('Facebook (Rexipe) needs 15 minutes')).toBeInTheDocument()
+  })
+
+  it('gives the assigned reviewer Approve / Request changes beside the More menu', async () => {
+    asPost('IN_REVIEW')
+    PREFLIGHT = { ...PREFLIGHT, nextTransition: { to: 'APPROVED', label: 'Approve', requiresReview: true } }
+    await renderPost()
+    const actions = await screen.findByTestId('post-header-actions')
+    expect(await within(actions).findByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(within(actions).getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
+    expect(await screen.findByText(/Locked while this post is in review/)).toBeInTheDocument()
   })
 })

@@ -15,6 +15,7 @@ import { Pencil } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
+import { Lock, TriangleAlert } from 'lucide-react'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPatch } from '@/lib/api'
 import { isApprovedOrLater, isUnderReviewOrLater } from '@/components/workitems/MediaUploadPanel'
@@ -31,6 +32,13 @@ export interface WorkItemDescriptionCardProps {
   isCaption: boolean
   canEdit: boolean
   onSaved: (description: string) => void
+  /**
+   * `card` (default) is its own Card. `section` renders bare — a header row and a body — inside a card
+   * the caller owns, with the lock and the "sends it back for review" note as one quiet line each.
+   */
+  variant?: 'card' | 'section'
+  /** The heading, when it should not simply be "Caption" / "Description". */
+  title?: string
 }
 
 export function WorkItemDescriptionCard({
@@ -43,6 +51,8 @@ export function WorkItemDescriptionCard({
   isCaption,
   canEdit,
   onSaved,
+  variant = 'card',
+  title,
 }: WorkItemDescriptionCardProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -78,6 +88,83 @@ export function WorkItemDescriptionCard({
     } finally {
       setSaving(false)
     }
+  }
+
+  if (variant === 'section') {
+    return (
+      <div data-testid="description-section">
+        <div className="flex items-start justify-between gap-4 px-4 py-3">
+          <div className="min-w-0 space-y-1">
+            <h2 className="text-sm font-semibold text-foreground">{title ?? label}</h2>
+            {frozen && !editing && (
+              <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                The {label.toLowerCase()} is locked while this {noun} is {statusLabel}.
+              </p>
+            )}
+            {revertsOnEdit && !frozen && !editing && canEdit && (
+              <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                Editing the {label.toLowerCase()} or media sends this {noun} back for review.
+              </p>
+            )}
+          </div>
+          {canEdit && !frozen && !editing && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setDraft(description ?? '')
+                setEditing(true)
+              }}
+            >
+              <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {description ? 'Edit' : `Write the ${label.toLowerCase()}`}
+            </Button>
+          )}
+        </div>
+        {editing ? (
+          <div className="space-y-3 px-4 pb-3">
+            {revertsOnEdit && (
+              <Alert variant="warning">
+                Changing the {label.toLowerCase()} sends this {noun} back for review and takes back
+                anything already scheduled on a platform.
+              </Alert>
+            )}
+            <label htmlFor={`description-${workItemId}`} className="sr-only">
+              {label}
+            </label>
+            <textarea
+              id={`description-${workItemId}`}
+              autoFocus
+              rows={6}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={isCaption ? 'What should this post say?' : `What is this ${noun} about?`}
+              className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setEditing(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={() => void save()} disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="px-4 pb-3">
+            {description ? (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{description}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {isCaption ? `No caption yet — this is the text that goes out with the ${noun}.` : 'No description yet.'}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (

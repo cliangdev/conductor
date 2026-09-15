@@ -196,7 +196,7 @@ export function TikTokPublishOptions({
   // Nobody has to make an audience choice before they even see the field: shown pre-selected on the
   // first level TikTok allows this account, rather than a "Select who can view…" placeholder that
   // reads as nothing having been decided yet. The choice is only actually reported (and saved) once
-  // the row is next saved — see PostTargetPicker's backfill in `optionsFor`, which folds this same
+  // the row is next saved — see `buildSelectionPayload` in destinations/selectionState, which folds this same
   // default into whatever save happens to fire next, rather than firing one here per row on mount and
   // racing every other TikTok row doing the same thing in the same tick.
   const firstAllowed = privacyLevelOptions[0]

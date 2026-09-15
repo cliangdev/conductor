@@ -103,7 +103,7 @@ describe('TikTokPublishOptions', () => {
     const { onChange } = renderOptions()
     expect(screen.getByLabelText(/who can view this video/i)).toHaveValue(ALL_LEVELS[0])
     // Shown, not yet saved — the caller folds this same default into whatever save happens next
-    // (PostTargetPicker's `withTikTokDefault`) rather than this component firing one itself.
+    // (`withTikTokDefault` in destinations/publishState) rather than this component firing one itself.
     expect(onChange).not.toHaveBeenCalled()
   })
 

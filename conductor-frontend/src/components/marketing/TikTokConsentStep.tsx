@@ -182,7 +182,7 @@ interface TikTokConsentStepProps {
   disabled?: boolean
   /**
    * Renders as a plain disclosure (no Card/heading) for embedding directly under the TikTok row in
-   * PostTargetPicker, which already carries the "Publishing to" card and its own row heading.
+   * a card that already carries its own heading.
    */
   bare?: boolean
 }
