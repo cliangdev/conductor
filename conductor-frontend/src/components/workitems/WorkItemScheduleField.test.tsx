@@ -249,3 +249,27 @@ describe('WorkItemScheduleField', () => {
     }
   })
 })
+
+describe('WorkItemScheduleField — inline layout', () => {
+  it('reads as one sentence with the zone by name, and offers Change', () => {
+    renderField({ scheduledFor: '2026-07-04T13:00:00.000Z', scheduleTimezone: 'America/New_York', layout: 'inline' })
+    const line = screen.getByTestId('schedule-line')
+    expect(line).toHaveTextContent(/^Goes out Jul 4, 2026, 9:00 AM Eastern Time/)
+    expect(screen.getByRole('button', { name: 'Change' })).toBeInTheDocument()
+  })
+
+  it('speaks in the past tense once the item has gone out, and says "as soon as it’s approved" with no date', () => {
+    renderField({ scheduledFor: '2026-07-04T13:00:00.000Z', scheduleTimezone: 'America/New_York', layout: 'inline', pastTense: true })
+    expect(screen.getByTestId('schedule-line')).toHaveTextContent(/^Went out/)
+    renderField({ publishOnApproval: true, layout: 'inline' })
+    expect(screen.getAllByTestId('schedule-line').at(-1)).toHaveTextContent('As soon as it’s approved')
+  })
+
+  it('opens the same editor inline and saves through the same request', async () => {
+    const { onChanged } = renderField({ layout: 'inline' })
+    await userEvent.click(screen.getByRole('button', { name: 'Set' }))
+    await userEvent.click(screen.getByLabelText('As soon as approved'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(null, expect.any(String), true))
+  })
+})

@@ -8,73 +8,17 @@ import { useCallback, useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { apiErrorMessage, apiGet } from '@/lib/api'
 import { humanizeId, statusMeta } from '@/lib/workflows'
+import {
+  COLUMNS,
+  count,
+  unreportedNote,
+  type PublishMetricsResponse,
+} from '@/components/marketing/destinations/DestinationMetrics'
 import { timeAgo } from '@/lib/format'
 import type { WorkflowView } from '@/types/workItem'
 
-export interface PublishMetricSnapshot {
-  observedAt: string
-  views?: number | null
-  likes?: number | null
-  comments?: number | null
-  shares?: number | null
-  saves?: number | null
-  reach?: number | null
-  impressions?: number | null
-  watchTimeSeconds?: number | null
-  unavailable?: boolean
-}
-
-export interface PublishMetricsTarget {
-  targetId: string
-  platform: string
-  accountLabel?: string | null
-  permalink?: string | null
-  latest: PublishMetricSnapshot
-  series: PublishMetricSnapshot[]
-}
-
-export interface PublishMetricsResponse {
-  workItemId: string
-  targets: PublishMetricsTarget[]
-  totals?: PublishMetricSnapshot | null
-}
-
-const COLUMNS: { key: keyof PublishMetricSnapshot; label: string }[] = [
-  { key: 'views', label: 'Views' },
-  { key: 'likes', label: 'Likes' },
-  { key: 'comments', label: 'Comments' },
-  { key: 'shares', label: 'Shares' },
-]
-
-/**
- * What each platform hands out through its public API without extra permissions. A dash in the table is
- * the platform not reporting it, never a zero, and this is what lets the card say so in words.
- */
-const REPORTED: Record<string, ReadonlySet<keyof PublishMetricSnapshot>> = {
-  tiktok: new Set(['views', 'likes', 'comments', 'shares']),
-  youtube: new Set(['views', 'likes', 'comments']),
-  facebook: new Set(['likes', 'comments', 'shares']),
-  instagram: new Set(['likes', 'comments']),
-}
-
-/** "Facebook doesn't report views; Instagram doesn't report views or shares." for the platforms present. */
-export function unreportedNote(platforms: string[]): string | null {
-  const parts: string[] = []
-  for (const platform of [...new Set(platforms.map((p) => p.toLowerCase()))]) {
-    const reported = REPORTED[platform]
-    if (!reported) continue
-    const missing = COLUMNS.filter((c) => !reported.has(c.key)).map((c) => c.label.toLowerCase())
-    if (missing.length === 0) continue
-    const list = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(', ')} or ${missing.at(-1)}`
-    parts.push(`${humanizeId(platform)} doesn't report ${list}`)
-  }
-  return parts.length === 0 ? null : parts.join('; ') + '.'
-}
-
-function count(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '—'
-  return new Intl.NumberFormat().format(value)
-}
+export type { PublishMetricSnapshot, PublishMetricsResponse, PublishMetricsTarget } from '@/components/marketing/destinations/DestinationMetrics'
+export { unreportedNote }
 
 export function PostPerformanceCard({
   projectId,

@@ -17,15 +17,14 @@
 // reach Approved.
 
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { Film, ImageIcon, UploadCloud } from 'lucide-react'
+import { Film, ImageIcon, Lock, Plus, UploadCloud, X } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
-import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { apiDelete, apiErrorMessage, apiPost } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { WorkflowView, WorkItemAsset } from '@/types/workItem'
+import { MediaThumb } from '@/components/marketing/MediaThumb'
 
 /** Mirrors the backend allowlist (AssetUploadPolicy.ALLOWED_CONTENT_TYPES) — it stays authoritative. */
 export const ALLOWED_MEDIA_CONTENT_TYPES = [
@@ -225,6 +224,11 @@ export interface MediaUploadPanelProps {
   /** Refetch the Work Item's assets so the new preview appears. */
   onUploaded: () => void | Promise<void>
   className?: string
+  /**
+   * `full` (default) is its own card with full-width previews and a dropzone. `strip` is bare — a row of
+   * thumbnails with remove-on-hover and an "Add" tile — for a card that already holds the caption.
+   */
+  variant?: 'full' | 'strip'
 }
 
 export function MediaUploadPanel({
@@ -236,6 +240,7 @@ export function MediaUploadPanel({
   assets,
   onUploaded,
   className,
+  variant = 'full',
 }: MediaUploadPanelProps) {
   const assetTypes = useMemo(() => workflowView?.assetTypes ?? [], [workflowView])
   /**
@@ -326,6 +331,102 @@ export function MediaUploadPanel({
     } finally {
       setRemoving(null)
     }
+  }
+
+  if (variant === 'strip') {
+    return (
+      <div className={cn('space-y-2', className)} data-testid="media-strip">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <span>Media</span>
+          {mediaAssets.length > 0 && <span className="font-normal">{mediaAssets.length} file{mediaAssets.length !== 1 ? 's' : ''}</span>}
+        </div>
+        <div
+          onDragOver={(e) => {
+            if (locked) return
+            e.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            if (locked) return
+            e.preventDefault()
+            setDragging(false)
+            handleFiles(e.dataTransfer?.files ?? null)
+          }}
+          className={cn('flex flex-wrap gap-2 rounded-md', dragging && 'bg-accent-soft')}
+        >
+          {mediaAssets.map((asset) => (
+            <div key={asset.id} className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-md bg-surface-3">
+              {asset.previewUrl ? (
+                <MediaThumb asset={asset} size="lg" />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center text-muted-foreground" title="Upload not finished — no preview yet">
+                  <UploadCloud className="h-4 w-4" aria-hidden />
+                </span>
+              )}
+              <span className="absolute bottom-1 left-1 inline-flex items-center gap-1 rounded bg-foreground/70 px-1 py-0.5 text-[10px] text-background">
+                {isVideoContentType(asset.contentType) ? <Film className="h-3 w-3" aria-hidden /> : <ImageIcon className="h-3 w-3" aria-hidden />}
+                <span className="sr-only">{asset.label || asset.type}</span>
+              </span>
+              {!locked && (
+                <button
+                  type="button"
+                  disabled={removing === asset.id || uploading}
+                  onClick={() => void remove(asset.id)}
+                  aria-label={`Remove ${asset.label || asset.type}`}
+                  className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-foreground/70 text-background opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
+                >
+                  <X className="h-3 w-3" aria-hidden />
+                </button>
+              )}
+            </div>
+          ))}
+          {!locked && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="sr-only"
+                accept={ALLOWED_MEDIA_CONTENT_TYPES.join(',')}
+                aria-label="Media file"
+                onChange={(e) => {
+                  handleFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                disabled={uploading || !selectedType}
+                onClick={() => fileInputRef.current?.click()}
+                className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+                {uploading ? 'Uploading…' : 'Add'}
+              </button>
+            </>
+          )}
+        </div>
+        {locked && (
+          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Media is locked while this {workflowView?.noun?.toLowerCase() ?? 'item'} is {statusDisplayLabel(workflowView, status)}.
+          </p>
+        )}
+        {uploading && (
+          <div
+            role="progressbar"
+            aria-label="Upload progress"
+            aria-valuenow={progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-3"
+          >
+            <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+          </div>
+        )}
+        {error && <Alert variant="destructive">{error}</Alert>}
+      </div>
+    )
   }
 
   return (
