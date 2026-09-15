@@ -198,7 +198,7 @@ say) that no API reaches.
 It is not a way around the pipeline. A manual Post goes through the same review gate, the same media
 rules, the same schedule and the same calendar. The only thing a human takes over is the posting.
 
-1. **Select it.** In *Publishing to* on the Post, pick e.g. "TikTok (manual)". Over MCP:
+1. **Select it.** In *Destinations* on the Post, tick e.g. "TikTok (manual)". Over MCP:
    `set_publish_targets` with `{platform: "tiktok"}` and no `connectionId`.
 2. **Approve and schedule** as normal.
 3. **At fire time** the target moves `PENDING → AWAITING_MANUAL`. *Publishing results* shows it as
@@ -239,8 +239,8 @@ A Post has one caption and one set of uploaded media, and by default every desti
 it. That default is a real behaviour, not just an initial value: an **inheriting** destination keeps
 following the Post as files are added and removed.
 
-Any destination can be given its own instead. On the Post, *Publishing to* → **Customize for this
-destination** opens a caption box and an ordered picker over the Post's own files; over MCP the same
+Any destination can be given its own instead. On the Post, open the destination's row in *Destinations*
+(the chevron) for a caption box and an ordered picker over the Post's own files; over MCP the same
 thing is `captionOverride` and `assetIds` on `set_publish_targets`. Both are optional, and leaving them
 out is what inherits.
 

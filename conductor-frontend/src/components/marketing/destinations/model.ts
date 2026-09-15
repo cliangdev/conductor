@@ -4,7 +4,7 @@
 // Pure: no React, no fetches.
 
 import type { StatusHue } from '@/components/ui/status-badge'
-import type { PublishFinding, PublishPreflight } from '@/components/marketing/PublishReadinessCard'
+import type { PublishFinding, PublishPreflight } from '@/components/marketing/publishReadiness'
 import type { PublishMetricsResponse, PublishMetricsTarget } from './DestinationMetrics'
 import type { PostFormat } from '@/components/marketing/PostFormatSelector'
 import type { InstagramPublishOptionValues } from '@/components/marketing/InstagramPublishOptions'

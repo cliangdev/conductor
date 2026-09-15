@@ -5,7 +5,7 @@
 // primary action per screen; the rest one click away.
 
 import { Button } from '@/components/ui/button'
-import { PublishReadinessAction, type PublishReadinessState } from '@/components/marketing/PublishReadinessCard'
+import { PublishReadinessAction, type PublishReadinessState } from '@/components/marketing/publishReadiness'
 
 export interface PostHeaderActionsProps {
   readiness: PublishReadinessState

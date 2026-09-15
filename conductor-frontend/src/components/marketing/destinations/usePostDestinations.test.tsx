@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { MARKETING_VIEW, jsonResponse, option, selection, tiktokOption } from '@/components/marketing/test-fixtures'
-import type { PublishPreflight } from '@/components/marketing/PublishReadinessCard'
+import type { PublishPreflight } from '@/components/marketing/publishReadiness'
 import { usePostDestinations, type UsePostDestinationsArgs } from './usePostDestinations'
 import type { PublishTargetOption, SelectedPublishTarget } from './types'
 

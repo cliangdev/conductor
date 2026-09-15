@@ -7,7 +7,7 @@ import {
   PublishReadinessAction,
   type PublishPreflight,
   type UsePublishReadinessArgs,
-} from './PublishReadinessCard'
+} from './publishReadiness'
 
 const { toastErrorSpy } = vi.hoisted(() => ({ toastErrorSpy: vi.fn() }))
 vi.mock('@/components/ui/toast', async () => {

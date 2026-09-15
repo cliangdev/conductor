@@ -8,22 +8,19 @@
 // rejection. So this is a gate, not a notice: until the creator has seen the preview, read the
 // destination handle, and ticked the box, a Post carrying a TikTok target can't be sent for review.
 //
-// The gate is published through a context rather than drilled down the properties panel, so the one
-// status control (StatusDropdown) can read it wherever it happens to be rendered.
+// The gate is published through a context rather than drilled down the properties panel, so every
+// status control (the rail's, the header's More menu) can read it wherever it happens to be rendered.
 //
-// MKT-1: the consent itself lives on the server, not in this component. It used to be a boolean in
-// React state, which meant it did not survive a reload and — much worse — did not exist at all for
-// any client that is not this one. The backend now records what was consented to (the accounts, their
-// publish options, the media) and refuses the review-gated transition without it, so this component's
-// job is to show the preview, PUT the creator's answer, and render back what the server says. Pass
-// `projectId`/`workItemId`/`token` to get that; without them it stays the controlled component it was.
+// MKT-1: the consent itself lives on the server. The backend records what was consented to (the
+// accounts, their publish options, the media) and refuses the review-gated transition without it.
+// usePostDestinations reads and writes it; the TikTok row's details render the preview and the box
+// from the two components at the bottom of this file.
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 import { AtSign, ImageOff } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
-import { Card, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
+import { apiGet, apiPut } from '@/lib/api'
 import { isVideoContentType } from '@/components/workitems/MediaUploadPanel'
 import {
   privacyLevelLabel,
@@ -162,161 +159,6 @@ export function optionsSummary(options: TikTokPublishOptionValues): string {
   if (options.brandOrganicToggle) parts.push('Promotional content')
   if (options.brandContentToggle) parts.push('Paid partnership')
   return parts.join(' · ')
-}
-
-interface TikTokConsentStepProps {
-  targets: TikTokConsentTarget[]
-  assets: TikTokPreviewAsset[]
-  /**
-   * The three that make consent persistent. Supply all of them and the step reads and writes the
-   * creator's consent through the API — which is what makes it survive a reload and, far more
-   * importantly, what makes it the same consent the backend gates the transition on. Omit them and
-   * the step stays a controlled component driven by `consented`/`onConsentChange`.
-   */
-  projectId?: string
-  workItemId?: string
-  token?: string
-  consented?: boolean
-  /** Told the current answer whenever it changes, including the first read back from the server. */
-  onConsentChange?: (consented: boolean) => void
-  disabled?: boolean
-  /**
-   * Renders as a plain disclosure (no Card/heading) for embedding directly under the TikTok row in
-   * a card that already carries its own heading.
-   */
-  bare?: boolean
-}
-
-/**
- * Renders nothing for a Post with no TikTok target — and, because the hooks live in the inner
- * component, asks the server nothing about it either. A Facebook-only Post is untouched by all of
- * this, exactly as the gate that reads it is.
- */
-export function TikTokConsentStep(props: TikTokConsentStepProps) {
-  if (props.targets.length === 0) return null
-  return <TikTokConsentStepBody {...props} />
-}
-
-function TikTokConsentStepBody({
-  targets,
-  assets,
-  projectId,
-  workItemId,
-  token,
-  consented = false,
-  onConsentChange,
-  disabled,
-  bare,
-}: TikTokConsentStepProps) {
-  const persisted = Boolean(projectId && workItemId && token)
-
-  const [server, setServer] = useState<PublishConsentState | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // The parent's handler is an inline arrow, so it is a new function every render; holding it in a
-  // ref keeps it out of the effect's dependencies instead of re-fetching on every render.
-  const notify = useRef(onConsentChange)
-  useEffect(() => {
-    notify.current = onConsentChange
-  }, [onConsentChange])
-
-  const publish = useCallback((state: PublishConsentState | null) => {
-    setServer(state)
-    notify.current?.(Boolean(state?.valid))
-  }, [])
-
-  // What the creator is being asked to consent to. When it changes — an account swapped, a privacy
-  // level edited, a different cut uploaded — the server's answer changes with it, so re-read rather
-  // than keeping a stale "yes" on screen.
-  // The targets carry their own caption and media, so serialising them covers everything the creator
-  // was shown; the Post's asset ids stay in for an inheriting destination, whose media lives there.
-  const subject = JSON.stringify([targets, assets.map((asset) => asset.id)])
-
-  useEffect(() => {
-    if (!persisted) return
-    let cancelled = false
-    fetchPublishConsent(projectId!, workItemId!, token!)
-      .then((state) => {
-        if (cancelled) return
-        setError(null)
-        publish(state)
-      })
-      .catch((e) => {
-        if (cancelled) return
-        // Fail closed: an unreadable consent is not a given one.
-        setError(apiErrorMessage(e, 'Could not read this post’s TikTok consent.'))
-        publish(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [persisted, projectId, workItemId, token, subject, publish])
-
-  const given = persisted ? Boolean(server?.valid) : consented
-
-  async function changeConsent(next: boolean) {
-    if (!persisted) {
-      onConsentChange?.(next)
-      return
-    }
-    setSaving(true)
-    try {
-      publish(await recordPublishConsent(projectId!, workItemId!, next, token!))
-      setError(null)
-    } catch (e) {
-      setError(apiErrorMessage(e, 'Could not record your TikTok consent.'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const blockedReason = tiktokSubmissionBlockedReason(targets, given, server?.verdict)
-  const unresolved = targets.some((t) => t.problem)
-  const anyPaidPartnership = targets.some((t) => t.options.brandContentToggle)
-
-  const body = (
-    <div className="space-y-4">
-      <ul className="space-y-3">
-          {targets.map((target) => (
-            <li key={target.connectionId}>
-              <TikTokConsentPreview target={target} assets={assets} />
-            </li>
-          ))}
-        </ul>
-
-        <TikTokConsentCheckbox
-          given={given}
-          unresolved={unresolved}
-          disabled={disabled}
-          saving={saving}
-          consentedAt={server?.consentedAt}
-          consentedByName={server?.consentedByName}
-          anyPaidPartnership={anyPaidPartnership}
-          error={error}
-          onChange={(next) => void changeConsent(next)}
-        />
-
-        {blockedReason && <Alert variant="warning">{blockedReason}</Alert>}
-      </div>
-  )
-
-  if (bare) {
-    return (
-      <div className="space-y-3 border-t border-border bg-surface-raised px-4 py-3">
-        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
-        {body}
-      </div>
-    )
-  }
-  return (
-    <Card>
-      <CardHeader>
-        <h2 className="text-sm font-medium text-foreground">Confirm your TikTok post</h2>
-      </CardHeader>
-      <div className="p-4">{body}</div>
-    </Card>
-  )
 }
 
 // ── the pieces, for a destination row ───────────────────────────────────────

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { manualOption, option, selection, tiktokOption } from '@/components/marketing/test-fixtures'
-import type { PublishPreflight } from '@/components/marketing/PublishReadinessCard'
+import type { PublishPreflight } from '@/components/marketing/publishReadiness'
 import type { PublishMetricsResponse } from './DestinationMetrics'
 import { attentionOf, buildRows, describeFireTime, sortRows, summarize, type BuildRowsArgs } from './model'
 import { EMPTY_DRAFT } from './selectionState'

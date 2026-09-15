@@ -21,7 +21,7 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
-import { usePublishReadiness } from '@/components/marketing/PublishReadinessCard'
+import { usePublishReadiness } from '@/components/marketing/publishReadiness'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { usePostDestinations } from '@/components/marketing/destinations/usePostDestinations'
 import { PostDetailBody } from '@/components/marketing/post-detail/PostDetailBody'
