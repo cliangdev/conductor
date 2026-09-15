@@ -25,6 +25,8 @@ import { TimeZonePicker } from '@/components/ui/time-zone-picker'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPatch } from '@/lib/api'
 import { browserTimeZone, instantToWallClock, wallClockToInstant } from '@/lib/schedule'
+import { zoneDisplayLabel } from '@/components/ui/time-zone-picker'
+import { cn } from '@/lib/utils'
 
 /** Re-exported for the tests that grew up here; the one copy lives in lib/schedule. */
 export { wallClockToInstant, instantToWallClock } from '@/lib/schedule'
@@ -35,6 +37,18 @@ function describeDate(iso: string, timeZone: string): string {
     return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone }).format(new Date(iso))
   } catch {
     return iso
+  }
+}
+
+/** The inline reading's time: "9:00 AM Pacific Time (Los Angeles)" rather than the bare zone id. */
+function describeInlineTime(iso: string, timeZone: string): string {
+  try {
+    return (
+      new Intl.DateTimeFormat(undefined, { timeStyle: 'short', timeZone }).format(new Date(iso)) +
+      ` ${zoneDisplayLabel(timeZone)}`
+    )
+  } catch {
+    return zoneDisplayLabel(timeZone)
   }
 }
 
@@ -63,6 +77,61 @@ export interface WorkItemScheduleFieldProps {
   /** False for a reader — a REVIEWER sees the schedule but cannot move it. */
   canEdit: boolean
   onChanged: (scheduledFor: string | null, scheduleTimezone: string | null, publishOnApproval?: boolean) => void
+  /**
+   * `rail` (default) is the properties panel's two-line reading; `inline` is one sentence for a card
+   * header — "Goes out Fri, Sep 12, 9:00 AM Pacific Time (Los Angeles) · Change".
+   */
+  layout?: 'rail' | 'inline'
+  /** Inline only: the time is behind us and the item went out — "Went out", not "Goes out". */
+  pastTense?: boolean
+}
+
+/** The editing controls on their own, for a caller that saves them itself (the compose page). */
+export interface ScheduleEditorValue {
+  onApproval: boolean
+  local: string
+  tz: string
+}
+
+export function ScheduleEditor({
+  idPrefix,
+  value,
+  disabled,
+  onChange,
+  defaultOpen = true,
+  align = 'end',
+}: {
+  idPrefix: string
+  value: ScheduleEditorValue
+  disabled?: boolean
+  onChange: (next: ScheduleEditorValue) => void
+  defaultOpen?: boolean
+  align?: 'start' | 'end'
+}) {
+  return (
+    <div className="space-y-2">
+      <Checkbox
+        checked={value.onApproval}
+        disabled={disabled}
+        onCheckedChange={(onApproval) => onChange({ ...value, onApproval })}
+        label="As soon as approved"
+      />
+      {!value.onApproval && (
+        <DateTimePicker
+          id={`sched-${idPrefix}`}
+          label="Scheduled date and time"
+          value={value.local}
+          onChange={(local) => onChange({ ...value, local })}
+          defaultOpen={defaultOpen}
+          align={align}
+        />
+      )}
+      <label htmlFor={`tz-${idPrefix}`} className="sr-only">
+        Schedule timezone
+      </label>
+      <TimeZonePicker id={`tz-${idPrefix}`} value={value.tz} onChange={(tz) => onChange({ ...value, tz })} disabled={disabled} />
+    </div>
+  )
 }
 
 export function WorkItemScheduleField({
@@ -74,6 +143,8 @@ export function WorkItemScheduleField({
   publishOnApproval = false,
   canEdit,
   onChanged,
+  layout = 'rail',
+  pastTense = false,
 }: WorkItemScheduleFieldProps) {
   const zone = scheduleTimezone || browserTimeZone()
   const [editing, setEditing] = useState(false)
@@ -118,6 +189,28 @@ export function WorkItemScheduleField({
     [projectId, issueId, token, onChanged, publishOnApproval]
   )
 
+  if (!editing && layout === 'inline') {
+    const text = scheduledFor
+      ? `${pastTense ? 'Went out' : 'Goes out'} ${describeDate(scheduledFor, zone)}, ${describeInlineTime(scheduledFor, zone)}`
+      : publishOnApproval
+        ? 'As soon as it’s approved'
+        : 'Not scheduled'
+    return (
+      <div className="flex flex-wrap items-center gap-x-1.5 text-sm text-muted-foreground" data-testid="schedule-line">
+        <CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span>{text}</span>
+        {canEdit && (
+          <>
+            <span aria-hidden="true">·</span>
+            <button type="button" onClick={open} className="text-primary hover:underline">
+              {hasSchedule ? 'Change' : 'Set'}
+            </button>
+          </>
+        )}
+      </div>
+    )
+  }
+
   if (!editing) {
     return (
       <div className="flex items-start justify-between gap-2">
@@ -150,27 +243,18 @@ export function WorkItemScheduleField({
   }
 
   return (
-    <div className="space-y-2">
-      <Checkbox
-        checked={onApproval}
+    <div className={cn('space-y-2', layout === 'inline' && 'max-w-sm')}>
+      <ScheduleEditor
+        idPrefix={issueId}
+        value={{ onApproval, local, tz }}
         disabled={saving}
-        onCheckedChange={setOnApproval}
-        label="As soon as approved"
+        onChange={(next) => {
+          setOnApproval(next.onApproval)
+          setLocal(next.local)
+          setTz(next.tz)
+        }}
+        align={layout === 'inline' ? 'start' : 'end'}
       />
-      {!onApproval && (
-        <DateTimePicker
-          id={`sched-${issueId}`}
-          label="Scheduled date and time"
-          value={local}
-          onChange={setLocal}
-          defaultOpen
-          align="end"
-        />
-      )}
-      <label htmlFor={`tz-${issueId}`} className="sr-only">
-        Schedule timezone
-      </label>
-      <TimeZonePicker id={`tz-${issueId}`} value={tz} onChange={setTz} disabled={saving} />
       <div className="flex items-center justify-between gap-2">
         {hasSchedule ? (
           <button

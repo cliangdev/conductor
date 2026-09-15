@@ -145,14 +145,14 @@ export function useTikTokPublishGate(): string | null {
 // ── the step ────────────────────────────────────────────────────────────────
 
 /** The handle a creator would recognise, with exactly one leading `@`. */
-function destinationName(target: TikTokConsentTarget): string {
+export function destinationName(target: TikTokConsentTarget): string {
   const nickname = target.creatorNickname?.trim()
   if (!nickname) return target.label
   return nickname.startsWith('@') ? nickname : `@${nickname}`
 }
 
 /** What the post will carry, in the same words the options panel used. */
-function optionsSummary(options: TikTokPublishOptionValues): string {
+export function optionsSummary(options: TikTokPublishOptionValues): string {
   const parts: string[] = [
     options.privacyLevel ? privacyLevelLabel(options.privacyLevel) : 'No privacy level chosen',
   ]
@@ -278,108 +278,25 @@ function TikTokConsentStepBody({
   const body = (
     <div className="space-y-4">
       <ul className="space-y-3">
-          {targets.map((target) => {
-            // What this account actually receives: its own selection, or the Post's whole set when it
-            // inherits. Rendering the Post's set for a destination that chose a subset would ask the
-            // creator to consent to media that never goes there.
-            const targetAssets = target.assetIds
-              ? target.assetIds
-                  .map((id) => assets.find((asset) => asset.id === id))
-                  .filter((asset): asset is TikTokPreviewAsset => Boolean(asset))
-              : assets
-            return (
-              <li
-                key={target.connectionId}
-                className="overflow-hidden rounded-md border border-border bg-surface-raised"
-              >
-                <div className="px-3 py-2.5">
-                  <span className="flex items-center gap-2">
-                    <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="text-xs text-muted-foreground">You are posting to</span>
-                    <span className="truncate text-sm font-semibold text-foreground">
-                      {destinationName(target)}
-                    </span>
-                  </span>
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    {optionsSummary(target.options)}
-                  </span>
-                </div>
-
-                <div className="border-t border-border">
-                  {targetAssets.length === 0 ? (
-                    <p className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
-                      <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
-                      No media has been chosen for this account — TikTok needs it before this post can
-                      go out.
-                    </p>
-                  ) : (
-                    <ul className="divide-y divide-border">
-                      {targetAssets.map((asset) => (
-                        <li key={asset.id}>
-                          {asset.previewUrl ? (
-                            isVideoContentType(asset.contentType) ? (
-                              <video
-                                controls
-                                src={asset.previewUrl}
-                                className="block max-h-80 w-full bg-surface-3"
-                                aria-label={asset.label || 'TikTok video'}
-                              />
-                            ) : (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={asset.previewUrl}
-                                alt={asset.label || 'TikTok post media'}
-                                className="block max-h-80 w-full bg-surface-3 object-contain"
-                              />
-                            )
-                          ) : (
-                            <p className="px-3 py-4 text-sm text-muted-foreground">
-                              {asset.label} is still uploading — no preview yet.
-                            </p>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {target.caption && (
-                    <p className="border-t border-border px-3 py-2 text-sm text-foreground">
-                      {target.caption}
-                    </p>
-                  )}
-                </div>
-              </li>
-            )
-          })}
+          {targets.map((target) => (
+            <li key={target.connectionId}>
+              <TikTokConsentPreview target={target} assets={assets} />
+            </li>
+          ))}
         </ul>
 
-        <Checkbox
-          checked={given}
-          disabled={disabled || unresolved || saving}
-          onCheckedChange={changeConsent}
-          label="I have reviewed this preview and the destination account, and I consent to publishing this post to TikTok."
-          disabledReason={
-            unresolved
-              ? 'Resolve the option problem above before you can consent.'
-              : disabled
-                ? 'Editing is locked while this post is under review.'
-                : undefined
-          }
+        <TikTokConsentCheckbox
+          given={given}
+          unresolved={unresolved}
+          disabled={disabled}
+          saving={saving}
+          consentedAt={server?.consentedAt}
+          consentedByName={server?.consentedByName}
+          anyPaidPartnership={anyPaidPartnership}
+          error={error}
+          onChange={(next) => void changeConsent(next)}
         />
 
-        {given && server?.consentedAt && (
-          <p className="text-xs text-muted-foreground">
-            Consented{server.consentedByName ? ` by ${server.consentedByName}` : ''} on{' '}
-            {new Date(server.consentedAt).toLocaleString()}.
-          </p>
-        )}
-
-        <p className="text-sm text-muted-foreground">
-          {anyPaidPartnership
-            ? 'By posting, you agree to TikTok’s Branded Content Policy and Music Usage Confirmation.'
-            : 'By posting, you agree to TikTok’s Music Usage Confirmation.'}
-        </p>
-
-        {error && <Alert variant="destructive">{error}</Alert>}
         {blockedReason && <Alert variant="warning">{blockedReason}</Alert>}
       </div>
   )
@@ -399,5 +316,134 @@ function TikTokConsentStepBody({
       </CardHeader>
       <div className="p-4">{body}</div>
     </Card>
+  )
+}
+
+// ── the pieces, for a destination row ───────────────────────────────────────
+
+/**
+ * What one TikTok account will receive — the handle, the options, the media that actually goes there
+ * and the caption — for the creator to look at before consenting. Rendering the Post's whole set for a
+ * destination that chose a subset would ask the creator to consent to media that never goes there.
+ */
+export function TikTokConsentPreview({
+  target,
+  assets,
+}: {
+  target: TikTokConsentTarget
+  assets: TikTokPreviewAsset[]
+}) {
+  const targetAssets = target.assetIds
+    ? target.assetIds
+        .map((id) => assets.find((asset) => asset.id === id))
+        .filter((asset): asset is TikTokPreviewAsset => Boolean(asset))
+    : assets
+  return (
+    <div className="overflow-hidden rounded-md border border-border bg-surface-raised">
+      <div className="px-3 py-2.5">
+        <span className="flex items-center gap-2">
+          <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="text-xs text-muted-foreground">You are posting to</span>
+          <span className="truncate text-sm font-semibold text-foreground">{destinationName(target)}</span>
+        </span>
+        <span className="mt-1 block text-xs text-muted-foreground">{optionsSummary(target.options)}</span>
+      </div>
+
+      <div className="border-t border-border">
+        {targetAssets.length === 0 ? (
+          <p className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
+            <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
+            No media has been chosen for this account — TikTok needs it before this post can go out.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {targetAssets.map((asset) => (
+              <li key={asset.id}>
+                {asset.previewUrl ? (
+                  isVideoContentType(asset.contentType) ? (
+                    <video
+                      controls
+                      src={asset.previewUrl}
+                      className="block max-h-80 w-full bg-surface-3"
+                      aria-label={asset.label || 'TikTok video'}
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={asset.previewUrl}
+                      alt={asset.label || 'TikTok post media'}
+                      className="block max-h-80 w-full bg-surface-3 object-contain"
+                    />
+                  )
+                ) : (
+                  <p className="px-3 py-4 text-sm text-muted-foreground">
+                    {asset.label} is still uploading — no preview yet.
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {target.caption && (
+          <p className="border-t border-border px-3 py-2 text-sm text-foreground">{target.caption}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The consent itself: the box, who ticked it and when, the policy line, and any trouble recording it. */
+export function TikTokConsentCheckbox({
+  given,
+  unresolved,
+  disabled,
+  saving,
+  consentedAt,
+  consentedByName,
+  anyPaidPartnership,
+  error,
+  onChange,
+}: {
+  given: boolean
+  /** An option problem stands on some account; consent can't be given until it is fixed. */
+  unresolved: boolean
+  disabled?: boolean
+  saving?: boolean
+  consentedAt?: string | null
+  consentedByName?: string | null
+  anyPaidPartnership: boolean
+  error?: string | null
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <Checkbox
+        checked={given}
+        disabled={disabled || unresolved || saving}
+        onCheckedChange={onChange}
+        label="I have reviewed this preview and the destination account, and I consent to publishing this post to TikTok."
+        disabledReason={
+          unresolved
+            ? 'Resolve the option problem above before you can consent.'
+            : disabled
+              ? 'Editing is locked while this post is under review.'
+              : undefined
+        }
+      />
+
+      {given && consentedAt && (
+        <p className="text-xs text-muted-foreground">
+          Consented{consentedByName ? ` by ${consentedByName}` : ''} on {new Date(consentedAt).toLocaleString()}.
+        </p>
+      )}
+
+      <p className="text-sm text-muted-foreground">
+        {anyPaidPartnership
+          ? 'By posting, you agree to TikTok’s Branded Content Policy and Music Usage Confirmation.'
+          : 'By posting, you agree to TikTok’s Music Usage Confirmation.'}
+      </p>
+
+      {error && <Alert variant="destructive">{error}</Alert>}
+    </div>
   )
 }

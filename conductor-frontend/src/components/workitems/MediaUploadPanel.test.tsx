@@ -497,3 +497,40 @@ describe('isApprovedOrLater', () => {
   })
 
 })
+
+describe('MediaUploadPanel — strip variant', () => {
+  const assets: MediaAsset[] = [
+    {
+      id: 'a-img', issueId: 'wi-1', type: 'instagram_post', label: 'Hero', kind: 'file',
+      ref: 'marketing-assets/a-img', done: true, createdAt: '', updatedAt: '',
+      uploadStatus: 'UPLOADED', contentType: 'image/png', sizeBytes: 1024,
+      previewUrl: 'https://storage.googleapis.com/preview/hero.png',
+    },
+  ]
+
+  it('renders thumbnails with a remove control and an Add tile, no card of its own', () => {
+    renderPanel({ variant: 'strip', assets })
+    expect(screen.getByTestId('media-strip')).toHaveTextContent('1 file')
+    expect(screen.getByAltText('Hero')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove Hero' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Media' })).not.toBeInTheDocument()
+  })
+
+  it('locks into a quiet line once the item is under review', () => {
+    renderPanel({ variant: 'strip', assets, status: 'IN_REVIEW' })
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove Hero' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Media is locked while this post is In Review/)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('uploads through the same mint → PUT → confirm sequence from the Add tile', async () => {
+    renderPanel({ variant: 'strip' })
+    selectFile(imageFile())
+    await waitFor(() => expect(onUploaded).toHaveBeenCalled())
+    const urls = fetchMock.mock.calls.map(([u]) => String(u))
+    expect(urls).toContain(uploadsUrl)
+    expect(urls).toContain(confirmUrl)
+  })
+})
