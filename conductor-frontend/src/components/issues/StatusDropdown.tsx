@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { StatusRing } from '@/components/workitems/StatusRing'
@@ -11,14 +11,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
-import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
-import { useTikTokPublishGate } from '@/components/marketing/TikTokConsentStep'
-import {
-  DEFAULT_WORKFLOW_SLUG,
-  statusHasReviewGate,
-  statusMeta,
-  useWorkflowView,
-} from '@/lib/workflows'
+import { apiPatch, apiErrorMessage } from '@/lib/api'
+import { useAvailableTransitions, useBlockedReason } from './useAvailableTransitions'
+import { DEFAULT_WORKFLOW_SLUG, statusMeta, useWorkflowView } from '@/lib/workflows'
 
 type UserRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
 
@@ -62,19 +57,6 @@ export interface ReviewVerdictOption {
   submit: () => Promise<void>
 }
 
-interface AvailableTransition {
-  toStatus: string
-  label: string
-  requiresReview?: boolean
-}
-
-interface AvailableTransitionsResponse {
-  workflow: string
-  currentStatus: string
-  noun?: string
-  transitions: AvailableTransition[]
-}
-
 /**
  * COND-18: the doer's status control. The current status's label + color come from the bound
  * Workflow's view (single source — see lib/workflows), and the valid next moves are computed
@@ -96,38 +78,14 @@ export function StatusDropdown({
   blockedMoves,
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
-  const [transitions, setTransitions] = useState<AvailableTransition[]>([])
 
   const view = useWorkflowView(projectId, workflowSlug, token)
   const { label: displayLabel, category } = statusMeta(view, currentStatus)
 
-  // TIK-4: why a Post carrying TikTok targets can't be sent for approval yet — null for everything
-  // else, so no other Work Item sees a difference. Published by TikTokConsentStep's provider.
-  const tiktokBlock = useTikTokPublishGate()
-
-  /** A move into a review-gated status is the submit-for-approval move the consent gate guards. */
-  function blockedReason(toStatus: string): string | null {
-    if (tiktokBlock && statusHasReviewGate(view, toStatus)) return tiktokBlock
-    return blockedMoves?.[toStatus] ?? null
-  }
-
-  useEffect(() => {
-    if (userRole === 'REVIEWER' || !token) return
-    let cancelled = false
-    apiGet<AvailableTransitionsResponse>(
-      `/api/v2/projects/${projectId}/work-items/${issueId}/available-transitions`,
-      token
-    )
-      .then((res) => {
-        if (!cancelled) setTransitions(res.transitions ?? [])
-      })
-      .catch(() => {
-        if (!cancelled) setTransitions([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, issueId, currentStatus, userRole, token])
+  const transitions = useAvailableTransitions(projectId, issueId, currentStatus, userRole, token)
+  // TIK-4 and the publish gate: the one reason a move is refused, shared with every other status
+  // control on the page so they all disable the same move for the same reason.
+  const blockedReason = useBlockedReason(view, blockedMoves)
 
   // REVIEWERs (and any state with no available moves) see a read-only indicator — unless there is a
   // verdict of theirs to give, which is the one move a reviewer owns.

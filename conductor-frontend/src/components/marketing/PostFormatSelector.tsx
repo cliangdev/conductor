@@ -12,7 +12,7 @@
 
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
-import type { PublishPlatform } from './PostTargetPicker'
+import type { PublishPlatform } from './destinations/types'
 
 export type PostFormat = 'feed' | 'reel' | 'story'
 

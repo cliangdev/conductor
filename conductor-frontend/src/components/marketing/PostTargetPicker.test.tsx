@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
+import { PostTargetPicker } from './PostTargetPicker'
+import { workflowDeclaresPublishTargets } from './destinations/publishState'
+import type { PublishTargetOption, SelectedPublishTarget } from './destinations/types'
 import {
-  PostTargetPicker,
-  workflowDeclaresPublishTargets,
-  type PublishTargetOption,
-  type SelectedPublishTarget,
-} from './PostTargetPicker'
+  jsonResponse,
+  manualOption,
+  option,
+  selection as buildSelection,
+  tiktokOption,
+} from './test-fixtures'
 
 const API = 'https://api.test'
 const PROJECT = 'project-1'
@@ -31,57 +35,8 @@ const VIEW: WorkflowView = {
   ],
 }
 
-function option(overrides: Partial<PublishTargetOption> & Pick<PublishTargetOption, 'platform' | 'connectionId'>): PublishTargetOption {
-  return {
-    connectorId: overrides.platform === 'facebook' || overrides.platform === 'instagram' ? 'meta' : overrides.platform,
-    label: overrides.connectionId ?? 'Manual',
-    lane: overrides.platform === 'facebook' || overrides.platform === 'youtube' ? 'NATIVE' : 'APP_MANAGED',
-    ...overrides,
-  }
-}
-
-function tiktokOption(
-  connectionId: string,
-  overrides: Partial<PublishTargetOption> = {}
-): PublishTargetOption {
-  return option({
-    platform: 'tiktok',
-    connectionId,
-    label: `@${connectionId}`,
-    creatorNickname: connectionId,
-    privacyLevelOptions: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
-    ...overrides,
-  })
-}
-
-/** A destination a human publishes by hand: no account, no connector, always offered. */
-function manualOption(platform: PublishTargetOption['platform']): PublishTargetOption {
-  const labels: Record<string, string> = {
-    facebook: 'Facebook (manual)',
-    instagram: 'Instagram (manual)',
-    youtube: 'YouTube (manual)',
-    tiktok: 'TikTok (manual)',
-  }
-  return {
-    platform,
-    connectorId: null,
-    connectionId: null,
-    label: labels[platform],
-    lane: 'MANUAL',
-  }
-}
-
-function selection(o: PublishTargetOption, id = `target-${o.platform}-${o.connectionId}`): SelectedPublishTarget {
-  return {
-    id,
-    workItemId: WORK_ITEM,
-    platform: o.platform,
-    connectorId: o.connectorId,
-    connectionId: o.connectionId,
-    label: o.label,
-    lane: o.lane,
-    state: 'PENDING',
-  }
+function selection(o: PublishTargetOption, id?: string): SelectedPublishTarget {
+  return buildSelection(o, WORK_ITEM, id)
 }
 
 // ── recorded traffic ────────────────────────────────────────────────────────
@@ -106,15 +61,6 @@ let manualCalls: Array<{ url: string; body: { permalink: string; publishedAt: st
 let manualRejection: { status: number; detail: string } | null = null
 let consentServed: Record<string, unknown> | null = null
 let consentPutBodies: Array<{ consented: boolean }> = []
-
-function jsonResponse(status: number, body: unknown) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: { get: () => 'application/json' },
-    json: async () => body,
-  }
-}
 
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const method = init?.method ?? 'GET'

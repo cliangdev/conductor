@@ -17,7 +17,7 @@ import { Modal } from '@/components/ui/modal'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPost } from '@/lib/api'
 import { humanizeId, workItemDetailPath } from '@/lib/workflows'
-import { workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
+import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import type { WorkflowView } from '@/types/workItem'
 
 interface CreatedWorkItem {

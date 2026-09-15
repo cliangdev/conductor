@@ -36,10 +36,10 @@ import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
-import { statusHue, statusHueClasses, type StatusHue } from '@/components/ui/status-badge'
+import { ShowDetails } from '@/components/ui/show-details'
+import { statusHueClasses } from '@/components/ui/status-badge'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPost, apiPut } from '@/lib/api'
 import {
@@ -58,7 +58,6 @@ import {
 import {
   EMPTY_TIKTOK_OPTIONS,
   TikTokPublishOptions,
-  normalizeTikTokOptions,
   tiktokOptionsProblem,
   type TikTokPublishOptionValues,
 } from '@/components/marketing/TikTokPublishOptions'
@@ -66,12 +65,10 @@ import { TikTokConsentStep, type TikTokConsentTarget } from '@/components/market
 import {
   InstagramPublishOptions,
   isSingleImageTarget,
-  normalizeInstagramOptions,
   type InstagramPublishOptionValues,
 } from '@/components/marketing/InstagramPublishOptions'
 import {
   YouTubePublishOptions,
-  normalizeYouTubeOptions,
   type YouTubePublishOptionValues,
 } from '@/components/marketing/YouTubePublishOptions'
 import {
@@ -80,320 +77,36 @@ import {
   type PostFormat,
 } from '@/components/marketing/PostFormatSelector'
 import type { WorkflowView } from '@/types/workItem'
-
-export type PublishPlatform = 'facebook' | 'instagram' | 'youtube' | 'tiktok'
-export type PublishLane = 'NATIVE' | 'APP_MANAGED' | 'MANUAL'
-
-/**
- * One selectable destination.
- *
- * Automated options are derived from an ACTIVE connection. The MANUAL option for each platform is not
- * derived from anything — it is always offered, with `connectionId` null, and is what a project with no
- * social integration publishes through: a human posts it and pastes the link back.
- */
-export interface PublishTargetOption {
-  platform: PublishPlatform
-  connectorId: string | null
-  /** Null on the MANUAL lane: there is no account, and one manual destination per platform. */
-  connectionId: string | null
-  label: string
-  lane: PublishLane
-  healthStatus?: string | null
-  healthMessage?: string | null
-  /** Extra detail behind `healthMessage` — the platform's own words, shown only on request. */
-  healthDetail?: string | null
-  /**
-   * TIK-2. TikTok reports a different set of privacy levels per creator (a private account is
-   * offered fewer than a public one), so the choices come from the connection rather than from a
-   * table here. Absent/empty means TikTok has told us nothing — which is a broken connection, not
-   * permission to guess.
-   */
-  privacyLevelOptions?: string[] | null
-  /** The handle the creator would recognise, for the consent step's "you are posting to @…". */
-  creatorNickname?: string | null
-  /** The `publishOptions` keys a target on this platform accepts, from the server's platform registry. */
-  optionKeys?: string[]
-  /** The formats this platform offers, e.g. `['feed', 'reel', 'story']`. Every platform lists `feed`. */
-  formats?: string[]
-}
-
-/** The union of every platform's own option bag. Field names never collide across platforms. */
-export type PublishOptionsBag = Partial<TikTokPublishOptionValues> &
-  Partial<InstagramPublishOptionValues> &
-  Partial<YouTubePublishOptionValues>
-
-/** One destination actually selected on this Post (a persisted post_publish_target row). */
-export interface SelectedPublishTarget {
-  id: string
-  workItemId: string
-  platform: PublishPlatform
-  connectorId: string | null
-  connectionId: string | null
-  label?: string | null
-  lane: PublishLane
-  state: string
-  platformPostId?: string | null
-  /** The shape this destination publishes in. Absent reads as `feed`, same as the API default. */
-  format?: PostFormat | null
-  /** Per-target publish options, keyed by platform. Partial — an older row carries nothing. */
-  publishOptions?: PublishOptionsBag | null
-  /** This destination's own copy, or null when it uses the Post's caption. */
-  captionOverride?: string | null
-  /** Its own ordered media, or null when it inherits the Post's whole set. */
-  assetIds?: string[] | null
-  /** What will actually go out here, whichever of the two above applies. */
-  effectiveAssetIds?: string[]
-  effectiveCaption?: string | null
-  /** Set once the platform (or a human) confirms this went live. */
-  permalink?: string | null
-  /** The platform's own words, verbatim, when `state` is FAILED — or the hand-off note on AWAITING_MANUAL. */
-  errorMessage?: string | null
-  /** Extra detail behind `errorMessage` — shown only on request, via a "Show details" disclosure. */
-  errorDetail?: string | null
-  /** Human words for `state`, from the server. Falls back to the local STATE_LABELS map when absent. */
-  stateLabel?: string | null
-  fireTime?: string | null
-}
-
-/** What a selection sends back. `publishOptions` rides along only where the platform has any. */
-interface PublishTargetSelectionPayload {
-  platform: PublishPlatform
-  /** Omitted (null) selects the platform's manual destination. */
-  connectionId: string | null
-  format?: PostFormat
-  publishOptions?: PublishOptionsBag
-  captionOverride?: string | null
-  assetIds?: string[]
-}
-
-interface RetryPublishResponse {
-  workItemId: string
-  status: string
-  retriedCount: number
-  targets: SelectedPublishTarget[]
-}
-
-/** Render order, so the groups don't reshuffle as connections come and go. */
-const PLATFORM_ORDER: PublishPlatform[] = ['facebook', 'instagram', 'youtube', 'tiktok']
-
-const PLATFORM_LABELS: Record<PublishPlatform, string> = {
-  facebook: 'Facebook',
-  instagram: 'Instagram',
-  youtube: 'YouTube',
-  tiktok: 'TikTok',
-}
-
-/**
- * Publish state → status-ramp hue. Explicit rather than left to `statusHue`, which only knows
- * PENDING and FAILED out of the six; the rest would silently land on gray and stop being
- * distinguishable. REVOKED is deliberately **slate** (the ramp's Closed/Skipped hue), not red: a
- * revocation is Conductor taking the post back off a platform after an approval stopped applying,
- * which is a withdrawal, not a failure — colouring it red would send someone hunting for a platform
- * error that never happened.
- */
-const STATE_HUES: Record<string, StatusHue> = {
-  PENDING: 'gray',
-  HANDED_OFF: 'blue',
-  PUBLISHING: 'blue',
-  // Amber, not blue: this is the one state that is waiting on the person reading the screen. Every
-  // other in-flight state is waiting on a machine and needs nothing from anybody.
-  AWAITING_MANUAL: 'amber',
-  PUBLISHED: 'green',
-  FAILED: 'red',
-  REVOKED: 'slate',
-}
-
-/** Human words for the wire states — the design system's "translate at the UI boundary" rule. */
-const STATE_LABELS: Record<string, string> = {
-  PENDING: 'Waiting',
-  HANDED_OFF: 'Handed off',
-  PUBLISHING: 'Publishing',
-  AWAITING_MANUAL: 'Post it now',
-  PUBLISHED: 'Published',
-  FAILED: 'Failed',
-  REVOKED: 'Taken back',
-}
-
-function stateHue(state: string): StatusHue {
-  return STATE_HUES[state] ?? statusHue(state)
-}
-
-/** The server's own `stateLabel` wins when present; the local map is the fallback for an older backend. */
-function stateLabelFor(target: SelectedPublishTarget): string {
-  return target.stateLabel ?? STATE_LABELS[target.state] ?? target.state
-}
-
-/**
- * A destination waiting on the person reading this: a manual one whose fire time has passed, or an
- * automated one the platform handed back (TikTok's pre-audit inbox upload). Either way the next step is a
- * human's, and the link they record is the outcome.
- */
-function awaitsAHuman(target: SelectedPublishTarget): boolean {
-  return target.state === 'AWAITING_MANUAL'
-}
-
-/** Strip the scheme so a permalink reads as a destination rather than a wall of URL. */
-function permalinkText(permalink: string): string {
-  return permalink.replace(/^https?:\/\//, '')
-}
-
-/**
- * Client-side mirror of PostScheduleValidator.declaresPublishTargets: a Workflow treats publishing as
- * a concept when one of its declared asset types is named for a publishable platform
- * (`instagram_post`, `youtube_video`, or a bare `tiktok`). It is the gate for offering this picker at
- * all — an ENGINEERING item declares `github_pr` and never sees it.
- */
-export function workflowDeclaresPublishTargets(view: WorkflowView | undefined): boolean {
-  return (view?.assetTypes ?? []).some((assetType) => {
-    const head = assetType.trim().toLowerCase().split('_')[0]
-    return (PLATFORM_ORDER as string[]).includes(head)
-  })
-}
-
-/**
- * (platform, connection) is a target's identity — the same pair the backend's uniqueness is on. A manual
- * destination has no connection, so it keys on the same `manual` sentinel the backend uses, which is also
- * what makes "one manual destination per platform" fall out for free.
- */
-function targetKey(platform: string, connectionId: string | null): string {
-  return `${platform} ${connectionId ?? 'manual'}`
-}
-
-function isManual(option: PublishTargetOption | SelectedPublishTarget): boolean {
-  return option.lane === 'MANUAL'
-}
-
-/** Whether this platform group offers any connected account. */
-function hasAccount(targets: PublishTargetOption[]): boolean {
-  return targets.some((o) => !isManual(o))
-}
-
-function isUnhealthy(option: PublishTargetOption): boolean {
-  return option.healthStatus === 'UNHEALTHY'
-}
-
-/**
- * A TikTok target's options, with a missing privacy level backfilled from the account's own first
- * allowed level — the same default TikTokPublishOptions shows pre-selected, so the picker never saves
- * (or gates approval on) "no privacy level chosen" for a row the audience select already shows as
- * decided. Applied at save time, in one place, rather than as a per-row effect on mount: two TikTok
- * rows defaulting in the same tick would otherwise race each other's save.
- */
-function withTikTokDefault(
-  option: PublishTargetOption,
-  values: TikTokPublishOptionValues
-): TikTokPublishOptionValues {
-  if (values.privacyLevel) return values
-  const fallback = option.privacyLevelOptions?.[0]
-  return fallback ? { ...values, privacyLevel: fallback } : values
-}
-
-/**
- * Whether this selected target's row shows its outcome (chip, permalink, error, actions) instead of the
- * editable checkbox/format/options UI: "the item has been scheduled or published" (`approvedOrLater` —
- * a Post commits its bundle at approval, the step right before scheduling, so a target here is done
- * being edited even if it hasn't fired yet), or this particular target already has — a retry resets a
- * FAILED target back to PENDING, the same wire value an unscheduled selection carries, so `state` alone
- * cannot tell the two apart; the item-level signal can.
- */
-function isSettled(
-  target: SelectedPublishTarget | undefined,
-  approvedOrLater: boolean
-): target is SelectedPublishTarget {
-  if (!target) return false
-  return approvedOrLater || target.state !== 'PENDING'
-}
-
-/**
- * The TikTok options carried by a set of persisted targets. `fallback` covers a backend that hasn't
- * started echoing publishOptions yet — without it, a round-trip would silently blank an edit.
- */
-function seedTikTokOptions(
-  targets: SelectedPublishTarget[],
-  fallback: Record<string, TikTokPublishOptionValues> = {}
-): Record<string, TikTokPublishOptionValues> {
-  const seeded: Record<string, TikTokPublishOptionValues> = {}
-  for (const target of targets) {
-    if (target.platform !== 'tiktok') continue
-    const key = targetKey(target.platform, target.connectionId)
-    seeded[key] = normalizeTikTokOptions(target.publishOptions ?? fallback[key])
-  }
-  return seeded
-}
-
-/** Same trap, for Instagram's own option bag. */
-function seedInstagramOptions(
-  targets: SelectedPublishTarget[],
-  fallback: Record<string, InstagramPublishOptionValues> = {}
-): Record<string, InstagramPublishOptionValues> {
-  const seeded: Record<string, InstagramPublishOptionValues> = {}
-  for (const target of targets) {
-    if (target.platform !== 'instagram') continue
-    const key = targetKey(target.platform, target.connectionId)
-    seeded[key] = normalizeInstagramOptions(target.publishOptions ?? fallback[key])
-  }
-  return seeded
-}
-
-/** Same trap, for YouTube's own option bag. */
-function seedYouTubeOptions(
-  targets: SelectedPublishTarget[],
-  fallback: Record<string, YouTubePublishOptionValues> = {}
-): Record<string, YouTubePublishOptionValues> {
-  const seeded: Record<string, YouTubePublishOptionValues> = {}
-  for (const target of targets) {
-    if (target.platform !== 'youtube') continue
-    const key = targetKey(target.platform, target.connectionId)
-    seeded[key] = normalizeYouTubeOptions(target.publishOptions ?? fallback[key])
-  }
-  return seeded
-}
-
-/** The format each persisted target carries. A missing value reads as `feed`, same as the API. */
-function seedFormats(
-  targets: SelectedPublishTarget[],
-  fallback: Record<string, PostFormat> = {}
-): Record<string, PostFormat> {
-  const seeded: Record<string, PostFormat> = {}
-  for (const target of targets) {
-    const key = targetKey(target.platform, target.connectionId)
-    seeded[key] = target.format ?? fallback[key] ?? 'feed'
-  }
-  return seeded
-}
-
-/** This target's own effective media, in publish order — the chosen subset, or the whole Post's. */
-function effectiveAssetsFor(content: TargetContent | undefined, assets: MediaAsset[]): MediaAsset[] {
-  const ids = content?.assetIds ?? assets.map((a) => a.id)
-  const byId = new Map(assets.map((a) => [a.id, a]))
-  return ids.map((id) => byId.get(id)).filter((a): a is MediaAsset => Boolean(a))
-}
-
-/**
- * The per-target caption and media carried by a set of persisted targets. Same trap as the TikTok
- * options above: a save sends the complete selection, so anything not seeded back from the server would
- * be cleared by the next unrelated edit.
- */
-function seedContent(
-  targets: SelectedPublishTarget[],
-  fallback: Record<string, TargetContent> = {}
-): Record<string, TargetContent> {
-  const seeded: Record<string, TargetContent> = {}
-  for (const target of targets) {
-    const key = targetKey(target.platform, target.connectionId)
-    const stored: TargetContent = {
-      captionOverride: target.captionOverride ?? null,
-      assetIds: target.assetIds ?? null,
-    }
-    const known = target.captionOverride !== undefined || target.assetIds !== undefined
-    seeded[key] = known ? stored : (fallback[key] ?? INHERITED_CONTENT)
-  }
-  return seeded
-}
-
-function isInherited(content: TargetContent | undefined): boolean {
-  return !content || (content.captionOverride === null && content.assetIds === null)
-}
+import type {
+  PublishTargetOption,
+  RetryPublishResponse,
+  SelectedPublishTarget,
+} from './destinations/types'
+import {
+  PLATFORM_LABELS,
+  PLATFORM_ORDER,
+  awaitsAHuman,
+  hasAccount,
+  isManual,
+  isSettled,
+  isUnhealthy,
+  permalinkText,
+  stateHue,
+  stateLabelFor,
+  targetKey,
+  withTikTokDefault,
+} from './destinations/publishState'
+import {
+  buildSelectionPayload,
+  effectiveAssetsFor,
+  isInherited,
+  seedContent,
+  seedFormats,
+  seedInstagramOptions,
+  seedTikTokOptions,
+  seedYouTubeOptions,
+} from './destinations/selectionState'
+import { ManualPublishForm } from './destinations/ManualPublishForm'
 
 interface PostTargetPickerProps {
   projectId: string
@@ -558,48 +271,16 @@ export function PostTargetPicker({
 
       // Every selected target's caption and media go out on every save, because this endpoint is a
       // set-replace: a target sent without them would have its customisation cleared by an edit to a
-      // different target entirely.
-      // Inheriting is expressed by leaving the field out, not by sending null: the server reads both
-      // the same way, and an omitted field keeps an uncustomised target's payload byte-identical to
-      // what a client that predates per-target content would send.
-      const contentFor = (o: PublishTargetOption): Partial<PublishTargetSelectionPayload> => {
-        const content = nextContent[targetKey(o.platform, o.connectionId)]
-        if (!content) return {}
-        return {
-          ...(content.captionOverride === null ? {} : { captionOverride: content.captionOverride }),
-          ...(content.assetIds === null ? {} : { assetIds: content.assetIds }),
-        }
-      }
-      // Options ride along only for an API (non-manual) target. A manual one never uses them — they
-      // are the payload we would send the platform, and on that lane the creator sets every one of
-      // them in the platform's own composer — and sending them anyway would store a bag of
-      // meaningless falses on the row that then counts as part of the publish bundle.
-      const optionsFor = (o: PublishTargetOption): Partial<PublishTargetSelectionPayload> => {
-        if (isManual(o)) return {}
-        const key = targetKey(o.platform, o.connectionId)
-        if (o.platform === 'tiktok') {
-          return { publishOptions: withTikTokDefault(o, nextTiktok[key] ?? EMPTY_TIKTOK_OPTIONS) }
-        }
-        if (o.platform === 'instagram') {
-          const values = nextInstagram[key]
-          return values && Object.keys(values).length > 0 ? { publishOptions: values } : {}
-        }
-        if (o.platform === 'youtube') {
-          const values = nextYoutube[key]
-          return values && Object.keys(values).length > 0 ? { publishOptions: values } : {}
-        }
-        return {}
-      }
-      // Only ever send targets the project can still publish to; an orphan would be refused.
-      const payload: PublishTargetSelectionPayload[] = options
-        .filter((o) => nextKeys.has(targetKey(o.platform, o.connectionId)))
-        .map((o) => ({
-          platform: o.platform,
-          connectionId: o.connectionId,
-          format: nextFormats[targetKey(o.platform, o.connectionId)] ?? 'feed',
-          ...optionsFor(o),
-          ...contentFor(o),
-        }))
+      // different target entirely. Only ever send targets the project can still publish to; an orphan
+      // would be refused. Both rules live in buildSelectionPayload.
+      const payload = buildSelectionPayload(options, {
+        keys: nextKeys,
+        tiktok: nextTiktok,
+        instagram: nextInstagram,
+        youtube: nextYoutube,
+        content: nextContent,
+        formats: nextFormats,
+      })
       setSaving(true)
       try {
         const updated = await apiPut<SelectedPublishTarget[]>(
@@ -1198,27 +879,6 @@ function TargetRow({
 }
 
 /**
- * A "Show details" disclosure beside a message, for the extra detail the server sends alongside it —
- * only rendered when there is one and it says more than the message already does.
- */
-function ShowDetails({ message, detail }: { message: string | null | undefined; detail?: string | null }) {
-  const [open, setOpen] = useState(false)
-  if (!detail || detail === message) return null
-  return (
-    <div>
-      <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setOpen((o) => !o)}>
-        {open ? 'Hide details' : 'Show details'}
-      </Button>
-      {open && (
-        <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs text-foreground">
-          {detail}
-        </pre>
-      )}
-    </div>
-  )
-}
-
-/**
  * What happened to one destination, plus the actions that belong to it: nothing for a plain success or
  * an in-flight state (the chip and permalink in the row header already say it), a "Mark published" form
  * for one waiting on a human, and the platform's own error verbatim for one that failed.
@@ -1278,86 +938,4 @@ function SettledOutcomeRow({
       {open && <ManualPublishForm target={target} onCancel={onCancel} onComplete={onComplete} />}
     </div>
   )
-}
-
-/**
- * Records what a human already did: the link to the post they published by hand, and when.
- *
- * The link is required and the reason is not pedantry — there is no platform to ask, so it is the only
- * record this destination ever went out, and the thing the calendar, the Asset library and any later
- * reader all read. The time defaults to now but is editable, because the common case for filling this
- * in is a few hours after the fact and a wrong timestamp on a published post is quietly misleading.
- */
-function ManualPublishForm({
-  target,
-  onCancel,
-  onComplete,
-}: {
-  target: SelectedPublishTarget
-  onCancel: () => void
-  onComplete: (permalink: string, publishedAt: string | null) => Promise<void>
-}) {
-  const [permalink, setPermalink] = useState('')
-  const [publishedAt, setPublishedAt] = useState(() => localDateTimeValue(new Date()))
-  const [saving, setSaving] = useState(false)
-  const linkId = `manual-link-${target.id}`
-  const timeId = `manual-time-${target.id}`
-
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!permalink.trim() || saving) return
-    setSaving(true)
-    try {
-      await onComplete(permalink.trim(), publishedAt ? new Date(publishedAt).toISOString() : null)
-    } catch (err) {
-      // Never swallow: the row stays exactly as it was and the reason is said out loud.
-      toastError(apiErrorMessage(err, 'Could not record this as published'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="ml-6 space-y-2.5 border-t border-border pt-3">
-      <div className="space-y-1">
-        <label htmlFor={linkId} className="block text-sm font-medium text-foreground">
-          Link to the published post
-        </label>
-        <input
-          id={linkId}
-          type="url"
-          required
-          autoFocus
-          value={permalink}
-          onChange={(e) => setPermalink(e.target.value)}
-          placeholder="https://…"
-          className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-      <div className="space-y-1">
-        <span className="block text-sm font-medium text-foreground">When it went out</span>
-        <DateTimePicker id={timeId} label="When it went out" value={publishedAt} onChange={setPublishedAt} />
-      </div>
-      <div className="flex items-center justify-end gap-2">
-        {!permalink.trim() && !saving && (
-          <span className="text-sm text-muted-foreground">Paste the link first.</span>
-        )}
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={saving}>
-          Cancel
-        </Button>
-        <Button type="submit" size="sm" disabled={saving || !permalink.trim()}>
-          {saving ? 'Recording…' : 'Record as published'}
-        </Button>
-      </div>
-    </form>
-  )
-}
-
-/**
- * `new Date()` as the value a `datetime-local` input accepts: local wall-clock, no zone, no seconds.
- * `toISOString` would be wrong here — it is UTC, and the input would show a time the user did not mean.
- */
-function localDateTimeValue(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }

@@ -26,7 +26,8 @@ import {
   PublishReadinessAction,
   PublishReadinessCard,
 } from '@/components/marketing/PublishReadinessCard'
-import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
+import { PostTargetPicker } from '@/components/marketing/PostTargetPicker'
+import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { PostPerformanceCard } from '@/components/marketing/PostPerformanceCard'
 import {
   TikTokPublishGateProvider,

@@ -32,7 +32,8 @@ import {
   putToSignedUrl,
 } from '@/components/workitems/MediaUploadPanel'
 import type { CreateWorkItemModalProps } from '@/components/workitems/CreateWorkItemModal'
-import type { PublishTargetOption } from '@/components/marketing/PostTargetPicker'
+import type { PublishTargetOption } from '@/components/marketing/destinations/types'
+import { browserTimeZone, nextSlot, wallClockToInstant as toInstant } from '@/lib/schedule'
 import { PostFormatSelector, type PostFormat } from '@/components/marketing/PostFormatSelector'
 
 interface CreatedWorkItem {
@@ -53,65 +54,8 @@ function targetKey(option: PublishTargetOption): string {
   return `${option.platform}${option.connectionId ?? 'manual'}`
 }
 
-function browserTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-  } catch {
-    return 'UTC'
-  }
-}
-
-/** How far `timeZone` is from UTC at `ts`, in milliseconds — read out of Intl, the one source that knows DST. */
-function offsetAt(ts: number, timeZone: string): number {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hour12: false,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-      .formatToParts(new Date(ts))
-      .map((p) => [p.type, p.value])
-  ) as Record<string, string>
-  const asUtc = Date.UTC(
-    Number(parts['year']),
-    Number(parts['month']) - 1,
-    Number(parts['day']),
-    Number(parts['hour']) % 24,
-    Number(parts['minute']),
-    Number(parts['second'])
-  )
-  return asUtc - ts
-}
-
-/** A wall-clock `datetime-local` value in `timeZone`, as the instant it names. */
-export function toInstant(local: string, timeZone: string): string | null {
-  if (!local) return null
-  const [datePart, timePart] = local.split('T')
-  const [y, m, d] = (datePart ?? '').split('-').map(Number)
-  const [hh, mm] = (timePart ?? '').split(':').map(Number)
-  if (!y || !m || !d || Number.isNaN(hh) || Number.isNaN(mm)) return null
-  const guess = Date.UTC(y, m - 1, d, hh, mm)
-  // Two passes converge on the zone's offset at that wall-clock time, DST included.
-  let instant = guess
-  for (let i = 0; i < 2; i++) {
-    instant = guess - offsetAt(instant, timeZone)
-  }
-  return new Date(instant).toISOString()
-}
-
-/** The next five-minute mark at or after `earliest` — a tidy calendar slot rather than 14:07. */
-export function nextSlot(earliest: Date): Date {
-  const slot = new Date(earliest.getTime())
-  slot.setSeconds(0, 0)
-  slot.setMinutes(Math.ceil(slot.getMinutes() / 5) * 5)
-  if (slot.getTime() < earliest.getTime()) slot.setMinutes(slot.getMinutes() + 5)
-  return slot
-}
+/** Re-exported for the tests that grew up here; the one copy lives in lib/schedule. */
+export { nextSlot, wallClockToInstant as toInstant } from '@/lib/schedule'
 
 export function ComposePostModal({
   open,
