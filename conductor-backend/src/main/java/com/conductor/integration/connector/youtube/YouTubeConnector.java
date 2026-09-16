@@ -69,7 +69,10 @@ import java.util.Optional;
  *       the scheduled publish never flips the video public, and the upload call still returns 200.</li>
  *   <li><b>{@code youtube.upload} is a sensitive scope.</b> It requires Google OAuth verification of
  *       the app; until that passes, the consent screen is capped at 100 test users, so anyone outside
- *       that list cannot connect at all.</li>
+ *       that list cannot connect at all. {@code yt-analytics.readonly} is sensitive too, and only gates
+ *       the retention half of {@link #getVideoStatistics}: a connection made before this scope was added
+ *       still reads its Data API view/like/comment counts, it just can't reach the Analytics API for
+ *       watch time until reconnected.</li>
  *   <li><b>Quota.</b> The default YouTube Data API allocation is roughly 100 uploads/day (an upload
  *       costs ~1600 units against a 10,000-unit/day default), and exceeding it fails the upload
  *       rather than queueing it.</li>
@@ -169,13 +172,16 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
 
     /**
      * {@code youtube.upload} to publish, {@code youtube.readonly} to resolve the channel identity and
-     * to read back a published video. Both are sensitive scopes — see the class javadoc.
+     * to read back a published video, {@code yt-analytics.readonly} to read watch time and retention for
+     * the {@code post_metrics} feed ({@link #getVideoStatistics}). All three are sensitive scopes — see
+     * the class javadoc.
      */
     @Override
     public List<String> oauthScopes() {
         return List.of(
                 "https://www.googleapis.com/auth/youtube.upload",
-                "https://www.googleapis.com/auth/youtube.readonly");
+                "https://www.googleapis.com/auth/youtube.readonly",
+                "https://www.googleapis.com/auth/yt-analytics.readonly");
     }
 
     /**
@@ -304,7 +310,10 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     /** Whether the upload has actually gone public yet, for the native lane's confirmation poller. */
     /**
      * The public counters of a batch of videos — the {@code post_metrics} feed's read. One
-     * {@code videos.list} call per batch, a single quota unit however many ids it carries.
+     * {@code videos.list} call for counts (a single quota unit however many ids it carries), plus one
+     * Analytics API {@code reports} call for watch time and retention. The two are independent reads: a
+     * connection missing {@code yt-analytics.readonly} still gets counts from the first call, just with
+     * the retention fields left null — see {@link YouTubeDataClient#listVideoAnalytics}.
      */
     private ActionResult getVideoStatistics(Map<String, Object> input, ConnectionContext ctx) {
         Object raw = input == null ? null : input.get("post_ids");
@@ -319,6 +328,12 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
         if (ids.isEmpty()) {
             return ActionResult.error(ACTION_GET_VIDEO_STATISTICS + " requires 'post_ids'");
         }
+        Map<String, YouTubeDataClient.VideoAnalytics> analyticsById = new LinkedHashMap<>();
+        boolean analyticsForbidden = false;
+        for (YouTubeDataClient.VideoAnalytics analytics : dataClient.listVideoAnalytics(ctx.accessToken(), ids, null)) {
+            analyticsById.put(analytics.id(), analytics);
+            analyticsForbidden = analyticsForbidden || analytics.forbidden();
+        }
         List<Map<String, Object>> rows = new java.util.ArrayList<>();
         for (YouTubeDataClient.VideoStatistics stats : dataClient.listVideoStatistics(ctx.accessToken(), ids)) {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -327,9 +342,27 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
             if (stats.views() != null) row.put("views", stats.views());
             if (stats.likes() != null) row.put("likes", stats.likes());
             if (stats.comments() != null) row.put("comments", stats.comments());
+            YouTubeDataClient.VideoAnalytics analytics = stats.unavailable() ? null : analyticsById.get(stats.id());
+            if (analytics != null) {
+                if (analytics.estimatedMinutesWatched() != null) {
+                    row.put("watch_time_seconds", Math.round(analytics.estimatedMinutesWatched() * 60));
+                }
+                if (analytics.averageViewPercentage() != null) {
+                    row.put("avg_view_pct", analytics.averageViewPercentage());
+                }
+                if (analytics.averageViewDurationSeconds() != null) {
+                    row.put("avg_view_duration_s", analytics.averageViewDurationSeconds());
+                }
+            }
             rows.add(row);
         }
-        return ActionResult.ok(Map.of("metrics", rows));
+        // Counts still flow even when the Analytics API is forbidden (a connection that predates
+        // yt-analytics.readonly) — this stays a success, just with a hint attached, never the setup-
+        // required failure that would stop the counts from being recorded at all.
+        String message = analyticsForbidden
+                ? "Reconnect YouTube to read watch time and retention (missing the yt-analytics.readonly permission)"
+                : null;
+        return new ActionResult(true, message, Map.of("metrics", rows));
     }
 
     private ActionResult getVideoStatus(Map<String, Object> input, ConnectionContext ctx) {

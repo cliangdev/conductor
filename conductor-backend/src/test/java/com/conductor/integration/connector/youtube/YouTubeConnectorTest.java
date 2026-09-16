@@ -43,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -51,6 +52,7 @@ class YouTubeConnectorTest {
     private static final String ACCESS_TOKEN = "ya29.google-access-token";
     private static final String UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload";
     private static final String READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
+    private static final String ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
 
     private YouTubeDataClient dataClient;
     private YouTubeConnector connector;
@@ -65,7 +67,7 @@ class YouTubeConnectorTest {
 
     @Test
     void oauthScopes_declareUploadAndReadonly() {
-        assertThat(connector.oauthScopes()).containsExactlyInAnyOrder(UPLOAD_SCOPE, READONLY_SCOPE);
+        assertThat(connector.oauthScopes()).containsExactlyInAnyOrder(UPLOAD_SCOPE, READONLY_SCOPE, ANALYTICS_SCOPE);
     }
 
     @Test
@@ -594,7 +596,7 @@ class YouTubeConnectorTest {
 
     @Test
     void unpublishVideo_rePrivatizesAndClearsPublishAtWithAnExplicitNull() {
-        when(dataClient.updateVideoStatus(eq(ACCESS_TOKEN), eq("vid-123"), eq("private"), eq(null)))
+        when(dataClient.updateVideoStatus(eq(ACCESS_TOKEN), eq("vid-123"), eq("private"), isNull()))
                 .thenReturn(new YouTubeDataClient.VideoStatus("vid-123", "Acme launch", "private", null));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("video_id", "vid-123");
@@ -709,5 +711,68 @@ class YouTubeConnectorTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).contains("dance");
+    }
+
+    // --- [auto] get_video_statistics merges Data API counts with Analytics API retention ---
+
+    @Test
+    void getVideoStatistics_mergesCountsWithWatchTimeAndRetention() {
+        when(dataClient.listVideoStatistics(ACCESS_TOKEN, List.of("vid-1")))
+                .thenReturn(List.of(new YouTubeDataClient.VideoStatistics("vid-1", 500L, 40L, 3L, false)));
+        when(dataClient.listVideoAnalytics(eq(ACCESS_TOKEN), eq(List.of("vid-1")), isNull()))
+                .thenReturn(List.of(new YouTubeDataClient.VideoAnalytics("vid-1", 120.0, 45.5, 62.3, false)));
+
+        ActionResult result = connector.invoke("get_video_statistics", Map.of("post_ids", List.of("vid-1")), ctx());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.message()).isNull();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.get("post_id")).isEqualTo("vid-1");
+            assertThat(row.get("views")).isEqualTo(500L);
+            assertThat(row.get("watch_time_seconds")).isEqualTo(7200L); // 120 minutes * 60
+            assertThat(row.get("avg_view_pct")).isEqualTo(62.3);
+            assertThat(row.get("avg_view_duration_s")).isEqualTo(45.5);
+        });
+    }
+
+    @Test
+    void getVideoStatistics_analyticsForbidden_stillReturnsCountsWithAReconnectHint() {
+        when(dataClient.listVideoStatistics(ACCESS_TOKEN, List.of("vid-1")))
+                .thenReturn(List.of(new YouTubeDataClient.VideoStatistics("vid-1", 500L, 40L, 3L, false)));
+        when(dataClient.listVideoAnalytics(eq(ACCESS_TOKEN), eq(List.of("vid-1")), isNull()))
+                .thenReturn(List.of(new YouTubeDataClient.VideoAnalytics("vid-1", null, null, null, true)));
+
+        ActionResult result = connector.invoke("get_video_statistics", Map.of("post_ids", List.of("vid-1")), ctx());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.message()).contains("Reconnect YouTube");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.get("post_id")).isEqualTo("vid-1");
+            assertThat(row.get("views")).isEqualTo(500L);
+            assertThat(row).doesNotContainKey("watch_time_seconds");
+            assertThat(row).doesNotContainKey("avg_view_pct");
+        });
+    }
+
+    @Test
+    void getVideoStatistics_unavailableVideo_neverAppliesAnalyticsToIt() {
+        when(dataClient.listVideoStatistics(ACCESS_TOKEN, List.of("gone")))
+                .thenReturn(List.of(new YouTubeDataClient.VideoStatistics("gone", null, null, null, true)));
+        when(dataClient.listVideoAnalytics(eq(ACCESS_TOKEN), eq(List.of("gone")), isNull()))
+                .thenReturn(List.of(new YouTubeDataClient.VideoAnalytics("gone", 10.0, 5.0, 20.0, false)));
+
+        ActionResult result = connector.invoke("get_video_statistics", Map.of("post_ids", List.of("gone")), ctx());
+
+        assertThat(result.success()).isTrue();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.get("unavailable")).isEqualTo(true);
+            assertThat(row).doesNotContainKey("watch_time_seconds");
+        });
     }
 }

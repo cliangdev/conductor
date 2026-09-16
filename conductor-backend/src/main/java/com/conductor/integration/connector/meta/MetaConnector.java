@@ -148,6 +148,7 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
                 "pages_read_engagement",
                 "instagram_basic",
                 "instagram_content_publish",
+                "instagram_manage_insights",
                 "business_management");
     }
 

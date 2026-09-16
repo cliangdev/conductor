@@ -6,15 +6,21 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Set;
 import java.util.Locale;
 import java.net.URISyntaxException;
@@ -45,8 +51,17 @@ import java.util.Map;
  */
 public class YouTubeDataClient {
 
+    private static final Logger log = LoggerFactory.getLogger(YouTubeDataClient.class);
+
     static final String API_BASE = "https://www.googleapis.com/youtube/v3";
     static final String UPLOAD_BASE = "https://www.googleapis.com/upload/youtube/v3";
+    static final String ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2";
+
+    /** {@code startDate} floor for an analytics report when the caller has no better one. */
+    private static final String ANALYTICS_EPOCH_START = "2000-01-01";
+
+    private static final DateTimeFormatter ANALYTICS_DATE =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ROOT).withZone(ZoneOffset.UTC);
     /** The canonical watch URL a published video is reachable at. */
     public static final String WATCH_URL_PREFIX = "https://www.youtube.com/watch?v=";
 
@@ -276,6 +291,92 @@ public class YouTubeDataClient {
                     count(stats, "commentCount"), false));
         }
         return result;
+    }
+
+    /**
+     * One video's retention numbers from the Analytics API, or all-null with {@code forbidden} when the
+     * report could not be read for this channel. {@code watchTimeSeconds} is derived from
+     * {@code estimatedMinutesWatched} (the report's own unit) by the caller, not here, since rounding is a
+     * once-per-row concern the caller already owns for the entity column.
+     */
+    public record VideoAnalytics(String id, Double estimatedMinutesWatched, Double averageViewDurationSeconds,
+                                 Double averageViewPercentage, boolean forbidden) {}
+
+    /**
+     * Reads watch time and retention for up to fifty videos in one {@code reports} call
+     * ({@code dimensions=video}, filtered to the given ids) — {@code startDate} defaults to
+     * {@value #ANALYTICS_EPOCH_START} when the caller has no better bound (e.g. no publish date to start
+     * from), {@code endDate} is always today.
+     *
+     * <p>The Analytics API is a separate, newer-scoped surface from the Data API {@link #listVideoStatistics}
+     * reads — a connection that predates {@code yt-analytics.readonly} gets a 403 here while the Data API
+     * counts keep working. That 403 (and any other 4xx: an unrecognized video id, a malformed filter) is
+     * caught rather than thrown, so the caller can keep the counts it already has and fall back to nulls
+     * for retention — never failing the whole metrics batch over the newer, narrower scope. A 5xx/IO
+     * failure still propagates, same as every other read in this class.
+     */
+    public List<VideoAnalytics> listVideoAnalytics(String accessToken, List<String> videoIds, Instant startDate) {
+        if (videoIds == null || videoIds.isEmpty()) {
+            return List.of();
+        }
+        String start = startDate != null ? ANALYTICS_DATE.format(startDate) : ANALYTICS_EPOCH_START;
+        String end = ANALYTICS_DATE.format(Instant.now());
+        URI uri = UriComponentsBuilder.fromUriString(ANALYTICS_BASE + "/reports")
+                .queryParam("ids", "channel==MINE")
+                .queryParam("startDate", start)
+                .queryParam("endDate", end)
+                .queryParam("dimensions", "video")
+                .queryParam("filters", "video==" + String.join(",", videoIds))
+                .queryParam("metrics", "views,likes,comments,shares,estimatedMinutesWatched,"
+                        + "averageViewDuration,averageViewPercentage")
+                .build().toUri();
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.GET,
+                    new HttpEntity<>(bearer(accessToken)), String.class);
+            return parseAnalyticsReport(response.getBody());
+        } catch (HttpClientErrorException e) {
+            boolean forbidden = e.getStatusCode().value() == 403;
+            log.debug("YouTube analytics unavailable for {} video(s): {} {}", videoIds.size(),
+                    e.getStatusCode().value(), e.getResponseBodyAsString());
+            return videoIds.stream().map(id -> new VideoAnalytics(id, null, null, null, forbidden)).toList();
+        }
+    }
+
+    private List<VideoAnalytics> parseAnalyticsReport(String json) {
+        JsonNode body = parse(json);
+        JsonNode headers = body.path("columnHeaders");
+        JsonNode rows = body.path("rows");
+        if (!headers.isArray() || !rows.isArray()) {
+            return List.of();
+        }
+        List<String> columns = new ArrayList<>();
+        headers.forEach(header -> columns.add(header.path("name").asText(null)));
+        int videoIdx = columns.indexOf("video");
+        int minutesIdx = columns.indexOf("estimatedMinutesWatched");
+        int durationIdx = columns.indexOf("averageViewDuration");
+        int percentIdx = columns.indexOf("averageViewPercentage");
+        List<VideoAnalytics> result = new ArrayList<>();
+        for (JsonNode row : rows) {
+            if (!row.isArray() || videoIdx < 0 || videoIdx >= row.size()) {
+                continue;
+            }
+            String id = row.get(videoIdx).asText(null);
+            if (id == null) {
+                continue;
+            }
+            result.add(new VideoAnalytics(id,
+                    numericColumn(row, minutesIdx), numericColumn(row, durationIdx),
+                    numericColumn(row, percentIdx), false));
+        }
+        return result;
+    }
+
+    private static Double numericColumn(JsonNode row, int index) {
+        if (index < 0 || index >= row.size()) {
+            return null;
+        }
+        JsonNode value = row.get(index);
+        return value.isNumber() ? value.asDouble() : null;
     }
 
     private static Long count(JsonNode stats, String field) {
