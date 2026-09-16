@@ -11,6 +11,11 @@ import java.util.List;
  */
 public record ConnectorSpec(AuthType authType, boolean singleInstance, List<ConnectorConfigField> fields) {
 
+    /** No credential at all — a built-in or public-data connector with nothing to configure. */
+    public static ConnectorSpec none(boolean singleInstance) {
+        return new ConnectorSpec(AuthType.NONE, singleInstance, List.of());
+    }
+
     public static ConnectorSpec apiKey(boolean singleInstance, List<ConnectorConfigField> fields) {
         return new ConnectorSpec(AuthType.API_KEY, singleInstance, fields);
     }

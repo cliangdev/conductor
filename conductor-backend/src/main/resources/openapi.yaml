@@ -6307,6 +6307,12 @@ components:
           type: string
         connected:
           type: boolean
+        builtIn:
+          type: boolean
+          description: >-
+            True for a connector every project is provisioned into automatically (e.g.
+            conductor-marketing) — no credential, and no "Connect" affordance should be shown for it
+            in the browse grid.
         configFields:
           type: array
           items:
@@ -6343,6 +6349,11 @@ components:
           type: array
           items:
             type: string
+        builtIn:
+          type: boolean
+          description: >-
+            True for a connector every project is provisioned into automatically — no credential,
+            and never something an agent or a person needs to "connect".
         configFields:
           type: array
           items:

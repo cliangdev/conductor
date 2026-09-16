@@ -64,12 +64,17 @@ export default function IntegrationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, accessToken]);
 
-  const grouped = integrations.reduce<Record<string, IntegrationListItem[]>>((acc, item) => {
-    const cat = item.category || 'Other';
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(item);
-    return acc;
-  }, {});
+  // Built-in connectors (e.g. conductor-marketing) are provisioned automatically — never something
+  // to browse and connect, so they're left out of the browse grid entirely. They still appear on the
+  // Connected tab and their own detail page (Feeds health panel) once provisioned.
+  const grouped = integrations
+    .filter((item) => !item.builtIn)
+    .reduce<Record<string, IntegrationListItem[]>>((acc, item) => {
+      const cat = item.category || 'Other';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(item);
+      return acc;
+    }, {});
 
   const connected = integrations.filter((i) => i.connected);
 
@@ -249,8 +254,9 @@ export default function IntegrationsPage() {
                               : 'OAuth2'}
                     </div>
                   </div>
-                  {/* Single-instance connectors can be removed inline; multi-instance are managed on the detail page. */}
-                  {canMutate && item.singleInstance && (
+                  {/* Single-instance connectors can be removed inline; multi-instance are managed on the detail page.
+                      Built-in connectors are provisioned automatically and are not user-removable. */}
+                  {canMutate && item.singleInstance && !item.builtIn && (
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDisconnect(item); }}
                       disabled={disconnecting === item.connectorId}

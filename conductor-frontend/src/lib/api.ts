@@ -235,6 +235,11 @@ export interface IntegrationListItem {
   description: string
   iconLabel: string
   connected: boolean
+  /**
+   * True for a connector every project is provisioned into automatically (e.g. conductor-marketing)
+   * — no credential, and no "Connect" affordance should be shown for it in the browse grid.
+   */
+  builtIn?: boolean
   configFields: ConnectorConfigField[]
   connections: ConnectionSummary[]
   /**
