@@ -668,6 +668,12 @@
       "requiredParams": []
     },
     {
+      "name": "get_marketing_insights",
+      "description": "What is working across the project's published Posts: totals, engagement rate by platform, format and time, best and worst posts, and movers vs the prior window.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "submit_review",
       "description": "Record an approve / request_changes verdict on a Post as this API key's user (an assigned REVIEWER). Approval schedules the Post.",
       "category": "marketing",

@@ -2027,6 +2027,68 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/insights:
+    get:
+      tags:
+        - publish-metrics
+      summary: What is working across the project's published Posts
+      description: >-
+        A structured reading of every `post_metrics` snapshot in the window: totals, engagement rate by
+        platform, by format, by hour of day and by weekday, the best and worst destinations, and how the
+        window compares with the one before it. Engagement rate is (likes + comments + shares + saves) over
+        views; a group with no views reports null. Groups are computed over destinations that fired inside
+        the window, using each destination's latest snapshot. Empty groups are omitted, so a project with
+        one platform sees one platform row. `coverage` names what a platform does not report so a reader
+        does not mistake a missing counter for a zero.
+      operationId: getMarketingInsights
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            default: 30d
+          description: 7d, 30d (default) or 90d — how far back from now the window reaches.
+        - name: platform
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Restrict to one platform (facebook, instagram, tiktok, youtube).
+      responses:
+        "200":
+          description: The insights
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingInsightsResponse"
+        "400":
+          description: Unknown window or platform
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/work-items/{workItemId}/publish-preflight:
     get:
       tags:
@@ -3569,6 +3631,243 @@ components:
         observedAt:
           type: string
           format: date-time
+
+    MarketingInsightsResponse:
+      type: object
+      required:
+        - window
+        - totals
+        - byPlatform
+        - byFormat
+        - byHour
+        - byWeekday
+        - topPosts
+        - bottomPosts
+        - movers
+        - coverage
+      properties:
+        window:
+          $ref: "#/components/schemas/InsightsWindow"
+        totals:
+          $ref: "#/components/schemas/InsightsGroup"
+        byPlatform:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsGroup"
+          description: One row per platform, key = platform id, sorted by engagement rate descending (nulls last).
+        byFormat:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsGroup"
+          description: One row per format (FEED, REEL, STORY, …), key = format.
+        byHour:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsGroup"
+          description: One row per UTC hour of the destination's fire time that has at least one post, key = "0".."23", sorted by hour.
+        byWeekday:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsGroup"
+          description: One row per UTC weekday of the fire time, key = MONDAY..SUNDAY, sorted Monday first.
+        topPosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsPost"
+          description: Up to ten destinations with the highest engagement rate (views ≥ 1), best first.
+        bottomPosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsPost"
+          description: Up to five destinations with the lowest engagement rate (views ≥ 1), worst first. Empty when fewer than ten destinations reported.
+        movers:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsMover"
+          description: How this window's totals compare with the window of the same length immediately before it.
+        coverage:
+          $ref: "#/components/schemas/InsightsCoverage"
+
+    InsightsWindow:
+      type: object
+      required:
+        - from
+        - to
+        - days
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        days:
+          type: integer
+
+    InsightsGroup:
+      type: object
+      description: The counters of one grouping of destinations, summed over each destination's latest snapshot.
+      required:
+        - key
+        - posts
+        - views
+        - likes
+        - comments
+        - shares
+        - saves
+      properties:
+        key:
+          type: string
+          description: The group's identity — a platform, a format, an hour, a weekday, or "all" for totals.
+        label:
+          type: string
+          nullable: true
+          description: A display name where the key is not one (e.g. "Instagram").
+        posts:
+          type: integer
+          description: Destinations in the group with at least one snapshot.
+        views:
+          type: integer
+          format: int64
+        likes:
+          type: integer
+          format: int64
+        comments:
+          type: integer
+          format: int64
+        shares:
+          type: integer
+          format: int64
+        saves:
+          type: integer
+          format: int64
+        engagementRate:
+          type: number
+          format: double
+          nullable: true
+          description: (likes + comments + shares + saves) / views; null when views are zero.
+        medianViews:
+          type: integer
+          format: int64
+          nullable: true
+          description: The median of the group's latest per-destination views; null when no destination has views.
+        avgViewPct:
+          type: number
+          format: double
+          nullable: true
+          description: Mean of the destinations' average-view-percentage where a platform reports it (YouTube); null otherwise.
+
+    InsightsPost:
+      type: object
+      required:
+        - workItemId
+        - targetId
+        - platform
+        - views
+        - observedAt
+      properties:
+        workItemId:
+          type: string
+        displayId:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        workflowSlug:
+          type: string
+          nullable: true
+          description: The Work Item's Workflow slug (e.g. "posts"), so a client can build the Post page route without guessing the Area's Workflow.
+        captionExcerpt:
+          type: string
+          nullable: true
+          description: The first 140 characters of the caption that went to this destination.
+        targetId:
+          type: string
+        platform:
+          type: string
+        format:
+          type: string
+          nullable: true
+        accountLabel:
+          type: string
+          nullable: true
+        permalink:
+          type: string
+          nullable: true
+        firedAt:
+          type: string
+          format: date-time
+          nullable: true
+        views:
+          type: integer
+          format: int64
+        likes:
+          type: integer
+          format: int64
+          nullable: true
+        comments:
+          type: integer
+          format: int64
+          nullable: true
+        shares:
+          type: integer
+          format: int64
+          nullable: true
+        saves:
+          type: integer
+          format: int64
+          nullable: true
+        engagementRate:
+          type: number
+          format: double
+          nullable: true
+        avgViewPct:
+          type: number
+          format: double
+          nullable: true
+        observedAt:
+          type: string
+          format: date-time
+
+    InsightsMover:
+      type: object
+      required:
+        - metric
+        - current
+        - previous
+      properties:
+        metric:
+          type: string
+          description: posts, views, likes, comments, shares, saves or engagementRate.
+        current:
+          type: number
+          format: double
+        previous:
+          type: number
+          format: double
+        deltaPct:
+          type: number
+          format: double
+          nullable: true
+          description: (current − previous) / previous × 100; null when previous is zero.
+
+    InsightsCoverage:
+      type: object
+      required:
+        - platforms
+        - notes
+      properties:
+        platforms:
+          type: array
+          items:
+            type: string
+          description: Platforms with at least one snapshot in the window.
+        notes:
+          type: array
+          items:
+            type: string
+          description: Plain sentences about what is not being counted — a platform that reports no views, a connection that needs reconnecting for insights.
 
     PublishPreflightResponse:
       type: object

@@ -422,12 +422,27 @@ so a retried pull replays the stored answer instead of spending the budget twice
 
 Read it back with `GET …/work-items/{id}/publish-metrics` (a series per destination plus the latest
 totals) and `GET /projects/{id}/publish-metrics/top-posts?metric=views` (every destination's latest
-snapshot, ranked); over MCP, `get_post_analytics` and `list_top_posts`.
+snapshot, ranked) and `GET /projects/{id}/marketing/insights?window=30d` (totals, engagement rate by
+platform, format, hour and weekday, best and worst destinations, and movers against the prior window — the
+"What's working" page in the Marketing area); over MCP, `get_post_analytics`, `list_top_posts` and
+`get_marketing_insights`.
 
-Two things to know: TikTok's read needs the `video.list` scope, so a TikTok account connected before this
-feed existed reports *setup required* until the creator reconnects it; and Instagram's views, reach and
-saves live behind the insights edge, whose availability varies by media type, so only likes and comments
-are read there today.
+Three things to know: TikTok's read needs the `video.list` scope, so a TikTok account connected before this
+feed existed reports *setup required* until the creator reconnects it; Instagram now reads views, reach,
+saves and shares through the insights edge (`instagram_manage_insights`) alongside likes and comments — a
+connection made before that scope was added keeps its likes and comments flowing and just gets a reconnect
+prompt for the rest, rather than the pull failing outright; and YouTube adds watch time and average view
+percentage from the Analytics API (`yt-analytics.readonly`), with the same reconnect-for-the-rest treatment
+for a connection that predates it.
+
+A second, built-in connector reads that same `post_publish_target_metric` table from the other
+direction: `conductor-marketing` (no credential, provisioned automatically onto every project that has the
+Knowledge Center enabled and has published at least one Post) declares a `what_works_weekly` **metric** feed — `AuthType.NONE`,
+`sink: KNOWLEDGE` — that runs the ordinary metrics-digest pipeline (see
+[`docs/knowledge.md`](knowledge.md#metrics-digests)) over the trailing week's published destinations:
+a daily trend, a by-platform and by-format breakdown, and the week's top posts by engagement rate. When
+something material happened it narrates a weekly "what's working" page at `marketing/what-works.md` —
+same inbox, same librarian, same silence-is-fine-if-nothing-changed behavior as any other digest feed.
 
 ## Getting told about it
 

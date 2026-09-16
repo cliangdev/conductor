@@ -82,7 +82,7 @@
     },
     {
       "id": "get_instagram_media_metrics",
-      "description": "Read the like and comment counts of up to 50 Instagram media in one call; an id Graph no longer resolves comes back as unavailable",
+      "description": "Read the like, comment, view, reach, save and share counts of up to 50 Instagram media (one call per media, plus its insights edge); an id Graph no longer resolves comes back as unavailable, and a connection missing the instagram_manage_insights permission still returns likes/comments with the rest left null",
       "params": {
         "post_ids": "Platform ids of the media to read (required, list, at most 50)"
       },

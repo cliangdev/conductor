@@ -61,7 +61,7 @@
     },
     {
       "id": "get_video_statistics",
-      "description": "Read the view, like and comment counts of up to 50 videos in one videos.list call (one quota unit); a video the channel no longer holds comes back as unavailable",
+      "description": "Read the view, like and comment counts of up to 50 videos in one videos.list call (one quota unit), plus watch time and view-retention from the Analytics API; a video the channel no longer holds comes back as unavailable, and a connection missing the yt-analytics.readonly permission still returns counts with retention left null",
       "params": {
         "post_ids": "Video ids to read (required, list, at most 50)"
       },
