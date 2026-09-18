@@ -50,8 +50,15 @@ export default function OpengraphImage() {
               strokeWidth="2.4"
               strokeLinecap="round"
             >
-              <path d="M18.70 6.77 A8.5 8.5 0 1 0 18.70 17.23" />
-              <circle cx="18.70" cy="17.23" r="2.5" fill="#ffffff" stroke="none" />
+              <path d="M10.2 10.2 L7.6 7.6" />
+              <path d="M13.8 10.2 L16.4 7.6" />
+              <path d="M10.2 13.8 L7.6 16.4" />
+              <path d="M13.8 13.8 L16.4 16.4" />
+              <circle cx="12" cy="12" r="3.1" fill="#ffffff" stroke="none" />
+              <circle cx="5.2" cy="5.2" r="2.1" fill="#ffffff" stroke="none" />
+              <circle cx="18.8" cy="5.2" r="2.1" fill="#ffffff" stroke="none" />
+              <circle cx="5.2" cy="18.8" r="2.1" fill="#ffffff" stroke="none" />
+              <circle cx="18.8" cy="18.8" r="2.1" fill="#ffffff" stroke="none" />
             </svg>
           </div>
           <div style={{ fontSize: '84px', fontWeight: 800, letterSpacing: '-0.02em' }}>
