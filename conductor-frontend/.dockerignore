@@ -1,0 +1,25 @@
+# Without this file, `COPY . .` in the dev and builder stages copies the host's node_modules over
+# the one `npm ci` installed in the deps stage. A developer with a stale install then poisons the
+# image — the symptom is a next / @next/swc version skew and Turbopack exiting with
+# "Missing field `turbopackMemoryEviction`".
+node_modules
+.next
+.git
+.gitignore
+
+# Build and test output, never an input.
+coverage
+playwright-report
+test-results
+tests/e2e
+
+# Local-only configuration. Real values arrive as build args and Cloud Run env vars.
+.env
+.env.*
+!.env.local.example
+
+# Editor and OS noise.
+.DS_Store
+*.log
+.vscode
+.idea

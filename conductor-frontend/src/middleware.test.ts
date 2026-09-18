@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { middleware } from './middleware'
+import { middleware, config } from './middleware'
 import { NextRequest } from 'next/server'
 
 function makeRequest(pathAndQuery: string, cookies: Record<string, string> = {}): NextRequest {
@@ -54,20 +54,29 @@ describe('middleware', () => {
     expect(location).toContain('next=%2Fapp%2Fprojects%2F123%2Fsettings')
   })
 
-  it('redirects unauthenticated / to /login', () => {
-    const req = makeRequest('/')
-    const response = middleware(req)
+  // `/`, `/privacy` and `/terms` are the public marketing pages: they must render with no cookie,
+  // because platform app reviewers verify them signed out. They are outside the matcher entirely,
+  // so these cases assert the middleware would not gate them if it ever ran.
+  it('lets the unauthenticated landing page through', () => {
+    const response = middleware(makeRequest('/'))
 
-    expect(response.status).toBe(307)
-    expect(response.headers.get('location')).toBe('http://localhost/login')
+    expect(response.status).toBe(200)
   })
 
-  it('redirects authenticated / to /app/projects', () => {
-    const req = makeRequest('/', { access_token: 'valid-token' })
-    const response = middleware(req)
+  it('lets the landing page through for a signed-in visitor too', () => {
+    const response = middleware(makeRequest('/', { access_token: 'valid-token' }))
 
-    expect(response.status).toBe(307)
-    expect(response.headers.get('location')).toBe('http://localhost/app/projects')
+    expect(response.status).toBe(200)
+  })
+
+  it.each(['/privacy', '/terms'])('lets the unauthenticated %s page through', (path) => {
+    const response = middleware(makeRequest(path))
+
+    expect(response.status).toBe(200)
+  })
+
+  it('does not gate the landing page in the matcher', () => {
+    expect(config.matcher).not.toContain('/')
   })
 
   it('redirects authenticated /login to /app/projects', () => {

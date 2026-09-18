@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 
 // Route segment config — this image is static and identical for every link.
-export const alt = 'Conductor — Team PRD collaboration platform'
+export const alt = 'Conductor: a coordination platform for teams that work with AI agents'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -26,7 +26,8 @@ export default function OpengraphImage() {
           fontFamily: 'sans-serif',
         }}
       >
-        {/* Brand mark + wordmark */}
+        {/* Brand mark + wordmark. The mark is the same geometry as ConductorLogo, inlined because
+            satori renders raw SVG but cannot pull in a React component's Tailwind classes. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '28px' }}>
           <div
             style={{
@@ -38,11 +39,27 @@ export default function OpengraphImage() {
               borderRadius: '24px',
               backgroundColor: 'rgba(255,255,255,0.14)',
               border: '2px solid rgba(255,255,255,0.35)',
-              fontSize: '60px',
-              fontWeight: 800,
             }}
           >
-            C
+            <svg
+              width="60"
+              height="60"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+            >
+              <path d="M10.2 10.2 L7.6 7.6" />
+              <path d="M13.8 10.2 L16.4 7.6" />
+              <path d="M10.2 13.8 L7.6 16.4" />
+              <path d="M13.8 13.8 L16.4 16.4" />
+              <circle cx="12" cy="12" r="3.1" fill="#ffffff" stroke="none" />
+              <circle cx="5.2" cy="5.2" r="2.1" fill="#ffffff" stroke="none" />
+              <circle cx="18.8" cy="5.2" r="2.1" fill="#ffffff" stroke="none" />
+              <circle cx="5.2" cy="18.8" r="2.1" fill="#ffffff" stroke="none" />
+              <circle cx="18.8" cy="18.8" r="2.1" fill="#ffffff" stroke="none" />
+            </svg>
           </div>
           <div style={{ fontSize: '84px', fontWeight: 800, letterSpacing: '-0.02em' }}>
             Conductor
@@ -59,7 +76,7 @@ export default function OpengraphImage() {
             color: 'rgba(255,255,255,0.92)',
           }}
         >
-          Team PRD collaboration platform
+          A coordination platform for teams that work with AI agents
         </div>
 
         <div
@@ -69,7 +86,7 @@ export default function OpengraphImage() {
             color: 'rgba(255,255,255,0.7)',
           }}
         >
-          Review, approve, and ship product requirements together.
+          Agents draft the work. Your team approves it. Conductor ships it.
         </div>
       </div>
     ),
