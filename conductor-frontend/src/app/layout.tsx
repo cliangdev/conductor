@@ -4,10 +4,11 @@ import './globals.css'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ToastProvider } from '@/components/ui/toast'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'
+import { resolveSiteUrl } from '@/lib/site-url'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
+const siteUrl = resolveSiteUrl()
 const description =
   'A coordination platform for teams that work with AI agents. Agents draft the work. Your team approves it. Conductor ships it.'
 

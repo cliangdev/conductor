@@ -121,33 +121,66 @@ that a stranger can sign up and connect their own account.
 
 ## Cutover checklist for conductor.rexipe.io
 
-Run these in order. Steps 1 to 3 are safe before any traffic moves.
+How the existing subdomains are actually wired, confirmed 2026-09-18 against the live projects:
+`rexipe.io` DNS is hosted at GoDaddy (`ns07/ns08.domaincontrol.com`), and each subdomain is a Cloud
+Run domain mapping plus a `CNAME` to `ghs.googlehosted.com`. `admin-staging.rexipe.io` maps to
+`nexus-dashboard` and `api-staging.rexipe.io` maps to `nexus-backend`, both in `archon-staging`,
+`us-central1`. Conductor lives in a different project, `ai-conductor-prod` (project number
+199707291514), with `conductor-frontend` and `conductor-backend` also in `us-central1`.
 
-1. **Map the domain** to the frontend Cloud Run service:
+### Who has to run what
+
+Creating a Cloud Run domain mapping requires the caller to be a **verified owner of the domain in
+Google Search Console**, which is separate from project IAM. Both existing mappings were created by
+`caluvdsnuts@gmail.com`, the project owner. `bryan.sheddy@gmail.com` holds `roles/editor`: enough to
+update Cloud Run services, not enough to create a mapping (`gcloud` answers "You currently have no
+verified domains") and not enough to read or write secrets.
+
+So steps 1 and 4 below need the owner account, or the owner first has to add
+`bryan.sheddy@gmail.com` as a verified owner of `rexipe.io` in Search Console.
+
+### Steps
+
+1. **Create the mapping**, as `caluvdsnuts@gmail.com`:
    ```bash
    gcloud beta run domain-mappings create \
-     --service=<frontend-service> \
+     --service=conductor-frontend \
      --domain=conductor.rexipe.io \
-     --region=<region> \
-     --project=<project>
+     --region=us-central1 \
+     --project=ai-conductor-prod
    ```
-   Add the `CNAME` it prints at the `rexipe.io` DNS provider, then wait for the certificate to go
-   ready (`gcloud beta run domain-mappings describe --domain=conductor.rexipe.io --region=<region>`).
-2. **Allow both origins during the move.** CORS is built from `frontend.url` plus
-   `FRONTEND_CORS_ADDITIONAL_ORIGINS`, which takes a comma-separated list. Set the backend's
-   `FRONTEND_CORS_ADDITIONAL_ORIGINS` to the current frontend Cloud Run URL so the old hostname
-   keeps working while DNS propagates.
-3. **Firebase.** Add `conductor.rexipe.io` under Authentication, Settings, Authorized domains, and
-   add it to the Google OAuth client's authorized JavaScript origins.
-4. **Flip the canonical host.** Set the repo variable
-   `NEXT_PUBLIC_SITE_URL=https://conductor.rexipe.io` and the backend's
-   `FRONTEND_URL=https://conductor.rexipe.io`, then redeploy both. `NEXT_PUBLIC_SITE_URL` is a
-   frontend build arg, so it needs a redeploy rather than a restart.
-5. **Update the platform consoles.** TikTok (the fields above), Meta and Google all point at the new
+2. **Add the DNS record at GoDaddy**: type `CNAME`, name `conductor`, value `ghs.googlehosted.com.`
+   This is the same record shape the other two subdomains use. Then wait for the certificate:
+   ```bash
+   gcloud beta run domain-mappings describe --domain=conductor.rexipe.io \
+     --region=us-central1 --project=ai-conductor-prod
+   ```
+3. **Allow both origins while DNS propagates.** CORS is built from `frontend.url` plus
+   `FRONTEND_CORS_ADDITIONAL_ORIGINS`, comma-separated:
+   ```bash
+   gcloud run services update conductor-backend --region=us-central1 --project=ai-conductor-prod \
+     --update-env-vars="FRONTEND_CORS_ADDITIONAL_ORIGINS=https://conductor-frontend-199707291514.us-central1.run.app,https://conductor-frontend-x6setx6tpa-uc.a.run.app"
+   ```
+4. **Flip the canonical host.** `FRONTEND_URL` on the backend is a **Secret Manager secret**, not a
+   plain env var, so it takes a new secret version rather than an env update, and it needs the owner
+   account:
+   ```bash
+   printf 'https://conductor.rexipe.io' | gcloud secrets versions add FRONTEND_URL \
+     --data-file=- --project=ai-conductor-prod
+   ```
+   The service reads `latest`, so it picks the new value up on its next revision. Redeploy the
+   backend to make that immediate.
+5. **Frontend build arg.** `NEXT_PUBLIC_SITE_URL` is baked in at image build time, and it was
+   missing from the repo variables entirely until 2026-09-18. It is now set to
+   `https://conductor.rexipe.io`. Any build started before it was set has an empty value, so
+   re-run Frontend CD after changing it rather than expecting a restart to pick it up.
+6. **Firebase**: add `conductor.rexipe.io` under Authentication, Settings, Authorized domains, and
+   to the Google OAuth client's authorized JavaScript origins. Console only.
+7. **Update the platform consoles.** TikTok (the fields above), Meta and Google all point at the new
    URLs.
-6. **Verify signed out.** `/`, `/privacy` and `/terms` all return 200, and the homepage title is
+8. **Verify signed out.** `/`, `/privacy` and `/terms` all return 200, and the homepage title is
    exactly `Conductor`. Then sign in and publish once, end to end.
-7. **Clean up.** Once the new host is serving, clear `FRONTEND_CORS_ADDITIONAL_ORIGINS`.
+9. **Clean up.** Once the new host is serving, clear `FRONTEND_CORS_ADDITIONAL_ORIGINS`.
 
 ## Open items before submitting
 
