@@ -26,7 +26,8 @@ export default function OpengraphImage() {
           fontFamily: 'sans-serif',
         }}
       >
-        {/* Brand mark + wordmark */}
+        {/* Brand mark + wordmark. The mark is the same geometry as ConductorLogo, inlined because
+            satori renders raw SVG but cannot pull in a React component's Tailwind classes. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '28px' }}>
           <div
             style={{
@@ -38,11 +39,20 @@ export default function OpengraphImage() {
               borderRadius: '24px',
               backgroundColor: 'rgba(255,255,255,0.14)',
               border: '2px solid rgba(255,255,255,0.35)',
-              fontSize: '60px',
-              fontWeight: 800,
             }}
           >
-            C
+            <svg
+              width="60"
+              height="60"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+            >
+              <path d="M18.70 6.77 A8.5 8.5 0 1 0 18.70 17.23" />
+              <circle cx="18.70" cy="17.23" r="2.5" fill="#ffffff" stroke="none" />
+            </svg>
           </div>
           <div style={{ fontSize: '84px', fontWeight: 800, letterSpacing: '-0.02em' }}>
             Conductor

@@ -11,6 +11,7 @@ import {
   Users,
   Workflow,
 } from 'lucide-react'
+import { ConductorMarkBoxed } from '@/components/brand/ConductorLogo'
 import {
   GithubGlyph,
   LICENSE_NAME,
@@ -95,13 +96,13 @@ export default function LandingPage() {
     <SiteShell>
       {/* Hero */}
       <section className="border-b border-border">
-        <div className="mx-auto max-w-6xl px-5 py-20 text-center">
-          <h1 className="text-[15px] font-semibold uppercase tracking-[0.18em] text-primary">
-            Conductor
-          </h1>
-          <p className="mx-auto mt-5 max-w-3xl text-[40px] font-semibold leading-[1.1] tracking-[-0.02em] text-foreground sm:text-[52px]">
+        <div className="mx-auto flex max-w-6xl flex-col items-center px-5 py-20 text-center">
+          {/* The name itself sits in the header lockup and the footer, so the hero leads with the
+              mark and gives the h1 to the headline. */}
+          <ConductorMarkBoxed className="h-14 w-14" />
+          <h1 className="mx-auto mt-7 max-w-3xl text-[40px] font-semibold leading-[1.1] tracking-[-0.02em] text-foreground sm:text-[52px]">
             A coordination platform for teams that work with AI agents
-          </p>
+          </h1>
           <p className="mx-auto mt-6 max-w-2xl text-[15px] leading-[1.7] text-foreground-muted">
             Your agents write the specs, the code, the campaigns and the social posts. Your team
             reviews them and decides what ships. Conductor publishes what was approved to the

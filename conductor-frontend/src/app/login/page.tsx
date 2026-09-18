@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { AuthCard, GoogleSignInButton } from '@/components/auth/AuthCard'
 import { useAuth } from '@/contexts/AuthContext'
 import { REPO_URL } from '@/components/site/SiteChrome'
+import { ConductorLogo } from '@/components/brand/ConductorLogo'
 
 function resolveNext(next: string | null): string {
   return next && next.startsWith('/') ? next : '/app/projects'
@@ -19,7 +20,10 @@ function resolveNext(next: string | null): string {
 function Header() {
   return (
     <>
-      <h1 className="mb-2 text-2xl font-bold text-foreground text-center">Conductor</h1>
+      <h1 className="mb-2 flex justify-center">
+        <ConductorLogo size="lg" />
+        <span className="sr-only">Conductor</span>
+      </h1>
       <p className="mb-8 text-sm text-muted-foreground text-center">
         Agents draft the work. Your team approves it.
       </p>

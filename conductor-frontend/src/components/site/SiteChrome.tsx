@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { ConductorLogo } from '@/components/brand/ConductorLogo'
 
 /**
  * Chrome for the public marketing pages (`/`, `/privacy`, `/terms`), which is what a visitor or a
@@ -48,8 +49,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-6 px-5">
-        <Link href="/" className="text-[15px] font-semibold tracking-[-0.015em] text-foreground">
-          Conductor
+        <Link href="/" aria-label="Conductor home">
+          <ConductorLogo size="md" />
         </Link>
         <nav className="hidden items-center gap-6 md:flex">
           {NAV.map((item) => (
