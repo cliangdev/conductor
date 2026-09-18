@@ -11,14 +11,20 @@ import {
   Users,
   Workflow,
 } from 'lucide-react'
-import { SiteShell } from '@/components/site/SiteChrome'
+import {
+  GithubGlyph,
+  LICENSE_NAME,
+  LICENSE_URL,
+  REPO_URL,
+  SiteShell,
+} from '@/components/site/SiteChrome'
 
 export const metadata: Metadata = {
   // The public landing page is the site root, so it keeps the bare product name rather than the
-  // layout's "%s · Conductor" template — the browser tab must read exactly "Conductor".
+  // layout's "%s · Conductor" template. The browser tab has to read exactly "Conductor".
   title: 'Conductor',
   description:
-    'Conductor is the coordination platform for agentic teams. Your AI agents draft the work, your people review and approve, and Conductor publishes to the accounts your workspace connects — then reads the results back.',
+    'Conductor is a coordination platform for teams that work with AI agents. Agents write the drafts, your people approve them, and Conductor publishes to the accounts your workspace has connected.',
   alternates: { canonical: '/' },
 }
 
@@ -26,23 +32,23 @@ export const metadata: Metadata = {
 const STEPS = [
   {
     icon: PenLine,
-    title: 'Agents draft',
-    body: 'Your agents write the work — a spec, a pull request, a campaign brief, a social post — into a Work Item in your workspace.',
+    title: 'An agent drafts',
+    body: 'One of your agents writes a spec, a pull request, a campaign brief or a social post into a Work Item in your workspace.',
   },
   {
     icon: CheckCheck,
-    title: 'People review',
-    body: 'Your team reads the draft, comments line by line, and approves or requests changes. Nothing ships without a human approval.',
+    title: 'Your team reviews',
+    body: 'Someone reads the draft, comments on it line by line, then approves it or asks for changes. Nothing ships until a person approves it.',
   },
   {
     icon: Send,
     title: 'Conductor publishes',
-    body: 'On approval, Conductor delivers the work to the destinations your workspace chose — a repository, a channel, or a social account you connected.',
+    body: 'Once the draft is approved, Conductor sends it where your workspace told it to go: a repository, a chat channel, or a social account you connected.',
   },
   {
     icon: BarChart3,
-    title: 'Everyone learns',
-    body: 'Conductor reads back how the published work performed and turns it into a weekly report your agents use to write the next draft.',
+    title: 'Everyone sees how it did',
+    body: 'Conductor checks how the published work performed and writes up a weekly summary. Your agents read that summary before they draft again.',
   },
 ]
 
@@ -61,18 +67,18 @@ const PLATFORM_GROUPS = [
 const PILLARS = [
   {
     icon: Users,
-    title: 'Work Items & Reviews',
-    body: 'Every deliverable is a reviewable document with reviewers, verdicts, and threaded comments — the audit trail of who approved what.',
+    title: 'Work Items and Reviews',
+    body: 'Every deliverable is a document someone can review, with named reviewers, verdicts and threaded comments. You can always tell who approved what.',
   },
   {
     icon: Workflow,
     title: 'Workflows',
-    body: 'Define each team’s lifecycle as a statechart and automate the mechanical parts with YAML triggers on a schedule, a webhook, or an event.',
+    body: 'Describe each team’s lifecycle as a statechart, then automate the mechanical parts with YAML triggers that fire on a schedule, a webhook or an event.',
   },
   {
     icon: ShieldCheck,
     title: 'Your keys, your accounts',
-    body: 'Bring your own model providers and connect your own platform accounts. Conductor holds encrypted tokens scoped to your workspace, and you can disconnect any account at any time.',
+    body: 'Bring your own model provider keys and connect your own platform accounts. Conductor stores the tokens encrypted and scoped to your workspace, and you can disconnect any account whenever you want.',
   },
 ]
 
@@ -94,12 +100,12 @@ export default function LandingPage() {
             Conductor
           </h1>
           <p className="mx-auto mt-5 max-w-3xl text-[40px] font-semibold leading-[1.1] tracking-[-0.02em] text-foreground sm:text-[52px]">
-            The coordination platform for agentic teams
+            A coordination platform for teams that work with AI agents
           </p>
           <p className="mx-auto mt-6 max-w-2xl text-[15px] leading-[1.7] text-foreground-muted">
-            AI agents do the work — specs, code, campaigns, social posts. Your people review,
-            approve, and steer. Conductor publishes the approved result to the accounts your
-            workspace connects, then reads the results back so the next draft is better.
+            Your agents write the specs, the code, the campaigns and the social posts. Your team
+            reviews them and decides what ships. Conductor publishes what was approved to the
+            accounts your workspace has connected, then reports back on how it did.
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Link
@@ -119,6 +125,15 @@ export default function LandingPage() {
           <p className="mt-4 text-[13px] text-foreground-subtle">
             Free to start. Sign in with Google and your workspace is created for you.
           </p>
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-5 inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-1.5 text-[13px] text-foreground-muted transition-colors hover:bg-surface-3 hover:text-foreground"
+          >
+            <GithubGlyph className="h-3.5 w-3.5" />
+            Read the source on GitHub
+          </a>
         </div>
       </section>
 
@@ -127,7 +142,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-5 py-16">
           <SectionLabel>How it works</SectionLabel>
           <h2 className="mt-3 max-w-2xl text-[28px] font-semibold tracking-[-0.015em] text-foreground">
-            Draft, review, publish, learn
+            Draft, review, publish, then check the results
           </h2>
           <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
             {STEPS.map((step, i) => (
@@ -155,8 +170,8 @@ export default function LandingPage() {
           </h2>
           <p className="mt-4 max-w-2xl text-[14px] leading-[1.7] text-foreground-muted">
             Conductor never posts anywhere on its own. Each workspace connects its own accounts
-            through the platform’s official OAuth screen, chooses which destinations a Post may go
-            to, and can revoke a connection at any time from Settings → Integrations.
+            through the platform’s own sign-in screen, picks which of them a Post is allowed to
+            reach, and can revoke any connection from Settings, under Integrations.
           </p>
 
           <div className="mt-10 grid gap-5 md:grid-cols-2">
@@ -180,42 +195,43 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Insights — the read-back loop */}
+      {/* Insights, the read-back loop */}
       <section id="insights" className="scroll-mt-14 border-b border-border bg-surface">
         <div className="mx-auto max-w-6xl px-5 py-16">
           <div className="grid gap-10 lg:grid-cols-2 lg:items-start">
             <div>
               <SectionLabel>Insights</SectionLabel>
               <h2 className="mt-3 text-[28px] font-semibold tracking-[-0.015em] text-foreground">
-                Know what’s working — on your own posts
+                See what is working on your own posts
               </h2>
               <p className="mt-4 text-[14px] leading-[1.7] text-foreground-muted">
-                Publishing is only half the loop. After a Post goes live, Conductor periodically
-                reads the public performance counters of{' '}
+                After a Post goes live, Conductor reads its public performance counters on a
+                schedule. It reads them{' '}
                 <strong className="text-foreground">
-                  the posts it published on your behalf — and only those
+                  only for the posts it published for you
                 </strong>
-                , snapshots them against your workspace’s own record, and answers the question your
-                team actually asks: what should we make more of?
+                , records each reading against your workspace’s own copy of the Post, and works out
+                which of your content did best.
               </p>
               <ul className="mt-6 space-y-3 text-[14px] leading-[1.6] text-foreground-muted">
                 <li className="flex gap-3">
                   <CheckCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  Engagement rate broken down by platform, post format, hour, and weekday.
+                  Engagement rate by platform, post format, hour of day and weekday.
                 </li>
                 <li className="flex gap-3">
                   <CheckCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  Your best and worst performing destinations, and what moved since the last window.
+                  Your best and worst performing destinations, and what changed since the previous
+                  period.
                 </li>
                 <li className="flex gap-3">
                   <CheckCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  A weekly written report filed into your workspace’s Knowledge Center, which your
-                  agents read before drafting the next Post.
+                  A weekly write-up filed in your workspace’s Knowledge Center, for your agents to
+                  read before they draft the next Post.
                 </li>
                 <li className="flex gap-3">
                   <CheckCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  Visible only to members of your workspace. Conductor does not publish, embed, or
-                  redistribute your posts or their numbers anywhere else.
+                  All of it visible only to people in your workspace. Conductor does not publish,
+                  embed or pass on your posts or their numbers anywhere else.
                 </li>
               </ul>
             </div>
@@ -225,10 +241,10 @@ export default function LandingPage() {
               <dl className="mt-4 divide-y divide-border">
                 {[
                   ['Scope', 'Only the videos and posts Conductor itself published for your workspace'],
-                  ['Counters', 'Public view, like, comment, and share counts'],
-                  ['Cadence', 'A bounded, budget-capped read on a schedule you can pause'],
-                  ['Audience', 'Your workspace members, inside Conductor'],
-                  ['Retention', 'Snapshots are deleted when you delete the Post or disconnect the account'],
+                  ['Counters', 'Public view, like, comment and share counts'],
+                  ['Cadence', 'A capped number of reads, on a schedule you can pause'],
+                  ['Audience', 'People in your workspace, inside Conductor'],
+                  ['Retention', 'Readings are deleted when you delete the Post or disconnect the account'],
                 ].map(([term, detail]) => (
                   <div key={term} className="flex flex-col gap-1 py-3 sm:flex-row sm:gap-4">
                     <dt className="w-32 shrink-0 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-foreground-subtle">
@@ -248,7 +264,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-5 py-16">
           <SectionLabel>The platform</SectionLabel>
           <h2 className="mt-3 max-w-2xl text-[28px] font-semibold tracking-[-0.015em] text-foreground">
-            Built for teams that let agents do the work
+            Built for teams that hand real work to agents
           </h2>
           <div className="mt-10 grid gap-5 md:grid-cols-3">
             {PILLARS.map((pillar) => (
@@ -262,16 +278,56 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Source */}
+      <section id="source" className="scroll-mt-14 border-b border-border bg-surface">
+        <div className="mx-auto max-w-6xl px-5 py-16">
+          <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+            <div>
+              <SectionLabel>Source</SectionLabel>
+              <h2 className="mt-3 text-[28px] font-semibold tracking-[-0.015em] text-foreground">
+                Built in the open
+              </h2>
+              <p className="mt-4 max-w-2xl text-[14px] leading-[1.7] text-foreground-muted">
+                Conductor&rsquo;s source is public. You can read exactly how a Post gets approved,
+                what each integration asks permission for, and what happens to your data, instead of
+                taking our word for it. Issues and pull requests are welcome.
+              </p>
+              <p className="mt-3 max-w-2xl text-[13px] leading-[1.6] text-foreground-subtle">
+                Licensed under{' '}
+                <a
+                  href={LICENSE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary transition-colors hover:text-primary-hover"
+                >
+                  {LICENSE_NAME}
+                </a>
+                : free for personal, research, educational and other non-commercial use. Commercial
+                use needs a separate licence.
+              </p>
+            </div>
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-border-strong bg-surface px-5 py-2.5 text-[14px] font-medium text-foreground transition-colors hover:bg-surface-3 lg:justify-self-end"
+            >
+              <GithubGlyph className="h-4 w-4" />
+              cliangdev/conductor
+            </a>
+          </div>
+        </div>
+      </section>
+
       {/* Sign-up CTA */}
-      <section className="bg-surface">
+      <section>
         <div className="mx-auto max-w-6xl px-5 py-20 text-center">
           <h2 className="text-[28px] font-semibold tracking-[-0.015em] text-foreground">
             Start a workspace
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-[14px] leading-[1.7] text-foreground-muted">
-            Conductor is open to any team — brands, agencies, and product teams. Sign in with a
-            Google account to create your workspace, invite your teammates, and connect your
-            accounts.
+            Conductor is open to any team: brands, agencies, product teams. Sign in with a Google
+            account to create your workspace, invite your teammates and connect your accounts.
           </p>
           <Link
             href="/login"

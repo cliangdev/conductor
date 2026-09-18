@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 
 // Route segment config — this image is static and identical for every link.
-export const alt = 'Conductor — Team PRD collaboration platform'
+export const alt = 'Conductor: a coordination platform for teams that work with AI agents'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -59,7 +59,7 @@ export default function OpengraphImage() {
             color: 'rgba(255,255,255,0.92)',
           }}
         >
-          Team PRD collaboration platform
+          A coordination platform for teams that work with AI agents
         </div>
 
         <div
@@ -69,7 +69,7 @@ export default function OpengraphImage() {
             color: 'rgba(255,255,255,0.7)',
           }}
         >
-          Review, approve, and ship product requirements together.
+          Agents draft the work. Your team approves it. Conductor ships it.
         </div>
       </div>
     ),

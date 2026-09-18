@@ -2,6 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AuthCard, GoogleSignInButton } from '@/components/auth/AuthCard'
 import { useAuth } from '@/contexts/AuthContext'
+import { REPO_URL } from '@/components/site/SiteChrome'
 
 function resolveNext(next: string | null): string {
   return next && next.startsWith('/') ? next : '/app/projects'
@@ -18,8 +20,36 @@ function Header() {
   return (
     <>
       <h1 className="mb-2 text-2xl font-bold text-foreground text-center">Conductor</h1>
-      <p className="mb-8 text-sm text-muted-foreground text-center">Agentic software development</p>
+      <p className="mb-8 text-sm text-muted-foreground text-center">
+        Agents draft the work. Your team approves it.
+      </p>
     </>
+  )
+}
+
+/** Links out of the sign-in card. Someone who lands here first needs a way to the public pages,
+ * and a platform app reviewer looks for the policy links from wherever they happen to be. */
+function LoginFooter() {
+  return (
+    <nav className="flex items-center gap-4 text-[13px] text-muted-foreground">
+      <Link href="/" className="transition-colors hover:text-foreground">
+        Back to home
+      </Link>
+      <Link href="/privacy" className="transition-colors hover:text-foreground">
+        Privacy
+      </Link>
+      <Link href="/terms" className="transition-colors hover:text-foreground">
+        Terms
+      </Link>
+      <a
+        href={REPO_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="transition-colors hover:text-foreground"
+      >
+        GitHub
+      </a>
+    </nav>
   )
 }
 
@@ -47,7 +77,7 @@ function LocalLoginForm() {
   }
 
   return (
-    <AuthCard>
+    <AuthCard footer={<LoginFooter />}>
       <Header />
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
@@ -94,7 +124,7 @@ function GoogleLoginForm() {
   }
 
   return (
-    <AuthCard>
+    <AuthCard footer={<LoginFooter />}>
       <Header />
       <GoogleSignInButton onClick={handleSignIn} loading={loading} />
       {signInError && <p className="mt-3 text-sm text-destructive text-center">{signInError}</p>}

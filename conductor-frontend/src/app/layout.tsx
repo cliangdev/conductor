@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
 const description =
-  'Team PRD collaboration platform — review, approve, and ship product requirements together.'
+  'A coordination platform for teams that work with AI agents. Agents draft the work. Your team approves it. Conductor ships it.'
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

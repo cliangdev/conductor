@@ -4,7 +4,7 @@ import { CONTACT_EMAIL, LegalPage } from '@/components/site/SiteChrome'
 export const metadata: Metadata = {
   title: 'Terms of Service',
   description:
-    'The terms that govern your use of Conductor — accounts, acceptable use, your content, connected accounts, and the limits of our liability.',
+    'The terms that govern your use of Conductor: accounts, acceptable use, your content, connected accounts, and the limits of our liability.',
   alternates: { canonical: '/terms' },
 }
 
@@ -15,65 +15,68 @@ export default function TermsPage() {
     <LegalPage title="Terms of Service" updated={UPDATED}>
       <p>
         These terms govern your use of Conductor (&ldquo;Conductor&rdquo;, &ldquo;we&rdquo;,
-        &ldquo;us&rdquo;) — the web application, the API, the command-line tools, and the
+        &ldquo;us&rdquo;): the web application, the API, the command-line tools and the
         integrations. By creating an account or using the service you agree to them. If you are
         agreeing on behalf of a company, you confirm you have the authority to bind it.
       </p>
 
       <h2>1. The service</h2>
       <p>
-        Conductor is a coordination platform for teams that work with AI agents. Agents draft work —
-        specifications, code, campaigns, social posts — into reviewable Work Items; your people
-        review and approve; and Conductor delivers approved work to the destinations your workspace
-        has connected. We add, change, and remove features over time.
+        Conductor is a coordination platform for teams that work with AI agents. Agents draft
+        work, such as specifications, code, campaigns and social posts, into Work Items that
+        someone can review. Your people review and approve them, and Conductor delivers the
+        approved work to the destinations your workspace has connected. We add, change and remove
+        features over time.
       </p>
 
       <h2>2. Eligibility and accounts</h2>
       <p>
         You must be at least 16 years old and legally able to enter a contract. You are responsible
         for the accuracy of your account information, for the security of your credentials and API
-        keys, and for all activity under your account. Tell us promptly at{' '}
-        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> if you suspect unauthorised access.
+        keys, and for all activity under your account. If you suspect someone has gained access
+        they should not have, tell us promptly at{' '}
+        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
       </p>
 
       <h2>3. Workspaces and roles</h2>
       <p>
-        Work happens inside a workspace. A workspace administrator controls membership, roles, and
+        Work happens inside a workspace. A workspace administrator controls membership, roles and
         connected accounts, and can see and remove any content in that workspace. If you join a
-        workspace created by someone else, that organisation — not Conductor — decides what you may
-        do in it.
+        workspace someone else created, that organisation decides what you may do in it, not
+        Conductor.
       </p>
 
       <h2>4. Your content</h2>
       <p>
-        You keep all rights in the content you and your agents put into Conductor. You grant us only
-        the licence we need to run the service: to store, process, transmit, and display that
+        You keep all rights in the content you and your agents put into Conductor. You grant us
+        only the licence we need to run the service: to store, process, transmit and display that
         content to your workspace, to send it to the AI providers you configure, and to publish it
         to the destinations you approve. We claim no ownership, and we do not use your content to
         train models.
       </p>
       <p>
-        You are responsible for your content — that you have the rights to it, and that publishing
+        You are responsible for your content. That means you have the rights to it, and publishing
         it is lawful and does not infringe anyone else&rsquo;s rights.
       </p>
 
       <h2>5. Connected accounts and platform rules</h2>
       <p>
-        When you connect a third-party account (for example TikTok, Instagram, a Facebook Page,
-        YouTube, Discord, GitHub, or Google Drive), you authorise Conductor to act on that account
-        within the scopes you grant, for the features you enable. You remain bound by that
+        When you connect a third-party account, say TikTok, Instagram, a Facebook Page, YouTube,
+        Discord, GitHub or Google Drive, you authorise Conductor to act on that account within the
+        permissions you grant, for the features you turn on. You stay bound by that
         platform&rsquo;s own terms and content policies, and you are responsible for anything
-        Conductor publishes at your direction. A platform may rate-limit, suspend, or revoke access
-        at any time; where that happens, the affected feature stops working until you reconnect.
-        You may disconnect any account at any time from Settings → Integrations.
+        Conductor publishes at your direction. A platform may rate-limit, suspend or revoke access
+        at any time, and when that happens the affected feature stops working until you reconnect.
+        You can disconnect any account whenever you want, from Settings, under Integrations.
       </p>
 
       <h2>6. AI output</h2>
       <p>
-        Agent output is generated by machine-learning models and can be wrong, incomplete, or
-        unsuitable. Conductor is built so a human reviews and approves before anything is published
-        — do not disable that judgement. You are responsible for reviewing output before you act on
-        it or publish it. We make no warranty about the accuracy of agent output.
+        Agent output is generated by machine-learning models and can be wrong, incomplete or
+        unsuitable. Conductor is built so that a person reviews and approves before anything is
+        published, and you should not work around that. You are responsible for reviewing output
+        before you act on it or publish it. We make no warranty about the accuracy of agent
+        output.
       </p>
 
       <h2>7. Acceptable use</h2>
@@ -82,35 +85,35 @@ export default function TermsPage() {
         <li>break the law, or infringe intellectual property, privacy, or publicity rights;</li>
         <li>publish spam, deceptive content, malware, or content that a destination platform prohibits;</li>
         <li>impersonate anyone, or misrepresent who created or approved content;</li>
-        <li>generate coordinated inauthentic activity, engagement farming, or automated posting designed to evade a platform&rsquo;s limits;</li>
+        <li>generate coordinated inauthentic activity, engagement farming, or automated posting meant to get around a platform&rsquo;s limits;</li>
         <li>probe, scrape, overload, or circumvent the security or rate limits of the service or any connected platform;</li>
-        <li>resell or provide the service to a third party except as part of your own product or client work, where you remain responsible for their use.</li>
+        <li>resell or provide the service to a third party, except as part of your own product or client work, where you stay responsible for how they use it.</li>
       </ul>
       <p>
-        We may suspend or terminate access that violates this section, and may remove content that
-        does.
+        We may suspend or end access that breaks this section, and we may remove content that
+        breaks it.
       </p>
 
       <h2>8. Fees</h2>
       <p>
-        Where the service is offered free of charge, it is provided as-is and we may introduce or
-        change fees with notice. Model usage is billed by the AI provider whose key you supply, not
-        by us; you are responsible for those costs.
+        Where the service is free, it is provided as-is, and we may introduce or change fees with
+        notice. Model usage is billed by the AI provider whose key you supply, not by us, so those
+        costs are yours.
       </p>
 
       <h2>9. Availability and changes</h2>
       <p>
-        We aim to keep Conductor available but make no uptime commitment unless we have agreed one
-        in writing. We may modify, suspend, or discontinue features, and will give reasonable notice
-        of material changes that reduce functionality you rely on.
+        We aim to keep Conductor available, but we make no uptime commitment unless we have agreed
+        one in writing. We may change, suspend or discontinue features, and we will give reasonable
+        notice of material changes that take away functionality you rely on.
       </p>
 
       <h2>10. Termination</h2>
       <p>
         You may stop using Conductor and delete your account at any time by writing to{' '}
-        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>. We may suspend or terminate an
-        account for a material breach of these terms, for a legal requirement, or if continuing
-        would create risk for us or our users. On termination we delete your data as described in
+        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>. We may suspend or close an account
+        for a material breach of these terms, because the law requires it, or if carrying on would
+        create risk for us or our users. When an account closes we delete your data as described in
         the <a href="/privacy">Privacy Policy</a>.
       </p>
 
@@ -118,38 +121,37 @@ export default function TermsPage() {
       <p>
         The service is provided &ldquo;as is&rdquo; and &ldquo;as available&rdquo;, without
         warranties of any kind, express or implied, including merchantability, fitness for a
-        particular purpose, and non-infringement, to the fullest extent the law allows.
+        particular purpose and non-infringement, to the fullest extent the law allows.
       </p>
 
       <h2>12. Limitation of liability</h2>
       <p>
         To the fullest extent the law allows, Conductor is not liable for indirect, incidental,
-        special, consequential, or punitive damages, or for lost profits, revenue, data, or
-        goodwill. Our total liability for any claim relating to the service is limited to the
-        greater of the amounts you paid us in the twelve months before the claim, or one hundred US
+        special, consequential or punitive damages, or for lost profits, revenue, data or goodwill.
+        Our total liability for any claim relating to the service is limited to whichever is
+        greater: the amounts you paid us in the twelve months before the claim, or one hundred US
         dollars.
       </p>
 
       <h2>13. Indemnity</h2>
       <p>
-        You will indemnify and hold Conductor harmless from claims arising out of your content, your
-        use of the service, or your breach of these terms — including claims brought by a platform
-        whose account you connected.
+        You will indemnify and hold Conductor harmless from claims arising out of your content,
+        your use of the service, or your breach of these terms. That includes claims brought by a
+        platform whose account you connected.
       </p>
 
       <h2>14. Governing law and disputes</h2>
       <p>
-        These terms are governed by the laws of the jurisdiction in which Conductor&rsquo;s operator
-        has its principal place of business, without regard to conflict-of-law rules. The courts of
-        that jurisdiction have exclusive jurisdiction over any dispute, and you and we each consent
-        to venue there.
+        These terms are governed by the laws of the place where Conductor&rsquo;s operator has its
+        principal place of business, without regard to conflict-of-law rules. The courts there have
+        exclusive jurisdiction over any dispute, and you and we each consent to venue there.
       </p>
 
       <h2>15. Changes to these terms</h2>
       <p>
-        We will post updates here and revise the &ldquo;last updated&rdquo; date. Material changes
-        will be announced in the application or by email. Continuing to use Conductor after a change
-        takes effect means you accept it.
+        We will post updates here and revise the &ldquo;last updated&rdquo; date. We will announce
+        material changes in the application or by email. If you keep using Conductor after a change
+        takes effect, you accept it.
       </p>
 
       <h2>16. Contact</h2>
