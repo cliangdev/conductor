@@ -148,5 +148,6 @@ Run in this order; steps 1–3 are safe before any traffic moves.
 
 - Confirm the operating legal entity's name and the governing-law jurisdiction in `/terms`
   (§14 is written jurisdiction-neutral as a placeholder).
-- Confirm `CONTACT_EMAIL` in `conductor-frontend/src/components/site/SiteChrome.tsx` is a mailbox
-  someone reads — the reviewer may write to it.
+- ~~Confirm the contact mailbox.~~ Confirmed 2026-09-18: `support@rexipe.io`, already set as
+  `CONTACT_EMAIL` in `conductor-frontend/src/components/site/SiteChrome.tsx`. Keep it monitored
+  through review — the reviewer may write to it.
