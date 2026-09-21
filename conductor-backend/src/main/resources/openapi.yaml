@@ -4087,7 +4087,8 @@ paths:
       description: >-
         ADMIN only — these credentials decide which platform application every member's consent flow
         runs as. Idempotent: replaces any existing row. The response is the masked status, never the
-        secret that was just written.
+        secret that was just written. Refused for a DEPLOYMENT_ONLY connector (Meta, TikTok):
+        Conductor's own reviewed app is the only app, so there is nothing for a project to set.
       operationId: setConnectorAppCredential
       parameters:
         - name: projectId
@@ -4126,7 +4127,10 @@ paths:
       summary: Clear this project's own OAuth app credentials for a connector
       description: >-
         ADMIN only. Idempotent — a no-op when the project never had a row. Returns the status that
-        is now effective, which falls back to the deployment environment variables.
+        is now effective: for a WORKSPACE_OR_DEPLOYMENT connector that falls back to the deployment
+        environment variables; for a WORKSPACE_ONLY connector that becomes unconfigured until an
+        admin enters another app; refused outright for a DEPLOYMENT_ONLY connector, which has no
+        project-owned app to clear.
       operationId: clearConnectorAppCredential
       parameters:
         - name: projectId
@@ -6380,7 +6384,7 @@ components:
         - credentialSource
         - configured
         - missingProperties
-        - allowsDeploymentCredentials
+        - appOwnership
       properties:
         connectorId:
           type: string
@@ -6391,14 +6395,19 @@ components:
             PROJECT — the workspace brought its own platform app; DEPLOYMENT — no project row, the
             operator's environment variables supplied them; NONE — neither, so no consent flow can
             start.
-        allowsDeploymentCredentials:
-          type: boolean
+        appOwnership:
+          type: string
+          enum: [DEPLOYMENT_ONLY, WORKSPACE_ONLY, WORKSPACE_OR_DEPLOYMENT]
           description: >-
-            Whether this connector can fall back to the deployment's app when the workspace has stored
-            none. False for the publishing platforms (Meta, TikTok, YouTube), whose apps carry their own
-            platform review and so belong to the workspace — for those, NONE means an admin must enter
-            a client id and secret here, and `missingProperties` is empty because no environment
-            variable would resolve it.
+            Who is allowed to own this connector's OAuth app. DEPLOYMENT_ONLY: Conductor's own
+            reviewed app is the only app (Meta, TikTok): `clientId`/`clientSecretLast4` are always
+            null here, since this endpoint is member-level and must never expose Conductor's own app
+            id or secret fragment, and there is nothing for a project to set or clear.
+            WORKSPACE_ONLY: the workspace must bring its own app, with no deployment fallback
+            (YouTube, whose OAuth verification and upload quota are both tied to one client);
+            `missingProperties` is empty when unconfigured, because no environment variable would
+            resolve it. WORKSPACE_OR_DEPLOYMENT: the project's own row wins if present, otherwise the
+            deployment's environment variables are a valid fallback (the Google family).
         configured:
           type: boolean
           description: True unless credentialSource is NONE.
@@ -6414,8 +6423,9 @@ components:
           type: array
           description: >-
             Environment variable names that would have to be set for the deployment fallback to
-            resolve. Non-empty only when credentialSource is NONE and allowsDeploymentCredentials is
-            true; empty otherwise, including for a workspace-only connector that has nothing stored.
+            resolve. Non-empty only when credentialSource is NONE and appOwnership is DEPLOYMENT_ONLY
+            or WORKSPACE_OR_DEPLOYMENT; empty otherwise, including for a WORKSPACE_ONLY connector that
+            has nothing stored, since no environment variable would resolve it there.
           items:
             type: string
         updatedBy:

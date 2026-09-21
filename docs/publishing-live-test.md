@@ -65,10 +65,14 @@ Keep the workspace to the people doing the test. Every automated destination pub
 
 ## Connect the accounts in Conductor
 
-Only a workspace **ADMIN** can do the first two steps.
+Only a workspace **ADMIN** can authorize a connection.
 
-1. Integrations → *Meta* → **Platform app credentials** → enter the app id and secret → **Verify**.
-   The card should say the pair is valid. Repeat for *TikTok* with its client key and secret.
+1. Nothing to configure for Meta or TikTok. Both publish through Conductor's own reviewed app, whose
+   credentials come from the deployment environment, so the connector page shows a read-only note
+   rather than a credential form. If it instead says the deployment has not configured the platform
+   app, the `TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET` or `META_APP_ID`/`META_APP_SECRET` secrets are
+   missing from the backend service. (YouTube is the exception and still needs the workspace's own
+   client id and secret under **Platform app credentials**.)
 2. **Authorize** → consent as the account that holds the app role → pick the Page. The connection
    card should show the Page and, if linked, the Instagram username. For TikTok the card shows the
    creator's nickname and caches the privacy levels the account may use.

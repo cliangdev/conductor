@@ -236,7 +236,7 @@ public class IntegrationController implements IntegrationsApi {
             String projectId, String connectorId, SetConnectorAppCredentialRequest request) {
         requireMember(projectId);
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
-        appCredentialService.put(projectId, connectorId, request.getClientId(), request.getClientSecret(),
+        appCredentialService.put(projectId, connector, request.getClientId(), request.getClientSecret(),
                 requireUserPrincipal());
         return ResponseEntity.ok(toAppCredentialDto(appCredentialService.status(projectId, connector)));
     }
@@ -246,7 +246,7 @@ public class IntegrationController implements IntegrationsApi {
             String projectId, String connectorId) {
         requireMember(projectId);
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
-        appCredentialService.clear(projectId, connectorId, requireUserPrincipal());
+        appCredentialService.clear(projectId, connector, requireUserPrincipal());
         return ResponseEntity.ok(toAppCredentialDto(appCredentialService.status(projectId, connector)));
     }
 
@@ -709,7 +709,8 @@ public class IntegrationController implements IntegrationsApi {
                 .clientId(status.clientId())
                 .clientSecretLast4(status.clientSecretLast4())
                 .missingProperties(status.missingProperties())
-                .allowsDeploymentCredentials(status.allowsDeploymentCredentials())
+                .appOwnership(ConnectorAppCredentialStatusDto.AppOwnershipEnum
+                        .fromValue(status.appOwnership().name()))
                 .updatedBy(status.updatedBy())
                 .updatedAt(status.updatedAt());
     }

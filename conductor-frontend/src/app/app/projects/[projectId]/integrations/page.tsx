@@ -285,9 +285,11 @@ export default function IntegrationsPage() {
                       href={detailHref(item)}
                       unavailableReason={
                         blockedOnAppCredential(item)
-                          ? item.appCredential?.allowsDeploymentCredentials
-                            ? 'No platform app is configured, so nobody can connect this yet.'
-                            : "Enter this workspace's app credentials to let members connect."
+                          ? item.appCredential?.appOwnership === 'DEPLOYMENT_ONLY'
+                            ? "This deployment hasn't configured its platform app yet, so nobody can connect this."
+                            : item.appCredential?.appOwnership === 'WORKSPACE_OR_DEPLOYMENT'
+                              ? 'No platform app is configured, so nobody can connect this yet.'
+                              : "Enter this workspace's app credentials to let members connect."
                           : undefined
                       }
                       trailing={

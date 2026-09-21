@@ -134,8 +134,8 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
 
     /** Mirrors the real connector: this platform's app belongs to the workspace, not the deployment. */
     @Override
-    public boolean allowsDeploymentCredentials() {
-        return false;
+    public AppOwnership appOwnership() {
+        return AppOwnership.WORKSPACE_ONLY;
     }
 
     /**

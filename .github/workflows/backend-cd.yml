@@ -58,6 +58,15 @@ jobs:
         WORKFLOW_SECRETS_KEY=WORKFLOW_SECRETS_KEY:latest
         GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest
         GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest
+        # Conductor's own TikTok and Meta apps. These platforms review an app once and then every
+        # workspace authorizes its own account through it, so the app belongs to the deployment
+        # rather than to a workspace. The env var names are what the connectors already return from
+        # clientIdProperty()/clientSecretProperty(), and ConnectorAppCredentialService reads them
+        # straight off the environment, so there is nothing to declare in application.properties.
+        TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest
+        TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest
+        META_APP_ID=META_APP_ID:latest
+        META_APP_SECRET=META_APP_SECRET:latest
         GITHUB_APP_PRIVATE_KEY=GITHUB_APP_PRIVATE_KEY:latest
         GITHUB_APP_WEBHOOK_SECRET=GITHUB_APP_WEBHOOK_SECRET:latest
     secrets: inherit

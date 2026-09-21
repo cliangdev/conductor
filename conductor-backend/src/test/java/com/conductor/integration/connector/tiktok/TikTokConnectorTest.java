@@ -51,6 +51,11 @@ class TikTokConnectorTest {
     }
 
     @Test
+    void appOwnership_isDeploymentOnly_soConductorsOwnAppIsTheOnlyApp() {
+        assertThat(connector.appOwnership()).isEqualTo(OAuth2Connector.AppOwnership.DEPLOYMENT_ONLY);
+    }
+
+    @Test
     void consentUrl_usesTikTokHostAndDeclaredScopes_withoutGoogleParams() {
         // Mirrors how OAuthFlowService assembles the consent URL from the connector's declarations.
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(connector.authorizationUrl())

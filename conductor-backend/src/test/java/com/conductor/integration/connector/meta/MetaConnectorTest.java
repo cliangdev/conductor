@@ -197,8 +197,8 @@ class MetaConnectorTest {
     }
 
     @Test
-    void allowsDeploymentCredentials_isFalse_soAWorkspaceMustBringItsOwnApp() {
-        assertThat(connector.allowsDeploymentCredentials()).isFalse();
+    void appOwnership_isDeploymentOnly_soConductorsOwnAppIsTheOnlyApp() {
+        assertThat(connector.appOwnership()).isEqualTo(OAuth2Connector.AppOwnership.DEPLOYMENT_ONLY);
     }
 
     @Test
