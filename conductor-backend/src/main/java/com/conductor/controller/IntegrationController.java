@@ -458,7 +458,7 @@ public class IntegrationController implements IntegrationsApi {
         requireAdminOrCreator(projectId);
         requireConnector(connectorId);
         String authUrl = oAuthFlowService.buildAuthorizationUrl(
-                projectId, connectorId, oAuthFlowService.oauthCallbackUri());
+                projectId, connectorId, oAuthFlowService.oauthCallbackUri(connectorId));
         return ResponseEntity.ok(new OAuthAuthorizeResponse().authorizationUrl(authUrl));
     }
 

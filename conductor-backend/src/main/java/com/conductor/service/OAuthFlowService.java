@@ -65,6 +65,18 @@ public class OAuthFlowService {
     @Value("${BACKEND_URL:}")
     private String backendUrl;
 
+    /**
+     * Optional branded origin for the OAuth callback, e.g. {@code https://conductor.rexipe.io}, whose
+     * frontend proxies {@code /api/v1/oauth/callback} to this backend. Used only for connectors whose
+     * app Conductor itself registers ({@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY}): we control
+     * those apps' allowed redirect URIs, and platform review expects the redirect on the product's own
+     * domain. Every other connector keeps the backend's own callback, because its app is registered
+     * against that URL, and for a workspace-owned app by the customer rather than by us. Blank means no
+     * branded callback at all.
+     */
+    @Value("${OAUTH_CALLBACK_BASE_URL:}")
+    private String oauthCallbackBaseUrl;
+
     public OAuthFlowService(IntegrationOAuthStateRepository oAuthStateRepository,
                             ConnectionService connectionService,
                             ConnectorRegistry connectorRegistry,
@@ -125,8 +137,23 @@ public class OAuthFlowService {
         return new OAuthCredentials(resolved.clientId(), resolved.clientSecret());
     }
 
+    private static final String CALLBACK_PATH = "/api/v1/oauth/callback";
+
+    /** The backend's own callback URL. Every connector's app accepts this one. */
     public String oauthCallbackUri() {
-        return backendUrl + "/api/v1/oauth/callback";
+        return backendUrl + CALLBACK_PATH;
+    }
+
+    /**
+     * The callback URL a new authorization for this connector should use. Both addresses reach the
+     * same handler, and whichever is chosen here is recorded on the state row and replayed at the
+     * exchange, so the two can coexist in a platform's allowed-redirect list.
+     */
+    public String oauthCallbackUri(String connectorId) {
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        boolean branded = connector.appOwnership() == OAuth2Connector.AppOwnership.DEPLOYMENT_ONLY
+                && oauthCallbackBaseUrl != null && !oauthCallbackBaseUrl.isBlank();
+        return branded ? oauthCallbackBaseUrl + CALLBACK_PATH : oauthCallbackUri();
     }
 
     @Transactional
@@ -149,6 +176,7 @@ public class OAuthFlowService {
         oauthState.setConnectorId(connectorId);
         oauthState.setExpiresAt(OffsetDateTime.now().plusMinutes(10));
         oauthState.setConfigJson(Map.of());
+        oauthState.setRedirectUri(redirectUri);
         oAuthStateRepository.save(oauthState);
 
         if (stubAuthorization) {
@@ -173,7 +201,12 @@ public class OAuthFlowService {
     }
 
     @Transactional
-    public String handleCallback(String code, String state, String redirectUri) {
+    /**
+     * @param fallbackRedirectUri used only when the state row predates recorded redirect URIs (V138);
+     *                            otherwise the exchange replays the exact URI the consent URL was built
+     *                            with, which is what OAuth requires.
+     */
+    public String handleCallback(String code, String state, String fallbackRedirectUri) {
         IntegrationOAuthState oauthState = oAuthStateRepository.findById(state)
                 .orElseThrow(() -> new BusinessException("Invalid or expired OAuth state"));
 
@@ -193,6 +226,7 @@ public class OAuthFlowService {
                 ? null
                 : requireOAuthConfig(projectId, connector);
 
+        String redirectUri = oauthState.getRedirectUri() != null ? oauthState.getRedirectUri() : fallbackRedirectUri;
         Map<String, Object> tokenResponse = exchangeCodeForTokens(connector, creds, code, redirectUri);
 
         String accessToken = (String) tokenResponse.get("access_token");
