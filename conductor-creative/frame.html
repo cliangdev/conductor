@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Creative frame</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  /* No page chrome at all: the render job screenshots .cc-board directly, and
+     anything else on the page would only risk bleeding into the capture. */
+  html, body { margin: 0; padding: 0; background: #6E6E73; }
+  body { display: flex; align-items: flex-start; justify-content: center; }
+</style>
+</head>
+<body>
+<!--
+  Single-artboard renderer for the T3 render job (job/render.mjs). Renders
+  exactly one placement (or one sequence beat) of one creative at its TRUE
+  pixel size, fits its type, runs the in-page assertions, and reports the
+  result on window.__RENDER_RESULT / window.__ready.
+
+  Reads its spec from window.__RENDER_SPEC__, which the job sets via
+  Playwright's addInitScript() before navigation (see frame.js) — never a
+  query string or a fetch, so an arbitrarily large creative/brand payload
+  never hits a URL length limit. Always served over http (job/server.mjs),
+  never opened as file://, because `type="module"` imports are blocked there.
+-->
+<script type="module" src="frame.js"></script>
+</body>
+</html>

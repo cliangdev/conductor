@@ -18,6 +18,12 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }))
 
+const { mockCan } = vi.hoisted(() => ({ mockCan: vi.fn((_cap?: string) => true) }))
+vi.mock('@/contexts/PermissionsContext', () => ({
+  useCan: (cap: string) => mockCan(cap),
+  usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
+}))
+
 import { apiPost } from '@/lib/api'
 import { PhotoPicker } from './PhotoPicker'
 import type { CreativePhoto } from './types'
@@ -48,6 +54,7 @@ function photo(overrides: Partial<CreativePhoto> = {}): CreativePhoto {
 describe('PhotoPicker', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCan.mockReturnValue(true)
   })
 
   it('picks an existing photo from the library grid', async () => {
@@ -129,5 +136,26 @@ describe('PhotoPicker', () => {
     expect(await screen.findByText('Long edge under 2160px')).toBeInTheDocument()
 
     global.Image = originalImage
+  })
+
+  it('hides upload and check/block controls for a role without creative.manage (REVIEWER)', async () => {
+    mockCan.mockReturnValue(false)
+    render(
+      <PhotoPicker
+        projectId="proj-1"
+        token="tok"
+        open
+        onOpenChange={() => {}}
+        photos={[photo()]}
+        onSelect={vi.fn()}
+        onPhotosChanged={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /Upload a photo/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Checked' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Block' })).not.toBeInTheDocument()
+    // Selecting an existing (unblocked) photo still works — reading the library stays allowed.
+    expect(screen.getByTestId('photo-picker-grid').querySelector('button')).not.toBeDisabled()
   })
 })

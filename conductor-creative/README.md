@@ -261,29 +261,89 @@ key/folder plus a registry entry, no code change. The backend keeps a copy of
 test on that side reads these files directly to make sure the two never
 drift.
 
-## For T3 (the headless render job)
+## The T3 headless render job (`job/`)
 
 `render.js` and `mount.js` deliberately keep the "build one board" concern
 (`resolveAd`/`resolveSequence`/`renderBoard`/`fitBoard`) separate from the
-"live in a container" concern (`mountBoard`). A Playwright job doesn't need a
-container to scale into — it wants the true-pixel-size board, fitted, and
-then a screenshot of exactly that element. The job (not built in this
-tranche) is expected to:
+"live in a container" concern (`mountBoard`). The render job doesn't need a
+container to scale into — it wants the true-pixel-size board, fitted, and a
+screenshot of exactly that element. Nothing in `render.js` reaches for a Node
+built-in or assumes a bundler; it only reaches for `document`, so it runs the
+same way under Playwright as it does in the Next.js editor.
 
-1. Serve a minimal HTML page that imports `styles.css`, this package's
-   `render.js`, and the creative + brand JSON for one render.
-2. Call `resolveAd`/`resolveSequence` + `renderBoard` directly (skip
-   `mount.js`'s container-scaling entirely — the job wants the board at its
-   real pixel dimensions, unscaled).
-3. Append the board, wait for `document.fonts.ready` and every image's
-   `decode()`, call `fitBoard`, then screenshot the `.cc-board` element.
-4. Run its own in-page assertions (spill, safe-zone intrusion, contrast,
-   fonts loaded, background photo loaded) before accepting the frame — ported
-   from nexus-marketing's `export-png.mjs`, not part of this package.
+**Pages.** `frame.html` + `frame.js` render one placement (or one sequence
+beat) at true size: `resolveAd`/`resolveSequence` → `renderBoard`, append,
+await `document.fonts.ready` and every image's `decode()`, `fitBoard`, then
+`assertions.js`'s `runAssertions`. `sheet.html` + `sheet.js` render a contact
+sheet of every placement (or every sequence beat) scaled down, for a
+`previewOnly` render — fits every board at true size first, exactly like
+`mount.js`, then applies the display scale, so the two never disagree on
+whether type fits. Both pages take their spec off `window.__RENDER_SPEC__`,
+which the job sets via Playwright's `addInitScript()` before navigation —
+never a query string or a `fetch`, so an arbitrarily large creative/brand
+payload never hits a URL length limit. Both report
+`window.__RENDER_RESULT = { ok, errors?, warnings?, width, height }` and set
+`window.__ready = true` exactly once, success or failure, for the job's
+`page.waitForFunction` to key off.
 
-Nothing in `render.js` reaches for a Node built-in or assumes a bundler; it
-only reaches for `document`, so it runs the same way under Playwright as it
-does in the Next.js editor.
+**`assertions.js`** is the in-page safety net, ported from
+`nexus-marketing/social/export-png.mjs` and made brand-agnostic: text spill,
+bottom safe-zone intrusion (mirrors `render.js`'s own `fitBoard`/`fits()`
+bottom check, so fitting and this check can never disagree), fonts loaded
+(reads `brand.fontFamily` instead of a hardcoded face), every `<img>` loaded,
+a bleed/card layout's CSS background photo probed directly (invisible to a
+plain `<img>` check), the accent colour actually resolving on the headline's
+`<em>` (reads the board's own `--cc-accent`, not a hardcoded brand color),
+headline contrast ≥ 3:1, and the rendered box matching the placement's pixel
+size. Its pure math (`relativeLuminance`, `parseRgb`, `contrastRatio`,
+`spillDetect`, `safeZoneIntrusion`) has no DOM dependency and is unit-tested
+directly with fixture rects/colors in `test/assertions.test.mjs`;
+`runAssertions` itself needs a real browser and is exercised end-to-end by
+`test/job.test.mjs`.
+
+**`job/`** is a separate npm package (its own `package.json`) so `playwright`
+is not a dependency of `conductor-creative/` itself — the frontend consumes
+that package via a `file:` dependency and must stay dependency-free.
+
+- `job/render.mjs` — the rendering core, `run({ transport, ... })`: fetches
+  the spec, serves this package's own files over `job/server.mjs`'s tiny
+  static server, opens one Playwright page per placement (or per sequence
+  beat, or the one contact-sheet page for `previewOnly`) at
+  `deviceScaleFactor: 2`, screenshots the `.cc-board` (or `#sheet`) element,
+  and calls `transport.putFrame`/`complete`/`fail`. Exits 0 on success, 1 on
+  any failure — a bad assertion, a load error, or a timeout on any network
+  step. Run directly: `node job/render.mjs` with `CONDUCTOR_API_URL`,
+  `CONDUCTOR_RENDER_TOKEN` and `RENDER_ID` set.
+- `job/transport.mjs` — the render core's ONLY knowledge of how it talks to
+  the backend (`getSpec`/`putFrame`/`complete`/`fail`), against today's
+  `/internal/v1/creative-renders/*` contract. Deliberately isolated: how this
+  job is launched and reports back (a direct Cloud Run Job talking straight
+  REST, or sitting behind a Conductor Workflow) is expected to change: when
+  it does, only this file and `test/transport.test.mjs` change, never
+  `render.mjs`'s rendering core or its own tests.
+- `job/server.mjs` — a dependency-free `node:http` static server (ported from
+  nexus-marketing's `social/server.mjs`) scoped to this package's root, so
+  `frame.html`/`sheet.html`'s `type="module"` imports and stylesheet
+  `<link>`s resolve (both are blocked under `file://`).
+
+**Image.** `runner-image/Dockerfile.render`, built from the repo root
+(`docker build -f runner-image/Dockerfile.render .`): `FROM
+mcr.microsoft.com/playwright:v1.63.0-noble` (pinned to match the `playwright`
+**1.63.0** npm version in `job/package.json` — these two must move together),
+copies `conductor-creative/` in, `npm ci --omit=dev` in `job/`, `CMD
+["node", "render.mjs"]`.
+
+**Tests.** `test/assertions.test.mjs` (pure math, no browser),
+`test/transport.test.mjs` (the HTTP contract, against a fake `node:http`
+backend), `test/job.test.mjs` (the rendering core end to end against a real
+Chromium, with an in-memory fake transport — no HTTP, no coupling to the
+current backend contract; covers single/multi-placement, a story sequence,
+`previewOnly`, an unknown-placement failure with no frames uploaded, and a
+spec-fetch failure; one test asserts the actual PNG's `IHDR` pixel dimensions
+match the placement × 2). These need a local Chromium
+(`cd conductor-creative/job && npx playwright install chromium`); every
+Playwright-dependent test skips itself when one is not available rather than
+failing a machine that never ran that install step.
 
 ## Intentional behavior changes from `nexus-marketing/social/`
 

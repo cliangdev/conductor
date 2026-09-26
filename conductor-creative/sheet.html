@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Creative contact sheet</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  html, body { margin: 0; background: #F2F2F7; font-family: system-ui, -apple-system, sans-serif; }
+  #sheet { display: inline-flex; gap: 24px; align-items: flex-start; padding: 24px; }
+  .cell { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .shell { position: relative; overflow: hidden; border-radius: 6px; box-shadow: 0 3px 12px rgba(0,0,0,0.16); }
+  .cap { font-size: 13px; font-weight: 700; color: #717171; }
+</style>
+</head>
+<body>
+<!--
+  Preview-only contact sheet: every enabled placement of one creative (or
+  every beat of a story/carousel), scaled down onto one page, for a quick
+  look without downloading full-size PNGs one at a time. Rendered by
+  job/render.mjs when a render's `previewOnly` flag is set, and uploaded as
+  the single frame placementKey "sheet". Reads its spec from
+  window.__RENDER_SPEC__ — see sheet.js.
+-->
+<div id="sheet"></div>
+<script type="module" src="sheet.js"></script>
+</body>
+</html>

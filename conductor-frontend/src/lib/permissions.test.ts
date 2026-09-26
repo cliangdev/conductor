@@ -13,6 +13,7 @@ const ALL_CAPABILITIES: Capability[] = [
   'issue.edit',
   'issue.assignReviewers',
   'integration.appCredential.manage',
+  'creative.manage',
 ]
 
 describe('can', () => {
@@ -30,6 +31,7 @@ describe('can', () => {
     expect(can('CREATOR', 'doc.edit')).toBe(true)
     expect(can('CREATOR', 'issue.edit')).toBe(true)
     expect(can('CREATOR', 'issue.assignReviewers')).toBe(true)
+    expect(can('CREATOR', 'creative.manage')).toBe(true)
 
     expect(can('CREATOR', 'workspace.manage')).toBe(false)
     expect(can('CREATOR', 'members.manage')).toBe(false)

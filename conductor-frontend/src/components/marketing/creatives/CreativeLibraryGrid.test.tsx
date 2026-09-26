@@ -15,8 +15,12 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'user-1' }, accessToken: 'tok', loading: false }),
 }))
 
-const { pushSpy } = vi.hoisted(() => ({ pushSpy: vi.fn() }))
+const { pushSpy, mockCan } = vi.hoisted(() => ({ pushSpy: vi.fn(), mockCan: vi.fn((_cap?: string) => true) }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushSpy }) }))
+vi.mock('@/contexts/PermissionsContext', () => ({
+  useCan: (cap: string) => mockCan(cap),
+  usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
+}))
 
 import { apiGet, apiPost } from '@/lib/api'
 import { CreativeLibraryGrid } from './CreativeLibraryGrid'
@@ -82,6 +86,7 @@ function creative(overrides: Partial<Creative> = {}): Creative {
 describe('CreativeLibraryGrid', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCan.mockReturnValue(true)
   })
 
   it('lists Creatives grouped by family with variant pills', async () => {
@@ -118,5 +123,19 @@ describe('CreativeLibraryGrid', () => {
     await waitFor(() =>
       expect(pushSpy).toHaveBeenCalledWith('/app/projects/proj-1/marketing/creatives/cr-new'),
     )
+  })
+
+  it('hides "New creative" for a role without creative.manage (REVIEWER)', async () => {
+    mockCan.mockReturnValue(false)
+    ;(apiGet as Mock).mockImplementation((path: string) => {
+      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
+      if (path.includes('/creatives')) return Promise.resolve([creative()])
+      return Promise.reject(new Error(`unexpected GET ${path}`))
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    expect(await screen.findByText('12a')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New creative' })).not.toBeInTheDocument()
   })
 })

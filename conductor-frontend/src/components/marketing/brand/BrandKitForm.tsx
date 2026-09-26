@@ -19,6 +19,8 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/components/ui/toast'
+import { Can } from '@/components/auth/Can'
+import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage, type ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import {
@@ -114,6 +116,7 @@ export interface BrandKitFormProps {
 
 export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
   const { showToast } = useToast()
+  const canManage = useCan('creative.manage')
 
   const [kits, setKits] = useState<BrandKit[] | null>(null)
   const [selectedKitId, setSelectedKitId] = useState<string | null>(null)
@@ -320,30 +323,32 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
             </option>
           ))}
         </Select>
-        {selectedKit && !selectedKit.isDefault && (
-          <Button variant="outline" size="sm" onClick={handleSetDefault}>
-            <StarIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            Set as default
+        <Can do="creative.manage">
+          {selectedKit && !selectedKit.isDefault && (
+            <Button variant="outline" size="sm" onClick={handleSetDefault}>
+              <StarIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              Set as default
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={() => setCreatingKit(true)}>
+            <PlusIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            New kit
           </Button>
-        )}
-        <Button variant="outline" size="sm" onClick={() => setCreatingKit(true)}>
-          <PlusIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-          New kit
-        </Button>
-        {selectedKit && kits.length > 1 && (
-          <Button variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(true)}>
-            <TrashIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            Delete kit
-          </Button>
-        )}
-        <div className="ml-auto">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save kit'}
-          </Button>
-        </div>
+          {selectedKit && kits.length > 1 && (
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(true)}>
+              <TrashIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              Delete kit
+            </Button>
+          )}
+          <div className="ml-auto">
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving…' : 'Save kit'}
+            </Button>
+          </div>
+        </Can>
       </div>
 
-      {creatingKit && (
+      {creatingKit && canManage && (
         <div className="flex flex-wrap items-end gap-2 rounded-md border border-border p-3">
           <div>
             <Label htmlFor="new-kit-slug" className="text-xs">Slug</Label>
@@ -360,7 +365,8 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
 
       {error?.detail && !error.fieldErrors?.length && <Alert variant="destructive">{error.detail}</Alert>}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <fieldset disabled={!canManage} className="m-0 grid min-w-0 gap-6 border-0 p-0 lg:grid-cols-2">
+        <legend className="sr-only">Brand kit details</legend>
         <div className="space-y-6">
           <section className="space-y-3 rounded-lg border border-border p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identity</h3>
@@ -646,7 +652,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
             </div>
           </section>
         </div>
-      </div>
+      </fieldset>
 
       <ConfirmModal
         open={deleteConfirmOpen}

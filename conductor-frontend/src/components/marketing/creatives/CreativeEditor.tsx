@@ -23,6 +23,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
+import { Can } from '@/components/auth/Can'
+import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage, type ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
@@ -100,12 +102,15 @@ function PlacementBoard({
   brand,
   sequenceIndex,
   onFocalChange,
+  draggable,
 }: {
   placementKey: string
   creative: RenderCreative
   brand: ReturnType<typeof brandKitToBrand>
   sequenceIndex: number
   onFocalChange: (placementKey: string, value: string) => void
+  /** Readers can't save changes anyway — skip wiring the focal-drag interaction for them. */
+  draggable: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<typeof mountBoard> | null>(null)
@@ -118,7 +123,9 @@ function PlacementBoard({
     if (!containerRef.current) return
     const handle = mountBoard(containerRef.current, { creative, brand, placementKey, sequenceIndex })
     handleRef.current = handle
-    const drag = attachFocalDrag(handle, (value: string) => onFocalChangeRef.current(placementKey, value))
+    const drag = draggable
+      ? attachFocalDrag(handle, (value: string) => onFocalChangeRef.current(placementKey, value))
+      : { detach: () => {} }
     return () => {
       drag.detach()
       handle.destroy()
@@ -126,7 +133,7 @@ function PlacementBoard({
     }
     // Mount once per placement; updates below patch the live board instead of re-mounting it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placementKey])
+  }, [placementKey, draggable])
 
   useEffect(() => {
     handleRef.current?.update({ creative, brand, sequenceIndex })
@@ -158,6 +165,7 @@ export interface CreativeEditorProps {
 export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorProps) {
   const router = useRouter()
   const { showToast } = useToast()
+  const canManage = useCan('creative.manage')
 
   const [creative, setCreative] = useState<Creative | null>(null)
   const [form, setForm] = useState<FormState | null>(null)
@@ -171,6 +179,9 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const [conflict, setConflict] = useState(false)
   const [saving, setSaving] = useState(false)
   const [photoPickerOpen, setPhotoPickerOpen] = useState(false)
+  // Which sequence beat's photo the shared PhotoPicker modal is targeting; null means the
+  // Creative's own main photo. One modal instance is reused for both (see its onSelect below).
+  const [beatPhotoPickerIndex, setBeatPhotoPickerIndex] = useState<number | null>(null)
   const [variantOpen, setVariantOpen] = useState(false)
   const [variantHeadline, setVariantHeadline] = useState('')
   const [variantBusy, setVariantBusy] = useState(false)
@@ -222,6 +233,15 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const selectedKit = useMemo(() => kits?.find((k) => k.id === form?.brandKitId) ?? null, [kits, form?.brandKitId])
   const brand = useMemo(() => brandKitToBrand(selectedKit), [selectedKit])
 
+  // Looked up by beat.photoId so the live preview and each beat's thumbnail can resolve a photo
+  // without a per-beat network round trip — `photos` already holds the project's library
+  // (including blocked ones, loaded once below) so this is a local map, not a fetch.
+  const photoById = useMemo(() => {
+    const map = new Map<string, CreativePhoto>()
+    for (const p of photos) map.set(p.id, p)
+    return map
+  }, [photos])
+
   const renderCreative: RenderCreative | null = useMemo(() => {
     if (!form) return null
     return {
@@ -236,13 +256,21 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
       placements: form.placements,
       typeOverrides: form.typeOverrides,
       sequenceKind: form.sequenceKind ?? undefined,
-      sequence: form.sequence.map((b) => ({
-        headline: b.headline ?? undefined,
-        body: b.body ?? undefined,
-        cta: b.cta ?? undefined,
-      })),
+      sequence: form.sequence.map((b) => {
+        // A beat's own photo wins; an unset beat photo falls back to the Creative's main photo
+        // (conductor-creative/README.md's "the creative shape" — the render package does not do
+        // this fallback itself, so it's resolved here before the beat reaches the render package).
+        const beatPhoto = b.photoId ? photoById.get(b.photoId) : undefined
+        return {
+          headline: b.headline ?? undefined,
+          body: b.body ?? undefined,
+          cta: b.cta ?? undefined,
+          photoUrl: beatPhoto?.url ?? photo?.url ?? undefined,
+          focal: beatPhoto?.focal ?? photo?.focal,
+        }
+      }),
     }
-  }, [form, photo])
+  }, [form, photo, photoById])
 
   const enabledKeys = useMemo(() => {
     if (!renderCreative) return []
@@ -366,20 +394,22 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
         <span className="text-xs text-muted-foreground">
           kit: {selectedKit?.name ?? '—'} · v{creative.version}
         </span>
-        <div className="ml-auto flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setVariantHeadline(form.headline)
-              setVariantOpen(true)
-            }}
-          >
-            Save as variant
-          </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
+        <Can do="creative.manage">
+          <div className="ml-auto flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setVariantHeadline(form.headline)
+                setVariantOpen(true)
+              }}
+            >
+              Save as variant
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        </Can>
       </div>
 
       {conflict && (
@@ -396,7 +426,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
       )}
 
       <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
-        <div className="space-y-4">
+        <fieldset disabled={!canManage} className="m-0 min-w-0 space-y-4 border-0 p-0">
+          <legend className="sr-only">Creative details</legend>
           <Card className="space-y-3 p-4">
             <div>
               <Label htmlFor="creative-name">Name</Label>
@@ -562,9 +593,24 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
 
             {form.sequenceKind && (
               <div className="space-y-2">
-                {form.sequence.map((beat, i) => (
+                {form.sequence.map((beat, i) => {
+                  const beatPhoto = beat.photoId ? photoById.get(beat.photoId) : undefined
+                  return (
                   <div key={i} className="flex items-start gap-2 rounded-md border border-border p-2">
                     <span className="mt-1.5 text-xs text-muted-foreground">{i + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => setBeatPhotoPickerIndex(i)}
+                      aria-label={`Beat ${i + 1} photo`}
+                      className="mt-0.5 h-8 w-8 shrink-0 overflow-hidden rounded border border-border-strong bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {beatPhoto?.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={beatPhoto.url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="sr-only">Choose a photo for this beat</span>
+                      )}
+                    </button>
                     <div className="flex-1 space-y-1">
                       <Input
                         aria-label={`Beat ${i + 1} headline`}
@@ -599,7 +645,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                       <XIcon className="h-3.5 w-3.5" aria-hidden />
                     </button>
                   </div>
-                ))}
+                  )
+                })}
                 <Button
                   variant="outline"
                   size="sm"
@@ -614,12 +661,12 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               </div>
             )}
           </Card>
-        </div>
+        </fieldset>
 
         <div className="space-y-4">
           <Card className="space-y-3 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Live preview · drag a frame to set its focal point
+              Live preview {canManage && '· drag a frame to set its focal point'}
             </h3>
             {renderCreative && (
               <div className="flex flex-wrap gap-4">
@@ -631,6 +678,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                     brand={brand}
                     sequenceIndex={sequenceIndex}
                     onFocalChange={handleFocalChange}
+                    draggable={canManage}
                   />
                 ))}
               </div>
@@ -683,14 +731,28 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
       <PhotoPicker
         projectId={projectId}
         token={token}
-        open={photoPickerOpen}
-        onOpenChange={setPhotoPickerOpen}
+        open={photoPickerOpen || beatPhotoPickerIndex !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPhotoPickerOpen(false)
+            setBeatPhotoPickerIndex(null)
+          }
+        }}
         photos={photos}
         onPhotosChanged={() => listCreativePhotos(projectId, token, true).then(setPhotos)}
         onSelect={(p) => {
-          setPhoto(p)
-          update('photoId', p.id)
+          if (beatPhotoPickerIndex !== null) {
+            const idx = beatPhotoPickerIndex
+            update(
+              'sequence',
+              form.sequence.map((b, i) => (i === idx ? { ...b, photoId: p.id } : b)),
+            )
+          } else {
+            setPhoto(p)
+            update('photoId', p.id)
+          }
           setPhotoPickerOpen(false)
+          setBeatPhotoPickerIndex(null)
         }}
       />
 

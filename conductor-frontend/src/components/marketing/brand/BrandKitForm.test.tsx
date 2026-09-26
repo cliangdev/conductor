@@ -11,8 +11,12 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }))
 
-const { toastSpy } = vi.hoisted(() => ({ toastSpy: vi.fn() }))
+const { toastSpy, mockCan } = vi.hoisted(() => ({ toastSpy: vi.fn(), mockCan: vi.fn((_cap?: string) => true) }))
 vi.mock('@/components/ui/toast', () => ({ useToast: () => ({ showToast: toastSpy }) }))
+vi.mock('@/contexts/PermissionsContext', () => ({
+  useCan: (cap: string) => mockCan(cap),
+  usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
+}))
 
 import { apiGet } from '@/lib/api'
 import { BrandKitForm } from './BrandKitForm'
@@ -57,6 +61,7 @@ const REGISTRY = {
 describe('BrandKitForm', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCan.mockReturnValue(true)
     ;(apiGet as Mock).mockImplementation((path: string) => {
       if (path.includes('/creative-registry')) return Promise.resolve(REGISTRY)
       if (path.includes('/brand-kits')) return Promise.resolve([kit()])
@@ -89,5 +94,17 @@ describe('BrandKitForm', () => {
     await userEvent.type(testLineInput, 'Every saved link, finally usable.')
 
     expect(await screen.findByText(/found 0/)).toBeInTheDocument()
+  })
+
+  it('disables kit fields and hides management actions for a role without creative.manage (REVIEWER)', async () => {
+    mockCan.mockReturnValue(false)
+    render(<BrandKitForm projectId="proj-1" token="tok" />)
+
+    await screen.findByLabelText('Brand kit')
+
+    expect(screen.getByLabelText('Name')).toBeDisabled()
+    expect(screen.getByLabelText('Test a line')).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Save kit' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New kit' })).not.toBeInTheDocument()
   })
 })

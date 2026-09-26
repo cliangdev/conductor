@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/ui/status-badge'
+import { Can } from '@/components/auth/Can'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
@@ -234,11 +235,13 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
           </Button>
         )}
 
-        <div className="ml-auto">
-          <Button onClick={handleNewCreative} disabled={creating}>
-            {creating ? 'Creating…' : 'New creative'}
-          </Button>
-        </div>
+        <Can do="creative.manage">
+          <div className="ml-auto">
+            <Button onClick={handleNewCreative} disabled={creating}>
+              {creating ? 'Creating…' : 'New creative'}
+            </Button>
+          </div>
+        </Can>
       </div>
 
       {error && <Alert variant="destructive">{error}</Alert>}
@@ -257,9 +260,11 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
             }
             action={
               !filtered && (
-                <Button onClick={handleNewCreative} disabled={creating}>
-                  New creative
-                </Button>
+                <Can do="creative.manage">
+                  <Button onClick={handleNewCreative} disabled={creating}>
+                    New creative
+                  </Button>
+                </Can>
               )
             }
           />

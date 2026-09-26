@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
 import { putToSignedUrl } from '@/components/workitems/MediaUploadPanel'
+import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import {
@@ -66,6 +67,7 @@ export function PhotoPicker({
   onSelect,
   onPhotosChanged,
 }: PhotoPickerProps) {
+  const canManage = useCan('creative.manage')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -127,49 +129,51 @@ export function PhotoPicker({
   return (
     <Modal open={open} onOpenChange={onOpenChange} title="Choose a photo" description="Pick from the library or upload a new one.">
       <div className="space-y-4">
-        <div className="space-y-2 rounded-md border border-border p-3">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <Label htmlFor="photo-source" className="text-xs">Source</Label>
-              <Input id="photo-source" value={source} onChange={(e) => setSource(e.target.value)} placeholder="Unsplash" />
+        {canManage && (
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="photo-source" className="text-xs">Source</Label>
+                <Input id="photo-source" value={source} onChange={(e) => setSource(e.target.value)} placeholder="Unsplash" />
+              </div>
+              <div>
+                <Label htmlFor="photo-licence" className="text-xs">Licence</Label>
+                <Input id="photo-licence" value={licence} onChange={(e) => setLicence(e.target.value)} placeholder="CC0" />
+              </div>
             </div>
-            <div>
-              <Label htmlFor="photo-licence" className="text-xs">Licence</Label>
-              <Input id="photo-licence" value={licence} onChange={(e) => setLicence(e.target.value)} placeholder="CC0" />
-            </div>
+            <Checkbox
+              id="photo-ai-generated"
+              checked={aiGenerated}
+              onCheckedChange={setAiGenerated}
+              label="This image is AI-generated"
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ALLOWED_PHOTO_TYPES.join(',')}
+              className="sr-only"
+              aria-label="Photo file"
+              onChange={(e) => {
+                void handleFile(e.target.files?.[0])
+                e.target.value = ''
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <UploadCloudIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              {uploading ? 'Uploading…' : 'Upload a photo'}
+            </Button>
+            {uploadError && <Alert variant="destructive">{uploadError}</Alert>}
+            {warnings.map((w) => (
+              <Alert key={w} variant="warning">{w}</Alert>
+            ))}
           </div>
-          <Checkbox
-            id="photo-ai-generated"
-            checked={aiGenerated}
-            onCheckedChange={setAiGenerated}
-            label="This image is AI-generated"
-          />
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ALLOWED_PHOTO_TYPES.join(',')}
-            className="sr-only"
-            aria-label="Photo file"
-            onChange={(e) => {
-              void handleFile(e.target.files?.[0])
-              e.target.value = ''
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <UploadCloudIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            {uploading ? 'Uploading…' : 'Upload a photo'}
-          </Button>
-          {uploadError && <Alert variant="destructive">{uploadError}</Alert>}
-          {warnings.map((w) => (
-            <Alert key={w} variant="warning">{w}</Alert>
-          ))}
-        </div>
+        )}
 
         <div data-testid="photo-picker-grid" className="grid grid-cols-3 gap-2">
           {photos.map((photo) => (
@@ -189,30 +193,32 @@ export function PhotoPicker({
                   </span>
                 )}
               </button>
-              <div className="flex items-center justify-between gap-1 border-t border-border bg-surface px-1.5 py-1 text-[11px]">
-                <button
-                  type="button"
-                  disabled={busyPhotoId === photo.id}
-                  onClick={() => void toggleFlag(photo, 'checked')}
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded px-1',
-                    photo.checked ? 'text-status-approved' : 'text-muted-foreground',
-                  )}
-                  title={photo.checked ? 'Checked' : 'Mark checked'}
-                >
-                  <CheckIcon className="h-3 w-3" aria-hidden />
-                  {photo.checked ? 'Checked' : 'Check'}
-                </button>
-                <button
-                  type="button"
-                  disabled={busyPhotoId === photo.id}
-                  onClick={() => void toggleFlag(photo, 'blocked')}
-                  className={cn('rounded px-1', photo.blocked ? 'text-status-failed' : 'text-muted-foreground')}
-                  title={photo.blocked ? 'Blocked — unblock' : 'Block this photo'}
-                >
-                  {photo.blocked ? 'Blocked' : 'Block'}
-                </button>
-              </div>
+              {canManage && (
+                <div className="flex items-center justify-between gap-1 border-t border-border bg-surface px-1.5 py-1 text-[11px]">
+                  <button
+                    type="button"
+                    disabled={busyPhotoId === photo.id}
+                    onClick={() => void toggleFlag(photo, 'checked')}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded px-1',
+                      photo.checked ? 'text-status-approved' : 'text-muted-foreground',
+                    )}
+                    title={photo.checked ? 'Checked' : 'Mark checked'}
+                  >
+                    <CheckIcon className="h-3 w-3" aria-hidden />
+                    {photo.checked ? 'Checked' : 'Check'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyPhotoId === photo.id}
+                    onClick={() => void toggleFlag(photo, 'blocked')}
+                    className={cn('rounded px-1', photo.blocked ? 'text-status-failed' : 'text-muted-foreground')}
+                    title={photo.blocked ? 'Blocked — unblock' : 'Block this photo'}
+                  >
+                    {photo.blocked ? 'Blocked' : 'Block'}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

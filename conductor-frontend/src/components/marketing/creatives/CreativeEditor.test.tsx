@@ -11,9 +11,17 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }))
 
-const { pushSpy, toastSpy } = vi.hoisted(() => ({ pushSpy: vi.fn(), toastSpy: vi.fn() }))
+const { pushSpy, toastSpy, mockCan } = vi.hoisted(() => ({
+  pushSpy: vi.fn(),
+  toastSpy: vi.fn(),
+  mockCan: vi.fn((_cap?: string) => true),
+}))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushSpy }) }))
 vi.mock('@/components/ui/toast', () => ({ useToast: () => ({ showToast: toastSpy }) }))
+vi.mock('@/contexts/PermissionsContext', () => ({
+  useCan: (cap: string) => mockCan(cap),
+  usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
+}))
 
 import { apiGet, apiPatch, apiPost } from '@/lib/api'
 import { CreativeEditor } from './CreativeEditor'
@@ -93,12 +101,43 @@ function creative(overrides: Partial<Creative> = {}): Creative {
   }
 }
 
-function mockGetsFor(activeCreative: Creative, kits: BrandKit[] = [KIT]) {
+interface TestPhoto {
+  id: string
+  label: string
+  url: string
+}
+
+function photo(overrides: Partial<TestPhoto> & { id: string }): TestPhoto & Record<string, unknown> {
+  return {
+    label: overrides.id,
+    url: `https://storage.example/${overrides.id}.jpg`,
+    projectId: 'proj-1',
+    contentType: 'image/jpeg',
+    sizeBytes: 1,
+    width: 10,
+    height: 10,
+    aiGenerated: false,
+    checked: true,
+    blocked: false,
+    focal: {},
+    uploadStatus: 'UPLOADED',
+    warnings: [],
+    createdAt: '2026-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function mockGetsFor(activeCreative: Creative, kits: BrandKit[] = [KIT], photos: ReturnType<typeof photo>[] = []) {
   ;(apiGet as Mock).mockImplementation((path: string) => {
     if (path.includes('/creative-registry')) return Promise.resolve(REGISTRY)
     if (path.includes('/brand-kits')) return Promise.resolve(kits)
     if (path.includes('/readiness')) return Promise.resolve({ ready: false, items: [] })
-    if (path.match(/\/marketing\/photos(\?|$)/)) return Promise.resolve([])
+    const singlePhoto = path.match(/\/marketing\/photos\/([^/?]+)$/)
+    if (singlePhoto) {
+      const found = photos.find((p) => p.id === singlePhoto[1])
+      return found ? Promise.resolve(found) : Promise.reject(new Error(`no such photo ${singlePhoto[1]}`))
+    }
+    if (path.match(/\/marketing\/photos(\?|$)/)) return Promise.resolve(photos)
     if (path.endsWith(`/creatives/${activeCreative.id}`)) return Promise.resolve(activeCreative)
     return Promise.reject(new Error(`unexpected GET ${path}`))
   })
@@ -107,6 +146,7 @@ function mockGetsFor(activeCreative: Creative, kits: BrandKit[] = [KIT]) {
 describe('CreativeEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCan.mockReturnValue(true)
   })
 
   it('re-renders the live preview on every keystroke with no server call (AC-P0-2.2)', async () => {
@@ -189,5 +229,44 @@ describe('CreativeEditor', () => {
       const inner = board.querySelector('.cc-board') as HTMLElement | null
       expect(inner?.style.getPropertyValue('--cc-accent')).toBe('#2F6FD0')
     })
+  })
+
+  it("gives a sequence beat its own photo, falling back to the Creative's main photo when a beat is left unset", async () => {
+    const mainPhoto = photo({ id: 'photo-main' })
+    const beatPhoto = photo({ id: 'photo-beat' })
+    mockGetsFor(
+      creative({ photoId: 'photo-main', sequenceKind: 'story', sequence: [{}, {}] }),
+      [KIT],
+      [mainPhoto, beatPhoto],
+    )
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    const board = await screen.findByTestId('placement-board-4x5')
+    const boardPhotoSrc = () => (board.querySelector('.cc-board__band img') as HTMLImageElement | null)?.src ?? ''
+
+    // Beat 1 (the shown frame at sequenceIndex 0) starts unset, so it falls back to the main photo.
+    await waitFor(() => expect(boardPhotoSrc()).toContain('photo-main.jpg'))
+
+    await userEvent.click(screen.getByLabelText('Beat 1 photo'))
+    await userEvent.click(await screen.findByRole('button', { name: 'photo-beat' }))
+
+    await waitFor(() => expect(boardPhotoSrc()).toContain('photo-beat.jpg'))
+
+    // Beat 2 was never given its own photo — it keeps falling back to the main photo.
+    await userEvent.click(screen.getByRole('button', { name: 'Next beat' }))
+    await waitFor(() => expect(boardPhotoSrc()).toContain('photo-main.jpg'))
+  })
+
+  it('hides Save actions and disables the form for a role without creative.manage (REVIEWER)', async () => {
+    mockCan.mockReturnValue(false)
+    mockGetsFor(creative())
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    const headlineInput = await screen.findByLabelText('Headline')
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save as variant' })).not.toBeInTheDocument()
+    expect(headlineInput).toBeDisabled()
   })
 })

@@ -1,0 +1,14 @@
+{
+  "name": "@cliangdev/creative-render-job",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "T3 headless render job: renders a Conductor Creative to upload-ready PNGs in Playwright Chromium, checks each frame with the in-page assertions, and hands the result to a pluggable transport (see transport.mjs). Kept as its own package.json so playwright is not a dependency of conductor-creative/ itself (the frontend consumes that package and must stay dependency-free).",
+  "main": "render.mjs",
+  "scripts": {
+    "start": "node render.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}
