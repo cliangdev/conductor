@@ -71,4 +71,53 @@ public interface PostPublishTargetRepository extends JpaRepository<PostPublishTa
             + "AND t.fireTime IS NOT NULL AND t.fireTime <= :now "
             + "ORDER BY t.fireTime ASC")
     List<PostPublishTarget> findDueManualTargets(@Param("now") OffsetDateTime now);
+
+    /**
+     * Published destinations of one project whose fire time falls inside an insights window, optionally
+     * restricted to one platform. The population {@code MarketingInsightsQueryService} groups over — rows
+     * with a null {@code fireTime} are handled separately via {@link #findPublishedWithoutFireTime}.
+     */
+    @Query("SELECT t FROM PostPublishTarget t "
+            + "WHERE t.workItem.project.id = :projectId "
+            + "AND t.state = com.conductor.entity.PostPublishTargetState.PUBLISHED "
+            + "AND (:platform IS NULL OR t.platform = :platform) "
+            + "AND t.fireTime IS NOT NULL AND t.fireTime >= :from AND t.fireTime < :to")
+    List<PostPublishTarget> findPublishedByFireTimeWindow(@Param("projectId") String projectId,
+                                                          @Param("platform") String platform,
+                                                          @Param("from") OffsetDateTime from,
+                                                          @Param("to") OffsetDateTime to);
+
+    /**
+     * Published destinations with no {@code fireTime} recorded (rows that predate the column, or a lane
+     * that never set it) — an insights window falls back to each one's first snapshot to decide whether it
+     * belongs.
+     */
+    @Query("SELECT t FROM PostPublishTarget t "
+            + "WHERE t.workItem.project.id = :projectId "
+            + "AND t.state = com.conductor.entity.PostPublishTargetState.PUBLISHED "
+            + "AND (:platform IS NULL OR t.platform = :platform) "
+            + "AND t.fireTime IS NULL")
+    List<PostPublishTarget> findPublishedWithoutFireTime(@Param("projectId") String projectId,
+                                                         @Param("platform") String platform);
+
+    /**
+     * Same population as {@link #findPublishedByFireTimeWindow} but with the owning Work Item (and its
+     * Project, for the display id) eagerly fetched — the "what works" weekly connector reads each
+     * destination's post title/displayId for its top-posts dimension, and a plain lazy load here would
+     * be one extra query per destination.
+     */
+    @Query("SELECT t FROM PostPublishTarget t "
+            + "JOIN FETCH t.workItem wi "
+            + "JOIN FETCH wi.project "
+            + "WHERE wi.project.id = :projectId "
+            + "AND t.state = com.conductor.entity.PostPublishTargetState.PUBLISHED "
+            + "AND t.fireTime IS NOT NULL AND t.fireTime >= :from AND t.fireTime < :to "
+            + "ORDER BY t.fireTime ASC")
+    List<PostPublishTarget> findPublishedWithWorkItemByFireTimeWindow(@Param("projectId") String projectId,
+                                                                      @Param("from") OffsetDateTime from,
+                                                                      @Param("to") OffsetDateTime to);
+
+    /** Whether this project has ever published at least one destination — the gate the "what works"
+     *  weekly connector's health check and its feed provisioner both read. */
+    boolean existsByWorkItem_Project_IdAndState(String projectId, PostPublishTargetState state);
 }

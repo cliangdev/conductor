@@ -148,6 +148,13 @@ public class PostMetricsFeedPuller {
                     }
                     return IngestBatch.degraded(platform.label() + " metrics read failed: " + message);
                 }
+                if (result.message() != null) {
+                    // A success with a message attached is a partial-scope hint (e.g. "reconnect Instagram
+                    // to read views, reach and saves") — the counts it came with still get recorded below,
+                    // this is never a reason to fail or degrade the pull; see InstagramPublishAction.metrics
+                    // and YouTubeConnector.getVideoStatistics.
+                    log.warn("Post metrics feed {} ({}): {}", feed.getId(), platform.label(), result.message());
+                }
                 written += record(chunk, platform, periodKey, now, result.output());
             }
             if (exhausted) {

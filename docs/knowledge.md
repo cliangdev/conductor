@@ -185,7 +185,10 @@ A second, parallel producer feeds the same wiki: a connector can declare a sched
 that pulls a metric series on a cadence and, when something material happened, narrates it into a
 knowledge source. This is not the source-inbox pipeline above with a different trigger — it's a
 distinct pre-pipeline that decides *whether a source should exist at all*, then hands its output to
-that exact same inbox → librarian machinery once it does.
+that exact same inbox → librarian machinery once it does. A feed's connector doesn't need a credential
+at all — `conductor-marketing` is a built-in, no-auth connector that declares its own weekly
+`what_works_weekly` feed over data already in Conductor (published Post performance) rather than a
+third-party API.
 
 ```mermaid
 flowchart LR

@@ -219,13 +219,71 @@ class MetaGraphClientTest {
         server.expect(requestTo(containsString("/v21.0/m1?fields=")))
                 .andRespond(withSuccess("{\"id\":\"m1\",\"like_count\":7,\"comments_count\":1}",
                         MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m1/insights?metric=")))
+                .andRespond(withSuccess("{\"data\":["
+                        + "{\"name\":\"views\",\"values\":[{\"value\":100}]},"
+                        + "{\"name\":\"reach\",\"values\":[{\"value\":80}]},"
+                        + "{\"name\":\"saved\",\"values\":[{\"value\":3}]},"
+                        + "{\"name\":\"shares\",\"values\":[{\"value\":2}]},"
+                        + "{\"name\":\"total_interactions\",\"values\":[{\"value\":112}]}]}",
+                        MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m1"), "token");
 
         assertThat(metrics).singleElement().satisfies(m -> {
             assertThat(m.likes()).isEqualTo(7L);
             assertThat(m.comments()).isEqualTo(1L);
+            assertThat(m.views()).isEqualTo(100L);
+            assertThat(m.reach()).isEqualTo(80L);
+            assertThat(m.saves()).isEqualTo(3L);
+            assertThat(m.shares()).isEqualTo(2L);
+            assertThat(m.totalInteractions()).isEqualTo(112L);
             assertThat(m.unavailable()).isFalse();
+            assertThat(m.insightsForbidden()).isFalse();
+        });
+    }
+
+    @Test
+    void readMediaMetrics_insightsForbidden_keepsCountsAndMarksForbidden() {
+        server.expect(requestTo(containsString("/v21.0/m2?fields=")))
+                .andRespond(withSuccess("{\"id\":\"m2\",\"like_count\":9,\"comments_count\":4}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m2/insights?metric=")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                                org.springframework.http.HttpStatus.FORBIDDEN)
+                        .body("{\"error\":{\"message\":\"Missing permission\",\"code\":10}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m2"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.likes()).isEqualTo(9L);
+            assertThat(m.comments()).isEqualTo(4L);
+            assertThat(m.views()).isNull();
+            assertThat(m.reach()).isNull();
+            assertThat(m.saves()).isNull();
+            assertThat(m.unavailable()).isFalse();
+            assertThat(m.insightsForbidden()).isTrue();
+        });
+    }
+
+    @Test
+    void readMediaMetrics_insightsBadRequest_keepsCountsWithoutMarkingForbidden() {
+        server.expect(requestTo(containsString("/v21.0/m3?fields=")))
+                .andRespond(withSuccess("{\"id\":\"m3\",\"like_count\":2,\"comments_count\":0}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m3/insights?metric=")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body("{\"error\":{\"message\":\"metric not supported\"}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m3"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.likes()).isEqualTo(2L);
+            assertThat(m.views()).isNull();
+            assertThat(m.unavailable()).isFalse();
+            assertThat(m.insightsForbidden()).isFalse();
         });
     }
 

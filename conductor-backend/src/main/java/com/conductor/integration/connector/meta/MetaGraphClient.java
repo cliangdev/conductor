@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.integration.ConnectorHttp;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -46,6 +48,8 @@ import java.util.Map;
  * <br>IG content publishing: https://developers.facebook.com/docs/instagram-platform/content-publishing
  */
 public class MetaGraphClient {
+
+    private static final Logger log = LoggerFactory.getLogger(MetaGraphClient.class);
 
     static final String GRAPH_BASE = "https://graph.facebook.com/v21.0";
 
@@ -425,8 +429,16 @@ public class MetaGraphClient {
         return permalink.startsWith("/") ? "https://www.facebook.com" + permalink : permalink;
     }
 
-    /** One published post's counts, as Graph reports them; {@code unavailable} when Graph no longer knows the id. */
-    public record PostMetrics(String id, Long likes, Long comments, Long shares, boolean unavailable) {}
+    /**
+     * One published post's counts, as Graph reports them; {@code unavailable} when Graph no longer knows
+     * the id. {@code views}/{@code reach}/{@code saves}/{@code totalInteractions} are populated only for
+     * Instagram media, read from the insights edge ({@link #readMediaMetrics}) — Facebook's read never
+     * sets them. {@code insightsForbidden} is true when the insights read itself came back 403 (a
+     * connection that predates the {@code instagram_manage_insights} scope), so the caller can surface a
+     * reconnect hint without failing the read that still produced likes/comments.
+     */
+    public record PostMetrics(String id, Long views, Long likes, Long comments, Long shares, Long reach,
+                              Long saves, Long totalInteractions, boolean unavailable, boolean insightsForbidden) {}
 
     /**
      * Reads the engagement counts of up to fifty Page posts in one call ({@code ?ids=a,b,c}). An id Graph
@@ -444,14 +456,14 @@ public class MetaGraphClient {
             JsonNode node = readNodeOrNull(id,
                     "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)", pageToken);
             if (node == null) {
-                metrics.add(new PostMetrics(id, null, null, null, true));
+                metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, true, false));
                 continue;
             }
-            metrics.add(new PostMetrics(id,
+            metrics.add(new PostMetrics(id, null,
                     summaryCount(node.path("likes")),
                     summaryCount(node.path("comments")),
                     node.path("shares").path("count").isNumber() ? node.path("shares").path("count").asLong() : null,
-                    false));
+                    null, null, null, false, false));
         }
         return metrics;
     }
@@ -480,10 +492,15 @@ public class MetaGraphClient {
         }
     }
 
+    /** Metric names read off the insights edge; see {@link #readMediaInsights}. */
+    private static final String INSIGHTS_METRICS = "views,reach,saved,shares,total_interactions";
+
     /**
-     * Reads the like and comment counts of up to fifty Instagram media in one call. Views, reach and saves
-     * live behind the insights edge, whose availability varies by media type and permission; they are
-     * left null here rather than risking the whole batch on a field one media type refuses.
+     * Reads the like and comment counts of up to fifty Instagram media, one read per media, then reads
+     * each media's insights edge for views/reach/saves/shares. Insights availability varies by media type
+     * and permission — a 4xx there (a metric one media type refuses, or a connection missing
+     * {@code instagram_manage_insights}) never fails the batch; it just leaves that media's insight fields
+     * null, keeping the like/comment counts already read. See {@link #readMediaInsights}.
      */
     public List<PostMetrics> readMediaMetrics(List<String> mediaIds, String token) {
         if (mediaIds == null || mediaIds.isEmpty()) {
@@ -493,15 +510,65 @@ public class MetaGraphClient {
         for (String id : mediaIds) {
             JsonNode node = readNodeOrNull(id, "id,like_count,comments_count", token);
             if (node == null) {
-                metrics.add(new PostMetrics(id, null, null, null, true));
+                metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, true, false));
                 continue;
             }
-            metrics.add(new PostMetrics(id,
+            MediaInsights insights = readMediaInsights(id, token);
+            metrics.add(new PostMetrics(id, insights.views(),
                     node.path("like_count").isNumber() ? node.path("like_count").asLong() : null,
                     node.path("comments_count").isNumber() ? node.path("comments_count").asLong() : null,
-                    null, false));
+                    insights.shares(), insights.reach(), insights.saves(), insights.totalInteractions(),
+                    false, insights.forbidden()));
         }
         return metrics;
+    }
+
+    /** One media's insights edge answer — everything null when the read failed, see {@link #readMediaInsights}. */
+    private record MediaInsights(Long views, Long reach, Long saves, Long shares, Long totalInteractions,
+                                 boolean forbidden) {
+        static final MediaInsights EMPTY = new MediaInsights(null, null, null, null, null, false);
+    }
+
+    /**
+     * Reads one Instagram media's {@code /insights} edge ({@code views,reach,saved,shares,total_interactions}).
+     * Meta refuses some of these per media type (a 400 naming the metric) and refuses the whole edge for a
+     * connection missing {@code instagram_manage_insights} (a 403) — either way this returns
+     * {@link MediaInsights#EMPTY} (marked {@code forbidden} for the 403 case, so the caller can surface a
+     * reconnect hint) rather than throwing, so one media's insight gap never costs the batch its
+     * like/comment counts. A 5xx/IO failure still propagates, same as every other read in this class.
+     */
+    private MediaInsights readMediaInsights(String mediaId, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + mediaId + "/insights")
+                .queryParam("metric", INSIGHTS_METRICS)
+                .encode().build().toUri());
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+            JsonNode body = parseJson(response.getBody());
+            JsonNode data = body != null && body.path("data").isArray() ? body.path("data") : null;
+            if (data == null) {
+                return MediaInsights.EMPTY;
+            }
+            Map<String, Long> byName = new java.util.HashMap<>();
+            for (JsonNode entry : data) {
+                String name = entry.path("name").asText(null);
+                JsonNode values = entry.path("values");
+                if (name == null || !values.isArray() || values.isEmpty()) {
+                    continue;
+                }
+                JsonNode value = values.get(0).path("value");
+                if (value.isNumber()) {
+                    byName.put(name, value.asLong());
+                }
+            }
+            return new MediaInsights(byName.get("views"), byName.get("reach"), byName.get("saved"),
+                    byName.get("shares"), byName.get("total_interactions"), false);
+        } catch (HttpClientErrorException e) {
+            boolean forbidden = e.getStatusCode().value() == 403;
+            log.debug("Instagram insights unavailable for media {}: {} {}", mediaId,
+                    e.getStatusCode().value(), e.getResponseBodyAsString());
+            return forbidden ? new MediaInsights(null, null, null, null, null, true) : MediaInsights.EMPTY;
+        }
     }
 
     private static Long summaryCount(JsonNode edge) {

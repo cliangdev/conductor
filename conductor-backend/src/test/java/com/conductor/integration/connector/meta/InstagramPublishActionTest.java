@@ -420,6 +420,8 @@ class InstagramPublishActionTest {
         // One read per media (Graph refuses the ?ids= batch for apps pinned to v26+); the bad one 400s alone.
         onGet("media-ok?fields=", call -> new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
                 .put("id", "media-ok").put("like_count", 5).put("comments_count", 1));
+        onGet("media-ok/insights?metric=", call -> readTree(
+                "{\"data\":[{\"name\":\"views\",\"values\":[{\"value\":42}]}]}"));
         onGet("media-bad?fields=", call -> {
             throw org.springframework.web.client.HttpClientErrorException.create(
                     org.springframework.http.HttpStatus.BAD_REQUEST, "Bad Request", new org.springframework.http.HttpHeaders(),
@@ -430,15 +432,42 @@ class InstagramPublishActionTest {
                 Map.of("post_ids", List.of("media-ok", "media-bad")), CTX);
 
         assertThat(result.success()).isTrue();
+        assertThat(result.message()).isNull();
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
         assertThat(rows).anySatisfy(row -> {
             assertThat(row.get("post_id")).isEqualTo("media-ok");
             assertThat(row.get("unavailable")).isEqualTo(false);
+            assertThat(row.get("views")).isEqualTo(42L);
         });
         assertThat(rows).anySatisfy(row -> {
             assertThat(row.get("post_id")).isEqualTo("media-bad");
             assertThat(row.get("unavailable")).isEqualTo(true);
+        });
+    }
+
+    @Test
+    void metrics_insightsForbidden_stillReturnsCountsWithAReconnectHint() {
+        onGet("media-1?fields=", call -> new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("id", "media-1").put("like_count", 11).put("comments_count", 2));
+        onGet("media-1/insights?metric=", call -> {
+            throw org.springframework.web.client.HttpClientErrorException.create(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "Forbidden", new org.springframework.http.HttpHeaders(),
+                    "{\"error\":{\"message\":\"Missing permission\",\"code\":10}}".getBytes(), null);
+        });
+
+        ActionResult result = connector.invoke("get_instagram_media_metrics",
+                Map.of("post_ids", List.of("media-1")), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.message()).contains("Reconnect Instagram");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.get("post_id")).isEqualTo("media-1");
+            assertThat(row.get("likes")).isEqualTo(11L);
+            assertThat(row.get("comments")).isEqualTo(2L);
+            assertThat(row).doesNotContainKey("views");
         });
     }
 
@@ -561,6 +590,14 @@ class InstagramPublishActionTest {
     private static PublishMedia image() {
         return new PublishMedia("https://signed.example/hero.jpg", "assets/proj/wi-1/hero.jpg",
                 "image/jpeg", 2048L);
+    }
+
+    private static JsonNode readTree(String json) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void onPost(String uriContains, Function<Call, Object> body) {

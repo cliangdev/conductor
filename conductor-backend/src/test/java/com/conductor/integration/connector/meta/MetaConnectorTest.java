@@ -85,7 +85,8 @@ class MetaConnectorTest {
 
         assertThat(connector.oauthScopes()).containsExactlyInAnyOrder(
                 "pages_show_list", "pages_manage_posts", "pages_read_engagement",
-                "instagram_basic", "instagram_content_publish", "business_management");
+                "instagram_basic", "instagram_content_publish", "instagram_manage_insights",
+                "business_management");
         for (String scope : connector.oauthScopes()) {
             assertThat(consentUrl).contains(scope);
         }

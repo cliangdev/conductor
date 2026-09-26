@@ -174,6 +174,7 @@ public class IntegrationController implements IntegrationsApi {
                     .description(meta.description())
                     .iconLabel(meta.iconLabel())
                     .connected(!connections.isEmpty())
+                    .builtIn(meta.builtIn())
                     .configFields(toConfigFieldDtos(spec))
                     .connections(connections.stream().map(this::toConnectionSummary).toList())
                     // Null for a non-OAuth2 connector -- it has no app credential to configure.
@@ -207,6 +208,7 @@ public class IntegrationController implements IntegrationsApi {
                     .authType(spec.authType().name())
                     .capabilities(connectorRegistry.capabilitiesOf(connector).stream()
                             .map(Capability::name).toList())
+                    .builtIn(meta.builtIn())
                     .configFields(toCatalogConfigFieldDtos(spec))
                     .connected(!activeConnectionIds.isEmpty())
                     .activeConnectionIds(activeConnectionIds)

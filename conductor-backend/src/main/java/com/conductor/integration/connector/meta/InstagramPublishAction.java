@@ -85,15 +85,28 @@ class InstagramPublishAction {
             return MetaConnector.MetaActions.permanentOrRethrow(e, "Instagram could not read media metrics");
         }
         List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        boolean insightsForbidden = false;
         for (MetaGraphClient.PostMetrics m : read) {
             Map<String, Object> row = new java.util.LinkedHashMap<>();
             row.put("post_id", m.id());
             row.put("unavailable", m.unavailable());
+            if (m.views() != null) row.put("views", m.views());
             if (m.likes() != null) row.put("likes", m.likes());
             if (m.comments() != null) row.put("comments", m.comments());
+            if (m.shares() != null) row.put("shares", m.shares());
+            if (m.reach() != null) row.put("reach", m.reach());
+            if (m.saves() != null) row.put("saves", m.saves());
+            if (m.totalInteractions() != null) row.put("total_interactions", m.totalInteractions());
             rows.add(row);
+            insightsForbidden = insightsForbidden || m.insightsForbidden();
         }
-        return ActionResult.ok(Map.of("metrics", rows));
+        // Likes/comments still flow even when the insights edge is forbidden (a connection that predates
+        // instagram_manage_insights) — this stays a success, just with a hint attached, never the setup-
+        // required failure that would stop the counts from being recorded at all.
+        String message = insightsForbidden
+                ? "Reconnect Instagram to read views, reach and saves (missing the instagram_manage_insights permission)"
+                : null;
+        return new ActionResult(true, message, Map.of("metrics", rows));
     }
 
     private static final String MEDIA_TYPE_IMAGE = "IMAGE";

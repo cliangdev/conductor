@@ -1,0 +1,34 @@
+{
+  "description": "Built in. Reads what happened to your published Posts and narrates what is working into the Knowledge Center every week.",
+  "operations": [],
+  "ingest": [
+    {
+      "id": "what_works_weekly",
+      "label": "What's working, weekly",
+      "description": "Weekly digest of published Post performance: views, engagement, top posts, and which platforms/formats are pulling their weight",
+      "mode": "SNAPSHOT",
+      "sourceType": "metrics.digest.{connector}.{ingest}",
+      "defaultIntervalMinutes": 10080,
+      "window": { "sizeDays": 7, "lagDays": 0, "alignTo": "ISO_WEEK" },
+      "suggestedDisposition": "KNOWLEDGE",
+      "suggestedDomain": "marketing",
+      "digest": {
+        "seriesPath": "trend",
+        "dateField": "date",
+        "pagePath": "marketing/what-works.md",
+        "metrics": [
+          { "key": "posts", "label": "Posts published", "agg": "SUM", "field": "posts", "direction": "UP_IS_GOOD", "minAbsolute": 1 },
+          { "key": "views", "label": "Views", "agg": "SUM", "field": "views", "direction": "UP_IS_GOOD", "minAbsolute": 100, "minRelative": 0.20 },
+          { "key": "engagements", "label": "Engagements", "agg": "SUM", "field": "engagements", "direction": "UP_IS_GOOD", "minAbsolute": 10, "minRelative": 0.20 },
+          { "key": "engagementRate", "label": "Engagement rate", "agg": "RATIO", "numerator": "engagements", "denominator": "views", "direction": "UP_IS_GOOD", "minAbsolute": 0.005, "minRelative": 0.15 }
+        ],
+        "dimensions": [
+          { "key": "topPosts", "label": "Top posts", "idField": "post", "valueField": "views", "topN": 5, "baselineN": 20, "minRelative": 0.30, "minRankMove": 3 },
+          { "key": "byPlatform", "label": "By platform", "idField": "platform", "valueField": "engagementRate", "topN": 4, "baselineN": 4, "minRelative": 0.15 },
+          { "key": "byFormat", "label": "By format", "idField": "format", "valueField": "engagementRate", "topN": 4, "baselineN": 4, "minRelative": 0.15 }
+        ],
+        "maxQuietPeriods": 8
+      }
+    }
+  ]
+}

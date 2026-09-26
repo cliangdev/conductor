@@ -64,6 +64,7 @@ import {
   listTopPosts,
   type CreatePostParams,
 } from './tools/posts.js'
+import { getMarketingInsights } from './tools/insights.js'
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1022,6 +1023,17 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_marketing_insights',
+    description: 'What is working across the project\'s published Posts: totals, engagement rate by platform, format and time, best and worst posts, and movers vs the prior window. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window: { type: 'string', enum: ['7d', '30d', '90d'], description: 'How far back to look (default 30d)' },
+        platform: { type: 'string', description: 'Restrict to one platform, from the project\'s connected platforms (optional)' },
+      },
+    },
+  },
+  {
     name: 'submit_review',
     description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned REVIEWER or ADMIN. Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step, done in the Conductor UI, not this tool. Returns the confirmation table.',
     inputSchema: {
@@ -1713,6 +1725,14 @@ export async function runMcpServer(): Promise<void> {
               },
               config
             )
+          )
+        }
+        case 'get_marketing_insights': {
+          return successResponse(
+            await getMarketingInsights(config, {
+              window: params['window'] as '7d' | '30d' | '90d' | undefined,
+              platform: params['platform'] as string | undefined,
+            })
           )
         }
         case 'get_post_analytics': {

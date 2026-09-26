@@ -15,7 +15,18 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
    `ConnectorData.healthy/degraded/setupRequired`; series points use the key **`value`** (the
    frontend reads `value`).
 2. **Local stub** — `integration/connector/local/Local<Name>Connector.java`, `@Profile("local")`,
-   returning realistic fake data so the page renders end-to-end without real credentials.
+   returning realistic fake data so the page renders end-to-end without real credentials. Skip this
+   entirely for a connector with no network call at all (`AuthType.NONE`, reading only Conductor's own
+   data, e.g. `conductor-marketing`) — it needs no stand-in and carries no `@Profile` restriction, so
+   the one class runs the same way in every profile.
+
+   A connector every project should be provisioned into automatically, with no Integrations "Connect"
+   flow at all, sets `ConnectorMetadata.builtIn` to `true` (the five-arg constructor every other
+   connector uses defaults it to `false`). `IntegrationController` surfaces it on both
+   `IntegrationListItem`/`ConnectorCatalogEntryDto` as `builtIn`, and the Integrations browse grid
+   filters it out of the "available to connect" list — its connection still shows on the Connected tab
+   and its own detail page (Feeds health panel) once something has provisioned it (see
+   `MarketingInsightsFeedProvisioner` for the provisioning side).
 3. **OAuth (only if applicable)** — implement `OAuth2Connector` and return your scopes from
    `oauthScopes()`. The shared `OAuthFlowService` looks the connector up in `ConnectorRegistry` and
    asks it for scopes/endpoints/config — you do not touch that service. `OAuth2Connector`'s five other
