@@ -4,6 +4,8 @@ import com.conductor.agent.AgentReferencedByWorkflowsException;
 import com.conductor.conversation.AgentNotAddressableException;
 import com.conductor.conversation.ConversationBusyException;
 import com.conductor.conversation.ConversationNotFoundException;
+import com.conductor.creative.BrandKitValidationException;
+import com.conductor.creative.CreativeValidationException;
 import com.conductor.knowledge.page.FrontmatterException;
 import com.conductor.knowledge.page.KnowledgeConflictException;
 import jakarta.persistence.EntityNotFoundException;
@@ -96,6 +98,36 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
         problem.setType(URI.create("about:blank"));
         problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    /**
+     * A Creative failed a {@code CreativeValidator} rule (COND-24 T2). The body's {@code violations}
+     * array carries every failing rule, each with the rule's own message — a Brand Kit copy rule's
+     * failure surfaces with the kit author's own {@code message}, verbatim (AC-P0-2.1).
+     */
+    @ExceptionHandler(CreativeValidationException.class)
+    public ProblemDetail handleCreativeValidationException(CreativeValidationException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        List<Map<String, String>> violations = e.violations().stream()
+                .map(v -> Map.of("field", v.field(), "ruleId", v.ruleId(), "message", v.message()))
+                .collect(Collectors.toList());
+        problem.setProperty("violations", violations);
+        return problem;
+    }
+
+    /** A Brand Kit write carried a copy rule regex that does not compile (COND-24 T2). */
+    @ExceptionHandler(BrandKitValidationException.class)
+    public ProblemDetail handleBrandKitValidationException(BrandKitValidationException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        List<Map<String, String>> fieldErrors = e.fieldErrors().stream()
+                .map(fe -> Map.of("field", fe.field(), "message", fe.message()))
+                .collect(Collectors.toList());
+        problem.setProperty("fieldErrors", fieldErrors);
         return problem;
     }
 

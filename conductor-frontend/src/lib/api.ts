@@ -387,12 +387,15 @@ export function listGitHubRepositories(
  * A failed API call. `detail` is the backend's RFC 7807 ProblemDetail message (present only when the
  * server sent a meaningful one); `message` mirrors it, falling back to an opaque "Server error (n)".
  * `code`/`fieldErrors` are captured forward-compatibly (the backend doesn't mint codes yet).
+ * `violations` is the Creative validator's 422 shape (`CreativeValidationProblem`) — a `ruleId`
+ * alongside `field`/`message` so a client can key off the rule rather than a positional index.
  */
 export interface ApiError extends Error {
   status: number
   detail?: string
   code?: string
   fieldErrors?: { field: string; message: string }[]
+  violations?: { field: string; ruleId: string; message: string }[]
 }
 
 const NETWORK_ERROR_MESSAGE = 'Could not reach server — please try again'
@@ -401,6 +404,7 @@ async function throwApiError(res: Response): Promise<never> {
   let detail: string | undefined
   let code: string | undefined
   let fieldErrors: { field: string; message: string }[] | undefined
+  let violations: { field: string; ruleId: string; message: string }[] | undefined
   try {
     const contentType = res.headers.get('content-type') ?? ''
     if (contentType.includes('json')) {
@@ -410,6 +414,7 @@ async function throwApiError(res: Response): Promise<never> {
       else if (typeof json.error === 'string') detail = json.error
       if (typeof json.code === 'string') code = json.code
       if (Array.isArray(json.fieldErrors)) fieldErrors = json.fieldErrors
+      if (Array.isArray(json.violations)) violations = json.violations
     }
   } catch { /* non-parseable body — keep defaults */ }
   const err = new Error(detail ?? `Server error (${res.status})`) as ApiError
@@ -417,6 +422,7 @@ async function throwApiError(res: Response): Promise<never> {
   err.detail = detail
   if (code) err.code = code
   if (fieldErrors) err.fieldErrors = fieldErrors
+  if (violations) err.violations = violations
   throw err
 }
 

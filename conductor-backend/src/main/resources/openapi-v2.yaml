@@ -36,6 +36,10 @@ tags:
     description: What happened to published destinations after they went out — the post_metrics feeds' snapshots and the project ranking.
   - name: publish-outcomes
     description: Per-target publish outcomes on a Post, and retrying the ones that failed
+  - name: brand-kits
+    description: Per-project Brand Kits (tokens, logos, copy rules) a Creative renders with
+  - name: creatives
+    description: The Creative library — photos with provenance, and the creatives themselves
 
 paths:
   /projects/{projectId}/work-items:
@@ -2406,6 +2410,1079 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/brand-kits:
+    get:
+      tags:
+        - brand-kits
+      summary: List the project's Brand Kits
+      description: >-
+        Every kit in the project, oldest first. A project always has at least one: if none exists yet,
+        the first call lazily and idempotently creates the kit `default` with brand-free tokens before
+        returning (race-safe — a concurrent first call never creates two).
+      operationId: listBrandKits
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The project's Brand Kits
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BrandKitResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - brand-kits
+      summary: Create a Brand Kit
+      description: >-
+        A second brand, or a regional variant — most workspaces need only the lazily-created `default`.
+        The first kit ever created on a project is not automatically default; use PATCH `isDefault` to
+        switch. Requires ADMIN or CREATOR.
+      operationId: createBrandKit
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBrandKitRequest"
+      responses:
+        "201":
+          description: The created Brand Kit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandKitResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A kit with this slug already exists in the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: A copy rule's `pattern` or `exceptPattern` does not compile as a regex
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FieldValidationProblem"
+
+  /projects/{projectId}/marketing/brand-kits/{kitId}:
+    get:
+      tags:
+        - brand-kits
+      summary: Get one Brand Kit
+      operationId: getBrandKit
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kitId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Brand Kit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandKitResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Brand Kit not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - brand-kits
+      summary: Update a Brand Kit
+      description: >-
+        Set-replace on every field present in the body; omit a field to leave it unchanged. Setting
+        `isDefault: true` unsets every other kit's default in the same transaction. Requires ADMIN or
+        CREATOR.
+      operationId: patchBrandKit
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kitId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchBrandKitRequest"
+      responses:
+        "200":
+          description: The updated Brand Kit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandKitResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Brand Kit not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: A copy rule's `pattern` or `exceptPattern` does not compile as a regex
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FieldValidationProblem"
+    delete:
+      tags:
+        - brand-kits
+      summary: Delete a Brand Kit
+      description: >-
+        Refused when this is the project's default kit, or when any Creative still references it —
+        reassign or delete those first. Requires ADMIN or CREATOR.
+      operationId: deleteBrandKit
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kitId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Brand Kit not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: This is the project's default kit, or a Creative still references it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/brand-kits/{kitId}/images/{slot}:
+    post:
+      tags:
+        - brand-kits
+      summary: Mint a signed upload for one Brand Kit image slot
+      description: >-
+        Mint -> client `PUT`s the bytes to `uploadUrl` -> confirm, the same shape as
+        `AssetService#createFileAsset`/`confirmUpload`. Nothing is set on the kit until confirm.
+        Requires ADMIN or CREATOR.
+      operationId: mintBrandKitImageUpload
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kitId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: slot
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/BrandImageSlot"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MintUploadRequest"
+      responses:
+        "200":
+          description: The signed upload ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadTicketResponse"
+        "400":
+          description: Disallowed content type or size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Brand Kit not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - brand-kits
+      summary: Clear one Brand Kit image slot
+      operationId: deleteBrandKitImage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kitId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: slot
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/BrandImageSlot"
+      responses:
+        "200":
+          description: The Brand Kit with this slot cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandKitResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Brand Kit not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/brand-kits/{kitId}/images/{slot}/confirm:
+    post:
+      tags:
+        - brand-kits
+      summary: Confirm an uploaded Brand Kit image
+      operationId: confirmBrandKitImage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kitId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: slot
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/BrandImageSlot"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmUploadRequest"
+      responses:
+        "200":
+          description: The Brand Kit with this slot set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandKitResponse"
+        "400":
+          description: The confirmed path does not match the minted upload for this slot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Brand Kit not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/photos:
+    get:
+      tags:
+        - creatives
+      summary: List the project's Creative photos
+      operationId: listCreativePhotos
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: includeBlocked
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Include photos a human has marked blocked (burned-in text, logos or claims).
+      responses:
+        "200":
+          description: The project's photos, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CreativePhotoResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - creatives
+      summary: Mint a signed upload for a new Creative photo
+      description: >-
+        Mint -> client `PUT`s the bytes to `uploadUrl` -> confirm. Dimensions are client-declared —
+        Conductor has no image pipeline and WebP cannot be probed server-side — and a long edge under
+        2160px on either axis surfaces as a `warnings` entry, never a refusal. Requires ADMIN or
+        CREATOR.
+      operationId: createCreativePhoto
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativePhotoRequest"
+      responses:
+        "201":
+          description: The pending photo and its signed upload URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePhotoResponse"
+        "400":
+          description: Disallowed content type or size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/photos/{photoId}:
+    get:
+      tags:
+        - creatives
+      summary: Get one Creative photo
+      operationId: getCreativePhoto
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The photo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePhotoResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Photo not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - creatives
+      summary: Update a Creative photo's provenance, verdict or focal points
+      operationId: patchCreativePhoto
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchCreativePhotoRequest"
+      responses:
+        "200":
+          description: The updated photo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePhotoResponse"
+        "400":
+          description: A focal value is not shaped "x% y%", or names an unknown placement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Photo not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/photos/{photoId}/confirm:
+    post:
+      tags:
+        - creatives
+      summary: Confirm an uploaded Creative photo
+      operationId: confirmCreativePhoto
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmCreativePhotoRequest"
+      responses:
+        "200":
+          description: The confirmed, UPLOADED photo, with any long-edge warning
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePhotoResponse"
+        "400":
+          description: Disallowed content type or size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Photo not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creative-registry:
+    get:
+      tags:
+        - creatives
+      summary: The layout and placement registry a Creative can reference
+      description: >-
+        The classpath contract behind `CreativeValidator`, so clients never hardcode a layout or
+        placement key. Layout keys and their allowed themes come from `conductor-creative/layouts/`;
+        placement keys from `conductor-creative/placements.json`.
+      operationId: getCreativeRegistry
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The registry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRegistryResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives:
+    get:
+      tags:
+        - creatives
+      summary: List the project's Creatives
+      operationId: listCreatives
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/CreativeState"
+        - name: brandKitId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: >-
+            The project's Creatives, sorted by display number descending then variant letter
+            ascending (so 12b sits right after 12a, and the newest concept leads).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CreativeResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - creatives
+      summary: Create a Creative
+      description: >-
+        `brandKitId` defaults to the project's default kit. `number` is assigned as the next free
+        per-project display number; `variantLetter` is always `a` for a fresh Creative (use the
+        `variants` endpoint to cut a lettered variant of an existing one). Requires ADMIN or CREATOR.
+      operationId: createCreative
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativeRequest"
+      responses:
+        "201":
+          description: The created Creative
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The Creative fails a structural rule (unknown layout/theme/placement, the kit's
+            accent-phrase rule, a copy rule, sequence bounds) or, when `state` is `READY`, a readiness
+            rule (photo missing/unchecked/blocked, blank headline).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeValidationProblem"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}:
+    get:
+      tags:
+        - creatives
+      summary: Get one Creative
+      operationId: getCreative
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Creative
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - creatives
+      summary: Update a Creative
+      description: >-
+        `version` must match the Creative's current version or the write is refused with 409 — read
+        the Creative again, reapply the edit on top of the newer version. Changing `headline` or
+        `layout` clears any pinned `typeOverrides` for the fields that changed, exactly like nexus's
+        `setConcept`. Requires ADMIN or CREATOR.
+      operationId: patchCreative
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchCreativeRequest"
+      responses:
+        "200":
+          description: The updated Creative
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The supplied `version` is stale — the Creative was changed since it was read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The patched Creative fails a structural or (if `state` is or becomes `READY`) readiness
+            rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeValidationProblem"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/variants:
+    post:
+      tags:
+        - creatives
+      summary: Cut a lettered variant of a Creative
+      description: >-
+        Copies photo, layout, theme, body, caption, alt text, placements, sequence and Brand Kit from
+        the family root (the `a` this Creative descends from), assigns the same display `number` and
+        the next free `variantLetter`, and sets `parentCreativeId` to the family root. `headline`
+        defaults to a copy of the source Creative's headline; supply one to give the variant its own
+        hook (AC-P0-2.3: 12a -> 12b keeps the same photo, layout and body with its own headline).
+        Requires ADMIN or CREATOR.
+      operationId: createCreativeVariant
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          description: The Creative (any letter in the family) to cut the variant from.
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativeVariantRequest"
+      responses:
+        "201":
+          description: The new variant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The variant fails a structural rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeValidationProblem"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/readiness:
+    get:
+      tags:
+        - creatives
+      summary: What is stopping this Creative from going up for review
+      description: >-
+        A port of nexus's `readiness()`: caption, alt text, the photo's `checked` verdict and
+        source/licence, and the Creative's own state (must not be `DRAFT`) are blocking; the photo's
+        AI disclosure is informational only. `ready` is true only when every blocking item is clear.
+      operationId: getCreativeReadiness
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The readiness checklist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeReadinessResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4315,3 +5392,791 @@ components:
           type: string
         code:
           type: string
+
+    BrandImageSlot:
+      type: string
+      description: One of the four optional Brand Kit image slots.
+      enum:
+        - mark
+        - wordmark_dark
+        - wordmark_light
+        - badge
+
+    CopyRuleField:
+      type: string
+      enum:
+        - headline
+        - body
+        - caption
+
+    CopyRule:
+      type: object
+      description: >-
+        One brand copy rule, enforced by CreativeValidator against every field it names. The frontend
+        runs the same rule in JS for live validation, so `pattern`/`exceptPattern`/`flags` stick to the
+        regex subset both a Java `Pattern` and a JS `RegExp` accept — no lookbehind, no named groups,
+        no Java-only or JS-only escapes.
+      required:
+        - id
+        - pattern
+        - message
+        - fields
+      properties:
+        id:
+          type: string
+        pattern:
+          type: string
+          description: A regular expression tested against the field's text.
+        flags:
+          type: string
+          nullable: true
+          description: Any combination of `i` (case-insensitive) and `m` (multiline). Omit for neither.
+        message:
+          type: string
+          description: Shown verbatim when the rule fails — this is the text AC-P0-2.1 checks for.
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CopyRuleField"
+        exceptPattern:
+          type: string
+          nullable: true
+          description: >-
+            When set, every match of this pattern is stripped from the field's text before `pattern`
+            is tested — the "Add All to Shopping List" exact-button-name exemption in nexus.
+
+    BrandKitResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - slug
+        - name
+        - isDefault
+        - tokens
+        - accentPhraseRequired
+        - copyRules
+        - approvedLines
+        - enabledPlacements
+        - knowledgePagePath
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        slug:
+          type: string
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        tokens:
+          type: object
+          description: "CSS custom properties the renderer maps to: accent, accent2, darkBg, darkInk, lightBg, lightCard, ink, ink2. Each value is a #RRGGBB hex colour."
+          additionalProperties:
+            type: string
+        fontFamily:
+          type: string
+          nullable: true
+        fontUrl:
+          type: string
+          nullable: true
+        markUrl:
+          type: string
+          nullable: true
+          description: Short-lived signed GET URL, or null when this slot has no image.
+        wordmarkDarkUrl:
+          type: string
+          nullable: true
+        wordmarkLightUrl:
+          type: string
+          nullable: true
+        badgeUrl:
+          type: string
+          nullable: true
+        ctaClaim:
+          type: string
+          nullable: true
+        accentPhraseRequired:
+          type: boolean
+        copyRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/CopyRule"
+        approvedLines:
+          type: array
+          items:
+            type: string
+        enabledPlacements:
+          type: array
+          description: Placement keys (from the creative registry) this kit exports by default.
+          items:
+            type: string
+        knowledgePagePath:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateBrandKitRequest:
+      type: object
+      required:
+        - slug
+        - name
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        tokens:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        fontFamily:
+          type: string
+          nullable: true
+        fontUrl:
+          type: string
+          nullable: true
+        ctaClaim:
+          type: string
+          nullable: true
+        accentPhraseRequired:
+          type: boolean
+          default: false
+        copyRules:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/CopyRule"
+        approvedLines:
+          type: array
+          nullable: true
+          items:
+            type: string
+        enabledPlacements:
+          type: array
+          nullable: true
+          items:
+            type: string
+        knowledgePagePath:
+          type: string
+          nullable: true
+
+    PatchBrandKitRequest:
+      type: object
+      description: Every field is optional and set-replace; omit a field to leave it unchanged.
+      properties:
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        tokens:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        fontFamily:
+          type: string
+          nullable: true
+        fontUrl:
+          type: string
+          nullable: true
+        ctaClaim:
+          type: string
+          nullable: true
+        accentPhraseRequired:
+          type: boolean
+        copyRules:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/CopyRule"
+        approvedLines:
+          type: array
+          nullable: true
+          items:
+            type: string
+        enabledPlacements:
+          type: array
+          nullable: true
+          items:
+            type: string
+        knowledgePagePath:
+          type: string
+
+    MintUploadRequest:
+      type: object
+      required:
+        - contentType
+        - sizeBytes
+      properties:
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+
+    UploadTicketResponse:
+      type: object
+      required:
+        - uploadUrl
+        - gcsPath
+      properties:
+        uploadUrl:
+          type: string
+        gcsPath:
+          type: string
+
+    ConfirmUploadRequest:
+      type: object
+      required:
+        - gcsPath
+      properties:
+        gcsPath:
+          type: string
+
+    FieldError:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+
+    FieldValidationProblem:
+      type: object
+      description: A 422 ProblemDetail body carrying which field(s) failed and why.
+      required:
+        - message
+        - fieldErrors
+      properties:
+        message:
+          type: string
+        fieldErrors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+
+    CreativeViolation:
+      type: object
+      required:
+        - field
+        - ruleId
+        - message
+      properties:
+        field:
+          type: string
+        ruleId:
+          type: string
+          description: >-
+            A stable rule identifier (e.g. `layout`, `theme`, `accentPhrase`, `sequence`, or a Brand
+            Kit copy rule's own `id`) — never a positional index, so a client can key off it.
+        message:
+          type: string
+          description: The failing rule's own message (a Brand Kit copy rule's `message` verbatim, per AC-P0-2.1).
+
+    CreativeValidationProblem:
+      type: object
+      description: The 422 ProblemDetail body CreativeValidator produces.
+      required:
+        - message
+        - violations
+      properties:
+        message:
+          type: string
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeViolation"
+
+    CreativePhotoResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - contentType
+        - sizeBytes
+        - aiGenerated
+        - checked
+        - blocked
+        - focal
+        - uploadStatus
+        - warnings
+        - createdAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        label:
+          type: string
+          nullable: true
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        licence:
+          type: string
+          nullable: true
+        aiGenerated:
+          type: boolean
+        checked:
+          type: boolean
+        blocked:
+          type: boolean
+        blockedReason:
+          type: string
+          nullable: true
+        focal:
+          type: object
+          description: 'Per-placement focal point, e.g. `{"9x16": "50% 30%"}`.'
+          additionalProperties:
+            type: string
+        uploadStatus:
+          type: string
+          enum:
+            - PENDING
+            - UPLOADED
+        url:
+          type: string
+          nullable: true
+          description: Short-lived signed GET URL, present only once UPLOADED.
+        uploadUrl:
+          type: string
+          nullable: true
+          description: The signed PUT URL to upload bytes to — present only on the create response.
+        warnings:
+          type: array
+          items:
+            type: string
+          description: e.g. a long edge under 2160px. Advisory only — never a refusal.
+        createdBy:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateCreativePhotoRequest:
+      type: object
+      required:
+        - contentType
+        - sizeBytes
+        - width
+        - height
+      properties:
+        label:
+          type: string
+          nullable: true
+        contentType:
+          type: string
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+        sizeBytes:
+          type: integer
+          format: int64
+        width:
+          type: integer
+        height:
+          type: integer
+        source:
+          type: string
+          nullable: true
+        licence:
+          type: string
+          nullable: true
+        aiGenerated:
+          type: boolean
+          default: false
+
+    ConfirmCreativePhotoRequest:
+      type: object
+      properties:
+        sizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: The byte count actually written, re-validated against the upload ceiling.
+
+    PatchCreativePhotoRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        source:
+          type: string
+        licence:
+          type: string
+        aiGenerated:
+          type: boolean
+        checked:
+          type: boolean
+        blocked:
+          type: boolean
+        blockedReason:
+          type: string
+        focal:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+
+    CreativeState:
+      type: string
+      enum:
+        - DRAFT
+        - READY
+        - ARCHIVED
+
+    CreativeTheme:
+      type: string
+      enum:
+        - dark
+        - light
+
+    SequenceKind:
+      type: string
+      enum:
+        - story
+        - carousel
+
+    SequenceBeat:
+      type: object
+      description: One story beat or carousel card; each inherits the Creative and overrides only what changes.
+      properties:
+        headline:
+          type: string
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        photoId:
+          type: string
+          nullable: true
+        cta:
+          type: boolean
+          nullable: true
+
+    CreativeResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - brandKitId
+        - number
+        - variantLetter
+        - displayId
+        - state
+        - layout
+        - theme
+        - placements
+        - sequence
+        - typeOverrides
+        - version
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        brandKitId:
+          type: string
+        number:
+          type: integer
+        variantLetter:
+          type: string
+        displayId:
+          type: string
+          description: "number and variantLetter joined, e.g. \"12a\"."
+        parentCreativeId:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        state:
+          $ref: "#/components/schemas/CreativeState"
+        layout:
+          type: string
+        theme:
+          $ref: "#/components/schemas/CreativeTheme"
+        photoId:
+          type: string
+          nullable: true
+        photoUrl:
+          type: string
+          nullable: true
+          description: Short-lived signed GET URL of the photo, for convenience — the frontend still fetches the photo separately for its metadata.
+        focalOverride:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        headline:
+          type: string
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        caption:
+          type: string
+          nullable: true
+        altText:
+          type: string
+          nullable: true
+        placements:
+          type: array
+          items:
+            type: string
+        sequenceKind:
+          $ref: "#/components/schemas/SequenceKind"
+        sequence:
+          type: array
+          items:
+            $ref: "#/components/schemas/SequenceBeat"
+        carouselRatio:
+          type: string
+          nullable: true
+        typeOverrides:
+          type: object
+          description: Pinned per-placement [fontSize, lineHeight, letterSpacing].
+          additionalProperties:
+            type: array
+            items:
+              type: number
+        version:
+          type: integer
+        createdBy:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateCreativeRequest:
+      type: object
+      properties:
+        brandKitId:
+          type: string
+          nullable: true
+          description: Defaults to the project's default Brand Kit.
+        name:
+          type: string
+          nullable: true
+        state:
+          $ref: "#/components/schemas/CreativeState"
+        layout:
+          type: string
+          nullable: true
+          description: Defaults to the registry's first layout.
+        theme:
+          $ref: "#/components/schemas/CreativeTheme"
+        photoId:
+          type: string
+          nullable: true
+        focalOverride:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        headline:
+          type: string
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        caption:
+          type: string
+          nullable: true
+        altText:
+          type: string
+          nullable: true
+        placements:
+          type: array
+          items:
+            type: string
+        sequenceKind:
+          $ref: "#/components/schemas/SequenceKind"
+        sequence:
+          type: array
+          items:
+            $ref: "#/components/schemas/SequenceBeat"
+        carouselRatio:
+          type: string
+          nullable: true
+
+    PatchCreativeRequest:
+      type: object
+      required:
+        - version
+      properties:
+        version:
+          type: integer
+          description: Must equal the Creative's current version, or the write is refused with 409.
+        brandKitId:
+          type: string
+        name:
+          type: string
+        state:
+          $ref: "#/components/schemas/CreativeState"
+        layout:
+          type: string
+        theme:
+          $ref: "#/components/schemas/CreativeTheme"
+        photoId:
+          type: string
+          nullable: true
+        focalOverride:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        headline:
+          type: string
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        caption:
+          type: string
+          nullable: true
+        altText:
+          type: string
+          nullable: true
+        placements:
+          type: array
+          nullable: true
+          items:
+            type: string
+        sequenceKind:
+          $ref: "#/components/schemas/SequenceKind"
+        sequence:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/SequenceBeat"
+        carouselRatio:
+          type: string
+          nullable: true
+        typeOverrides:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: array
+            items:
+              type: number
+
+    CreateCreativeVariantRequest:
+      type: object
+      properties:
+        headline:
+          type: string
+          nullable: true
+          description: Defaults to a copy of the source Creative's headline.
+        name:
+          type: string
+          nullable: true
+
+    CreativeReadinessItem:
+      type: object
+      required:
+        - key
+        - ok
+        - blocking
+        - message
+      properties:
+        key:
+          type: string
+        ok:
+          type: boolean
+        blocking:
+          type: boolean
+        message:
+          type: string
+
+    CreativeReadinessResponse:
+      type: object
+      required:
+        - ready
+        - items
+      properties:
+        ready:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeReadinessItem"
+
+    CreativeRegistryLayout:
+      type: object
+      required:
+        - themes
+      properties:
+        themes:
+          type: array
+          items:
+            type: string
+
+    CreativeRegistryPlacement:
+      type: object
+      required:
+        - key
+        - label
+        - width
+        - height
+        - default
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        platform:
+          type: string
+          nullable: true
+        width:
+          type: integer
+        height:
+          type: integer
+        default:
+          type: boolean
+
+    CreativeRegistryResponse:
+      type: object
+      required:
+        - layouts
+        - placements
+      properties:
+        layouts:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/CreativeRegistryLayout"
+        placements:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeRegistryPlacement"

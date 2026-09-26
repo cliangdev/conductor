@@ -14,6 +14,7 @@ import {
   KeyIcon,
   LibraryIcon,
   LockIcon,
+  PaletteIcon,
   PuzzleIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
@@ -63,6 +64,7 @@ export const AUTOMATION_NAV: StaticNavEntry[] = [
 // view (connection badges, secret key names) isn't the reason anyone would visit.
 export const SETTINGS_NAV: StaticNavEntry[] = [
   { key: 'settings-general', label: 'General', icon: SlidersHorizontalIcon, path: (id) => `/app/projects/${id}/settings/general` },
+  { key: 'settings-brand', label: 'Brand', icon: PaletteIcon, path: (id) => `/app/projects/${id}/settings/brand` },
   { key: 'settings-members', label: 'Members & Roles', icon: UsersIcon, path: (id) => `/app/projects/${id}/settings/members` },
   { key: 'settings-api-keys', label: 'API Keys', icon: KeyIcon, path: (id) => `/app/projects/${id}/settings/api-keys` },
   { key: 'settings-providers', label: 'AI Providers', icon: SparklesIcon, path: (id) => `/app/projects/${id}/settings/providers`, permission: 'agent.manage' },

@@ -7,6 +7,7 @@ conductor-frontend/tsconfig.tsbuildinfo
 # Dependencies
 conductor-tools/node_modules/
 conductor-frontend/node_modules/
+conductor-creative/node_modules/
 
 # Environment / secrets
 .env

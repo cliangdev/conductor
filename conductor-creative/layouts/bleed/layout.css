@@ -1,0 +1,44 @@
+/* bleed — photo covers the whole artboard, text sits over a scrim. */
+
+.cc-board--bleed {
+  background-image: var(--cc-photo);
+  background-size: cover;
+  background-position: var(--cc-focal, 50% 50%);
+  justify-content: flex-end;
+}
+
+/* Fill variant (9x16, 4x5, story): the scrim covers the artboard and the
+   copy is distributed from top to bottom over it. */
+.cc-board__panel--fill {
+  flex: 1 1 auto;
+  height: 100%;
+  justify-content: space-between;
+}
+.cc-r-9x16 .cc-board__panel--fill,
+.cc-r-story .cc-board__panel--fill {
+  padding: 48px 88px var(--cc-safe-bottom, 430px);
+  background-image: linear-gradient(to top,
+    rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.88) 42%,
+    rgba(0,0,0,0.68) 62%, rgba(0,0,0,0.34) 80%, rgba(0,0,0,0.55) 100%);
+}
+.cc-r-4x5 .cc-board__panel--fill {
+  padding: 48px 88px 96px;
+  background-image: linear-gradient(to top,
+    rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.88) 48%,
+    rgba(0,0,0,0.62) 70%, rgba(0,0,0,0.30) 86%, rgba(0,0,0,0.50) 100%);
+}
+
+/* Sequence frames (stories and carousels): anchored bottom so the eye does
+   not have to re-find the copy between taps or swipes. */
+.cc-board--seq .cc-board__panel--fill { justify-content: flex-end; gap: 28px; }
+.cc-board--story.cc-board--bleed .cc-board__panel--fill { padding-top: var(--cc-safe-top, 250px); }
+
+/* Bottom variant (every 1x1, forced via perPlacement). */
+.cc-board__panel--bottom {
+  flex: 0 0 auto;
+  padding: 220px 72px 48px;
+  gap: 14px;
+  background-image: linear-gradient(to top,
+    rgba(28,28,30,0.97) 0%, rgba(28,28,30,0.95) 42%,
+    rgba(28,28,30,0.74) 66%, rgba(28,28,30,0.26) 88%, rgba(28,28,30,0) 100%);
+}

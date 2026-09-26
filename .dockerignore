@@ -1,0 +1,24 @@
+# Root .dockerignore — used only by builds whose context is the repo root, which today is just
+# conductor-frontend/Dockerfile (see .github/workflows/deploy-cloudrun.yml's `dockerfile` input and
+# docker-compose.yml's frontend service). It needs conductor-frontend/ and conductor-creative/
+# (the sibling package it depends on via file:../conductor-creative) and nothing else from the
+# monorepo, so everything else is excluded to keep the build context — and upload to the daemon —
+# small.
+**
+
+!conductor-frontend
+!conductor-frontend/**
+!conductor-creative
+!conductor-creative/**
+
+# Never ship a stale host install over the one `npm ci` produces in the image (same reasoning as
+# conductor-frontend/.dockerignore), and conductor-creative's node_modules/test/ are dev-only
+# (its one devDependency, linkedom, exists solely to give ITS OWN tests a DOM — not needed here).
+conductor-frontend/node_modules
+conductor-frontend/.next
+conductor-creative/node_modules
+conductor-creative/test
+
+**/.git
+**/.DS_Store
+**/*.log

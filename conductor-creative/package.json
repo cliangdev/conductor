@@ -1,0 +1,44 @@
+{
+  "name": "@cliangdev/creative-render",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Brand-agnostic render engine for Conductor Creatives: layouts, placements, live DOM preview and copy-rule checks, shared by the web editor and the headless render job.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "exports": {
+    ".": "./render.js",
+    "./render.js": "./render.js",
+    "./mount": "./mount.js",
+    "./mount.js": "./mount.js",
+    "./copy-rules": "./copy-rules.js",
+    "./copy-rules.js": "./copy-rules.js",
+    "./placements": "./placements.js",
+    "./placements.js": "./placements.js",
+    "./placements.json": "./placements.json",
+    "./layouts/index.js": "./layouts/index.js",
+    "./layouts/index.json": "./layouts/index.json",
+    "./styles.css": "./styles.css",
+    "./tokens.css": "./tokens.css",
+    "./frame.css": "./frame.css",
+    "./layouts/*/layout.css": "./layouts/*/layout.css"
+  },
+  "files": [
+    "render.js",
+    "mount.js",
+    "copy-rules.js",
+    "placements.js",
+    "placements.json",
+    "layouts",
+    "styles.css",
+    "tokens.css",
+    "frame.css",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.5"
+  },
+  "dependencies": {}
+}

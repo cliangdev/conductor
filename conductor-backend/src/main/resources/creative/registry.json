@@ -1,0 +1,16 @@
+{
+  "layouts": {
+    "stacked": { "themes": ["dark"] },
+    "bleed": { "themes": ["dark"] },
+    "card": { "themes": ["dark", "light"] },
+    "split": { "themes": ["dark"] }
+  },
+  "placements": [
+    { "key": "9x16", "label": "9:16 TikTok and Reels", "platform": "tiktok", "width": 1080, "height": 1920, "default": true },
+    { "key": "4x5", "label": "4:5 Instagram feed", "platform": "instagram", "width": 1080, "height": 1350, "default": true },
+    { "key": "1x1", "label": "1:1 Facebook feed", "platform": "facebook", "width": 1080, "height": 1080, "default": true },
+    { "key": "story", "label": "9:16 Instagram and Facebook Stories", "platform": "story", "width": 1080, "height": 1920, "default": false },
+    { "key": "1.91x1", "label": "1.91:1 link ad", "platform": "link", "width": 1200, "height": 628, "default": false },
+    { "key": "2x3", "label": "2:3 Pinterest", "platform": "pinterest", "width": 1000, "height": 1500, "default": false }
+  ]
+}

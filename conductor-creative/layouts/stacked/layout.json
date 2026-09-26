@@ -1,0 +1,23 @@
+{
+  "name": "stacked",
+  "description": "Photo band pinned top over a solid text panel.",
+  "themes": [
+    "dark"
+  ],
+  "lockupInPanel": true,
+  "photo": "band",
+  "panel": "plain",
+  "band": {
+    "9x16": 1080,
+    "4x5": 800
+  },
+  "dropBody": [
+    "4x5"
+  ],
+  "perPlacement": {
+    "1x1": {
+      "layout": "bleed",
+      "panel": "bottom"
+    }
+  }
+}

@@ -139,6 +139,29 @@ class GlobalExceptionHandlerTest {
                 .anyMatch(e -> e.getLevel() == Level.ERROR && e.getFormattedMessage().contains("Unexpected error"));
     }
 
+    @Test
+    void creativeValidationExceptionYields422WithTheRulesOwnMessageInViolations() throws Exception {
+        controller.toThrow = new com.conductor.creative.CreativeValidationException(List.of(
+                new com.conductor.creative.CreativeValidationException.Violation("headline", "noExclaim", "No exclamation marks.")));
+
+        mockMvc.perform(get("/boom"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations[0].field").value("headline"))
+                .andExpect(jsonPath("$.violations[0].ruleId").value("noExclaim"))
+                .andExpect(jsonPath("$.violations[0].message").value("No exclamation marks."));
+    }
+
+    @Test
+    void brandKitValidationExceptionYields422WithFieldErrors() throws Exception {
+        controller.toThrow = new com.conductor.creative.BrandKitValidationException(List.of(
+                new com.conductor.creative.BrandKitValidationException.FieldError(
+                        "copyRules[0].pattern", "Rule 'bad': pattern does not compile as a regex: x")));
+
+        mockMvc.perform(get("/boom"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.fieldErrors[0].field").value("copyRules[0].pattern"));
+    }
+
     @RestController
     static class BoomController {
 

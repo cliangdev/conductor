@@ -8,6 +8,7 @@ import {
   FileTextIcon,
   FolderIcon,
   ImagesIcon,
+  LayoutTemplateIcon,
   LogOutIcon,
   PanelLeftCloseIcon,
   PanelLeftIcon,
@@ -63,6 +64,12 @@ const AREA_EXTRA_NAV: Record<
       label: "What's working",
       icon: TrendingUpIcon,
       path: (projectId) => `/app/projects/${projectId}/marketing/insights`,
+    },
+    {
+      key: 'marketing-creatives',
+      label: 'Creatives',
+      icon: LayoutTemplateIcon,
+      path: (projectId) => `/app/projects/${projectId}/marketing/creatives`,
     },
     {
       key: 'marketing-assets',
