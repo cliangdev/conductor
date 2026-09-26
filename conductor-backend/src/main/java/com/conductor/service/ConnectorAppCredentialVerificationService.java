@@ -114,8 +114,22 @@ public class ConnectorAppCredentialVerificationService {
         this.restTemplate = restTemplate;
     }
 
-    /** Probes {@code connector}'s effective credentials for {@code projectId} and reports what it proved. */
+    /**
+     * Probes {@code connector}'s effective credentials for {@code projectId} and reports what it
+     * proved.
+     *
+     * <p>Refuses outright for a {@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY} connector, before
+     * ever calling {@link ConnectorAppCredentialService#resolve}: this endpoint is reachable by a
+     * CREATOR in any tenant, and Meta's probe in particular mints a real app access token server-side
+     * ({@link #probeAppAccessToken}), so letting it run against Conductor's own app would let any
+     * creator anywhere spend a live credential that belongs to Conductor, not their workspace.
+     */
     public VerificationReport verify(String projectId, OAuth2Connector connector) {
+        if (connector.appOwnership() == OAuth2Connector.AppOwnership.DEPLOYMENT_ONLY) {
+            return report(connector, null, List.of(fail("Verification is refused for a Conductor-managed "
+                    + "app: this connector authenticates as Conductor's own reviewed app, not a "
+                    + "workspace-owned one, so there is no per-project credential to probe")));
+        }
         ResolvedAppCredentials credentials;
         try {
             credentials = appCredentialService.resolve(projectId, connector);

@@ -33,3 +33,7 @@ local-uploads/
 # Misc
 *.log
 .conductor/
+
+# Private working notes, never committed. Also added in #498; duplicated here so this branch
+# cannot leak the file if that PR merges later.
+docs/private/

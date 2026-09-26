@@ -38,6 +38,17 @@ public class SecurityConfig {
     @Value("${frontend.url:http://localhost:3000}")
     private String frontendUrl;
 
+    /**
+     * Extra browser origins allowed through CORS, comma-separated, on top of {@code frontend.url}.
+     *
+     * <p>{@code frontend.url} stays single-valued because it is also the base of every link the
+     * backend writes into a notification. This exists for a hostname cutover: while the frontend
+     * moves to a custom domain, the old Cloud Run URL has to keep working until DNS and the
+     * platform redirect settings have caught up. Empty in the steady state.
+     */
+    @Value("${frontend.cors.additional-origins:}")
+    private String additionalCorsOrigins;
+
     public SecurityConfig(JwtService jwtService, UserRepository userRepository, ProjectApiKeyRepository projectApiKeyRepository, UserApiKeyRepository userApiKeyRepository, RunTokenService runTokenService) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
@@ -49,13 +60,26 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(frontendUrl));
+        config.setAllowedOrigins(allowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
         return source;
+    }
+
+    /** {@code frontend.url} plus any configured extra origins, de-duplicated and blank-free. */
+    List<String> allowedOrigins() {
+        java.util.LinkedHashSet<String> origins = new java.util.LinkedHashSet<>();
+        origins.add(frontendUrl.trim());
+        for (String extra : additionalCorsOrigins.split(",")) {
+            String trimmed = extra.trim();
+            if (!trimmed.isEmpty()) {
+                origins.add(trimmed);
+            }
+        }
+        return List.copyOf(origins);
     }
 
     @Bean

@@ -479,4 +479,120 @@ class OAuthFlowServiceTest {
                 .isInstanceOf(OAuthReauthRequiredException.class)
                 .hasMessageContaining("reconnect");
     }
+
+
+    // ---- redirect_uri: two callback addresses, one recorded per flow -------------------------------
+
+    private static final String BACKEND = "https://backend.example.run.app";
+    private static final String BRANDED = "https://conductor.rexipe.io";
+
+    /** Same fake, but an app Conductor itself registers, the way TikTok and Meta are. */
+    private static class ConductorOwnedConnector extends FakeOAuth2Connector {
+        @Override
+        public AppOwnership appOwnership() { return AppOwnership.DEPLOYMENT_ONLY; }
+    }
+
+    /** Same fake, but an app a workspace must bring, the way YouTube is. */
+    private static class WorkspaceOwnedConnector extends FakeOAuth2Connector {
+        @Override
+        public AppOwnership appOwnership() { return AppOwnership.WORKSPACE_ONLY; }
+    }
+
+    private void useCallbackBases(String backend, String branded) {
+        ReflectionTestUtils.setField(service, "backendUrl", backend);
+        ReflectionTestUtils.setField(service, "oauthCallbackBaseUrl", branded);
+    }
+
+    @Test
+    void oauthCallbackUri_isBrandedOnlyForAnAppConductorOwns() {
+        useCallbackBases(BACKEND, BRANDED);
+
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new ConductorOwnedConnector()));
+        assertThat(service.oauthCallbackUri("acme")).isEqualTo(BRANDED + "/api/v1/oauth/callback");
+
+        // A workspace's own app, and the Google-family default, were registered against the backend's
+        // URL, by the customer in the workspace case, so they must keep it.
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new WorkspaceOwnedConnector()));
+        assertThat(service.oauthCallbackUri("acme")).isEqualTo(BACKEND + "/api/v1/oauth/callback");
+
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new FakeOAuth2Connector()));
+        assertThat(service.oauthCallbackUri("acme")).isEqualTo(BACKEND + "/api/v1/oauth/callback");
+    }
+
+    @Test
+    void oauthCallbackUri_withNoBrandedBaseConfigured_everyConnectorUsesTheBackend() {
+        useCallbackBases(BACKEND, "");
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new ConductorOwnedConnector()));
+
+        assertThat(service.oauthCallbackUri("acme")).isEqualTo(BACKEND + "/api/v1/oauth/callback");
+    }
+
+    @Test
+    void buildAuthorizationUrl_recordsTheRedirectUriItWasBuiltWith() {
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new FakeOAuth2Connector()));
+        when(environment.getProperty("ACME_OAUTH_CLIENT_ID", "")).thenReturn("acme-client-id");
+        when(environment.getProperty("ACME_OAUTH_CLIENT_SECRET", "")).thenReturn("acme-client-secret");
+
+        String branded = BRANDED + "/api/v1/oauth/callback";
+        String url = service.buildAuthorizationUrl(PROJECT_ID, "acme", branded);
+
+        ArgumentCaptor<IntegrationOAuthState> captor = ArgumentCaptor.forClass(IntegrationOAuthState.class);
+        verify(oAuthStateRepository).save(captor.capture());
+        assertThat(captor.getValue().getRedirectUri()).isEqualTo(branded);
+        assertThat(url).contains("redirect_uri=" + branded);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private ArgumentCaptor<HttpEntity> stubAcmeExchange(IntegrationOAuthState oauthState) {
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new FakeOAuth2Connector()));
+        when(environment.getProperty("ACME_OAUTH_CLIENT_ID", "")).thenReturn("acme-client-id");
+        when(environment.getProperty("ACME_OAUTH_CLIENT_SECRET", "")).thenReturn("acme-client-secret");
+        when(oAuthStateRepository.findById(oauthState.getState())).thenReturn(Optional.of(oauthState));
+
+        Connection conn = new Connection();
+        conn.setId("conn-1");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId("acme");
+        when(connectionService.getOrCreateSingle(PROJECT_ID, "acme", AuthType.OAUTH2)).thenReturn(conn);
+
+        ArgumentCaptor<HttpEntity> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        when(restTemplate.exchange(eq("https://acme.example.com/oauth/token"), eq(HttpMethod.POST),
+                requestCaptor.capture(), eq(Map.class)))
+                .thenReturn((ResponseEntity) ResponseEntity.ok(Map.of("access_token", "a", "expires_in", 3600)));
+        return requestCaptor;
+    }
+
+    private static IntegrationOAuthState acmeState(String redirectUri) {
+        IntegrationOAuthState s = new IntegrationOAuthState();
+        s.setState("s-" + (redirectUri == null ? "legacy" : "recorded"));
+        s.setProjectId(PROJECT_ID);
+        s.setConnectorId("acme");
+        s.setExpiresAt(OffsetDateTime.now().plusMinutes(5));
+        s.setRedirectUri(redirectUri);
+        return s;
+    }
+
+    @Test
+    @SuppressWarnings("rawtypes")
+    void handleCallback_replaysTheRecordedRedirectUri_evenWhenArrivingThroughTheOtherAddress() {
+        // Consent was built with the branded URL; the callback handler's own default is the backend's.
+        // OAuth rejects an exchange whose redirect_uri differs from the consent's, so the recorded one wins.
+        IntegrationOAuthState state = acmeState(BRANDED + "/api/v1/oauth/callback");
+        ArgumentCaptor<HttpEntity> body = stubAcmeExchange(state);
+
+        service.handleCallback("code", state.getState(), BACKEND + "/api/v1/oauth/callback");
+
+        MultiValueMapAssertHelper.assertContains(body.getValue(), "redirect_uri", BRANDED + "/api/v1/oauth/callback");
+    }
+
+    @Test
+    @SuppressWarnings("rawtypes")
+    void handleCallback_aFlowStartedBeforeRedirectUrisWereRecordedUsesTheFallback() {
+        IntegrationOAuthState state = acmeState(null);
+        ArgumentCaptor<HttpEntity> body = stubAcmeExchange(state);
+
+        service.handleCallback("code", state.getState(), BACKEND + "/api/v1/oauth/callback");
+
+        MultiValueMapAssertHelper.assertContains(body.getValue(), "redirect_uri", BACKEND + "/api/v1/oauth/callback");
+    }
 }

@@ -31,17 +31,28 @@ const nextConfig = {
     ]
   },
   async rewrites() {
+    const rules = []
+
     // Proxy Firebase auth handler to our own domain so signInWithPopup opens
     // a same-origin popup — eliminates all COOP/window.closed issues in Chrome 149+.
     // This mirrors how Firebase Hosting handles custom auth domains.
     const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    if (!authDomain || authDomain === 'placeholder.firebaseapp.com') return []
-    return [
-      {
-        source: '/__/auth/:path*',
-        destination: `https://${authDomain}/__/auth/:path*`,
-      },
-    ]
+    if (authDomain && authDomain !== 'placeholder.firebaseapp.com') {
+      rules.push({ source: '/__/auth/:path*', destination: `https://${authDomain}/__/auth/:path*` })
+    }
+
+    // The OAuth callback for the platform apps Conductor registers (TikTok, Meta) lives on this
+    // domain, so their allowed redirect URI reads https://conductor.rexipe.io/api/v1/oauth/callback
+    // rather than a *.run.app address. Only this one path is proxied: the backend's 302 onward to
+    // the app passes straight through to the browser. The backend records which callback address a
+    // flow started with and replays it at the token exchange, so this and the backend's own
+    // callback URL both keep working. See OAuthFlowService.oauthCallbackUri(String).
+    const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '')
+    if (/^https?:\/\//.test(apiUrl)) {
+      rules.push({ source: '/api/v1/oauth/callback', destination: `${apiUrl}/api/v1/oauth/callback` })
+    }
+
+    return rules
   },
 };
 

@@ -180,10 +180,10 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
         return true;
     }
 
-    /** Mirrors the real connector: this platform's app belongs to the workspace, not the deployment. */
+    /** Mirrors the real connector: this platform's app is Conductor's own, not the workspace's. */
     @Override
-    public boolean allowsDeploymentCredentials() {
-        return false;
+    public AppOwnership appOwnership() {
+        return AppOwnership.DEPLOYMENT_ONLY;
     }
 
     /** Same as the real connector: the grant covers several Pages, so a human picks one. */

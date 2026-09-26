@@ -5,11 +5,21 @@ import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
 /** The shared centered-card shell for the login and CLI-login pages. Each page supplies its own
- * headings/copy as children so the card itself carries no fixed title. */
-export function AuthCard({ children, className }: { children: React.ReactNode; className?: string }) {
+ * headings/copy as children so the card itself carries no fixed title. `footer` renders below the
+ * card, outside it, for links that belong to the page rather than the form. */
+export function AuthCard({
+  children,
+  className,
+  footer,
+}: {
+  children: React.ReactNode
+  className?: string
+  footer?: React.ReactNode
+}) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-background px-4">
       <Card className={cn('w-full max-w-sm p-8', className)}>{children}</Card>
+      {footer}
     </div>
   )
 }

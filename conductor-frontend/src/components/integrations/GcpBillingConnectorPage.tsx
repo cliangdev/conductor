@@ -234,7 +234,9 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
                 </button>
                 {credentialBlocked && (
                   <p className="text-xs text-muted-foreground">
-                    Available once the platform app credentials above are configured.
+                    {appCredential?.appOwnership === 'DEPLOYMENT_ONLY'
+                      ? "Available once this deployment's platform app is configured."
+                      : 'Available once the platform app credentials above are configured.'}
                   </p>
                 )}
               </div>

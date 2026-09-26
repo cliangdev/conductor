@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -253,19 +254,31 @@ class ConnectorAppCredentialVerificationServiceTest {
 
     @Test
     void reportsErrorTellingTheAdminToEnterCredentials_whenTheConnectorTakesNoDeploymentApp() {
-        StubConnector meta = metaConnector();
+        StubConnector workspaceOnly = workspaceOnlyConnector();
         // NONE with no missing properties is how the credential service says "workspace-only, and this
         // workspace has entered nothing" — there is no env var that would resolve it.
         when(appCredentialService.resolve(eq(PROJECT_ID), any())).thenReturn(
-                new ResolvedAppCredentials("meta", CredentialSource.NONE, null, null, List.of()));
+                new ResolvedAppCredentials("youtube", CredentialSource.NONE, null, null, List.of()));
 
-        var report = service.verify(PROJECT_ID, meta);
+        var report = service.verify(PROJECT_ID, workspaceOnly);
 
         server.verify();
         assertThat(report.status()).isEqualTo(ConnectorAppCredentialVerificationService.ReportStatus.ERROR);
         assertThat(messages(report))
                 .contains("enter this workspace's client id and secret")
                 .doesNotContain("on the deployment");
+    }
+
+    @Test
+    void refusesToVerifyADeploymentOnlyConnector_withoutEverResolvingCredentials() {
+        StubConnector meta = deploymentOnlyMetaConnector();
+
+        var report = service.verify(PROJECT_ID, meta);
+
+        server.verify();
+        verifyNoInteractions(appCredentialService);
+        assertThat(report.status()).isEqualTo(ConnectorAppCredentialVerificationService.ReportStatus.ERROR);
+        assertThat(messages(report)).contains("refused for a Conductor-managed app");
     }
 
     @Test
@@ -304,9 +317,30 @@ class ConnectorAppCredentialVerificationServiceTest {
         return new StubConnector("tiktok", "TikTok", "https://open.tiktokapis.com/v2/oauth/token/", "client_key");
     }
 
-    /** Only the OAuth2Connector hooks the probe actually reads. */
-    private record StubConnector(String id, String name, String tokenUrl, String clientIdParamName)
-            implements OAuth2Connector {
+    /** Stands in for YouTube: a real connector whose app must be the workspace's own. */
+    private StubConnector workspaceOnlyConnector() {
+        return new StubConnector("youtube", "YouTube", "https://oauth2.googleapis.com/token", "client_id",
+                OAuth2Connector.AppOwnership.WORKSPACE_ONLY);
+    }
+
+    /** Meta as it actually is now: Conductor's own app, never a workspace's to verify. */
+    private StubConnector deploymentOnlyMetaConnector() {
+        return new StubConnector("meta", "Meta", "https://graph.facebook.com/v21.0/oauth/access_token",
+                "client_id", OAuth2Connector.AppOwnership.DEPLOYMENT_ONLY);
+    }
+
+    /**
+     * Only the OAuth2Connector hooks the probe actually reads, plus {@code appOwnership} so the
+     * refusal path can be exercised without dragging every other fixture into DEPLOYMENT_ONLY. The
+     * 4-arg constructor keeps every existing fixture at the interface's WORKSPACE_OR_DEPLOYMENT
+     * default.
+     */
+    private record StubConnector(String id, String name, String tokenUrl, String clientIdParamName,
+                                 OAuth2Connector.AppOwnership appOwnership) implements OAuth2Connector {
+        StubConnector(String id, String name, String tokenUrl, String clientIdParamName) {
+            this(id, name, tokenUrl, clientIdParamName, OAuth2Connector.AppOwnership.WORKSPACE_OR_DEPLOYMENT);
+        }
+
         @Override
         public String getId() {
             return id;

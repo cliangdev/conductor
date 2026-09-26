@@ -4,13 +4,9 @@ Posts video to a **TikTok creator account**. TikTok has no scheduling API, so Co
 
 ## Before you connect
 
-1. Register an app in the TikTok for Developers console to get a **client key** and secret.
-2. Add the **Content Posting API** product and enable **Direct Post** — a separate toggle from adding the product itself. Posting will not work without it.
-3. Add the **Login Kit** product. Redirect URIs are registered here, not under Content Posting API: \`{BACKEND_URL}/api/v1/oauth/callback\`. They must be https, absolute, and free of query strings.
-4. Request the \`user.info.basic\`, \`video.publish\` and \`video.upload\` scopes. All three need TikTok's approval before they can be granted.
-5. Submit the app for TikTok's **content-posting audit**.
+TikTok publishes through Conductor's own reviewed app, so there is no app to register, no product to add, and no redirect URI to enter. You need a **TikTok account** you can log into with content-posting permission on it. Click **Connect** and log in with that account when TikTok asks.
 
-> **Until the audit passes, posts are forced to \`SELF_ONLY\`** — visible to the creator alone — and at most **5 users can post in any 24-hour window**. TikTok publishes no timeline for the audit. The most commonly reported rejection reason is a consent flow that doesn't match TikTok's required disclosure screens.
+> **Until Conductor's app passes TikTok's content-posting audit, posts are forced to \`SELF_ONLY\`** (visible to the creator alone), and at most **5 users can post in any 24-hour window**, across every workspace on this deployment. TikTok publishes no timeline for the audit.
 
 ## Compliance requirements
 

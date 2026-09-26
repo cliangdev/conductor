@@ -34,6 +34,13 @@ public class IntegrationOAuthState {
     @Column(name = "config_json", columnDefinition = "jsonb")
     private Map<String, Object> configJson;
 
+    /**
+     * The redirect_uri the consent URL was built with, replayed at the token exchange, which must match
+     * it exactly. Null for a flow started before this was recorded. See V138.
+     */
+    @Column(name = "redirect_uri", columnDefinition = "TEXT")
+    private String redirectUri;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -58,6 +65,9 @@ public class IntegrationOAuthState {
 
     public Map<String, Object> getConfigJson() { return configJson; }
     public void setConfigJson(Map<String, Object> configJson) { this.configJson = configJson; }
+
+    public String getRedirectUri() { return redirectUri; }
+    public void setRedirectUri(String redirectUri) { this.redirectUri = redirectUri; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

@@ -132,6 +132,9 @@ export function ConnectorAppCredentialPanel({
   // Best-effort: the raw id still shows if the member list can't be read, which beats hiding
   // "who set it" entirely.
   const setterName = status.updatedBy ? (memberNames[status.updatedBy] ?? status.updatedBy) : null
+  // WORKSPACE_OR_DEPLOYMENT is the only ownership where clearing a workspace credential leaves a
+  // working fallback; WORKSPACE_ONLY has none, and DEPLOYMENT_ONLY never reaches this branch at all.
+  const canFallBackToDeployment = status.appOwnership === 'WORKSPACE_OR_DEPLOYMENT'
 
   useEffect(() => {
     const userId = status.updatedBy
@@ -222,6 +225,47 @@ export function ConnectorAppCredentialPanel({
     }
   }
 
+  // Conductor's own reviewed app is always used for this connector, so a workspace never sees or
+  // sets a client id or secret, and there is no Save, Replace, Clear or Verify to offer.
+  if (status.appOwnership === 'DEPLOYMENT_ONLY') {
+    return (
+      <Card className="mb-6 max-w-2xl">
+        <CardHeader>
+          <h2 className="text-sm font-semibold text-foreground">Platform app</h2>
+          <StatusBadge status={badge.status} label={badge.label} />
+        </CardHeader>
+        <div className="px-4 py-3">
+          {source === 'NONE' ? (
+            <Alert variant="warning">
+              <p>
+                {connectorName} publishes through Conductor&apos;s own reviewed app, but this
+                deployment has not configured it yet, so nobody can connect {connectorName} until
+                it does.
+              </p>
+              {status.missingProperties.length > 0 && (
+                <p className="mt-1">
+                  An operator needs to set{' '}
+                  {status.missingProperties.map((property, index) => (
+                    <span key={property}>
+                      {index > 0 && ', '}
+                      <code className="font-mono text-xs">{property}</code>
+                    </span>
+                  ))}{' '}
+                  on the deployment.
+                </p>
+              )}
+            </Alert>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {connectorName} publishes through Conductor&apos;s own reviewed app. There is
+              nothing to configure here.
+            </p>
+          )}
+        </div>
+      </Card>
+    )
+  }
+
   return (
     <Card className="mb-6 max-w-2xl">
       <CardHeader>
@@ -274,7 +318,7 @@ export function ConnectorAppCredentialPanel({
                   deployment's app has an env var worth naming; one whose app must belong to the
                   workspace does not, and naming one would send an admin to set something nothing reads.
                 */}
-                {status.allowsDeploymentCredentials ? (
+                {canFallBackToDeployment ? (
                   status.missingProperties.length > 0 && (
                     <p className="mt-1">
                       Set{' '}
@@ -289,8 +333,9 @@ export function ConnectorAppCredentialPanel({
                   )
                 ) : (
                   <p className="mt-1">
-                    {connectorName} apps belong to the workspace that registered them, so there is no
-                    deployment credential to fall back on.{' '}
+                    {connectorName} needs this workspace&apos;s own app, since it isn&apos;t part of
+                    Conductor&apos;s central app, so there is no deployment credential to fall back
+                    on.{' '}
                     {canManage
                       ? 'Enter this workspace\u2019s client ID and secret below.'
                       : 'Only a workspace admin can enter this workspace\u2019s client ID and secret.'}
@@ -341,9 +386,16 @@ export function ConnectorAppCredentialPanel({
                 </>
               )}
               {canManage && source === 'DEPLOYMENT' && (
-                <Button size="sm" variant="outline" onClick={openForm}>
-                  Use a credential for this workspace instead
-                </Button>
+                <details className="w-full">
+                  <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
+                    Use your own app
+                  </summary>
+                  <div className="mt-2">
+                    <Button size="sm" variant="outline" onClick={openForm}>
+                      Use a credential for this workspace instead
+                    </Button>
+                  </div>
+                </details>
               )}
               {canManage && source === 'NONE' && (
                 <Button size="sm" onClick={openForm}>
@@ -370,12 +422,12 @@ export function ConnectorAppCredentialPanel({
       <ConfirmModal
         open={confirmingClear}
         title={
-          status.allowsDeploymentCredentials
+          canFallBackToDeployment
             ? 'Use the deployment credential?'
             : `Remove this workspace's ${connectorName} app?`
         }
         description={
-          status.allowsDeploymentCredentials
+          canFallBackToDeployment
             ? `This removes the client ID and secret set on this workspace. ${connectorName} consent flows fall back to whatever the deployment provides.`
             : `This removes the client ID and secret set on this workspace. Nobody can connect ${connectorName} until another app is entered here; connections that already exist keep working until their tokens need refreshing.`
         }

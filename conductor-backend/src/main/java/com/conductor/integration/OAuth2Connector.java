@@ -31,8 +31,8 @@ import java.util.Map;
  *   <li><b>Account selection</b> — {@link #requiresAccountSelection()} and
  *       {@link #listAuthorizableAccounts(String)}, for providers whose grant covers several
  *       publishable accounts and where a human must pick one before the connection is usable.</li>
- *   <li><b>Credential ownership</b> — {@link #allowsDeploymentCredentials()}, for a provider whose
- *       app must be registered by each workspace rather than once by the deployment.</li>
+ *   <li><b>Credential ownership</b>: {@link #appOwnership()}, for whether a provider's app is
+ *       registered once by the deployment or must be the workspace's own.</li>
  * </ul>
  */
 public interface OAuth2Connector extends Connector {
@@ -60,21 +60,52 @@ public interface OAuth2Connector extends Connector {
     }
 
     /**
-     * Whether this connector may fall back to the deployment-wide app named by
-     * {@link #clientIdProperty()}/{@link #clientSecretProperty()} when a workspace has stored no app
-     * credentials of its own.
-     *
-     * <p>True for the Google family, which shares one deployment OAuth client across GSC, GCP Billing
-     * and the rest: those apps are registered once by whoever runs the deployment, and a workspace that
-     * sets nothing is meant to inherit them.
-     *
-     * <p>False for a provider whose app must belong to the workspace — the publishing platforms, whose
-     * apps carry their own App Review, their own rate limits and their own creator relationship. For
-     * those, {@link com.conductor.service.ConnectorAppCredentialService} never reads the environment at
-     * all: no row means not configured, and the property names survive only as identifiers.
+     * Who is allowed to own the OAuth <em>app</em> (as opposed to the per-connection grant a member
+     * authorizes) this connector authenticates as. {@link com.conductor.service
+     * .ConnectorAppCredentialService} reads this to decide whether a project's own stored row, the
+     * deployment's environment variables, or only the deployment may ever supply the app's client id
+     * and secret.
      */
-    default boolean allowsDeploymentCredentials() {
-        return true;
+    enum AppOwnership {
+        /**
+         * The app belongs to the deployment and only the deployment: Conductor registers one app,
+         * gets it reviewed once, and every workspace's members authorize through it. This is the
+         * shape for a platform whose review process is expensive and slow to repeat per workspace and
+         * whose API has no per-workspace app quota that would make sharing one app a problem: TikTok's
+         * content-posting audit and Meta's App Review are both reviews of the <em>app</em>, not of any
+         * one workspace's use of it, so one reviewed app can carry every workspace's traffic. For this
+         * ownership, {@link com.conductor.service.ConnectorAppCredentialService} never even looks for
+         * a project row (a stale one left over from before a connector's ownership changed must never
+         * win), and a project can never store or clear one of its own.
+         */
+        DEPLOYMENT_ONLY,
+        /**
+         * The app must belong to the workspace: a deployment-wide app is never a valid stand-in. This
+         * is the shape for a platform whose OAuth verification is granted to one specific client and
+         * whose quota is metered per project rather than per end user: YouTube's {@code youtube.upload}
+         * scope is sensitive, Google verifies it against one OAuth client, and upload quota is granted
+         * to that client's project on Google Cloud, so sharing Conductor's own app across workspaces
+         * would mean every workspace draining the same quota bucket and inheriting the same
+         * verification exposure. A project with no row of its own simply cannot connect.
+         */
+        WORKSPACE_ONLY,
+        /**
+         * Either may supply the app: a project's own stored row wins if present, and the deployment's
+         * environment variables are a valid fallback otherwise. This is the default and describes the
+         * Google family (GSC, GCP Billing, and any Google-backed connector that does not opt into
+         * {@link #WORKSPACE_ONLY}); those apps are registered once by whoever runs the deployment, and
+         * a workspace that has entered nothing of its own is meant to inherit them.
+         */
+        WORKSPACE_OR_DEPLOYMENT
+    }
+
+    /**
+     * See {@link AppOwnership}. Defaults to {@link AppOwnership#WORKSPACE_OR_DEPLOYMENT}, which is
+     * the exact behaviour every connector had before this hook existed, so a connector that overrides
+     * nothing is unaffected.
+     */
+    default AppOwnership appOwnership() {
+        return AppOwnership.WORKSPACE_OR_DEPLOYMENT;
     }
 
     /**

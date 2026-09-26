@@ -136,34 +136,55 @@ describe('IntegrationsPage — JSON field (gcp connector)', () => {
 // platform app credential that consent flow can only fail mid-redirect with a server error naming
 // an environment variable, so the card must withhold the affordance instead of offering it.
 
-const oauthConnector = (credentialSource: 'PROJECT' | 'DEPLOYMENT' | 'NONE' | null) => ({
-  connectorId: 'meta',
-  name: 'Meta',
-  category: 'Marketing',
-  authType: 'OAUTH2' as const,
-  capabilities: ['publish'],
-  singleInstance: true,
-  description: 'Publish to Facebook and Instagram',
-  iconLabel: 'MT',
-  connected: false,
-  configFields: [],
-  connections: [],
-  appCredential:
-    credentialSource === null
-      ? null
-      : {
-          connectorId: 'meta',
-          credentialSource,
-          configured: credentialSource !== 'NONE',
-          clientId: credentialSource === 'NONE' ? null : 'app-123',
-          clientSecretLast4: credentialSource === 'NONE' ? null : 'cdef',
-          // Meta's app belongs to the workspace, so an unconfigured one names no env var.
-          missingProperties: [],
-          allowsDeploymentCredentials: false,
-          updatedBy: null,
-          updatedAt: null,
-        },
-})
+type AppOwnership = 'DEPLOYMENT_ONLY' | 'WORKSPACE_ONLY' | 'WORKSPACE_OR_DEPLOYMENT'
+
+// One shape per ownership: YouTube never inherits (WORKSPACE_ONLY), Meta now publishes through
+// Conductor's own reviewed app and never exposes a client id or secret to a workspace
+// (DEPLOYMENT_ONLY), and Search Console can inherit or be overridden (WORKSPACE_OR_DEPLOYMENT).
+const CONNECTOR_BY_OWNERSHIP: Record<AppOwnership, { connectorId: string; name: string; iconLabel: string }> = {
+  WORKSPACE_ONLY: { connectorId: 'youtube', name: 'YouTube', iconLabel: 'YT' },
+  DEPLOYMENT_ONLY: { connectorId: 'meta', name: 'Meta', iconLabel: 'MT' },
+  WORKSPACE_OR_DEPLOYMENT: { connectorId: 'gsc', name: 'Google Search Console', iconLabel: 'GS' },
+}
+
+const oauthConnector = (
+  appOwnership: AppOwnership,
+  credentialSource: 'PROJECT' | 'DEPLOYMENT' | 'NONE' | null
+) => {
+  const { connectorId, name, iconLabel } = CONNECTOR_BY_OWNERSHIP[appOwnership]
+  return {
+    connectorId,
+    name,
+    category: 'Marketing',
+    authType: 'OAUTH2' as const,
+    capabilities: ['publish'],
+    singleInstance: true,
+    description: `Publish through ${name}`,
+    iconLabel,
+    connected: false,
+    configFields: [],
+    connections: [],
+    appCredential:
+      credentialSource === null
+        ? null
+        : {
+            connectorId,
+            credentialSource,
+            configured: credentialSource !== 'NONE',
+            // A DEPLOYMENT_ONLY connector never exposes a client id or secret to a workspace, even
+            // when configured.
+            clientId: credentialSource === 'NONE' || appOwnership === 'DEPLOYMENT_ONLY' ? null : 'app-123',
+            clientSecretLast4: credentialSource === 'NONE' || appOwnership === 'DEPLOYMENT_ONLY' ? null : 'cdef',
+            missingProperties:
+              credentialSource === 'NONE' && appOwnership !== 'WORKSPACE_ONLY'
+                ? ['SOME_CLIENT_ID', 'SOME_CLIENT_SECRET']
+                : [],
+            appOwnership,
+            updatedBy: null,
+            updatedAt: null,
+          },
+  }
+}
 
 async function openBrowse() {
   render(<IntegrationsPage />)
@@ -175,36 +196,49 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
     vi.clearAllMocks()
   })
 
-  it('routes an OAuth2 card whose platform app is not configured to its setup page and says why', async () => {
-    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('NONE')])
+  it('routes a WORKSPACE_ONLY card whose app is not configured to its setup page and says why', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('WORKSPACE_ONLY', 'NONE')])
     await openBrowse()
 
-    const link = (await screen.findByText('Meta')).closest('a') as HTMLAnchorElement
+    const link = (await screen.findByText('YouTube')).closest('a') as HTMLAnchorElement
     expect(link).not.toBeNull()
-    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations/meta')
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations/youtube')
     expect(within(link).getByText(/enter this workspace's app credentials/i)).toBeInTheDocument()
     // The label points at the fix, not at a connect action that would fail.
     expect(within(link).getByText('Set up')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /authorize/i })).not.toBeInTheDocument()
   })
 
-  it('starts no OAuth flow when the blocked card is clicked — it navigates to the setup page', async () => {
-    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('NONE')])
+  it('routes a DEPLOYMENT_ONLY card whose central app is not configured to its setup page, blaming the deployment', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('DEPLOYMENT_ONLY', 'NONE')])
+    await openBrowse()
+
+    const link = (await screen.findByText('Meta')).closest('a') as HTMLAnchorElement
+    expect(link).not.toBeNull()
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations/meta')
+    // This is a deployment-side gap, not something a workspace member can fix by entering anything.
+    expect(within(link).queryByText(/enter this workspace's app credentials/i)).not.toBeInTheDocument()
+    expect(within(link).getByText(/deployment.*hasn't configured/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /authorize/i })).not.toBeInTheDocument()
+  })
+
+  it('starts no OAuth flow when a blocked card is clicked: it navigates to the setup page', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('WORKSPACE_ONLY', 'NONE')])
     await openBrowse()
 
     // A click on the card body bubbles to whatever wrapper the card rendered — so this fails
     // loudly if the connect affordance is ever restored for an unconfigured connector.
-    fireEvent.click(await screen.findByText('Meta'))
+    fireEvent.click(await screen.findByText('YouTube'))
 
     expect(api.apiPost).not.toHaveBeenCalled()
-    expect((await screen.findByText('Meta')).closest('a')).toHaveAttribute(
+    expect((await screen.findByText('YouTube')).closest('a')).toHaveAttribute(
       'href',
-      '/app/projects/proj-1/integrations/meta',
+      '/app/projects/proj-1/integrations/youtube',
     )
   })
 
   it('leaves a DEPLOYMENT-credentialed OAuth2 card connectable', async () => {
-    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('DEPLOYMENT')])
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('WORKSPACE_OR_DEPLOYMENT', 'DEPLOYMENT')])
     vi.mocked(api.apiPost).mockResolvedValue({ authorizationUrl: 'https://example.com/consent' })
     await openBrowse()
 
@@ -212,7 +246,7 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
 
     await waitFor(() => {
       expect(api.apiPost).toHaveBeenCalledWith(
-        '/api/v1/projects/proj-1/integrations/meta/oauth/authorize',
+        '/api/v1/projects/proj-1/integrations/gsc/oauth/authorize',
         {},
         'test-token',
       )
@@ -220,7 +254,7 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
   })
 
   it('leaves a PROJECT-credentialed OAuth2 card connectable', async () => {
-    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('PROJECT')])
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('WORKSPACE_ONLY', 'PROJECT')])
     vi.mocked(api.apiPost).mockResolvedValue({ authorizationUrl: 'https://example.com/consent' })
     await openBrowse()
 
@@ -240,7 +274,7 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
   })
 
   it('says nothing about platform apps on a connectable OAuth2 card', async () => {
-    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('DEPLOYMENT')])
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('WORKSPACE_OR_DEPLOYMENT', 'DEPLOYMENT')])
     await openBrowse()
 
     await screen.findByRole('button', { name: /authorize/i })

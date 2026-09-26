@@ -220,7 +220,9 @@ export default function GenericConnectorPage({
               </Button>
               {appCredential?.credentialSource === 'NONE' && (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Available once the platform app credentials above are configured.
+                  {appCredential.appOwnership === 'DEPLOYMENT_ONLY'
+                    ? "Available once this deployment's platform app is configured."
+                    : 'Available once the platform app credentials above are configured.'}
                 </p>
               )}
             </>

@@ -4,15 +4,7 @@ Publishes images and video to a **Facebook Page** and, when one is linked, an **
 
 ## Before you connect
 
-Meta has the longest lead time of any integration here. Start it early.
-
-1. Create a **Business** app in the Meta App Dashboard.
-2. Add **Facebook Login for Business**, and **Instagram → Instagram API setup with Facebook login**.
-3. Register the redirect URI under *Facebook Login → Settings → Valid OAuth Redirect URIs*: \`{BACKEND_URL}/api/v1/oauth/callback\`.
-4. Complete **business verification**. This is a separate gate that blocks App Review submission entirely, and commonly takes over a week — start it in parallel, not afterwards.
-5. Submit **App Review** for \`pages_manage_posts\`, \`pages_read_engagement\`, \`instagram_basic\`, \`instagram_content_publish\` and \`business_management\`. Only \`pages_show_list\` needs no review. Budget several weeks including a resubmission.
-
-**You can test the whole flow before review finishes.** Review is only required once someone *without a role on the app* uses it. Add your own Facebook account — and the Page and Instagram account you intend to publish to — as an app **Tester**, and every permission works immediately.
+Meta publishes through Conductor's own reviewed app, so there is no app to create, no business verification to complete, and no App Review to submit. Make sure you have the accounts below, then click **Connect** and log in with a Facebook account that administers the Page.
 
 ## Account requirements
 
@@ -36,7 +28,7 @@ A Page access token does not expire on a timer, but it dies immediately if the a
 
 ## Not yet confirmed
 
-Two things worth verifying against your own app dashboard rather than trusting this page: whether \`instagram_basic\` and \`instagram_content_publish\` are being sunset in favour of the newer \`instagram_business_*\` names, and whether a Page video published through the standard endpoint is reclassified as a Reel. Neither is settled in Meta's public documentation.
+Two things worth watching rather than trusting this page: whether \`instagram_basic\` and \`instagram_content_publish\` are being sunset in favour of the newer \`instagram_business_*\` names, and whether a Page video published through the standard endpoint is reclassified as a Reel. Neither is settled in Meta's public documentation.
 `
 
 export default doc
