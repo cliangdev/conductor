@@ -25,7 +25,7 @@ function Header() {
         <span className="sr-only">Conductor</span>
       </h1>
       <p className="mb-8 text-sm text-muted-foreground text-center">
-        Agents draft the work. Your team approves it.
+        Write it or let an agent draft it. Your team approves it.
       </p>
     </>
   )

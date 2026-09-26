@@ -86,7 +86,7 @@ export default function OpengraphImage() {
             color: 'rgba(255,255,255,0.7)',
           }}
         >
-          Agents draft the work. Your team approves it. Conductor ships it.
+          Write it or let an agent draft it. Your team approves. Conductor ships.
         </div>
       </div>
     ),

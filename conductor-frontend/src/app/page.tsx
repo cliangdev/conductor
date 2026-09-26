@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   // layout's "%s · Conductor" template. The browser tab has to read exactly "Conductor".
   title: 'Conductor',
   description:
-    'Conductor is a coordination platform for teams that work with AI agents. Agents write the drafts, your people approve them, and Conductor publishes to the accounts your workspace has connected.',
+    'Conductor is a coordination platform for teams that work with AI agents. Your team writes the work or has an agent draft it, a person approves it, and Conductor publishes to the accounts your workspace has connected.',
   alternates: { canonical: '/' },
 }
 
@@ -33,8 +33,8 @@ export const metadata: Metadata = {
 const STEPS = [
   {
     icon: PenLine,
-    title: 'An agent drafts',
-    body: 'One of your agents writes a spec, a pull request, a campaign brief or a social post into a Work Item in your workspace.',
+    title: 'Write it, or hand it off',
+    body: 'Write a spec, a pull request, a campaign brief or a social post yourself, or have one of your agents draft it. Either way it lands as a Work Item in your workspace.',
   },
   {
     icon: CheckCheck,
@@ -104,9 +104,10 @@ export default function LandingPage() {
             A coordination platform for teams that work with AI agents
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-[15px] leading-[1.7] text-foreground-muted">
-            Your agents write the specs, the code, the campaigns and the social posts. Your team
-            reviews them and decides what ships. Conductor publishes what was approved to the
-            accounts your workspace has connected, then reports back on how it did.
+            Your team writes the work or hands it to an agent: specs, code, campaigns, social
+            posts. Either way, a person reviews it and decides what ships. Conductor publishes what
+            was approved to the accounts your workspace has connected, then reports back on how it
+            did.
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Link

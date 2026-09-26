@@ -10,7 +10,7 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 
 const siteUrl = resolveSiteUrl()
 const description =
-  'A coordination platform for teams that work with AI agents. Agents draft the work. Your team approves it. Conductor ships it.'
+  'A coordination platform for teams that work with AI agents. Write it yourself or let an agent draft it. Your team approves it. Conductor ships it.'
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

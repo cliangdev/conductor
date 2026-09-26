@@ -22,9 +22,10 @@ export default function TermsPage() {
 
       <h2>1. The service</h2>
       <p>
-        Conductor is a coordination platform for teams that work with AI agents. Agents draft
-        work, such as specifications, code, campaigns and social posts, into Work Items that
-        someone can review. Your people review and approve them, and Conductor delivers the
+        Conductor is a coordination platform for teams that work with AI agents. Your team, or
+        the agents it works with, draft work such as specifications, code, campaigns and social
+        posts into Work Items that someone can review. Your people review and approve them, and
+        Conductor delivers the
         approved work to the destinations your workspace has connected. We add, change and remove
         features over time.
       </p>
