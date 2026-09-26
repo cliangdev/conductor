@@ -12,6 +12,7 @@ import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.OAuth2Connector;
+import com.conductor.integration.OAuth2Connector.AppOwnership;
 import com.conductor.repository.ConnectorAppCredentialRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.conductor.service.ConnectorAppCredentialService.CredentialSource;
@@ -73,6 +74,7 @@ class ConnectorAppCredentialServiceTest {
     private static final String PROJECT_B = "proj-b";
     private static final String CONNECTOR_ID = "acme";
     private static final String WORKSPACE_ONLY_CONNECTOR_ID = "platform";
+    private static final String DEPLOYMENT_ONLY_CONNECTOR_ID = "central-platform";
     private static final String REDIRECT_URI = "http://localhost:8080/api/v1/oauth/callback";
     private static final String LOCAL_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests";
     /** Stand-in KEK for the fake KMS: reversible, and obviously not the DEK it wraps. */
@@ -91,6 +93,7 @@ class ConnectorAppCredentialServiceTest {
     private ConnectorAppCredentialService service;
     private final AcmeConnector connector = new AcmeConnector();
     private final WorkspaceOnlyConnector workspaceOnlyConnector = new WorkspaceOnlyConnector();
+    private final DeploymentOnlyConnector deploymentOnlyConnector = new DeploymentOnlyConnector();
 
     @BeforeEach
     void setUp() {
@@ -114,9 +117,9 @@ class ConnectorAppCredentialServiceTest {
     }
 
     /**
-     * A connector whose app must belong to the workspace — the publishing platforms' shape. Identical
-     * to {@link AcmeConnector} but for {@link OAuth2Connector#allowsDeploymentCredentials()}, so any
-     * difference in resolution is attributable to that one flag.
+     * A connector whose app must belong to the workspace: YouTube's shape. Identical to
+     * {@link AcmeConnector} but for {@link OAuth2Connector#appOwnership()}, so any difference in
+     * resolution is attributable to that one override.
      */
     private static final class WorkspaceOnlyConnector implements OAuth2Connector {
         @Override public String getId() { return WORKSPACE_ONLY_CONNECTOR_ID; }
@@ -125,10 +128,30 @@ class ConnectorAppCredentialServiceTest {
         @Override public String tokenUrl() { return "https://platform.example.com/oauth/token"; }
         @Override public String clientIdProperty() { return "PLATFORM_APP_ID"; }
         @Override public String clientSecretProperty() { return "PLATFORM_APP_SECRET"; }
-        @Override public boolean allowsDeploymentCredentials() { return false; }
+        @Override public AppOwnership appOwnership() { return AppOwnership.WORKSPACE_ONLY; }
         @Override public ConnectorMetadata getMetadata() {
             return new ConnectorMetadata(WORKSPACE_ONLY_CONNECTOR_ID, "Platform", ConnectorCategory.MARKETING,
                     "Platform", "PL");
+        }
+        @Override public ConnectorSpec getSpec() { return ConnectorSpec.oauth2(false, List.of()); }
+    }
+
+    /**
+     * A connector whose app is Conductor's own: Meta/TikTok's shape. Identical to
+     * {@link AcmeConnector} but for {@link OAuth2Connector#appOwnership()}, so any difference in
+     * resolution is attributable to that one override.
+     */
+    private static final class DeploymentOnlyConnector implements OAuth2Connector {
+        @Override public String getId() { return DEPLOYMENT_ONLY_CONNECTOR_ID; }
+        @Override public List<String> oauthScopes() { return List.of("platform.publish"); }
+        @Override public String authorizationUrl() { return "https://central.example.com/oauth/authorize"; }
+        @Override public String tokenUrl() { return "https://central.example.com/oauth/token"; }
+        @Override public String clientIdProperty() { return "CENTRAL_APP_ID"; }
+        @Override public String clientSecretProperty() { return "CENTRAL_APP_SECRET"; }
+        @Override public AppOwnership appOwnership() { return AppOwnership.DEPLOYMENT_ONLY; }
+        @Override public ConnectorMetadata getMetadata() {
+            return new ConnectorMetadata(DEPLOYMENT_ONLY_CONNECTOR_ID, "Central", ConnectorCategory.MARKETING,
+                    "Central", "CE");
         }
         @Override public ConnectorSpec getSpec() { return ConnectorSpec.oauth2(false, List.of()); }
     }
@@ -253,7 +276,7 @@ class ConnectorAppCredentialServiceTest {
 
     @Test
     void theStoredSecretIsCiphertextOnTheRowAndNeverPlaintext() {
-        service.put(PROJECT_A, CONNECTOR_ID, "project-a-client-id", "sup3r-secret-value", admin());
+        service.put(PROJECT_A, connector, "project-a-client-id", "sup3r-secret-value", admin());
 
         ArgumentCaptor<ConnectorAppCredential> captor = ArgumentCaptor.forClass(ConnectorAppCredential.class);
         verify(repository).save(captor.capture());
@@ -346,7 +369,7 @@ class ConnectorAppCredentialServiceTest {
     void theStoredSecretRoundTripsThroughTheKmsEnvelope() {
         ConnectorAppCredentialService kmsBacked = kmsBackedService(kmsEnvelope());
 
-        kmsBacked.put(PROJECT_A, CONNECTOR_ID, "project-a-client-id", "sup3r-secret-value", admin());
+        kmsBacked.put(PROJECT_A, connector, "project-a-client-id", "sup3r-secret-value", admin());
         ConnectorAppCredential saved = savedRow();
 
         assertThat(saved.getKmsKeyReference()).isNotBlank();
@@ -360,8 +383,8 @@ class ConnectorAppCredentialServiceTest {
     void eachCredentialRowIsEncryptedUnderItsOwnDek() {
         ConnectorAppCredentialService kmsBacked = kmsBackedService(kmsEnvelope());
 
-        kmsBacked.put(PROJECT_A, CONNECTOR_ID, "client-a", "identical-secret", admin());
-        kmsBacked.put(PROJECT_B, CONNECTOR_ID, "client-b", "identical-secret", admin());
+        kmsBacked.put(PROJECT_A, connector, "client-a", "identical-secret", admin());
+        kmsBacked.put(PROJECT_B, connector, "client-b", "identical-secret", admin());
 
         ArgumentCaptor<ConnectorAppCredential> captor = ArgumentCaptor.forClass(ConnectorAppCredential.class);
         verify(repository, times(2)).save(captor.capture());
@@ -377,7 +400,7 @@ class ConnectorAppCredentialServiceTest {
 
     @Test
     void theLocalProfileEncryptsWithNoKmsConfigured() {
-        service.put(PROJECT_A, CONNECTOR_ID, "project-a-client-id", "sup3r-secret-value", admin());
+        service.put(PROJECT_A, connector, "project-a-client-id", "sup3r-secret-value", admin());
         ConnectorAppCredential saved = savedRow();
 
         assertThat(saved.getKmsKeyReference()).isEqualTo("local");
@@ -451,7 +474,7 @@ class ConnectorAppCredentialServiceTest {
                 .thenReturn(Optional.of(legacy));
         ConnectorAppCredentialService kmsBacked = kmsBackedService(kmsEnvelope());
 
-        kmsBacked.put(PROJECT_A, CONNECTOR_ID, "project-a-client-id", "re-entered-secret", admin());
+        kmsBacked.put(PROJECT_A, connector, "project-a-client-id", "re-entered-secret", admin());
 
         ConnectorAppCredential saved = savedRow();
         assertThat(saved.getKmsKeyReference()).isNotBlank();
@@ -464,7 +487,7 @@ class ConnectorAppCredentialServiceTest {
 
     @Test
     void aNonAdminMemberCannotSetCredentials() {
-        assertThatThrownBy(() -> service.put(PROJECT_A, CONNECTOR_ID, "id", "secret", nonAdmin()))
+        assertThatThrownBy(() -> service.put(PROJECT_A, connector, "id", "secret", nonAdmin()))
                 .isInstanceOf(ForbiddenException.class);
 
         verify(repository, never()).save(any());
@@ -474,7 +497,7 @@ class ConnectorAppCredentialServiceTest {
     void aNonAdminMemberCannotClearCredentials() {
         storedRow(PROJECT_A, "project-a-client-id", "project-a-client-secret");
 
-        assertThatThrownBy(() -> service.clear(PROJECT_A, CONNECTOR_ID, nonAdmin()))
+        assertThatThrownBy(() -> service.clear(PROJECT_A, connector, nonAdmin()))
                 .isInstanceOf(ForbiddenException.class);
 
         verify(repository, never()).delete(any());
@@ -486,7 +509,7 @@ class ConnectorAppCredentialServiceTest {
         ConnectorAppCredential row = storedRow(PROJECT_A, "project-a-client-id", "project-a-client-secret");
         assertThat(service.resolve(PROJECT_A, connector).source()).isEqualTo(CredentialSource.PROJECT);
 
-        service.clear(PROJECT_A, CONNECTOR_ID, admin());
+        service.clear(PROJECT_A, connector, admin());
         verify(repository).delete(row);
 
         when(repository.findByProjectIdAndConnectorId(PROJECT_A, CONNECTOR_ID)).thenReturn(Optional.empty());
@@ -643,7 +666,7 @@ class ConnectorAppCredentialServiceTest {
         assertThat(status.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.NONE);
         assertThat(status.configured()).isFalse();
         assertThat(status.missingProperties()).isEmpty();
-        assertThat(status.allowsDeploymentCredentials()).isFalse();
+        assertThat(status.appOwnership()).isEqualTo(AppOwnership.WORKSPACE_ONLY);
     }
 
     @Test
@@ -669,9 +692,9 @@ class ConnectorAppCredentialServiceTest {
 
         assertThat(statuses).hasSize(2);
         assertThat(statuses.get(0).source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.DEPLOYMENT);
-        assertThat(statuses.get(0).allowsDeploymentCredentials()).isTrue();
+        assertThat(statuses.get(0).appOwnership()).isEqualTo(AppOwnership.WORKSPACE_OR_DEPLOYMENT);
         assertThat(statuses.get(1).source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.NONE);
-        assertThat(statuses.get(1).allowsDeploymentCredentials()).isFalse();
+        assertThat(statuses.get(1).appOwnership()).isEqualTo(AppOwnership.WORKSPACE_ONLY);
         assertThat(statuses.get(1).missingProperties()).isEmpty();
     }
 
@@ -688,6 +711,105 @@ class ConnectorAppCredentialServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Settings -> Integrations")
                 .hasMessageNotContaining("PLATFORM_APP_ID");
+
+        verify(oAuthStateRepository, never()).save(any());
+    }
+
+    // --- A connector whose app is Conductor's own never looks up a project row, even a stored one ---
+
+    @Test
+    void deploymentOnlyConnectorWithNoRowAndEnvSet_resolvesDeployment_withoutEverQueryingTheRow() {
+        when(environment.getProperty("CENTRAL_APP_ID", "")).thenReturn("central-app-id");
+        when(environment.getProperty("CENTRAL_APP_SECRET", "")).thenReturn("central-app-secret");
+
+        var resolved = service.resolve(PROJECT_A, deploymentOnlyConnector);
+
+        assertThat(resolved.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.DEPLOYMENT);
+        assertThat(resolved.clientId()).isEqualTo("central-app-id");
+        assertThat(resolved.clientSecret()).isEqualTo("central-app-secret");
+        verify(repository, never()).findByProjectIdAndConnectorId(any(), any());
+    }
+
+    @Test
+    void deploymentOnlyConnectorWithEnvUnset_resolvesNone_namingTheMissingEnvVars() {
+        when(environment.getProperty("CENTRAL_APP_ID", "")).thenReturn("");
+        when(environment.getProperty("CENTRAL_APP_SECRET", "")).thenReturn("");
+
+        var resolved = service.resolve(PROJECT_A, deploymentOnlyConnector);
+
+        assertThat(resolved.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.NONE);
+        assertThat(resolved.missingProperties()).containsExactly("CENTRAL_APP_ID", "CENTRAL_APP_SECRET");
+        verify(repository, never()).findByProjectIdAndConnectorId(any(), any());
+    }
+
+    @Test
+    void deploymentOnlyConnectorStatus_neverExposesTheCentralAppsClientIdOrSecret() {
+        when(environment.getProperty("CENTRAL_APP_ID", "")).thenReturn("central-app-id");
+        when(environment.getProperty("CENTRAL_APP_SECRET", "")).thenReturn("central-app-secret-value");
+
+        var status = service.status(PROJECT_A, deploymentOnlyConnector);
+
+        assertThat(status.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.DEPLOYMENT);
+        assertThat(status.configured()).isTrue();
+        // The integrations list and catalog endpoints this feeds are member-level, not admin: every
+        // member of every tenant can reach this status, so Conductor's own app id and secret fragment
+        // must never appear in it, unlike a WORKSPACE_OR_DEPLOYMENT connector's deployment resolve.
+        assertThat(status.clientId()).isNull();
+        assertThat(status.clientSecretLast4()).isNull();
+        assertThat(status.appOwnership()).isEqualTo(AppOwnership.DEPLOYMENT_ONLY);
+    }
+
+    @Test
+    void deploymentOnlyConnectorWithAStaleRowPresent_stillResolvesTheDeploymentApp_rowIsIgnored() {
+        when(environment.getProperty("CENTRAL_APP_ID", "")).thenReturn("central-app-id");
+        when(environment.getProperty("CENTRAL_APP_SECRET", "")).thenReturn("central-app-secret");
+        ConnectorAppCredential staleRow = envelopeRow(PROJECT_A, "stale-workspace-app-id", "stale-secret");
+        staleRow.setConnectorId(DEPLOYMENT_ONLY_CONNECTOR_ID);
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, DEPLOYMENT_ONLY_CONNECTOR_ID))
+                .thenReturn(Optional.of(staleRow));
+        when(repository.findByProjectId(PROJECT_A)).thenReturn(List.of(staleRow));
+
+        var resolved = service.resolve(PROJECT_A, deploymentOnlyConnector);
+        var status = service.status(PROJECT_A, deploymentOnlyConnector);
+        var statuses = service.statuses(PROJECT_A, List.of(deploymentOnlyConnector));
+
+        assertThat(resolved.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.DEPLOYMENT);
+        assertThat(resolved.clientId()).isEqualTo("central-app-id");
+        assertThat(status.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.DEPLOYMENT);
+        assertThat(statuses).hasSize(1);
+        assertThat(statuses.get(0).source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.DEPLOYMENT);
+        verify(repository, never()).findByProjectIdAndConnectorId(PROJECT_A, DEPLOYMENT_ONLY_CONNECTOR_ID);
+    }
+
+    @Test
+    void puttingADeploymentOnlyConnectorsCredentials_isRefused() {
+        assertThatThrownBy(() -> service.put(PROJECT_A, deploymentOnlyConnector, "id", "secret", admin()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Conductor publishes through its own reviewed app");
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void clearingADeploymentOnlyConnectorsCredentials_isRefused() {
+        assertThatThrownBy(() -> service.clear(PROJECT_A, deploymentOnlyConnector, admin()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Conductor publishes through its own reviewed app");
+
+        verify(repository, never()).delete(any());
+    }
+
+    @Test
+    void deploymentOnlyConnectorWithNoEnvSet_failsTheFlowNamingTheMissingEnvVar_notTheSettingsAdvice() {
+        when(connectorRegistry.findOAuth2(DEPLOYMENT_ONLY_CONNECTOR_ID))
+                .thenReturn(Optional.of(deploymentOnlyConnector));
+        OAuthFlowService flow = oauthFlowService();
+
+        assertThatThrownBy(() ->
+                flow.buildAuthorizationUrl(PROJECT_A, DEPLOYMENT_ONLY_CONNECTOR_ID, REDIRECT_URI))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("CENTRAL_APP_ID")
+                .hasMessageNotContaining("Settings -> Integrations");
 
         verify(oAuthStateRepository, never()).save(any());
     }

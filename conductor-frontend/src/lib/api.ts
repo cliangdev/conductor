@@ -203,24 +203,32 @@ export interface ConnectorConfigField {
  */
 export type ConnectorCredentialSource = 'PROJECT' | 'DEPLOYMENT' | 'NONE'
 
+/**
+ * Who the platform app behind a connector's consent flow can belong to. `DEPLOYMENT_ONLY` means
+ * Conductor's own reviewed app is always used, and a workspace never sees or sets a client id or
+ * secret for it. `WORKSPACE_ONLY` means the app carries its own platform review, so it belongs to
+ * whichever workspace registered it: a `NONE` credential source there means an admin has to enter
+ * a client id and secret. `WORKSPACE_OR_DEPLOYMENT` inherits the deployment's app by default, but a
+ * workspace may override it with its own.
+ */
+export type ConnectorAppOwnership = 'DEPLOYMENT_ONLY' | 'WORKSPACE_ONLY' | 'WORKSPACE_OR_DEPLOYMENT'
+
 /** Masked view of a connector's effective OAuth app credentials — the secret is never in it. */
 export interface ConnectorAppCredentialStatus {
   connectorId: string
   credentialSource: ConnectorCredentialSource
   configured: boolean
+  /** Always null for a `DEPLOYMENT_ONLY` connector: its app is never exposed to a workspace. */
   clientId?: string | null
+  /** Always null for a `DEPLOYMENT_ONLY` connector: its app is never exposed to a workspace. */
   clientSecretLast4?: string | null
   /**
    * Deployment environment variables that would have to be set for the fallback to resolve. Always
-   * empty when `allowsDeploymentCredentials` is false — no env var would resolve that case.
+   * empty when `appOwnership` is `WORKSPACE_ONLY`, since no env var would resolve that case.
    */
   missingProperties: string[]
-  /**
-   * Whether this connector can inherit the deployment's app. False for the publishing platforms,
-   * whose apps carry their own platform review and so belong to the workspace: for those, `NONE`
-   * means an admin has to enter a client id and secret here.
-   */
-  allowsDeploymentCredentials: boolean
+  /** Where the platform app behind this connector's consent flow may live. See {@link ConnectorAppOwnership}. */
+  appOwnership: ConnectorAppOwnership
   updatedBy?: string | null
   updatedAt?: string | null
 }

@@ -34,9 +34,10 @@ import java.util.Optional;
  * <p>The first non-Google {@link OAuth2Connector} in the codebase, so it overrides all five endpoint
  * methods rather than inheriting the Google defaults ({@link #authorizationUrl()}, {@link #tokenUrl()},
  * {@link #clientIdProperty()}, {@link #clientSecretProperty()}, {@link #extraAuthorizationParams()}).
- * The app id/secret are the <b>workspace's own</b> ({@link #allowsDeploymentCredentials()} is false):
- * a Meta app carries its own App Review and its own creator relationship, so there is no deployment
- * fallback and a project that has stored none simply cannot connect.
+ * The app id/secret are <b>Conductor's own</b> ({@link #appOwnership()} is
+ * {@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY}): Conductor registers one Meta app, carries
+ * it through App Review once, and every workspace's Pages authorize through that same app. There is
+ * no per-project app to store or clear.
  *
  * <p><b>Post-callback completion.</b> The shared {@code OAuthFlowService} only knows how to swap a
  * code for a token; Meta needs three more steps before the connection is usable, and they live in
@@ -172,12 +173,14 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     }
 
     /**
-     * A Meta app belongs to the workspace that had it reviewed, so the deployment's app is never a
-     * stand-in for one a project has not set. The property names above stay only as identifiers.
+     * Meta's App Review reviews the app, not any one workspace's use of it, so one reviewed app can
+     * carry every workspace's traffic. Conductor's own app, named by the properties above, is
+     * therefore the only app this connector ever authenticates as; there is nothing for a project to
+     * bring of its own.
      */
     @Override
-    public boolean allowsDeploymentCredentials() {
-        return false;
+    public AppOwnership appOwnership() {
+        return AppOwnership.DEPLOYMENT_ONLY;
     }
 
     /**

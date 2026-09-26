@@ -80,6 +80,11 @@ class YouTubeConnectorTest {
     }
 
     @Test
+    void appOwnership_isWorkspaceOnly_soTheDeploymentGoogleClientIsNeverAStandIn() {
+        assertThat(connector.appOwnership()).isEqualTo(OAuth2Connector.AppOwnership.WORKSPACE_ONLY);
+    }
+
+    @Test
     void connector_inheritsRatherThanOverridesTheGoogleEndpointMethods() {
         // Only oauthScopes() may be declared here; the other five must come from OAuth2Connector so a
         // change to Google's shared flow reaches this connector without an edit.

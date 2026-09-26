@@ -31,15 +31,25 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
      `access_type=offline&prompt=consent` for a refresh token; override if your provider's equivalent
      differs or isn't needed).
 
-   **Who owns the app.** By default a connector may inherit the deployment's app from those two
-   properties when a workspace has stored nothing — right for the Google family, which shares one
-   OAuth client across GSC, GCP Billing and the rest. Override `allowsDeploymentCredentials()` to
-   `false` for a provider whose app must belong to the workspace: one carrying its own App Review,
-   rate limits or creator relationship, as Meta, TikTok and YouTube all do. Then nothing reads the
-   environment for it, the property names survive only as identifiers, and a project with no stored
-   row simply cannot connect until an admin enters one under Settings → Integrations. Because a
-   stored credential is keyed on the connector id, opting one Google-backed connector out (YouTube)
-   leaves the others inheriting as before.
+   **Who owns the app.** `appOwnership()` picks one of three models, and the default is right for
+   most connectors.
+
+   - `WORKSPACE_OR_DEPLOYMENT` (default): the workspace may store its own app, and inherits the
+     deployment's from the two properties above when it has not. Right for the Google family, which
+     shares one OAuth client across GSC, GCP Billing and the rest.
+   - `DEPLOYMENT_ONLY`: Conductor registers the app, gets it reviewed once, and every workspace
+     authorizes its own account through it. Right for a platform built around that model, as TikTok
+     and Meta are. `ConnectorAppCredentialService` reads only the environment for these, refuses
+     writes to the app-credential endpoints, and reports a status carrying neither the client id nor
+     the secret's last four characters, because the integrations list is member-readable and those
+     identifiers belong to the deployment rather than to any one tenant.
+   - `WORKSPACE_ONLY`: nothing reads the environment, the property names survive only as
+     identifiers, and a project with no stored row cannot connect until an admin enters one. Right
+     where the platform grants verification to a single OAuth client and meters quota per project,
+     as YouTube does with `youtube.upload`.
+
+   Because a stored credential is keyed on the connector id, opting one Google-backed connector out
+   (YouTube) leaves the others inheriting as before.
 
    **Completion hooks that call the provider as the app.** `OAuthCompletionRequest` carries the
    `clientId`/`clientSecret` the code exchange ran as. Use those rather than re-resolving: Meta's

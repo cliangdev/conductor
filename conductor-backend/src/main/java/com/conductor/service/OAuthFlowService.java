@@ -100,10 +100,16 @@ public class OAuthFlowService {
      * The app credentials this project's flow runs as: its own stored pair if it has one, else the
      * deployment env vars where the connector accepts them.
      *
-     * <p>The two ways this fails need different messages, because they need different fixes. A
-     * Google-family connector with nothing set names the missing env var, as it always has. A
-     * publishing platform has no env var to name — nothing reads one for it — so it names the one
-     * thing that resolves it, which is an admin entering the workspace's app.
+     * <p>The two ways this fails need different messages, because they name different fixes, and
+     * {@link ConnectorAppCredentialService}'s {@code missingProperties} is what tells them apart
+     * rather than the connector's ownership directly. A connector whose deployment resolve can
+     * succeed with the right env vars set ({@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY}
+     * (Meta, TikTok: Conductor's own app) and {@link OAuth2Connector.AppOwnership#WORKSPACE_OR_DEPLOYMENT}
+     * (the Google family) alike) comes back with the missing property named, which is an operator
+     * problem: the deployment is missing an env var. {@link OAuth2Connector.AppOwnership#WORKSPACE_ONLY}
+     * (YouTube) has no env var that would ever resolve it, so {@code missingProperties} is empty and
+     * the fix named instead is an admin entering the workspace's own app under Settings ->
+     * Integrations.
      */
     private OAuthCredentials requireOAuthConfig(String projectId, OAuth2Connector connector) {
         var resolved = appCredentialService.resolve(projectId, connector);
