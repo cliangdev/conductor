@@ -69,6 +69,18 @@ public class LocalStorageService implements StorageService {
     }
 
     @Override
+    public void copy(String sourceGcsPath, String destinationGcsPath) {
+        Path source = resolveWithinStorageRoot(sourceGcsPath);
+        Path target = resolveWithinStorageRoot(destinationGcsPath);
+        try {
+            Files.createDirectories(target.getParent());
+            Files.copy(source, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new RuntimeException("Local storage copy failed: " + sourceGcsPath + " -> " + destinationGcsPath, e);
+        }
+    }
+
+    @Override
     public String generateSignedUrl(String gcsPath, int expiryMinutes) {
         String encoded = UriUtils.encodePath(gcsPath, StandardCharsets.UTF_8);
         return serverBaseUrl + "/api/v1/local-files/" + encoded;

@@ -29,6 +29,8 @@ import { apiErrorMessage, type ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import { PhotoPicker } from '@/components/marketing/creatives/PhotoPicker'
+import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
+import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
 import {
   createCreativeVariant,
   getCreative,
@@ -41,6 +43,7 @@ import {
   type CreativePhoto,
   type CreativeRegistry,
   type CreativeReadiness,
+  type CreativeRender,
   type CreativeState,
   type CreativeTheme,
   type SequenceBeat,
@@ -186,6 +189,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const [variantHeadline, setVariantHeadline] = useState('')
   const [variantBusy, setVariantBusy] = useState(false)
   const [sequenceIndex, setSequenceIndex] = useState(0)
+  const [latestSucceededRender, setLatestSucceededRender] = useState<CreativeRender | null>(null)
+  const [useInPostOpen, setUseInPostOpen] = useState(false)
 
   const load = useCallback(async () => {
     const [loaded, kitRows, reg] = await Promise.all([
@@ -396,6 +401,11 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
         </span>
         <Can do="creative.manage">
           <div className="ml-auto flex gap-2">
+            {latestSucceededRender && (
+              <Button variant="outline" onClick={() => setUseInPostOpen(true)}>
+                Use in Post
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => {
@@ -725,6 +735,16 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               </ul>
             </Card>
           )}
+
+          <RendersPanel
+            projectId={projectId}
+            creativeId={creativeId}
+            creativeDisplayId={creative.displayId}
+            creativeVersion={creative.version}
+            token={token}
+            registry={registry}
+            onLatestSucceededChange={setLatestSucceededRender}
+          />
         </div>
       </div>
 
@@ -775,6 +795,18 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
         <Label htmlFor="variant-headline">Headline</Label>
         <Textarea id="variant-headline" value={variantHeadline} onChange={(e) => setVariantHeadline(e.target.value)} rows={2} />
       </Modal>
+
+      {latestSucceededRender && (
+        <UseInPostDialog
+          open={useInPostOpen}
+          onOpenChange={setUseInPostOpen}
+          projectId={projectId}
+          creativeId={creativeId}
+          creativeDisplayId={creative.displayId}
+          renderId={latestSucceededRender.id}
+          token={token}
+        />
+      )}
     </div>
   )
 }

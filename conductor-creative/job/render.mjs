@@ -20,12 +20,24 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { startServer } from './server.mjs';
-import { createHttpTransport } from './transport.mjs';
+import { createApiTransport } from './transport.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = join(HERE, '..'); // conductor-creative/, the static root
 
 const PAGE_TIMEOUT_MS = 20_000;
+
+/* Placement frames are JPEG — Instagram feed images and TikTok photo posts both refuse PNG (see
+ * MediaTargetValidator on the backend) — at quality 92, a level export tooling generally treats as
+ * visually lossless while still compressing meaningfully smaller than PNG. The `sheet` contact sheet
+ * (a preview-only render, never attached to a Post) stays PNG: nothing on the backend gates it, and PNG
+ * keeps its text perfectly crisp for a human reviewing the grid. Every `.cc-board` paints an explicit
+ * `background-color` (frame.css) — dark or light theme — so there is no transparency for JPEG's opaque
+ * export to clip. */
+const PLACEMENT_FRAME_SCREENSHOT = { type: 'jpeg', quality: 92 };
+const PLACEMENT_FRAME_CONTENT_TYPE = 'image/jpeg';
+const SHEET_SCREENSHOT = { type: 'png' };
+const SHEET_CONTENT_TYPE = 'image/png';
 
 async function defaultBrowserFactory() {
   const { chromium } = await import('playwright');
@@ -120,14 +132,16 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
           warnings.push({ placementKey: frame.placementKey, index: frame.index, message });
         }
 
-        const locator = frame.page === 'sheet.html' ? page.locator('#sheet') : page.locator('.cc-board').first();
-        const png = await locator.screenshot();
+        const isSheet = frame.page === 'sheet.html';
+        const locator = isSheet ? page.locator('#sheet') : page.locator('.cc-board').first();
+        const bytes = await locator.screenshot(isSheet ? SHEET_SCREENSHOT : PLACEMENT_FRAME_SCREENSHOT);
+        const contentType = isSheet ? SHEET_CONTENT_TYPE : PLACEMENT_FRAME_CONTENT_TYPE;
         const box = await locator.boundingBox();
         const width = Math.round((box && box.width) || 0) * 2;
         const height = Math.round((box && box.height) || 0) * 2;
 
-        await transport.putFrame(frame.placementKey, { index: frame.index, width, height, png });
-        log(`ok   ${label}  ${width}x${height}`);
+        await transport.putFrame(frame.placementKey, { index: frame.index, width, height, bytes, contentType });
+        log(`ok   ${label}  ${width}x${height}  ${contentType}`);
       } finally {
         await page.close();
       }
@@ -162,15 +176,19 @@ function isMain() {
 
 if (isMain()) {
   const apiUrl = process.env.CONDUCTOR_API_URL;
-  const renderToken = process.env.CONDUCTOR_RENDER_TOKEN;
-  const renderId = process.env.RENDER_ID;
-  const missing = ['CONDUCTOR_API_URL', 'CONDUCTOR_RENDER_TOKEN', 'RENDER_ID'].filter((k) => !process.env[k]);
+  const apiKey = process.env.CONDUCTOR_API_KEY;
+  const projectId = process.env.CONDUCTOR_PROJECT_ID;
+  const creativeId = process.env.CREATIVE_ID;
+  const previewOnly = /^(1|true)$/i.test(process.env.PREVIEW_ONLY || '');
+  const renderer = process.env.RENDERER || 'cli';
+  const workflowRunId = process.env.WORKFLOW_RUN_ID || undefined;
+  const missing = ['CONDUCTOR_API_URL', 'CONDUCTOR_API_KEY', 'CONDUCTOR_PROJECT_ID', 'CREATIVE_ID'].filter((k) => !process.env[k]);
   if (missing.length) {
     console.error(`missing required env var(s): ${missing.join(', ')}`);
     process.exit(1);
   }
 
-  const transport = createHttpTransport({ apiUrl, renderToken, renderId });
-  const log = (...args) => console.log(`[render ${renderId}]`, ...args);
+  const transport = createApiTransport({ apiUrl, apiKey, projectId, creativeId, previewOnly, renderer, workflowRunId });
+  const log = (...args) => console.log(`[render ${creativeId}]`, ...args);
   run({ transport, log }).then((ok) => process.exit(ok ? 0 : 1));
 }

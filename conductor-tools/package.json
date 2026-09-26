@@ -1,6 +1,6 @@
 {
   "name": "@cliangdev/conductor",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "Agentic software development platform — AI-driven PRD, implementation, and beyond",
   "license": "SEE LICENSE IN ../LICENSE",
   "repository": {
@@ -23,7 +23,7 @@
     "scripts/"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/build-creative.mjs",
     "typecheck:fast": "tsgo --noEmit",
     "dev": "ts-node src/index.ts",
     "test": "vitest run",
@@ -36,7 +36,8 @@
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",
     "open": "^11.0.0",
-    "ora": "^9.4.0"
+    "ora": "^9.4.0",
+    "playwright-core": "1.63.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

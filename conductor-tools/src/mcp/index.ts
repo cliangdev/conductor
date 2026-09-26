@@ -66,6 +66,19 @@ import {
 } from './tools/posts.js'
 import { getMarketingInsights } from './tools/insights.js'
 import {
+  getBrandKit,
+  listCreatives,
+  getCreative,
+  createCreative,
+  updateCreative,
+  uploadCreativePhoto,
+  renderCreativeTool,
+  previewCreative,
+  attachCreativeToPost,
+  type CreateCreativeParams,
+  type UpdateCreativeParams,
+} from './tools/creatives.js'
+import {
   listProjectDocs,
   readProjectDoc,
   writeProjectDoc,
@@ -1046,6 +1059,167 @@ const TOOLS = [
       required: ['postId', 'verdict'],
     },
   },
+  // --- Creatives: Brand Kit + Creative library + local rendering ---
+  {
+    name: 'get_brand_kit',
+    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kitId: { type: 'string', description: "Brand Kit id (optional — omit for the project's default kit)" },
+      },
+    },
+  },
+  {
+    name: 'list_creatives',
+    description: "List the project's Creatives (photo + headline + layout), newest display number first, lettered variants grouped together. Filter by state or brandKitId.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'], description: 'Filter by state (optional)' },
+        brandKitId: { type: 'string', description: 'Filter to Creatives on one Brand Kit (optional)' },
+      },
+    },
+  },
+  {
+    name: 'get_creative',
+    description: 'One Creative in full: its fields, its readiness checklist (what still blocks it going to review), and the other lettered variants in its family. Call after create_creative/update_creative to verify a write.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id' },
+      },
+      required: ['creativeId'],
+    },
+  },
+  {
+    name: 'create_creative',
+    description: "Create a Creative (photo, headline, layout, theme, body, caption, alt text, optional story/carousel sequence), or, with variantOf, cut a lettered variant of an existing one instead (inherits everything but headline/name — every other field here is ignored). Refused with the failing rule's message on a bad layout/theme/placement, the kit's accent-phrase rule, a copy rule, or (when state is READY) a readiness rule. Call get_creative after to verify.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        variantOf: { type: 'string', description: 'Cut a lettered variant of this existing Creative instead of creating a fresh one (optional)' },
+        brandKitId: { type: 'string', description: "Brand Kit this Creative renders with (optional — defaults to the project's default kit)" },
+        name: { type: 'string', description: 'Internal name, not shown on the artwork (optional)' },
+        state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'], description: 'Defaults to DRAFT (optional)' },
+        layout: { type: 'string', description: "Layout key from the creative registry, e.g. stacked/bleed/card/split (optional — defaults to the registry's first layout)" },
+        theme: { type: 'string', enum: ['dark', 'light'], description: 'Optional — defaults to dark' },
+        photoId: { type: 'string', description: 'A photo from upload_creative_photo (optional)' },
+        focalOverride: { type: 'object', additionalProperties: { type: 'string' }, description: 'Per-placement focal point override, e.g. {"9x16":"50% 30%"} (optional)' },
+        headline: { type: 'string', description: 'Exactly one *accent phrase* marked with asterisks, when the Brand Kit requires one (optional)' },
+        body: { type: 'string', description: 'Body copy (optional)' },
+        caption: { type: 'string', description: "The post caption this Creative is meant for, carried through but never rendered onto the artwork (optional)" },
+        altText: { type: 'string', description: 'Accessibility description of the photo, not the copy (optional)' },
+        placements: { type: 'array', items: { type: 'string' }, description: "Extra placement keys this Creative opts into beyond the Brand Kit's enabled set (optional)" },
+        sequenceKind: { type: 'string', enum: ['story', 'carousel'], description: 'Set to render a multi-beat sequence instead of one frame (optional)' },
+        sequence: {
+          type: 'array',
+          description: 'Story beats (2-7) or carousel cards (2-10); each inherits the Creative and overrides only what changes (optional)',
+          items: {
+            type: 'object',
+            properties: {
+              headline: { type: 'string' },
+              body: { type: 'string' },
+              photoId: { type: 'string' },
+              cta: { type: 'boolean', description: 'Forces the CTA row on/off for this beat (optional — default: only the last beat shows it)' },
+            },
+          },
+        },
+        carouselRatio: { type: 'string', description: 'Aspect ratio key for a carousel sequence, e.g. 4x5 or 1x1 (optional)' },
+      },
+    },
+  },
+  {
+    name: 'update_creative',
+    description: "Patch a Creative's fields. version must equal its current value (from get_creative) or the write is refused with a 409 conflict — reread and reapply on top of the newer version rather than retrying blind. A failing structural or readiness rule is refused with the rule's own message. Call get_creative after to verify.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id' },
+        version: { type: 'number', description: "The Creative's current version, from get_creative" },
+        brandKitId: { type: 'string' },
+        name: { type: 'string' },
+        state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'] },
+        layout: { type: 'string' },
+        theme: { type: 'string', enum: ['dark', 'light'] },
+        photoId: { type: 'string' },
+        focalOverride: { type: 'object', additionalProperties: { type: 'string' } },
+        headline: { type: 'string' },
+        body: { type: 'string' },
+        caption: { type: 'string' },
+        altText: { type: 'string' },
+        placements: { type: 'array', items: { type: 'string' } },
+        sequenceKind: { type: 'string', enum: ['story', 'carousel'] },
+        sequence: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              headline: { type: 'string' },
+              body: { type: 'string' },
+              photoId: { type: 'string' },
+              cta: { type: 'boolean' },
+            },
+          },
+        },
+        carouselRatio: { type: 'string' },
+      },
+      required: ['creativeId', 'version'],
+    },
+  },
+  {
+    name: 'upload_creative_photo',
+    description: "Upload a photo into the project's photo library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Width and height are read from the file itself. Use the returned photo's id as a Creative's photoId.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'A file on this machine (use this or url)' },
+        url: { type: 'string', description: 'A public http(s) URL (use this or filePath)' },
+        label: { type: 'string', description: 'Human label (optional — defaults to the filename)' },
+        source: { type: 'string', description: 'Provenance note, e.g. a URL or "Generated with <model> on <date>" (optional)' },
+        licence: { type: 'string', description: 'e.g. "Own work", "Unsplash Licence", "Generated, house use" (optional)' },
+        aiGenerated: { type: 'boolean', description: 'Whether the photo is AI-generated (optional, informational only)' },
+      },
+    },
+  },
+  {
+    name: 'render_creative',
+    description: 'Render a Creative locally (Playwright on this machine) to upload-ready PNGs, or a small contact sheet with previewOnly. Runs synchronously — typically well under a minute — and returns the render id, state, frame URLs and any warnings. Call preview_creative to actually look at the result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id' },
+        previewOnly: { type: 'boolean', description: 'Render one small contact sheet instead of full-size placement frames (optional, default false)' },
+        renderer: { type: 'string', description: 'Attribution tag stored on the render (optional, default "mcp")' },
+        workflowRunId: { type: 'string', description: 'Attribute this render to a Workflow run (optional)' },
+      },
+      required: ['creativeId'],
+    },
+  },
+  {
+    name: 'preview_creative',
+    description: "Look at a Creative: returns its latest contact sheet as an image (rendering a fresh previewOnly one first if none exists yet). Use this to judge the actual artwork — does the headline read at a glance, is the copy sitting on the subject's face — not just the data. If the image is too large to inline it returns the URL instead, with a note saying so.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id' },
+      },
+      required: ['creativeId'],
+    },
+  },
+  {
+    name: 'attach_creative_to_post',
+    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. Uses the latest SUCCEEDED, non-preview render unless renderId is given. Call get_post_status to verify.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id' },
+        workItemId: { type: 'string', description: "The Post's Work Item id" },
+        renderId: { type: 'string', description: 'A specific render to attach (optional — defaults to the latest SUCCEEDED render)' },
+      },
+      required: ['creativeId', 'workItemId'],
+    },
+  },
 ]
 
 function authErrorResponse() {
@@ -1068,6 +1242,21 @@ function successResponse(data: unknown) {
       },
     ],
   }
+}
+
+/**
+ * An image content block (base64-encoded bytes + MIME type) plus an optional text block of
+ * metadata — the shape a client needs to actually render the image rather than just read about it.
+ * `preview_creative` is the first tool to need this; every other tool emits text only.
+ */
+export function imageResponse(image: { data: Buffer; mimeType: string }, meta?: unknown) {
+  const content: Array<{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string }> = [
+    { type: 'image', data: image.data.toString('base64'), mimeType: image.mimeType },
+  ]
+  if (meta !== undefined) {
+    content.push({ type: 'text', text: JSON.stringify(meta) })
+  }
+  return { content }
 }
 
 /**
@@ -1798,6 +1987,78 @@ export async function runMcpServer(): Promise<void> {
         case 'retry_failed_publish_targets': {
           return successResponse(
             await retryFailedPublishTargets({ issueId: params['issueId'] as string }, config)
+          )
+        }
+        case 'get_brand_kit': {
+          return successResponse(await getBrandKit({ kitId: params['kitId'] as string | undefined }, config))
+        }
+        case 'list_creatives': {
+          return successResponse(
+            await listCreatives(
+              { state: params['state'] as string | undefined, brandKitId: params['brandKitId'] as string | undefined },
+              config
+            )
+          )
+        }
+        case 'get_creative': {
+          return successResponse(await getCreative({ creativeId: params['creativeId'] as string }, config))
+        }
+        case 'create_creative': {
+          return successResponse(await createCreative(params as unknown as CreateCreativeParams, config))
+        }
+        case 'update_creative': {
+          return successResponse(await updateCreative(params as unknown as UpdateCreativeParams, config))
+        }
+        case 'upload_creative_photo': {
+          return successResponse(
+            await uploadCreativePhoto(
+              {
+                filePath: params['filePath'] as string | undefined,
+                url: params['url'] as string | undefined,
+                label: params['label'] as string | undefined,
+                source: params['source'] as string | undefined,
+                licence: params['licence'] as string | undefined,
+                aiGenerated: params['aiGenerated'] as boolean | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'render_creative': {
+          return successResponse(
+            await renderCreativeTool(
+              {
+                creativeId: params['creativeId'] as string,
+                previewOnly: params['previewOnly'] as boolean | undefined,
+                renderer: params['renderer'] as string | undefined,
+                workflowRunId: params['workflowRunId'] as string | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'preview_creative': {
+          const result = await previewCreative({ creativeId: params['creativeId'] as string }, config)
+          if (result.image) {
+            return imageResponse(result.image, {
+              renderId: result.renderId,
+              state: result.state,
+              url: result.url,
+              note: result.note,
+            })
+          }
+          return successResponse(result)
+        }
+        case 'attach_creative_to_post': {
+          return successResponse(
+            await attachCreativeToPost(
+              {
+                creativeId: params['creativeId'] as string,
+                workItemId: params['workItemId'] as string,
+                renderId: params['renderId'] as string | undefined,
+              },
+              config
+            )
           )
         }
         case 'upload_project_doc_image': {

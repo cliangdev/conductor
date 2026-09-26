@@ -1567,6 +1567,57 @@ The daemon reads from `~/.conductor/config.json`, written by `conductor init`. S
 
 ---
 
+## Creatives: rendering on a self-hosted Workflow
+
+Conductor Creatives (the Marketing area's ad-artwork library — see the root `CLAUDE.md`'s pillar
+list) render **locally**: the `conductor` CLI and MCP server drive a Playwright browser on whatever
+machine runs them, talking to the ordinary external v2 creatives API with a plain API key. There is
+no Cloud Run render job and no render-specific execution mode — rendering a Creative from a Workflow
+is just running the CLI from a `docker` step, the same way any other CLI-driven job would.
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      creativeId:
+        description: The Creative to render
+        required: true
+
+jobs:
+  render:
+    runs-on: self-hosted
+    steps:
+      - uses: docker://mcr.microsoft.com/playwright:v1.63.0-noble
+        env:
+          CONDUCTOR_API_KEY: ${{ secrets.CONDUCTOR_API_KEY }}
+        run: |
+          npx -y @cliangdev/conductor creative render ${{ inputs.creativeId }} \
+            --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"
+```
+
+A few things worth knowing before adapting this:
+
+- **`runs-on: self-hosted`** because a `docker` step only runs on Conductor-hosted or self-hosted
+  infrastructure (see [Execution modes](#execution-modes)) and this one needs a real browser —
+  `mcr.microsoft.com/playwright:v1.63.0-noble` ships a matching Chromium so `playwright-core` (what
+  the CLI uses to find a browser) has one to launch. Pin the image tag to the `playwright` version
+  in `conductor-creative/job/package.json` — the two are expected to move together.
+- **The API key** is a project API key (**Settings → API Keys**), passed as a
+  [workflow secret](#outputs-and-interpolation) — never embed one directly in the YAML.
+  `CONDUCTOR_API_URL` and `CONDUCTOR_PROJECT_ID` don't need to be set here: every self-hosted `docker`
+  step's container already carries them (the daemon's step-env contract), and the CLI reads them the
+  same way it would inside any other headless container with no `~/.conductor/config.json`.
+- **`--workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"`** reads the run's own id from a plain
+  environment variable, not a `${{ }}` expression — there is currently no interpolation root that
+  resolves to the run's own id (the valid roots are `event`, `secrets`, `steps`, `needs`, `inputs`
+  and `loop`; see [Outputs and interpolation](#outputs-and-interpolation)). `CONDUCTOR_WORKFLOW_RUN_ID`
+  is set directly in the container's environment for every self-hosted step regardless, so the shell
+  reads it like any other env var rather than going through the templating system. This value is
+  purely for attribution on the stored `creative_render` row — nothing reads it back — so it's safe
+  to drop the flag entirely if you don't need to trace a render back to the run that produced it.
+- Add `--preview` to render a small contact sheet instead of full-size placement frames — useful for
+  a workflow that just wants to sanity-check a Creative without producing upload-ready PNGs.
+
 ## Building workflows with Claude
 
 Claude can design and create workflows for you based on a plain-language description of the business goal.

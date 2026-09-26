@@ -3,6 +3,13 @@ package com.conductor.service;
 public interface StorageService {
     void upload(String gcsPath, byte[] content, String contentType);
     byte[] download(String gcsPath);
+
+    /**
+     * Server-side copy of one object to another path, without the bytes passing through this process —
+     * used to move a Creative render frame into a Post's own asset prefix on attach (COND-24 T3), so the
+     * two can be deleted, retained and billed independently.
+     */
+    void copy(String sourceGcsPath, String destinationGcsPath);
     String generateSignedUrl(String gcsPath, int expiryMinutes);
     /**
      * Deletes an object. Idempotent: a missing object is success. A real backend failure (auth,

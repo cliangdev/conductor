@@ -83,6 +83,13 @@ public class Asset {
     @Column(name = "duration_seconds", precision = 12, scale = 3)
     private BigDecimal durationSeconds;
 
+    /**
+     * Set when this asset was copied from a Creative render frame on attach (COND-24 T3) — see
+     * {@code CreativeAttachService}. Null for every asset uploaded the ordinary way.
+     */
+    @Column(name = "creative_frame_id", length = 36)
+    private String creativeFrameId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -144,6 +151,9 @@ public class Asset {
 
     public BigDecimal getDurationSeconds() { return durationSeconds; }
     public void setDurationSeconds(BigDecimal durationSeconds) { this.durationSeconds = durationSeconds; }
+
+    public String getCreativeFrameId() { return creativeFrameId; }
+    public void setCreativeFrameId(String creativeFrameId) { this.creativeFrameId = creativeFrameId; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

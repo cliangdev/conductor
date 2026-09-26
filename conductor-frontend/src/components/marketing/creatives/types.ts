@@ -47,6 +47,12 @@ export interface Creative {
   createdBy?: string | null
   createdAt: string
   updatedAt: string
+  /** The last SUCCEEDED render's id, if any — carried on both list rows and the detail response. */
+  latestRenderId?: string | null
+  /** The last SUCCEEDED render's 4x5 frame (else its first frame) — the library grid's thumbnail. */
+  latestRenderThumbnailUrl?: string | null
+  /** Full last-SUCCEEDED-render detail (with frames) — GET detail only, absent from list rows. */
+  latestRender?: CreativeRender | null
 }
 
 export interface CreateCreativeRequest {
@@ -165,6 +171,96 @@ export interface CreativeRegistryPlacement {
 export interface CreativeRegistry {
   layouts: Record<string, CreativeRegistryLayout>
   placements: CreativeRegistryPlacement[]
+}
+
+// ── Renders (COND-24 T3) ─────────────────────────────────────────────────────
+//
+// Rendering itself happens locally — Claude Code/Desktop's `render_creative` MCP tool or
+// `conductor creative render <id>` on the CLI, both driving @cliangdev/creative-render's job core
+// with Playwright against the user's own machine. There is no server-launched render and no render
+// button on the web; the frontend only ever reads render state and, once a render SUCCEEDED, attaches
+// its frames to a Post. See the T3 contract for the full endpoint list.
+
+export type CreativeRenderState = 'RUNNING' | 'SUCCEEDED' | 'FAILED'
+
+export interface CreativeRenderFrame {
+  id: string
+  placementKey: string
+  platform?: string | null
+  sequenceIndex?: number | null
+  /** Signed GET URL, valid long enough to load a thumbnail and drive a download link. */
+  url: string
+  width: number
+  height: number
+  sizeBytes: number
+  warnings: string[]
+}
+
+export interface CreativeRender {
+  id: string
+  state: CreativeRenderState
+  previewOnly: boolean
+  renderer?: string | null
+  workflowRunId?: string | null
+  /** The Creative's `version` at request time — compared against its current version to flag staleness. */
+  creativeVersion: number
+  requestedAt: string
+  finishedAt?: string | null
+  error?: string | null
+  frames: CreativeRenderFrame[]
+}
+
+export interface AttachCreativeRequest {
+  renderId: string
+  workItemId: string
+}
+
+export interface AttachedRenderAsset {
+  assetId: string
+  frameId: string
+  placementKey: string
+  sequenceIndex?: number | null
+}
+
+export interface AttachTargetUpdated {
+  targetId: string
+  platform: string
+  assetIds: string[]
+}
+
+export interface AttachTargetSkipped {
+  targetId: string
+  platform: string
+  reason: string
+}
+
+export interface AttachCreativeResult {
+  assets: AttachedRenderAsset[]
+  targetsUpdated: AttachTargetUpdated[]
+  targetsSkipped: AttachTargetSkipped[]
+}
+
+/** Latest-first, capped at 20 by the server. */
+export function listCreativeRenders(
+  projectId: string,
+  creativeId: string,
+  token: string,
+): Promise<CreativeRender[]> {
+  return apiGet<CreativeRender[]>(`${creativesBase(projectId)}/${creativeId}/renders`, token)
+}
+
+/**
+ * Attaches a SUCCEEDED render's frames to a Post: server-side copies each non-`sheet` frame into the
+ * Post's asset storage and, for targets without custom media, assigns them by placement. Returns what
+ * changed so the caller can show it — never silently.
+ */
+export function attachCreativeRender(
+  projectId: string,
+  creativeId: string,
+  body: AttachCreativeRequest,
+  token: string,
+): Promise<AttachCreativeResult> {
+  return apiPost<AttachCreativeResult>(`${creativesBase(projectId)}/${creativeId}/attach`, body, token)
 }
 
 const creativesBase = (projectId: string) => `/api/v2/projects/${projectId}/marketing/creatives`

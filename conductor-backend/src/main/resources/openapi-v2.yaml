@@ -3483,6 +3483,457 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/creatives/{creativeId}/renders:
+    get:
+      tags:
+        - creatives
+      summary: List a Creative's renders
+      description: Latest first, at most 20. A RUNNING render older than 30 minutes is reported (and persisted) as FAILED "timed out" — there is no scheduler; the sweep happens on this read.
+      operationId: listCreativeRenders
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Creative's renders, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CreativeRenderResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - creatives
+      summary: Request a render
+      description: >-
+        Rendering happens on the user's own machine (the Conductor MCP server or CLI, or a self-hosted
+        Workflow) — this only records the render as RUNNING and returns the render input (`spec`) the
+        local job renders from. `spec` is only ever returned by this call, never by a GET. Refuses with
+        422 (same shape as the Creative validator) if the Creative lacks a photo or headline, or fails any
+        other T2 structural rule. Requires ADMIN or CREATOR.
+      operationId: createCreativeRender
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativeRenderRequest"
+      responses:
+        "201":
+          description: The new render, RUNNING, plus its spec
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRenderResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The Creative lacks a photo or headline, or fails a T2 structural rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeValidationProblem"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}:
+    get:
+      tags:
+        - creatives
+      summary: Get one render
+      description: >-
+        As with the list, a RUNNING render older than 30 minutes is reported (and persisted) as FAILED
+        "timed out" on this read.
+      operationId: getCreativeRender
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: renderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The render
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRenderResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Render not found, does not belong to this Creative, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/frames/{placementKey}:
+    put:
+      tags:
+        - creatives
+      summary: Upload one rendered frame
+      description: >-
+        The local render job PUTs each placement's frame here as it finishes, one call per frame. Placement
+        frames are JPEG (Instagram feed images and TikTok photo posts both refuse PNG); the `sheet`
+        contact sheet for a preview-only render stays PNG. Upserts the frame row on `(placementKey, index)`;
+        `platform` is derived from the placement registry. Only accepted while the render is RUNNING — 409
+        once it has SUCCEEDED or FAILED. Requires ADMIN or CREATOR.
+      operationId: putCreativeRenderFrame
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: renderId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: placementKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: index
+          in: query
+          required: false
+          description: Sequence position for a story/carousel frame; omitted for a single-frame placement.
+          schema:
+            type: integer
+        - name: width
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: height
+          in: query
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        description: >-
+          Raw image bytes, at most 20 MB. A placement frame is JPEG; the `sheet` contact sheet is PNG.
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Frame stored
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Render not found, does not belong to this Creative, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The render is no longer RUNNING (already SUCCEEDED or FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Content-Type is not image/jpeg or image/png
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/complete:
+    post:
+      tags:
+        - creatives
+      summary: Mark a render SUCCEEDED
+      operationId: completeCreativeRender
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: renderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteCreativeRenderRequest"
+      responses:
+        "200":
+          description: The render, now SUCCEEDED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRenderResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Render not found, does not belong to this Creative, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The render is no longer RUNNING
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/fail:
+    post:
+      tags:
+        - creatives
+      summary: Mark a render FAILED
+      description: Deletes every frame already written for this render (AC-P0-3.2) — a failed render leaves nothing behind for attach to find.
+      operationId: failCreativeRender
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: renderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FailCreativeRenderRequest"
+      responses:
+        "200":
+          description: The render, now FAILED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRenderResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Render not found, does not belong to this Creative, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The render is no longer RUNNING
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/attach:
+    post:
+      tags:
+        - creatives
+      summary: Attach a render's frames to a Post
+      description: >-
+        Copies every non-`sheet` frame of a SUCCEEDED render into the Post's own assets, then — for
+        targets with `custom_media = false` only — sets each destination's media by placement (`9x16` to
+        TikTok and Instagram Reels, `4x5` to Instagram feed, `1x1` to Facebook, `story` to story-format
+        targets; sequences in index order, never sorted) through the same target media-selection path a
+        person uses, so the approval gate and bundle hash treat it exactly like any other customisation.
+        A target with `custom_media = true` is reported in `targetsSkipped` and left untouched. Requires
+        ADMIN or CREATOR, and the Work Item must be a Post in this project the caller can edit.
+      operationId: attachCreative
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachCreativeRequest"
+      responses:
+        "200":
+          description: What was attached and how each target's media selection changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachCreativeResponse"
+        "400":
+          description: The Work Item is not a Post (its Workflow does not declare publishing)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found; render not found or does not belong to this Creative; Work Item not found or not in this project; or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The render is not SUCCEEDED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -5978,6 +6429,19 @@ components:
         updatedAt:
           type: string
           format: date-time
+        latestRenderId:
+          type: string
+          nullable: true
+          description: Id of the last SUCCEEDED, non-preview render, if any. Present on both list and detail reads.
+        latestRenderThumbnailUrl:
+          type: string
+          nullable: true
+          description: Signed GET URL of that render's 4x5 frame, or its first frame if there is no 4x5. Present on both list and detail reads.
+        latestRender:
+          allOf:
+            - $ref: "#/components/schemas/CreativeRenderResponse"
+          nullable: true
+          description: The full last SUCCEEDED, non-preview render with its frames. Populated only on the single-Creative GET, null on list reads.
 
     CreateCreativeRequest:
       type: object
@@ -6180,3 +6644,363 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CreativeRegistryPlacement"
+
+    # ── Renders (COND-24 T3) ───────────────────────────────────────────────────────────────────────
+
+    CreativeRenderState:
+      type: string
+      enum:
+        - RUNNING
+        - SUCCEEDED
+        - FAILED
+
+    CreateCreativeRenderRequest:
+      type: object
+      properties:
+        previewOnly:
+          type: boolean
+          default: false
+          description: A browser-preview export the creative page keeps to itself — never counted as the Creative's latestRender.
+        renderer:
+          type: string
+          nullable: true
+          description: 'Free text naming what will run the job: mcp, cli, workflow.'
+        workflowRunId:
+          type: string
+          nullable: true
+          description: Set when a self-hosted Workflow is running the render.
+
+    CreativeRenderSpecLogos:
+      type: object
+      description: Signed GET URLs (valid at least 30 minutes), each null when the kit has not set that slot.
+      properties:
+        mark:
+          type: string
+          nullable: true
+        wordmarkDark:
+          type: string
+          nullable: true
+        wordmarkLight:
+          type: string
+          nullable: true
+        badge:
+          type: string
+          nullable: true
+
+    CreativeRenderSpecBrand:
+      type: object
+      required:
+        - tokens
+        - enabledPlacements
+      properties:
+        tokens:
+          type: object
+          additionalProperties:
+            type: string
+        fontFamily:
+          type: string
+          nullable: true
+        fontUrl:
+          type: string
+          nullable: true
+        logos:
+          $ref: "#/components/schemas/CreativeRenderSpecLogos"
+        ctaClaim:
+          type: string
+          nullable: true
+        enabledPlacements:
+          type: array
+          items:
+            type: string
+
+    CreativeRenderSpecBeat:
+      type: object
+      description: One story beat or carousel card, resolved to what the render actually needs — a photo URL and focal point, inheriting the Creative's own photo when the beat has none of its own.
+      properties:
+        headline:
+          type: string
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        cta:
+          type: boolean
+          nullable: true
+        photoUrl:
+          type: string
+          nullable: true
+        focal:
+          type: object
+          additionalProperties:
+            type: string
+
+    CreativeRenderSpecCreative:
+      type: object
+      required:
+        - layout
+        - theme
+        - placements
+        - typeOverrides
+        - focal
+      properties:
+        layout:
+          type: string
+        theme:
+          $ref: "#/components/schemas/CreativeTheme"
+        headline:
+          type: string
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        caption:
+          type: string
+          nullable: true
+        placements:
+          type: array
+          items:
+            type: string
+          description: The Creative's own opt-in placements, distinct from the resolved top-level `placements` this render actually produces.
+        focalOverride:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+        sequenceKind:
+          $ref: "#/components/schemas/SequenceKind"
+        sequence:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeRenderSpecBeat"
+        typeOverrides:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: number
+        photoUrl:
+          type: string
+          nullable: true
+        focal:
+          type: object
+          additionalProperties:
+            type: string
+
+    CreativeRenderSpec:
+      type: object
+      description: The render input a local job (MCP tool or CLI) renders from. Returned only by the POST that creates a render, never by a GET.
+      required:
+        - renderId
+        - previewOnly
+        - creative
+        - brand
+        - placements
+      properties:
+        renderId:
+          type: string
+        previewOnly:
+          type: boolean
+        creative:
+          $ref: "#/components/schemas/CreativeRenderSpecCreative"
+        brand:
+          $ref: "#/components/schemas/CreativeRenderSpecBrand"
+        placements:
+          type: array
+          items:
+            type: string
+          description: The resolved placements this render must produce one frame per (kit-enabled ∪ Creative opt-ins) ∩ registry, or ["story"]/[carouselRatio] for a sequence Creative.
+
+    CreativeRenderFrameResponse:
+      type: object
+      required:
+        - id
+        - placementKey
+        - url
+        - width
+        - height
+        - sizeBytes
+        - warnings
+      properties:
+        id:
+          type: string
+        placementKey:
+          type: string
+        platform:
+          type: string
+          nullable: true
+        sequenceIndex:
+          type: integer
+          nullable: true
+        url:
+          type: string
+          description: Short-lived signed GET URL.
+        width:
+          type: integer
+        height:
+          type: integer
+        sizeBytes:
+          type: integer
+          format: int64
+        warnings:
+          type: array
+          items:
+            type: string
+
+    CreativeRenderResponse:
+      type: object
+      required:
+        - id
+        - state
+        - previewOnly
+        - creativeVersion
+        - requestedAt
+        - frames
+      properties:
+        id:
+          type: string
+        state:
+          $ref: "#/components/schemas/CreativeRenderState"
+        previewOnly:
+          type: boolean
+        renderer:
+          type: string
+          nullable: true
+        workflowRunId:
+          type: string
+          nullable: true
+        creativeVersion:
+          type: integer
+        requestedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        frames:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeRenderFrameResponse"
+        spec:
+          allOf:
+            - $ref: "#/components/schemas/CreativeRenderSpec"
+          nullable: true
+          description: Only ever set on the response to the POST that creates the render.
+
+    CreativeRenderWarning:
+      type: object
+      required:
+        - placementKey
+        - message
+      properties:
+        placementKey:
+          type: string
+        index:
+          type: integer
+          nullable: true
+        message:
+          type: string
+
+    CompleteCreativeRenderRequest:
+      type: object
+      properties:
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeRenderWarning"
+
+    FailCreativeRenderRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+        log:
+          type: string
+          nullable: true
+
+    # ── Attach (COND-24 T3) ────────────────────────────────────────────────────────────────────────
+
+    AttachCreativeRequest:
+      type: object
+      required:
+        - renderId
+        - workItemId
+      properties:
+        renderId:
+          type: string
+        workItemId:
+          type: string
+          description: The Post (Work Item) this render's frames attach to.
+
+    AttachedCreativeAsset:
+      type: object
+      required:
+        - assetId
+        - frameId
+        - placementKey
+      properties:
+        assetId:
+          type: string
+        frameId:
+          type: string
+        placementKey:
+          type: string
+        sequenceIndex:
+          type: integer
+          nullable: true
+
+    AttachCreativeTargetUpdate:
+      type: object
+      required:
+        - targetId
+        - platform
+        - assetIds
+      properties:
+        targetId:
+          type: string
+        platform:
+          type: string
+        assetIds:
+          type: array
+          items:
+            type: string
+          description: In publish order — never re-sorted.
+
+    AttachCreativeTargetSkip:
+      type: object
+      required:
+        - targetId
+        - platform
+        - reason
+      properties:
+        targetId:
+          type: string
+        platform:
+          type: string
+        reason:
+          type: string
+
+    AttachCreativeResponse:
+      type: object
+      required:
+        - assets
+        - targetsUpdated
+        - targetsSkipped
+      properties:
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachedCreativeAsset"
+        targetsUpdated:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachCreativeTargetUpdate"
+        targetsSkipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachCreativeTargetSkip"

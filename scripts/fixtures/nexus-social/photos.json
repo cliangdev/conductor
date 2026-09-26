@@ -1,0 +1,30 @@
+{
+  "assets/lifestyle/fixture-hero.png": {
+    "focal": { "9x16": "50% 30%", "4x5": "50% 30%", "1x1": "50% 34%" },
+    "checked": "2026-09-05, no burned-in text, logos or claims",
+    "ai": "AI-generated for the fixture",
+    "source": "AI-generated for fixture use",
+    "licence": "Generated, house use"
+  },
+  "assets/lifestyle/fixture-story-1.png": {
+    "focal": { "9x16": "50% 50%" },
+    "checked": "2026-09-05, no burned-in text, logos or claims",
+    "source": "Fixture",
+    "licence": "Fixture use"
+  },
+  "assets/lifestyle/fixture-story-2.png": {
+    "checked": "2026-09-05, no burned-in text, logos or claims",
+    "source": "Fixture",
+    "licence": "Fixture use"
+  },
+  "assets/lifestyle/fixture-blocked.png": {
+    "blocked": "Burned-in text in the fixture photo. Replace before using.",
+    "source": "Fixture",
+    "licence": "Fixture use"
+  },
+  "assets/lifestyle/fixture-variant.png": {
+    "checked": "2026-09-05, no burned-in text, logos or claims",
+    "source": "Fixture",
+    "licence": "Fixture use"
+  }
+}

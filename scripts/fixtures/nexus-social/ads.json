@@ -1,0 +1,46 @@
+{
+  "ads": [
+    {
+      "id": "1a",
+      "name": "Fixture root",
+      "photo": "assets/lifestyle/fixture-hero.png",
+      "headline": "This is *fixture* copy.",
+      "body": "A fixture concept body.",
+      "style": "stacked",
+      "caption": "Fixture caption.",
+      "alt": "A fixture photo.",
+      "type": {
+        "9x16": [76, 1.04, -2.3]
+      }
+    },
+    {
+      "id": "1b",
+      "name": "Fixture variant",
+      "photo": "assets/lifestyle/fixture-variant.png",
+      "headline": "This is the *variant* hook.",
+      "body": "A different body for the variant.",
+      "style": "bleed",
+      "theme": "dark"
+    },
+    {
+      "id": "2a",
+      "name": "Fixture story",
+      "photo": "assets/lifestyle/fixture-story-1.png",
+      "headline": "A *story* concept.",
+      "body": "Story concept body.",
+      "style": "stacked",
+      "story": [
+        { "headline": "Beat one, *hooked*." },
+        { "headline": "Beat two, *paid off*.", "photo": "assets/lifestyle/fixture-story-2.png", "cta": true }
+      ]
+    },
+    {
+      "id": "3a",
+      "name": "Fixture draft",
+      "photo": "assets/lifestyle/fixture-blocked.png",
+      "headline": "A *blocked* draft concept.",
+      "style": "stacked",
+      "draft": "Photo is blocked; needs a replacement."
+    }
+  ]
+}

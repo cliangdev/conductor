@@ -12,6 +12,7 @@ import {
 import { buildSelectionPayload, type DestinationDraft } from '@/components/marketing/destinations/selectionState'
 import type { PublishTargetOption } from '@/components/marketing/destinations/types'
 import { nextSlot, wallClockToInstant } from '@/lib/schedule'
+import { attachCreativeRender } from '@/components/marketing/creatives/types'
 
 export interface CreatedWorkItem {
   id: string
@@ -42,6 +43,8 @@ export interface CreatePostInput {
   options: PublishTargetOption[]
   draft: DestinationDraft
   schedule: { onApproval: boolean; local: string; timeZone: string }
+  /** Set when this Post was started from a Creative's "Use in Post" — attached last, after destinations. */
+  attachCreative?: { creativeId: string; renderId: string }
   /** Told what is happening, for the footer's live region. */
   onStep?: (step: string) => void
 }
@@ -134,6 +137,22 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
     }
   } catch (err) {
     problems.push(apiErrorMessage(err, 'Could not set the schedule'))
+  }
+
+  if (input.attachCreative) {
+    try {
+      onStep?.('Attaching the creative…')
+      // Last, deliberately: the destinations PUT above replaces the whole target selection, which
+      // would silently undo an attach that ran before it.
+      await attachCreativeRender(
+        projectId,
+        input.attachCreative.creativeId,
+        { renderId: input.attachCreative.renderId, workItemId: created.id },
+        token,
+      )
+    } catch (err) {
+      problems.push(apiErrorMessage(err, 'Could not attach the creative'))
+    }
   }
 
   return { created, problems }

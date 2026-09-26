@@ -51,6 +51,7 @@ public class CreativeService {
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
     private final ObjectMapper objectMapper;
+    private final CreativeRenderService renderService;
 
     public CreativeService(CreativeRepository creativeRepository,
                            CreativePhotoRepository photoRepository,
@@ -61,7 +62,8 @@ public class CreativeService {
                            CreativeValidator validator,
                            ProjectSecurityService projectSecurityService,
                            StorageService storageService,
-                           ObjectMapper objectMapper) {
+                           ObjectMapper objectMapper,
+                           CreativeRenderService renderService) {
         this.creativeRepository = creativeRepository;
         this.photoRepository = photoRepository;
         this.brandKitRepository = brandKitRepository;
@@ -72,10 +74,23 @@ public class CreativeService {
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
         this.objectMapper = objectMapper;
+        this.renderService = renderService;
     }
 
-    /** A Creative plus its photo's short-lived signed GET, for convenience on both list and detail reads. */
-    public record CreativeView(Creative creative, String photoUrl) {
+    /**
+     * A Creative plus its photo's short-lived signed GET, for convenience on both list and detail reads.
+     *
+     * <p>{@code latestRenderSummary} (id + thumbnail URL) is populated on every read; {@code
+     * latestRenderFull} — the full render with its frames, for {@code CreativeResponse.latestRender} — is
+     * populated only for a single-Creative read (COND-24 T3, contract item 6), since fetching every
+     * render's every frame for a whole list would be an easy way to make that endpoint slow.
+     */
+    public record CreativeView(Creative creative, String photoUrl,
+                               CreativeRenderService.RenderView latestRenderSummary,
+                               CreativeRenderService.RenderView latestRenderFull) {
+        public CreativeView(Creative creative, String photoUrl) {
+            this(creative, photoUrl, null, null);
+        }
     }
 
     public record ReadinessItem(String key, boolean ok, boolean blocking, String message) {
@@ -105,7 +120,10 @@ public class CreativeService {
     public CreativeView getCreative(String projectId, String creativeId, User caller) {
         requireMember(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
-        return toView(creative, loadPhotos(List.of(creative)));
+        CreativeView view = toView(creative, loadPhotos(List.of(creative)));
+        // Only the single-Creative read pays for the full render + its frames (contract item 6).
+        CreativeRenderService.RenderView full = renderService.latestSucceededRender(creative.getId()).orElse(null);
+        return new CreativeView(view.creative(), view.photoUrl(), view.latestRenderSummary(), full);
     }
 
     @Transactional
@@ -418,7 +436,8 @@ public class CreativeService {
         String url = photo != null && photo.isUploaded()
                 ? storageService.generateSignedUrl(photo.getGcsPath(), PHOTO_URL_EXPIRY_MINUTES)
                 : null;
-        return new CreativeView(creative, url);
+        CreativeRenderService.RenderView summary = renderService.latestSucceededRender(creative.getId()).orElse(null);
+        return new CreativeView(creative, url, summary, null);
     }
 
     // ── JSON <-> typed helpers ───────────────────────────────────────────

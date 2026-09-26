@@ -125,6 +125,37 @@ describe('CreativeLibraryGrid', () => {
     )
   })
 
+  it('uses latestRenderThumbnailUrl as the tile thumbnail when present, instead of the live mount', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) => {
+      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
+      if (path.includes('/creatives')) {
+        return Promise.resolve([
+          creative({ latestRenderId: 'render-1', latestRenderThumbnailUrl: 'https://storage.example/12a-4x5.png' }),
+        ])
+      }
+      return Promise.reject(new Error(`unexpected GET ${path}`))
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    const thumb = await screen.findByTestId('creative-thumb-cr-1')
+    const img = thumb.querySelector('img')
+    expect(img).toHaveAttribute('src', 'https://storage.example/12a-4x5.png')
+  })
+
+  it('falls back to the live 4:5 mount when there is no render thumbnail yet', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) => {
+      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
+      if (path.includes('/creatives')) return Promise.resolve([creative()])
+      return Promise.reject(new Error(`unexpected GET ${path}`))
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    const thumb = await screen.findByTestId('creative-thumb-cr-1')
+    expect(thumb.querySelector('img')).not.toBeInTheDocument()
+  })
+
   it('hides "New creative" for a role without creative.manage (REVIEWER)', async () => {
     mockCan.mockReturnValue(false)
     ;(apiGet as Mock).mockImplementation((path: string) => {

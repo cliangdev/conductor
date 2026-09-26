@@ -1,14 +1,23 @@
 package com.conductor.v2.controller;
 
 import com.conductor.creative.Creative;
+import com.conductor.creative.CreativeAttachService;
 import com.conductor.creative.CreativePhoto;
 import com.conductor.creative.CreativePhotoService;
 import com.conductor.creative.CreativeRegistry;
+import com.conductor.creative.CreativeRenderService;
 import com.conductor.creative.CreativeService;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.CreativesApi;
+import com.conductor.generated.v2.model.AttachCreativeRequest;
+import com.conductor.generated.v2.model.AttachCreativeResponse;
+import com.conductor.generated.v2.model.AttachCreativeTargetSkip;
+import com.conductor.generated.v2.model.AttachCreativeTargetUpdate;
+import com.conductor.generated.v2.model.AttachedCreativeAsset;
+import com.conductor.generated.v2.model.CompleteCreativeRenderRequest;
 import com.conductor.generated.v2.model.ConfirmCreativePhotoRequest;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
+import com.conductor.generated.v2.model.CreateCreativeRenderRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
 import com.conductor.generated.v2.model.CreativePhotoResponse;
@@ -17,9 +26,11 @@ import com.conductor.generated.v2.model.CreativeReadinessResponse;
 import com.conductor.generated.v2.model.CreativeRegistryLayout;
 import com.conductor.generated.v2.model.CreativeRegistryPlacement;
 import com.conductor.generated.v2.model.CreativeRegistryResponse;
+import com.conductor.generated.v2.model.CreativeRenderResponse;
 import com.conductor.generated.v2.model.CreativeResponse;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
+import com.conductor.generated.v2.model.FailCreativeRenderRequest;
 import com.conductor.generated.v2.model.PatchCreativePhotoRequest;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
 import com.conductor.generated.v2.model.SequenceBeat;
@@ -27,10 +38,13 @@ import com.conductor.generated.v2.model.SequenceKind;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
@@ -50,13 +64,18 @@ public class CreativeController implements CreativesApi {
     private final CreativeService creativeService;
     private final CreativeRegistry registry;
     private final ObjectMapper objectMapper;
+    private final CreativeRenderService renderService;
+    private final CreativeAttachService attachService;
 
     public CreativeController(CreativePhotoService photoService, CreativeService creativeService,
-                              CreativeRegistry registry, ObjectMapper objectMapper) {
+                              CreativeRegistry registry, ObjectMapper objectMapper,
+                              CreativeRenderService renderService, CreativeAttachService attachService) {
         this.photoService = photoService;
         this.creativeService = creativeService;
         this.registry = registry;
         this.objectMapper = objectMapper;
+        this.renderService = renderService;
+        this.attachService = attachService;
     }
 
     // ── Photos ───────────────────────────────────────────────────────────
@@ -147,6 +166,96 @@ public class CreativeController implements CreativesApi {
         return ResponseEntity.ok(new CreativeReadinessResponse(readiness.ready(), items));
     }
 
+    // ── Renders (COND-24 T3) ─────────────────────────────────────────────
+
+    @Override
+    public ResponseEntity<CreativeRenderResponse> createCreativeRender(String projectId, String creativeId,
+                                                                       CreateCreativeRenderRequest request) {
+        CreativeRenderService.CreateRenderResult result =
+                renderService.requestRender(projectId, creativeId, request, currentUser());
+        CreativeRenderResponse response = renderService.toResponse(
+                new CreativeRenderService.RenderView(result.render(), List.of()), result.spec());
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @Override
+    public ResponseEntity<List<CreativeRenderResponse>> listCreativeRenders(String projectId, String creativeId) {
+        List<CreativeRenderResponse> body = renderService.listRenders(projectId, creativeId, currentUser()).stream()
+                .map(renderService::toResponse)
+                .toList();
+        return ResponseEntity.ok(body);
+    }
+
+    @Override
+    public ResponseEntity<CreativeRenderResponse> getCreativeRender(String projectId, String creativeId, String renderId) {
+        return ResponseEntity.ok(renderService.toResponse(
+                renderService.getRender(projectId, creativeId, renderId, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<Void> putCreativeRenderFrame(String projectId, String creativeId, String renderId,
+                                                       String placementKey, Integer width, Integer height,
+                                                       Resource body, Integer index) {
+        renderService.putFrame(projectId, creativeId, renderId, placementKey, index, width, height,
+                readAllBytes(body), currentRequestContentType(), currentUser());
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<CreativeRenderResponse> completeCreativeRender(String projectId, String creativeId,
+                                                                         String renderId,
+                                                                         CompleteCreativeRenderRequest request) {
+        return ResponseEntity.ok(renderService.toResponse(
+                renderService.completeRender(projectId, creativeId, renderId, request, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<CreativeRenderResponse> failCreativeRender(String projectId, String creativeId,
+                                                                     String renderId, FailCreativeRenderRequest request) {
+        return ResponseEntity.ok(renderService.toResponse(
+                renderService.failRender(projectId, creativeId, renderId, request, currentUser())));
+    }
+
+    // ── Attach (COND-24 T3) ──────────────────────────────────────────────
+
+    @Override
+    public ResponseEntity<AttachCreativeResponse> attachCreative(String projectId, String creativeId,
+                                                                  AttachCreativeRequest request) {
+        CreativeAttachService.AttachResult result = attachService.attach(projectId, creativeId,
+                request.getRenderId(), request.getWorkItemId(), currentUser());
+        List<AttachedCreativeAsset> assets = result.assets().stream()
+                .map(a -> new AttachedCreativeAsset(a.assetId(), a.frameId(), a.placementKey())
+                        .sequenceIndex(a.sequenceIndex()))
+                .toList();
+        List<AttachCreativeTargetUpdate> updated = result.targetsUpdated().stream()
+                .map(u -> new AttachCreativeTargetUpdate(u.targetId(), u.platform(), u.assetIds()))
+                .toList();
+        List<AttachCreativeTargetSkip> skipped = result.targetsSkipped().stream()
+                .map(s -> new AttachCreativeTargetSkip(s.targetId(), s.platform(), s.reason()))
+                .toList();
+        return ResponseEntity.ok(new AttachCreativeResponse(assets, updated, skipped));
+    }
+
+    private byte[] readAllBytes(Resource resource) {
+        try (java.io.InputStream in = resource.getInputStream()) {
+            return in.readAllBytes();
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException("Failed to read render frame upload body", e);
+        }
+    }
+
+    /**
+     * The raw {@code Content-Type} header of the current request. {@link CreativesApi}'s generated
+     * interface has no parameter for it (openapi-generator does not thread a `consumes` media type
+     * through to the method signature even with two content types declared) — this is the standard
+     * Spring MVC escape hatch for reaching the request from inside a call already bound by that fixed
+     * signature.
+     */
+    private String currentRequestContentType() {
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
+        return attrs.getRequest().getContentType();
+    }
+
     // ── Mapping ──────────────────────────────────────────────────────────
 
     private CreativePhotoResponse toResponse(CreativePhotoService.PhotoView view) {
@@ -186,6 +295,13 @@ public class CreativeController implements CreativesApi {
                 .sequenceKind(c.getSequenceKind() != null ? SequenceKind.fromValue(c.getSequenceKind()) : null)
                 .carouselRatio(c.getCarouselRatio())
                 .createdBy(c.getCreatedBy());
+        if (view.latestRenderSummary() != null) {
+            response.latestRenderId(view.latestRenderSummary().render().getId())
+                    .latestRenderThumbnailUrl(renderService.thumbnailUrl(view.latestRenderSummary()));
+        }
+        if (view.latestRenderFull() != null) {
+            response.latestRender(renderService.toResponse(view.latestRenderFull()));
+        }
         return response;
     }
 

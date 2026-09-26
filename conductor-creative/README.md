@@ -1,10 +1,11 @@
 # @cliangdev/creative-render
 
 The render engine behind Conductor Creatives: the same code draws a live
-preview in the web editor and (in a later tranche, T3) drives a headless
-Playwright job that produces upload-ready PNGs. One codebase, so the preview
-a marketer edits against and the frame that gets attached to a Post can never
-drift apart.
+preview in the web editor and (since T3) drives a headless Playwright job
+that produces upload-ready JPEG frames (Instagram feed images and TikTok
+photo posts both refuse PNG) — the preview-only contact sheet stays PNG. One
+codebase, so the preview a marketer edits against and the frame that gets
+attached to a Post can never drift apart.
 
 It is a brand-agnostic port of `nexus-marketing/social/`'s static-ad render
 engine (`render.js`, `layouts/`, `placements.json`). Everything Rexipe-specific
@@ -261,7 +262,16 @@ key/folder plus a registry entry, no code change. The backend keeps a copy of
 test on that side reads these files directly to make sure the two never
 drift.
 
-## The T3 headless render job (`job/`)
+## The headless render job (`job/`)
+
+Renders run **locally**: the Conductor CLI and MCP server (both part of `@cliangdev/conductor`,
+running on the user's own machine — under Claude Code or Claude Desktop) drive this job with a
+local Playwright/Chromium, talking to the backend over its ordinary external v2 API with the
+user's own API key. There is no backend-launched Cloud Run render job and no render token; the
+backend only records what a render produces (frames, warnings, state) and serves them back with
+signed URLs. A Workflow can run the same job on a self-hosted runner by shelling out to the CLI
+(`npx -y @cliangdev/conductor creative render ...`) — see
+[`docs/workflows.md`](../docs/workflows.md)'s Creatives section in the main repo.
 
 `render.js` and `mount.js` deliberately keep the "build one board" concern
 (`resolveAd`/`resolveSequence`/`renderBoard`/`fitBoard`) separate from the
@@ -309,29 +319,43 @@ that package via a `file:` dependency and must stay dependency-free.
   the spec, serves this package's own files over `job/server.mjs`'s tiny
   static server, opens one Playwright page per placement (or per sequence
   beat, or the one contact-sheet page for `previewOnly`) at
-  `deviceScaleFactor: 2`, screenshots the `.cc-board` (or `#sheet`) element,
-  and calls `transport.putFrame`/`complete`/`fail`. Exits 0 on success, 1 on
+  `deviceScaleFactor: 2`, screenshots the `.cc-board` element as JPEG
+  (quality 92) or the `#sheet` element as PNG, and calls
+  `transport.putFrame`/`complete`/`fail`. Exits 0 on success, 1 on
   any failure — a bad assertion, a load error, or a timeout on any network
   step. Run directly: `node job/render.mjs` with `CONDUCTOR_API_URL`,
-  `CONDUCTOR_RENDER_TOKEN` and `RENDER_ID` set.
+  `CONDUCTOR_API_KEY`, `CONDUCTOR_PROJECT_ID` and `CREATIVE_ID` set
+  (`PREVIEW_ONLY`, `RENDERER`, `WORKFLOW_RUN_ID` optional). This standalone
+  bootstrap is a convenience for running the job directly; `@cliangdev/conductor`'s
+  CLI and MCP server call `run()` themselves with their own Playwright-Core
+  browser discovery instead of shelling out to this file.
 - `job/transport.mjs` — the render core's ONLY knowledge of how it talks to
   the backend (`getSpec`/`putFrame`/`complete`/`fail`), against today's
-  `/internal/v1/creative-renders/*` contract. Deliberately isolated: how this
-  job is launched and reports back (a direct Cloud Run Job talking straight
-  REST, or sitting behind a Conductor Workflow) is expected to change: when
-  it does, only this file and `test/transport.test.mjs` change, never
-  `render.mjs`'s rendering core or its own tests.
+  external v2 `/projects/{projectId}/marketing/creatives/{creativeId}/renders`
+  contract, authenticated with a plain API key (`Authorization: Bearer
+  <apiKey>`) — the same key `conductor login`/a project API key already
+  provides, no separate render token. Deliberately isolated: how this job is
+  launched and reports back is expected to keep evolving; when it does, only
+  this file and `test/transport.test.mjs` change, never `render.mjs`'s
+  rendering core or its own tests.
 - `job/server.mjs` — a dependency-free `node:http` static server (ported from
   nexus-marketing's `social/server.mjs`) scoped to this package's root, so
   `frame.html`/`sheet.html`'s `type="module"` imports and stylesheet
   `<link>`s resolve (both are blocked under `file://`).
 
-**Image.** `runner-image/Dockerfile.render`, built from the repo root
-(`docker build -f runner-image/Dockerfile.render .`): `FROM
-mcr.microsoft.com/playwright:v1.63.0-noble` (pinned to match the `playwright`
-**1.63.0** npm version in `job/package.json` — these two must move together),
-copies `conductor-creative/` in, `npm ci --omit=dev` in `job/`, `CMD
-["node", "render.mjs"]`.
+**Running it from `@cliangdev/conductor`.** `conductor-tools`' build copies this
+package's runtime files (everything above, minus `mount.js`, `copy-rules.js`,
+tests and `job/package.json`/`node_modules`) into its own `dist/creative/` so
+the published npm package needs no `file:` dependency on this sibling
+directory. Its CLI (`conductor creative render <creativeId>`) and its MCP tool
+(`render_creative`) both import `job/render.mjs`'s `run()` and
+`job/transport.mjs`'s `createApiTransport()` from that copy, supplying their
+own browser factory built on `playwright-core` (system Chrome, then system
+Edge, then a Playwright-managed Chromium if one was installed with `npx
+playwright install chromium`) — `job/package.json`'s own `playwright`
+dependency (a full, browser-bundling install) is only for running this job
+directly out of this repo, e.g. inside a Docker image on a self-hosted
+Workflow runner.
 
 **Tests.** `test/assertions.test.mjs` (pure math, no browser),
 `test/transport.test.mjs` (the HTTP contract, against a fake `node:http`
@@ -339,8 +363,10 @@ backend), `test/job.test.mjs` (the rendering core end to end against a real
 Chromium, with an in-memory fake transport — no HTTP, no coupling to the
 current backend contract; covers single/multi-placement, a story sequence,
 `previewOnly`, an unknown-placement failure with no frames uploaded, and a
-spec-fetch failure; one test asserts the actual PNG's `IHDR` pixel dimensions
-match the placement × 2). These need a local Chromium
+spec-fetch failure; one test asserts a placement frame's actual JPEG (SOF
+marker) pixel dimensions match the placement × 2, and another does the same
+for the `sheet` contact sheet's PNG `IHDR` dimensions). These need a local
+Chromium
 (`cd conductor-creative/job && npx playwright install chromium`); every
 Playwright-dependent test skips itself when one is not available rather than
 failing a machine that never ran that install step.
@@ -373,3 +399,7 @@ failing a machine that never ran that install step.
 - **No golden-image test, no CLI, no MCP server, no photo pipeline** — all
   out of scope for this package (see the PRD; golden-image comparison and the
   Rexipe import are T6 work against the real render job).
+- **Placement frames export as JPEG, not PNG** (`export-png.mjs`'s namesake
+  format) — Instagram feed images and TikTok photo posts both refuse PNG, so
+  a PNG frame would fail the publishing approval gate. Only the preview-only
+  `sheet` contact sheet, never attached to a Post, still exports PNG.

@@ -16,7 +16,7 @@
 // blocks approval on any rule it cannot evaluate, so a video that skipped this step could never
 // reach Approved.
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Film, ImageIcon, Lock, Plus, UploadCloud, X } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -229,6 +229,11 @@ export interface MediaUploadPanelProps {
    * thumbnails with remove-on-hover and an "Add" tile — for a card that already holds the caption.
    */
   variant?: 'full' | 'strip'
+  /**
+   * An extra same-sized tile rendered after the "Add" tile in the `strip` variant (e.g. Post's
+   * "From a creative"). Hidden whenever uploads are locked, alongside "Add" itself.
+   */
+  extraTile?: ReactNode
 }
 
 export function MediaUploadPanel({
@@ -241,6 +246,7 @@ export function MediaUploadPanel({
   onUploaded,
   className,
   variant = 'full',
+  extraTile,
 }: MediaUploadPanelProps) {
   const assetTypes = useMemo(() => workflowView?.assetTypes ?? [], [workflowView])
   /**
@@ -403,6 +409,7 @@ export function MediaUploadPanel({
                 <Plus className="h-4 w-4" aria-hidden />
                 {uploading ? 'Uploading…' : 'Add'}
               </button>
+              {extraTile}
             </>
           )}
         </div>

@@ -47,9 +47,13 @@ function CreativeThumb({ creative, brand }: { creative: Creative; brand: RenderB
   const containerRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
 
+  // A rendered PNG (from a local `render_creative`/CLI run) is the real thing the platform will
+  // show — prefer it over the live browser mount, which falls back to whenever no render exists yet.
+  const thumbnailUrl = creative.latestRenderThumbnailUrl
+
   useEffect(() => {
     const el = containerRef.current
-    if (!el) return
+    if (!el || thumbnailUrl) return
     if (typeof IntersectionObserver === 'undefined') {
       setVisible(true)
       return
@@ -65,10 +69,10 @@ function CreativeThumb({ creative, brand }: { creative: Creative; brand: RenderB
     )
     observer.observe(el)
     return () => observer.disconnect()
-  }, [])
+  }, [thumbnailUrl])
 
   useEffect(() => {
-    if (!visible || !containerRef.current) return
+    if (thumbnailUrl || !visible || !containerRef.current) return
     const handle = mountBoard(containerRef.current, {
       creative: creativeToRenderCreative(creative),
       brand,
@@ -76,7 +80,16 @@ function CreativeThumb({ creative, brand }: { creative: Creative; brand: RenderB
     })
     return () => handle.destroy()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-mount only when the rendered fields change
-  }, [visible, creative.headline, creative.body, creative.layout, creative.theme, creative.photoUrl, brand])
+  }, [thumbnailUrl, visible, creative.headline, creative.body, creative.layout, creative.theme, creative.photoUrl, brand])
+
+  if (thumbnailUrl) {
+    return (
+      <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
+      </div>
+    )
+  }
 
   return (
     <div

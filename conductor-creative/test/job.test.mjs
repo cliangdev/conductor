@@ -1,12 +1,12 @@
 /* job.test.mjs — job/render.mjs's rendering core (`run()`), end to end
  * against a real Playwright Chromium and this package's own frame.html /
  * sheet.html, but with an in-memory FAKE TRANSPORT instead of HTTP — no
- * network, no fake backend server, and no coupling to today's
- * `/internal/v1/creative-renders` shape (that shape is transport.mjs's own
- * concern, covered by test/transport.test.mjs). This is deliberately how T3
- * is expected to keep working if the delivery mechanism changes (Cloud Run
- * Job vs. behind a Workflow): `run()` only ever calls the four methods on
- * `transport`.
+ * network, no fake backend server, and no coupling to today's external v2
+ * `/marketing/creatives/{creativeId}/renders` shape (that shape is
+ * transport.mjs's own concern, covered by test/transport.test.mjs). This is
+ * deliberately how the render core is expected to keep working if the
+ * delivery mechanism changes again: `run()` only ever calls the four methods
+ * on `transport`.
  *
  * Needs a real Chromium (`npx playwright install chromium`); every test
  * skips itself when one is not available, rather than failing CI on a
@@ -28,6 +28,29 @@ function pngDimensions(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
+/* A JPEG has no fixed-offset header: dimensions live in its SOF (start-of-frame) segment, found by
+ * walking the marker chain from the SOI. Every marker is 0xFF followed by a non-0x00/0xFF byte; markers
+ * that carry a payload are followed by a big-endian 2-byte segment length (which includes those 2
+ * length bytes themselves). The SOF markers are 0xC0-0xCF except DHT (0xC4), JPG (0xC8) and DAC (0xCC);
+ * a SOF segment's payload is precision (1 byte), height (2 bytes, BE), width (2 bytes, BE), ... */
+function jpegDimensions(buf) {
+  let offset = 2; // past the 0xFFD8 SOI marker
+  while (offset + 4 <= buf.length) {
+    if (buf[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = buf[offset + 1];
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      return { height: buf.readUInt16BE(offset + 5), width: buf.readUInt16BE(offset + 7) };
+    }
+    const segmentLength = buf.readUInt16BE(offset + 2);
+    offset += 2 + segmentLength;
+  }
+  throw new Error('no SOF marker found in JPEG');
+}
+
 function fakeTransport() {
   const calls = { putFrame: [], complete: null, fail: null };
   return {
@@ -36,8 +59,8 @@ function fakeTransport() {
     async getSpec() {
       return this.spec;
     },
-    async putFrame(placementKey, { index, width, height, png }) {
-      calls.putFrame.push({ placementKey, index, width, height, png });
+    async putFrame(placementKey, { index, width, height, bytes, contentType }) {
+      calls.putFrame.push({ placementKey, index, width, height, bytes, contentType });
     },
     async complete(warnings) {
       calls.complete = warnings;
@@ -75,7 +98,8 @@ test('run(): a valid single-placement creative renders, PUTs one frame, then com
   // 4x5 is 1080x1350; deviceScaleFactor 2 -> 2160x2700.
   assert.equal(frame.width, 2160);
   assert.equal(frame.height, 2700);
-  const dims = pngDimensions(frame.png);
+  assert.equal(frame.contentType, 'image/jpeg');
+  const dims = jpegDimensions(frame.bytes);
   assert.equal(dims.width, 2160);
   assert.equal(dims.height, 2700);
   assert.ok(Array.isArray(transport.calls.complete));
@@ -102,6 +126,7 @@ test('run(): multiple placements each produce one PUT, in order, before completi
   assert.equal(transport.calls.putFrame[0].height, 2160);
   assert.equal(transport.calls.putFrame[1].width, 2160); // 9x16 -> 1080x1920 @2x
   assert.equal(transport.calls.putFrame[1].height, 3840);
+  assert.ok(transport.calls.putFrame.every((f) => f.contentType === 'image/jpeg'));
 });
 
 test('run(): a story sequence uploads one indexed frame per beat at the story placement', async (t) => {
@@ -147,6 +172,8 @@ test('run(): previewOnly renders exactly one contact-sheet frame named "sheet"',
   assert.equal(ok, true);
   assert.equal(transport.calls.putFrame.length, 1);
   assert.equal(transport.calls.putFrame[0].placementKey, 'sheet');
+  assert.equal(transport.calls.putFrame[0].contentType, 'image/png');
+  assert.doesNotThrow(() => pngDimensions(transport.calls.putFrame[0].bytes));
 });
 
 test('run(): an unknown placement key fails the render and uploads nothing', async (t) => {
