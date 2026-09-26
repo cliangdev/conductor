@@ -44,7 +44,7 @@ jobs:
       # dispatch has no other path. See docs/workflows.md#queued-and-waiting-work and the Aug 2026 cost report.
       # Timed publishing (scheduled Posts) rides the same mechanism on its own queue, publish-tasks — see
       # docs/publishing.md#firing-on-time. The publishing pollers only sweep behind it.
-      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }} --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
+      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }},OAUTH_CALLBACK_BASE_URL=${{ vars.OAUTH_CALLBACK_BASE_URL }} --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
       # The TIKTOK_* and META_* bindings below are Conductor's own TikTok and Meta apps. Those
       # platforms review an app once and every workspace authorizes its own account through it, so
       # the app belongs to the deployment. The env var names are what the connectors return from

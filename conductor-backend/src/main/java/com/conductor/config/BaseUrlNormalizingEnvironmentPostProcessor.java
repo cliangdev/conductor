@@ -45,7 +45,8 @@ public class BaseUrlNormalizingEnvironmentPostProcessor implements EnvironmentPo
             "frontend.url",
             "BACKEND_URL",
             "CONDUCTOR_BACKEND_URL",
-            "conductor.backend.url");
+            "conductor.backend.url",
+            "OAUTH_CALLBACK_BASE_URL");
 
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
