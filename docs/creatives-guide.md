@@ -28,8 +28,8 @@ into the product.
   each as a hex value.
 - **CTA claim** — the short call-to-action line shown near the logo lockup (e.g. "Download free").
 - **"Headline must carry exactly one accent phrase"** — a switch. When it's on, every headline you
-  write must wrap exactly one phrase in `*asterisks*`, e.g. `Every saved recipe, *finally
-  organized*.` — never zero, never two. That phrase is what renders in italic accent colour.
+  write must wrap exactly one phrase in `*asterisks*`, e.g. `Spring colours, *half price*.` —
+  never zero, never two. That phrase is what renders in italic accent colour.
 - **Rules** — your copy rules: a regex pattern, optional flags, a message to show when it fails,
   which fields it checks (headline/body/caption), and an optional exception pattern for cases the
   rule shouldn't catch. Use **Test a line** to type a headline and see immediately whether it
