@@ -196,8 +196,11 @@ describe('RendersPanel', () => {
   it('lets the manual Refresh button re-fetch', async () => {
     ;(apiGet as Mock).mockResolvedValue([render_('r-1')])
     setup()
-    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1))
-    await userEvent.click(screen.getByRole('button', { name: /refresh/i }))
+    // Wait for the loaded panel (not just the first call) so the click lands on the rendered button.
+    const refresh = await screen.findByRole('button', { name: /refresh/i })
+    await waitFor(() => expect(refresh).toBeEnabled())
+    expect(apiGet).toHaveBeenCalledTimes(1)
+    await userEvent.click(refresh)
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2))
   })
 })
