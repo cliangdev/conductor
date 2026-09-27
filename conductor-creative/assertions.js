@@ -37,7 +37,10 @@ export function relativeLuminance([r, g, b]) {
 
 /** "rgb(1, 2, 3)" / "rgba(1, 2, 3, 0.5)" -> [1, 2, 3]; anything else -> null. */
 export function parseRgb(str) {
-  const m = /rgba?\(([^)]+)\)/.exec(str || '');
+  // Anchored, bounded and limited to digits, dots, commas and spaces, so no input can make it backtrack.
+  const s = String(str || '').trim();
+  if (s.length > 64) return null;
+  const m = /^rgba?\(([0-9., ]+)\)$/.exec(s);
   if (!m) return null;
   const parts = m[1].split(',').map((s) => parseFloat(s));
   return parts.length >= 3 && parts.slice(0, 3).every((n) => !Number.isNaN(n)) ? parts.slice(0, 3) : null;
