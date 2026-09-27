@@ -24,15 +24,6 @@ async function browserAvailable() {
 
 /* IHDR width/height live at fixed byte offsets in every PNG, per the spec:
  * signature (8) + length (4) + "IHDR" (4) + width (4, BE) + height (4, BE). */
-function pngDimensions(buf) {
-  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
-}
-
-/* A JPEG has no fixed-offset header: dimensions live in its SOF (start-of-frame) segment, found by
- * walking the marker chain from the SOI. Every marker is 0xFF followed by a non-0x00/0xFF byte; markers
- * that carry a payload are followed by a big-endian 2-byte segment length (which includes those 2
- * length bytes themselves). The SOF markers are 0xC0-0xCF except DHT (0xC4), JPG (0xC8) and DAC (0xCC);
- * a SOF segment's payload is precision (1 byte), height (2 bytes, BE), width (2 bytes, BE), ... */
 function jpegDimensions(buf) {
   let offset = 2; // past the 0xFFD8 SOI marker
   while (offset + 4 <= buf.length) {
@@ -172,8 +163,12 @@ test('run(): previewOnly renders exactly one contact-sheet frame named "sheet"',
   assert.equal(ok, true);
   assert.equal(transport.calls.putFrame.length, 1);
   assert.equal(transport.calls.putFrame[0].placementKey, 'sheet');
-  assert.equal(transport.calls.putFrame[0].contentType, 'image/png');
-  assert.doesNotThrow(() => pngDimensions(transport.calls.putFrame[0].bytes));
+  // A 1x JPEG, so preview_creative can hand it to a chat under the ~1 MB inline limit.
+  assert.equal(transport.calls.putFrame[0].contentType, 'image/jpeg');
+  const sheet = transport.calls.putFrame[0];
+  const dims = jpegDimensions(sheet.bytes);
+  assert.deepEqual([dims.width, dims.height], [sheet.width, sheet.height]);
+  assert.ok(sheet.bytes.length < 1_000_000, `sheet is ${sheet.bytes.length} bytes`);
 });
 
 test('run(): an unknown placement key fails the render and uploads nothing', async (t) => {

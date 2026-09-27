@@ -8,6 +8,7 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
@@ -51,6 +52,7 @@ public class CreativeAttachService {
     private final CreativeRenderRepository renderRepository;
     private final CreativeRenderFrameRepository frameRepository;
     private final AssetService assetService;
+    private final AssetRepository assetRepository;
     private final StorageService storageService;
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
@@ -65,6 +67,7 @@ public class CreativeAttachService {
                                  CreativeRenderRepository renderRepository,
                                  CreativeRenderFrameRepository frameRepository,
                                  AssetService assetService,
+                                 AssetRepository assetRepository,
                                  StorageService storageService,
                                  WorkItemRepository workItemRepository,
                                  ProjectSecurityService projectSecurityService,
@@ -78,6 +81,7 @@ public class CreativeAttachService {
         this.renderRepository = renderRepository;
         this.frameRepository = frameRepository;
         this.assetService = assetService;
+        this.assetRepository = assetRepository;
         this.storageService = storageService;
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
@@ -115,6 +119,10 @@ public class CreativeAttachService {
         if (!render.isSucceeded()) {
             throw new ConflictException("Render " + renderId + " is not SUCCEEDED (" + render.getState() + ")");
         }
+        if (render.isPreviewOnly()) {
+            throw new ConflictException("Render " + renderId + " is a preview (a contact sheet only) and has no frames"
+                    + " to attach; render the Creative in full first");
+        }
         WorkItem workItem = workItemRepository.findById(workItemId)
                 .filter(w -> w.getProject() != null && projectId.equals(w.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
@@ -129,7 +137,20 @@ public class CreativeAttachService {
         // placementKey -> assetIds, in the same order the frames were rendered (never re-sorted).
         Map<String, List<String>> assetIdsByPlacement = new LinkedHashMap<>();
 
+        // Attaching the same render again (say, to fill a destination added afterwards) reuses the frames
+        // already on this Post instead of copying them a second time.
+        Map<String, Asset> alreadyAttached = new LinkedHashMap<>();
+        for (Asset existing : assetRepository.findAllByWorkItemId(workItemId)) {
+            if (existing.getCreativeFrameId() != null) alreadyAttached.putIfAbsent(existing.getCreativeFrameId(), existing);
+        }
+
         for (CreativeRenderFrame frame : frames) {
+            Asset reused = alreadyAttached.get(frame.getId());
+            if (reused != null) {
+                attachedAssets.add(new AttachedAsset(reused.getId(), frame.getId(), frame.getPlacementKey(), frame.getSequenceIndex()));
+                assetIdsByPlacement.computeIfAbsent(frame.getPlacementKey(), k -> new ArrayList<>()).add(reused.getId());
+                continue;
+            }
             String assetId = java.util.UUID.randomUUID().toString();
             String destPath = GCS_PREFIX + "/" + projectId + "/" + workItemId + "/" + assetId + "-"
                     + frame.getPlacementKey() + (frame.getSequenceIndex() != null ? "-" + frame.getSequenceIndex() : "")

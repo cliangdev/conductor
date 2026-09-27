@@ -135,3 +135,51 @@ test('attachFocalDrag: reports an "x% y%" string as the pointer moves within the
 
   drag.detach();
 });
+
+// A draw awaits document.fonts.ready; the editor can destroy or update the board while it waits (switching
+// kits remounts every placement). The superseded draw must not fit a board that is gone or replaced.
+function withSlowFonts() {
+  let release;
+  const ready = new Promise((r) => { release = r; });
+  const previous = document.fonts;
+  document.fonts = { ready };
+  return { release, restore: () => { document.fonts = previous; } };
+}
+
+test('mountBoard: destroy() while fonts are still loading does not throw', async () => {
+  const fonts = withSlowFonts();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'Gone *soon*.' },
+      brand: {},
+      placementKey: '1x1',
+    });
+    await Promise.resolve();
+    handle.destroy();
+    fonts.release();
+    await handle.ready;
+    assert.equal(container.querySelectorAll('.cc-board').length, 0);
+  } finally {
+    fonts.restore();
+  }
+});
+
+test('mountBoard: an update() during a pending draw leaves one board showing the latest input', async () => {
+  const fonts = withSlowFonts();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'First *draft*.' },
+      brand: {},
+      placementKey: '4x5',
+    });
+    const second = handle.update({ creative: { layout: 'bleed', headline: 'Second *draft*.' } });
+    fonts.release();
+    await Promise.all([handle.ready, second]);
+    assert.equal(container.querySelectorAll('.cc-board').length, 1);
+    assert.equal(handle.board.querySelector('.cc-headline').textContent, 'Second draft.');
+  } finally {
+    fonts.restore();
+  }
+});

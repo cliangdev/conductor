@@ -127,6 +127,30 @@ describe('RendersPanel', () => {
     expect(screen.queryByText('Download')).not.toBeInTheDocument()
   })
 
+  it('shows the latest full render, skipping a newer preview that holds only a contact sheet', async () => {
+    const sheetOnly = render_('r-preview', {
+      previewOnly: true,
+      frames: [
+        {
+          id: 'frame-sheet',
+          placementKey: 'sheet',
+          platform: null,
+          sequenceIndex: null,
+          url: 'https://storage.example/sheet.jpg',
+          width: 1200,
+          height: 700,
+          sizeBytes: 90000,
+          warnings: [],
+        },
+      ],
+    })
+    ;(apiGet as Mock).mockResolvedValue([sheetOnly, render_('r-full')])
+    const onLatestSucceededChange = vi.fn()
+    setup({ onLatestSucceededChange })
+    await waitFor(() => expect(screen.getAllByText('Download')).toHaveLength(2))
+    expect(onLatestSucceededChange).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'r-full' }))
+  })
+
   it('shows a stale badge when the latest render predates the current Creative version', async () => {
     ;(apiGet as Mock).mockResolvedValue([render_('r-1', { creativeVersion: 2 })])
     setup({ creativeVersion: 5 })

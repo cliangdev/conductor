@@ -28,6 +28,14 @@ import {
 
 const ALLOWED_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 
+/** The file name without its extension, e.g. "sunset-hero.jpg" -> "sunset-hero" — the label default
+ *  so a newly uploaded photo never has to fall back to showing its raw UUID (see PhotoPicker.tsx's
+ *  upload form and CreativeEditor's photo button). */
+function stripExtension(filename: string): string {
+  const idx = filename.lastIndexOf('.')
+  return idx > 0 ? filename.slice(0, idx) : filename
+}
+
 /** Reads a locally-selected image's real pixel dimensions via a throwaway <img> — Conductor has no
  *  server-side image pipeline (WebP especially cannot be probed server-side), so this is the only
  *  place a photo's width/height are ever measured. */
@@ -72,12 +80,16 @@ export function PhotoPicker({
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
+  const [label, setLabel] = useState('')
   const [source, setSource] = useState('')
   const [licence, setLicence] = useState('')
   const [aiGenerated, setAiGenerated] = useState(false)
   const [busyPhotoId, setBusyPhotoId] = useState<string | null>(null)
 
-  async function handleFile(file: File | undefined) {
+  // `labelOverride` carries the file-name default computed at selection time — reading the `label`
+  // state here instead would race the setLabel call above it (state updates are async), so the file
+  // input's onChange passes the resolved value straight through rather than relying on a re-render.
+  async function handleFile(file: File | undefined, labelOverride?: string) {
     if (!file) return
     setUploadError(null)
     setWarnings([])
@@ -88,6 +100,7 @@ export function PhotoPicker({
       const pending = await createCreativePhoto(
         projectId,
         {
+          label: (labelOverride ?? label).trim() || undefined,
           contentType: file.type as 'image/jpeg' | 'image/png' | 'image/webp',
           sizeBytes: file.size,
           width: dims.width,
@@ -104,6 +117,7 @@ export function PhotoPicker({
       setWarnings(confirmed.warnings ?? [])
       await onPhotosChanged()
       onSelect(confirmed)
+      setLabel('')
       setSource('')
       setLicence('')
       setAiGenerated(false)
@@ -131,6 +145,15 @@ export function PhotoPicker({
       <div className="space-y-4">
         {canManage && (
           <div className="space-y-2 rounded-md border border-border p-3">
+            <div>
+              <Label htmlFor="photo-label" className="text-xs">Label</Label>
+              <Input
+                id="photo-label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Defaults to the file name"
+              />
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label htmlFor="photo-source" className="text-xs">Source</Label>
@@ -154,7 +177,12 @@ export function PhotoPicker({
               className="sr-only"
               aria-label="Photo file"
               onChange={(e) => {
-                void handleFile(e.target.files?.[0])
+                const file = e.target.files?.[0]
+                if (file) {
+                  const defaultLabel = label.trim() || stripExtension(file.name)
+                  setLabel(defaultLabel)
+                  void handleFile(file, defaultLabel)
+                }
                 e.target.value = ''
               }}
             />

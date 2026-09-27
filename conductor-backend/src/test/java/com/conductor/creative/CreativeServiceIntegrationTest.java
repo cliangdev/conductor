@@ -123,6 +123,48 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void cuttingAVariantWithNoNameCopiesTheSourcesName() {
+        CreateCreativeRequest request = concept("The original *hook*.", "A calm plan for busy nights.");
+        request.setName("Launch week hero");
+        CreativeService.CreativeView root = creativeService.createCreative(project.getId(), request, admin);
+
+        CreativeService.CreativeView variant = creativeService.createVariant(project.getId(),
+                root.creative().getId(), new CreateCreativeVariantRequest(), admin);
+        assertThat(variant.creative().getName()).isEqualTo("Launch week hero");
+
+        // An explicit name on the request still wins over copying the source's.
+        CreateCreativeVariantRequest namedVariantRequest = new CreateCreativeVariantRequest();
+        namedVariantRequest.setName("Alt hero");
+        CreativeService.CreativeView namedVariant = creativeService.createVariant(project.getId(),
+                root.creative().getId(), namedVariantRequest, admin);
+        assertThat(namedVariant.creative().getName()).isEqualTo("Alt hero");
+    }
+
+    @Test
+    void readinessListsNoPhotoChosenOnceWhenThereIsNoPhoto() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setPhotoId(null);
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        CreativeService.Readiness readiness = creativeService.readiness(project.getId(), created.creative().getId(), admin);
+
+        assertThat(readiness.items()).filteredOn(i -> i.message().equals("no photo chosen")).hasSize(1);
+        assertThat(readiness.items()).extracting(CreativeService.ReadinessItem::key).doesNotContain("photoProvenance");
+    }
+
+    @Test
+    void readinessChecksSourceAndLicenceOnceThereIsAPhoto() {
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                concept("Plan the week in *one sentence*.", "A calm plan."), admin);
+
+        CreativeService.Readiness readiness = creativeService.readiness(project.getId(), created.creative().getId(), admin);
+
+        assertThat(readiness.items()).extracting(CreativeService.ReadinessItem::key).contains("photoProvenance");
+        assertThat(readiness.items().stream().filter(i -> i.key().equals("photoProvenance")).findFirst().orElseThrow().ok())
+                .isTrue();
+    }
+
+    @Test
     void layoutOverridesAndLockupPersistAndCanBePatched() {
         CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
         request.setLockup(com.conductor.generated.v2.model.CreativeLockup.CHIP);

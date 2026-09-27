@@ -314,72 +314,94 @@ describe('preview_creative', () => {
     fetchMock.mockReset()
   })
 
-  it('downloads the sheet frame of the latest render that has one', async () => {
-    mocked(apiGet).mockResolvedValue([
-      { id: 'r2', state: 'SUCCEEDED', frames: [{ placementKey: '9x16', url: 'https://x.test/9x16.png', sizeBytes: 100 }] },
-      { id: 'r1', state: 'SUCCEEDED', frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.png', sizeBytes: 100 }] },
+  // previewCreative reads the creative (for its version) and its renders.
+  function serve(version: number, renders: unknown[]) {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders') ? renders : { id: 'c1', version }) as never
+    )
+  }
+  const jpeg = {
+    ok: true,
+    headers: { get: (name: string) => (name === 'content-type' ? 'image/jpeg' : null) },
+    arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+  }
+
+  it('downloads the sheet of the latest render made from the current version', async () => {
+    serve(3, [
+      { id: 'r2', state: 'SUCCEEDED', creativeVersion: 3, frames: [{ placementKey: '9x16', url: 'https://x.test/9x16.jpg', sizeBytes: 100 }] },
+      { id: 'r1', state: 'SUCCEEDED', creativeVersion: 3, frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.jpg', sizeBytes: 100 }] },
     ])
-    fetchMock.mockResolvedValue({
-      ok: true,
-      headers: { get: (name: string) => (name === 'content-type' ? 'image/png' : null) },
-      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-    })
+    fetchMock.mockResolvedValue(jpeg)
 
     const result = await previewCreative({ creativeId: 'c1' }, config)
 
     expect(renderCreative).not.toHaveBeenCalled()
     expect(result.renderId).toBe('r1')
-    expect(result.image?.mimeType).toBe('image/png')
-    expect(result.url).toBe('https://x.test/sheet.png')
+    expect(result.image?.mimeType).toBe('image/jpeg')
+    expect(result.url).toBe('https://x.test/sheet.jpg')
   })
 
-  it('falls back to image/png when the download response carries no content-type header', async () => {
-    mocked(apiGet).mockResolvedValue([
-      { id: 'r1', state: 'SUCCEEDED', frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.png', sizeBytes: 100 }] },
+  it('renders a fresh sheet when the only one was made before the creative was edited', async () => {
+    serve(4, [
+      { id: 'r1', state: 'SUCCEEDED', creativeVersion: 3, frames: [{ placementKey: 'sheet', url: 'https://x.test/old.jpg', sizeBytes: 100 }] },
+    ])
+    mocked(renderCreative).mockResolvedValue({
+      ok: true, renderId: 'r2', state: 'SUCCEEDED',
+      frames: [{ placementKey: 'sheet', url: 'https://x.test/new.jpg', sizeBytes: 100 }],
+    })
+    fetchMock.mockResolvedValue(jpeg)
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(renderCreative).toHaveBeenCalledWith({ creativeId: 'c1', previewOnly: true, renderer: 'mcp' }, config)
+    expect(result.url).toBe('https://x.test/new.jpg')
+    expect(result.image).toBeDefined()
+  })
+
+  it('renders a fresh sheet instead of giving up when the stored one is too large to inline', async () => {
+    serve(1, [
+      { id: 'r1', state: 'SUCCEEDED', creativeVersion: 1, frames: [{ placementKey: 'sheet', url: 'https://x.test/big.png', sizeBytes: 5_000_000 }] },
+    ])
+    mocked(renderCreative).mockResolvedValue({
+      ok: true, renderId: 'r2', state: 'SUCCEEDED',
+      frames: [{ placementKey: 'sheet', url: 'https://x.test/small.jpg', sizeBytes: 200_000 }],
+    })
+    fetchMock.mockResolvedValue(jpeg)
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(result.url).toBe('https://x.test/small.jpg')
+    expect(result.image).toBeDefined()
+  })
+
+  it('falls back to image/jpeg when the download response carries no content-type header', async () => {
+    serve(1, [
+      { id: 'r1', state: 'SUCCEEDED', creativeVersion: 1, frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.jpg', sizeBytes: 100 }] },
     ])
     fetchMock.mockResolvedValue({ ok: true, headers: { get: () => null }, arrayBuffer: async () => new Uint8Array([1]).buffer })
 
     const result = await previewCreative({ creativeId: 'c1' }, config)
 
-    expect(result.image?.mimeType).toBe('image/png')
+    expect(result.image?.mimeType).toBe('image/jpeg')
   })
 
-  it('renders a fresh previewOnly sheet when no render has one yet', async () => {
-    mocked(apiGet).mockResolvedValue([{ id: 'r1', state: 'SUCCEEDED', frames: [{ placementKey: '9x16', url: 'x', sizeBytes: 1 }] }])
+  it('returns the URL without an image block when even a fresh sheet is too large to inline', async () => {
+    serve(1, [])
     mocked(renderCreative).mockResolvedValue({
-      ok: true,
-      renderId: 'r2',
-      state: 'SUCCEEDED',
-      frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.png', sizeBytes: 100 }],
+      ok: true, renderId: 'r2', state: 'SUCCEEDED',
+      frames: [{ placementKey: 'sheet', url: 'https://x.test/huge.jpg', sizeBytes: 5_000_000 }],
     })
-    fetchMock.mockResolvedValue({
-      ok: true,
-      headers: { get: (name: string) => (name === 'content-type' ? 'image/png' : null) },
-      arrayBuffer: async () => new Uint8Array([1]).buffer,
-    })
-
-    const result = await previewCreative({ creativeId: 'c1' }, config)
-
-    expect(renderCreative).toHaveBeenCalledWith({ creativeId: 'c1', previewOnly: true, renderer: 'mcp' }, config)
-    expect(result.renderId).toBe('r2')
-    expect(result.image).toBeDefined()
-  })
-
-  it('returns the URL without an image block when the frame is too large to inline', async () => {
-    mocked(apiGet).mockResolvedValue([
-      { id: 'r1', state: 'SUCCEEDED', frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.png', sizeBytes: 5_000_000 }] },
-    ])
 
     const result = await previewCreative({ creativeId: 'c1' }, config)
 
     expect(fetchMock).not.toHaveBeenCalled()
     expect(result.image).toBeUndefined()
-    expect(result.url).toBe('https://x.test/sheet.png')
+    expect(result.url).toBe('https://x.test/huge.jpg')
     expect(result.note).toMatch(/larger than this tool can inline/)
   })
 
-  it('reports failure plainly when the fallback preview render fails', async () => {
-    mocked(apiGet).mockResolvedValue([])
+  it('reports failure plainly when the preview render fails', async () => {
+    serve(1, [])
     mocked(renderCreative).mockResolvedValue({ ok: false, error: 'no photo', renderId: 'r3', frames: [] })
 
     const result = await previewCreative({ creativeId: 'c1' }, config)
@@ -423,5 +445,31 @@ describe('attach_creative_to_post', () => {
     await expect(attachCreativeToPost({ creativeId: 'c1', workItemId: 'w1' }, config)).rejects.toThrow(
       /No SUCCEEDED render/
     )
+  })
+
+  it('accepts postId as the primary param name (matching get_post_status)', async () => {
+    mocked(apiPost).mockResolvedValue({ assets: [] })
+    await attachCreativeToPost({ creativeId: 'c1', postId: 'w1', renderId: 'r9' }, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives/c1/attach',
+      { renderId: 'r9', workItemId: 'w1' },
+      config
+    )
+  })
+
+  it('prefers postId over the deprecated workItemId alias when both are given', async () => {
+    mocked(apiPost).mockResolvedValue({ assets: [] })
+    await attachCreativeToPost({ creativeId: 'c1', postId: 'w-new', workItemId: 'w-old', renderId: 'r9' }, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives/c1/attach',
+      { renderId: 'r9', workItemId: 'w-new' },
+      config
+    )
+  })
+
+  it('throws a clear error when neither postId nor workItemId is given', async () => {
+    await expect(attachCreativeToPost({ creativeId: 'c1', renderId: 'r9' }, config)).rejects.toThrow(/postId is required/)
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(apiPost).not.toHaveBeenCalled()
   })
 })

@@ -128,12 +128,56 @@ describe('PhotoPicker', () => {
 
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith(
       expect.stringContaining('/marketing/photos'),
-      expect.objectContaining({ contentType: 'image/jpeg', width: 1200, height: 1500 }),
+      expect.objectContaining({ contentType: 'image/jpeg', width: 1200, height: 1500, label: 'photo' }),
       'tok',
     ))
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith(confirmed))
     expect(onPhotosChanged).toHaveBeenCalled()
     expect(await screen.findByText('Long edge under 2160px')).toBeInTheDocument()
+
+    global.Image = originalImage
+  })
+
+  it('sends a user-typed Label instead of the file name default', async () => {
+    ;(apiPost as Mock).mockImplementation((path: string) => {
+      if (path.endsWith('/confirm')) return Promise.resolve(photo({ id: 'photo-3' }))
+      return Promise.resolve(photo({ id: 'photo-3', uploadStatus: 'PENDING', url: null, uploadUrl: 'https://storage.example/upload-url' }))
+    })
+
+    render(
+      <PhotoPicker
+        projectId="proj-1"
+        token="tok"
+        open
+        onOpenChange={() => {}}
+        photos={[]}
+        onSelect={vi.fn()}
+        onPhotosChanged={vi.fn()}
+      />,
+    )
+
+    const originalImage = global.Image
+    class FakeImage {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      naturalWidth = 1200
+      naturalHeight = 1500
+      set src(_v: string) {
+        this.onload?.()
+      }
+    }
+    // @ts-expect-error stubbing the global Image constructor for the dimension probe
+    global.Image = FakeImage
+
+    await userEvent.type(screen.getByLabelText('Label'), 'Hero shot')
+    const file = new File(['x'.repeat(10)], 'IMG_0042.jpg', { type: 'image/jpeg' })
+    await userEvent.upload(screen.getByLabelText('Photo file') as HTMLInputElement, file)
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith(
+      expect.stringContaining('/marketing/photos'),
+      expect.objectContaining({ label: 'Hero shot' }),
+      'tok',
+    ))
 
     global.Image = originalImage
   })

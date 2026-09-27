@@ -30,14 +30,17 @@ const PAGE_TIMEOUT_MS = 20_000;
 /* Placement frames are JPEG — Instagram feed images and TikTok photo posts both refuse PNG (see
  * MediaTargetValidator on the backend) — at quality 92, a level export tooling generally treats as
  * visually lossless while still compressing meaningfully smaller than PNG. The `sheet` contact sheet
- * (a preview-only render, never attached to a Post) stays PNG: nothing on the backend gates it, and PNG
- * keeps its text perfectly crisp for a human reviewing the grid. Every `.cc-board` paints an explicit
+ * (a preview-only render, never attached to a Post) is a 1x JPEG: it exists to be looked at inside a
+ * chat (preview_creative returns it as an image), which caps it near 1 MB, and a 2x PNG grid of every
+ * placement runs well past that. Every `.cc-board` paints an explicit
  * `background-color` (frame.css) — dark or light theme — so there is no transparency for JPEG's opaque
  * export to clip. */
 const PLACEMENT_FRAME_SCREENSHOT = { type: 'jpeg', quality: 92 };
 const PLACEMENT_FRAME_CONTENT_TYPE = 'image/jpeg';
-const SHEET_SCREENSHOT = { type: 'png' };
-const SHEET_CONTENT_TYPE = 'image/png';
+const SHEET_SCREENSHOT = { type: 'jpeg', quality: 85 };
+const SHEET_CONTENT_TYPE = 'image/jpeg';
+const FRAME_SCALE = 2;
+const SHEET_SCALE = 1;
 
 async function defaultBrowserFactory() {
   const { chromium } = await import('playwright');
@@ -109,7 +112,9 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
 
     for (const frame of frames) {
       const label = frame.index !== undefined ? `${frame.placementKey}[${frame.index}]` : frame.placementKey;
-      const page = await browser.newPage({ deviceScaleFactor: 2 });
+      const isSheet = frame.page === 'sheet.html';
+      const scale = isSheet ? SHEET_SCALE : FRAME_SCALE;
+      const page = await browser.newPage({ deviceScaleFactor: scale });
       try {
         await page.addInitScript((s) => {
           window.__RENDER_SPEC__ = s;
@@ -132,13 +137,12 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
           warnings.push({ placementKey: frame.placementKey, index: frame.index, message });
         }
 
-        const isSheet = frame.page === 'sheet.html';
         const locator = isSheet ? page.locator('#sheet') : page.locator('.cc-board').first();
         const bytes = await locator.screenshot(isSheet ? SHEET_SCREENSHOT : PLACEMENT_FRAME_SCREENSHOT);
         const contentType = isSheet ? SHEET_CONTENT_TYPE : PLACEMENT_FRAME_CONTENT_TYPE;
         const box = await locator.boundingBox();
-        const width = Math.round((box && box.width) || 0) * 2;
-        const height = Math.round((box && box.height) || 0) * 2;
+        const width = Math.round((box && box.width) || 0) * scale;
+        const height = Math.round((box && box.height) || 0) * scale;
 
         await transport.putFrame(frame.placementKey, { index: frame.index, width, height, bytes, contentType });
         log(`ok   ${label}  ${width}x${height}  ${contentType}`);
@@ -161,6 +165,8 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
 }
 
 async function reportFailure(transport, message, log) {
+  // A spec fetch the API refused never created a render, so there is nothing to mark failed.
+  if (typeof transport.getRenderId === 'function' && !transport.getRenderId()) return;
   try {
     await transport.fail(message);
   } catch (err) {

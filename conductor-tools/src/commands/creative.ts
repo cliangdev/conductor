@@ -1,5 +1,6 @@
 import { Command } from 'commander'
 import { getConfig, resolveProject } from '../mcp/config.js'
+import { resolveCreativeId } from '../lib/creative-id.js'
 import { renderCreative } from '../lib/creative-render.js'
 
 export function registerCreative(program: Command): void {
@@ -7,7 +8,7 @@ export function registerCreative(program: Command): void {
 
   creative
     .command('render <creativeId>')
-    .description('Render a Creative to upload-ready PNGs (or a preview contact sheet) using a local browser')
+    .description('Render a Creative to upload-ready JPEG frames (or a preview contact sheet) using a local browser')
     .option('--preview', 'Render a preview contact sheet instead of full-size frames')
     .option('--renderer <name>', 'Attribution tag stored on the render (default: cli)')
     .option('--workflow-run-id <id>', 'Attribute this render to a Workflow run')
@@ -43,7 +44,7 @@ Examples:
       try {
         const result = await renderCreative(
           {
-            creativeId,
+            creativeId: await resolveCreativeId(creativeId, config),
             previewOnly: !!options.preview,
             renderer: options.renderer ?? 'cli',
             workflowRunId: options.workflowRunId,

@@ -79,6 +79,17 @@ import {
   type CreateCreativeParams,
   type UpdateCreativeParams,
 } from './tools/creatives.js'
+import { resolveCreativeId } from '../lib/creative-id.js'
+
+const CREATIVE_TOOLS = [
+  'get_creative',
+  'create_creative',
+  'update_creative',
+  'render_creative',
+  'preview_creative',
+  'attach_creative_to_post',
+  'create_experiment',
+] as const
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1088,7 +1099,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        creativeId: { type: 'string', description: 'Creative id' },
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
       },
       required: ['creativeId'],
     },
@@ -1145,7 +1156,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        creativeId: { type: 'string', description: 'Creative id' },
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
         version: { type: 'number', description: "The Creative's current version, from get_creative" },
         brandKitId: { type: 'string' },
         name: { type: 'string' },
@@ -1202,11 +1213,11 @@ const TOOLS = [
   },
   {
     name: 'render_creative',
-    description: 'Render a Creative locally (Playwright on this machine) to upload-ready PNGs, or a small contact sheet with previewOnly. Runs synchronously — typically well under a minute — and returns the render id, state, frame URLs and any warnings. Call preview_creative to actually look at the result.',
+    description: 'Render a Creative locally (Playwright on this machine) to upload-ready JPEG frames (one per placement), or a small contact sheet with previewOnly. Runs synchronously — typically well under a minute — and returns the render id, state, frame URLs and any warnings. Call preview_creative to actually look at the result.',
     inputSchema: {
       type: 'object',
       properties: {
-        creativeId: { type: 'string', description: 'Creative id' },
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
         previewOnly: { type: 'boolean', description: 'Render one small contact sheet instead of full-size placement frames (optional, default false)' },
         renderer: { type: 'string', description: 'Attribution tag stored on the render (optional, default "mcp")' },
         workflowRunId: { type: 'string', description: 'Attribute this render to a Workflow run (optional)' },
@@ -1220,22 +1231,23 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        creativeId: { type: 'string', description: 'Creative id' },
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
       },
       required: ['creativeId'],
     },
   },
   {
     name: 'attach_creative_to_post',
-    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. Uses the latest SUCCEEDED, non-preview render unless renderId is given. Call get_post_status to verify.",
+    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. Uses the latest SUCCEEDED, non-preview render unless renderId is given. Call get_post_status (postId) to verify.",
     inputSchema: {
       type: 'object',
       properties: {
-        creativeId: { type: 'string', description: 'Creative id' },
-        workItemId: { type: 'string', description: "The Post's Work Item id" },
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+        postId: { type: 'string', description: "The Post's Work Item id — same value get_post_status takes as postId" },
+        workItemId: { type: 'string', description: 'Deprecated alias for postId' },
         renderId: { type: 'string', description: 'A specific render to attach (optional — defaults to the latest SUCCEEDED render)' },
       },
-      required: ['creativeId', 'workItemId'],
+      required: ['creativeId'],
     },
   },
   {
@@ -1345,6 +1357,12 @@ export async function runMcpServer(): Promise<void> {
     const params = (args ?? {}) as Record<string, unknown>
 
     try {
+      // Creative tools accept a display id ("12a") wherever they take a Creative.
+      for (const key of ['creativeId', 'variantOf'] as const) {
+        if (typeof params[key] === 'string' && (CREATIVE_TOOLS as readonly string[]).includes(name)) {
+          params[key] = await resolveCreativeId(params[key] as string, config)
+        }
+      }
       switch (name) {
         case 'create_work_item': {
           const workflow = params['workflow'] as string | undefined
@@ -2085,7 +2103,8 @@ export async function runMcpServer(): Promise<void> {
             await attachCreativeToPost(
               {
                 creativeId: params['creativeId'] as string,
-                workItemId: params['workItemId'] as string,
+                postId: params['postId'] as string | undefined,
+                workItemId: params['workItemId'] as string | undefined,
                 renderId: params['renderId'] as string | undefined,
               },
               config

@@ -58,6 +58,11 @@ export interface RendersPanelProps {
   onLatestSucceededChange?: (render: CreativeRender | null) => void
 }
 
+// A preview render holds only the contact sheet: it has no frames to show or attach to a Post.
+function isAttachableRender(r: CreativeRender): boolean {
+  return r.state === 'SUCCEEDED' && !r.previewOnly
+}
+
 export function RendersPanel({
   projectId,
   creativeId,
@@ -82,7 +87,7 @@ export function RendersPanel({
         const rows = await listCreativeRenders(projectId, creativeId, token)
         setRenders(rows)
         setError(null)
-        onLatestSucceededChangeRef.current?.(rows.find((r) => r.state === 'SUCCEEDED') ?? null)
+        onLatestSucceededChangeRef.current?.(rows.find(isAttachableRender) ?? null)
       } catch (err) {
         setError(apiErrorMessage(err, 'Could not load renders'))
       } finally {
@@ -116,7 +121,7 @@ export function RendersPanel({
     )
   }
 
-  const latestSucceeded = (renders ?? []).find((r) => r.state === 'SUCCEEDED') ?? null
+  const latestSucceeded = (renders ?? []).find(isAttachableRender) ?? null
   const stale = latestSucceeded != null && latestSucceeded.creativeVersion < creativeVersion
 
   return (
@@ -192,7 +197,7 @@ export function RendersPanel({
                       <img
                         src={frame.url}
                         alt={placementLabel(registry, frame.placementKey)}
-                        className="aspect-square w-full bg-surface-3 object-cover"
+                        className="aspect-square w-full bg-surface-3 object-contain"
                       />
                       <div className="space-y-0.5 px-2 pb-2 text-xs">
                         <p className="font-medium text-foreground">{placementLabel(registry, frame.placementKey)}</p>

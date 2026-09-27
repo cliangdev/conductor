@@ -1,5 +1,6 @@
 package com.conductor.creative;
 
+import com.conductor.exception.ConflictException;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.MemberRole;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * {@link CreativeAttachService} against a real database (COND-24 T3, AC-P0-3.3): a Post whose Instagram
@@ -153,6 +155,37 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
 
         // The Post's own media is filled purely as a side effect of the assets now existing on it.
         assertThat(assetRepository.findAllByWorkItemId(post.getId())).hasSize(3);
+    }
+
+    @Test
+    void attachingTheSameRenderAgainReusesTheFramesAlreadyOnThePost() {
+        CreativeRender render = newRender();
+        newFrame(render, "9x16", null, "tiktok", 1080, 1920);
+        newFrame(render, "4x5", null, "instagram", 1080, 1350);
+        newFrame(render, "1x1", null, "facebook", 1080, 1080);
+
+        CreativeAttachService.AttachResult first = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+        CreativeAttachService.AttachResult second = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(assetRepository.findAllByWorkItemId(post.getId())).hasSize(3);
+        assertThat(second.assets()).extracting(CreativeAttachService.AttachedAsset::assetId)
+                .containsExactlyInAnyOrderElementsOf(
+                        first.assets().stream().map(CreativeAttachService.AttachedAsset::assetId).toList());
+    }
+
+    @Test
+    void aPreviewRenderIsRefusedBecauseItHasNoFramesToAttach() {
+        CreativeRender preview = newRender();
+        preview.setPreviewOnly(true);
+        renderRepository.save(preview);
+        newFrame(preview, CreativeRenderFrame.PLACEMENT_SHEET, null, null, 1200, 700, "image/jpeg");
+
+        assertThatThrownBy(() -> attachService.attach(project.getId(), creative.getId(), preview.getId(), post.getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("preview");
+        assertThat(assetRepository.findAllByWorkItemId(post.getId())).isEmpty();
     }
 
     // ── frames are JPEG, so an attached Instagram feed target clears the media-format gate ────────

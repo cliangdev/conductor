@@ -60,21 +60,29 @@ export function mountBoard(container, options) {
 
   let board = null;
   let destroyed = false;
+  let generation = 0;
 
+  // Each draw owns its board. A draw awaits fonts, so an update() or destroy() can land mid-draw: the
+  // generation check drops a superseded draw instead of fitting a board that is gone or replaced.
   async function draw() {
     if (destroyed) return;
+    const gen = ++generation;
+    const stale = () => destroyed || gen !== generation;
     await loadFont(state.brand);
-    shell.innerHTML = '';
+    if (stale()) return;
     const placement = state.placementsReg[state.placementKey];
     const ad = resolveFrame(state.creative, state.placementsReg, state.layoutsReg, state.sequenceIndex);
-    board = renderBoard(ad, state.placementKey, state.placementsReg, state.layoutsReg, state.brand);
-    board.style.transformOrigin = 'top left';
-    board.style.transform = 'none';
-    shell.appendChild(board);
+    const next = renderBoard(ad, state.placementKey, state.placementsReg, state.layoutsReg, state.brand);
+    next.style.transformOrigin = 'top left';
+    next.style.transform = 'none';
+    shell.innerHTML = '';
+    shell.appendChild(next);
+    board = next;
 
     // Fit at true (unscaled) size first...
     if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) await document.fonts.ready;
-    fitBoard(board, state.placementsReg);
+    if (stale()) return;
+    fitBoard(next, state.placementsReg);
 
     // ...then scale the whole board down to fit the container.
     const rect = container.getBoundingClientRect ? container.getBoundingClientRect() : { width: container.clientWidth, height: container.clientHeight };
@@ -86,7 +94,7 @@ export function mountBoard(container, options) {
         ));
     shell.style.width = Math.round(placement.w * s) + 'px';
     shell.style.height = Math.round(placement.h * s) + 'px';
-    board.style.transform = `scale(${s})`;
+    next.style.transform = `scale(${s})`;
   }
 
   const ready = draw();

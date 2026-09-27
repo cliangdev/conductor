@@ -8,7 +8,7 @@ import { renderCreative as runLocalRender } from '../../lib/creative-render.js'
 /**
  * Conductor Creatives: a Brand Kit (tokens, copy rules, approved lines) governs one or more
  * Creatives (photo + headline + layout, optionally a story/carousel sequence and lettered
- * variants), which render locally (Playwright, driven by this MCP server) to upload-ready PNGs
+ * variants), which render locally (Playwright, driven by this MCP server) to upload-ready JPEGs
  * that attach to a Post like any other media. See docs/mcp-tool-guidelines.md's action-verify and
  * dispatch-status patterns, both used below.
  */
@@ -303,6 +303,7 @@ interface RenderApiFrame {
 interface RenderApiItem {
   id: string
   state: string
+  creativeVersion?: number
   previewOnly?: boolean
   error?: string | null
   frames?: RenderApiFrame[]
@@ -338,17 +339,27 @@ export interface PreviewCreativeResult {
   note?: string
 }
 
-function findSheetFrame(renders: RenderApiItem[]): { render: RenderApiItem; frame: RenderApiFrame } | undefined {
+// Only a sheet rendered from the creative as it is now is worth showing: an older one would show the model
+// an ad it has since edited. One too large to inline is skipped too, so a fresh (small) one is rendered.
+function findCurrentSheetFrame(
+  renders: RenderApiItem[],
+  version: number | undefined
+): { render: RenderApiItem; frame: RenderApiFrame } | undefined {
   for (const render of renders) {
+    if (render.state !== 'SUCCEEDED') continue
+    if (version !== undefined && render.creativeVersion !== version) continue
     const frame = (render.frames ?? []).find((f) => f.placementKey === 'sheet')
-    if (frame) return { render, frame }
+    if (frame && (frame.sizeBytes ?? 0) <= MAX_INLINE_IMAGE_BYTES) return { render, frame }
   }
   return undefined
 }
 
 export async function previewCreative(params: { creativeId: string }, config: Config): Promise<PreviewCreativeResult> {
-  const renders = await apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config)
-  let found = findSheetFrame(renders)
+  const [creative, renders] = await Promise.all([
+    apiGet<{ version?: number }>(`${creativesBase(config)}/${params.creativeId}`, config),
+    apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config),
+  ])
+  let found = findCurrentSheetFrame(renders, creative?.version)
 
   if (!found) {
     const rendered = await runLocalRender({ creativeId: params.creativeId, previewOnly: true, renderer: 'mcp' }, config)
@@ -387,16 +398,22 @@ export async function previewCreative(params: { creativeId: string }, config: Co
   if (bytes.byteLength > MAX_INLINE_IMAGE_BYTES) {
     return { renderId: render.id, state: render.state, url: frame.url, note: 'The rendered image is larger than this tool can inline — open the URL directly instead.' }
   }
-  // The `sheet` contact sheet is PNG today, but the mime type comes off the response rather than being
-  // hardcoded so this never silently mislabels a frame if that ever changes (see docs/creatives.md).
-  const mimeType = (response.headers.get('content-type') || 'image/png').split(';')[0].trim()
+  // The `sheet` contact sheet is a 1x JPEG; the mime type comes off the response rather than being
+  // hardcoded so an older PNG sheet is never mislabelled (see docs/creatives.md).
+  const mimeType = (response.headers.get('content-type') || 'image/jpeg').split(';')[0].trim()
   return { renderId: render.id, state: render.state, url: frame.url, image: { data: Buffer.from(bytes), mimeType } }
 }
 
 export async function attachCreativeToPost(
-  params: { creativeId: string; workItemId: string; renderId?: string },
+  params: { creativeId: string; postId?: string; workItemId?: string; renderId?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
+  // `postId` is the primary name (it matches get_post_status's own param); `workItemId` is kept as a
+  // deprecated alias so existing callers don't break.
+  const postId = params.postId ?? params.workItemId
+  if (!postId) {
+    throw new Error('postId is required (the Post\'s Work Item id).')
+  }
   let renderId = params.renderId
   if (!renderId) {
     const renders = await apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config)
@@ -408,5 +425,5 @@ export async function attachCreativeToPost(
     }
     renderId = latest.id
   }
-  return apiPost(`${creativesBase(config)}/${params.creativeId}/attach`, { renderId, workItemId: params.workItemId }, config)
+  return apiPost(`${creativesBase(config)}/${params.creativeId}/attach`, { renderId, workItemId: postId }, config)
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({
@@ -18,7 +18,7 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPost } from '@/lib/api'
 import { BrandKitForm } from './BrandKitForm'
 import type { BrandKit } from './types'
 
@@ -73,7 +73,7 @@ describe('BrandKitForm', () => {
     render(<BrandKitForm projectId="proj-1" token="tok" />)
 
     const testLineInput = await screen.findByLabelText('Test a line')
-    await userEvent.type(testLineInput, 'Every saved link, finally usable!')
+    await userEvent.type(testLineInput, 'Every day, finally organized!')
 
     expect(await screen.findByText(/No exclamation marks\./)).toBeInTheDocument()
   })
@@ -82,7 +82,7 @@ describe('BrandKitForm', () => {
     render(<BrandKitForm projectId="proj-1" token="tok" />)
 
     const testLineInput = await screen.findByLabelText('Test a line')
-    await userEvent.type(testLineInput, 'Every saved link, *finally usable*.')
+    await userEvent.type(testLineInput, 'Every day, *finally organized*.')
 
     expect(await screen.findByText('No issues.')).toBeInTheDocument()
   })
@@ -91,7 +91,7 @@ describe('BrandKitForm', () => {
     render(<BrandKitForm projectId="proj-1" token="tok" />)
 
     const testLineInput = await screen.findByLabelText('Test a line')
-    await userEvent.type(testLineInput, 'Every saved link, finally usable.')
+    await userEvent.type(testLineInput, 'Every day, finally organized.')
 
     expect(await screen.findByText(/found 0/)).toBeInTheDocument()
   })
@@ -106,5 +106,54 @@ describe('BrandKitForm', () => {
     expect(screen.getByLabelText('Test a line')).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Save kit' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'New kit' })).not.toBeInTheDocument()
+  })
+
+  it('asks only for a Name and derives the slug client-side', async () => {
+    ;(apiPost as Mock).mockResolvedValue(kit({ id: 'kit-2', slug: 'holiday-drop', name: 'Holiday Drop!' }))
+    render(<BrandKitForm projectId="proj-1" token="tok" />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'New kit' }))
+    expect(screen.queryByLabelText('Slug')).not.toBeInTheDocument()
+    await userEvent.type(document.getElementById('new-kit-name')!, 'Holiday Drop!')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(
+        expect.stringContaining('/brand-kits'),
+        { slug: 'holiday-drop', name: 'Holiday Drop!' },
+        'tok',
+      ),
+    )
+    expect(toastSpy).toHaveBeenCalledWith('Brand kit created')
+  })
+
+  it('retries a duplicate-slug conflict with a numeric suffix', async () => {
+    const conflict = Object.assign(new Error('slug taken'), { status: 409 })
+    ;(apiPost as Mock)
+      .mockImplementationOnce(() => Promise.reject(conflict))
+      .mockImplementationOnce(() => Promise.resolve(kit({ id: 'kit-3', slug: 'summer-drop-2', name: 'Summer Drop' })))
+    render(<BrandKitForm projectId="proj-1" token="tok" />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'New kit' }))
+    await userEvent.type(document.getElementById('new-kit-name')!, 'Summer Drop')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('/brand-kits'),
+        { slug: 'summer-drop', name: 'Summer Drop' },
+        'tok',
+      ),
+    )
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('/brand-kits'),
+        { slug: 'summer-drop-2', name: 'Summer Drop' },
+        'tok',
+      ),
+    )
+    expect(toastSpy).toHaveBeenCalledWith('Brand kit created')
   })
 })

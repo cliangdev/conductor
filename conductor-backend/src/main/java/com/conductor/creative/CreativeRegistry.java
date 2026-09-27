@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -63,7 +64,11 @@ public class CreativeRegistry {
             entry.getValue().path("themes").forEach(t -> themes.add(t.asText()));
             loadedLayouts.put(key, new LayoutInfo(key, List.copyOf(themes)));
         });
-        this.layouts = Map.copyOf(loadedLayouts);
+        // Collections.unmodifiableMap (not Map.copyOf) — Map.copyOf's small-map implementation
+        // deliberately randomises iteration order per JVM run, which surfaced as placement checkboxes
+        // reordering themselves on every page load in the frontend. A LinkedHashMap view keeps
+        // registry.json's own order stable.
+        this.layouts = Collections.unmodifiableMap(loadedLayouts);
 
         Map<String, PlacementInfo> loadedPlacements = new LinkedHashMap<>();
         root.path("placements").forEach(p -> {
@@ -76,7 +81,7 @@ public class CreativeRegistry {
                     p.path("height").asInt(),
                     p.path("default").asBoolean(false)));
         });
-        this.placements = Map.copyOf(loadedPlacements);
+        this.placements = Collections.unmodifiableMap(loadedPlacements);
     }
 
     static JsonNode load(ObjectMapper objectMapper, String resourcePath) {

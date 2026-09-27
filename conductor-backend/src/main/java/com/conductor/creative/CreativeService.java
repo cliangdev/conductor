@@ -298,7 +298,7 @@ public class CreativeService {
         variant.setBrandKitId(kit.getId());
         variant.setNumber(root.getNumber());
         variant.setParentCreativeId(root.getId());
-        variant.setName(request != null ? request.getName() : null);
+        variant.setName(request != null && request.getName() != null ? request.getName() : source.getName());
         variant.setState(Creative.STATE_DRAFT);
         variant.setLayout(root.getLayout());
         variant.setTheme(root.getTheme());
@@ -338,10 +338,13 @@ public class CreativeService {
         items.add(new ReadinessItem("photoChecked", photoChecked, true,
                 photo == null ? "no photo chosen"
                         : photoChecked ? "photo has been checked" : "photo has not been checked for burned-in text"));
-        boolean provenanced = photo != null && notBlank(photo.getSource()) && notBlank(photo.getLicence());
-        items.add(new ReadinessItem("photoProvenance", provenanced, true,
-                photo == null ? "no photo chosen"
-                        : provenanced ? "photo has source and licence" : "photo is missing source and/or licence"));
+        // With no photo chosen, "photoChecked" above already carries that message once — this item is
+        // only meaningful once there is a photo to have source/licence on.
+        if (photo != null) {
+            boolean provenanced = notBlank(photo.getSource()) && notBlank(photo.getLicence());
+            items.add(new ReadinessItem("photoProvenance", provenanced, true,
+                    provenanced ? "photo has source and licence" : "photo is missing source and/or licence"));
+        }
         boolean notDraft = !Creative.STATE_DRAFT.equals(creative.getState());
         items.add(new ReadinessItem("state", notDraft, true,
                 notDraft ? "not a draft" : "Creative is still a draft"));

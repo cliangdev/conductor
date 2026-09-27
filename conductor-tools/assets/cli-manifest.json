@@ -131,7 +131,7 @@
     {
       "name": "creative render",
       "syntax": "conductor creative render <creativeId>",
-      "description": "Render a Creative locally with a Playwright-driven browser to upload-ready PNGs, or a preview contact sheet. Prints the render id, state and frame URLs; exits non-zero on failure.",
+      "description": "Render a Creative locally with a Playwright-driven browser to upload-ready JPEG frames, or a preview contact sheet. Prints the render id, state and frame URLs; exits non-zero on failure.",
       "category": "marketing",
       "options": [
         {
@@ -759,7 +759,7 @@
     },
     {
       "name": "render_creative",
-      "description": "Render a Creative locally (Playwright on this machine) to upload-ready PNGs, or a contact sheet with previewOnly. Runs synchronously and returns the render id, state and frame URLs.",
+      "description": "Render a Creative locally (Playwright on this machine) to upload-ready JPEG frames, or a contact sheet with previewOnly. Runs synchronously and returns the render id, state and frame URLs.",
       "category": "marketing",
       "requiredParams": [
         "creativeId"
@@ -775,11 +775,11 @@
     },
     {
       "name": "attach_creative_to_post",
-      "description": "Attach a Creative's rendered frames to a Post as its media, placement to platform, for every destination without its own custom media.",
+      "description": "Attach a Creative's rendered frames to a Post as its media, placement to platform, for every destination without its own custom media. Call get_post_status (postId) to verify.",
       "category": "marketing",
       "requiredParams": [
         "creativeId",
-        "workItemId"
+        "postId"
       ]
     },
     {

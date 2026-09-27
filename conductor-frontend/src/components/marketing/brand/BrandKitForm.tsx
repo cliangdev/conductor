@@ -81,6 +81,19 @@ function newRuleId() {
   return `rule-${Date.now()}-${ruleSeq}`
 }
 
+/** Lowercase, hyphenated, ascii-only — the slug a new kit's Name derives to, so the user is never
+ *  asked for a slug directly. "kit" is the fallback for a name that has no ascii letters or digits
+ *  at all (e.g. all emoji). */
+function slugify(name: string): string {
+  const slug = name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug || 'kit'
+}
+
 function PreviewBoard({ draft, kit }: { draft: Draft; kit: BrandKit | null }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -125,8 +138,8 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
   const [creatingKit, setCreatingKit] = useState(false)
-  const [newKitSlug, setNewKitSlug] = useState('')
   const [newKitName, setNewKitName] = useState('')
+  const [creatingKitBusy, setCreatingKitBusy] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [testLine, setTestLine] = useState('')
   const [newLine, setNewLine] = useState('')
@@ -207,18 +220,33 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
   }
 
   async function handleCreateKit() {
-    if (!newKitSlug.trim() || !newKitName.trim()) return
+    const name = newKitName.trim()
+    if (!name) return
+    setCreatingKitBusy(true)
+    const base = slugify(name)
+    // A duplicate slug is the only thing worth silently retrying — anything else (network, 4xx
+    // other than a conflict) is shown to the user straight away instead of burning two more calls.
+    const candidates = [base, `${base}-2`, `${base}-3`]
+    let lastErr: unknown = null
     try {
-      const created = await createBrandKit(projectId, { slug: newKitSlug.trim(), name: newKitName.trim() }, token)
-      await reload()
-      setSelectedKitId(created.id)
-      setDraft(toDraft(created))
-      setCreatingKit(false)
-      setNewKitSlug('')
-      setNewKitName('')
-      showToast('Brand kit created')
-    } catch (err) {
-      showToast(apiErrorMessage(err, 'Could not create the brand kit'), 'error')
+      for (const slug of candidates) {
+        try {
+          const created = await createBrandKit(projectId, { slug, name }, token)
+          await reload()
+          setSelectedKitId(created.id)
+          setDraft(toDraft(created))
+          setCreatingKit(false)
+          setNewKitName('')
+          showToast('Brand kit created')
+          return
+        } catch (err) {
+          lastErr = err
+          if ((err as ApiError).status !== 409) break
+        }
+      }
+      showToast(apiErrorMessage(lastErr, 'Could not create the brand kit'), 'error')
+    } finally {
+      setCreatingKitBusy(false)
     }
   }
 
@@ -351,15 +379,15 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
       {creatingKit && canManage && (
         <div className="flex flex-wrap items-end gap-2 rounded-md border border-border p-3">
           <div>
-            <Label htmlFor="new-kit-slug" className="text-xs">Slug</Label>
-            <Input id="new-kit-slug" value={newKitSlug} onChange={(e) => setNewKitSlug(e.target.value)} className="w-40" />
-          </div>
-          <div>
             <Label htmlFor="new-kit-name" className="text-xs">Name</Label>
-            <Input id="new-kit-name" value={newKitName} onChange={(e) => setNewKitName(e.target.value)} className="w-40" />
+            <Input id="new-kit-name" value={newKitName} onChange={(e) => setNewKitName(e.target.value)} className="w-56" />
           </div>
-          <Button size="sm" onClick={handleCreateKit}>Create</Button>
-          <Button size="sm" variant="ghost" onClick={() => setCreatingKit(false)}>Cancel</Button>
+          <Button size="sm" onClick={handleCreateKit} disabled={creatingKitBusy || !newKitName.trim()}>
+            {creatingKitBusy ? 'Creating…' : 'Create'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setCreatingKit(false)} disabled={creatingKitBusy}>
+            Cancel
+          </Button>
         </div>
       )}
 
@@ -383,6 +411,11 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
               <div>
                 <Label htmlFor="kit-font-url">Font URL</Label>
                 <Input id="kit-font-url" value={draft.fontUrl} onChange={(e) => updateDraft('fontUrl', e.target.value)} placeholder="https://fonts.googleapis.com/…" />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  The accent phrase renders in italic — include the italic face (Google Fonts:
+                  the <code className="font-mono">ital</code> axis, e.g. <code className="font-mono break-all">family=Poppins:ital,wght@0,400;0,800;1,800</code>)
+                  or the browser fakes the slant and the space after it closes up.
+                </p>
               </div>
             </div>
             <div>
@@ -418,17 +451,19 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
                           e.target.value = ''
                         }}
                       />
-                      <div className="flex justify-center gap-1">
-                        <label
-                          htmlFor={`logo-input-${slot}`}
-                          className="cursor-pointer text-[11px] text-accent hover:underline"
+                      <div className="flex justify-center gap-2">
+                        <button
+                          type="button"
+                          disabled={uploadingSlot === slot}
+                          onClick={() => document.getElementById(`logo-input-${slot}`)?.click()}
+                          className="rounded text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {uploadingSlot === slot ? 'Uploading…' : url ? 'Replace' : 'Upload'}
-                        </label>
+                        </button>
                         {url && (
                           <button
                             type="button"
-                            className="text-[11px] text-muted-foreground hover:text-destructive"
+                            className="rounded text-[11px] text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                             onClick={() => handleImageRemove(slot)}
                           >
                             Remove
@@ -444,7 +479,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
 
           <section className="space-y-3 rounded-lg border border-border p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tokens</h3>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3">
               {BRAND_TOKEN_KEYS.map((key) => (
                 <div key={key} className="space-y-1">
                   <Label htmlFor={`token-${key}`} className="text-xs">{key}</Label>
@@ -461,7 +496,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
                       value={draft.tokens[key] ?? ''}
                       onChange={(e) => updateDraft('tokens', { ...draft.tokens, [key]: e.target.value })}
                       placeholder="#RRGGBB"
-                      className="text-xs"
+                      className="min-w-[6.5rem] font-mono text-xs tabular-nums"
                     />
                   </div>
                 </div>
@@ -604,7 +639,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
                 id="kit-test-line"
                 value={testLine}
                 onChange={(e) => setTestLine(e.target.value)}
-                placeholder="Every saved link, finally usable!"
+                placeholder="Type a headline to test, *like this*"
               />
               {testLine && (
                 <p className={cn('mt-1 text-xs', testResults.length > 0 ? 'text-destructive' : 'text-status-approved')}>

@@ -31,24 +31,27 @@ const ATTEMPTS: Attempt[] = [
 ]
 
 /**
- * Launches the first browser it can find, in the order above, and returns a factory that hands back
- * that same already-launched instance. `run()` in the render core calls its `browserFactory` exactly
- * once per render, so launching eagerly here (rather than deferring to the factory call) avoids a
- * pointless extra launch/close just to "probe" availability.
+ * Returns a factory that, when the render core first asks for a browser, launches the first one it can
+ * find in the order above. Launching is deferred to that call on purpose: `run()` fetches the spec before
+ * it asks for a browser, and a browser launched ahead of a spec fetch that then fails is never closed —
+ * it keeps the CLI process alive and leaks a Chrome process from the MCP server.
  *
- * Throws `CHROME_INSTALL_HINT` plus what each attempt failed with when nothing could be launched.
+ * The factory throws `CHROME_INSTALL_HINT` plus what each attempt failed with when nothing launches;
+ * `run()` catches that and reports it as the render's failure.
  */
 export async function findBrowserFactory(log: (...args: unknown[]) => void = () => {}): Promise<BrowserFactory> {
   const { chromium } = await import('playwright-core')
-  const errors: string[] = []
-  for (const attempt of ATTEMPTS) {
-    try {
-      const browser = await chromium.launch(attempt.options)
-      log(`using ${attempt.label}`)
-      return async () => browser
-    } catch (err) {
-      errors.push(`${attempt.label}: ${err instanceof Error ? err.message : String(err)}`)
+  return async () => {
+    const errors: string[] = []
+    for (const attempt of ATTEMPTS) {
+      try {
+        const browser = await chromium.launch(attempt.options)
+        log(`using ${attempt.label}`)
+        return browser
+      } catch (err) {
+        errors.push(`${attempt.label}: ${err instanceof Error ? err.message : String(err)}`)
+      }
     }
+    throw new Error(`${CHROME_INSTALL_HINT}\n\nTried:\n${errors.map((e) => `  - ${e}`).join('\n')}`)
   }
-  throw new Error(`${CHROME_INSTALL_HINT}\n\nTried:\n${errors.map((e) => `  - ${e}`).join('\n')}`)
 }

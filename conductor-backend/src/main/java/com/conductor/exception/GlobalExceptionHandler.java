@@ -24,6 +24,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.exc.InvalidFormatException;
@@ -429,6 +430,16 @@ public class GlobalExceptionHandler {
     private String parameterName(org.springframework.validation.method.ParameterValidationResult result) {
         String name = result.getMethodParameter().getParameterName();
         return name != null ? name : "";
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ProblemDetail handleArgumentTypeMismatch(MethodArgumentTypeMismatchException e) {
+        // A path or query value that does not convert (an unknown enum value, a malformed number) is a
+        // client error — 400 naming the parameter, not the catch-all 500.
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail("Invalid value for '" + e.getName() + "': " + e.getValue());
+        return problem;
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)

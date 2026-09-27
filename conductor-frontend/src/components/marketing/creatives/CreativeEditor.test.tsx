@@ -105,7 +105,7 @@ function creative(overrides: Partial<Creative> = {}): Creative {
 
 interface TestPhoto {
   id: string
-  label: string
+  label: string | null
   url: string
 }
 
@@ -183,6 +183,26 @@ describe('CreativeEditor', () => {
     expect(await screen.findByText('No exclamation marks.')).toBeInTheDocument()
   })
 
+  it('shows a headline copy-rule message once, not twice, when the live check and the 422 violation agree', async () => {
+    mockGetsFor(creative({ headline: 'Dinner is ready!' }))
+    ;(apiPatch as Mock).mockRejectedValue({
+      status: 422,
+      detail: 'The Creative fails a structural rule',
+      violations: [{ field: 'headline', ruleId: 'no-exclaim', message: 'No exclamation marks.' }],
+    })
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+    await screen.findByLabelText('Headline')
+
+    // The live copy-rule check already flags this headline before any save is attempted.
+    expect(await screen.findAllByText('No exclamation marks.')).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    // The server's 422 carries the identical message — it must not render a second time.
+    expect(await screen.findAllByText('No exclamation marks.')).toHaveLength(1)
+  })
+
   it('shows a clear reload message on a 409 version conflict', async () => {
     mockGetsFor(creative())
     ;(apiPatch as Mock).mockRejectedValue({ status: 409, detail: 'stale version' })
@@ -258,6 +278,16 @@ describe('CreativeEditor', () => {
     // Beat 2 was never given its own photo — it keeps falling back to the main photo.
     await userEvent.click(screen.getByRole('button', { name: 'Next beat' }))
     await waitFor(() => expect(boardPhotoSrc()).toContain('photo-main.jpg'))
+  })
+
+  it('shows a content-type fallback instead of the raw photo id when a photo has no label', async () => {
+    const unlabelled = photo({ id: 'a1b2c3d4-e5f6-7890-uuid', label: null })
+    mockGetsFor(creative({ photoId: 'a1b2c3d4-e5f6-7890-uuid' }), [KIT], [unlabelled])
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    expect(await screen.findByText('Untitled jpeg photo')).toBeInTheDocument()
+    expect(screen.queryByText('a1b2c3d4-e5f6-7890-uuid')).not.toBeInTheDocument()
   })
 
   it('toggles the lockup chip class in the live preview and saves it as part of the patch', async () => {

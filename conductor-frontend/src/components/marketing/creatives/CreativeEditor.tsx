@@ -120,6 +120,16 @@ function violationsFor(err: ApiError | null, field: string): string[] {
   return (err?.violations ?? []).filter((v) => v.field === field).map((v) => v.message)
 }
 
+/** The Photo button's text — a raw UUID is never useful to a reviewer, so an unlabelled photo (one
+ *  uploaded before PhotoPicker started defaulting the label to the file name) falls back to its
+ *  content type instead. */
+function photoDisplayName(photo: CreativePhoto | null): string {
+  if (!photo) return 'Choose a photo…'
+  if (photo.label) return photo.label
+  const ext = photo.contentType?.split('/')[1]
+  return ext ? `Untitled ${ext} photo` : 'Untitled photo'
+}
+
 const STATE_HUE: Record<CreativeState, 'gray' | 'teal' | 'slate'> = {
   DRAFT: 'gray',
   READY: 'teal',
@@ -329,6 +339,15 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     return copyIssues.filter((i) => i.field === field).map((i) => i.message)
   }
 
+  // The live copy-rule check and the server's 422 violations often flag the exact same rule with the
+  // exact same message (the server enforces the same brand kit rules — see checkCreativeCopy above).
+  // Show each distinct message once per field rather than twice.
+  function messagesFor(field: string): string[] {
+    const live = issuesFor(field)
+    const serverOnly = violationsFor(saveError, field).filter((m) => !live.includes(m))
+    return [...live, ...serverOnly]
+  }
+
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev))
   }
@@ -513,9 +532,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                 ) : (
                   <span className="h-8 w-8 rounded bg-surface-3" />
                 )}
-                <span className="truncate text-muted-foreground">
-                  {photo ? photo.label || photo.id : 'Choose a photo…'}
-                </span>
+                <span className="truncate text-muted-foreground">{photoDisplayName(photo)}</span>
               </button>
               {violationsFor(saveError, 'photoId').map((m) => (
                 <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
@@ -564,22 +581,16 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             <div>
               <Label htmlFor="creative-headline">Headline</Label>
               <Textarea id="creative-headline" value={form.headline} onChange={(e) => update('headline', e.target.value)} rows={2} />
-              {issuesFor('headline').map((m) => (
+              {messagesFor('headline').map((m) => (
                 <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-              ))}
-              {violationsFor(saveError, 'headline').map((m) => (
-                <p key={`v-${m}`} className="mt-1 text-xs text-destructive">{m}</p>
               ))}
             </div>
 
             <div>
               <Label htmlFor="creative-body">Body</Label>
               <Textarea id="creative-body" value={form.body} onChange={(e) => update('body', e.target.value)} rows={3} />
-              {issuesFor('body').map((m) => (
+              {messagesFor('body').map((m) => (
                 <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-              ))}
-              {violationsFor(saveError, 'body').map((m) => (
-                <p key={`v-${m}`} className="mt-1 text-xs text-destructive">{m}</p>
               ))}
             </div>
 
