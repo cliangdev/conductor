@@ -63,6 +63,8 @@ export interface Creative {
   latestRenderThumbnailUrl?: string | null
   /** Full last-SUCCEEDED-render detail (with frames) — GET detail only, absent from list rows. */
   latestRender?: CreativeRender | null
+  /** The family's RUNNING hook experiment, if any (COND-24 T5). Same value on every letter in the family. */
+  activeExperimentId?: string | null
 }
 
 export interface CreateCreativeRequest {
@@ -279,6 +281,151 @@ export function attachCreativeRender(
 
 const creativesBase = (projectId: string) => `/api/v2/projects/${projectId}/marketing/creatives`
 const photosBase = (projectId: string) => `/api/v2/projects/${projectId}/marketing/photos`
+const experimentsBase = (projectId: string) => `/api/v2/projects/${projectId}/marketing/experiments`
+
+// ── Performance and hook experiments (COND-24 T5) ────────────────────────────────────────────────
+//
+// See docs/creatives.md's "Performance and experiments": attribution follows a rendered frame to
+// every published destination whose media still includes it, rolled up per lettered variant. A hook
+// experiment is a human-started A/B on one Creative family's variants, decided automatically once
+// every variant has window data, with a human confirming a winner's headline into the brand kit.
+
+/** One platform's slice of one Creative variant's numbers. */
+export interface CreativePerformancePlatform {
+  platform: string
+  posts: number
+  views: number
+  engagementRate?: number | null
+}
+
+/** One Creative variant's attributed performance — published destinations whose media traces back
+ * to one of its rendered frames. */
+export interface CreativePerformanceEntry {
+  creativeId: string
+  /** The variant's display id, e.g. "12b". */
+  label: string
+  headline?: string | null
+  posts: number
+  views: number
+  engagementRate?: number | null
+  avgViewPct?: number | null
+  views72h?: number | null
+  byPlatform: CreativePerformancePlatform[]
+}
+
+export interface CreativePerformanceResponse {
+  creativeId: string
+  /** Every lettered variant of this Creative's family, oldest letter first. */
+  family: CreativePerformanceEntry[]
+}
+
+export function getCreativePerformance(
+  projectId: string,
+  creativeId: string,
+  token: string,
+): Promise<CreativePerformanceResponse> {
+  return apiGet<CreativePerformanceResponse>(`${creativesBase(projectId)}/${creativeId}/performance`, token)
+}
+
+export type CreativeExperimentMetric = 'views' | 'engagement_rate' | 'avg_view_pct'
+export type CreativeExperimentState = 'RUNNING' | 'DECIDED' | 'INCONCLUSIVE'
+
+/** One variant's row inside a decided (or gave-up) experiment's `summary.variants`. */
+export interface CreativeExperimentSummaryVariant {
+  creativeId: string
+  label: string
+  headline?: string | null
+  hasData: boolean
+  views?: number | null
+  engagementRate?: number | null
+  avgViewPct?: number | null
+}
+
+/** Shape of `CreativeExperimentResponse.summary`, written once by `decide()` and never recomputed
+ * after `decidedAt` — absent (null) while still RUNNING. `reason` is `"tie"` (an exact tie among the
+ * leaders) or `"insufficient_data"` (the seven-day grace period lapsed with a variant still missing
+ * window data); absent on a clean decision. */
+export interface CreativeExperimentSummary {
+  comparisonMetric?: CreativeExperimentMetric
+  reason?: 'tie' | 'insufficient_data'
+  variants: CreativeExperimentSummaryVariant[]
+}
+
+export interface CreateCreativeExperimentRequest {
+  /** Any Creative in the family (a lettered variant or the root) — resolved to the family's root automatically. */
+  creativeId: string
+  metric?: CreativeExperimentMetric
+  /** Defaults to 72 on the server. */
+  windowHours?: number
+}
+
+export interface CreativeExperimentResponse {
+  id: string
+  projectId: string
+  /** The family's root Creative id (variant letter "a"). */
+  parentCreativeId: string
+  metric: CreativeExperimentMetric
+  windowHours: number
+  state: CreativeExperimentState
+  winnerCreativeId?: string | null
+  decidedAt?: string | null
+  summary?: CreativeExperimentSummary | null
+  winnerLineConfirmedAt?: string | null
+  winnerLineConfirmedBy?: string | null
+  createdBy?: string | null
+  createdAt: string
+}
+
+/** Newest first. */
+export function listCreativeExperiments(
+  projectId: string,
+  token: string,
+  query: { creativeId?: string; state?: CreativeExperimentState } = {},
+): Promise<CreativeExperimentResponse[]> {
+  const params = new URLSearchParams()
+  if (query.creativeId) params.set('creativeId', query.creativeId)
+  if (query.state) params.set('state', query.state)
+  const qs = params.toString()
+  return apiGet<CreativeExperimentResponse[]>(`${experimentsBase(projectId)}${qs ? `?${qs}` : ''}`, token)
+}
+
+/** Opens one RUNNING experiment on a Creative family — needs ≥ 2 variants and no RUNNING experiment
+ * already (409). */
+export function createCreativeExperiment(
+  projectId: string,
+  body: CreateCreativeExperimentRequest,
+  token: string,
+): Promise<CreativeExperimentResponse> {
+  return apiPost<CreativeExperimentResponse>(experimentsBase(projectId), body, token)
+}
+
+export function getCreativeExperiment(
+  projectId: string,
+  experimentId: string,
+  token: string,
+): Promise<CreativeExperimentResponse> {
+  return apiGet<CreativeExperimentResponse>(`${experimentsBase(projectId)}/${experimentId}`, token)
+}
+
+/** Attempts to settle a RUNNING experiment; a safe no-op (returns it unchanged) while any variant is
+ * still short of its own window deadline. */
+export function decideCreativeExperiment(
+  projectId: string,
+  experimentId: string,
+  token: string,
+): Promise<CreativeExperimentResponse> {
+  return apiPost<CreativeExperimentResponse>(`${experimentsBase(projectId)}/${experimentId}/decide`, {}, token)
+}
+
+/** The one human action that lets a decided winner's headline join the brand kit's approved lines —
+ * never automatic, and `decide` never calls it. Idempotent. */
+export function confirmCreativeExperimentWinner(
+  projectId: string,
+  experimentId: string,
+  token: string,
+): Promise<CreativeExperimentResponse> {
+  return apiPost<CreativeExperimentResponse>(`${experimentsBase(projectId)}/${experimentId}/confirm-winner`, {}, token)
+}
 
 export function getCreativeRegistry(projectId: string, token: string): Promise<CreativeRegistry> {
   return apiGet<CreativeRegistry>(`/api/v2/projects/${projectId}/marketing/creative-registry`, token)

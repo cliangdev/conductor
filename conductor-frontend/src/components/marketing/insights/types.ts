@@ -2,6 +2,9 @@
 // `MarketingInsightsResponse` and friends) — "What's working" across every published Post.
 
 import { apiGet } from '@/lib/api'
+import type { CreativePerformanceEntry } from '@/components/marketing/creatives/types'
+
+export type { CreativePerformanceEntry }
 
 export type InsightsWindowValue = '7d' | '30d' | '90d'
 
@@ -74,6 +77,9 @@ export interface MarketingInsightsResponse {
   bottomPosts: InsightsPost[]
   movers: InsightsMover[]
   coverage: InsightsCoverage
+  /** Up to ten Creative variants (COND-24 T5) with the highest views inside the window, best first.
+   * Empty on a workspace that has not attached any Creative to a Post yet. */
+  creatives: CreativePerformanceEntry[]
 }
 
 export function getMarketingInsights(

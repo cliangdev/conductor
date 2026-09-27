@@ -20,12 +20,14 @@ import { humanizeId, useSidebarWorkNav, workItemDetailPath, workItemListPath } f
 import { InsightsGroupTable } from './InsightsGroupTable'
 import { InsightsBestTimes } from './InsightsBestTimes'
 import { InsightsPostList } from './InsightsPostList'
+import { TopCreativesList } from './TopCreativesList'
 import {
   DEFAULT_INSIGHTS_WINDOW,
   INSIGHTS_WINDOWS,
   engagementRateLabel,
   getMarketingInsights,
   moverDeltaLabel,
+  type CreativePerformanceEntry,
   type InsightsMover,
   type InsightsPost,
   type InsightsWindowValue,
@@ -145,6 +147,10 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
     return workItemDetailPath(projectId, resolved.area, resolved.noun, post.displayId)
   }
 
+  function hrefForCreative(creative: CreativePerformanceEntry): string {
+    return `/app/projects/${projectId}/marketing/creatives/${creative.creativeId}`
+  }
+
   const windowLabel = activeWindow
   const loading = data === null && !error
 
@@ -251,6 +257,12 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
           {data.bottomPosts.length > 0 && (
             <div className="rounded-lg border border-border bg-surface p-4">
               <InsightsPostList title="Needs a rethink" posts={data.bottomPosts} hrefFor={hrefForPost} />
+            </div>
+          )}
+
+          {data.creatives.length > 0 && (
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <TopCreativesList creatives={data.creatives} hrefFor={hrefForCreative} />
             </div>
           )}
 

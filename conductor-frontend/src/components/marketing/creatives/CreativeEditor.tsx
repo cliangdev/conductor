@@ -28,6 +28,7 @@ import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage, type ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
+import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
 import { PhotoPicker } from '@/components/marketing/creatives/PhotoPicker'
 import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
 import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
@@ -848,6 +849,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             registry={registry}
             onLatestSucceededChange={setLatestSucceededRender}
           />
+
+          <CreativePerformancePanel projectId={projectId} creativeId={creativeId} token={token} />
         </div>
       </div>
 
