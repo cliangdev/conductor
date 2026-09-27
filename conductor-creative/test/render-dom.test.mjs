@@ -23,10 +23,21 @@ function board(creative, placementKey, brand) {
 
 /* ── the P0-2 invariant: no brand, no lockup, no badge ────────────────────── */
 
-test('renderBoard: a brand with no logos and no ctaClaim renders no lockup and no cta row', () => {
-  const b = board({ layout: 'bleed', headline: 'Plan the week in *one sentence*.' }, '9x16', {});
+test('renderBoard: a brand with no logos and no ctaClaim renders no logo image and no cta row', () => {
+  const b = board({ layout: 'bleed', headline: 'Plan the week in *one sentence*.' }, '4x5', {});
   assert.equal(b.querySelector('.cc-lockup'), null);
+  assert.equal(b.querySelector('img.cc-lockup__icon, img.cc-lockup__mark'), null);
   assert.equal(b.querySelector('.cc-cta'), null);
+});
+
+test('renderBoard: with no logo, a top-UI placement keeps an invisible lockup-sized spacer', () => {
+  // 9:16 has platform UI across its top edge; without the spacer the headline rises into it.
+  const b = board({ layout: 'bleed', headline: 'Plan the week in *one sentence*.' }, '9x16', {});
+  const spacer = b.querySelector('.cc-lockup--spacer');
+  assert.ok(spacer);
+  assert.equal(spacer.getAttribute('aria-hidden'), 'true');
+  assert.equal(b.querySelector('img.cc-lockup__icon, img.cc-lockup__mark'), null);
+  assert.ok(spacer.compareDocumentPosition(b.querySelector('.cc-headline')) & 4, 'spacer sits before the headline');
 });
 
 test('renderBoard: a brand with a mark and a wordmark renders the lockup', () => {

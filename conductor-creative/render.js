@@ -211,7 +211,7 @@ function el(tag, className, parent) {
  * for busy photography — ported from nexus's schema.json/render.js. A chip
  * sits on light ground regardless of the artboard's own theme, so it needs
  * the dark-ink wordmark just like a light theme does. */
-function buildLockup(brand, theme, lockup, parent) {
+function buildLockup(brand, theme, lockup, parent, reserveSpace = false) {
   const logos = (brand && brand.logos) || {};
   const hasMark = Boolean(logos.mark);
   const onLight = theme === 'light' || lockup === 'chip';
@@ -221,7 +221,16 @@ function buildLockup(brand, theme, lockup, parent) {
   const wordmarkSrc = onLight
     ? logos.wordmarkDark || logos.wordmarkLight
     : logos.wordmarkLight || logos.wordmarkDark;
-  if (!hasMark && !wordmarkSrc) return null;
+  if (!hasMark && !wordmarkSrc) {
+    // No logo: on a placement whose top edge is covered by platform UI (9:16, stories), keep the
+    // lockup's footprint as an invisible spacer so the headline stays where it would sit under a logo,
+    // clear of that zone, instead of rising into it.
+    if (!reserveSpace) return null;
+    const spacer = el('div', 'cc-lockup cc-lockup--spacer', parent);
+    spacer.setAttribute('aria-hidden', 'true');
+    el('div', 'cc-lockup__icon', spacer);
+    return spacer;
+  }
 
   const wrap = el('div', 'cc-lockup' + (lockup === 'chip' ? ' cc-lockup--chip' : ''), parent);
   if (hasMark) {
@@ -405,7 +414,7 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
     // copy over a full-artboard scrim.
     panel = el('div', 'cc-board__panel cc-board__panel--' + panelVariant, board);
   } else if (photoType === 'card') {
-    buildLockup(brand, ad.theme, ad.lockup, board);
+    buildLockup(brand, ad.theme, ad.lockup, board, placement.safe.top > 0);
     const card = el('div', 'cc-board__card', board);
     if (ad.photoUrl) {
       const cimg = el('img', null, card);
@@ -429,7 +438,7 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
 
   // A layout with its lockup at the top of the page (card) sets
   // `lockupInPanel: false` and builds it above, before the photo.
-  if (layouts[kind].lockupInPanel !== false) buildLockup(brand, ad.theme, ad.lockup, panel);
+  if (layouts[kind].lockupInPanel !== false) buildLockup(brand, ad.theme, ad.lockup, panel, placement.safe.top > 0);
   buildHeadline(ad, panel);
   const dropBody = (layouts[kind].dropBody || []).includes(placementKey);
   if (ad.body && !dropBody) {

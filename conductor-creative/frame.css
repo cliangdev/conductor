@@ -55,6 +55,7 @@
 .cc-lockup { display: inline-flex; align-items: center; flex: none; align-self: flex-start; gap: var(--cc-lockup-gap); }
 .cc-lockup__icon { display: block; width: var(--cc-icon-size); height: var(--cc-icon-size); border-radius: var(--cc-icon-radius); }
 .cc-lockup__mark { display: block; height: var(--cc-mark-height); }
+.cc-lockup--spacer { visibility: hidden; }
 
 /* Chip variant: a white pill behind the lockup, for busy photography (ported
    from nexus's schema.json `lockup: "chip"` / render.js). `--cc-l-card` and
