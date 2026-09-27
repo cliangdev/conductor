@@ -45,6 +45,38 @@ test('resolveAd: defaults layout to stacked and theme to dark', () => {
   assert.equal(ad.theme, 'dark');
 });
 
+test('resolveAd: defaults lockup to "plain"', () => {
+  const ad = resolveAd({ headline: 'x *y*.' }, PLACEMENTS, LAYOUTS);
+  assert.equal(ad.lockup, 'plain');
+  const chip = resolveAd({ headline: 'x *y*.', lockup: 'chip' }, PLACEMENTS, LAYOUTS);
+  assert.equal(chip.lockup, 'chip');
+});
+
+test('resolveAd: layoutOverrides.band overrides the layout\'s own per-placement band default', () => {
+  const stacked = resolveAd({ layout: 'stacked', headline: 'x *y*.' }, PLACEMENTS, LAYOUTS);
+  assert.equal(stacked.band['9x16'], LAYOUTS.stacked.band['9x16']);
+
+  const overridden = resolveAd(
+    { layout: 'stacked', headline: 'x *y*.', layoutOverrides: { band: { '9x16': 1200 } } },
+    PLACEMENTS, LAYOUTS
+  );
+  assert.equal(overridden.band['9x16'], 1200);
+  // A placement not named in the override keeps the layout's own default.
+  assert.equal(overridden.band['4x5'], LAYOUTS.stacked.band['4x5']);
+});
+
+test('resolveAd: layoutOverrides.padBottom overrides the placement\'s own safe-bottom default', () => {
+  const withDefault = resolveAd({ layout: 'stacked', headline: 'x *y*.' }, PLACEMENTS, LAYOUTS);
+  assert.equal(withDefault.padBottom['9x16'], PLACEMENTS['9x16'].safe.bottom);
+
+  const overridden = resolveAd(
+    { layout: 'stacked', headline: 'x *y*.', layoutOverrides: { padBottom: { '9x16': 500 } } },
+    PLACEMENTS, LAYOUTS
+  );
+  assert.equal(overridden.padBottom['9x16'], 500);
+  assert.equal(overridden.padBottom['4x5'], PLACEMENTS['4x5'].safe.bottom);
+});
+
 /* ── resolveSequence ────────────────────────────────────────────────────── */
 
 test('resolveSequence: CTA lands on the last frame only, by default', () => {

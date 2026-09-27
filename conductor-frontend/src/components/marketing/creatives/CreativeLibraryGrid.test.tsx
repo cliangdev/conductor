@@ -75,6 +75,7 @@ function creative(overrides: Partial<Creative> = {}): Creative {
     sequence: [],
     carouselRatio: null,
     typeOverrides: {},
+    lockup: 'plain',
     version: 1,
     createdBy: null,
     createdAt: '2026-01-01T00:00:00Z',

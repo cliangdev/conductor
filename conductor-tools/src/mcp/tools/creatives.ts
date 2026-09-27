@@ -84,6 +84,11 @@ export async function getCreative(params: { creativeId: string }, config: Config
   return { ...creative, readiness, variants }
 }
 
+export interface CreativeLayoutOverrides {
+  band?: Record<string, number>
+  padBottom?: Record<string, number>
+}
+
 export interface CreativeFields {
   brandKitId?: string
   name?: string
@@ -100,6 +105,10 @@ export interface CreativeFields {
   sequenceKind?: string
   sequence?: Array<Record<string, unknown>>
   carouselRatio?: string
+  /** 'plain' (default) or 'chip' — puts the logo lockup on a white pill, for busy photography. */
+  lockup?: string
+  /** Per-placement overrides of layout-derived numbers, in pixels — see conductor-creative/README.md. */
+  layoutOverrides?: CreativeLayoutOverrides
 }
 
 export interface CreateCreativeParams extends CreativeFields {

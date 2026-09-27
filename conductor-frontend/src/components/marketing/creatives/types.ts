@@ -11,6 +11,14 @@ import type { RenderCreative } from './renderTypes'
 export type CreativeState = 'DRAFT' | 'READY' | 'ARCHIVED'
 export type CreativeTheme = 'dark' | 'light'
 export type SequenceKind = 'story' | 'carousel'
+export type CreativeLockup = 'plain' | 'chip'
+
+/** Per-placement overrides of layout-derived numbers, in pixels — an absent placement key falls
+ * back to the layout's own default. See conductor-creative/README.md's "the creative shape". */
+export interface CreativeLayoutOverrides {
+  band?: Record<string, number> | null
+  padBottom?: Record<string, number> | null
+}
 
 export interface SequenceBeat {
   headline?: string | null
@@ -43,6 +51,8 @@ export interface Creative {
   sequence: SequenceBeat[]
   carouselRatio?: string | null
   typeOverrides: Record<string, number[]>
+  layoutOverrides?: CreativeLayoutOverrides | null
+  lockup: CreativeLockup
   version: number
   createdBy?: string | null
   createdAt: string
@@ -71,6 +81,8 @@ export interface CreateCreativeRequest {
   sequenceKind?: SequenceKind | null
   sequence?: SequenceBeat[]
   carouselRatio?: string | null
+  lockup?: CreativeLockup
+  layoutOverrides?: CreativeLayoutOverrides | null
 }
 
 export interface PatchCreativeRequest {
@@ -91,6 +103,8 @@ export interface PatchCreativeRequest {
   sequence?: SequenceBeat[]
   carouselRatio?: string | null
   typeOverrides?: Record<string, number[]> | null
+  lockup?: CreativeLockup
+  layoutOverrides?: CreativeLayoutOverrides | null
 }
 
 export interface CreateCreativeVariantRequest {
@@ -386,6 +400,7 @@ export function creativeToRenderCreative(
   return {
     layout: creative.layout as RenderCreative['layout'],
     theme: creative.theme,
+    lockup: creative.lockup,
     headline: creative.headline ?? '',
     body: creative.body ?? undefined,
     caption: creative.caption ?? undefined,
@@ -393,6 +408,7 @@ export function creativeToRenderCreative(
     focal: photo?.focal,
     focalOverride: creative.focalOverride ?? undefined,
     placements: creative.placements,
+    layoutOverrides: creative.layoutOverrides ?? undefined,
     typeOverrides: creative.typeOverrides as RenderCreative['typeOverrides'],
     sequenceKind: creative.sequenceKind ?? undefined,
     sequence: creative.sequence?.map((beat) => ({

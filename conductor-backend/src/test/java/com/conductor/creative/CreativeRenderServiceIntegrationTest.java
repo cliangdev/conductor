@@ -106,6 +106,21 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 });
     }
 
+    @Test
+    void specCarriesLockupAndLayoutOverridesThroughToTheRenderJob() {
+        creative.setLockup(Creative.LOCKUP_CHIP);
+        creative.setLayoutOverrides(objectMapper.valueToTree(
+                java.util.Map.of("band", java.util.Map.of("9x16", 1200), "padBottom", java.util.Map.of("9x16", 500))));
+        creative = creativeRepository.save(creative);
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), creative.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.spec().getCreative().getLockup().getValue()).isEqualTo("chip");
+        assertThat(result.spec().getCreative().getLayoutOverrides().getBand()).containsEntry("9x16", 1200);
+        assertThat(result.spec().getCreative().getLayoutOverrides().getPadBottom()).containsEntry("9x16", 500);
+    }
+
     // ── frames are JPEG (PNG fails the Instagram feed/TikTok photo publishing gate) ──────────────
 
     @Test

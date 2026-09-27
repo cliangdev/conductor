@@ -6,6 +6,7 @@
 export interface RenderCreative {
   layout?: 'stacked' | 'bleed' | 'card' | 'split'
   theme?: 'dark' | 'light'
+  lockup?: 'plain' | 'chip'
   headline: string
   body?: string
   caption?: string
@@ -13,6 +14,10 @@ export interface RenderCreative {
   focal?: Record<string, string>
   focalOverride?: Record<string, string>
   placements?: string[]
+  layoutOverrides?: {
+    band?: Record<string, number> | null
+    padBottom?: Record<string, number> | null
+  } | null
   typeOverrides?: Record<string, number[]>
   sequenceKind?: 'story' | 'carousel' | null
   sequence?: Array<{

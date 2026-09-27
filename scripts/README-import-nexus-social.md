@@ -62,11 +62,12 @@ The nexus repo's `social/golden/` holds a handful of previously-exported PNGs. A
 import + render, open the rendered frames for those same concept ids in the Conductor Creative
 editor (or the render output) side by side with the golden PNGs and eyeball them — same photo
 crop, same headline placement and size, same lockup position, same CTA row. This is a by-eye
-check, not a pixel diff: known gaps from this import (see the mapping report's notes) are the
-per-concept `band`/`padBottom` panel-height overrides and the `lockup: "chip"` choice, neither of
-which the current Creative model has a field for, so a handful of concepts will render with the
-model's default panel height and the plain lockup instead of the chip. If a golden concept looks
-materially off beyond that, stop and check the mapping before importing the rest.
+check, not a pixel diff. The per-concept `band`/`padBottom` panel-height overrides and the
+`lockup: "chip"` choice now map onto the Creative model's `layoutOverrides`/`lockup` fields (see
+`mapConceptFields` below), so a golden concept that used any of the three should render
+recognisably identically; the mapping report's notes call out anything else that didn't map
+cleanly. If a golden concept looks materially off, stop and check the mapping before importing
+the rest.
 
 ## Archiving `nexus-marketing/social/`
 

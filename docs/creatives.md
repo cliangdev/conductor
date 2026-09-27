@@ -19,6 +19,13 @@ optional story/carousel `sequence`, and opt-in `placements` beyond the kit's def
 `variantLetter` form nexus's display id (`12a`, `12b`); `version` is JPA's optimistic-lock column, giving
 a 409 on a stale write exactly like nexus's sha1 store version did.
 
+`lockup` (`plain`, the default, or `chip` — the logo lockup on a white pill, for busy photography) and
+`layoutOverrides` (`{band?, padBottom?}`, each a per-placement pixel override of the stacked layout's
+photo band height / the 9x16 panel's bottom safe-zone clearance) are the two nexus per-concept settings
+this port initially dropped; `CreativeValidator` checks every `layoutOverrides` placement key against the
+registry and a sane pixel bound, and `conductor-creative/render.js` applies them exactly like nexus's
+`render.js` did.
+
 `CreativeValidator` (`com.conductor.creative.CreativeValidator`) is a data-driven port of nexus's
 `validate()`/`copyErrors()`: layout/placement keys must be real, the layout must support the requested
 theme, the kit's accent-phrase and copy rules apply to every text field (including each sequence beat),

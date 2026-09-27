@@ -11,7 +11,14 @@
       "alt": "A fixture photo.",
       "type": {
         "9x16": [76, 1.04, -2.3]
-      }
+      },
+      "band": {
+        "9x16": 1200
+      },
+      "padBottom": {
+        "9x16": 500
+      },
+      "lockup": "chip"
     },
     {
       "id": "1b",

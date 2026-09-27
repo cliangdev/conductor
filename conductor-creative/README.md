@@ -61,6 +61,8 @@ backend's Work Item-adjacent `creative` API (camelCase):
 type Creative = {
   layout: 'stacked' | 'bleed' | 'card' | 'split'; // default: 'stacked'
   theme?: 'dark' | 'light';                        // default: 'dark'
+  lockup?: 'plain' | 'chip';                       // default: 'plain'; 'chip' puts the
+                                                    // logo lockup on a white pill, for busy photography
   headline: string;      // exactly one *accent phrase* marked with asterisks
   body?: string;
   caption?: string;      // carried through, never rendered onto the board
@@ -69,6 +71,10 @@ type Creative = {
   focalOverride?: Record<string, string>; // per-placement "x% y%", wins over focal
   placements?: string[]; // extra placement keys this creative opts into,
                           // beyond the brand kit's enabledPlacements
+  layoutOverrides?: {
+    band?: Record<string, number>;      // per-placement override of the stacked layout's photo band height (px)
+    padBottom?: Record<string, number>; // per-placement override of the 9x16 panel's bottom safe-zone clearance (px)
+  };
   typeOverrides?: Record<string, [size: number, leading?: number, tracking?: number]>;
   sequenceKind?: 'story' | 'carousel' | null;
   sequence?: Array<{
@@ -126,9 +132,11 @@ import {
 ```
 
 - **`resolveAd(creative, placements, layouts) -> Ad`** — fills in every
-  default (layout, theme, focal, band, padBottom, type) so the rest of the
-  code can assume a complete ad. `placements`/`layouts` are the registries
-  (see below); pass the shipped ones or your own.
+  default (layout, theme, lockup, focal, band, padBottom, type) so the rest
+  of the code can assume a complete ad. `creative.layoutOverrides.band` /
+  `.padBottom` win over the layout's own per-placement defaults.
+  `placements`/`layouts` are the registries (see below); pass the shipped
+  ones or your own.
 - **`resolveSequence(creative, placements, layouts) -> Ad[]`** — resolves
   `creative.sequence` into one `Ad` per beat/card, each inheriting the
   creative and overriding what it sets. Returns `[]` when
@@ -376,10 +384,6 @@ failing a machine that never ran that install step.
 - **Brand values are parameters, not constants.** `TRIAL_CLAIM`, the Apple
   badge path/ratio, the coral token, and the DM Sans self-hosted font are all
   gone; they are the `brand` object's job now.
-- **The lockup's "chip" variant (a white pill behind a busy photo's logo) was
-  dropped.** It was not part of the creative shape this port targets (the
-  backend's `creative` entity has no such field); a future tranche can add it
-  back as brand or layout data if it turns out to be needed generally.
 - **The CTA badge is sized by height only**, preserving its own intrinsic
   aspect ratio, instead of Apple's specific badge ratio — a brand's badge is
   not assumed to be any one store's artwork. Clear space (a quarter of the

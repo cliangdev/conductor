@@ -100,8 +100,10 @@ export function applyBrandTokens(el, brand) {
 /* Fills in every default so the rest of the code can assume a complete ad.
  * `raw` mirrors the backend creative shape (camelCase): layout, theme,
  * headline, body, caption, photoUrl, focal (per-placement "x% y%" carried on
- * the photo), focalOverride (per-creative override, wins over focal), band,
- * padBottom, typeOverrides. `placements` and `layouts` are the registries. */
+ * the photo), focalOverride (per-creative override, wins over focal),
+ * layoutOverrides ({band?, padBottom?}, each per-placement pixel overrides),
+ * lockup ('plain' | 'chip'), typeOverrides. `placements` and `layouts` are
+ * the registries. */
 export function resolveAd(raw, placements, layouts) {
   raw = raw || {};
   const layout = raw.layout || 'stacked';
@@ -115,16 +117,18 @@ export function resolveAd(raw, placements, layouts) {
   const layoutBand = (layouts[layout] && layouts[layout].band) || {};
   const padBottomDefault = {};
   for (const key of Object.keys(placements)) padBottomDefault[key] = placements[key].safe.bottom;
+  const layoutOverrides = raw.layoutOverrides || {};
   return {
     layout,
     theme: raw.theme || 'dark',
+    lockup: raw.lockup || 'plain',
     photoUrl: raw.photoUrl || null,
     headline: raw.headline || '',
     body: raw.body || '',
     caption: raw.caption || '',
     focal,
-    band: Object.assign({}, layoutBand, raw.band),
-    padBottom: Object.assign({}, padBottomDefault, raw.padBottom),
+    band: Object.assign({}, layoutBand, layoutOverrides.band),
+    padBottom: Object.assign({}, padBottomDefault, layoutOverrides.padBottom),
     type: raw.typeOverrides || null, // null means auto-fit
     showCta: true,
   };
@@ -201,18 +205,25 @@ function el(tag, className, parent) {
 
 /* Renders only when the brand has a mark and/or a wordmark image. A brand
  * with neither renders no lockup at all — there is nothing brand-neutral to
- * fall back to, and a placeholder logo would be worse than none. */
-function buildLockup(brand, theme, parent) {
+ * fall back to, and a placeholder logo would be worse than none.
+ *
+ * `lockup: 'chip'` puts the lockup on a white pill (frame.css's `.cc-lockup--chip`),
+ * for busy photography — ported from nexus's schema.json/render.js. A chip
+ * sits on light ground regardless of the artboard's own theme, so it needs
+ * the dark-ink wordmark just like a light theme does. */
+function buildLockup(brand, theme, lockup, parent) {
   const logos = (brand && brand.logos) || {};
   const hasMark = Boolean(logos.mark);
-  // Dark artboards need the light-ink wordmark; a light artboard needs the
-  // dark-ink one. Either falls back to the other when only one is supplied.
-  const wordmarkSrc = theme === 'light'
+  const onLight = theme === 'light' || lockup === 'chip';
+  // Dark artboards need the light-ink wordmark; a light artboard (or a chip,
+  // which is always light ground) needs the dark-ink one. Either falls back
+  // to the other when only one is supplied.
+  const wordmarkSrc = onLight
     ? logos.wordmarkDark || logos.wordmarkLight
     : logos.wordmarkLight || logos.wordmarkDark;
   if (!hasMark && !wordmarkSrc) return null;
 
-  const wrap = el('div', 'cc-lockup', parent);
+  const wrap = el('div', 'cc-lockup' + (lockup === 'chip' ? ' cc-lockup--chip' : ''), parent);
   if (hasMark) {
     const icon = el('img', 'cc-lockup__icon', wrap);
     icon.src = logos.mark;
@@ -321,6 +332,11 @@ const SCALE_PROPS = {
   iconSize: { prop: '--cc-icon-size', px: true },
   iconRadius: { prop: '--cc-icon-radius', px: true },
   markHeight: { prop: '--cc-mark-height', px: true },
+  chipPadding: { prop: '--cc-chip-pad' },
+  chipGap: { prop: '--cc-chip-gap', px: true },
+  chipIcon: { prop: '--cc-chip-icon', px: true },
+  chipIconRadius: { prop: '--cc-chip-icon-radius', px: true },
+  chipMark: { prop: '--cc-chip-mark', px: true },
   bodySize: { prop: '--cc-body-size', px: true },
   bodyLineHeight: { prop: '--cc-body-lh' },
   bodyMaxWidth: { prop: '--cc-body-max-w', px: true },
@@ -389,7 +405,7 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
     // copy over a full-artboard scrim.
     panel = el('div', 'cc-board__panel cc-board__panel--' + panelVariant, board);
   } else if (photoType === 'card') {
-    buildLockup(brand, ad.theme, board);
+    buildLockup(brand, ad.theme, ad.lockup, board);
     const card = el('div', 'cc-board__card', board);
     if (ad.photoUrl) {
       const cimg = el('img', null, card);
@@ -413,7 +429,7 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
 
   // A layout with its lockup at the top of the page (card) sets
   // `lockupInPanel: false` and builds it above, before the photo.
-  if (layouts[kind].lockupInPanel !== false) buildLockup(brand, ad.theme, panel);
+  if (layouts[kind].lockupInPanel !== false) buildLockup(brand, ad.theme, ad.lockup, panel);
   buildHeadline(ad, panel);
   const dropBody = (layouts[kind].dropBody || []).includes(placementKey);
   if (ad.body && !dropBody) {

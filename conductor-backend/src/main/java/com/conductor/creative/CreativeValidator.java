@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -31,6 +32,12 @@ import com.conductor.creative.CreativeValidationException.Violation;
  */
 @Component
 public class CreativeValidator {
+
+    /** Sane pixel bounds for a {@code layoutOverrides.band}/{@code padBottom} value — generous enough
+     * for any placement's own artboard height (the tallest today is 1920px) without letting a typo'd
+     * override (e.g. a stray extra zero) blow past what any layout could sensibly use. */
+    static final int LAYOUT_OVERRIDE_MIN_PX = 0;
+    static final int LAYOUT_OVERRIDE_MAX_PX = 4000;
 
     private final CreativeRegistry registry;
 
@@ -59,7 +66,9 @@ public class CreativeValidator {
             String sequenceKind,
             List<SequenceBeat> sequence,
             String carouselRatio,
-            Set<String> unknownSequencePhotoIds) {
+            Set<String> unknownSequencePhotoIds,
+            Map<String, Integer> layoutOverrideBand,
+            Map<String, Integer> layoutOverridePadBottom) {
 
         /**
          * A test-friendly builder for {@link Input} — every field defaults to "structurally valid and
@@ -84,6 +93,8 @@ public class CreativeValidator {
             private List<SequenceBeat> sequence = List.of();
             private String carouselRatio;
             private Set<String> unknownSequencePhotoIds = Set.of();
+            private Map<String, Integer> layoutOverrideBand = Map.of();
+            private Map<String, Integer> layoutOverridePadBottom = Map.of();
 
             public InputBuilder layout(String v) { this.layout = v; return this; }
             public InputBuilder theme(String v) { this.theme = v; return this; }
@@ -101,11 +112,13 @@ public class CreativeValidator {
             public InputBuilder sequence(List<SequenceBeat> v) { this.sequence = v; return this; }
             public InputBuilder carouselRatio(String v) { this.carouselRatio = v; return this; }
             public InputBuilder unknownSequencePhotoIds(Set<String> v) { this.unknownSequencePhotoIds = v; return this; }
+            public InputBuilder layoutOverrideBand(Map<String, Integer> v) { this.layoutOverrideBand = v; return this; }
+            public InputBuilder layoutOverridePadBottom(Map<String, Integer> v) { this.layoutOverridePadBottom = v; return this; }
 
             public Input build() {
                 return new Input(layout, theme, placements, headline, body, caption, state, photoId,
                         photoIdResolvable, photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence,
-                        carouselRatio, unknownSequencePhotoIds);
+                        carouselRatio, unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom);
             }
         }
     }
@@ -115,6 +128,7 @@ public class CreativeValidator {
 
         validateLayoutAndTheme(input, violations);
         validatePlacements(input, violations);
+        validateLayoutOverrides(input, violations);
 
         if (kit.isAccentPhraseRequired()) {
             checkAccentPhrase("headline", input.headline(), violations);
@@ -183,6 +197,37 @@ public class CreativeValidator {
         if (input.carouselRatio() != null && !registry.hasPlacement(input.carouselRatio())) {
             violations.add(new Violation("carouselRatio", "placement",
                     "carouselRatio must be one of: " + String.join(", ", registry.placements().keySet())));
+        }
+    }
+
+    /**
+     * {@code layoutOverrides.band}/{@code padBottom}: every placement key must be real (registry) and
+     * every value a sane pixel amount — a data-driven port of the same shape check nexus's schema.json
+     * gives its own {@code band}/{@code padBottom} (an object keyed by placement, integer values).
+     */
+    private void validateLayoutOverrides(Input input, List<Violation> violations) {
+        validateOverrideMap("layoutOverrides.band", input.layoutOverrideBand(), violations);
+        validateOverrideMap("layoutOverrides.padBottom", input.layoutOverridePadBottom(), violations);
+    }
+
+    private void validateOverrideMap(String field, Map<String, Integer> overrides, List<Violation> violations) {
+        if (overrides == null) {
+            return;
+        }
+        for (Map.Entry<String, Integer> entry : overrides.entrySet()) {
+            String placementKey = entry.getKey();
+            if (!registry.hasPlacement(placementKey)) {
+                violations.add(new Violation(field, "placement",
+                        "unknown placement \"" + placementKey + "\" in " + field + ", must be one of: "
+                                + String.join(", ", registry.placements().keySet())));
+                continue;
+            }
+            Integer value = entry.getValue();
+            if (value == null || value < LAYOUT_OVERRIDE_MIN_PX || value > LAYOUT_OVERRIDE_MAX_PX) {
+                violations.add(new Violation(field, "bounds",
+                        field + "[\"" + placementKey + "\"] must be between " + LAYOUT_OVERRIDE_MIN_PX
+                                + " and " + LAYOUT_OVERRIDE_MAX_PX + " px"));
+            }
         }
     }
 

@@ -56,6 +56,24 @@
 .cc-lockup__icon { display: block; width: var(--cc-icon-size); height: var(--cc-icon-size); border-radius: var(--cc-icon-radius); }
 .cc-lockup__mark { display: block; height: var(--cc-mark-height); }
 
+/* Chip variant: a white pill behind the lockup, for busy photography (ported
+   from nexus's schema.json `lockup: "chip"` / render.js). `--cc-l-card` and
+   `--cc-elev-overlay` are tokens.css's neutral light-ground surface and
+   shadow — brand-agnostic, so a white pill works over any brand's photo. */
+.cc-lockup--chip {
+  border-radius: 999px;
+  background: var(--cc-l-card);
+  box-shadow: var(--cc-elev-overlay);
+  padding: var(--cc-chip-pad);
+  gap: var(--cc-chip-gap);
+}
+.cc-lockup--chip .cc-lockup__icon {
+  width: var(--cc-chip-icon, var(--cc-icon-size));
+  height: var(--cc-chip-icon, var(--cc-icon-size));
+  border-radius: var(--cc-chip-icon-radius, var(--cc-icon-radius));
+}
+.cc-lockup--chip .cc-lockup__mark { height: var(--cc-chip-mark, var(--cc-mark-height)); }
+
 /* ── Headline ─────────────────────────────────────────────────────────────── */
 .cc-headline {
   margin: 0;

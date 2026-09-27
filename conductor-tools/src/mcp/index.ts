@@ -1126,6 +1126,15 @@ const TOOLS = [
           },
         },
         carouselRatio: { type: 'string', description: 'Aspect ratio key for a carousel sequence, e.g. 4x5 or 1x1 (optional)' },
+        lockup: { type: 'string', enum: ['plain', 'chip'], description: 'Optional — defaults to plain. "chip" puts the logo lockup on a white pill, for busy photography.' },
+        layoutOverrides: {
+          type: 'object',
+          description: 'Per-placement overrides of layout-derived numbers, in pixels (optional). A placement key not named here keeps the layout\'s own default.',
+          properties: {
+            band: { type: 'object', additionalProperties: { type: 'integer' }, description: 'Overrides the stacked layout\'s photo band height per placement, e.g. {"9x16": 1200}' },
+            padBottom: { type: 'object', additionalProperties: { type: 'integer' }, description: "Overrides the 9x16 panel's bottom safe-zone clearance per placement" },
+          },
+        },
       },
     },
   },
@@ -1163,6 +1172,14 @@ const TOOLS = [
           },
         },
         carouselRatio: { type: 'string' },
+        lockup: { type: 'string', enum: ['plain', 'chip'] },
+        layoutOverrides: {
+          type: 'object',
+          properties: {
+            band: { type: 'object', additionalProperties: { type: 'integer' } },
+            padBottom: { type: 'object', additionalProperties: { type: 'integer' } },
+          },
+        },
       },
       required: ['creativeId', 'version'],
     },

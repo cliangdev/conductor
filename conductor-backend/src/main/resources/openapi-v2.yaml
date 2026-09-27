@@ -6307,6 +6307,31 @@ components:
         - dark
         - light
 
+    CreativeLockup:
+      type: string
+      enum:
+        - plain
+        - chip
+      description: '"chip" puts the logo lockup on a white pill instead of bare on the photo, for busy photography.'
+
+    CreativeLayoutOverrides:
+      type: object
+      nullable: true
+      description: "Per-placement overrides of layout-derived numbers, in pixels. An absent placement key falls back to the layout's own default."
+      properties:
+        band:
+          type: object
+          nullable: true
+          description: 'Overrides the stacked layout''s photo band height per placement, e.g. {"9x16": 1200}.'
+          additionalProperties:
+            type: integer
+        padBottom:
+          type: object
+          nullable: true
+          description: Overrides the 9x16 panel's bottom safe-zone clearance per placement.
+          additionalProperties:
+            type: integer
+
     SequenceKind:
       type: string
       enum:
@@ -6345,6 +6370,7 @@ components:
         - placements
         - sequence
         - typeOverrides
+        - lockup
         - version
         - createdAt
         - updatedAt
@@ -6418,6 +6444,12 @@ components:
             type: array
             items:
               type: number
+        layoutOverrides:
+          allOf:
+            - $ref: "#/components/schemas/CreativeLayoutOverrides"
+          nullable: true
+        lockup:
+          $ref: "#/components/schemas/CreativeLockup"
         version:
           type: integer
         createdBy:
@@ -6494,6 +6526,12 @@ components:
         carouselRatio:
           type: string
           nullable: true
+        lockup:
+          $ref: "#/components/schemas/CreativeLockup"
+        layoutOverrides:
+          allOf:
+            - $ref: "#/components/schemas/CreativeLayoutOverrides"
+          nullable: true
 
     PatchCreativeRequest:
       type: object
@@ -6555,6 +6593,12 @@ components:
             type: array
             items:
               type: number
+        lockup:
+          $ref: "#/components/schemas/CreativeLockup"
+        layoutOverrides:
+          allOf:
+            - $ref: "#/components/schemas/CreativeLayoutOverrides"
+          nullable: true
 
     CreateCreativeVariantRequest:
       type: object
@@ -6785,6 +6829,12 @@ components:
           type: object
           additionalProperties:
             type: string
+        lockup:
+          $ref: "#/components/schemas/CreativeLockup"
+        layoutOverrides:
+          allOf:
+            - $ref: "#/components/schemas/CreativeLayoutOverrides"
+          nullable: true
 
     CreativeRenderSpec:
       type: object

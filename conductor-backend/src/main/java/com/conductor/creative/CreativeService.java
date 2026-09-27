@@ -6,6 +6,8 @@ import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeLayoutOverrides;
+import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
@@ -135,8 +137,10 @@ public class CreativeService {
         String theme = enumValue(request.getTheme(), Creative.THEME_DARK);
         String state = enumValue(request.getState(), Creative.STATE_DRAFT);
         String sequenceKind = enumValue(request.getSequenceKind(), null);
+        String lockup = enumValue(request.getLockup(), Creative.LOCKUP_PLAIN);
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : List.of();
         List<SequenceBeat> sequence = request.getSequence() != null ? request.getSequence() : List.of();
+        CreativeLayoutOverrides layoutOverrides = request.getLayoutOverrides();
 
         PhotoResolution mainPhoto = resolvePhoto(projectId, request.getPhotoId());
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
@@ -146,7 +150,8 @@ public class CreativeService {
                 state, request.getPhotoId(), mainPhoto.resolvable(), mainPhoto.photo() != null,
                 mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
-                sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds()));
+                sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
+                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides)));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -171,6 +176,8 @@ public class CreativeService {
         creative.setSequence(objectMapper.valueToTree(sequence));
         creative.setCarouselRatio(request.getCarouselRatio());
         creative.setTypeOverrides(objectMapper.createObjectNode());
+        creative.setLayoutOverrides(layoutOverrides != null ? objectMapper.valueToTree(layoutOverrides) : null);
+        creative.setLockup(lockup);
         creative.setCreatedBy(caller.getId());
 
         creative = saveWithNextNumber(creative);
@@ -199,8 +206,12 @@ public class CreativeService {
         String photoId = request.getPhotoId() != null ? request.getPhotoId() : current.getPhotoId();
         String carouselRatio = request.getCarouselRatio() != null ? request.getCarouselRatio() : current.getCarouselRatio();
         String sequenceKind = request.getSequenceKind() != null ? request.getSequenceKind().getValue() : current.getSequenceKind();
+        String lockup = request.getLockup() != null ? request.getLockup().getValue() : current.getLockup();
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : toStringList(current.getPlacements());
         List<SequenceBeat> sequence = request.getSequence() != null ? request.getSequence() : toSequenceBeats(current.getSequence());
+        CreativeLayoutOverrides layoutOverridesRequest = request.getLayoutOverrides();
+        JsonNode layoutOverrides = layoutOverridesRequest != null
+                ? objectMapper.valueToTree(layoutOverridesRequest) : current.getLayoutOverrides();
 
         PhotoResolution mainPhoto = resolvePhoto(projectId, photoId);
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
@@ -209,7 +220,8 @@ public class CreativeService {
                 layout, theme, placements, headline, body, caption, state, photoId, mainPhoto.resolvable(),
                 mainPhoto.photo() != null, mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(), sequenceKind,
-                toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds()));
+                toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
+                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides)));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -243,6 +255,8 @@ public class CreativeService {
         current.setSequence(objectMapper.valueToTree(sequence));
         current.setCarouselRatio(carouselRatio);
         current.setTypeOverrides(typeOverrides);
+        current.setLayoutOverrides(layoutOverrides);
+        current.setLockup(lockup);
 
         current = creativeRepository.save(current);
         return toView(current, loadPhotos(List.of(current)));
@@ -269,7 +283,8 @@ public class CreativeService {
                 Creative.STATE_DRAFT, root.getPhotoId(), mainPhoto.resolvable(), mainPhoto.photo() != null,
                 mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
-                root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds()));
+                root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds(),
+                overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides())));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -294,6 +309,8 @@ public class CreativeService {
         variant.setSequence(root.getSequence());
         variant.setCarouselRatio(root.getCarouselRatio());
         variant.setTypeOverrides(objectMapper.createObjectNode());
+        variant.setLayoutOverrides(root.getLayoutOverrides());
+        variant.setLockup(root.getLockup());
         variant.setCreatedBy(caller.getId());
 
         variant = saveWithNextLetter(variant);
@@ -476,6 +493,38 @@ public class CreativeService {
 
     private static String enumValue(SequenceKind kind, String fallback) {
         return kind != null ? kind.getValue() : fallback;
+    }
+
+    private static String enumValue(CreativeLockup lockup, String fallback) {
+        return lockup != null ? lockup.getValue() : fallback;
+    }
+
+    /** {@code layoutOverrides.band}, straight off the request DTO — used on create/variant, before it is ever
+     * persisted as JSON. */
+    private Map<String, Integer> overrideBand(CreativeLayoutOverrides layoutOverrides) {
+        return layoutOverrides != null && layoutOverrides.getBand() != null ? layoutOverrides.getBand() : Map.of();
+    }
+
+    private Map<String, Integer> overridePadBottom(CreativeLayoutOverrides layoutOverrides) {
+        return layoutOverrides != null && layoutOverrides.getPadBottom() != null ? layoutOverrides.getPadBottom() : Map.of();
+    }
+
+    /** Same, off the persisted/merged {@link JsonNode} — used on patch, where the effective value may be the
+     * current Creative's stored overrides rather than anything on the request DTO. */
+    private Map<String, Integer> overrideBand(JsonNode layoutOverrides) {
+        return extractOverrideInts(layoutOverrides, "band");
+    }
+
+    private Map<String, Integer> overridePadBottom(JsonNode layoutOverrides) {
+        return extractOverrideInts(layoutOverrides, "padBottom");
+    }
+
+    private Map<String, Integer> extractOverrideInts(JsonNode layoutOverrides, String key) {
+        if (layoutOverrides == null || !layoutOverrides.hasNonNull(key)) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(layoutOverrides.get(key), new TypeReference<Map<String, Integer>>() {
+        });
     }
 
     private static boolean notBlank(String s) {

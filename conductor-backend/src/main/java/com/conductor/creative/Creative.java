@@ -34,6 +34,9 @@ public class Creative {
     public static final String THEME_DARK = "dark";
     public static final String THEME_LIGHT = "light";
 
+    public static final String LOCKUP_PLAIN = "plain";
+    public static final String LOCKUP_CHIP = "chip";
+
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private String id;
@@ -102,6 +105,14 @@ public class Creative {
     @Column(name = "type_overrides", columnDefinition = "jsonb", nullable = false)
     private JsonNode typeOverrides;
 
+    /** {@code {band?: {placementKey: px}, padBottom?: {placementKey: px}}} — see V142__creative_layout_overrides.sql. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "layout_overrides", columnDefinition = "jsonb")
+    private JsonNode layoutOverrides;
+
+    @Column(name = "lockup", length = 16, nullable = false)
+    private String lockup;
+
     @Version
     @Column(name = "version", nullable = false)
     private int version;
@@ -128,6 +139,9 @@ public class Creative {
         }
         if (theme == null) {
             theme = THEME_DARK;
+        }
+        if (lockup == null) {
+            lockup = LOCKUP_PLAIN;
         }
         OffsetDateTime now = OffsetDateTime.now();
         createdAt = now;
@@ -206,6 +220,12 @@ public class Creative {
 
     public JsonNode getTypeOverrides() { return typeOverrides; }
     public void setTypeOverrides(JsonNode typeOverrides) { this.typeOverrides = typeOverrides; }
+
+    public JsonNode getLayoutOverrides() { return layoutOverrides; }
+    public void setLayoutOverrides(JsonNode layoutOverrides) { this.layoutOverrides = layoutOverrides; }
+
+    public String getLockup() { return lockup; }
+    public void setLockup(String lockup) { this.lockup = lockup; }
 
     public int getVersion() { return version; }
     public void setVersion(int version) { this.version = version; }

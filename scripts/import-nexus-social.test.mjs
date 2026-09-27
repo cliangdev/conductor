@@ -282,6 +282,9 @@ test('import-nexus-social: full run against a fake server', async () => {
     assert.equal(root.layout, 'stacked');
     assert.equal(root.state, 'READY');
     assert.equal(root.typeOverrides['9x16'][0], 76);
+    // band/padBottom/lockup map onto layoutOverrides/lockup, not dropped (COND-24 fidelity-gap tranche).
+    assert.deepEqual(root.layoutOverrides, { band: { '9x16': 1200 }, padBottom: { '9x16': 500 } });
+    assert.equal(root.lockup, 'chip');
 
     // Variant cut: 1b is a variant of 1a's family, with its own headline/layout/photo/theme -
     // i.e. the POST variants + PATCH the rest sequence, not a plain create.

@@ -8,6 +8,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -128,6 +129,30 @@ class CreativeValidatorTest {
     void unknownPlacementFailsAndRealPlacementPasses() {
         assertThat(violationRuleIds(baseInput().placements(List.of("not-a-placement")).build())).contains("placement");
         assertThat(violationRuleIds(baseInput().placements(List.of("1.91x1")).build())).doesNotContain("placement");
+    }
+
+    // ── layoutOverrides (band / padBottom) ─────────────────────────────────
+
+    @Test
+    void layoutOverrideUnknownPlacementKeyFails() {
+        assertThat(violationRuleIds(baseInput().layoutOverrideBand(Map.of("not-a-placement", 1200)).build()))
+                .contains("placement");
+        assertThat(violationRuleIds(baseInput().layoutOverridePadBottom(Map.of("not-a-placement", 500)).build()))
+                .contains("placement");
+    }
+
+    @Test
+    void layoutOverrideRealPlacementKeyPasses() {
+        assertThat(violationRuleIds(baseInput().layoutOverrideBand(Map.of("9x16", 1200)).build()))
+                .doesNotContain("placement", "bounds");
+        assertThat(violationRuleIds(baseInput().layoutOverridePadBottom(Map.of("4x5", 300)).build()))
+                .doesNotContain("placement", "bounds");
+    }
+
+    @Test
+    void layoutOverrideOutOfBoundsValueFails() {
+        assertThat(violationRuleIds(baseInput().layoutOverrideBand(Map.of("9x16", -1)).build())).contains("bounds");
+        assertThat(violationRuleIds(baseInput().layoutOverridePadBottom(Map.of("9x16", 5000)).build())).contains("bounds");
     }
 
     // ── sequence bounds (story 2-7, carousel 2-10) ─────────────────────────

@@ -123,6 +123,44 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void layoutOverridesAndLockupPersistAndCanBePatched() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setLockup(com.conductor.generated.v2.model.CreativeLockup.CHIP);
+        request.setLayoutOverrides(new com.conductor.generated.v2.model.CreativeLayoutOverrides()
+                .band(java.util.Map.of("9x16", 1200))
+                .padBottom(java.util.Map.of("9x16", 500)));
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+        assertThat(created.creative().getLockup()).isEqualTo("chip");
+        assertThat(created.creative().getLayoutOverrides().get("band").get("9x16").asInt()).isEqualTo(1200);
+        assertThat(created.creative().getLayoutOverrides().get("padBottom").get("9x16").asInt()).isEqualTo(500);
+
+        PatchCreativeRequest patch = new PatchCreativeRequest(created.creative().getVersion());
+        patch.setLockup(com.conductor.generated.v2.model.CreativeLockup.PLAIN);
+        patch.setLayoutOverrides(new com.conductor.generated.v2.model.CreativeLayoutOverrides()
+                .band(java.util.Map.of("4x5", 900)));
+        CreativeService.CreativeView patched = creativeService.patchCreative(
+                project.getId(), created.creative().getId(), patch, admin);
+        assertThat(patched.creative().getLockup()).isEqualTo("plain");
+        assertThat(patched.creative().getLayoutOverrides().get("band").get("4x5").asInt()).isEqualTo(900);
+
+        CreativeService.CreativeView variant = creativeService.createVariant(
+                project.getId(), patched.creative().getId(), new CreateCreativeVariantRequest(), admin);
+        assertThat(variant.creative().getLockup()).isEqualTo("plain");
+        assertThat(variant.creative().getLayoutOverrides().get("band").get("4x5").asInt()).isEqualTo(900);
+    }
+
+    @Test
+    void layoutOverrideWithAnUnknownPlacementKeyIsRefused() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setLayoutOverrides(new com.conductor.generated.v2.model.CreativeLayoutOverrides()
+                .band(java.util.Map.of("not-a-placement", 1200)));
+
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), request, admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
+    @Test
     void aBrandKitCopyRuleFailureSurfacesTheRulesOwnMessage() {
         CopyRule noExclaim = new CopyRule("noExclaim", "!", "No exclamation marks.", List.of(CopyRuleField.HEADLINE));
         BrandKit kit = brandKitService.createKit(project.getId(),

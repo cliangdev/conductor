@@ -93,6 +93,8 @@ function creative(overrides: Partial<Creative> = {}): Creative {
     sequence: [],
     carouselRatio: null,
     typeOverrides: {},
+    lockup: 'plain',
+    layoutOverrides: null,
     version: 3,
     createdBy: null,
     createdAt: '2026-01-01T00:00:00Z',
@@ -256,6 +258,57 @@ describe('CreativeEditor', () => {
     // Beat 2 was never given its own photo — it keeps falling back to the main photo.
     await userEvent.click(screen.getByRole('button', { name: 'Next beat' }))
     await waitFor(() => expect(boardPhotoSrc()).toContain('photo-main.jpg'))
+  })
+
+  it('toggles the lockup chip class in the live preview and saves it as part of the patch', async () => {
+    const kitWithLogo: BrandKit = { ...KIT, markUrl: 'https://cdn.example/mark.png' }
+    mockGetsFor(creative(), [kitWithLogo])
+    ;(apiPatch as Mock).mockResolvedValue(creative({ lockup: 'chip' }))
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+    const board = await screen.findByTestId('placement-board-4x5')
+    await waitFor(() => expect(board.querySelector('.cc-lockup')).toBeTruthy())
+    expect(board.querySelector('.cc-lockup--chip')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }))
+    await userEvent.selectOptions(screen.getByLabelText('Lockup'), 'chip')
+
+    await waitFor(() => expect(board.querySelector('.cc-lockup--chip')).toBeTruthy())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(apiPatch).toHaveBeenCalledWith(
+        expect.stringContaining('/creatives/cr-1'),
+        expect.objectContaining({ lockup: 'chip' }),
+        'tok',
+      ),
+    )
+  })
+
+  it('a per-placement band override sets --cc-band-h on the live board and is included in the patch', async () => {
+    mockGetsFor(creative({ layout: 'stacked' }))
+    ;(apiPatch as Mock).mockResolvedValue(creative())
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+    const board = await screen.findByTestId('placement-board-4x5')
+    await screen.findByLabelText('Headline')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }))
+    await userEvent.type(screen.getByLabelText('4x5 band height override'), '900')
+
+    await waitFor(() => {
+      const inner = board.querySelector('.cc-board') as HTMLElement | null
+      expect(inner?.style.getPropertyValue('--cc-band-h')).toBe('900px')
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(apiPatch).toHaveBeenCalledWith(
+        expect.stringContaining('/creatives/cr-1'),
+        expect.objectContaining({ layoutOverrides: { band: { '4x5': 900 }, padBottom: undefined } }),
+        'tok',
+      ),
+    )
   })
 
   it('hides Save actions and disables the form for a role without creative.manage (REVIEWER)', async () => {

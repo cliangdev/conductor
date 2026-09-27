@@ -11,6 +11,8 @@ import com.conductor.generated.v2.model.CreativeRenderFrameResponse;
 import com.conductor.generated.v2.model.CreativeRenderResponse;
 import com.conductor.generated.v2.model.CreativeRenderSpec;
 import com.conductor.generated.v2.model.CreativeRenderSpecBeat;
+import com.conductor.generated.v2.model.CreativeLayoutOverrides;
+import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeRenderSpecBrand;
 import com.conductor.generated.v2.model.CreativeRenderSpecCreative;
 import com.conductor.generated.v2.model.CreativeRenderSpecLogos;
@@ -127,7 +129,9 @@ public class CreativeRenderService {
                 Creative.STATE_READY, creative.getPhotoId(), creative.getPhotoId() == null || mainPhoto != null,
                 mainPhoto != null, mainPhoto != null && mainPhoto.isUploaded(),
                 mainPhoto != null && mainPhoto.isBlocked(), creative.getSequenceKind(),
-                toValidatorBeats(toSequenceBeats(creative.getSequence())), creative.getCarouselRatio(), Set.of()));
+                toValidatorBeats(toSequenceBeats(creative.getSequence())), creative.getCarouselRatio(), Set.of(),
+                extractOverrideInts(creative.getLayoutOverrides(), "band"),
+                extractOverrideInts(creative.getLayoutOverrides(), "padBottom")));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -352,7 +356,9 @@ public class CreativeRenderService {
                 .focalOverride(creative.getFocalOverride() != null ? toStringMap(creative.getFocalOverride()) : null)
                 .sequenceKind(creative.getSequenceKind() != null ? SequenceKind.fromValue(creative.getSequenceKind()) : null)
                 .sequence(beats)
-                .photoUrl(photoUrl(mainPhoto));
+                .photoUrl(photoUrl(mainPhoto))
+                .lockup(CreativeLockup.fromValue(creative.getLockup()))
+                .layoutOverrides(toLayoutOverrides(creative.getLayoutOverrides()));
 
         return new CreativeRenderSpec(render.getId(), render.isPreviewOnly(), creativeSpec, brand, placements);
     }
@@ -471,6 +477,18 @@ public class CreativeRenderService {
     private Map<String, List<BigDecimal>> toTypeOverrides(JsonNode node) {
         return node != null ? objectMapper.convertValue(node, new TypeReference<Map<String, List<BigDecimal>>>() {
         }) : Map.of();
+    }
+
+    private CreativeLayoutOverrides toLayoutOverrides(JsonNode node) {
+        return node != null ? objectMapper.convertValue(node, CreativeLayoutOverrides.class) : null;
+    }
+
+    private Map<String, Integer> extractOverrideInts(JsonNode layoutOverrides, String key) {
+        if (layoutOverrides == null || !layoutOverrides.hasNonNull(key)) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(layoutOverrides.get(key), new TypeReference<Map<String, Integer>>() {
+        });
     }
 
     private List<SequenceBeat> toSequenceBeats(JsonNode node) {

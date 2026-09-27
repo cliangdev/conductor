@@ -63,6 +63,23 @@ test('renderBoard: a single wordmark is used regardless of theme when the other 
   assert.equal(light.querySelector('.cc-lockup__mark').getAttribute('src'), 'https://cdn.example/only.png');
 });
 
+/* ── lockup: 'chip' (fidelity-gap port of nexus's white-pill lockup) ──────── */
+
+test('renderBoard: lockup "chip" adds cc-lockup--chip; plain (default) does not', () => {
+  const brand = { logos: { mark: 'https://cdn.example/mark.png' } };
+  const plain = board({ layout: 'bleed', headline: 'x *y*.' }, '9x16', brand);
+  assert.equal(plain.querySelector('.cc-lockup--chip'), null);
+
+  const chip = board({ layout: 'bleed', headline: 'x *y*.', lockup: 'chip' }, '9x16', brand);
+  assert.ok(chip.querySelector('.cc-lockup--chip'));
+});
+
+test('renderBoard: lockup "chip" forces the dark-ink wordmark even on a dark theme', () => {
+  const brand = { logos: { wordmarkDark: 'https://cdn.example/dark.png', wordmarkLight: 'https://cdn.example/light.png' } };
+  const chip = board({ layout: 'bleed', headline: 'x *y*.', theme: 'dark', lockup: 'chip' }, '9x16', brand);
+  assert.equal(chip.querySelector('.cc-lockup__mark').getAttribute('src'), 'https://cdn.example/dark.png');
+});
+
 test('renderBoard: a badge with no ctaClaim renders the badge alone, and vice versa', () => {
   const badgeOnly = board({ layout: 'bleed', headline: 'x *y*.' }, '9x16', { logos: { badge: 'https://cdn.example/badge.png' } });
   assert.ok(badgeOnly.querySelector('.cc-cta'));

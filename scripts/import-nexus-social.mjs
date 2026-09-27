@@ -464,15 +464,15 @@ function mapConceptFields(concept, photoMap, notes) {
 
   if (concept.type !== undefined) fields.typeOverrides = concept.type;
 
-  if (concept.band !== undefined) {
-    notes.push(`Concept ${concept.id}: "band" override (${JSON.stringify(concept.band)}) has no field on the Conductor Creative model — dropped.`);
+  // band/padBottom -> layoutOverrides, lockup -> lockup: the three per-concept settings the
+  // Conductor Creative model gained a field for in COND-24's fidelity-gap tranche (see
+  // scripts/README-import-nexus-social.md's "Verifying against social/golden/").
+  if (concept.band !== undefined || concept.padBottom !== undefined) {
+    fields.layoutOverrides = {};
+    if (concept.band !== undefined) fields.layoutOverrides.band = concept.band;
+    if (concept.padBottom !== undefined) fields.layoutOverrides.padBottom = concept.padBottom;
   }
-  if (concept.padBottom !== undefined) {
-    notes.push(`Concept ${concept.id}: "padBottom" override has no field on the Conductor Creative model — dropped.`);
-  }
-  if (concept.lockup !== undefined && concept.lockup !== 'plain') {
-    notes.push(`Concept ${concept.id}: "lockup: ${concept.lockup}" has no field on the Conductor Creative model — dropped (renders with the plain lockup).`);
-  }
+  if (concept.lockup !== undefined) fields.lockup = concept.lockup;
 
   return fields;
 }
@@ -532,6 +532,8 @@ async function importCreatives(client, project, kitId, ads, photoMap, notes) {
           sequenceKind: fields.sequenceKind,
           sequence: fields.sequence,
           carouselRatio: fields.carouselRatio,
+          lockup: fields.lockup,
+          layoutOverrides: fields.layoutOverrides,
         };
         const res = await client.post(`/projects/${project}/marketing/creatives`, body);
         const creativeId = res ? res.id : client.dryId(`creative-${concept.id}`);
@@ -578,6 +580,8 @@ async function importCreatives(client, project, kitId, ads, photoMap, notes) {
           sequence: fields.sequence,
           carouselRatio: fields.carouselRatio,
           typeOverrides: fields.typeOverrides,
+          lockup: fields.lockup,
+          layoutOverrides: fields.layoutOverrides,
         });
         mapping.push({ nexusId: concept.id, creativeId, name: displayName, action: 'created-variant' });
         variantsCreated++;

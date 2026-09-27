@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, XIcon } from 'lucide-react'
 import { attachFocalDrag, enabledPlacements, mountBoard } from '@cliangdev/creative-render/mount'
 import { checkCreativeCopy } from '@cliangdev/creative-render/copy-rules'
 import { placements as renderPlacements } from '@cliangdev/creative-render/placements'
@@ -40,6 +40,7 @@ import {
   listCreativePhotos,
   patchCreative,
   type Creative,
+  type CreativeLockup,
   type CreativePhoto,
   type CreativeRegistry,
   type CreativeReadiness,
@@ -67,6 +68,28 @@ interface FormState {
   sequenceKind: SequenceKind | null
   sequence: SequenceBeat[]
   typeOverrides: Record<string, number[]>
+  lockup: CreativeLockup
+  // Per-placement text inputs (not numbers): an empty string means "inherit the layout's default",
+  // distinct from "0", so the fields can be blank without forcing every placement to 0px.
+  layoutOverrideBand: Record<string, string>
+  layoutOverridePadBottom: Record<string, string>
+}
+
+function toStringMap(map: Record<string, number> | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(map ?? {})) out[k] = String(v)
+  return out
+}
+
+/** The inverse of {@link toStringMap} — blank or non-numeric entries are dropped, not coerced to 0. */
+function toIntMap(map: Record<string, string>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(map)) {
+    if (v.trim() === '') continue
+    const n = Math.round(Number(v))
+    if (Number.isFinite(n)) out[k] = n
+  }
+  return out
 }
 
 function toForm(creative: Creative): FormState {
@@ -86,6 +109,9 @@ function toForm(creative: Creative): FormState {
     sequenceKind: creative.sequenceKind ?? null,
     sequence: creative.sequence.map((b) => ({ ...b })),
     typeOverrides: { ...creative.typeOverrides },
+    lockup: creative.lockup,
+    layoutOverrideBand: toStringMap(creative.layoutOverrides?.band),
+    layoutOverridePadBottom: toStringMap(creative.layoutOverrides?.padBottom),
   }
 }
 
@@ -191,6 +217,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const [sequenceIndex, setSequenceIndex] = useState(0)
   const [latestSucceededRender, setLatestSucceededRender] = useState<CreativeRender | null>(null)
   const [useInPostOpen, setUseInPostOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const load = useCallback(async () => {
     const [loaded, kitRows, reg] = await Promise.all([
@@ -249,9 +276,12 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
 
   const renderCreative: RenderCreative | null = useMemo(() => {
     if (!form) return null
+    const band = toIntMap(form.layoutOverrideBand)
+    const padBottom = toIntMap(form.layoutOverridePadBottom)
     return {
       layout: form.layout as RenderCreative['layout'],
       theme: form.theme,
+      lockup: form.lockup,
       headline: form.headline,
       body: form.body || undefined,
       caption: form.caption || undefined,
@@ -259,6 +289,10 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
       focal: photo?.focal,
       focalOverride: Object.keys(form.focalOverride).length ? form.focalOverride : undefined,
       placements: form.placements,
+      layoutOverrides:
+        Object.keys(band).length || Object.keys(padBottom).length
+          ? { band: Object.keys(band).length ? band : undefined, padBottom: Object.keys(padBottom).length ? padBottom : undefined }
+          : undefined,
       typeOverrides: form.typeOverrides,
       sequenceKind: form.sequenceKind ?? undefined,
       sequence: form.sequence.map((b) => {
@@ -310,6 +344,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     setSaveError(null)
     setConflict(false)
     try {
+      const band = toIntMap(form.layoutOverrideBand)
+      const padBottom = toIntMap(form.layoutOverridePadBottom)
       const updated = await patchCreative(
         projectId,
         creativeId,
@@ -330,6 +366,11 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           sequenceKind: form.sequenceKind,
           sequence: form.sequence,
           typeOverrides: form.typeOverrides,
+          lockup: form.lockup,
+          layoutOverrides:
+            Object.keys(band).length || Object.keys(padBottom).length
+              ? { band: Object.keys(band).length ? band : undefined, padBottom: Object.keys(padBottom).length ? padBottom : undefined }
+              : null,
         },
         token,
       )
@@ -583,6 +624,68 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                 <option value="READY">Ready</option>
                 <option value="ARCHIVED">Archived</option>
               </Select>
+            </div>
+
+            <div className="border-t border-border pt-3">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((o) => !o)}
+                className="flex w-full items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                aria-expanded={advancedOpen}
+              >
+                <ChevronDownIcon className={cn('h-3.5 w-3.5 transition-transform', !advancedOpen && '-rotate-90')} aria-hidden />
+                Advanced
+              </button>
+              {advancedOpen && (
+                <div className="mt-2 space-y-3">
+                  <div>
+                    <Label htmlFor="creative-lockup">Lockup</Label>
+                    <Select
+                      id="creative-lockup"
+                      value={form.lockup}
+                      onChange={(e) => update('lockup', e.target.value as CreativeLockup)}
+                    >
+                      <option value="plain">Plain</option>
+                      <option value="chip">Chip (white pill, for busy photography)</option>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Layout overrides (px)</Label>
+                    <p className="mb-1.5 text-xs text-muted-foreground">
+                      Blank inherits the layout&apos;s own default for that placement.
+                    </p>
+                    <div className="space-y-1.5">
+                      {registry.placements.map((p) => (
+                        <div key={p.key} className="grid grid-cols-[auto_1fr_1fr] items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{p.key}</span>
+                          <Input
+                            type="number"
+                            aria-label={`${p.key} band height override`}
+                            placeholder="Band"
+                            value={form.layoutOverrideBand[p.key] ?? ''}
+                            onChange={(e) =>
+                              update('layoutOverrideBand', { ...form.layoutOverrideBand, [p.key]: e.target.value })
+                            }
+                          />
+                          <Input
+                            type="number"
+                            aria-label={`${p.key} bottom padding override`}
+                            placeholder="Pad bottom"
+                            value={form.layoutOverridePadBottom[p.key] ?? ''}
+                            onChange={(e) =>
+                              update('layoutOverridePadBottom', { ...form.layoutOverridePadBottom, [p.key]: e.target.value })
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {violationsFor(saveError, 'layoutOverrides.band').concat(violationsFor(saveError, 'layoutOverrides.padBottom')).map((m) => (
+                      <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
 

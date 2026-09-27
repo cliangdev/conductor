@@ -21,6 +21,8 @@ import com.conductor.generated.v2.model.CreateCreativeRenderRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
 import com.conductor.generated.v2.model.CreativePhotoResponse;
+import com.conductor.generated.v2.model.CreativeLayoutOverrides;
+import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeReadinessItem;
 import com.conductor.generated.v2.model.CreativeReadinessResponse;
 import com.conductor.generated.v2.model.CreativeRegistryLayout;
@@ -282,7 +284,8 @@ public class CreativeController implements CreativesApi {
         CreativeResponse response = new CreativeResponse(c.getId(), c.getProjectId(), c.getBrandKitId(), c.getNumber(),
                 c.getVariantLetter(), c.displayId(), CreativeState.fromValue(c.getState()), c.getLayout(),
                 CreativeTheme.fromValue(c.getTheme()), toStringList(c.getPlacements()), toSequenceBeats(c.getSequence()),
-                toTypeOverrides(c.getTypeOverrides()), c.getVersion(), c.getCreatedAt(), c.getUpdatedAt())
+                toTypeOverrides(c.getTypeOverrides()), CreativeLockup.fromValue(c.getLockup()), c.getVersion(),
+                c.getCreatedAt(), c.getUpdatedAt())
                 .parentCreativeId(c.getParentCreativeId())
                 .name(c.getName())
                 .photoId(c.getPhotoId())
@@ -294,6 +297,7 @@ public class CreativeController implements CreativesApi {
                 .altText(c.getAltText())
                 .sequenceKind(c.getSequenceKind() != null ? SequenceKind.fromValue(c.getSequenceKind()) : null)
                 .carouselRatio(c.getCarouselRatio())
+                .layoutOverrides(toLayoutOverrides(c.getLayoutOverrides()))
                 .createdBy(c.getCreatedBy());
         if (view.latestRenderSummary() != null) {
             response.latestRenderId(view.latestRenderSummary().render().getId())
@@ -326,6 +330,10 @@ public class CreativeController implements CreativesApi {
     private Map<String, List<BigDecimal>> toTypeOverrides(JsonNode node) {
         return node != null ? objectMapper.convertValue(node, new TypeReference<Map<String, List<BigDecimal>>>() {
         }) : Map.of();
+    }
+
+    private CreativeLayoutOverrides toLayoutOverrides(JsonNode node) {
+        return node != null ? objectMapper.convertValue(node, CreativeLayoutOverrides.class) : null;
     }
 
     private User currentUser() {
