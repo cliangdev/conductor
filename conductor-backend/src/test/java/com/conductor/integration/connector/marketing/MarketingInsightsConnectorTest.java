@@ -1,5 +1,7 @@
 package com.conductor.integration.connector.marketing;
 
+import com.conductor.creative.CreativeExperimentService;
+import com.conductor.creative.CreativeRepository;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.Project;
@@ -9,6 +11,7 @@ import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
 import com.conductor.repository.PostPublishTargetMetricRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -23,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -39,15 +43,22 @@ class MarketingInsightsConnectorTest {
 
     private PostPublishTargetRepository targetRepository;
     private PostPublishTargetMetricRepository metricRepository;
+    private CreativeExperimentService experimentService;
+    private CreativeRepository creativeRepository;
     private MarketingInsightsConnector connector;
 
     @BeforeEach
     void setUp() {
         targetRepository = mock(PostPublishTargetRepository.class);
         metricRepository = mock(PostPublishTargetMetricRepository.class);
+        experimentService = mock(CreativeExperimentService.class);
+        creativeRepository = mock(CreativeRepository.class);
         MarketingInsightsSnapshotQuery query = new MarketingInsightsSnapshotQuery(targetRepository, metricRepository);
         Clock fixedClock = Clock.fixed(NOW, ZoneOffset.UTC);
-        connector = new MarketingInsightsConnector(query, metricRepository, fixedClock);
+        connector = new MarketingInsightsConnector(query, metricRepository, experimentService, creativeRepository,
+                new ObjectMapper(), fixedClock);
+        when(experimentService.decidedSince(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of());
     }
 
     private static WorkItem post(String id, String projectKey, int seq, String title) {
@@ -142,6 +153,50 @@ class MarketingInsightsConnectorTest {
         assertThat(topPosts.get(0).get("post")).isEqualTo("MK-12 · Instagram · Every saved link, finally usable");
         assertThat(topPosts.get(0).get("views")).isEqualTo(800L);
         assertThat(topPosts.get(0).get("permalink")).isEqualTo("https://ig/1");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fetchDataDecidesRunningExperimentsAndAddsDecidedWinnersToThePayload() {
+        when(targetRepository.findPublishedWithWorkItemByFireTimeWindow(eq("proj-1"), eq(WINDOW_START), eq(WINDOW_END)))
+                .thenReturn(List.of());
+        when(metricRepository.existsPublishedWithMetricForProject("proj-1")).thenReturn(true);
+
+        com.conductor.creative.CreativeExperiment experiment = new com.conductor.creative.CreativeExperiment();
+        experiment.setId("exp-1");
+        experiment.setProjectId("proj-1");
+        experiment.setWinnerCreativeId("c12b");
+        experiment.setMetric("views");
+        experiment.setWindowHours(72);
+        experiment.setState(com.conductor.creative.CreativeExperiment.STATE_DECIDED);
+
+        when(experimentService.decidedSince(org.mockito.ArgumentMatchers.eq("proj-1"), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(experiment));
+        com.conductor.creative.Creative winner = new com.conductor.creative.Creative();
+        winner.setId("c12b");
+        winner.setNumber(12);
+        winner.setVariantLetter("b");
+        winner.setHeadline("*Winning* hook");
+        when(creativeRepository.findByIdAndProjectId("c12b", "proj-1")).thenReturn(java.util.Optional.of(winner));
+
+        ConnectorData result = connector.fetchData(ctx());
+
+        verify(experimentService).decideAllRunning("proj-1");
+        List<Map<String, Object>> hookWinners = (List<Map<String, Object>>) result.data().get("hookWinners");
+        assertThat(hookWinners).hasSize(1);
+        assertThat(hookWinners.get(0).get("creative")).isEqualTo("12b");
+        assertThat(hookWinners.get(0).get("headline")).isEqualTo("*Winning* hook");
+    }
+
+    @Test
+    void fetchDataOmitsHookWinnersWhenNoExperimentHasBeenDecided() {
+        when(targetRepository.findPublishedWithWorkItemByFireTimeWindow(eq("proj-1"), eq(WINDOW_START), eq(WINDOW_END)))
+                .thenReturn(List.of());
+        when(metricRepository.existsPublishedWithMetricForProject("proj-1")).thenReturn(true);
+
+        ConnectorData result = connector.fetchData(ctx());
+
+        assertThat(result.data()).doesNotContainKey("hookWinners");
     }
 
     @Test

@@ -781,6 +781,14 @@
         "creativeId",
         "workItemId"
       ]
+    },
+    {
+      "name": "create_experiment",
+      "description": "Start a hook experiment comparing every lettered variant of a Creative's family; settles itself once every variant has published and reported.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId"
+      ]
     }
   ]
 }

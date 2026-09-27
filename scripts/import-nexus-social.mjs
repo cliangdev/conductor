@@ -305,7 +305,7 @@ async function ensureBrandKit(client, project, kitSlug, kitName, brand, sourceDi
   const payload = {
     tokens,
     fontFamily: 'DM Sans',
-    fontUrl: null,
+    fontUrl: 'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap',
     ctaClaim: copy.trialClaim || null,
     accentPhraseRequired: true,
     copyRules: buildCopyRules(),
@@ -314,7 +314,6 @@ async function ensureBrandKit(client, project, kitSlug, kitName, brand, sourceDi
     // (schema.json: "The three default placements always export regardless of this list").
     enabledPlacements: ['9x16', '4x5', '1x1'],
   };
-  notes.push('fontUrl left null: DM Sans ships as local .woff2 files in nexus (assets/fonts/), not a hostable URL. Host it (e.g. alongside the frontend) and PATCH fontUrl by hand if the render job needs self-hosted fonts.');
 
   if (!kit) {
     kit = await client.post(`/projects/${project}/marketing/brand-kits`, { slug: kitSlug, name: kitName, ...payload });

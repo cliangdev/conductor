@@ -9,8 +9,8 @@ story/carousel sequences). Not product code — run it once, verify, then archiv
 
 1. **Brand Kit** (`--kit-slug`, default `default`): maps `brand.json`'s nine CSS tokens to the
    eight the kit has a field for (`--sky` has no destination and is dropped, with a note), sets
-   `fontFamily: "DM Sans"` (no `fontUrl` — nexus ships DM Sans as local `.woff2` files, not a
-   hostable URL), `ctaClaim` from `copy.trialClaim`, `accentPhraseRequired: true`, the six
+   `fontFamily: "DM Sans"` with `fontUrl` pointing at DM Sans on Google Fonts (nexus self-hosts
+   the same family as `.woff2`), `ctaClaim` from `copy.trialClaim`, `accentPhraseRequired: true`, the six
    `copyErrors` checks from `core.mjs` as data-driven copy rules (with the "Add All to Shopping
    List" exception), `approvedLines` from `copy.trialClaim`/`priceDisclosure`/`autoRenew`, and
    `enabledPlacements: ["9x16", "4x5", "1x1"]` (nexus's three always-on placements). Uploads the

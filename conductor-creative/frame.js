@@ -19,6 +19,7 @@
 import { resolveAd, resolveSequence, renderBoard, fitBoard } from './render.js';
 import { placements as DEFAULT_PLACEMENTS } from './placements.js';
 import { layouts as DEFAULT_LAYOUTS } from './layouts/index.js';
+import { ensureBrandFont } from './font.js';
 import { runAssertions } from './assertions.js';
 
 function finish(result) {
@@ -57,6 +58,7 @@ async function main() {
 
   let board;
   try {
+    await ensureBrandFont(spec.brand);
     board = renderBoard(ad, spec.placementKey, placementsReg, layoutsReg, spec.brand || {});
     document.body.appendChild(board);
 

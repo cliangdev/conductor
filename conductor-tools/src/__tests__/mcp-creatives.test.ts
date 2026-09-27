@@ -35,6 +35,7 @@ import {
   renderCreativeTool,
   previewCreative,
   attachCreativeToPost,
+  createExperiment,
 } from '../mcp/tools/creatives.js'
 
 const config: Config = {
@@ -98,20 +99,81 @@ describe('list_creatives', () => {
 })
 
 describe('get_creative', () => {
-  it('merges the creative, its readiness, and sibling variants from the full list', async () => {
+  it('merges the creative, its readiness, sibling variants, performance and active experiment', async () => {
     mocked(apiGet)
-      .mockResolvedValueOnce({ id: 'c12a', number: 12, displayId: '12a' })
+      .mockResolvedValueOnce({ id: 'c12a', number: 12, displayId: '12a', activeExperimentId: 'exp-1' })
       .mockResolvedValueOnce({ ready: false, items: [] })
       .mockResolvedValueOnce([
         { id: 'c12a', number: 12, displayId: '12a' },
         { id: 'c12b', number: 12, displayId: '12b', state: 'DRAFT', headline: 'h' },
         { id: 'c9a', number: 9, displayId: '9a' },
       ])
+      .mockResolvedValueOnce({
+        creativeId: 'c12a',
+        family: [
+          { creativeId: 'c12a', label: '12a', headline: 'A', posts: 2, views: 100, engagementRate: 0.123456, avgViewPct: null, views72h: 90, byPlatform: [] },
+          { creativeId: 'c12b', label: '12b', headline: 'B', posts: 1, views: 50, engagementRate: null, avgViewPct: null, views72h: null, byPlatform: [] },
+        ],
+      })
+      .mockResolvedValueOnce({ id: 'exp-1', state: 'RUNNING', metric: 'views', windowHours: 72, summary: null })
 
     const result = await getCreative({ creativeId: 'c12a' }, config)
 
     expect(result['readiness']).toEqual({ ready: false, items: [] })
     expect(result['variants']).toEqual([{ id: 'c12b', displayId: '12b', state: 'DRAFT', headline: 'h' }])
+    expect(apiGet).toHaveBeenNthCalledWith(5, '/api/v2/projects/proj-1/marketing/experiments/exp-1', config)
+    expect(result['experiment']).toMatchObject({ id: 'exp-1', state: 'RUNNING' })
+    const performance = result['performance'] as Array<Record<string, unknown>>
+    expect(performance).toHaveLength(2)
+    expect(performance[0]!['engagementRate']).toBe(0.1235)
+    expect(performance[0]).not.toHaveProperty('byPlatform')
+  })
+
+  it('falls back to listing experiments by creativeId when there is no activeExperimentId', async () => {
+    mocked(apiGet)
+      .mockResolvedValueOnce({ id: 'c12a', number: 12, displayId: '12a', activeExperimentId: null })
+      .mockResolvedValueOnce({ ready: true, items: [] })
+      .mockResolvedValueOnce([{ id: 'c12a', number: 12, displayId: '12a' }])
+      .mockResolvedValueOnce({ creativeId: 'c12a', family: [] })
+      .mockResolvedValueOnce([{ id: 'exp-old', state: 'DECIDED', winnerCreativeId: 'c12a' }])
+
+    const result = await getCreative({ creativeId: 'c12a' }, config)
+
+    expect(apiGet).toHaveBeenNthCalledWith(5, '/api/v2/projects/proj-1/marketing/experiments?creativeId=c12a', config)
+    expect(result['experiment']).toMatchObject({ id: 'exp-old', state: 'DECIDED', winnerCreativeId: 'c12a' })
+  })
+
+  it('reports a null experiment when the family has never run one', async () => {
+    mocked(apiGet)
+      .mockResolvedValueOnce({ id: 'c12a', number: 12, displayId: '12a' })
+      .mockResolvedValueOnce({ ready: true, items: [] })
+      .mockResolvedValueOnce([{ id: 'c12a', number: 12, displayId: '12a' }])
+      .mockResolvedValueOnce({ creativeId: 'c12a', family: [] })
+      .mockResolvedValueOnce([])
+
+    const result = await getCreative({ creativeId: 'c12a' }, config)
+
+    expect(result['experiment']).toBeNull()
+  })
+})
+
+describe('create_experiment', () => {
+  it('POSTs creativeId/metric/windowHours to the experiments collection', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'exp-1', state: 'RUNNING' })
+
+    await createExperiment({ creativeId: 'c12a', metric: 'avg_view_pct', windowHours: 48 }, config)
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/experiments',
+      { creativeId: 'c12a', metric: 'avg_view_pct', windowHours: 48 },
+      config
+    )
+  })
+
+  it('propagates a 409 when the family already has a RUNNING experiment', async () => {
+    mocked(apiPost).mockRejectedValue(new ApiError(409, 'Creative 12a already has a RUNNING experiment'))
+
+    await expect(createExperiment({ creativeId: 'c12a' }, config)).rejects.toMatchObject({ status: 409 })
   })
 })
 

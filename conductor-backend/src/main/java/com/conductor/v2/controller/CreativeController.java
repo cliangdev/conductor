@@ -2,6 +2,9 @@ package com.conductor.v2.controller;
 
 import com.conductor.creative.Creative;
 import com.conductor.creative.CreativeAttachService;
+import com.conductor.creative.CreativeExperiment;
+import com.conductor.creative.CreativeExperimentService;
+import com.conductor.creative.CreativePerformanceService;
 import com.conductor.creative.CreativePhoto;
 import com.conductor.creative.CreativePhotoService;
 import com.conductor.creative.CreativeRegistry;
@@ -16,10 +19,17 @@ import com.conductor.generated.v2.model.AttachCreativeTargetUpdate;
 import com.conductor.generated.v2.model.AttachedCreativeAsset;
 import com.conductor.generated.v2.model.CompleteCreativeRenderRequest;
 import com.conductor.generated.v2.model.ConfirmCreativePhotoRequest;
+import com.conductor.generated.v2.model.CreateCreativeExperimentRequest;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.CreateCreativeRenderRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeExperimentMetric;
+import com.conductor.generated.v2.model.CreativeExperimentResponse;
+import com.conductor.generated.v2.model.CreativeExperimentState;
+import com.conductor.generated.v2.model.CreativePerformanceEntry;
+import com.conductor.generated.v2.model.CreativePerformancePlatform;
+import com.conductor.generated.v2.model.CreativePerformanceResponse;
 import com.conductor.generated.v2.model.CreativePhotoResponse;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
@@ -68,16 +78,21 @@ public class CreativeController implements CreativesApi {
     private final ObjectMapper objectMapper;
     private final CreativeRenderService renderService;
     private final CreativeAttachService attachService;
+    private final CreativePerformanceService performanceService;
+    private final CreativeExperimentService experimentService;
 
     public CreativeController(CreativePhotoService photoService, CreativeService creativeService,
                               CreativeRegistry registry, ObjectMapper objectMapper,
-                              CreativeRenderService renderService, CreativeAttachService attachService) {
+                              CreativeRenderService renderService, CreativeAttachService attachService,
+                              CreativePerformanceService performanceService, CreativeExperimentService experimentService) {
         this.photoService = photoService;
         this.creativeService = creativeService;
         this.registry = registry;
         this.objectMapper = objectMapper;
         this.renderService = renderService;
         this.attachService = attachService;
+        this.performanceService = performanceService;
+        this.experimentService = experimentService;
     }
 
     // ── Photos ───────────────────────────────────────────────────────────
@@ -238,6 +253,78 @@ public class CreativeController implements CreativesApi {
         return ResponseEntity.ok(new AttachCreativeResponse(assets, updated, skipped));
     }
 
+    // ── Performance + experiments (COND-24 T5) ──────────────────────────
+
+    @Override
+    public ResponseEntity<CreativePerformanceResponse> getCreativePerformance(String projectId, String creativeId) {
+        CreativePerformanceService.FamilyPerformance perf =
+                performanceService.familyPerformance(projectId, creativeId, currentUser());
+        return ResponseEntity.ok(new CreativePerformanceResponse(perf.creativeId(),
+                perf.family().stream().map(this::toResponse).toList()));
+    }
+
+    @Override
+    public ResponseEntity<List<CreativeExperimentResponse>> listCreativeExperiments(String projectId, String creativeId,
+                                                                                     CreativeExperimentState state) {
+        List<CreativeExperimentResponse> body = experimentService
+                .list(projectId, creativeId, state != null ? state.getValue() : null, currentUser())
+                .stream().map(this::toResponse).toList();
+        return ResponseEntity.ok(body);
+    }
+
+    @Override
+    public ResponseEntity<CreativeExperimentResponse> createCreativeExperiment(String projectId,
+                                                                                CreateCreativeExperimentRequest request) {
+        CreativeExperiment experiment = experimentService.create(projectId, request.getCreativeId(),
+                request.getMetric() != null ? request.getMetric().getValue() : null, request.getWindowHours(), currentUser());
+        return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(experiment));
+    }
+
+    @Override
+    public ResponseEntity<CreativeExperimentResponse> getCreativeExperiment(String projectId, String experimentId) {
+        return ResponseEntity.ok(toResponse(experimentService.get(projectId, experimentId, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<CreativeExperimentResponse> decideCreativeExperiment(String projectId, String experimentId) {
+        return ResponseEntity.ok(toResponse(experimentService.decide(projectId, experimentId, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<CreativeExperimentResponse> confirmCreativeExperimentWinner(String projectId, String experimentId) {
+        return ResponseEntity.ok(toResponse(experimentService.confirmWinner(projectId, experimentId, currentUser())));
+    }
+
+    private CreativePerformanceEntry toResponse(CreativePerformanceService.VariantPerformance p) {
+        return new CreativePerformanceEntry(p.creativeId(), p.label(), p.posts(), p.views(),
+                p.byPlatform().stream()
+                        .map(b -> new CreativePerformancePlatform(b.platform(), b.posts(), b.views()).engagementRate(b.engagementRate()))
+                        .toList())
+                .headline(p.headline())
+                .engagementRate(p.engagementRate())
+                .avgViewPct(p.avgViewPct())
+                .views72h(p.views72h());
+    }
+
+    private CreativeExperimentResponse toResponse(CreativeExperiment e) {
+        return new CreativeExperimentResponse(e.getId(), e.getProjectId(), e.getParentCreativeId(),
+                CreativeExperimentMetric.fromValue(e.getMetric()), e.getWindowHours(),
+                CreativeExperimentState.fromValue(e.getState()), e.getCreatedAt())
+                .winnerCreativeId(e.getWinnerCreativeId())
+                .decidedAt(e.getDecidedAt())
+                .summary(toSummaryObject(e.getSummary()))
+                .winnerLineConfirmedAt(e.getWinnerLineConfirmedAt())
+                .winnerLineConfirmedBy(e.getWinnerLineConfirmedBy())
+                .createdBy(e.getCreatedBy());
+    }
+
+    private Map<String, Object> toSummaryObject(JsonNode summary) {
+        if (summary == null) {
+            return null;
+        }
+        return objectMapper.convertValue(summary, new TypeReference<Map<String, Object>>() { });
+    }
+
     private byte[] readAllBytes(Resource resource) {
         try (java.io.InputStream in = resource.getInputStream()) {
             return in.readAllBytes();
@@ -298,7 +385,8 @@ public class CreativeController implements CreativesApi {
                 .sequenceKind(c.getSequenceKind() != null ? SequenceKind.fromValue(c.getSequenceKind()) : null)
                 .carouselRatio(c.getCarouselRatio())
                 .layoutOverrides(toLayoutOverrides(c.getLayoutOverrides()))
-                .createdBy(c.getCreatedBy());
+                .createdBy(c.getCreatedBy())
+                .activeExperimentId(view.activeExperimentId());
         if (view.latestRenderSummary() != null) {
             response.latestRenderId(view.latestRenderSummary().render().getId())
                     .latestRenderThumbnailUrl(renderService.thumbnailUrl(view.latestRenderSummary()));

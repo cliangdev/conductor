@@ -1,5 +1,6 @@
 package com.conductor.marketing.insights;
 
+import com.conductor.creative.CreativePerformanceService;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.PostPublishTargetState;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -41,6 +43,7 @@ class MarketingInsightsQueryServiceTest {
     private PostPublishTargetRepository targetRepository;
     private PostPublishTargetMetricRepository metricRepository;
     private WorkItemRepository workItemRepository;
+    private CreativePerformanceService performanceService;
     private MarketingInsightsQueryService service;
     private User caller;
     private Project project;
@@ -51,8 +54,10 @@ class MarketingInsightsQueryServiceTest {
         targetRepository = mock(PostPublishTargetRepository.class);
         metricRepository = mock(PostPublishTargetMetricRepository.class);
         workItemRepository = mock(WorkItemRepository.class);
+        performanceService = mock(CreativePerformanceService.class);
+        when(performanceService.topCreatives(anyString(), any(), any(), anyInt())).thenReturn(List.of());
         service = new MarketingInsightsQueryService(security, targetRepository, metricRepository, workItemRepository,
-                new PublishPlatformRegistry());
+                new PublishPlatformRegistry(), performanceService);
         caller = new User();
         caller.setId("u-1");
         when(security.isProjectMember("proj-1", "u-1")).thenReturn(true);

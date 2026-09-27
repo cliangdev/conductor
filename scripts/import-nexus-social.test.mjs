@@ -248,9 +248,8 @@ test('import-nexus-social: full run against a fake server', async () => {
     assert.equal(kit.copyRules.length, 6);
     assert.equal(kit.ctaClaim, '7 days free, then Pro or Pro Max.');
     assert.equal(kit.fontFamily, 'DM Sans');
-    assert.equal(kit.fontUrl, null);
+    assert.match(kit.fontUrl, /fonts\.googleapis\.com\/css2\?family=DM\+Sans/);
     assert.ok(summary.notes.some((n) => n.includes('--sky')));
-    assert.ok(summary.notes.some((n) => n.includes('fontUrl left null')));
 
     // All four brand image slots confirmed.
     assert.equal(kit.markUrl, 'https://signed.example/mark');

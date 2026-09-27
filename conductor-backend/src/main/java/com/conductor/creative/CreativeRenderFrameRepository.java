@@ -19,6 +19,11 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
 
     List<CreativeRenderFrame> findAllByRenderId(String renderId);
 
+    /** Every frame this Creative has ever produced, across every render — COND-24 T5 attribution reads
+     *  this rather than following {@code CreativeRenderRepository}'s "latest succeeded" view because a
+     *  Post can be attached from an older render whose frames are still the ones actually published. */
+    List<CreativeRenderFrame> findAllByCreativeId(String creativeId);
+
     @Modifying
     void deleteAllByRenderId(String renderId);
 }

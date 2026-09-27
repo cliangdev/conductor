@@ -20,6 +20,7 @@
 import { resolveAd, resolveSequence, renderBoard, fitAll } from './render.js';
 import { placements as DEFAULT_PLACEMENTS } from './placements.js';
 import { layouts as DEFAULT_LAYOUTS } from './layouts/index.js';
+import { ensureBrandFont } from './font.js';
 
 const SHEET_SCALE = 0.34;
 
@@ -60,6 +61,7 @@ async function main() {
   }
 
   try {
+    await ensureBrandFont(spec.brand);
     const isSequence = spec.creative.sequenceKind && Array.isArray(spec.creative.sequence) && spec.creative.sequence.length;
     if (isSequence) {
       const frames = resolveSequence(spec.creative, placementsReg, layoutsReg);

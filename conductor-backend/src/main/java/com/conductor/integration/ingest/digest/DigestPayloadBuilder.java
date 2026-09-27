@@ -22,6 +22,19 @@ import java.util.Map;
 public class DigestPayloadBuilder {
 
     public Map<String, Object> build(IngestSpec spec, String periodKey, ChangeDetectionResult result) {
+        return build(spec, periodKey, result, Map.of());
+    }
+
+    /**
+     * Same as {@link #build(IngestSpec, String, ChangeDetectionResult)}, plus a narrow, already-narrated-
+     * safe {@code extra} passthrough: today only its {@code hookWinners} key (COND-24 T5 — decided
+     * creative experiments since the last run) is copied onto the payload verbatim, when present and
+     * non-empty. This is not a general escape hatch for raw data — {@code extra} is the connector's own
+     * raw pulled snapshot, and every other key in it is still deliberately ignored, for the same reason
+     * the class javadoc gives: the narrator must never see anything beyond already-computed changes.
+     */
+    public Map<String, Object> build(IngestSpec spec, String periodKey, ChangeDetectionResult result,
+                                     Map<String, Object> extra) {
         Map<String, Object> payload = new LinkedHashMap<>();
 
         Map<String, Object> period = new LinkedHashMap<>();
@@ -65,6 +78,10 @@ public class DigestPayloadBuilder {
             dimensions.put(key, rows);
         });
         payload.put("dimensions", dimensions);
+
+        if (extra != null && extra.get("hookWinners") instanceof List<?> hookWinners && !hookWinners.isEmpty()) {
+            payload.put("hookWinners", hookWinners);
+        }
 
         return payload;
     }

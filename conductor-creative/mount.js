@@ -13,35 +13,10 @@
 import { resolveAd, resolveSequence, renderBoard, fitBoard, enabledPlacements } from './render.js';
 import { placements as defaultPlacements } from './placements.js';
 import { layouts as defaultLayouts } from './layouts/index.js';
+import { loadFont } from './font.js';
 
 export { enabledPlacements };
-
-/* Loads `brand.fontUrl` as a <link rel="stylesheet"> (a Google Fonts URL or a
- * self-hosted @font-face sheet both work this way) and resolves once the
- * browser has it, or immediately if there is no fontUrl. Idempotent: calling
- * it twice with the same URL does not insert a second <link>. Does not touch
- * `document.fonts.ready` itself — callers that need the font *painted*, not
- * just requested, should await that separately (mountBoard does). */
-const loadedFontUrls = new Set();
-export function loadFont(brand) {
-  const href = brand && brand.fontUrl;
-  if (!href) return Promise.resolve();
-  if (loadedFontUrls.has(href)) return Promise.resolve();
-  if (typeof document === 'undefined') return Promise.resolve();
-  const existing = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).find((l) => l.href === href);
-  if (existing) {
-    loadedFontUrls.add(href);
-    return Promise.resolve();
-  }
-  return new Promise((resolve, reject) => {
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    link.onload = () => { loadedFontUrls.add(href); resolve(); };
-    link.onerror = () => reject(new Error('failed to load font stylesheet: ' + href));
-    document.head.appendChild(link);
-  });
-}
+export { loadFont };
 
 function resolveFrame(creative, placementsReg, layoutsReg, sequenceIndex) {
   if (creative.sequenceKind && Array.isArray(creative.sequence) && creative.sequence.length) {

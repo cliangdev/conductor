@@ -3483,6 +3483,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/creatives/{creativeId}/performance:
+    get:
+      tags:
+        - creatives
+      summary: A Creative family's attributed performance (COND-24 T5)
+      description: >-
+        Per-variant roll-ups for every lettered sibling of this Creative's family: posts, views,
+        engagement rate, average view percentage where a platform reports it, and 72h views, each sliced
+        by platform. Attribution follows creative_render_frame → assets.creative_frame_id to every
+        published destination whose actual media (inherited or explicit) still includes one of this
+        Creative's rendered frames — a frame later replaced on its Post no longer counts. A variant with
+        no attributed, reporting destination yet comes back with posts: 0 and null rates rather than
+        being omitted.
+      operationId: getCreativePerformance
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The family's performance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePerformanceResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/marketing/creatives/{creativeId}/renders:
     get:
       tags:
@@ -3929,6 +3977,269 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The render is not SUCCEEDED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/experiments:
+    get:
+      tags:
+        - creatives
+      summary: List hook experiments (COND-24 T5)
+      operationId: listCreativeExperiments
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Restrict to one Creative family — any lettered variant or the root, resolved automatically.
+        - name: state
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/CreativeExperimentState"
+      responses:
+        "200":
+          description: Experiments, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CreativeExperimentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: creativeId given but not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - creatives
+      summary: Start a hook experiment
+      description: >-
+        Opens one RUNNING experiment on a Creative family. The family (found from creativeId, any
+        lettered variant or the root) must have at least two variants, and may have at most one RUNNING
+        experiment at a time. Call getCreativeExperiment (or getCreative, which carries
+        activeExperimentId) after to verify.
+      operationId: createCreativeExperiment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativeExperimentRequest"
+      responses:
+        "201":
+          description: The new RUNNING experiment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeExperimentResponse"
+        "400":
+          description: The family has fewer than two variants, or an unknown metric was given
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The family already has a RUNNING experiment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/experiments/{experimentId}:
+    get:
+      tags:
+        - creatives
+      summary: Read one hook experiment
+      operationId: getCreativeExperiment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: experimentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The experiment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeExperimentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Experiment not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/experiments/{experimentId}/decide:
+    post:
+      tags:
+        - creatives
+      summary: Decide a hook experiment
+      description: >-
+        Settles a RUNNING experiment once every variant in the family has at least one published,
+        attributed destination with a snapshot at or after fireTime + windowHours: the winner is the
+        variant with the highest avg_view_pct when every variant reports it, else the experiment's own
+        metric (default views). An exact tie among the leaders settles INCONCLUSIVE immediately. While any
+        variant is still missing window data this is a safe no-op that leaves the experiment RUNNING and
+        returns it unchanged — unless the last outstanding variant's deadline is more than seven days
+        past, in which case the experiment gives up and settles INCONCLUSIVE rather than wait forever.
+        Calling this on an already-DECIDED or already-INCONCLUSIVE experiment returns it unchanged.
+      operationId: decideCreativeExperiment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: experimentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The experiment after the decision attempt (state may be unchanged)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeExperimentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Experiment not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/experiments/{experimentId}/confirm-winner:
+    post:
+      tags:
+        - creatives
+      summary: Confirm a decided experiment's winning headline into the Brand Kit
+      description: >-
+        Appends the winning variant's headline to its family's Brand Kit approved_lines (deduplicated) and
+        stamps who confirmed it and when. Requires ADMIN or CREATOR — this is the one human action that
+        lets a decided winner influence future brand copy; it is never automatic, and decide never calls
+        it. Refused with 400 when the experiment has no decided winner. Idempotent: calling it again on an
+        already-confirmed experiment is a no-op that never appends the line twice.
+      operationId: confirmCreativeExperimentWinner
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: experimentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The experiment with winnerLineConfirmedAt/By set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeExperimentResponse"
+        "400":
+          description: The experiment has no decided winner (not DECIDED, or DECIDED with no winner)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Experiment not found, or caller is not a member
           content:
             application/json:
               schema:
@@ -5173,6 +5484,7 @@ components:
         - bottomPosts
         - movers
         - coverage
+        - creatives
       properties:
         window:
           $ref: "#/components/schemas/InsightsWindow"
@@ -5215,6 +5527,14 @@ components:
           description: How this window's totals compare with the window of the same length immediately before it.
         coverage:
           $ref: "#/components/schemas/InsightsCoverage"
+        creatives:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativePerformanceEntry"
+          description: >-
+            Up to ten Creative variants (COND-24 T5) with the highest views among destinations published
+            through them that fired inside the window, best first. Empty on a workspace that has not
+            attached any Creative to a Post yet.
 
     InsightsWindow:
       type: object
@@ -6474,6 +6794,10 @@ components:
             - $ref: "#/components/schemas/CreativeRenderResponse"
           nullable: true
           description: The full last SUCCEEDED, non-preview render with its frames. Populated only on the single-Creative GET, null on list reads.
+        activeExperimentId:
+          type: string
+          nullable: true
+          description: The family's RUNNING hook experiment, if any (COND-24 T5). Same value on every letter in the family.
 
     CreateCreativeRequest:
       type: object
@@ -7054,3 +7378,163 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AttachCreativeTargetSkip"
+
+    CreativePerformancePlatform:
+      type: object
+      description: One platform's slice of one Creative variant's numbers.
+      required:
+        - platform
+        - posts
+        - views
+      properties:
+        platform:
+          type: string
+        posts:
+          type: integer
+        views:
+          type: integer
+          format: int64
+        engagementRate:
+          type: number
+          format: double
+          nullable: true
+
+    CreativePerformanceEntry:
+      type: object
+      description: One Creative variant's attributed performance — published destinations whose media traces back to one of its rendered frames.
+      required:
+        - creativeId
+        - label
+        - posts
+        - views
+        - byPlatform
+      properties:
+        creativeId:
+          type: string
+        label:
+          type: string
+          description: The variant's display id, e.g. "12b".
+        headline:
+          type: string
+          nullable: true
+        posts:
+          type: integer
+          description: Published, attributed destinations with at least one reported snapshot.
+        views:
+          type: integer
+          format: int64
+        engagementRate:
+          type: number
+          format: double
+          nullable: true
+          description: (likes + comments + shares + saves) / views across every attributed destination; null when views are zero or there is no data.
+        avgViewPct:
+          type: number
+          format: double
+          nullable: true
+          description: Mean average-view-percentage where a platform reports it (YouTube); null otherwise.
+        views72h:
+          type: integer
+          format: int64
+          nullable: true
+          description: Summed views at the snapshot nearest at or after each destination's fireTime + 72h; null when no destination has reached that snapshot yet.
+        byPlatform:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativePerformancePlatform"
+
+    CreativePerformanceResponse:
+      type: object
+      required:
+        - creativeId
+        - family
+      properties:
+        creativeId:
+          type: string
+          description: The Creative id this performance read was requested for (echoed back).
+        family:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativePerformanceEntry"
+          description: Every lettered variant of this Creative's family, oldest letter first.
+
+    CreativeExperimentMetric:
+      type: string
+      enum:
+        - views
+        - engagement_rate
+        - avg_view_pct
+      description: >-
+        The metric requested at creation. The decision itself prefers avg_view_pct whenever every variant
+        reports it, regardless of this value — see CreativeExperimentService.
+
+    CreativeExperimentState:
+      type: string
+      enum:
+        - RUNNING
+        - DECIDED
+        - INCONCLUSIVE
+
+    CreateCreativeExperimentRequest:
+      type: object
+      required:
+        - creativeId
+      properties:
+        creativeId:
+          type: string
+          description: Any Creative in the family (a lettered variant or the root) — resolved to the family's root automatically.
+        metric:
+          $ref: "#/components/schemas/CreativeExperimentMetric"
+        windowHours:
+          type: integer
+          description: Defaults to 72.
+
+    CreativeExperimentResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - parentCreativeId
+        - metric
+        - windowHours
+        - state
+        - createdAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        parentCreativeId:
+          type: string
+          description: The family's root Creative id (variant letter "a").
+        metric:
+          $ref: "#/components/schemas/CreativeExperimentMetric"
+        windowHours:
+          type: integer
+        state:
+          $ref: "#/components/schemas/CreativeExperimentState"
+        winnerCreativeId:
+          type: string
+          nullable: true
+        decidedAt:
+          type: string
+          format: date-time
+          nullable: true
+        summary:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Per-variant numbers used to decide (or why a decision could not be made yet). Shape documented in docs/creatives.md.
+        winnerLineConfirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        winnerLineConfirmedBy:
+          type: string
+          nullable: true
+        createdBy:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time

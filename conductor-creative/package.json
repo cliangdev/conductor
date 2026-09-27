@@ -21,10 +21,12 @@
     "./styles.css": "./styles.css",
     "./tokens.css": "./tokens.css",
     "./frame.css": "./frame.css",
-    "./layouts/*/layout.css": "./layouts/*/layout.css"
+    "./layouts/*/layout.css": "./layouts/*/layout.css",
+    "./font": "./font.js"
   },
   "files": [
     "render.js",
+    "font.js",
     "mount.js",
     "copy-rules.js",
     "assertions.js",

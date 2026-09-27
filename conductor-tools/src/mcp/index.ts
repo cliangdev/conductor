@@ -75,6 +75,7 @@ import {
   renderCreativeTool,
   previewCreative,
   attachCreativeToPost,
+  createExperiment,
   type CreateCreativeParams,
   type UpdateCreativeParams,
 } from './tools/creatives.js'
@@ -1037,7 +1038,7 @@ const TOOLS = [
   },
   {
     name: 'get_marketing_insights',
-    description: 'What is working across the project\'s published Posts: totals, engagement rate by platform, format and time, best and worst posts, and movers vs the prior window. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
+    description: 'What is working across the project\'s published Posts: totals, engagement rate by platform, format and time, best and worst posts, top-performing Creatives, and movers vs the prior window. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1083,7 +1084,7 @@ const TOOLS = [
   },
   {
     name: 'get_creative',
-    description: 'One Creative in full: its fields, its readiness checklist (what still blocks it going to review), and the other lettered variants in its family. Call after create_creative/update_creative to verify a write.',
+    description: "One Creative in full: its fields, its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1235,6 +1236,19 @@ const TOOLS = [
         renderId: { type: 'string', description: 'A specific render to attach (optional — defaults to the latest SUCCEEDED render)' },
       },
       required: ['creativeId', 'workItemId'],
+    },
+  },
+  {
+    name: 'create_experiment',
+    description: "Start a hook experiment comparing every lettered variant of a Creative's family (needs at least two; only one RUNNING experiment per family at a time — refused with a conflict otherwise). It settles itself once every variant has published and reported, or via the weekly insights job — nothing to poll. Call get_creative to see its state and, once decided, the winner and numbers.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Any Creative in the family — a lettered variant or the root; resolved automatically' },
+        metric: { type: 'string', enum: ['views', 'engagement_rate', 'avg_view_pct'], description: 'Optional — defaults to views. The decision prefers avg_view_pct whenever every variant reports it, regardless of this choice.' },
+        windowHours: { type: 'number', description: 'Hours after each variant fires before it counts toward the decision (optional, default 72)' },
+      },
+      required: ['creativeId'],
     },
   },
 ]
@@ -2073,6 +2087,18 @@ export async function runMcpServer(): Promise<void> {
                 creativeId: params['creativeId'] as string,
                 workItemId: params['workItemId'] as string,
                 renderId: params['renderId'] as string | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'create_experiment': {
+          return successResponse(
+            await createExperiment(
+              {
+                creativeId: params['creativeId'] as string,
+                metric: params['metric'] as string | undefined,
+                windowHours: params['windowHours'] as number | undefined,
               },
               config
             )

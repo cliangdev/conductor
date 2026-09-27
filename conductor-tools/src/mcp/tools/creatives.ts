@@ -15,6 +15,41 @@ import { renderCreative as runLocalRender } from '../../lib/creative-render.js'
 
 const V2_PROJECT = (config: Config): string => `/api/v2/projects/${config.projectId}`
 const creativesBase = (config: Config): string => `${V2_PROJECT(config)}/marketing/creatives`
+const experimentsBase = (config: Config): string => `${V2_PROJECT(config)}/marketing/experiments`
+
+/** Rounds a rate-like number to 4 decimals; leaves null/undefined alone. */
+function round4(n: unknown): number | null | undefined {
+  if (typeof n !== 'number') return n as null | undefined
+  return Math.round(n * 10000) / 10000
+}
+
+/** The fields worth an agent's context for one variant's performance — a subset of CreativePerformanceEntry. */
+function trimPerformanceEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  return {
+    creativeId: entry['creativeId'],
+    label: entry['label'],
+    headline: entry['headline'],
+    posts: entry['posts'],
+    views: entry['views'],
+    engagementRate: round4(entry['engagementRate']),
+    avgViewPct: round4(entry['avgViewPct']),
+    views72h: entry['views72h'],
+  }
+}
+
+/** The fields worth an agent's context for the family's active/last experiment. */
+function trimExperiment(experiment: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: experiment['id'],
+    state: experiment['state'],
+    metric: experiment['metric'],
+    windowHours: experiment['windowHours'],
+    winnerCreativeId: experiment['winnerCreativeId'],
+    decidedAt: experiment['decidedAt'],
+    summary: experiment['summary'],
+    winnerLineConfirmedAt: experiment['winnerLineConfirmedAt'],
+  }
+}
 
 /**
  * The backend's 422 body for a Creative validation failure is `{ message, violations: [{ field,
@@ -73,15 +108,56 @@ export async function listCreatives(
 }
 
 export async function getCreative(params: { creativeId: string }, config: Config): Promise<Record<string, unknown>> {
-  const [creative, readiness, all] = await Promise.all([
+  const [creative, readiness, all, performance] = await Promise.all([
     apiGet<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}`, config),
     apiGet<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}/readiness`, config),
     apiGet<Array<Record<string, unknown>>>(creativesBase(config), config),
+    apiGet<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}/performance`, config),
   ])
   const variants = all
     .filter((c) => c['number'] === creative['number'] && c['id'] !== creative['id'])
     .map((c) => ({ id: c['id'], displayId: c['displayId'], state: c['state'], headline: c['headline'] }))
-  return { ...creative, readiness, variants }
+
+  const activeExperimentId = creative['activeExperimentId'] as string | null | undefined
+  let experiment: Record<string, unknown> | undefined
+  if (activeExperimentId) {
+    experiment = await apiGet<Record<string, unknown>>(`${experimentsBase(config)}/${activeExperimentId}`, config)
+  } else {
+    const experiments = await apiGet<Array<Record<string, unknown>>>(
+      `${experimentsBase(config)}?creativeId=${params.creativeId}`,
+      config
+    )
+    experiment = experiments[0]
+  }
+
+  const family = (performance['family'] as Array<Record<string, unknown>> | undefined) ?? []
+  return {
+    ...creative,
+    readiness,
+    variants,
+    performance: family.map(trimPerformanceEntry),
+    experiment: experiment ? trimExperiment(experiment) : null,
+  }
+}
+
+/**
+ * Starts a hook experiment on a Creative family (>= 2 lettered variants; one RUNNING experiment per
+ * family at a time — a second attempt is refused with a 409). It settles on its own once every variant
+ * has published and reported (or via the weekly "what's working" job) — nothing further to call. Read
+ * the result through get_creative, whose experiment field carries the current state, and once DECIDED,
+ * the winner and its numbers.
+ */
+export async function createExperiment(
+  params: { creativeId: string; metric?: string; windowHours?: number },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return withCreativeErrors(() =>
+    apiPost(
+      experimentsBase(config),
+      { creativeId: params.creativeId, metric: params.metric, windowHours: params.windowHours },
+      config
+    )
+  )
 }
 
 export interface CreativeLayoutOverrides {

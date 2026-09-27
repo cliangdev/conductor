@@ -43,6 +43,7 @@ export const CREATIVE_RUNTIME_FILES = [
   'tokens.css',
   'frame.css',
   'frame.html',
+  'font.js',
   'frame.js',
   'sheet.html',
   'sheet.js',

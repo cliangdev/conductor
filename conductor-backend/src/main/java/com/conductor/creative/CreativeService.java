@@ -54,6 +54,7 @@ public class CreativeService {
     private final StorageService storageService;
     private final ObjectMapper objectMapper;
     private final CreativeRenderService renderService;
+    private final CreativeExperimentRepository experimentRepository;
 
     public CreativeService(CreativeRepository creativeRepository,
                            CreativePhotoRepository photoRepository,
@@ -65,7 +66,8 @@ public class CreativeService {
                            ProjectSecurityService projectSecurityService,
                            StorageService storageService,
                            ObjectMapper objectMapper,
-                           CreativeRenderService renderService) {
+                           CreativeRenderService renderService,
+                           CreativeExperimentRepository experimentRepository) {
         this.creativeRepository = creativeRepository;
         this.photoRepository = photoRepository;
         this.brandKitRepository = brandKitRepository;
@@ -77,6 +79,7 @@ public class CreativeService {
         this.storageService = storageService;
         this.objectMapper = objectMapper;
         this.renderService = renderService;
+        this.experimentRepository = experimentRepository;
     }
 
     /**
@@ -89,9 +92,10 @@ public class CreativeService {
      */
     public record CreativeView(Creative creative, String photoUrl,
                                CreativeRenderService.RenderView latestRenderSummary,
-                               CreativeRenderService.RenderView latestRenderFull) {
+                               CreativeRenderService.RenderView latestRenderFull,
+                               String activeExperimentId) {
         public CreativeView(Creative creative, String photoUrl) {
-            this(creative, photoUrl, null, null);
+            this(creative, photoUrl, null, null, null);
         }
     }
 
@@ -115,17 +119,17 @@ public class CreativeService {
             creatives = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
         }
         Map<String, CreativePhoto> photos = loadPhotos(creatives);
-        return creatives.stream().map(c -> toView(c, photos)).toList();
+        return creatives.stream().map(c -> toView(projectId, c, photos)).toList();
     }
 
     @Transactional(readOnly = true)
     public CreativeView getCreative(String projectId, String creativeId, User caller) {
         requireMember(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
-        CreativeView view = toView(creative, loadPhotos(List.of(creative)));
+        CreativeView view = toView(projectId, creative, loadPhotos(List.of(creative)));
         // Only the single-Creative read pays for the full render + its frames (contract item 6).
         CreativeRenderService.RenderView full = renderService.latestSucceededRender(creative.getId()).orElse(null);
-        return new CreativeView(view.creative(), view.photoUrl(), view.latestRenderSummary(), full);
+        return new CreativeView(view.creative(), view.photoUrl(), view.latestRenderSummary(), full, view.activeExperimentId());
     }
 
     @Transactional
@@ -181,7 +185,7 @@ public class CreativeService {
         creative.setCreatedBy(caller.getId());
 
         creative = saveWithNextNumber(creative);
-        return toView(creative, loadPhotos(List.of(creative)));
+        return toView(projectId, creative, loadPhotos(List.of(creative)));
     }
 
     @Transactional
@@ -259,7 +263,7 @@ public class CreativeService {
         current.setLockup(lockup);
 
         current = creativeRepository.save(current);
-        return toView(current, loadPhotos(List.of(current)));
+        return toView(projectId, current, loadPhotos(List.of(current)));
     }
 
     @Transactional
@@ -314,7 +318,7 @@ public class CreativeService {
         variant.setCreatedBy(caller.getId());
 
         variant = saveWithNextLetter(variant);
-        return toView(variant, loadPhotos(List.of(variant)));
+        return toView(projectId, variant, loadPhotos(List.of(variant)));
     }
 
     @Transactional(readOnly = true)
@@ -448,13 +452,23 @@ public class CreativeService {
         return map;
     }
 
-    private CreativeView toView(Creative creative, Map<String, CreativePhoto> photos) {
+    private CreativeView toView(String projectId, Creative creative, Map<String, CreativePhoto> photos) {
         CreativePhoto photo = creative.getPhotoId() != null ? photos.get(creative.getPhotoId()) : null;
         String url = photo != null && photo.isUploaded()
                 ? storageService.generateSignedUrl(photo.getGcsPath(), PHOTO_URL_EXPIRY_MINUTES)
                 : null;
         CreativeRenderService.RenderView summary = renderService.latestSucceededRender(creative.getId()).orElse(null);
-        return new CreativeView(creative, url, summary, null);
+        return new CreativeView(creative, url, summary, null, activeExperimentId(projectId, creative));
+    }
+
+    /** The family's RUNNING experiment id, if any — no extra fetch needed since the root id is either
+     *  {@code creative.parentCreativeId} or the creative's own id. */
+    private String activeExperimentId(String projectId, Creative creative) {
+        String rootId = creative.getParentCreativeId() != null ? creative.getParentCreativeId() : creative.getId();
+        return experimentRepository.findFirstByProjectIdAndParentCreativeIdAndState(
+                        projectId, rootId, CreativeExperiment.STATE_RUNNING)
+                .map(CreativeExperiment::getId)
+                .orElse(null);
     }
 
     // ── JSON <-> typed helpers ───────────────────────────────────────────

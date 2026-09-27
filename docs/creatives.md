@@ -112,3 +112,50 @@ No image processing beyond the screenshot the local job takes: Playwright's own 
 only "re-encoding" that happens, and there is no server-side cropping and no Cloud Run render job. Every
 render is a well-known local (or self-hosted-Workflow) job PUTing frames it already produced; this
 backend's job is bookkeeping, storage and the attach mapping above.
+
+## Performance and experiments (COND-24 T5)
+
+**Attribution** (`CreativeAttributionResolver`) answers "which published destinations actually sent this
+Creative": `creative_render_frame` → `assets.creative_frame_id` → the owning Post's publish targets,
+resolved through the same `PublishTargetMediaResolver` the approval gate uses — an inheriting target
+counts only while the frame's asset is still part of the Post's shared media, and a target with its own
+explicit selection counts only while that frame's asset is among it. A frame later replaced on its Post
+stops counting from that point on; nothing is backfilled.
+
+`CreativePerformanceService` rolls this up per variant: posts, views, engagement rate
+`(likes+comments+shares+saves)/views`, average view percentage where a platform reports it (YouTube), and
+`views72h` — the *snapshot nearest at or after `fireTime + 72h`*, deliberately a different read of the
+metric history than `views`/`engagementRate`/`avgViewPct`, which come from each destination's absolute
+latest snapshot. `GET .../marketing/creatives/{creativeId}/performance` returns the whole family (every
+lettered sibling); `GET .../marketing/insights` carries the top ten variants by views inside its window as
+`creatives`, the same way it carries top/bottom posts.
+
+**`creative_experiment`** (V143) is a hook experiment: two or more variants of one family, each published
+as its own Post, decided by `CreativeExperimentService`. `create` needs the family to have at least two
+variants and refuses a second `RUNNING` experiment on the same family with 409 (`uq_creative_experiment_
+running_per_family`). `decide` — called on demand via `POST .../experiments/{id}/decide`, or by the
+`conductor-marketing` weekly feed pull for every `RUNNING` experiment in the project — settles once every
+variant has at least one published, attributed destination with a snapshot at or after `fireTime +
+windowHours` (default 72): the comparison metric is `avg_view_pct` when every variant reports it, else the
+metric requested at creation (default `views`); an exact tie among the leaders settles `INCONCLUSIVE`
+immediately (the window has, by definition, already fully elapsed for everyone at that point). While any
+variant is still short of its own deadline, `decide` is a safe no-op that leaves the experiment `RUNNING`
+— unless the last outstanding variant's deadline (its own `fireTime + windowHours`, or the experiment's
+`createdAt + windowHours` for a variant never published at all) is more than seven days past, in which case
+the experiment gives up as `INCONCLUSIVE` rather than wait forever. `summary` records the per-variant
+numbers used (or why a decision couldn't be made) and is never recomputed after `decidedAt` is set.
+
+**Confirming a winner** is the one human action in this loop: `POST .../experiments/{id}/confirm-winner`
+appends the winning variant's headline to its family's Brand Kit `approved_lines` (deduplicated) and
+stamps `winnerLineConfirmedAt`/`By`. It requires ADMIN or CREATOR, requires a `DECIDED` experiment with a
+winner, and is idempotent — `decide` never calls it, and calling it twice never appends the line twice. No
+experiment ever changes brand copy on its own.
+
+The weekly `conductor-marketing` digest (`docs/knowledge.md`'s "Metrics digests") gets a **Hook winners**
+section: `MarketingInsightsConnector.fetchData` decides every `RUNNING` experiment for the project, then
+reads every experiment `DECIDED` since the start of that pull's trailing window and adds it to the raw
+payload as `hookWinners` (creative, headline, metric, per-variant numbers). `DigestPayloadBuilder` copies
+that key onto the narrator's payload verbatim when non-empty — the one narrow exception to "the narrator
+never sees raw numbers", since a hook winner is already a finished decision, not a raw series — and
+`MetricsDigestService` treats a non-empty `hookWinners` as material on its own, so a decided experiment is
+narrated even on an otherwise-flat week.
