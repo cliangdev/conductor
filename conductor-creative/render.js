@@ -156,7 +156,8 @@ export function resolveSequence(raw, placements, layouts) {
   const last = seq.length - 1;
   return seq.map((frame, i) => {
     const merged = resolveAd({ ...raw, ...frame, sequence: undefined, sequenceKind: undefined }, placements, layouts);
-    merged.showCta = frame.cta !== undefined ? frame.cta : i === last;
+    // null and undefined both mean "not set" (the API sends null): the CTA then lands on the last frame only.
+    merged.showCta = frame.cta != null ? frame.cta : i === last;
     // Body is per-frame opt-in: a hook frame can be a headline and nothing else.
     merged.body = frame.body !== undefined ? frame.body || '' : '';
     merged.isSequence = true;

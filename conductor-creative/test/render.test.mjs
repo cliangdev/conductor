@@ -92,6 +92,19 @@ test('resolveSequence: CTA lands on the last frame only, by default', () => {
   assert.deepEqual(frames.map((f) => f.showCta), [false, false, true]);
 });
 
+test('resolveSequence: a null cta (as the API sends an unset one) still means last frame only', () => {
+  const raw = {
+    layout: 'bleed', headline: 'A *thing*.', sequenceKind: 'carousel',
+    sequence: [
+      { headline: 'One *thing*.', cta: null },
+      { headline: 'Two *things*.', cta: null },
+      { headline: 'Three *things*.', cta: null },
+    ],
+  };
+  const frames = resolveSequence(raw, PLACEMENTS, LAYOUTS);
+  assert.deepEqual(frames.map((f) => f.showCta), [false, false, true]);
+});
+
 test('resolveSequence: a per-frame cta override wins over the last-frame default', () => {
   const raw = {
     layout: 'bleed', headline: 'A *thing*.', sequenceKind: 'story',
