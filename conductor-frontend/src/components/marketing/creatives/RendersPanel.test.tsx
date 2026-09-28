@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({
@@ -191,6 +191,25 @@ describe('RendersPanel', () => {
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1))
     await vi.advanceTimersByTimeAsync(15000)
     expect(apiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens a frame full size in the viewer, with a big image and next/previous navigation', async () => {
+    ;(apiGet as Mock).mockResolvedValue([render_('r-1')])
+    setup()
+    await waitFor(() => expect(screen.getByTestId('renders-panel')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: 'View 9:16 full size' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('9:16')).toBeInTheDocument()
+    expect(within(dialog).getByText('1080×1920px')).toBeInTheDocument()
+    const img = within(dialog).getByRole('img', { name: '9:16' }) as HTMLImageElement
+    expect(img.src).toBe('https://storage.example/9x16.png')
+    expect(within(dialog).queryByRole('button', { name: 'Previous' })).not.toBeInTheDocument()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Next' }))
+    expect(within(dialog).getByText('4:5')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
   })
 
   it('lets the manual Refresh button re-fetch', async () => {

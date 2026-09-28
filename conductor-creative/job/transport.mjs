@@ -25,6 +25,10 @@
  */
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+// A frame is a few hundred KB to a few MB; through a scale-to-zero backend (a cold start, a slow uplink)
+// that can outlast the JSON calls' limit, so uploads get their own, and one retry — the PUT is an upsert.
+const DEFAULT_UPLOAD_TIMEOUT_MS = 90_000;
+const UPLOAD_ATTEMPTS = 2;
 
 async function withTimeout(fn, ms, label) {
   const ctrl = new AbortController();
@@ -66,6 +70,7 @@ export function createApiTransport({
   renderer,
   workflowRunId,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  uploadTimeoutMs = DEFAULT_UPLOAD_TIMEOUT_MS,
   fetchImpl = fetch,
 }) {
   const creativeBase = `${apiUrl.replace(/\/+$/, '')}/api/v2/projects/${projectId}/marketing/creatives/${creativeId}`;
@@ -122,15 +127,27 @@ export function createApiTransport({
       const qs = new URLSearchParams({ width: String(width), height: String(height) });
       if (index !== undefined && index !== null) qs.set('index', String(index));
       const base = renderBase();
-      return withTimeout(async (signal) => {
+      const put = () => withTimeout(async (signal) => {
         const res = await fetchImpl(`${base}/frames/${encodeURIComponent(placementKey)}?${qs}`, {
           method: 'PUT',
           headers: { ...authHeaders, 'Content-Type': contentType },
           body: bytes,
           signal,
         });
-        if (res.status !== 204) throw new Error(`PUT frame ${placementKey} failed: ${res.status} ${await safeText(res)}`);
-      }, timeoutMs, `PUT frame ${placementKey}`);
+        if (res.status !== 204) {
+          const err = new Error(`PUT frame ${placementKey} failed: ${res.status} ${await safeText(res)}`);
+          err.retryable = res.status >= 500;
+          throw err;
+        }
+      }, uploadTimeoutMs, `PUT frame ${placementKey}`);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await put();
+        } catch (err) {
+          const retryable = err.retryable || /timed out/.test(err.message);
+          if (!retryable || attempt >= UPLOAD_ATTEMPTS) throw err;
+        }
+      }
     },
 
     async complete(warnings) {

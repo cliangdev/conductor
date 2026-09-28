@@ -96,6 +96,16 @@ describe('BrandKitForm', () => {
     expect(await screen.findByText(/found 0/)).toBeInTheDocument()
   })
 
+  it('labels the two wordmark slots by their own color and which frame they land on', async () => {
+    render(<BrandKitForm projectId="proj-1" token="tok" />)
+    await screen.findByLabelText('Brand kit')
+
+    expect(screen.getByText('Wordmark · dark')).toBeInTheDocument()
+    expect(screen.getByText('for light frames')).toBeInTheDocument()
+    expect(screen.getByText('Wordmark · light')).toBeInTheDocument()
+    expect(screen.getByText('for dark frames')).toBeInTheDocument()
+  })
+
   it('disables kit fields and hides management actions for a role without creative.manage (REVIEWER)', async () => {
     mockCan.mockReturnValue(false)
     render(<BrandKitForm projectId="proj-1" token="tok" />)

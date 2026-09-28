@@ -274,12 +274,13 @@ function buildCopyRules() {
  * BrandKitService; every one of these is. Badge is Apple's own artwork and nexus always uses the
  * black variant regardless of theme (render.js: BADGE_SRC is a single constant) - there is no
  * separate "badge on dark" asset to lose, so one slot loses nothing here. Wordmark is genuinely
- * theme-dependent in nexus (render.js: "Dark artboards take the light wordmark"), so wordmarkDark
- * intentionally maps to the *-light.png file and vice versa - this is not a typo. */
+ * theme-dependent in nexus (render.js: "Dark artboards take the light wordmark"). Conductor names the
+ * slots by ink colour the same way the renderer reads them: wordmark_light is the light-ink file a dark
+ * frame shows (nexus's *-light.png), wordmark_dark the dark-ink file a light frame or chip shows. */
 const BRAND_IMAGE_SLOTS = [
   { slot: 'mark', file: 'assets/mascot/app-icon.png' },
-  { slot: 'wordmark_dark', file: 'assets/brand/rexipe-wordmark-light.png' },
-  { slot: 'wordmark_light', file: 'assets/brand/rexipe-wordmark.png' },
+  { slot: 'wordmark_dark', file: 'assets/brand/rexipe-wordmark.png' },
+  { slot: 'wordmark_light', file: 'assets/brand/rexipe-wordmark-light.png' },
   { slot: 'badge', file: 'assets/appstore/app-store-badge-black-en-us.svg' },
 ];
 

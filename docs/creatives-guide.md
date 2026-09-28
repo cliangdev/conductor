@@ -20,8 +20,11 @@ into the product.
   in a headline always renders in italic, so your font URL must include the italic face. On Google
   Fonts that's the `ital` axis, e.g. `family=Poppins:ital,wght@0,400;0,800;1,800`. Leave it out and
   the browser fakes the slant — the space after the accent phrase visually closes up.
-- **Logos** — Mark, Wordmark (dark), Wordmark (light), and Store badge. All four are optional; a
-  kit with no logo uploaded simply renders without a lockup for that slot, no placeholder.
+- **Logos** — Mark, Wordmark · dark (for light frames), Wordmark · light (for dark frames), and
+  Store badge. Each wordmark slot name is the logo's own color, not the frame it's used on: the
+  renderer puts the light-colored wordmark on dark frames and the dark-colored one on light frames
+  and chips, so it reads against the background. All four are optional; a kit with no logo uploaded
+  simply renders without a lockup for that slot, no placeholder.
 - **Tokens** — the colour palette a Creative renders with: `accent`/`accent2` (the accent-phrase
   and CTA colours), `darkBg`/`darkInk` (dark-theme background and text), `lightBg`/`lightCard`
   (light-theme background and card surfaces), and `ink`/`ink2` (primary and secondary text). Set

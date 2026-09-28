@@ -13,10 +13,15 @@ import type { RenderBrand } from '@/components/marketing/creatives/renderTypes'
 
 export type BrandImageSlot = 'mark' | 'wordmark_dark' | 'wordmark_light' | 'badge'
 
-export const BRAND_IMAGE_SLOTS: { slot: BrandImageSlot; label: string }[] = [
+// Each slot name is the WORDMARK'S OWN COLOR, not the frame it appears on — the renderer uses
+// wordmark_light on dark frames and wordmark_dark on light frames and chips (so the mark reads
+// against the background), which is the inverse of "dark kit asset for dark theme" and is exactly
+// the pairing that got swapped when the labels just said "(dark)"/"(light)". The `hint` line spells
+// out where each one is actually used.
+export const BRAND_IMAGE_SLOTS: { slot: BrandImageSlot; label: string; hint?: string }[] = [
   { slot: 'mark', label: 'Mark' },
-  { slot: 'wordmark_dark', label: 'Wordmark (dark)' },
-  { slot: 'wordmark_light', label: 'Wordmark (light)' },
+  { slot: 'wordmark_dark', label: 'Wordmark · dark', hint: 'for light frames' },
+  { slot: 'wordmark_light', label: 'Wordmark · light', hint: 'for dark frames' },
   { slot: 'badge', label: 'Store badge' },
 ]
 

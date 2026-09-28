@@ -7,7 +7,7 @@
 // here that launches anything server-side.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CopyIcon, ImagesIcon } from 'lucide-react'
+import { CopyIcon, ImagesIcon, Maximize2Icon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -18,6 +18,7 @@ import { toastError, toastSuccess } from '@/components/ui/toast'
 import { apiErrorMessage } from '@/lib/api'
 import { timeAgo } from '@/lib/format'
 import { statusHue } from '@/lib/workflows'
+import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
 import {
   listCreativeRenders,
   type CreativeRegistry,
@@ -75,6 +76,9 @@ export function RendersPanel({
   const [renders, setRenders] = useState<CreativeRender[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // Index into the latest succeeded render's non-sheet frames of the one open in the full-size
+  // viewer, or null when it's closed.
+  const [viewerFrameIndex, setViewerFrameIndex] = useState<number | null>(null)
   const onLatestSucceededChangeRef = useRef(onLatestSucceededChange)
   useEffect(() => {
     onLatestSucceededChangeRef.current = onLatestSucceededChange
@@ -123,6 +127,9 @@ export function RendersPanel({
 
   const latestSucceeded = (renders ?? []).find(isAttachableRender) ?? null
   const stale = latestSucceeded != null && latestSucceeded.creativeVersion < creativeVersion
+  // The contact sheet frame has nothing of its own to view full size — only the real per-placement
+  // outputs go in the grid and the viewer.
+  const frames = latestSucceeded?.frames.filter((f) => f.placementKey !== 'sheet') ?? []
 
   return (
     <Card className="space-y-3 p-4" data-testid="renders-panel">
@@ -189,37 +196,68 @@ export function RendersPanel({
                 </Alert>
               )}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {latestSucceeded.frames
-                  .filter((f) => f.placementKey !== 'sheet')
-                  .map((frame) => (
-                    <div key={frame.id} className="space-y-1 overflow-hidden rounded-md border border-border">
+                {frames.map((frame, i) => (
+                  <div key={frame.id} className="group relative space-y-1 overflow-hidden rounded-md border border-border">
+                    <button
+                      type="button"
+                      onClick={() => setViewerFrameIndex(i)}
+                      aria-label={`View ${placementLabel(registry, frame.placementKey)} full size`}
+                      className="block w-full"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={frame.url}
                         alt={placementLabel(registry, frame.placementKey)}
                         className="aspect-square w-full bg-surface-3 object-contain"
                       />
-                      <div className="space-y-0.5 px-2 pb-2 text-xs">
-                        <p className="font-medium text-foreground">{placementLabel(registry, frame.placementKey)}</p>
-                        <p className="text-muted-foreground">
-                          {frame.platform ?? '—'} · {frame.width}×{frame.height} · {formatBytes(frame.sizeBytes)}
-                        </p>
-                        {frame.warnings.length > 0 && (
-                          <p className="text-status-progress">{frame.warnings.join('; ')}</p>
-                        )}
-                        <a
-                          href={frame.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-block text-primary underline-offset-2 hover:underline"
-                        >
-                          Download
-                        </a>
-                      </div>
+                    </button>
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute right-1 top-1 z-10 rounded-md bg-surface/90 p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                    >
+                      <Maximize2Icon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="space-y-0.5 px-2 pb-2 text-xs">
+                      <p className="font-medium text-foreground">{placementLabel(registry, frame.placementKey)}</p>
+                      <p className="text-muted-foreground">
+                        {frame.platform ?? '—'} · {frame.width}×{frame.height} · {formatBytes(frame.sizeBytes)}
+                      </p>
+                      {frame.warnings.length > 0 && (
+                        <p className="text-status-progress">{frame.warnings.join('; ')}</p>
+                      )}
+                      <a
+                        href={frame.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-block text-primary underline-offset-2 hover:underline"
+                      >
+                        Download
+                      </a>
                     </div>
-                  ))}
+                  </div>
+                ))}
               </div>
             </div>
+          )}
+
+          {viewerFrameIndex !== null && frames[viewerFrameIndex] && (
+            <FullSizeViewer
+              open
+              onOpenChange={(open) => {
+                if (!open) setViewerFrameIndex(null)
+              }}
+              title={placementLabel(registry, frames[viewerFrameIndex].placementKey)}
+              subtitle={`${frames[viewerFrameIndex].width}×${frames[viewerFrameIndex].height}px`}
+              onPrev={viewerFrameIndex > 0 ? () => setViewerFrameIndex(viewerFrameIndex - 1) : undefined}
+              onNext={viewerFrameIndex < frames.length - 1 ? () => setViewerFrameIndex(viewerFrameIndex + 1) : undefined}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={frames[viewerFrameIndex].url}
+                alt={placementLabel(registry, frames[viewerFrameIndex].placementKey)}
+                className="max-h-[90vh] max-w-[85vw] object-contain"
+              />
+            </FullSizeViewer>
           )}
         </div>
       )}

@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+
+/** Dispatches a native pointer event on `el` — the frame's board is mounted by
+ * @cliangdev/creative-render's mountBoard, which wires its focal-drag/click detection with plain
+ * addEventListener, not React's synthetic events, so a real DOM event is required (RTL's fireEvent
+ * helpers cover click but not pointerdown/move/up with custom clientX/clientY). */
+function dispatchPointer(el: Element, type: string, props: { clientX: number; clientY: number }) {
+  const event = new Event(type) as Event & { pointerId?: number; clientX?: number; clientY?: number }
+  Object.assign(event, { pointerId: 1, ...props })
+  fireEvent(el, event)
+}
 
 vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
@@ -383,5 +393,76 @@ describe('CreativeEditor', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Save as variant' })).not.toBeInTheDocument()
     expect(headlineInput).toBeDisabled()
+  })
+
+  it('opens the full-size viewer on a plain click, without moving the focal point', async () => {
+    mockGetsFor(creative())
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    const board = await screen.findByTestId('placement-board-4x5')
+    await waitFor(() => expect(board.firstElementChild).toBeTruthy())
+    const shell = board.firstElementChild as HTMLElement
+    const focalBefore = (board.querySelector('.cc-board') as HTMLElement | null)?.style.getPropertyValue('--cc-focal')
+
+    dispatchPointer(shell, 'pointerdown', { clientX: 40, clientY: 40 })
+    dispatchPointer(shell, 'pointerup', { clientX: 40, clientY: 40 })
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('4:5 Instagram feed')).toBeInTheDocument()
+    expect(within(dialog).getByText('1080×1350px')).toBeInTheDocument()
+    expect((board.querySelector('.cc-board') as HTMLElement | null)?.style.getPropertyValue('--cc-focal')).toBe(focalBefore)
+  })
+
+  it('still sets the focal point on an actual drag (movement past the threshold) and does not open the viewer', async () => {
+    mockGetsFor(creative())
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    const board = await screen.findByTestId('placement-board-4x5')
+    const shell = board.firstElementChild as HTMLElement
+    shell.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 200, height: 250, right: 200, bottom: 250, x: 0, y: 0, toJSON() {} }) as DOMRect
+
+    dispatchPointer(shell, 'pointerdown', { clientX: 40, clientY: 40 })
+    dispatchPointer(shell, 'pointermove', { clientX: 140, clientY: 140 })
+    dispatchPointer(shell, 'pointerup', { clientX: 140, clientY: 140 })
+
+    await waitFor(() =>
+      expect((board.querySelector('.cc-board') as HTMLElement | null)?.style.getPropertyValue('--cc-focal')).not.toBe(''),
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it("steps through the enabled placements with the viewer's Next/Previous buttons", async () => {
+    mockGetsFor(creative(), [{ ...KIT, enabledPlacements: ['4x5', '1x1'] }])
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    const board = await screen.findByTestId('placement-board-4x5')
+    const shell = board.firstElementChild as HTMLElement
+    dispatchPointer(shell, 'pointerdown', { clientX: 10, clientY: 10 })
+    dispatchPointer(shell, 'pointerup', { clientX: 10, clientY: 10 })
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('4:5 Instagram feed')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Previous' })).not.toBeInTheDocument()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Next' }))
+    expect(within(dialog).getByText('1:1 Facebook feed')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Previous' }))
+    expect(within(dialog).getByText('4:5 Instagram feed')).toBeInTheDocument()
+  })
+
+  it('lets a reader (no creative.manage) open the full-size viewer with a plain click', async () => {
+    mockCan.mockReturnValue(false)
+    mockGetsFor(creative())
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    const board = await screen.findByTestId('placement-board-4x5')
+    const shell = board.firstElementChild as HTMLElement
+    fireEvent.click(shell)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('4:5 Instagram feed')).toBeInTheDocument()
   })
 })

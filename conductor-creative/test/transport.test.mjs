@@ -131,6 +131,33 @@ test('putFrame: PUTs a placement frame\'s JPEG bytes to the render-scoped path w
   }
 });
 
+test('putFrame: retries once when the upload fails with a 5xx, and stops at a 4xx', async () => {
+  let puts = 0;
+  let status = [503, 204];
+  const { server, origin } = await startFakeBackend(async (req, res) => {
+    await readBody(req);
+    if (req.url.endsWith('/renders')) {
+      res.writeHead(201, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'r1', spec: SPEC }));
+      return;
+    }
+    puts += 1;
+    res.writeHead(status.shift() ?? 204).end();
+  });
+  try {
+    const transport = createApiTransport({ apiUrl: origin, apiKey: 'k', projectId: 'p1', creativeId: 'c1' });
+    await transport.getSpec();
+    await transport.putFrame('4x5', { width: 2160, height: 2700, bytes: Buffer.from([1]) });
+    assert.equal(puts, 2);
+
+    puts = 0;
+    status = [413, 204];
+    await assert.rejects(transport.putFrame('4x5', { width: 2160, height: 2700, bytes: Buffer.from([1]) }), /413/);
+    assert.equal(puts, 1);
+  } finally {
+    server.close();
+  }
+});
+
 test('putFrame: PUTs the "sheet" contact sheet as PNG', async () => {
   const calls = [];
   const { server, origin } = await startFakeBackend(async (req, res) => {

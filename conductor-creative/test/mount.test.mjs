@@ -117,22 +117,42 @@ test('attachFocalDrag: reports an "x% y%" string as the pointer moves within the
   const down = new window.Event('pointerdown');
   down.pointerId = 1; down.clientX = 50; down.clientY = 100;
   handle.shell.dispatchEvent(down);
-
-  assert.deepEqual(reported, ['25% 50%']);
-  assert.equal(handle.board.style.getPropertyValue('--cc-focal'), '25% 50%');
+  // Pressing alone is not a drag: the focal point must not jump to the press.
+  assert.deepEqual(reported, []);
 
   const move = new window.Event('pointermove');
   move.clientX = 150; move.clientY = 20;
   handle.shell.dispatchEvent(move);
-  assert.deepEqual(reported, ['25% 50%', '75% 10%']);
+  assert.deepEqual(reported, ['75% 10%']);
+  assert.equal(handle.board.style.getPropertyValue('--cc-focal'), '75% 10%');
 
   const up = new window.Event('pointerup');
   handle.shell.dispatchEvent(up);
   const moveAfterUp = new window.Event('pointermove');
   moveAfterUp.clientX = 0; moveAfterUp.clientY = 0;
   handle.shell.dispatchEvent(moveAfterUp);
-  assert.equal(reported.length, 2, 'no report after pointerup');
+  assert.equal(reported.length, 1, 'no report after pointerup');
 
+  drag.detach();
+});
+
+test('attachFocalDrag: a click (no movement past the threshold) calls onClick and leaves the focal point', async () => {
+  const container = makeContainer();
+  const handle = mountBoard(container, { creative: { layout: 'bleed', headline: 'x *y*.' }, brand: {}, placementKey: '4x5' });
+  await handle.ready;
+  handle.shell.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 250 });
+  const reported = [];
+  let clicks = 0;
+  const drag = attachFocalDrag(handle, (v) => reported.push(v), { onClick: () => { clicks += 1; } });
+
+  const down = new window.Event('pointerdown'); down.pointerId = 1; down.clientX = 40; down.clientY = 40;
+  handle.shell.dispatchEvent(down);
+  const jitter = new window.Event('pointermove'); jitter.clientX = 42; jitter.clientY = 41;
+  handle.shell.dispatchEvent(jitter);
+  handle.shell.dispatchEvent(new window.Event('pointerup'));
+
+  assert.equal(clicks, 1);
+  assert.deepEqual(reported, []);
   drag.detach();
 });
 

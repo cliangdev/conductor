@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, Maximize2Icon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
 import { attachFocalDrag, enabledPlacements, mountBoard } from '@cliangdev/creative-render/mount'
 import { checkCreativeCopy } from '@cliangdev/creative-render/copy-rules'
 import { placements as renderPlacements } from '@cliangdev/creative-render/placements'
@@ -36,6 +36,7 @@ import { apiErrorMessage, type ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
+import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
 import { PhotoPicker } from '@/components/marketing/creatives/PhotoPicker'
 import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
 import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
@@ -60,6 +61,17 @@ import {
   type SequenceKind,
 } from '@/components/marketing/creatives/types'
 import type { RenderCreative } from '@/components/marketing/creatives/renderTypes'
+
+// attachFocalDrag ships with no .d.ts (see renderTypes.ts's header on the same limitation for
+// mountBoard) — TS's plain-JS inference of its destructured third parameter only picks up
+// `threshold` (it has a default value); `onClick` has none, so TS drops it from the inferred type.
+// This local mirror restores it rather than casting every call site to `any`.
+type AttachFocalDrag = (
+  handle: ReturnType<typeof mountBoard>,
+  onChange: (value: string) => void,
+  options?: { onClick?: (e: PointerEvent) => void; threshold?: number },
+) => { detach: () => void }
+const attachFocalDragTyped = attachFocalDrag as unknown as AttachFocalDrag
 
 interface FormState {
   brandKitId: string
@@ -151,29 +163,47 @@ function PlacementBoard({
   sequenceIndex,
   onFocalChange,
   draggable,
+  onOpen,
 }: {
   placementKey: string
   creative: RenderCreative
   brand: ReturnType<typeof brandKitToBrand>
   sequenceIndex: number
   onFocalChange: (placementKey: string, value: string) => void
-  /** Readers can't save changes anyway — skip wiring the focal-drag interaction for them. */
+  /** Readers can't save changes anyway — skip wiring the focal-drag interaction for them (they can
+   *  still click to open the full-size viewer; see the plain click listener below). */
   draggable: boolean
+  /** Opens the full-size viewer for this placement — wired to both a plain click on the frame and
+   *  the corner "expand" affordance. */
+  onOpen: (placementKey: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<typeof mountBoard> | null>(null)
   const onFocalChangeRef = useRef(onFocalChange)
+  const onOpenRef = useRef(onOpen)
   useEffect(() => {
     onFocalChangeRef.current = onFocalChange
   }, [onFocalChange])
+  useEffect(() => {
+    onOpenRef.current = onOpen
+  }, [onOpen])
 
   useEffect(() => {
     if (!containerRef.current) return
     const handle = mountBoard(containerRef.current, { creative, brand, placementKey, sequenceIndex })
     handleRef.current = handle
+    // Draggable frames get the full focal-drag interaction (a plain click still opens the viewer,
+    // via attachFocalDrag's own click/drag distinction — see conductor-creative/mount.js). Readers
+    // can't drag (nothing to save), but a plain click must still open the viewer for them.
     const drag = draggable
-      ? attachFocalDrag(handle, (value: string) => onFocalChangeRef.current(placementKey, value))
-      : { detach: () => {} }
+      ? attachFocalDragTyped(handle, (value: string) => onFocalChangeRef.current(placementKey, value), {
+          onClick: () => onOpenRef.current(placementKey),
+        })
+      : (() => {
+          const onClick = () => onOpenRef.current(placementKey)
+          handle.shell.addEventListener('click', onClick)
+          return { detach: () => handle.shell.removeEventListener('click', onClick) }
+        })()
     return () => {
       drag.detach()
       handle.destroy()
@@ -192,15 +222,98 @@ function PlacementBoard({
   const width = dims ? Math.round((height * dims.w) / dims.h) : height
 
   return (
-    <div className="shrink-0 space-y-1">
+    <div className="group relative shrink-0 space-y-1">
       <div
         ref={containerRef}
         data-testid={`placement-board-${placementKey}`}
         className="relative overflow-hidden rounded-md bg-surface-3"
         style={{ width, height }}
       />
+      <button
+        type="button"
+        onClick={() => onOpen(placementKey)}
+        aria-label={`View ${dims?.label ?? placementKey} full size`}
+        className="absolute right-1 top-1 z-10 rounded-md bg-surface/90 p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        <Maximize2Icon className="h-3.5 w-3.5" aria-hidden />
+      </button>
       <p className="text-center text-[11px] text-muted-foreground">{dims?.label ?? placementKey}</p>
     </div>
+  )
+}
+
+/** The dims of a placement — pulled out of `renderPlacements` once so both the small board and the
+ *  full-size viewer size themselves off the same registry entry. */
+function placementDims(placementKey: string): { w: number; h: number; label: string } | undefined {
+  return renderPlacements[placementKey as keyof typeof renderPlacements] as { w: number; h: number; label: string } | undefined
+}
+
+/** Fits `dims`' aspect ratio into ~90% of the viewport (minus a little room for the viewer's own
+ *  chrome), scaling up past the placement's true pixel size when the viewport allows — the point is
+ *  to see it big, not to cap it at 1:1. */
+function fitToViewport(dims: { w: number; h: number } | undefined): { width: number; height: number } {
+  if (!dims) return { width: 320, height: 320 }
+  if (typeof window === 'undefined') return { width: dims.w, height: dims.h }
+  const maxW = window.innerWidth * 0.8
+  const maxH = window.innerHeight * 0.7
+  const scale = Math.max(0.01, Math.min(maxW / dims.w, maxH / dims.h))
+  return { width: Math.round(dims.w * scale), height: Math.round(dims.h * scale) }
+}
+
+/** The full-size viewer's board — a fresh `mountBoard`, sized to fill the viewer, with no drag
+ *  interaction wired up (view only). */
+function PlacementViewerBoard({
+  placementKey,
+  creative,
+  brand,
+  sequenceIndex,
+}: {
+  placementKey: string
+  creative: RenderCreative
+  brand: ReturnType<typeof brandKitToBrand>
+  sequenceIndex: number
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const handleRef = useRef<ReturnType<typeof mountBoard> | null>(null)
+  const dims = placementDims(placementKey)
+  const [size, setSize] = useState(() => fitToViewport(dims))
+
+  useEffect(() => {
+    function onResize() {
+      setSize(fitToViewport(dims))
+    }
+    onResize()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [dims?.w, dims?.h])
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const handle = mountBoard(containerRef.current, { creative, brand, placementKey, sequenceIndex })
+    handleRef.current = handle
+    return () => {
+      handle.destroy()
+      handleRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placementKey])
+
+  useEffect(() => {
+    handleRef.current?.update({ creative, brand, sequenceIndex })
+  }, [creative, brand, sequenceIndex])
+
+  // Resizing the container doesn't re-fit itself — nudge mountBoard to redraw at the new size.
+  useEffect(() => {
+    handleRef.current?.update({})
+  }, [size.width, size.height])
+
+  return (
+    <div
+      ref={containerRef}
+      data-testid={`placement-viewer-board-${placementKey}`}
+      className="relative overflow-hidden rounded-md bg-surface-3"
+      style={{ width: size.width, height: size.height }}
+    />
   )
 }
 
@@ -239,6 +352,9 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // Index into `enabledKeys` of the placement currently open in the full-size viewer, or null when
+  // it's closed.
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     const [loaded, kitRows, reg] = await Promise.all([
@@ -366,6 +482,11 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     setForm((prev) =>
       prev ? { ...prev, focalOverride: { ...prev.focalOverride, [placementKey]: value } } : prev,
     )
+  }
+
+  function openPlacementViewer(placementKey: string) {
+    const idx = enabledKeys.indexOf(placementKey)
+    setViewerIndex(idx === -1 ? 0 : idx)
   }
 
   async function handleSave() {
@@ -828,7 +949,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
         <div className="space-y-4">
           <Card className="space-y-3 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Live preview {canManage && '· drag a frame to set its focal point'}
+              Live preview · click a frame to view it full size{canManage && ' · drag to set its focal point'}
             </h3>
             {renderCreative && (
               <div className="flex flex-wrap gap-4">
@@ -841,6 +962,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                     sequenceIndex={sequenceIndex}
                     onFocalChange={handleFocalChange}
                     draggable={canManage}
+                    onOpen={openPlacementViewer}
                   />
                 ))}
               </div>
@@ -963,6 +1085,30 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           Permanently delete <strong>{creative.displayId}</strong>? This cannot be undone.
         </p>
       </ConfirmModal>
+
+      {viewerIndex !== null && renderCreative && enabledKeys[viewerIndex] && (() => {
+        const key = enabledKeys[viewerIndex]
+        const dims = placementDims(key)
+        return (
+          <FullSizeViewer
+            open
+            onOpenChange={(open) => {
+              if (!open) setViewerIndex(null)
+            }}
+            title={dims?.label ?? key}
+            subtitle={dims ? `${dims.w}×${dims.h}px` : undefined}
+            onPrev={viewerIndex > 0 ? () => setViewerIndex(viewerIndex - 1) : undefined}
+            onNext={viewerIndex < enabledKeys.length - 1 ? () => setViewerIndex(viewerIndex + 1) : undefined}
+          >
+            <PlacementViewerBoard
+              placementKey={key}
+              creative={renderCreative}
+              brand={brand}
+              sequenceIndex={sequenceIndex}
+            />
+          </FullSizeViewer>
+        )
+      })()}
 
       {latestSucceededRender && (
         <UseInPostDialog

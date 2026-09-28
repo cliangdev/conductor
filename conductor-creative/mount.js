@@ -122,8 +122,12 @@ export function mountBoard(container, options) {
  * whether it lands on `creative.focalOverride[placementKey]` or on the
  * photo's own `focal[placementKey]`, then calls `handle.update(...)` with the
  * patched creative so the board reflects it immediately. */
-export function attachFocalDrag(handle, onChange) {
+export function attachFocalDrag(handle, onChange, { onClick, threshold = 4 } = {}) {
   const shell = handle.shell;
+  // A press only becomes a drag once the pointer moves `threshold` px; a plain click leaves the focal
+  // point alone (and calls `onClick`, e.g. to open the frame full size) instead of jumping the photo
+  // to wherever the click landed.
+  let start = null;
   let dragging = false;
   const apply = (e) => {
     const box = shell.getBoundingClientRect();
@@ -134,15 +138,25 @@ export function attachFocalDrag(handle, onChange) {
     onChange(value);
   };
   const onPointerDown = (e) => {
-    dragging = true;
+    start = { x: e.clientX, y: e.clientY };
+    dragging = false;
     // Not every environment implements pointer capture (some DOM test shims
     // do not); dragging still works without it, it just will not continue
     // past the shell's own edges.
     if (shell.setPointerCapture) { try { shell.setPointerCapture(e.pointerId); } catch { /* no-op */ } }
+  };
+  const onPointerMove = (e) => {
+    if (!start) return;
+    if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) < threshold) return;
+    dragging = true;
     apply(e);
   };
-  const onPointerMove = (e) => { if (dragging) apply(e); };
-  const onPointerUp = () => { dragging = false; };
+  const onPointerUp = (e) => {
+    const wasClick = start && !dragging;
+    start = null;
+    dragging = false;
+    if (wasClick && onClick) onClick(e);
+  };
   shell.addEventListener('pointerdown', onPointerDown);
   shell.addEventListener('pointermove', onPointerMove);
   shell.addEventListener('pointerup', onPointerUp);

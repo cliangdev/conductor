@@ -421,7 +421,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
             <div>
               <Label>Logos</Label>
               <div className="grid grid-cols-4 gap-2">
-                {BRAND_IMAGE_SLOTS.map(({ slot, label }) => {
+                {BRAND_IMAGE_SLOTS.map(({ slot, label, hint }) => {
                   const urlKey = ({
                     mark: 'markUrl',
                     wordmark_dark: 'wordmarkDarkUrl',
@@ -440,6 +440,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
                         )}
                       </div>
                       <p className="text-center text-[11px] text-muted-foreground">{label}</p>
+                      {hint && <p className="text-center text-[10px] text-muted-foreground/70">{hint}</p>}
                       <input
                         type="file"
                         accept="image/png,image/jpeg,image/webp,image/svg+xml"
