@@ -1,0 +1,17 @@
+{
+  "name": "card",
+  "description": "The light layout: inset rounded photo on a light page.",
+  "themes": [
+    "dark",
+    "light"
+  ],
+  "lockupInPanel": false,
+  "photo": "card",
+  "panel": "plain",
+  "band": {
+    "9x16": 700,
+    "4x5": 520,
+    "1x1": 320
+  },
+  "dropBody": []
+}

@@ -62,6 +62,25 @@ interface InsightsCoverage {
   notes: string[]
 }
 
+interface CreativePerformancePlatform {
+  platform: string
+  posts: number
+  views: number
+  engagementRate?: number | null
+}
+
+interface CreativePerformanceEntry {
+  creativeId: string
+  label: string
+  headline?: string | null
+  posts: number
+  views: number
+  engagementRate?: number | null
+  avgViewPct?: number | null
+  views72h?: number | null
+  byPlatform: CreativePerformancePlatform[]
+}
+
 interface MarketingInsightsResponse {
   window: InsightsWindow
   totals: InsightsGroup
@@ -73,6 +92,7 @@ interface MarketingInsightsResponse {
   bottomPosts: InsightsPost[]
   movers: InsightsMover[]
   coverage: InsightsCoverage
+  creatives: CreativePerformanceEntry[]
 }
 
 /** Rounds a rate-like number to 4 decimals; leaves null/undefined alone. */
@@ -121,6 +141,20 @@ function topGroups(groups: InsightsGroup[]): Record<string, unknown>[] {
     .map(trimGroup)
 }
 
+/** The fields worth an agent's context for one Creative variant's attributed performance. */
+function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> {
+  return omitNulls({
+    creativeId: entry.creativeId,
+    label: entry.label,
+    headline: entry.headline,
+    posts: entry.posts,
+    views: entry.views,
+    engagementRate: round4(entry.engagementRate),
+    avgViewPct: round4(entry.avgViewPct),
+    views72h: entry.views72h,
+  })
+}
+
 /**
  * What is working across the project's published Posts, trimmed to what an agent needs to reason from:
  * totals and per-platform/per-format engagement, the best hours and weekdays to post, the best and worst
@@ -152,5 +186,6 @@ export async function getMarketingInsights(
       omitNulls({ metric: m.metric, current: round4(m.current), previous: round4(m.previous), deltaPct: round4(m.deltaPct) })
     ),
     coverage: data.coverage,
+    topCreatives: (data.creatives ?? []).slice(0, 5).map(trimCreative),
   }
 }

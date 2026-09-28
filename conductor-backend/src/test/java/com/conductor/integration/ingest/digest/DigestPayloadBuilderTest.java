@@ -79,6 +79,22 @@ class DigestPayloadBuilderTest {
     }
 
     @Test
+    void hookWinnersFromExtraAreCopiedVerbatimWhenPresentAndNonEmpty() {
+        IngestSpec spec = gscLikeSpec();
+        ChangeDetectionResult result = resultWith(List.of(), Map.of(), true, null);
+
+        Map<String, Object> withWinners = builder.build(spec, "2026-W30", result,
+                Map.of("hookWinners", List.of(Map.of("creative", "12b"))));
+        assertThat(withWinners).containsKey("hookWinners");
+
+        Map<String, Object> withoutWinners = builder.build(spec, "2026-W30", result, Map.of("hookWinners", List.of()));
+        assertThat(withoutWinners).doesNotContainKey("hookWinners");
+
+        Map<String, Object> noExtraAtAll = builder.build(spec, "2026-W30", result);
+        assertThat(noExtraAtAll).doesNotContainKey("hookWinners");
+    }
+
+    @Test
     void surfacesPeriodMoversComparedToLowConfidenceReasonDomainAndPagePath() {
         IngestSpec spec = gscLikeSpec();
         List<MetricChange> changes = List.of(

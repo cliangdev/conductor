@@ -18,6 +18,7 @@ The coordination layer for an agentic organization. AI agents do the work — au
 - **Knowledge Center** — an ingestion inbox feeding an agent-maintained wiki. Librarian workflows organize incoming knowledge into reviewed, versioned pages. See [docs/knowledge.md](docs/knowledge.md).
 - **Integrations** — a unified connector framework (OAuth, webhooks, fetch, actions): GitHub, Discord, GCP, Apple Search Ads, Google Search Console, PostHog, RevenueCat, Meta, YouTube, TikTok, and more. See [docs/integrations-adding-a-connector.md](docs/integrations-adding-a-connector.md).
 - **Publishing** — take a Work Item through review to something live on a platform. Per-post scheduling on a calendar, an approval bound to the exact media and destinations it was given for, and per-destination outcomes with the live link. Publishes through Facebook, Instagram, YouTube and TikTok, or through a human by hand when there is no integration. See [docs/publishing.md](docs/publishing.md).
+- **Creatives** — a per-workspace Brand Kit (colours, fonts, logos, copy rules) turns a photo and a headline into upload-ready artwork for every placement, rendered locally via Claude Code/Desktop or the CLI and attached to a Post as its media. See [docs/creatives-guide.md](docs/creatives-guide.md).
 
 ## Architecture
 
@@ -69,6 +70,7 @@ conductor/
 ├── conductor-backend/     # Spring Boot 4, Java 21 — REST API, workflow engine, connectors
 ├── conductor-frontend/    # Next.js 16, TypeScript, Tailwind, shadcn/ui
 ├── conductor-tools/       # @cliangdev/conductor — CLI + MCP server (single npm package)
+├── conductor-creative/    # @cliangdev/creative-render — Creatives render engine (web preview + local render job)
 ├── conductor-worker/      # self-hosted job runner (Express + Docker)
 ├── runner-image/          # container images for workflow step execution
 ├── docs/                  # architecture and contributor guides (see below)
@@ -108,6 +110,8 @@ CLI + MCP for agent use: see the [conductor-tools README](conductor-tools/README
 | [docs/memory.md](docs/memory.md) | Agent memory: extraction/consolidation write path, retrieval scoring, memory-vs-knowledge |
 | [docs/ai-providers.md](docs/ai-providers.md) | AI Providers: BYO-key model, registered providers, model discovery, adding a provider |
 | [docs/publishing.md](docs/publishing.md) | Publishing: the approval gate, publish targets and lanes, outcomes, the manual lane |
+| [docs/creatives-guide.md](docs/creatives-guide.md) | Creatives how-to: Brand Kit setup, making artwork, attaching it to a Post, hook experiments |
+| [docs/creatives.md](docs/creatives.md) | Creatives under the hood: Brand Kit/Creative model, local rendering, attach mapping, attribution |
 | [docs/api-guidelines.md](docs/api-guidelines.md) | OpenAPI-first workflow, external vs internal API split |
 | [docs/mcp-tool-guidelines.md](docs/mcp-tool-guidelines.md) | MCP tool design principles |
 | [docs/integrations-adding-a-connector.md](docs/integrations-adding-a-connector.md) | Building a new connector |

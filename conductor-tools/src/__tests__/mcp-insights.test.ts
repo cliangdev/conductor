@@ -93,6 +93,10 @@ function fixture() {
       { metric: 'engagementRate', current: 0.11700001, previous: 0.1, deltaPct: null },
     ],
     coverage: { platforms: ['instagram', 'facebook'], notes: ['TikTok reconnect needed for insights.'] },
+    creatives: [
+      { creativeId: 'c12b', label: '12b', headline: 'Hook B', posts: 3, views: 900, engagementRate: 0.199999, avgViewPct: null, views72h: 800, byPlatform: [] },
+      { creativeId: 'c12a', label: '12a', headline: 'Hook A', posts: 2, views: 400, engagementRate: 0.1, avgViewPct: null, views72h: null, byPlatform: [] },
+    ],
   }
 }
 
@@ -146,6 +150,12 @@ describe('get_marketing_insights', () => {
     expect(movers[1]).not.toHaveProperty('deltaPct')
 
     expect(result['coverage']).toEqual({ platforms: ['instagram', 'facebook'], notes: ['TikTok reconnect needed for insights.'] })
+
+    const topCreatives = result['topCreatives'] as Record<string, unknown>[]
+    expect(topCreatives).toHaveLength(2)
+    expect(topCreatives[0]).toEqual({ creativeId: 'c12b', label: '12b', headline: 'Hook B', posts: 3, views: 900, engagementRate: 0.2, views72h: 800 })
+    expect(topCreatives[1]).not.toHaveProperty('avgViewPct')
+    expect(topCreatives[1]).not.toHaveProperty('views72h')
   })
 
   it('passes window and platform through as query params', async () => {

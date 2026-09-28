@@ -1,5 +1,6 @@
 package com.conductor.marketing.insights;
 
+import com.conductor.creative.CreativePerformanceService;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
@@ -64,7 +65,8 @@ public class MarketingInsightsQueryService {
     /** The whole response, as plain data the controller maps to {@code MarketingInsightsResponse}. */
     public record Insights(Window window, Group totals, List<Group> byPlatform, List<Group> byFormat,
                            List<Group> byHour, List<Group> byWeekday, List<Post> topPosts,
-                           List<Post> bottomPosts, List<Mover> movers, Coverage coverage) {}
+                           List<Post> bottomPosts, List<Mover> movers, Coverage coverage,
+                           List<CreativePerformanceService.VariantPerformance> creatives) {}
 
     /**
      * One destination in an insights population: its identity, when it fired, and — when it has reported
@@ -80,6 +82,7 @@ public class MarketingInsightsQueryService {
 
     private static final List<String> COUNT_METRICS = List.of("likes", "comments", "shares", "saves");
     private static final int TOP_POSTS_LIMIT = 10;
+    private static final int TOP_CREATIVES_LIMIT = 10;
     private static final int BOTTOM_POSTS_LIMIT = 5;
     private static final int BOTTOM_POSTS_MIN_POPULATION = 10;
     private static final int CAPTION_EXCERPT_LENGTH = 140;
@@ -96,17 +99,20 @@ public class MarketingInsightsQueryService {
     private final PostPublishTargetMetricRepository metricRepository;
     private final WorkItemRepository workItemRepository;
     private final PublishPlatformRegistry platformRegistry;
+    private final CreativePerformanceService creativePerformanceService;
 
     public MarketingInsightsQueryService(ProjectSecurityService projectSecurityService,
                                          PostPublishTargetRepository targetRepository,
                                          PostPublishTargetMetricRepository metricRepository,
                                          WorkItemRepository workItemRepository,
-                                         PublishPlatformRegistry platformRegistry) {
+                                         PublishPlatformRegistry platformRegistry,
+                                         CreativePerformanceService creativePerformanceService) {
         this.projectSecurityService = projectSecurityService;
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
         this.workItemRepository = workItemRepository;
         this.platformRegistry = platformRegistry;
+        this.creativePerformanceService = creativePerformanceService;
     }
 
     @Transactional(readOnly = true)
@@ -153,8 +159,11 @@ public class MarketingInsightsQueryService {
 
         Coverage coverage = coverage(population, reporting);
 
+        List<CreativePerformanceService.VariantPerformance> creatives =
+                creativePerformanceService.topCreatives(projectId, from, to, TOP_CREATIVES_LIMIT);
+
         return new Insights(new Window(from, to, spec.days()), totals, byPlatform, byFormat, byHour, byWeekday,
-                topPosts, bottomPosts, movers, coverage);
+                topPosts, bottomPosts, movers, coverage, creatives);
     }
 
     // ---- population -------------------------------------------------------------------------------

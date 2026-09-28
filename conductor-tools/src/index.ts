@@ -15,6 +15,7 @@ import { registerConfig } from './commands/config.js'
 import { registerDashboard } from './commands/dashboard.js'
 import { registerStatus } from './commands/status.js'
 import { registerLint } from './commands/lint.js'
+import { registerCreative } from './commands/creative.js'
 
 const program = new Command()
 
@@ -34,5 +35,6 @@ registerConfig(program)
 registerDashboard(program)
 registerStatus(program)
 registerLint(program)
+registerCreative(program)
 
 program.parse()

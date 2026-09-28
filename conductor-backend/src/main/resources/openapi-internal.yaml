@@ -17,6 +17,8 @@ tags:
     description: Workflow run worker callbacks (logs, outputs, job failures)
   - name: work-item-assets-internal
     description: Local-profile passthrough for work-item file-Asset bytes
+  - name: creative-content-internal
+    description: Local-profile passthrough for Brand Kit image and Creative photo bytes (COND-24 T2)
   - name: publish-internal
     description: Cloud Tasks targets for timed publishing work on post_publish_target rows
 
@@ -248,6 +250,100 @@ paths:
           description: Bytes stored. Confirm the upload via the v2 confirm endpoint.
         "404":
           description: No such Asset, or the Asset does not belong to this Work Item
+
+  /projects/{projectId}/brand-kits/{kitId}/images/{slot}/content:
+    put:
+      tags: [creative-content-internal]
+      summary: Upload a Brand Kit image slot's raw bytes (local profile only)
+      description: >
+        Passthrough upload for one Brand Kit image slot, served ONLY on the `local` profile, where
+        StorageService cannot mint signed upload URLs. This is the exact URL
+        `POST /api/v2/projects/{projectId}/marketing/brand-kits/{kitId}/images/{slot}` returns as its
+        `uploadUrl` in that case. Unlike a file Asset, minting an image slot persists no pending row —
+        there is nothing to look up server-side — so the client's own `gcsPath` (handed back by that
+        same mint call, and separately required again by the confirm endpoint) rides along as a query
+        parameter and is checked against the slot's own prefix before anything is written.
+
+
+        There is no run token to check here (no workflow run is involved); the caller-facing scope
+        check is that the Brand Kit must belong to `projectId`. Same shape as the work-item-asset
+        content passthrough `PUT /internal/v1/work-items/{workItemId}/assets/{assetId}/content`.
+      operationId: uploadBrandKitImageContent
+      security: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kitId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: slot
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: gcsPath
+          in: query
+          required: true
+          description: The path this same mint call returned — must match this kit/slot's own prefix.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: >
+          The raw image bytes. Any media type is accepted: the browser PUTs the file with its own
+          Content-Type, exactly as it would to a signed bucket URL.
+        content:
+          "*/*":
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Bytes stored. Confirm the upload via the v2 confirm endpoint.
+        "404":
+          description: No such Brand Kit in this project
+
+  /projects/{projectId}/creative-photos/{photoId}/content:
+    put:
+      tags: [creative-content-internal]
+      summary: Upload a Creative photo's raw bytes (local profile only)
+      description: >
+        Passthrough upload for a Creative photo, served ONLY on the `local` profile. This is the exact
+        URL `POST /api/v2/projects/{projectId}/marketing/photos` returns as its `uploadUrl` in that
+        case, so the two must stay byte-for-byte identical — mirrors
+        `PUT /internal/v1/work-items/{workItemId}/assets/{assetId}/content` exactly: the pending photo
+        row already carries `gcsPath` and `contentType` from mint, so this needs nothing beyond the
+        photo id and a scope check that it belongs to `projectId`.
+      operationId: uploadCreativePhotoContent
+      security: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "*/*":
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Bytes stored. Confirm the upload via the v2 confirm endpoint.
+        "404":
+          description: No such Creative photo in this project
 
   /publish-targets/{targetId}/dispatch:
     post:

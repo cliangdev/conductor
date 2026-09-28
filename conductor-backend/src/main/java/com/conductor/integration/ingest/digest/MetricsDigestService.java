@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -82,6 +83,11 @@ public class MetricsDigestService {
             feed.setLastWindowEnd(OffsetDateTime.ofInstant(window.end(), ZoneOffset.UTC));
         }
 
+        // A decided hook experiment (COND-24 T5) is worth narrating even on an otherwise-flat week --
+        // the change detector has no notion of it since it never runs through a MetricSpec/DimensionSpec.
+        boolean hasHookWinners = rawPayload.get("hookWinners") instanceof List<?> hookWinners && !hookWinners.isEmpty();
+        boolean material = result.material() || hasHookWinners;
+
         ConnectorFeedDigest digest = new ConnectorFeedDigest();
         digest.setProjectId(feed.getProjectId());
         digest.setFeedId(feed.getId());
@@ -90,17 +96,17 @@ public class MetricsDigestService {
             digest.setWindowStart(OffsetDateTime.ofInstant(window.start(), ZoneOffset.UTC));
             digest.setWindowEnd(OffsetDateTime.ofInstant(window.end(), ZoneOffset.UTC));
         }
-        digest.setChangeReport(payloadBuilder.build(spec, periodKey, result));
-        digest.setMaterial(result.material());
+        digest.setChangeReport(payloadBuilder.build(spec, periodKey, result, rawPayload));
+        digest.setMaterial(material);
         // Computed once, here, at row-creation time -- never recomputed downstream (see
         // DigestSubmissionService), and deliberately excludes the numbers: the PERIOD is the unit of
         // knowledge, so re-narrating the same period after a fix collapses instead of duplicating.
         digest.setDedupKey("knowledge-digest:" + feed.getId() + ":" + periodKey);
-        digest.setStatus(result.material() ? DigestStatus.PENDING : DigestStatus.SKIPPED);
+        digest.setStatus(material ? DigestStatus.PENDING : DigestStatus.SKIPPED);
         digestRepository.save(digest);
 
         log.info("Recorded {} digest for feed={} period={} material={}",
-                digest.getStatus(), feed.getId(), periodKey, result.material());
+                digest.getStatus(), feed.getId(), periodKey, material);
     }
 
     /** {@code SnapshotIngestAdapter} always stamps this; a metric feed pulled through a future custom

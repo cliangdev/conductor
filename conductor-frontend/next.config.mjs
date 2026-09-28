@@ -1,6 +1,22 @@
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // @cliangdev/creative-render (conductor-creative/) ships plain ESM .js, not pre-built — this
+  // tells Next to transpile it like first-party source rather than skip it as a "pre-built" dep.
+  transpilePackages: ['@cliangdev/creative-render'],
+  // Without this, Turbopack infers the workspace root by walking up from every resolved file
+  // (including the file:../conductor-creative symlink target) looking for a lockfile, and — since
+  // there's no npm workspace tying the two sibling packages together — walks all the way past the
+  // repo root to the first one it finds, breaking package.json "exports" resolution (e.g.
+  // '@cliangdev/creative-render/styles.css'). Pinning it to the repo root (one level up) fixes that.
+  turbopack: {
+    root: path.join(__dirname, '..'),
+  },
   async headers() {
     return [
       {

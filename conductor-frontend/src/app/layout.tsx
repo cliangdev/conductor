@@ -1,6 +1,9 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
+// Creative editor/library boards render this everywhere they mount — imported once, globally, so
+// no route pays for it twice. Every class is `cc-`-prefixed, so it cannot collide with app Tailwind.
+import '@cliangdev/creative-render/styles.css'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ToastProvider } from '@/components/ui/toast'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'

@@ -12,6 +12,7 @@ const PLUGIN_FILES = [
   'skills/conductor-ux-ui-design/references/design-tokens.md',
   'skills/conductor-coder/SKILL.md',
   'skills/conductor-publisher/SKILL.md',
+  'skills/conductor-creative/SKILL.md',
 ]
 
 // Paths removed in previous versions — deleted on `conductor init` to clean up stale installs.

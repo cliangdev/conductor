@@ -129,6 +129,44 @@ class MetricsDigestServiceTest {
     }
 
     @Test
+    void hookWinnersInThePayloadForceMaterialityEvenOnAnOtherwiseFlatPeriod() throws Exception {
+        ConnectorFeed feed = feed();
+        MetricsAggregator aggregator = new MetricsAggregator();
+        MetricsChangeDetector detector = new MetricsChangeDetector();
+        IngestSpec spec = metricSpec();
+
+        Map<String, Object> flatPayload = Map.of("trend", List.of(Map.of("date", "2026-07-20", "clicks", 4200)));
+        MetricsBaseline baseline = null;
+        for (int i = 0; i < 6; i++) {
+            MetricsSnapshot snapshot = aggregator.aggregate(flatPayload, spec, null);
+            ChangeDetectionResult result = detector.detect(snapshot, baseline, spec.digest(), "period-" + i, 0);
+            baseline = result.updatedBaseline();
+        }
+        feed.setLastStats(new ObjectMapper().convertValue(baseline, Map.class));
+        feed.setQuietPeriods(0);
+
+        when(digestRepository.findByFeedIdAndPeriodKey("feed-1", "period-final")).thenReturn(Optional.empty());
+        Map<String, Object> payloadWithHookWinner = Map.of(
+                "trend", List.of(Map.of("date", "2026-07-20", "clicks", 4200)),
+                "hookWinners", List.of(Map.of("creative", "12b", "headline", "*Winning* hook")));
+        IngestItem item = itemWithPeriodKey("period-final", payloadWithHookWinner);
+
+        service.record(feed, spec, item, null);
+
+        ArgumentCaptor<ConnectorFeedDigest> captor = ArgumentCaptor.forClass(ConnectorFeedDigest.class);
+        verify(digestRepository).save(captor.capture());
+        ConnectorFeedDigest saved = captor.getValue();
+        // The numeric metric alone would be non-material (flat vs. baseline), but a decided hook
+        // experiment is worth narrating regardless -- see MetricsDigestService#record.
+        assertThat(saved.isMaterial()).isTrue();
+        assertThat(saved.getStatus()).isEqualTo(DigestStatus.PENDING);
+        assertThat(saved.getChangeReport()).containsKey("hookWinners");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> hookWinners = (List<Map<String, Object>>) saved.getChangeReport().get("hookWinners");
+        assertThat(hookWinners).hasSize(1);
+    }
+
+    @Test
     void steadyRepeatedPeriod_isNonMaterialAndPersistsSkippedDigest() throws Exception {
         ConnectorFeed feed = feed();
         MetricsAggregator aggregator = new MetricsAggregator();

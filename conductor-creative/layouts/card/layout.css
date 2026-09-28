@@ -1,0 +1,24 @@
+/* card — the light layout: inset rounded photo card on a light page. */
+
+.cc-board--card { padding: var(--cc-card-pad); gap: var(--cc-card-gap); }
+
+.cc-board__card {
+  position: relative;
+  width: 100%;
+  height: var(--cc-band-h);
+  flex: 0 0 auto;
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: var(--cc-elev-high);
+}
+.cc-board__card img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  object-position: var(--cc-focal, 50% 40%);
+}
+.cc-board--card .cc-board__panel {
+  flex: 1 1 auto; min-height: 0;
+  justify-content: center;
+  gap: 28px;
+}

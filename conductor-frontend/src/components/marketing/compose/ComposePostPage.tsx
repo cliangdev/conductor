@@ -8,7 +8,7 @@
 
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Film, ImageIcon, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
@@ -40,10 +40,17 @@ export interface ComposePostPageProps {
 
 export function ComposePostPage({ projectId, workflowSlug, workflowView, detailArea, noun, token }: ComposePostPageProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const types = useMemo(() => workflowView.types ?? [], [workflowView])
   const assetType = workflowView.assetTypes?.[0] ?? ''
   const lowerNoun = noun.toLowerCase()
   const listPath = workItemListPath(projectId, detailArea, noun)
+
+  // Arrived from a Creative's "Use in Post" → "New Post". Media comes from the creative's render,
+  // attached server-side after this Post exists — nothing to prefill here.
+  const fromCreativeId = searchParams.get('creativeId')
+  const fromRenderId = searchParams.get('renderId')
+  const attachCreative = fromCreativeId && fromRenderId ? { creativeId: fromCreativeId, renderId: fromRenderId } : undefined
 
   const [title, setTitle] = useState('')
   const [caption, setCaption] = useState('')
@@ -90,6 +97,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
         options: destinations.options,
         draft: destinations.draft,
         schedule: { onApproval: schedule.onApproval, local: schedule.local, timeZone: schedule.tz },
+        attachCreative,
         onStep: setStep,
       })
       if (problems.length > 0) {
@@ -145,6 +153,11 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="compose-media">Media</Label>
+                {attachCreative && (
+                  <p className="text-xs text-muted-foreground">
+                    This {lowerNoun}&rsquo;s media will come from that creative&rsquo;s render once it&rsquo;s created.
+                  </p>
+                )}
                 <input
                   id="compose-media"
                   ref={fileInputRef}

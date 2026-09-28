@@ -11,8 +11,15 @@ vi.mock('@/components/workitems/MediaUploadPanel', async (importOriginal) => ({
 import type { WorkflowView } from '@/types/workItem'
 import { ComposePostPage } from './ComposePostPage'
 
-const { pushSpy, toastErrorSpy } = vi.hoisted(() => ({ pushSpy: vi.fn(), toastErrorSpy: vi.fn() }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushSpy }) }))
+const { pushSpy, toastErrorSpy, searchParamsRef } = vi.hoisted(() => ({
+  pushSpy: vi.fn(),
+  toastErrorSpy: vi.fn(),
+  searchParamsRef: { current: new URLSearchParams() },
+}))
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: pushSpy }),
+  useSearchParams: () => searchParamsRef.current,
+}))
 vi.mock('@/components/ui/toast', async () => {
   const actual = await vi.importActual<typeof import('@/components/ui/toast')>('@/components/ui/toast')
   return { ...actual, toastError: toastErrorSpy }
@@ -76,6 +83,7 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (method === 'PUT' && url.startsWith('http://storage.test/')) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
   if (method === 'POST' && url.endsWith('/assets/asset-1/confirm')) return { ok: true, status: 204, headers: { get: () => null }, json: async () => ({}) }
   if (method === 'PATCH') return json(200, {})
+  if (method === 'POST' && url.endsWith('/attach')) return json(200, { assets: [], targetsUpdated: [], targetsSkipped: [] })
   throw new Error(`unexpected ${method} ${url}`)
 })
 
@@ -84,6 +92,7 @@ beforeEach(() => {
   calls = []
   createRejection = null
   targetsRejection = null
+  searchParamsRef.current = new URLSearchParams()
   pushSpy.mockClear()
   toastErrorSpy.mockClear()
   fetchMock.mockClear()
@@ -231,6 +240,26 @@ describe('ComposePostPage', () => {
     expect(String(toastErrorSpy.mock.calls[0]![0])).toContain("Type 'POST' is not allowed")
     expect(pushSpy).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Create post' })).toBeEnabled()
+  })
+
+  it('attaches the creative render after creating the Post, once destinations and schedule are saved', async () => {
+    searchParamsRef.current = new URLSearchParams({ creativeId: 'cr-1', renderId: 'render-1' })
+    renderPage()
+    expect(screen.getByText(/media will come from that creative/i)).toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Caption'), 'From a creative')
+    await userEvent.click(await account('@acme'))
+    await pickUtc()
+    await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+
+    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/app/projects/project-1/marketing/posts/MK-9'))
+    const attach = calls.find((c) => c.method === 'POST' && c.url.endsWith('/attach'))
+    expect(attach?.body).toEqual({ renderId: 'render-1', workItemId: 'wi-9' })
+    // Runs after the destinations PUT — otherwise that PUT would clobber the attach's per-target media.
+    const targetsIndex = calls.findIndex((c) => c.method === 'PUT')
+    const attachIndex = calls.findIndex((c) => c.method === 'POST' && c.url.endsWith('/attach'))
+    expect(attachIndex).toBeGreaterThan(targetsIndex)
+    expect(toastErrorSpy).not.toHaveBeenCalled()
   })
 
   it('opens the Post even when the destinations could not be saved, and says so', async () => {

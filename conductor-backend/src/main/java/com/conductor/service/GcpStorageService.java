@@ -67,6 +67,14 @@ public class GcpStorageService implements StorageService {
         return content;
     }
 
+    @Override
+    public void copy(String sourceGcsPath, String destinationGcsPath) {
+        storage.copy(com.google.cloud.storage.Storage.CopyRequest.newBuilder()
+                .setSource(BlobId.of(bucketName, sourceGcsPath))
+                .setTarget(BlobId.of(bucketName, destinationGcsPath))
+                .build()).getResult();
+    }
+
     public boolean isHealthy() {
         try {
             // Probe an OBJECT-level operation the app actually relies on (storage.objects.list), not a

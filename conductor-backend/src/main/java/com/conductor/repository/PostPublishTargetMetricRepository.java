@@ -57,6 +57,23 @@ public interface PostPublishTargetMetricRepository extends JpaRepository<PostPub
     List<PostPublishTargetMetric> findAllByTargetIdInOrderByTargetIdAscObservedAtAsc(List<String> targetIds);
 
     /**
+     * The first available (non-{@code unavailable}) snapshot of one target observed at or after {@code
+     * at} — "the snapshot nearest after fire_time + window_hours" a creative's 72h-views figure and an
+     * experiment's decision both read (COND-24 T5). Absent when no pull has landed yet at or past that
+     * instant, which the caller reads as "not decidable yet" rather than falling back to an earlier row.
+     */
+    @Query(value = """
+            SELECT * FROM post_publish_target_metric m
+             WHERE m.target_id = :targetId
+               AND m.unavailable = false
+               AND m.observed_at >= :at
+             ORDER BY m.observed_at ASC
+             LIMIT 1
+            """, nativeQuery = true)
+    Optional<PostPublishTargetMetric> findFirstAvailableAtOrAfter(@Param("targetId") String targetId,
+                                                                  @Param("at") OffsetDateTime at);
+
+    /**
      * Whether this project has at least one PUBLISHED destination that has reported at least one
      * metric snapshot (available or not) — the "what works" weekly connector's health gate. One
      * native join rather than pulling target ids back into Java just to ask "is there any overlap".

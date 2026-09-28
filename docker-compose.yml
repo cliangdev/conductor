@@ -45,7 +45,10 @@ services:
 
   frontend:
     build:
-      context: ./conductor-frontend
+      # Repo root, not ./conductor-frontend — see conductor-frontend/Dockerfile's header comment:
+      # the image needs the sibling conductor-creative/ package in its build context too.
+      context: .
+      dockerfile: ./conductor-frontend/Dockerfile
       target: dev
     environment:
       NEXT_PUBLIC_AUTH_MODE: local

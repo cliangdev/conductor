@@ -72,7 +72,10 @@ jobs:
     with:
       service: conductor-frontend
       image-name: frontend
-      build-context: conductor-frontend/
+      # Repo-root context (not conductor-frontend/) so the image can COPY the sibling
+      # conductor-creative/ package the frontend depends on via file:../conductor-creative.
+      build-context: .
+      dockerfile: conductor-frontend/Dockerfile
       is-frontend: true
       health-path: /api/health
       cloudrun-flags: --allow-unauthenticated

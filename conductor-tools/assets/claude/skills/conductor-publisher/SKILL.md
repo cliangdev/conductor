@@ -17,6 +17,10 @@ are. One instance of it is a MARKETING Post going to Instagram and TikTok; anoth
 own lifecycle that publishes somewhere else. Read the rules below as rules about the pipeline, and
 the platform names as examples.
 
+If the destination needs artwork that does not exist yet — a photo turned into on-brand ad
+creative, not just an attached file — make it first with the `conductor-creative` skill, then come
+back here with the rendered frames to attach and schedule.
+
 ## Step 1 — Gather three things, and ask rather than guess
 
 1. **The copy** — inline, or a file path you `Read`. Keep it exactly as given.

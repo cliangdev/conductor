@@ -19,6 +19,21 @@ runs:
       working-directory: conductor-frontend
       shell: bash
       run: npm ci
+    # conductor-creative is the sibling render package the frontend depends on via
+    # file:../conductor-creative (npm ci above already resolved and symlinked it). Its own test
+    # suite (render.test.mjs, registry.test.mjs, copy-rules.test.mjs) is plain `node --test` with
+    # one devDependency (linkedom, for a DOM to render into) — install and run it here so a change
+    # to the shared package is verified by the same CI that verifies the frontend using it.
+    - name: Install conductor-creative dependencies
+      if: ${{ inputs.run-checks == 'true' }}
+      working-directory: conductor-creative
+      shell: bash
+      run: npm install
+    - name: Test conductor-creative
+      if: ${{ inputs.run-checks == 'true' }}
+      working-directory: conductor-creative
+      shell: bash
+      run: npm test
     - name: Typecheck
       if: ${{ inputs.run-checks == 'true' }}
       working-directory: conductor-frontend

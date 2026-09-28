@@ -19,6 +19,15 @@ public interface AssetRepository extends JpaRepository<Asset, String> {
 
     Optional<Asset> findByIdAndWorkItemId(String id, String workItemId);
 
+    /**
+     * Every asset copied from one of these Creative render frames (COND-24 T5 attribution), with its
+     * owning Work Item eagerly fetched — {@code CreativeAttributionResolver} groups the result by
+     * work item id to resolve each Post's publish targets in one further query per Post rather than
+     * lazy-loading {@code asset.getWorkItem()} once per row.
+     */
+    @Query("SELECT a FROM Asset a JOIN FETCH a.workItem WHERE a.creativeFrameId IN :frameIds")
+    List<Asset> findAllByCreativeFrameIdIn(@Param("frameIds") Collection<String> frameIds);
+
     boolean existsByWorkItemIdAndTypeAndRef(String workItemId, String type, String ref);
 
     /**

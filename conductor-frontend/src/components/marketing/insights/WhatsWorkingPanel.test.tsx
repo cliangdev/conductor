@@ -140,6 +140,24 @@ describe('WhatsWorkingPanel', () => {
     expect(await screen.findByText('Could not load insights — please try again.')).toBeInTheDocument()
   })
 
+  it('shows Top creatives linking to the Creative editor', async () => {
+    stubApi(() => Promise.resolve(insightsResponse()))
+    renderPanel()
+
+    expect(await screen.findByText('Top creatives')).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: '12b' })
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/marketing/creatives/cr-12b')
+    expect(screen.getByText('Stop scrolling, start cooking')).toBeInTheDocument()
+  })
+
+  it('hides the Top creatives section when creatives is empty', async () => {
+    stubApi(() => Promise.resolve(insightsResponse({ creatives: [] })))
+    renderPanel()
+
+    await screen.findByText('Top posts')
+    expect(screen.queryByText('Top creatives')).not.toBeInTheDocument()
+  })
+
   it('hides the "Needs a rethink" section when bottomPosts is empty', async () => {
     stubApi(() => Promise.resolve(insightsResponse({ bottomPosts: [] })))
     renderPanel()

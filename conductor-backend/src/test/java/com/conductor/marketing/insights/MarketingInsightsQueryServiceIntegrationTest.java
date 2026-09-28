@@ -1,5 +1,6 @@
 package com.conductor.marketing.insights;
 
+import com.conductor.creative.CreativePerformanceService;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
@@ -49,6 +50,7 @@ class MarketingInsightsQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @Autowired private PostPublishTargetRepository targetRepository;
     @Autowired private PostPublishTargetMetricRepository metricRepository;
     @Autowired private ProjectSecurityService projectSecurityService;
+    @Autowired private CreativePerformanceService creativePerformanceService;
 
     private MarketingInsightsQueryService service;
     private User creator;
@@ -58,7 +60,7 @@ class MarketingInsightsQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @BeforeEach
     void setUp() {
         service = new MarketingInsightsQueryService(projectSecurityService, targetRepository, metricRepository,
-                workItemRepository, new PublishPlatformRegistry());
+                workItemRepository, new PublishPlatformRegistry(), creativePerformanceService);
 
         creator = new User();
         creator.setFirebaseUid("test-uid-" + UUID.randomUUID());

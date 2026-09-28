@@ -1,0 +1,126 @@
+/* frame.css — the shared creative artboard rules: everything a layout does
+ * not own. Ratios and layouts are both data, not hardcoded here.
+ *
+ *   Placements (artboard sizes and per-placement numbers: lockup, body, cta,
+ *   card padding) live in placements.json / placements.js. render.js reads
+ *   them and sets CSS custom properties on the board (--cc-board-w,
+ *   --cc-lockup-gap, --cc-body-size, ...).
+ *
+ *   Layouts (structural families: stacked, bleed, card, split, and any added
+ *   later) live in layouts/<name>/layout.json + layout.css. This file keeps
+ *   only what every layout shares: the artboard, the lockup, the headline,
+ *   the body, the cta row, sequence anchoring, and the safe-zone review
+ *   guide.
+ *
+ * NOTHING structural here may be position:absolute. A PNG exporter that
+ * screenshots this DOM (the future render job) can drop absolutely
+ * positioned layers, so every photo and scrim stays in normal flow: photos
+ * are painted as background-image on the artboard or a band, scrims are
+ * background-image on the text panel.
+ *
+ * This file has no @import and no font-face: fonts are brand data (a kit's
+ * `fontUrl`), loaded by mount.js's loadFont(), never bundled here.
+ */
+
+/* ── Artboard ─────────────────────────────────────────────────────────────── */
+.cc-board {
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  font-family: var(--cc-font);
+  background-color: var(--cc-d-bg);
+  -webkit-font-smoothing: antialiased;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: var(--cc-board-w);
+  height: var(--cc-board-h);
+}
+.cc-board--light { background-color: var(--cc-l-bg); }
+
+.cc-board__panel {
+  position: relative; /* keeps the panel above the glow */
+  box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: flex-start;
+}
+
+/* ── Sequence frames (stories and carousels) ──────────────────────────────── */
+/* Anchored to the bottom on every frame so the eye does not have to re-find the
+   copy between taps or swipes. The CTA appears only on the last frame. */
+.cc-board--seq .cc-lockup { position: absolute; top: var(--cc-safe-top, 48px); left: 88px; }
+
+/* ── Lockup ───────────────────────────────────────────────────────────────── */
+/* Renders only when the brand kit has a mark and/or a wordmark image; a kit
+   with neither renders no lockup at all (see render.js's buildLockup). */
+.cc-lockup { display: inline-flex; align-items: center; flex: none; align-self: flex-start; gap: var(--cc-lockup-gap); }
+.cc-lockup__icon { display: block; width: var(--cc-icon-size); height: var(--cc-icon-size); border-radius: var(--cc-icon-radius); }
+.cc-lockup__mark { display: block; height: var(--cc-mark-height); }
+.cc-lockup--spacer { visibility: hidden; }
+
+/* Chip variant: a white pill behind the lockup, for busy photography (ported
+   from nexus's schema.json `lockup: "chip"` / render.js). `--cc-l-card` and
+   `--cc-elev-overlay` are tokens.css's neutral light-ground surface and
+   shadow — brand-agnostic, so a white pill works over any brand's photo. */
+.cc-lockup--chip {
+  border-radius: 999px;
+  background: var(--cc-l-card);
+  box-shadow: var(--cc-elev-overlay);
+  padding: var(--cc-chip-pad);
+  gap: var(--cc-chip-gap);
+}
+.cc-lockup--chip .cc-lockup__icon {
+  width: var(--cc-chip-icon, var(--cc-icon-size));
+  height: var(--cc-chip-icon, var(--cc-icon-size));
+  border-radius: var(--cc-chip-icon-radius, var(--cc-icon-radius));
+}
+.cc-lockup--chip .cc-lockup__mark { height: var(--cc-chip-mark, var(--cc-mark-height)); }
+
+/* ── Headline ─────────────────────────────────────────────────────────────── */
+.cc-headline {
+  margin: 0;
+  font-size: var(--cc-h-size);
+  line-height: var(--cc-h-leading, 1.04);
+  font-weight: 800;
+  letter-spacing: var(--cc-h-track, -2.3px);
+  color: var(--cc-d-ink);
+  text-wrap: balance;
+}
+.cc-board--light .cc-headline { color: var(--cc-ink); }
+.cc-headline em { font-style: italic; color: var(--cc-accent); }
+
+/* ── Body ─────────────────────────────────────────────────────────────────── */
+.cc-body {
+  margin: 0;
+  font-weight: 500;
+  text-wrap: pretty;
+  font-size: var(--cc-body-size);
+  line-height: var(--cc-body-lh);
+  max-width: var(--cc-body-max-w);
+  color: var(--cc-body-color);
+}
+.cc-board--light .cc-body { font-size: var(--cc-light-body-size, var(--cc-body-size)); color: var(--cc-ink-2); }
+
+/* ── CTA row ──────────────────────────────────────────────────────────────── */
+/* Renders only when the kit has a badge image and/or a ctaClaim string; a kit
+   with neither renders no cta row at all (see render.js's buildCta). */
+.cc-cta { display: flex; align-items: center; flex-wrap: wrap; flex: none; gap: var(--cc-cta-gap); margin-top: var(--cc-cta-margin-top, 0); }
+
+/* The badge is brand artwork (a kit's `logos.badge`): sized by height only in
+   render.js, its own intrinsic aspect ratio preserved. Nothing here may
+   restyle it — no border, no border-radius, no filter, no shadow, no overlay —
+   since a store badge (Apple's, Google's, or a kit's own) typically comes with
+   guidelines against exactly that. */
+.cc-badge { display: block; flex: none; width: auto; }
+
+.cc-cta__note { font-weight: 600; font-size: var(--cc-note-size); color: var(--cc-note-color); }
+.cc-board--light .cc-cta__note { color: var(--cc-ink-2); }
+
+/* ── Safe zones (review guide only, never exported) ───────────────────────── */
+.cc-safe { position: absolute; inset: 0; pointer-events: none; }
+.cc-safe__top    { position: absolute; top: 0; left: 0; right: 0; height: var(--cc-safe-top);
+                   background: rgba(74,173,219,0.28); border-bottom: 2px dashed var(--cc-sky); }
+.cc-safe__bottom { position: absolute; bottom: 0; left: 0; right: 0; height: var(--cc-safe-bottom);
+                   background: rgba(74,173,219,0.28); border-top: 2px dashed var(--cc-sky); }
+.cc-safe__right  { position: absolute; bottom: var(--cc-safe-bottom); top: var(--cc-safe-top); right: 0;
+                   width: var(--cc-safe-right);
+                   background: rgba(74,173,219,0.20); border-left: 2px dashed var(--cc-sky); }

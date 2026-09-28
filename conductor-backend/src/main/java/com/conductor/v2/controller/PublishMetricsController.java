@@ -1,8 +1,11 @@
 package com.conductor.v2.controller;
 
+import com.conductor.creative.CreativePerformanceService;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.generated.v2.api.PublishMetricsApi;
+import com.conductor.generated.v2.model.CreativePerformanceEntry;
+import com.conductor.generated.v2.model.CreativePerformancePlatform;
 import com.conductor.generated.v2.model.InsightsCoverage;
 import com.conductor.generated.v2.model.InsightsGroup;
 import com.conductor.generated.v2.model.InsightsMover;
@@ -88,7 +91,19 @@ public class PublishMetricsController implements PublishMetricsApi {
                 r.topPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.bottomPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.movers().stream().map(PublishMetricsController::toMover).toList(),
-                new InsightsCoverage(r.coverage().platforms(), r.coverage().notes()));
+                new InsightsCoverage(r.coverage().platforms(), r.coverage().notes()),
+                r.creatives().stream().map(PublishMetricsController::toCreativeEntry).toList());
+    }
+
+    private static CreativePerformanceEntry toCreativeEntry(CreativePerformanceService.VariantPerformance p) {
+        return new CreativePerformanceEntry(p.creativeId(), p.label(), p.posts(), p.views(),
+                p.byPlatform().stream()
+                        .map(b -> new CreativePerformancePlatform(b.platform(), b.posts(), b.views()).engagementRate(b.engagementRate()))
+                        .toList())
+                .headline(p.headline())
+                .engagementRate(p.engagementRate())
+                .avgViewPct(p.avgViewPct())
+                .views72h(p.views72h());
     }
 
     private static InsightsWindow toWindow(MarketingInsightsQueryService.Window w) {

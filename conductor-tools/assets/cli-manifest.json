@@ -127,6 +127,26 @@
       "syntax": "conductor config set-url <url>",
       "description": "Update the API base URL. Use when running a self-hosted backend.",
       "category": "config"
+    },
+    {
+      "name": "creative render",
+      "syntax": "conductor creative render <creativeId>",
+      "description": "Render a Creative locally with a Playwright-driven browser to upload-ready JPEG frames, or a preview contact sheet. Prints the render id, state and frame URLs; exits non-zero on failure.",
+      "category": "marketing",
+      "options": [
+        {
+          "flag": "--preview",
+          "description": "Render a preview contact sheet instead of full-size frames"
+        },
+        {
+          "flag": "--renderer <name>",
+          "description": "Attribution tag stored on the render (default: cli)"
+        },
+        {
+          "flag": "--workflow-run-id <id>",
+          "description": "Attribute this render to a Workflow run"
+        }
+      ]
     }
   ],
   "claudeIntegration": {
@@ -168,6 +188,10 @@
       {
         "name": "conductor-publisher",
         "description": "Schedules and tracks a Post through the publishing pipeline: gathers copy, destinations and timing, checks content, creates it with create_post, reports the confirmation table, follows it through review and publishing."
+      },
+      {
+        "name": "conductor-creative",
+        "description": "Makes a Creative end to end: reads the Brand Kit and its Knowledge page, picks a photo and an angle, creates the Creative, renders and looks at the result, fixes what's wrong, then hands it to conductor-publisher."
       }
     ]
   },
@@ -695,6 +719,76 @@
       "description": "The project's best-performing published destinations ranked by one metric.",
       "category": "marketing",
       "requiredParams": []
+    },
+    {
+      "name": "get_brand_kit",
+      "description": "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context.",
+      "category": "marketing"
+    },
+    {
+      "name": "list_creatives",
+      "description": "List the project's Creatives (photo + headline + layout), newest display number first. Filter by state or brandKitId.",
+      "category": "marketing"
+    },
+    {
+      "name": "get_creative",
+      "description": "One Creative in full: its fields, readiness checklist, and the other lettered variants in its family.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId"
+      ]
+    },
+    {
+      "name": "create_creative",
+      "description": "Create a Creative, or with variantOf cut a lettered variant of an existing one. Refused with the failing rule's message on a validation or readiness error.",
+      "category": "marketing"
+    },
+    {
+      "name": "update_creative",
+      "description": "Patch a Creative's fields. version must match the current value or the write is refused with a 409 conflict.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId",
+        "version"
+      ]
+    },
+    {
+      "name": "upload_creative_photo",
+      "description": "Upload a photo into the project's photo library from a local file or a public URL, recording its provenance for the readiness checklist. Width/height are read from the file.",
+      "category": "marketing"
+    },
+    {
+      "name": "render_creative",
+      "description": "Render a Creative locally (Playwright on this machine) to upload-ready JPEG frames, or a contact sheet with previewOnly. Runs synchronously and returns the render id, state and frame URLs.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId"
+      ]
+    },
+    {
+      "name": "preview_creative",
+      "description": "Look at a Creative: returns its latest contact sheet as an image, rendering a fresh preview first if none exists yet.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId"
+      ]
+    },
+    {
+      "name": "attach_creative_to_post",
+      "description": "Attach a Creative's rendered frames to a Post as its media, placement to platform, for every destination without its own custom media. Call get_post_status (postId) to verify.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId",
+        "postId"
+      ]
+    },
+    {
+      "name": "create_experiment",
+      "description": "Start a hook experiment comparing every lettered variant of a Creative's family; settles itself once every variant has published and reported.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId"
+      ]
     }
   ]
 }

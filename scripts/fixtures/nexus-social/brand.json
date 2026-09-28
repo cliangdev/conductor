@@ -1,0 +1,25 @@
+{
+  "syncedAt": "2026-09-07",
+  "sources": {
+    "plans": "nexus-landing/src/data/plans.ts",
+    "membership": "nexus-app/shared/i18n/locales/en/membership.json",
+    "tokens": "nexus-landing/src/styles/global.css"
+  },
+  "copy": {
+    "trialDays": 7,
+    "trialClaim": "7 days free, then Pro or Pro Max.",
+    "priceDisclosure": "Pro and Pro Max are in-app purchases. Apple sets the price in your currency.",
+    "autoRenew": "Auto-renews until canceled. Cancel anytime in Settings."
+  },
+  "tokens": {
+    "--coral": "#FF5A5F",
+    "--coral-2": "#E8474C",
+    "--d-bg": "#1C1C1E",
+    "--d-ink": "#FFFFFF",
+    "--l-bg": "#F2F2F7",
+    "--l-card": "#FFFFFF",
+    "--ink": "#222222",
+    "--ink-2": "#717171",
+    "--sky": "#4AADDB"
+  }
+}

@@ -134,6 +134,19 @@ export function insightsResponse(overrides: Partial<MarketingInsightsResponse> =
       platforms: ['instagram', 'tiktok'],
       notes: ["Facebook doesn't report views; connect it under Integrations to include it here."],
     },
+    creatives: [
+      {
+        creativeId: 'cr-12b',
+        label: '12b',
+        headline: 'Stop scrolling, start cooking',
+        posts: 3,
+        views: 22000,
+        engagementRate: 0.11,
+        avgViewPct: null,
+        views72h: 18000,
+        byPlatform: [{ platform: 'tiktok', posts: 3, views: 22000, engagementRate: 0.11 }],
+      },
+    ],
     ...overrides,
   }
 }
@@ -160,5 +173,6 @@ export function emptyInsightsResponse(): MarketingInsightsResponse {
     bottomPosts: [],
     movers: [],
     coverage: { platforms: [], notes: [] },
+    creatives: [],
   })
 }

@@ -1,0 +1,33 @@
+/* tokens.css — neutral fallback tokens for the creative artboard.
+ *
+ * This package renders no brand: every color and font here is a plain,
+ * unbranded default so a board with no brand tokens applied still renders
+ * something legible. The real values come from a workspace's Brand Kit,
+ * applied at render time as inline custom properties on the board's own root
+ * element (see render.js's applyBrandTokens / mount.js's mountBoard) — never
+ * written here and never on `:root`, so two different kits can render on the
+ * same page (e.g. two creatives side by side) without colliding.
+ *
+ * Scoped to .cc-board so it cannot collide with the host app's own styles.
+ * All custom properties are prefixed --cc- for the same reason.
+ */
+
+.cc-board {
+  --cc-accent: #6B7280;    /* neutral accent; a kit's `tokens.accent` overrides this */
+  --cc-accent-2: #4B5563;  /* a kit's `tokens.accent2` overrides this */
+
+  --cc-d-bg: #1C1C1E;      /* dark artboard background and scrim end stop */
+  --cc-d-ink: #FFFFFF;     /* headline on dark */
+
+  --cc-l-bg: #F2F2F7;      /* light artboard background */
+  --cc-l-card: #FFFFFF;    /* light-ground card/chip background */
+  --cc-ink: #222222;       /* headline on light */
+  --cc-ink-2: #717171;     /* body on light */
+
+  --cc-sky: #4AADDB;       /* safe-zone review guide only, never in an export */
+
+  --cc-elev-overlay: 0 8px 24px rgba(0,0,0,0.12);
+  --cc-elev-high: 0 8px 32px rgba(0,0,0,0.10);
+
+  --cc-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}

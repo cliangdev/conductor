@@ -1,0 +1,17 @@
+{
+  "name": "split",
+  "description": "Photo on the top half, copy on a solid panel below, no scrim.",
+  "themes": [
+    "dark"
+  ],
+  "lockupInPanel": true,
+  "photo": "band",
+  "panel": "plain",
+  "band": {
+    "9x16": 960,
+    "4x5": 675,
+    "1x1": 540
+  },
+  "dropBody": [],
+  "bandScrim": false
+}

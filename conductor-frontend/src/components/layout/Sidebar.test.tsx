@@ -287,8 +287,21 @@ describe('Sidebar', () => {
       '/app/projects/proj-1/marketing/posts',
       '/app/projects/proj-1/marketing/campaigns',
       '/app/projects/proj-1/marketing/insights',
+      '/app/projects/proj-1/marketing/creatives',
       '/app/projects/proj-1/marketing/assets',
     ])
+  })
+
+  it('renders Creatives as a sibling of the Posts entry inside the Marketing group', async () => {
+    (apiGet as Mock).mockResolvedValue([
+      workflow({ id: 'wf-mkt', name: 'MARKETING', area: 'MARKETING', slug: 'MARKETING', noun: 'Post' }),
+    ])
+    render(<Sidebar />)
+
+    const posts = await screen.findByRole('link', { name: /posts/i })
+    const creatives = screen.getByRole('link', { name: /creatives/i })
+    expect(creatives).toHaveAttribute('href', '/app/projects/proj-1/marketing/creatives')
+    expect(posts.parentElement).toBe(creatives.parentElement)
   })
 
   it('does not render What’s working or Asset Library when no Marketing workflow is in the nav', async () => {
@@ -297,6 +310,7 @@ describe('Sidebar', () => {
 
     await screen.findByRole('link', { name: /issues/i })
     expect(screen.queryByRole('link', { name: /what.s working/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^creatives$/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /asset library/i })).not.toBeInTheDocument()
   })
 

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'conductor-frontend/**'
+      - 'conductor-creative/**'
       - '.github/workflows/frontend-ci.yml'
       - '.github/actions/frontend-test/**'
 

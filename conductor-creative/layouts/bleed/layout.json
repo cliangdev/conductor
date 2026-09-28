@@ -1,0 +1,17 @@
+{
+  "name": "bleed",
+  "description": "Photo fills the artboard, copy sits over a scrim.",
+  "themes": [
+    "dark"
+  ],
+  "lockupInPanel": true,
+  "photo": "background",
+  "panel": "fill",
+  "dropBody": [],
+  "perPlacement": {
+    "1x1": {
+      "layout": "bleed",
+      "panel": "bottom"
+    }
+  }
+}

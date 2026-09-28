@@ -132,6 +132,54 @@ public class AssetService {
     public record FileAssetUploadTicket(Asset asset, String uploadUrl) {
     }
 
+    /**
+     * A file Asset whose bytes are already sitting in storage at {@code gcsPath} — the shape a system
+     * caller uses when it copied the bytes itself rather than minting a signed upload (COND-24 T3:
+     * {@code CreativeAttachService} copies a Creative render frame into the Post's own asset prefix, then
+     * calls {@link #createFromStoredObject} to record it as a Post asset in one step, already
+     * {@code UPLOADED}).
+     */
+    public record StoredObjectInput(String type, String label, String gcsPath, String contentType, long sizeBytes,
+                                    Integer width, Integer height, String creativeFrameId) {
+    }
+
+    /**
+     * Records a file Asset whose bytes are already at {@code input.gcsPath()} — no signed URL, no PENDING
+     * row, straight to {@code UPLOADED}. Runs the same type/immutability guards {@link #createFileAsset}
+     * does, but skips {@link AssetUploadPolicy}'s allowlist: the caller already validated (or produced)
+     * these bytes itself (a render frame is always {@code image/png}), and re-checking against the
+     * upload-facing allowlist here would only reject a type that allowlist has no reason to know about.
+     *
+     * <p>No caller/membership check — this is a system path invoked from within another service's own
+     * transaction (mirrors {@link #recordAsset}), after that service has already established the caller
+     * may edit the Work Item.
+     */
+    @Transactional
+    public Asset createFromStoredObject(String projectId, String workItemId, StoredObjectInput input) {
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        validateAssetType(projectId, workItem, input.type());
+        guardFileAssetMutable(projectId, workItem);
+
+        Asset asset = new Asset();
+        asset.setWorkItem(workItem);
+        asset.setType(input.type());
+        asset.setLabel(input.label());
+        asset.setKind(KIND_FILE);
+        asset.setRef(input.gcsPath());
+        asset.setGcsPath(input.gcsPath());
+        asset.setContentType(input.contentType());
+        asset.setSizeBytes(input.sizeBytes());
+        asset.setWidth(positiveOrNull(input.width()));
+        asset.setHeight(positiveOrNull(input.height()));
+        asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
+        asset.setDone(true);
+        asset.setCreativeFrameId(input.creativeFrameId());
+        assetRepository.save(asset);
+
+        publishAssetAdded(projectId, workItem, asset);
+        return asset;
+    }
+
     @Transactional(readOnly = true)
     public List<Asset> listAssets(String projectId, String workItemId, User caller) {
         verifyMembership(projectId, caller.getId());
@@ -393,6 +441,19 @@ public class AssetService {
         if (!KIND_FILE.equals(asset.getKind())) {
             throw new BusinessException("Asset " + asset.getId() + " is not a file asset");
         }
+    }
+
+    /**
+     * The asset type a system caller should file an Asset under when it has no meaningful type of its own
+     * to offer — the workflow's first declared {@code asset_types} entry, mirroring the frontend's
+     * {@code MediaUploadPanel} default (the type used to be a real "which channel" choice and no longer
+     * decides anything; see that component's own doc comment), or {@code "media"} for a workflow that
+     * declares none. Used by {@code CreativeAttachService}, which has nothing better to call a Creative
+     * render frame copied onto a Post.
+     */
+    public String defaultAssetType(String projectId, WorkItem workItem) {
+        List<String> allowed = resolveStatechart(projectId, workItem).assetTypes();
+        return allowed.isEmpty() ? "media" : allowed.get(0);
     }
 
     private void validateAssetType(String projectId, WorkItem workItem, String type) {
