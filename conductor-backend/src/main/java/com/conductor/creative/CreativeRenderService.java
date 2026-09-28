@@ -363,13 +363,16 @@ public class CreativeRenderService {
         return new CreativeRenderSpec(render.getId(), render.isPreviewOnly(), creativeSpec, brand, placements);
     }
 
+    static final String DEFAULT_CAROUSEL_RATIO = "4x5";
+
     /** kit enabled ∪ creative opt-ins ∩ registry — except a sequence Creative, which renders only its own shape. */
     List<String> resolvePlacements(BrandKit kit, Creative creative) {
         if ("story".equals(creative.getSequenceKind())) {
             return List.of("story");
         }
         if ("carousel".equals(creative.getSequenceKind())) {
-            return creative.getCarouselRatio() != null ? List.of(creative.getCarouselRatio()) : List.of();
+            // nexus's default: a carousel with no ratio set is a 4:5 Instagram carousel.
+            return List.of(creative.getCarouselRatio() != null ? creative.getCarouselRatio() : DEFAULT_CAROUSEL_RATIO);
         }
         Set<String> union = new LinkedHashSet<>(toStringList(kit.getEnabledPlacements()));
         union.addAll(toStringList(creative.getPlacements()));

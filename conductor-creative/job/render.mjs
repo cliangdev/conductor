@@ -74,6 +74,9 @@ export function framesFor(spec) {
   const { creative, placements, previewOnly } = spec;
   if (previewOnly) return [{ page: 'sheet.html', placementKey: 'sheet' }];
   const isSequence = creative.sequenceKind && Array.isArray(creative.sequence) && creative.sequence.length;
+  if (!placements || !placements.length) {
+    throw new Error('the render spec names no placements to render (check the Brand Kit\'s enabled placements, or the carousel ratio)');
+  }
   if (isSequence) {
     const key = placements[0];
     return creative.sequence.map((_, index) => ({ page: 'frame.html', placementKey: key, index }));

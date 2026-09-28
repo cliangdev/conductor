@@ -271,6 +271,21 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
+    void aCarouselWithNoRatioSetRendersAt4x5() {
+        Creative carousel = new Creative();
+        carousel.setProjectId(project.getId());
+        carousel.setBrandKitId(defaultKit.getId());
+        carousel.setLayout("bleed");
+        carousel.setTheme(Creative.THEME_DARK);
+        carousel.setSequenceKind("carousel");
+        carousel.setPlacements(objectMapper.valueToTree(List.of()));
+        carousel.setSequence(objectMapper.valueToTree(List.of()));
+        carousel.setTypeOverrides(objectMapper.createObjectNode());
+
+        assertThat(renderService.resolvePlacements(defaultKit, carousel)).containsExactly("4x5");
+    }
+
+    @Test
     void aSinglePlacementCreativeResolvesToTheKitAndOptInUnionIntersectedWithTheRegistry() {
         Creative single = new Creative();
         single.setProjectId(project.getId());

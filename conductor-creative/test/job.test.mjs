@@ -238,3 +238,8 @@ test('framesFor: a plain creative produces one frame per placement, no index', (
     { page: 'frame.html', placementKey: '4x5' },
   ]);
 });
+
+test('framesFor: a spec with no placements fails with a readable message', () => {
+  assert.throws(() => framesFor({ creative: { sequenceKind: 'carousel', sequence: [{}, {}] }, placements: [] }), /names no placements/);
+  assert.throws(() => framesFor({ creative: {}, placements: [] }), /names no placements/);
+});
