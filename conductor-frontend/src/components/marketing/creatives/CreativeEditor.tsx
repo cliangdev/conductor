@@ -33,10 +33,13 @@ import { useToast } from '@/components/ui/toast'
 import { Can } from '@/components/auth/Can'
 import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage, type ApiError } from '@/lib/api'
+import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
+import { CLIP_PLACEMENT_KEYS, nearestAspectPlacement } from '@/components/marketing/creatives/clipPlacement'
 import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
 import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
+import { MediaPicker } from '@/components/marketing/creatives/MediaPicker'
 import { PhotoPicker } from '@/components/marketing/creatives/PhotoPicker'
 import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
 import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
@@ -50,6 +53,7 @@ import {
   listCreativePhotos,
   patchCreative,
   type Creative,
+  type CreativeKind,
   type CreativeLockup,
   type CreativePhoto,
   type CreativeRegistry,
@@ -77,6 +81,7 @@ interface FormState {
   brandKitId: string
   name: string
   state: CreativeState
+  kind: CreativeKind
   layout: string
   theme: CreativeTheme
   photoId: string | null
@@ -85,6 +90,8 @@ interface FormState {
   body: string
   caption: string
   altText: string
+  /** CLIP only — see the `Creative.clipMedia` doc comment in types.ts. */
+  clipMedia: Record<string, string>
   placements: string[]
   sequenceKind: SequenceKind | null
   sequence: SequenceBeat[]
@@ -118,6 +125,7 @@ function toForm(creative: Creative): FormState {
     brandKitId: creative.brandKitId,
     name: creative.name ?? '',
     state: creative.state,
+    kind: creative.kind ?? 'STILL',
     layout: creative.layout,
     theme: creative.theme,
     photoId: creative.photoId ?? null,
@@ -126,6 +134,7 @@ function toForm(creative: Creative): FormState {
     body: creative.body ?? '',
     caption: creative.caption ?? '',
     altText: creative.altText ?? '',
+    clipMedia: { ...(creative.clipMedia ?? {}) },
     placements: [...creative.placements],
     sequenceKind: creative.sequenceKind ?? null,
     sequence: creative.sequence.map((b) => ({ ...b })),
@@ -317,6 +326,134 @@ function PlacementViewerBoard({
   )
 }
 
+/** One row of the Clip media section — the default video, or one placement's override. */
+function ClipMediaRow({
+  rowKey,
+  rowLabel,
+  servesLabel,
+  media,
+  canManage,
+  onPick,
+  onClear,
+}: {
+  rowKey: string
+  rowLabel: string
+  servesLabel: string
+  media: CreativePhoto | undefined
+  canManage: boolean
+  onPick: () => void
+  onClear: () => void
+}) {
+  const aspect = media?.width && media?.height ? media.width / media.height : 9 / 16
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label>{rowLabel}</Label>
+        {media && canManage && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-xs text-muted-foreground hover:text-destructive"
+            aria-label={`Remove ${rowLabel.toLowerCase()} video`}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      {media ? (
+        <div className="space-y-1">
+          <video
+            controls
+            muted
+            playsInline
+            poster={media.posterUrl ?? undefined}
+            src={media.url ?? undefined}
+            data-testid={`clip-media-video-${rowKey}`}
+            className="max-h-52 rounded-md border border-border bg-surface-3"
+            style={{ aspectRatio: aspect }}
+          />
+          <p className="text-xs text-muted-foreground">
+            {media.width && media.height ? `${media.width}×${media.height} · ` : ''}
+            {media.durationSeconds != null ? formatDuration(media.durationSeconds) : '—'} · {servesLabel}
+          </p>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onPick}
+          disabled={!canManage}
+          className="flex h-20 w-full items-center justify-center rounded-md border border-dashed border-border-strong text-sm text-muted-foreground hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Choose a video…
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** CLIP mode's right-column section — replaces the STILL/MOTION "Live preview" boards with the
+ *  default video plus each optional per-placement override, matching video-contract.md's "Web"
+ *  section: "a default video + optional per-placement videos ... each a `<video controls muted
+ *  playsInline poster>` with its ratio, duration and which placement(s) it will serve". */
+function ClipMediaSection({
+  form,
+  update,
+  registry,
+  mediaById,
+  canManage,
+  onPick,
+}: {
+  form: FormState
+  update: <K extends keyof FormState>(key: K, value: FormState[K]) => void
+  registry: CreativeRegistry
+  mediaById: Map<string, CreativePhoto>
+  canManage: boolean
+  onPick: (rowKey: string) => void
+}) {
+  const defaultMedia = form.clipMedia.default ? mediaById.get(form.clipMedia.default) : undefined
+  const defaultNearest = defaultMedia ? nearestAspectPlacement(registry.placements, defaultMedia.width, defaultMedia.height) : null
+  const defaultServes = defaultNearest
+    ? `Serves ${registry.placements.find((p) => p.key === defaultNearest)?.label ?? defaultNearest} by default (nearest match)`
+    : 'Serves every placement without its own video'
+
+  function clearRow(rowKey: string) {
+    const next = { ...form.clipMedia }
+    delete next[rowKey]
+    update('clipMedia', next)
+  }
+
+  return (
+    <Card className="space-y-4 p-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Clip media</h3>
+      <ClipMediaRow
+        rowKey="default"
+        rowLabel="Default (all placements)"
+        servesLabel={defaultServes}
+        media={defaultMedia}
+        canManage={canManage}
+        onPick={() => onPick('default')}
+        onClear={() => clearRow('default')}
+      />
+      {CLIP_PLACEMENT_KEYS.map((key) => {
+        const media = form.clipMedia[key] ? mediaById.get(form.clipMedia[key]) : undefined
+        const label = registry.placements.find((p) => p.key === key)?.label ?? key
+        return (
+          <ClipMediaRow
+            key={key}
+            rowKey={key}
+            rowLabel={label}
+            servesLabel={`Serves ${label}`}
+            media={media}
+            canManage={canManage}
+            onPick={() => onPick(key)}
+            onClear={() => clearRow(key)}
+          />
+        )
+      })}
+    </Card>
+  )
+}
+
 export interface CreativeEditorProps {
   projectId: string
   creativeId: string
@@ -343,6 +480,9 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   // Which sequence beat's photo the shared PhotoPicker modal is targeting; null means the
   // Creative's own main photo. One modal instance is reused for both (see its onSelect below).
   const [beatPhotoPickerIndex, setBeatPhotoPickerIndex] = useState<number | null>(null)
+  // CLIP mode: which clipMedia slot ('default' or a placement key) the shared video MediaPicker is
+  // targeting; null means it's closed.
+  const [clipMediaPickerKey, setClipMediaPickerKey] = useState<string | null>(null)
   const [variantOpen, setVariantOpen] = useState(false)
   const [variantHeadline, setVariantHeadline] = useState('')
   const [variantBusy, setVariantBusy] = useState(false)
@@ -505,6 +645,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           brandKitId: form.brandKitId,
           name: form.name || undefined,
           state: form.state,
+          kind: form.kind,
           layout: form.layout,
           theme: form.theme,
           photoId: form.photoId,
@@ -513,6 +654,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           body: form.body,
           caption: form.caption,
           altText: form.altText,
+          clipMedia: Object.keys(form.clipMedia).length ? form.clipMedia : null,
           placements: form.placements,
           sequenceKind: form.sequenceKind,
           sequence: form.sequence,
@@ -659,6 +801,21 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           <legend className="sr-only">Creative details</legend>
           <Card className="space-y-3 p-4">
             <div>
+              <Label htmlFor="creative-kind">Kind</Label>
+              <Select
+                id="creative-kind"
+                value={form.kind}
+                onChange={(e) => update('kind', e.target.value as CreativeKind)}
+              >
+                <option value="STILL">Still</option>
+                <option value="MOTION" disabled>
+                  Motion — coming next
+                </option>
+                <option value="CLIP">Clip</option>
+              </Select>
+            </div>
+
+            <div>
               <Label htmlFor="creative-name">Name</Label>
               <Input id="creative-name" value={form.name} onChange={(e) => update('name', e.target.value)} />
             </div>
@@ -677,80 +834,84 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               ))}
             </div>
 
-            <div>
-              <Label>Photo</Label>
-              <button
-                type="button"
-                onClick={() => setPhotoPickerOpen(true)}
-                className="flex w-full items-center gap-2 rounded-md border border-border-strong px-2 py-1.5 text-left text-sm hover:bg-surface-3"
-              >
-                {photo?.url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={photo.url} alt="" className="h-8 w-8 rounded object-cover" />
-                ) : (
-                  <span className="h-8 w-8 rounded bg-surface-3" />
-                )}
-                <span className="truncate text-muted-foreground">{photoDisplayName(photo)}</span>
-              </button>
-              {violationsFor(saveError, 'photoId').map((m) => (
-                <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="creative-layout">Layout</Label>
-                <Select
-                  id="creative-layout"
-                  value={form.layout}
-                  onChange={(e) => {
-                    const layout = e.target.value
-                    const themes = registry.layouts[layout]?.themes ?? []
-                    setForm((prev) =>
-                      prev ? { ...prev, layout, theme: (themes.includes(prev.theme) ? prev.theme : (themes[0] as CreativeTheme) ?? prev.theme) } : prev,
-                    )
-                  }}
-                >
-                  {layoutOptions.map((l) => (
-                    <option key={l} value={l}>
-                      {l}
-                    </option>
+            {form.kind !== 'CLIP' && (
+              <>
+                <div>
+                  <Label>Photo</Label>
+                  <button
+                    type="button"
+                    onClick={() => setPhotoPickerOpen(true)}
+                    className="flex w-full items-center gap-2 rounded-md border border-border-strong px-2 py-1.5 text-left text-sm hover:bg-surface-3"
+                  >
+                    {photo?.url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={photo.url} alt="" className="h-8 w-8 rounded object-cover" />
+                    ) : (
+                      <span className="h-8 w-8 rounded bg-surface-3" />
+                    )}
+                    <span className="truncate text-muted-foreground">{photoDisplayName(photo)}</span>
+                  </button>
+                  {violationsFor(saveError, 'photoId').map((m) => (
+                    <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
                   ))}
-                </Select>
-                {violationsFor(saveError, 'layout').map((m) => (
-                  <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-                ))}
-              </div>
-              <div>
-                <Label htmlFor="creative-theme">Theme</Label>
-                <Select id="creative-theme" value={form.theme} onChange={(e) => update('theme', e.target.value as CreativeTheme)}>
-                  {themeOptions.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="creative-layout">Layout</Label>
+                    <Select
+                      id="creative-layout"
+                      value={form.layout}
+                      onChange={(e) => {
+                        const layout = e.target.value
+                        const themes = registry.layouts[layout]?.themes ?? []
+                        setForm((prev) =>
+                          prev ? { ...prev, layout, theme: (themes.includes(prev.theme) ? prev.theme : (themes[0] as CreativeTheme) ?? prev.theme) } : prev,
+                        )
+                      }}
+                    >
+                      {layoutOptions.map((l) => (
+                        <option key={l} value={l}>
+                          {l}
+                        </option>
+                      ))}
+                    </Select>
+                    {violationsFor(saveError, 'layout').map((m) => (
+                      <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                    ))}
+                  </div>
+                  <div>
+                    <Label htmlFor="creative-theme">Theme</Label>
+                    <Select id="creative-theme" value={form.theme} onChange={(e) => update('theme', e.target.value as CreativeTheme)}>
+                      {themeOptions.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </Select>
+                    {violationsFor(saveError, 'theme').map((m) => (
+                      <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="creative-headline">Headline</Label>
+                  <Textarea id="creative-headline" value={form.headline} onChange={(e) => update('headline', e.target.value)} rows={2} />
+                  {messagesFor('headline').map((m) => (
+                    <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
                   ))}
-                </Select>
-                {violationsFor(saveError, 'theme').map((m) => (
-                  <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            <div>
-              <Label htmlFor="creative-headline">Headline</Label>
-              <Textarea id="creative-headline" value={form.headline} onChange={(e) => update('headline', e.target.value)} rows={2} />
-              {messagesFor('headline').map((m) => (
-                <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-              ))}
-            </div>
-
-            <div>
-              <Label htmlFor="creative-body">Body</Label>
-              <Textarea id="creative-body" value={form.body} onChange={(e) => update('body', e.target.value)} rows={3} />
-              {messagesFor('body').map((m) => (
-                <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-              ))}
-            </div>
+                <div>
+                  <Label htmlFor="creative-body">Body</Label>
+                  <Textarea id="creative-body" value={form.body} onChange={(e) => update('body', e.target.value)} rows={3} />
+                  {messagesFor('body').map((m) => (
+                    <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                  ))}
+                </div>
+              </>
+            )}
 
             <div>
               <Label htmlFor="creative-caption">Caption</Label>
@@ -765,27 +926,29 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               <Input id="creative-alt-text" value={form.altText} onChange={(e) => update('altText', e.target.value)} />
             </div>
 
-            <div>
-              <Label>Extra placements</Label>
-              <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-                {registry.placements
-                  .filter((p) => !(brand.enabledPlacements ?? []).includes(p.key))
-                  .map((p) => (
-                    <Checkbox
-                      key={p.key}
-                      id={`extra-placement-${p.key}`}
-                      checked={form.placements.includes(p.key)}
-                      onCheckedChange={(checked) =>
-                        update(
-                          'placements',
-                          checked ? [...form.placements, p.key] : form.placements.filter((k) => k !== p.key),
-                        )
-                      }
-                      label={p.label}
-                    />
-                  ))}
+            {form.kind !== 'CLIP' && (
+              <div>
+                <Label>Extra placements</Label>
+                <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                  {registry.placements
+                    .filter((p) => !(brand.enabledPlacements ?? []).includes(p.key))
+                    .map((p) => (
+                      <Checkbox
+                        key={p.key}
+                        id={`extra-placement-${p.key}`}
+                        checked={form.placements.includes(p.key)}
+                        onCheckedChange={(checked) =>
+                          update(
+                            'placements',
+                            checked ? [...form.placements, p.key] : form.placements.filter((k) => k !== p.key),
+                          )
+                        }
+                        label={p.label}
+                      />
+                    ))}
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               <Label htmlFor="creative-state">State</Label>
@@ -796,157 +959,171 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               </Select>
             </div>
 
-            <div className="border-t border-border pt-3">
-              <button
-                type="button"
-                onClick={() => setAdvancedOpen((o) => !o)}
-                className="flex w-full items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                aria-expanded={advancedOpen}
-              >
-                <ChevronDownIcon className={cn('h-3.5 w-3.5 transition-transform', !advancedOpen && '-rotate-90')} aria-hidden />
-                Advanced
-              </button>
-              {advancedOpen && (
-                <div className="mt-2 space-y-3">
-                  <div>
-                    <Label htmlFor="creative-lockup">Lockup</Label>
-                    <Select
-                      id="creative-lockup"
-                      value={form.lockup}
-                      onChange={(e) => update('lockup', e.target.value as CreativeLockup)}
-                    >
-                      <option value="plain">Plain</option>
-                      <option value="chip">Chip (white pill, for busy photography)</option>
-                    </Select>
-                  </div>
+            {form.kind !== 'CLIP' && (
+              <div className="border-t border-border pt-3">
+                <button
+                  type="button"
+                  onClick={() => setAdvancedOpen((o) => !o)}
+                  className="flex w-full items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                  aria-expanded={advancedOpen}
+                >
+                  <ChevronDownIcon className={cn('h-3.5 w-3.5 transition-transform', !advancedOpen && '-rotate-90')} aria-hidden />
+                  Advanced
+                </button>
+                {advancedOpen && (
+                  <div className="mt-2 space-y-3">
+                    <div>
+                      <Label htmlFor="creative-lockup">Lockup</Label>
+                      <Select
+                        id="creative-lockup"
+                        value={form.lockup}
+                        onChange={(e) => update('lockup', e.target.value as CreativeLockup)}
+                      >
+                        <option value="plain">Plain</option>
+                        <option value="chip">Chip (white pill, for busy photography)</option>
+                      </Select>
+                    </div>
 
-                  <div>
-                    <Label>Layout overrides (px)</Label>
-                    <p className="mb-1.5 text-xs text-muted-foreground">
-                      Blank inherits the layout&apos;s own default for that placement.
-                    </p>
-                    <div className="space-y-1.5">
-                      {registry.placements.map((p) => (
-                        <div key={p.key} className="grid grid-cols-[auto_1fr_1fr] items-center gap-2">
-                          <span className="text-xs text-muted-foreground">{p.key}</span>
-                          <Input
-                            type="number"
-                            aria-label={`${p.key} band height override`}
-                            placeholder="Band"
-                            value={form.layoutOverrideBand[p.key] ?? ''}
-                            onChange={(e) =>
-                              update('layoutOverrideBand', { ...form.layoutOverrideBand, [p.key]: e.target.value })
-                            }
-                          />
-                          <Input
-                            type="number"
-                            aria-label={`${p.key} bottom padding override`}
-                            placeholder="Pad bottom"
-                            value={form.layoutOverridePadBottom[p.key] ?? ''}
-                            onChange={(e) =>
-                              update('layoutOverridePadBottom', { ...form.layoutOverridePadBottom, [p.key]: e.target.value })
-                            }
-                          />
-                        </div>
+                    <div>
+                      <Label>Layout overrides (px)</Label>
+                      <p className="mb-1.5 text-xs text-muted-foreground">
+                        Blank inherits the layout&apos;s own default for that placement.
+                      </p>
+                      <div className="space-y-1.5">
+                        {registry.placements.map((p) => (
+                          <div key={p.key} className="grid grid-cols-[auto_1fr_1fr] items-center gap-2">
+                            <span className="text-xs text-muted-foreground">{p.key}</span>
+                            <Input
+                              type="number"
+                              aria-label={`${p.key} band height override`}
+                              placeholder="Band"
+                              value={form.layoutOverrideBand[p.key] ?? ''}
+                              onChange={(e) =>
+                                update('layoutOverrideBand', { ...form.layoutOverrideBand, [p.key]: e.target.value })
+                              }
+                            />
+                            <Input
+                              type="number"
+                              aria-label={`${p.key} bottom padding override`}
+                              placeholder="Pad bottom"
+                              value={form.layoutOverridePadBottom[p.key] ?? ''}
+                              onChange={(e) =>
+                                update('layoutOverridePadBottom', { ...form.layoutOverridePadBottom, [p.key]: e.target.value })
+                              }
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      {violationsFor(saveError, 'layoutOverrides.band').concat(violationsFor(saveError, 'layoutOverrides.padBottom')).map((m) => (
+                        <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
                       ))}
                     </div>
-                    {violationsFor(saveError, 'layoutOverrides.band').concat(violationsFor(saveError, 'layoutOverrides.padBottom')).map((m) => (
-                      <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
-                    ))}
                   </div>
-                </div>
-              )}
-            </div>
-          </Card>
-
-          <Card className="space-y-3 p-4">
-            <Label htmlFor="creative-sequence-kind">Sequence</Label>
-            <Select
-              id="creative-sequence-kind"
-              value={form.sequenceKind ?? ''}
-              onChange={(e) => {
-                const v = e.target.value
-                update('sequenceKind', v ? (v as SequenceKind) : null)
-              }}
-            >
-              <option value="">None</option>
-              <option value="story">Story</option>
-              <option value="carousel">Carousel</option>
-            </Select>
-
-            {form.sequenceKind && (
-              <div className="space-y-2">
-                {form.sequence.map((beat, i) => {
-                  const beatPhoto = beat.photoId ? photoById.get(beat.photoId) : undefined
-                  return (
-                  <div key={i} className="flex items-start gap-2 rounded-md border border-border p-2">
-                    <span className="mt-1.5 text-xs text-muted-foreground">{i + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => setBeatPhotoPickerIndex(i)}
-                      aria-label={`Beat ${i + 1} photo`}
-                      className="mt-0.5 h-8 w-8 shrink-0 overflow-hidden rounded border border-border-strong bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {beatPhoto?.url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={beatPhoto.url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="sr-only">Choose a photo for this beat</span>
-                      )}
-                    </button>
-                    <div className="flex-1 space-y-1">
-                      <Input
-                        aria-label={`Beat ${i + 1} headline`}
-                        value={beat.headline ?? ''}
-                        onChange={(e) =>
-                          update(
-                            'sequence',
-                            form.sequence.map((b, idx) => (idx === i ? { ...b, headline: e.target.value } : b)),
-                          )
-                        }
-                        placeholder={i === 0 ? form.headline || 'Headline (inherits above)' : 'Headline'}
-                      />
-                      <Textarea
-                        aria-label={`Beat ${i + 1} body`}
-                        value={beat.body ?? ''}
-                        onChange={(e) =>
-                          update(
-                            'sequence',
-                            form.sequence.map((b, idx) => (idx === i ? { ...b, body: e.target.value } : b)),
-                          )
-                        }
-                        rows={2}
-                        placeholder="Body (optional, not inherited)"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      aria-label={`Remove beat ${i + 1}`}
-                      onClick={() => update('sequence', form.sequence.filter((_, idx) => idx !== i))}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <XIcon className="h-3.5 w-3.5" aria-hidden />
-                    </button>
-                  </div>
-                  )
-                })}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => update('sequence', [...form.sequence, {}])}
-                >
-                  <PlusIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                  Beat
-                </Button>
-                {violationsFor(saveError, 'sequence').map((m) => (
-                  <p key={m} className="text-xs text-destructive">{m}</p>
-                ))}
+                )}
               </div>
             )}
           </Card>
+
+          {form.kind !== 'CLIP' && (
+            <Card className="space-y-3 p-4">
+              <Label htmlFor="creative-sequence-kind">Sequence</Label>
+              <Select
+                id="creative-sequence-kind"
+                value={form.sequenceKind ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value
+                  update('sequenceKind', v ? (v as SequenceKind) : null)
+                }}
+              >
+                <option value="">None</option>
+                <option value="story">Story</option>
+                <option value="carousel">Carousel</option>
+              </Select>
+
+              {form.sequenceKind && (
+                <div className="space-y-2">
+                  {form.sequence.map((beat, i) => {
+                    const beatPhoto = beat.photoId ? photoById.get(beat.photoId) : undefined
+                    return (
+                    <div key={i} className="flex items-start gap-2 rounded-md border border-border p-2">
+                      <span className="mt-1.5 text-xs text-muted-foreground">{i + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => setBeatPhotoPickerIndex(i)}
+                        aria-label={`Beat ${i + 1} photo`}
+                        className="mt-0.5 h-8 w-8 shrink-0 overflow-hidden rounded border border-border-strong bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {beatPhoto?.url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={beatPhoto.url} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="sr-only">Choose a photo for this beat</span>
+                        )}
+                      </button>
+                      <div className="flex-1 space-y-1">
+                        <Input
+                          aria-label={`Beat ${i + 1} headline`}
+                          value={beat.headline ?? ''}
+                          onChange={(e) =>
+                            update(
+                              'sequence',
+                              form.sequence.map((b, idx) => (idx === i ? { ...b, headline: e.target.value } : b)),
+                            )
+                          }
+                          placeholder={i === 0 ? form.headline || 'Headline (inherits above)' : 'Headline'}
+                        />
+                        <Textarea
+                          aria-label={`Beat ${i + 1} body`}
+                          value={beat.body ?? ''}
+                          onChange={(e) =>
+                            update(
+                              'sequence',
+                              form.sequence.map((b, idx) => (idx === i ? { ...b, body: e.target.value } : b)),
+                            )
+                          }
+                          rows={2}
+                          placeholder="Body (optional, not inherited)"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={`Remove beat ${i + 1}`}
+                        onClick={() => update('sequence', form.sequence.filter((_, idx) => idx !== i))}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <XIcon className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    </div>
+                    )
+                  })}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => update('sequence', [...form.sequence, {}])}
+                  >
+                    <PlusIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    Beat
+                  </Button>
+                  {violationsFor(saveError, 'sequence').map((m) => (
+                    <p key={m} className="text-xs text-destructive">{m}</p>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
         </fieldset>
 
         <div className="space-y-4">
+          {form.kind === 'CLIP' ? (
+            <ClipMediaSection
+              form={form}
+              update={update}
+              registry={registry}
+              mediaById={photoById}
+              canManage={canManage}
+              onPick={setClipMediaPickerKey}
+            />
+          ) : (
           <Card className="space-y-3 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Live preview · click a frame to view it full size{canManage && ' · drag to set its focal point'}
@@ -993,6 +1170,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               </div>
             )}
           </Card>
+          )}
 
           {readiness && (
             <Card className="space-y-1.5 p-4">
@@ -1015,6 +1193,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             creativeId={creativeId}
             creativeDisplayId={creative.displayId}
             creativeVersion={creative.version}
+            creativeKind={form.kind}
             token={token}
             registry={registry}
             onLatestSucceededChange={setLatestSucceededRender}
@@ -1049,6 +1228,24 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           }
           setPhotoPickerOpen(false)
           setBeatPhotoPickerIndex(null)
+        }}
+      />
+
+      <MediaPicker
+        projectId={projectId}
+        token={token}
+        open={clipMediaPickerKey !== null}
+        onOpenChange={(open) => {
+          if (!open) setClipMediaPickerKey(null)
+        }}
+        kind="VIDEO"
+        media={photos}
+        onMediaChanged={() => listCreativePhotos(projectId, token, true).then(setPhotos)}
+        onSelect={(m) => {
+          if (clipMediaPickerKey) {
+            update('clipMedia', { ...form.clipMedia, [clipMediaPickerKey]: m.id })
+          }
+          setClipMediaPickerKey(null)
         }}
       />
 
@@ -1118,6 +1315,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           creativeId={creativeId}
           creativeDisplayId={creative.displayId}
           renderId={latestSucceededRender.id}
+          renderFrames={latestSucceededRender.frames}
           token={token}
         />
       )}

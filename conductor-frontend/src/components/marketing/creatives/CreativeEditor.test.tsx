@@ -89,6 +89,7 @@ function creative(overrides: Partial<Creative> = {}): Creative {
     parentCreativeId: null,
     name: 'Paste a link',
     state: 'DRAFT',
+    kind: 'STILL',
     layout: 'stacked',
     theme: 'dark',
     photoId: null,
@@ -464,5 +465,87 @@ describe('CreativeEditor', () => {
 
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('4:5 Instagram feed')).toBeInTheDocument()
+  })
+
+  describe('Kind and Clip mode (COND-24 T6)', () => {
+    it('shows a Kind control defaulting to Still, with Motion disabled as "coming next"', async () => {
+      mockGetsFor(creative())
+      render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+      await screen.findByLabelText('Headline')
+
+      const kindSelect = screen.getByLabelText('Kind') as HTMLSelectElement
+      expect(kindSelect.value).toBe('STILL')
+      const motionOption = screen.getByRole('option', { name: /Motion.*coming next/i }) as HTMLOptionElement
+      expect(motionOption.disabled).toBe(true)
+    })
+
+    it('switching to Clip hides Still-only fields and shows the Clip media section, keeping name/caption/alt text/state', async () => {
+      mockGetsFor(creative({ name: 'My ad', caption: 'Caption text', altText: 'Alt text' }))
+      render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+      await screen.findByLabelText('Headline')
+
+      await userEvent.selectOptions(screen.getByLabelText('Kind'), 'CLIP')
+
+      expect(screen.queryByLabelText('Headline')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Layout')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Theme')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('placement-board-4x5')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Caption')).toHaveValue('Caption text')
+      expect(screen.getByLabelText('Alt text')).toHaveValue('Alt text')
+      expect(screen.getByLabelText('Name')).toHaveValue('My ad')
+      expect(screen.getByText('Clip media')).toBeInTheDocument()
+    })
+
+    it('picks a default clip video and shows it playable with its poster and duration', async () => {
+      const video = {
+        id: 'vid-1',
+        label: 'clip.mp4',
+        url: 'https://storage.example/clip.mp4',
+        contentType: 'video/mp4',
+        sizeBytes: 1000,
+        width: 1080,
+        height: 1920,
+        mediaKind: 'VIDEO',
+        durationSeconds: 20,
+        hasAudio: true,
+        posterUrl: 'https://storage.example/clip-poster.jpg',
+        aiGenerated: false,
+        checked: true,
+        blocked: false,
+        focal: {},
+        uploadStatus: 'UPLOADED',
+        warnings: [],
+        createdAt: '2026-01-01T00:00:00Z',
+      }
+      mockGetsFor(creative({ kind: 'CLIP' }), [KIT], [video])
+      render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+      await screen.findByText('Clip media')
+
+      await userEvent.click(screen.getAllByRole('button', { name: 'Choose a video…' })[0])
+      const grid = await screen.findByTestId('video-picker-grid')
+      await userEvent.click(grid.querySelector('button')!)
+
+      const videoEl = await screen.findByTestId('clip-media-video-default') as HTMLVideoElement
+      expect(videoEl.poster).toBe('https://storage.example/clip-poster.jpg')
+      expect(videoEl.src).toBe('https://storage.example/clip.mp4')
+      expect(screen.getByText(/20s/)).toBeInTheDocument()
+    })
+
+    it('saves kind and clipMedia for a Clip creative', async () => {
+      mockGetsFor(creative({ kind: 'CLIP', clipMedia: { default: 'vid-1' } }))
+      ;(apiPatch as Mock).mockResolvedValue(creative({ kind: 'CLIP', clipMedia: { default: 'vid-1' } }))
+      render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+      await screen.findByText('Clip media')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      await waitFor(() =>
+        expect(apiPatch).toHaveBeenCalledWith(
+          expect.stringContaining('/creatives/cr-1'),
+          expect.objectContaining({ kind: 'CLIP', clipMedia: { default: 'vid-1' } }),
+          'tok',
+        ),
+      )
+    })
   })
 })

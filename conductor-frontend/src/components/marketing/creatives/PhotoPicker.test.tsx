@@ -37,6 +37,7 @@ function photo(overrides: Partial<CreativePhoto> = {}): CreativePhoto {
     sizeBytes: 12345,
     width: 2400,
     height: 3000,
+    mediaKind: 'IMAGE',
     source: 'Unsplash',
     licence: 'CC0',
     aiGenerated: false,

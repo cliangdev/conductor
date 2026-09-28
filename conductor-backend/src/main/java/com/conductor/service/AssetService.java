@@ -137,10 +137,19 @@ public class AssetService {
      * caller uses when it copied the bytes itself rather than minting a signed upload (COND-24 T3:
      * {@code CreativeAttachService} copies a Creative render frame into the Post's own asset prefix, then
      * calls {@link #createFromStoredObject} to record it as a Post asset in one step, already
-     * {@code UPLOADED}).
+     * {@code UPLOADED}). {@code durationSeconds} is set for a CLIP creative's video frame (COND-24 PR1),
+     * so {@code MediaTargetValidator}'s video duration rules (reels, stories, TikTok's per-creator cap)
+     * can run against it exactly as they would a directly-uploaded video Asset.
      */
     public record StoredObjectInput(String type, String label, String gcsPath, String contentType, long sizeBytes,
-                                    Integer width, Integer height, String creativeFrameId) {
+                                    Integer width, Integer height, String creativeFrameId,
+                                    java.math.BigDecimal durationSeconds) {
+
+        /** A stored object with no known duration — every caller but a video Creative frame. */
+        public StoredObjectInput(String type, String label, String gcsPath, String contentType, long sizeBytes,
+                                 Integer width, Integer height, String creativeFrameId) {
+            this(type, label, gcsPath, contentType, sizeBytes, width, height, creativeFrameId, null);
+        }
     }
 
     /**
@@ -171,6 +180,7 @@ public class AssetService {
         asset.setSizeBytes(input.sizeBytes());
         asset.setWidth(positiveOrNull(input.width()));
         asset.setHeight(positiveOrNull(input.height()));
+        asset.setDurationSeconds(input.durationSeconds());
         asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
         asset.setDone(true);
         asset.setCreativeFrameId(input.creativeFrameId());

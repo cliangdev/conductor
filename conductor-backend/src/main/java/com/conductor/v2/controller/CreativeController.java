@@ -33,6 +33,8 @@ import com.conductor.generated.v2.model.CreativePerformanceResponse;
 import com.conductor.generated.v2.model.CreativePhotoResponse;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
+import com.conductor.generated.v2.model.ConfirmCreativePhotoPosterRequest;
+import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.CreativeReadinessItem;
 import com.conductor.generated.v2.model.CreativeReadinessResponse;
 import com.conductor.generated.v2.model.CreativeRegistryLayout;
@@ -43,6 +45,8 @@ import com.conductor.generated.v2.model.CreativeResponse;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.FailCreativeRenderRequest;
+import com.conductor.generated.v2.model.MediaKind;
+import com.conductor.generated.v2.model.MintCreativePhotoPosterResponse;
 import com.conductor.generated.v2.model.PatchCreativePhotoRequest;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
 import com.conductor.generated.v2.model.SequenceBeat;
@@ -98,8 +102,10 @@ public class CreativeController implements CreativesApi {
     // ── Photos ───────────────────────────────────────────────────────────
 
     @Override
-    public ResponseEntity<List<CreativePhotoResponse>> listCreativePhotos(String projectId, Boolean includeBlocked) {
-        List<CreativePhotoResponse> body = photoService.listPhotos(projectId, Boolean.TRUE.equals(includeBlocked), currentUser())
+    public ResponseEntity<List<CreativePhotoResponse>> listCreativePhotos(String projectId, Boolean includeBlocked,
+                                                                          List<MediaKind> mediaKind) {
+        List<CreativePhotoResponse> body = photoService.listPhotos(projectId, Boolean.TRUE.equals(includeBlocked),
+                        CreativePhotoService.mediaKindValues(mediaKind), currentUser())
                 .stream().map(this::toResponse).toList();
         return ResponseEntity.ok(body);
     }
@@ -132,6 +138,20 @@ public class CreativeController implements CreativesApi {
     public ResponseEntity<Void> deleteCreativePhoto(String projectId, String photoId) {
         photoService.deletePhoto(projectId, photoId, currentUser());
         return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<MintCreativePhotoPosterResponse> mintCreativePhotoPoster(String projectId, String photoId) {
+        CreativePhotoService.PosterUploadTicket ticket = photoService.mintPoster(projectId, photoId, currentUser());
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(new MintCreativePhotoPosterResponse(ticket.uploadUrl(), ticket.gcsPath()));
+    }
+
+    @Override
+    public ResponseEntity<CreativePhotoResponse> confirmCreativePhotoPoster(String projectId, String photoId,
+                                                                            ConfirmCreativePhotoPosterRequest request) {
+        return ResponseEntity.ok(toResponse(photoService.confirmPoster(projectId, photoId,
+                request.getGcsPath(), currentUser())));
     }
 
     // ── Registry ─────────────────────────────────────────────────────────
@@ -203,7 +223,7 @@ public class CreativeController implements CreativesApi {
         CreativeRenderService.CreateRenderResult result =
                 renderService.requestRender(projectId, creativeId, request, currentUser());
         CreativeRenderResponse response = renderService.toResponse(
-                new CreativeRenderService.RenderView(result.render(), List.of()), result.spec());
+                new CreativeRenderService.RenderView(result.render(), result.frames()), result.spec());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -362,13 +382,17 @@ public class CreativeController implements CreativesApi {
     private CreativePhotoResponse toResponse(CreativePhotoService.PhotoView view) {
         CreativePhoto photo = view.photo();
         CreativePhotoResponse response = new CreativePhotoResponse(photo.getId(), photo.getProjectId(),
-                photo.getContentType(), photo.getSizeBytes(), photo.isAiGenerated(), photo.isChecked(), photo.isBlocked(),
+                photo.getContentType(), photo.getSizeBytes(), MediaKind.fromValue(photo.getMediaKind()),
+                photo.isAiGenerated(), photo.isChecked(), photo.isBlocked(),
                 toStringMap(photo.getFocal()),
-                CreativePhotoResponse.UploadStatusEnum.fromValue(photo.getUploadStatus()), view.warnings(),
-                photo.getCreatedAt())
+                CreativePhotoResponse.UploadStatusEnum.fromValue(photo.getUploadStatus()),
+                view.warnings(), photo.getCreatedAt())
                 .label(photo.getLabel())
                 .width(photo.getWidth())
                 .height(photo.getHeight())
+                .durationSeconds(photo.getDurationSeconds())
+                .hasAudio(photo.getHasAudio())
+                .posterUrl(view.posterUrl())
                 .source(photo.getSource())
                 .licence(photo.getLicence())
                 .blockedReason(photo.getBlockedReason())
@@ -383,7 +407,8 @@ public class CreativeController implements CreativesApi {
         CreativeResponse response = new CreativeResponse(c.getId(), c.getProjectId(), c.getBrandKitId(), c.getNumber(),
                 c.getVariantLetter(), c.displayId(), CreativeState.fromValue(c.getState()), c.getLayout(),
                 CreativeTheme.fromValue(c.getTheme()), toStringList(c.getPlacements()), toSequenceBeats(c.getSequence()),
-                toTypeOverrides(c.getTypeOverrides()), CreativeLockup.fromValue(c.getLockup()), c.getVersion(),
+                toTypeOverrides(c.getTypeOverrides()), CreativeLockup.fromValue(c.getLockup()),
+                CreativeKind.fromValue(c.getKind()), c.getVersion(),
                 c.getCreatedAt(), c.getUpdatedAt())
                 .parentCreativeId(c.getParentCreativeId())
                 .name(c.getName())
@@ -397,6 +422,7 @@ public class CreativeController implements CreativesApi {
                 .sequenceKind(c.getSequenceKind() != null ? SequenceKind.fromValue(c.getSequenceKind()) : null)
                 .carouselRatio(c.getCarouselRatio())
                 .layoutOverrides(toLayoutOverrides(c.getLayoutOverrides()))
+                .clipMedia(c.getClipMedia() != null ? toStringMap(c.getClipMedia()) : null)
                 .createdBy(c.getCreatedBy())
                 .activeExperimentId(view.activeExperimentId());
         if (view.latestRenderSummary() != null) {

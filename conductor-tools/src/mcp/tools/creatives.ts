@@ -1,8 +1,11 @@
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { basename, extname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Config } from '../config.js'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
+import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
+import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { renderCreative as runLocalRender } from '../../lib/creative-render.js'
 
 /**
@@ -169,9 +172,16 @@ export interface CreativeFields {
   brandKitId?: string
   name?: string
   state?: string
+  /** STILL (default): brand-rendered photo/headline artwork. CLIP: a finished video used as-is, via
+   * clipMedia — no brand layout, no photo/headline required. MOTION: accepted, but rendering it
+   * 422s until PR 2 ships. */
+  kind?: string
   layout?: string
   theme?: string
   photoId?: string
+  /** CLIP only: media ids per placement, e.g. {"default": mediaId, "9x16": mediaId}. "default"
+   * covers any placement without its own entry. */
+  clipMedia?: Record<string, string>
   focalOverride?: Record<string, string>
   headline?: string
   body?: string
@@ -216,14 +226,22 @@ export async function updateCreative(params: UpdateCreativeParams, config: Confi
   return withCreativeErrors(() => apiPatch(`${creativesBase(config)}/${creativeId}`, patch, config))
 }
 
-// --- Photos -----------------------------------------------------------------
+// --- Media (photo library: photos, video, audio) -----------------------------
 
-async function readPhotoSource(params: {
+const VIDEO_LENGTH_WARNING_SECONDS = 180
+
+interface MediaSource {
+  bytes: Uint8Array
+  filename: string
+  /** Set only when the bytes already live at a real path on disk (a given filePath) — probeMedia and
+   * extractPoster need an actual file, so a URL download without one gets written to a temp file lazily,
+   * only once we know it isn't an image (readImageDimensions works on bytes alone). */
   filePath?: string
-  url?: string
-}): Promise<{ bytes: Uint8Array; filename: string }> {
+}
+
+async function readMediaSource(params: { filePath?: string; url?: string }): Promise<MediaSource> {
   if (params.filePath) {
-    return { bytes: new Uint8Array(await readFile(params.filePath)), filename: basename(params.filePath) }
+    return { bytes: new Uint8Array(await readFile(params.filePath)), filename: basename(params.filePath), filePath: params.filePath }
   }
   const raw = params.url as string
   let parsed: URL
@@ -240,51 +258,174 @@ async function readPhotoSource(params: {
     throw new Error(`Fetching ${raw} failed: HTTP ${response.status}`)
   }
   const bytes = new Uint8Array(await response.arrayBuffer())
-  return { bytes, filename: basename(parsed.pathname) || 'photo' }
+  return { bytes, filename: basename(parsed.pathname) || 'media' }
 }
 
-export async function uploadCreativePhoto(
-  params: {
-    filePath?: string
-    url?: string
-    label?: string
-    source?: string
-    licence?: string
-    aiGenerated?: boolean
-  },
-  config: Config
-): Promise<Record<string, unknown>> {
+function stripExtension(filename: string): string {
+  const ext = extname(filename)
+  return ext ? filename.slice(0, -ext.length) : filename
+}
+
+/** The fields worth an agent's context for one uploaded media item — trims whatever else the
+ * backend's photo library response carries (checked/blocked review metadata, timestamps, etc.). */
+const MEDIA_RESULT_FIELDS = [
+  'id', 'label', 'mediaKind', 'contentType', 'width', 'height', 'durationSeconds', 'hasAudio',
+  'posterUrl', 'url', 'sizeBytes', 'source', 'licence', 'aiGenerated', 'uploadStatus', 'checked', 'blocked',
+] as const
+
+function trimMedia(media: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of MEDIA_RESULT_FIELDS) {
+    if (key in media) out[key] = media[key]
+  }
+  return out
+}
+
+async function uploadPoster(mediaId: string, localVideoPath: string, config: Config, warnings: string[]): Promise<void> {
+  const posterPath = join(tmpdir(), `conductor-poster-${mediaId}.jpg`)
+  try {
+    await extractPoster(localVideoPath, posterPath, 1)
+    const posterBytes = await readFile(posterPath)
+    const posterMint = await apiPost<{ uploadUrl: string; gcsPath: string }>(
+      `${V2_PROJECT(config)}/marketing/photos/${mediaId}/poster`,
+      {},
+      config
+    )
+    await putBytes(posterMint.uploadUrl, 'image/jpeg', posterBytes)
+    await apiPost(`${V2_PROJECT(config)}/marketing/photos/${mediaId}/poster/confirm`, { gcsPath: posterMint.gcsPath }, config)
+  } catch (err) {
+    warnings.push(`Could not extract or upload a poster frame: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    await rm(posterPath, { force: true }).catch(() => {})
+  }
+}
+
+export interface UploadCreativeMediaParams {
+  filePath?: string
+  url?: string
+  label?: string
+  source?: string
+  licence?: string
+  aiGenerated?: boolean
+}
+
+export interface UploadCreativeMediaResult {
+  media: Record<string, unknown>
+  warnings: string[]
+}
+
+/**
+ * Uploads a photo, video or audio file into the project's media library from a local path or a
+ * public URL, detecting its kind, dimensions/duration/audio automatically, and — for a video —
+ * extracting and uploading a poster frame. Shared by `upload_creative_media` and the deprecated
+ * `upload_creative_photo` alias, so the two never drift.
+ */
+export async function uploadCreativeMedia(params: UploadCreativeMediaParams, config: Config): Promise<UploadCreativeMediaResult> {
   if (!params.filePath && !params.url) {
     throw new Error('Pass filePath (a file on this machine) or url (a public http(s) URL).')
   }
-  const { bytes, filename } = await readPhotoSource(params)
-  const info = readImageDimensions(bytes)
-  if (!info) {
-    throw new Error(
-      `Could not read "${filename}" as a PNG, JPEG or WebP — Creative photos accept only those three formats.`
+  const source = await readMediaSource(params)
+  const label = params.label ?? stripExtension(source.filename)
+  const warnings: string[] = []
+
+  const imageInfo = readImageDimensions(source.bytes)
+  if (imageInfo) {
+    const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
+      `${V2_PROJECT(config)}/marketing/photos`,
+      {
+        label,
+        contentType: imageInfo.contentType,
+        sizeBytes: source.bytes.byteLength,
+        width: imageInfo.width,
+        height: imageInfo.height,
+        source: params.source ?? null,
+        licence: params.licence ?? null,
+        aiGenerated: !!params.aiGenerated,
+      },
+      config
     )
+    if (!mint.uploadUrl) {
+      throw new Error('The mint response carried no uploadUrl — cannot upload bytes.')
+    }
+    await putBytes(mint.uploadUrl, imageInfo.contentType, source.bytes)
+    const confirmed = await apiPost<Record<string, unknown>>(
+      `${V2_PROJECT(config)}/marketing/photos/${mint.id}/confirm`,
+      { sizeBytes: source.bytes.byteLength },
+      config
+    )
+    return { media: trimMedia(confirmed), warnings }
   }
 
-  const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
-    `${V2_PROJECT(config)}/marketing/photos`,
-    {
-      label: params.label ?? filename,
-      contentType: info.contentType,
-      sizeBytes: bytes.byteLength,
-      width: info.width,
-      height: info.height,
-      source: params.source ?? null,
-      licence: params.licence ?? null,
-      aiGenerated: !!params.aiGenerated,
-    },
-    config
-  )
-  if (!mint.uploadUrl) {
-    throw new Error('The mint response carried no uploadUrl — cannot upload bytes.')
+  // Not an image — probe it as video/audio, which needs a real file on disk.
+  let probePath = source.filePath
+  let tempDir: string | undefined
+  if (!probePath) {
+    tempDir = await mkdtemp(join(tmpdir(), 'conductor-media-'))
+    probePath = join(tempDir, source.filename || 'media')
+    await writeFile(probePath, source.bytes)
   }
-  await putBytes(mint.uploadUrl, info.contentType, bytes)
-  return apiPost(`${V2_PROJECT(config)}/marketing/photos/${mint.id}/confirm`, { sizeBytes: bytes.byteLength }, config)
+
+  let probe: MediaProbeResult
+  try {
+    probe = await probeMedia(probePath)
+  } catch (err) {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    throw new Error(
+      `Could not read "${source.filename}" as a photo, video or audio file: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  if (probe.kind !== 'VIDEO' && probe.kind !== 'AUDIO') {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    throw new Error(`"${source.filename}" is not a recognizable photo, video or audio file.`)
+  }
+  if (probe.kind === 'VIDEO' && probe.durationSeconds && probe.durationSeconds > VIDEO_LENGTH_WARNING_SECONDS) {
+    warnings.push(`This video is ${Math.round(probe.durationSeconds)}s long — longer than most platforms take.`)
+  }
+
+  try {
+    const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
+      `${V2_PROJECT(config)}/marketing/photos`,
+      {
+        mediaKind: probe.kind,
+        label,
+        contentType: probe.contentType,
+        sizeBytes: source.bytes.byteLength,
+        width: probe.width ?? null,
+        height: probe.height ?? null,
+        durationSeconds: probe.durationSeconds ?? null,
+        hasAudio: probe.kind === 'VIDEO' ? !!probe.hasAudio : undefined,
+        source: params.source ?? null,
+        licence: params.licence ?? null,
+        aiGenerated: !!params.aiGenerated,
+      },
+      config
+    )
+    if (!mint.uploadUrl) {
+      throw new Error('The mint response carried no uploadUrl — cannot upload bytes.')
+    }
+    await putBytes(mint.uploadUrl, probe.contentType, source.bytes)
+    const confirmed = await apiPost<Record<string, unknown>>(
+      `${V2_PROJECT(config)}/marketing/photos/${mint.id}/confirm`,
+      { sizeBytes: source.bytes.byteLength },
+      config
+    )
+
+    let finalMedia = confirmed
+    if (probe.kind === 'VIDEO') {
+      await uploadPoster(mint.id, probePath, config, warnings)
+      finalMedia = await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/photos/${mint.id}`, config).catch(
+        () => confirmed
+      )
+    }
+    return { media: trimMedia(finalMedia), warnings }
+  } finally {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  }
 }
+
+/** Deprecated alias for {@link uploadCreativeMedia}, kept so existing callers naming the old tool
+ * still work — same implementation, same behavior, including for photos. */
+export const uploadCreativePhoto = uploadCreativeMedia
 
 // --- Rendering ----------------------------------------------------------------
 
@@ -298,6 +439,11 @@ interface RenderApiFrame {
   height?: number
   sizeBytes?: number
   warnings?: string[]
+  /** CLIP frames only — the frame is a video, and these describe it. */
+  durationSeconds?: number
+  hasAudio?: boolean
+  posterUrl?: string
+  contentType?: string
 }
 
 interface RenderApiItem {
@@ -354,11 +500,99 @@ function findCurrentSheetFrame(
   return undefined
 }
 
+// The latest SUCCEEDED render (of the creative's current version) that actually has frames — CLIP has
+// no dedicated 'sheet' frame the way a STILL previewOnly render does, so any frame set will do.
+function findLatestRenderWithFrames(renders: RenderApiItem[], version: number | undefined): RenderApiItem | undefined {
+  for (const render of renders) {
+    if (render.state !== 'SUCCEEDED') continue
+    if (version !== undefined && render.creativeVersion !== version) continue
+    if (render.frames && render.frames.length) return render
+  }
+  return undefined
+}
+
+/**
+ * CLIP preview: there is no server-rendered contact sheet (previewOnly renders 422 for CLIP), so this
+ * downloads each placement frame's poster JPEG and composes them into one small sheet locally with
+ * ffmpeg (see poster-sheet.ts), falling back to just the first poster on its own if composition fails
+ * — showing one frame beats showing nothing. Frame count is placement count, so it's always at least 1.
+ */
+async function previewClip(
+  creativeId: string,
+  version: number | undefined,
+  renders: RenderApiItem[],
+  config: Config
+): Promise<PreviewCreativeResult> {
+  let render = findLatestRenderWithFrames(renders, version)
+  if (!render) {
+    // previewOnly renders are refused for CLIP — the only way to get frames is a real render.
+    const rendered = await runLocalRender({ creativeId, previewOnly: false, renderer: 'mcp' }, config)
+    if (!rendered.ok || !rendered.frames.length) {
+      return {
+        renderId: rendered.renderId,
+        state: rendered.state,
+        note: `Rendering failed${rendered.error ? `: ${rendered.error}` : '.'} There is nothing to show.`,
+      }
+    }
+    render = { id: rendered.renderId!, state: rendered.state ?? 'SUCCEEDED', frames: rendered.frames as RenderApiFrame[] }
+  }
+
+  const frames = (render.frames ?? []).filter((f) => f.posterUrl)
+  if (!frames.length) {
+    return { renderId: render.id, state: render.state, note: 'The render produced no poster frame to preview.' }
+  }
+
+  const summary = frames
+    .map((f) => {
+      const size = f.width && f.height ? `${f.width}x${f.height}` : ''
+      const duration = f.durationSeconds != null ? `${f.durationSeconds}s` : ''
+      return `${f.placementKey}: ${[size, duration].filter(Boolean).join(', ') || 'unknown'}`
+    })
+    .join('\n')
+
+  const dir = await mkdtemp(join(tmpdir(), 'conductor-preview-'))
+  try {
+    const posterPaths: string[] = []
+    let firstPoster: Buffer | undefined
+    for (const frame of frames) {
+      const response = await fetch(frame.posterUrl!)
+      if (!response.ok) continue
+      const bytes = Buffer.from(await response.arrayBuffer())
+      if (!firstPoster) firstPoster = bytes
+      const filePath = join(dir, `${frame.placementKey}.jpg`)
+      await writeFile(filePath, bytes)
+      posterPaths.push(filePath)
+    }
+    if (!posterPaths.length || !firstPoster) {
+      return { renderId: render.id, state: render.state, note: 'Could not download any poster frame to preview.' }
+    }
+
+    try {
+      const sheet = await composePosterSheet(posterPaths)
+      return { renderId: render.id, state: render.state, image: { data: sheet, mimeType: 'image/jpeg' }, note: summary }
+    } catch {
+      return {
+        renderId: render.id,
+        state: render.state,
+        image: { data: firstPoster, mimeType: 'image/jpeg' },
+        note: `${summary}\n(Could not compose a combined sheet — showing the first placement's poster only.)`,
+      }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function previewCreative(params: { creativeId: string }, config: Config): Promise<PreviewCreativeResult> {
   const [creative, renders] = await Promise.all([
-    apiGet<{ version?: number }>(`${creativesBase(config)}/${params.creativeId}`, config),
+    apiGet<{ version?: number; kind?: string }>(`${creativesBase(config)}/${params.creativeId}`, config),
     apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config),
   ])
+
+  if (creative?.kind === 'CLIP') {
+    return previewClip(params.creativeId, creative?.version, renders, config)
+  }
+
   let found = findCurrentSheetFrame(renders, creative?.version)
 
   if (!found) {

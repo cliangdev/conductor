@@ -86,6 +86,35 @@ describe('UseInPostDialog', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
   })
 
+  it('shows a video icon next to a target whose attached asset came from a video frame', async () => {
+    ;(attachCreativeRender as Mock).mockResolvedValue({
+      assets: [{ assetId: 'a1', frameId: 'f-video', placementKey: '9x16', sequenceIndex: null }],
+      targetsUpdated: [{ targetId: 't-tiktok', platform: 'tiktok', assetIds: ['a1'] }],
+      targetsSkipped: [],
+    })
+    setup({
+      renderFrames: [
+        {
+          id: 'f-video',
+          placementKey: '9x16',
+          platform: 'tiktok',
+          sequenceIndex: null,
+          url: 'https://storage.example/9x16.mp4',
+          width: 1080,
+          height: 1920,
+          sizeBytes: 2_000_000,
+          warnings: [],
+          contentType: 'video/mp4',
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByText('Week 3 launch'))
+    await waitFor(() => expect(screen.getByTestId('use-in-post-result')).toBeInTheDocument())
+
+    expect(screen.getByLabelText('Video')).toBeInTheDocument()
+  })
+
   it('says there are no Draft Posts when the project has none', () => {
     mockUseDraftPosts.mockReturnValue({ posts: [], postWorkflows: [], error: null, reload: vi.fn() })
     setup()

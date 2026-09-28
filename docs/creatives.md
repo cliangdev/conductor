@@ -109,6 +109,52 @@ own edit in the UI goes through — so the approval gate reverts and the bundle 
 human had picked that media by hand. Sequence frames (a carousel's beats) attach in the order they
 rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is content.
 
+## Video (COND-24 PR1)
+
+The media library (`creative_photo` — the table/entity name stays, the API calls it "media") now takes
+video and audio alongside photos: `mediaKind` is `IMAGE` (the original photo library), `VIDEO` or `AUDIO`.
+A `VIDEO` also carries `durationSeconds` (required), an optional `hasAudio`, an optional codec hint, and an
+optional JPEG poster — minted through its own `POST .../photos/{photoId}/poster` (signed PUT) →
+`POST .../poster/confirm` pair, exactly like the photo's own mint → PUT → confirm shape. `width`/`height`
+are required for `IMAGE`/`VIDEO` and unused for `AUDIO`. Size ceilings are per kind (100 MB image, 1 GB
+video, 50 MB audio); a video longer than 180 seconds warns ("longer than most platforms take") but never
+refuses — there is no length cap here, platform caps are enforced at publish time by
+`MediaTargetValidator`.
+
+A Creative's `kind` — `STILL` (default, everything above), `MOTION` or `CLIP` — picks what it is. `STILL`
+is unchanged. `MOTION` (a branded animated video) is accepted by the write API today, but a render for one
+currently refuses with 422 ("Motion creatives render in the next release") — PR2 fills this in. `CLIP` is a
+finished video used as-is, with no brand layout at all: `clipMedia` is a map of `{"default": mediaId,
+"<placementKey>": mediaId, ...}`, where `default` covers every placement the map doesn't otherwise name.
+Every referenced id must be a `VIDEO` in the media library that has finished uploading, is not blocked, and
+belongs to the same project — checked on every write, the same way a STILL Creative's `photoId` is. A CLIP
+needs no layout, theme, headline or photo; going `READY` needs a caption and at least one clip instead of a
+headline and a photo.
+
+**CLIP renders are assembled by this backend, not by a local job.** `POST .../creatives/{id}/renders` for a
+CLIP creative settles `SUCCEEDED` in the same call: one frame per placement the clip set covers. An
+explicit `clipMedia` key (other than `default`) is that frame's own placement; `default`'s media resolves
+to whichever registry placement's aspect ratio is closest to its own — among every registry placement, a
+story's aspect counts as `9x16` (so a 9:16 default lands on `9x16`, not `story`) — and only fills that
+placement in when nothing more specific already claims it. Each frame is a server-side `StorageService.copy`
+of the source media (and its poster, if it has one) into the render's own path; `spec` is always null for a
+CLIP response, since there is no local job to hand a spec to. `previewOnly` is refused with 422 — there is
+no contact sheet to assemble from a single finished file. A frame carries `durationSeconds`/`hasAudio`/
+`posterUrl`/`contentType` alongside the usual width/height/size — null for a STILL frame, set for a CLIP
+one.
+
+**Attach is video-aware.** `CreativePlacementTargetMapper#matchesVideo` extends the STILL mapping: a
+`9x16` video also fills TikTok (its one format), an Instagram or Facebook reel, YouTube when the set has no
+`16x9` cut (it goes out as a Short), Facebook's feed when there is no `1x1` cut (Facebook publishes a lone Page
+video as a Reel), and any story-format target left unclaimed by a dedicated `story` frame; a `16x9` video
+fills YouTube, and Facebook's feed only when the set has neither a `1x1` nor a `9x16` cut. `CreativeAttachService`
+copies the video bytes into the Post's own asset prefix and records `durationSeconds` on the resulting
+Asset (via `AssetService.StoredObjectInput`), so `MediaTargetValidator`'s reel/story/TikTok duration rules
+run against it exactly as they would a directly-uploaded video.
+
+The `16x9` placement (1920×1080, YouTube and landscape video) was added to the registry for this — it is
+not in any Brand Kit's default enabled set, since it means nothing to a STILL Creative's brand layout.
+
 ## What this backend does not do
 
 No image processing beyond the screenshot the local job takes: Playwright's own JPEG/PNG encoder does the

@@ -197,6 +197,69 @@ class CreativeValidatorTest {
         assertThat(violationRuleIds(baseInput().sequenceKind("story").sequence(present).build())).doesNotContain("sequenceHeadline");
     }
 
+    // ── CLIP (COND-24 PR1) ──────────────────────────────────────────────────
+
+    @Test
+    void clipMediaMustResolveToAnUploadedUnblockedVideoInTheProject() {
+        CreativeValidator.ClipMediaEntry missing = new CreativeValidator.ClipMediaEntry("default", "gone", false, false, false, false);
+        assertThat(violationRuleIds(clipInput(missing))).contains("mediaNotFound");
+
+        CreativeValidator.ClipMediaEntry notVideo = new CreativeValidator.ClipMediaEntry("default", "photo-1", true, false, true, false);
+        assertThat(violationRuleIds(clipInput(notVideo))).contains("mediaNotVideo");
+
+        CreativeValidator.ClipMediaEntry notUploaded = new CreativeValidator.ClipMediaEntry("default", "video-1", true, true, false, false);
+        assertThat(violationRuleIds(clipInput(notUploaded))).contains("mediaUploaded");
+
+        CreativeValidator.ClipMediaEntry blocked = new CreativeValidator.ClipMediaEntry("default", "video-1", true, true, true, true);
+        assertThat(violationRuleIds(clipInput(blocked))).contains("mediaBlocked");
+
+        CreativeValidator.ClipMediaEntry fine = new CreativeValidator.ClipMediaEntry("default", "video-1", true, true, true, false);
+        assertThat(violationRuleIds(clipInput(fine))).isEmpty();
+    }
+
+    @Test
+    void clipMediaPlacementKeyMustBeDefaultOrARealPlacement() {
+        CreativeValidator.ClipMediaEntry unknown = new CreativeValidator.ClipMediaEntry("not-a-placement", "video-1", true, true, true, false);
+        assertThat(violationRuleIds(clipInput(unknown))).contains("placement");
+
+        CreativeValidator.ClipMediaEntry real = new CreativeValidator.ClipMediaEntry("9x16", "video-1", true, true, true, false);
+        assertThat(violationRuleIds(clipInput(real))).isEmpty();
+    }
+
+    @Test
+    void clipDoesNotRequireLayoutThemeHeadlineOrPhoto() {
+        CreativeValidator.ClipMediaEntry fine = new CreativeValidator.ClipMediaEntry("default", "video-1", true, true, true, false);
+        CreativeValidator.Input input = baseInput().kind(Creative.KIND_CLIP)
+                .clipMedia(List.of(fine))
+                .caption("Watch this.")
+                .build();
+        assertThat(validator.validate(kit, input)).isEmpty();
+    }
+
+    @Test
+    void clipGoingReadyNeedsACaptionAndAtLeastOneClip() {
+        CreativeValidator.ClipMediaEntry fine = new CreativeValidator.ClipMediaEntry("default", "video-1", true, true, true, false);
+
+        CreativeValidator.Input noCaption = baseInput().kind(Creative.KIND_CLIP).state(Creative.STATE_READY)
+                .clipMedia(List.of(fine)).build();
+        assertThat(violationRuleIds(noCaption)).contains("captionRequired");
+
+        CreativeValidator.Input noClip = baseInput().kind(Creative.KIND_CLIP).state(Creative.STATE_READY)
+                .caption("Watch this.").build();
+        assertThat(violationRuleIds(noClip)).contains("clipRequired");
+
+        CreativeValidator.Input ready = baseInput().kind(Creative.KIND_CLIP).state(Creative.STATE_READY)
+                .caption("Watch this.").clipMedia(List.of(fine)).build();
+        assertThat(validator.validate(kit, ready)).isEmpty();
+
+        // A CLIP going READY is never blocked by the STILL-only photo/headline rules.
+        assertThat(violationRuleIds(ready)).doesNotContain("photoRequired", "headlineRequired");
+    }
+
+    private CreativeValidator.Input clipInput(CreativeValidator.ClipMediaEntry entry) {
+        return baseInput().kind(Creative.KIND_CLIP).clipMedia(List.of(entry)).build();
+    }
+
     // ── readiness-on-READY gating ────────────────────────────────────────
 
     @Test

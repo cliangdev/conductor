@@ -52,6 +52,12 @@ function startFakeBackend() {
   const server = createServer((req, res) => {
     const url = new URL(req.url!, 'http://localhost')
     const pathname = url.pathname
+    if (req.method === 'GET' && /\/creatives\/cr1$/.test(pathname)) {
+      // renderCreative() checks the creative's kind first — a plain STILL creative here.
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ id: 'cr1', kind: 'STILL' }))
+      return
+    }
     if (req.method === 'POST' && pathname.endsWith('/renders')) {
       let body = ''
       req.on('data', (c) => (body += c))

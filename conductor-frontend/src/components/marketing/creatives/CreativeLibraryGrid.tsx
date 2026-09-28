@@ -9,7 +9,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ImagesIcon, LayersIcon } from 'lucide-react'
+import { FilmIcon, ImagesIcon, LayersIcon, PlayIcon } from 'lucide-react'
 import { mountBoard } from '@cliangdev/creative-render/mount'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -21,12 +21,15 @@ import { StatusBadge } from '@/components/ui/status-badge'
 import { Can } from '@/components/auth/Can'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
+import { formatDuration } from '@/lib/format'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import {
   creativeToRenderCreative,
   createCreative,
+  listCreativePhotos,
   listCreatives,
   type Creative,
+  type CreativePhoto,
   type CreativeState,
 } from '@/components/marketing/creatives/types'
 import type { RenderBrand } from '@/components/marketing/creatives/renderTypes'
@@ -100,6 +103,37 @@ function CreativeThumb({ creative, brand }: { creative: Creative; brand: RenderB
   )
 }
 
+/** CLIP creatives never mount a live board — there's no layout/theme/headline to render — so their
+ *  tile shows a poster instead: the latest render's frame poster if there is one, else the default
+ *  clip media's own poster (set at upload time — see MediaPicker's captureVideoPoster). */
+function ClipThumb({ creative, mediaById }: { creative: Creative; mediaById: Map<string, CreativePhoto> }) {
+  const defaultMediaId = creative.clipMedia?.default
+  const defaultMedia = defaultMediaId ? mediaById.get(defaultMediaId) : undefined
+  const posterUrl = creative.latestRenderThumbnailUrl ?? defaultMedia?.posterUrl ?? undefined
+  const durationSeconds = defaultMedia?.durationSeconds ?? undefined
+
+  return (
+    <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
+      {posterUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={posterUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <span className="flex h-full items-center justify-center text-muted-foreground">
+          <FilmIcon className="h-6 w-6" aria-hidden />
+        </span>
+      )}
+      <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <PlayIcon className="h-8 w-8 fill-background text-background drop-shadow" aria-hidden />
+      </span>
+      {durationSeconds != null && (
+        <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-foreground/70 px-1.5 py-0.5 text-[11px] text-background">
+          {formatDuration(durationSeconds)}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function GridSkeleton() {
   return (
     <div data-testid="creative-grid-skeleton" className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4" aria-hidden>
@@ -126,6 +160,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
   const [kits, setKits] = useState<BrandKit[] | null>(null)
   const [creatives, setCreatives] = useState<Creative[] | null>(null)
+  const [media, setMedia] = useState<CreativePhoto[]>([])
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -138,6 +173,21 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       .then(setKits)
       .catch(() => setKits([]))
   }, [projectId, accessToken])
+
+  // Only CLIP tiles need this — see ClipThumb's fallback to the default clip media's own poster,
+  // for a Clip that hasn't been rendered yet.
+  useEffect(() => {
+    if (!projectId || !accessToken) return
+    listCreativePhotos(projectId, accessToken, true, 'VIDEO')
+      .then(setMedia)
+      .catch(() => setMedia([]))
+  }, [projectId, accessToken])
+
+  const mediaById = useMemo(() => {
+    const map = new Map<string, CreativePhoto>()
+    for (const m of media) map.set(m.id, m)
+    return map
+  }, [media])
 
   useEffect(() => {
     if (!projectId || !accessToken) return
@@ -296,7 +346,11 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                 href={`/app/projects/${projectId}/marketing/creatives/${root.id}`}
                 className="group block overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-strong"
               >
-                <CreativeThumb creative={root} brand={brand} />
+                {root.kind === 'CLIP' ? (
+                  <ClipThumb creative={root} mediaById={mediaById} />
+                ) : (
+                  <CreativeThumb creative={root} brand={brand} />
+                )}
                 <div className="flex flex-col gap-1.5 border-t border-border p-3">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-mono">{root.displayId}</span>
@@ -327,7 +381,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                     {showKitName && kit && <span className="ml-auto shrink-0 truncate">{kit.name}</span>}
                   </div>
                   <p className="truncate text-sm text-foreground" title={root.name || root.displayId}>
-                    {root.name || root.layout}
+                    {root.name || (root.kind === 'CLIP' ? 'Clip' : root.layout)}
                   </p>
                   <StatusBadge status={root.state} hue={STATE_HUE[root.state]} label={STATE_LABEL[root.state]} className="self-start" />
                 </div>

@@ -238,6 +238,52 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(storedAssetIds(facebookTarget.getId())).containsExactly(existingAsset.getId());
     }
 
+    // ── video attach end to end (COND-24 PR1) ───────────────────────────────────────────────────
+
+    @Test
+    void aClipRendersVideoFramesThatAttachToInstagramReelTikTokYouTubeAndFacebookFeedAndPassTheMediaGate() {
+        Connection youtube = connection("youtube", "{\"channelId\":\"UC123\",\"channelTitle\":\"Acme Channel\"}");
+        String youtubeConnectionId = connectionRepository.saveAndFlush(youtube).getId();
+        // TikTok's per-creator video-length cap must be cached for MediaTargetValidator to clear a video
+        // (see MediaTargetValidator#cachedMaxVideoDurationSec) — set generously above this test's clip.
+        Connection tiktok = connectionRepository.findById(tiktokConnectionId).orElseThrow();
+        tiktok.setConfigJson("{\"creatorNickname\":\"Acme Creator\",\"creatorUsername\":\"acme\",\"maxVideoPostDurationSec\":600}");
+        connectionRepository.saveAndFlush(tiktok);
+
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId, null, null, null, "reel"),
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId),
+                new PublishTargetService.TargetSelection("youtube", youtubeConnectionId),
+                new PublishTargetService.TargetSelection("facebook", metaConnectionId)), admin);
+
+        CreativeRender render = newRender();
+        // 16x9 sorts before 9x16 (frames are read sequenceIndex-first, then placementKey ascending), so it
+        // is checked first for every target: YouTube and Facebook feed (no 1x1 frame here) claim it; TikTok
+        // and the Instagram reel fall through to 9x16.
+        newVideoFrame(render, "16x9", "youtube", 1920, 1080);
+        newVideoFrame(render, "9x16", "tiktok", 1080, 1920);
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(result.targetsSkipped()).isEmpty();
+        assertThat(result.targetsUpdated()).extracting(CreativeAttachService.TargetUpdate::platform)
+                .containsExactlyInAnyOrder("instagram", "tiktok", "youtube", "facebook");
+        // Every target gets exactly one video, never two.
+        assertThat(result.targetsUpdated()).allSatisfy(u -> assertThat(u.assetIds()).hasSize(1));
+
+        for (PostPublishTarget target : targetRepository.findAllByWorkItemId(post.getId())) {
+            Asset asset = assetRepository.findById(storedAssetIds(target.getId()).get(0)).orElseThrow();
+            assertThat(asset.getContentType()).startsWith("video/");
+            assertThat(asset.getDurationSeconds()).isNotNull();
+            assertThat(asset.getWidth()).isNotNull();
+            assertThat(asset.getHeight()).isNotNull();
+        }
+
+        List<PublishFinding> findings = mediaTargetValidator.inspect(post);
+        assertThat(findings).noneMatch(PublishFinding::blocks);
+    }
+
     // ── sequence frames attach in index order, never sorted ─────────────────────────────────────
 
     @Test
@@ -315,6 +361,30 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         frame.setWidth(width);
         frame.setHeight(height);
         frame.setSizeBytes((long) bytes.length);
+        frame.setWarnings(objectMapper.createArrayNode());
+        return frameRepository.save(frame);
+    }
+
+    /** A video render frame (COND-24 PR1) — real CLIP frames are always video, with a duration set. */
+    private CreativeRenderFrame newVideoFrame(CreativeRender render, String placementKey, String platform,
+                                              int width, int height) {
+        String gcsPath = "projects/" + project.getId() + "/creatives/" + creative.getId() + "/renders/"
+                + render.getId() + "/" + placementKey + ".mp4";
+        byte[] bytes = ("video-bytes-" + placementKey).getBytes();
+        storageService.upload(gcsPath, bytes, "video/mp4");
+
+        CreativeRenderFrame frame = new CreativeRenderFrame();
+        frame.setRenderId(render.getId());
+        frame.setCreativeId(creative.getId());
+        frame.setPlacementKey(placementKey);
+        frame.setPlatform(platform);
+        frame.setGcsPath(gcsPath);
+        frame.setContentType("video/mp4");
+        frame.setWidth(width);
+        frame.setHeight(height);
+        frame.setSizeBytes((long) bytes.length);
+        frame.setDurationSeconds(new java.math.BigDecimal("15"));
+        frame.setHasAudio(true);
         frame.setWarnings(objectMapper.createArrayNode());
         return frameRepository.save(frame);
     }

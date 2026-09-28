@@ -24,7 +24,7 @@ vi.mock('@/contexts/PermissionsContext', () => ({
 
 import { apiGet, apiPost } from '@/lib/api'
 import { CreativeLibraryGrid } from './CreativeLibraryGrid'
-import type { Creative } from './types'
+import type { Creative, CreativePhoto } from './types'
 import type { BrandKit } from '@/components/marketing/brand/types'
 
 const KIT: BrandKit = {
@@ -61,6 +61,7 @@ function creative(overrides: Partial<Creative> = {}): Creative {
     parentCreativeId: null,
     name: 'Paste a link',
     state: 'READY',
+    kind: 'STILL',
     layout: 'stacked',
     theme: 'dark',
     photoId: null,
@@ -84,6 +85,48 @@ function creative(overrides: Partial<Creative> = {}): Creative {
   }
 }
 
+function clipMedia(overrides: Partial<CreativePhoto> = {}): CreativePhoto {
+  return {
+    id: 'media-1',
+    projectId: 'proj-1',
+    contentType: 'video/mp4',
+    sizeBytes: 1000,
+    width: 1080,
+    height: 1920,
+    mediaKind: 'VIDEO',
+    durationSeconds: 12.5,
+    posterUrl: 'https://storage.example/media-1-poster.jpg',
+    aiGenerated: false,
+    checked: true,
+    blocked: false,
+    focal: {},
+    uploadStatus: 'UPLOADED',
+    url: 'https://storage.example/media-1.mp4',
+    warnings: [],
+    createdAt: '2026-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+/** Wires apiGet for the routes CreativeLibraryGrid always calls (brand kits, creatives, and — for
+ *  CLIP tiles — the media library), so each test only spells out what's specific to it. */
+function mockGets({
+  creatives = [],
+  kits = [KIT],
+  media = [],
+}: {
+  creatives?: Creative[]
+  kits?: BrandKit[]
+  media?: CreativePhoto[]
+}) {
+  ;(apiGet as Mock).mockImplementation((path: string) => {
+    if (path.includes('/brand-kits')) return Promise.resolve(kits)
+    if (path.includes('/marketing/photos')) return Promise.resolve(media)
+    if (path.includes('/creatives')) return Promise.resolve(creatives)
+    return Promise.reject(new Error(`unexpected GET ${path}`))
+  })
+}
+
 describe('CreativeLibraryGrid', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -91,15 +134,11 @@ describe('CreativeLibraryGrid', () => {
   })
 
   it('lists Creatives grouped by family with variant pills', async () => {
-    ;(apiGet as Mock).mockImplementation((path: string) => {
-      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
-      if (path.includes('/creatives')) {
-        return Promise.resolve([
-          creative(),
-          creative({ id: 'cr-1b', variantLetter: 'b', displayId: '12b', parentCreativeId: 'cr-1' }),
-        ])
-      }
-      return Promise.reject(new Error(`unexpected GET ${path}`))
+    mockGets({
+      creatives: [
+        creative(),
+        creative({ id: 'cr-1b', variantLetter: 'b', displayId: '12b', parentCreativeId: 'cr-1' }),
+      ],
     })
 
     render(<CreativeLibraryGrid projectId="proj-1" />)
@@ -109,11 +148,7 @@ describe('CreativeLibraryGrid', () => {
   })
 
   it('creates a new Creative and navigates to its editor', async () => {
-    ;(apiGet as Mock).mockImplementation((path: string) => {
-      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
-      if (path.includes('/creatives')) return Promise.resolve([])
-      return Promise.reject(new Error(`unexpected GET ${path}`))
-    })
+    mockGets({ creatives: [] })
     ;(apiPost as Mock).mockResolvedValue(creative({ id: 'cr-new' }))
 
     render(<CreativeLibraryGrid projectId="proj-1" />)
@@ -127,14 +162,8 @@ describe('CreativeLibraryGrid', () => {
   })
 
   it('uses latestRenderThumbnailUrl as the tile thumbnail when present, instead of the live mount', async () => {
-    ;(apiGet as Mock).mockImplementation((path: string) => {
-      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
-      if (path.includes('/creatives')) {
-        return Promise.resolve([
-          creative({ latestRenderId: 'render-1', latestRenderThumbnailUrl: 'https://storage.example/12a-4x5.png' }),
-        ])
-      }
-      return Promise.reject(new Error(`unexpected GET ${path}`))
+    mockGets({
+      creatives: [creative({ latestRenderId: 'render-1', latestRenderThumbnailUrl: 'https://storage.example/12a-4x5.png' })],
     })
 
     render(<CreativeLibraryGrid projectId="proj-1" />)
@@ -145,11 +174,7 @@ describe('CreativeLibraryGrid', () => {
   })
 
   it('falls back to the live 4:5 mount when there is no render thumbnail yet', async () => {
-    ;(apiGet as Mock).mockImplementation((path: string) => {
-      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
-      if (path.includes('/creatives')) return Promise.resolve([creative()])
-      return Promise.reject(new Error(`unexpected GET ${path}`))
-    })
+    mockGets({ creatives: [creative()] })
 
     render(<CreativeLibraryGrid projectId="proj-1" />)
 
@@ -159,15 +184,44 @@ describe('CreativeLibraryGrid', () => {
 
   it('hides "New creative" for a role without creative.manage (REVIEWER)', async () => {
     mockCan.mockReturnValue(false)
-    ;(apiGet as Mock).mockImplementation((path: string) => {
-      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
-      if (path.includes('/creatives')) return Promise.resolve([creative()])
-      return Promise.reject(new Error(`unexpected GET ${path}`))
-    })
+    mockGets({ creatives: [creative()] })
 
     render(<CreativeLibraryGrid projectId="proj-1" />)
 
     expect(await screen.findByText('12a')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'New creative' })).not.toBeInTheDocument()
+  })
+
+  it('shows a CLIP creative\'s poster with a play badge and duration, from its default clip media', async () => {
+    mockGets({
+      creatives: [creative({ kind: 'CLIP', layout: '', clipMedia: { default: 'media-1' } })],
+      media: [clipMedia()],
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    const thumb = await screen.findByTestId('creative-thumb-cr-1')
+    expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/media-1-poster.jpg')
+    expect(thumb).toHaveTextContent('13s')
+  })
+
+  it('prefers the latest render\'s thumbnail over the default clip media poster for a CLIP creative', async () => {
+    mockGets({
+      creatives: [
+        creative({
+          kind: 'CLIP',
+          layout: '',
+          clipMedia: { default: 'media-1' },
+          latestRenderId: 'render-1',
+          latestRenderThumbnailUrl: 'https://storage.example/render-poster.jpg',
+        }),
+      ],
+      media: [clipMedia()],
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    const thumb = await screen.findByTestId('creative-thumb-cr-1')
+    expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/render-poster.jpg')
   })
 })

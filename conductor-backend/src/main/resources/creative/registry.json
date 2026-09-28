@@ -11,6 +11,7 @@
     { "key": "1x1", "label": "1:1 Facebook feed", "platform": "facebook", "width": 1080, "height": 1080, "default": true },
     { "key": "story", "label": "9:16 Instagram and Facebook Stories", "platform": "story", "width": 1080, "height": 1920, "default": false },
     { "key": "1.91x1", "label": "1.91:1 link ad", "platform": "link", "width": 1200, "height": 628, "default": false },
-    { "key": "2x3", "label": "2:3 Pinterest", "platform": "pinterest", "width": 1000, "height": 1500, "default": false }
+    { "key": "2x3", "label": "2:3 Pinterest", "platform": "pinterest", "width": 1000, "height": 1500, "default": false },
+    { "key": "16x9", "label": "16:9 YouTube and landscape video", "platform": "youtube", "width": 1920, "height": 1080, "default": false }
   ]
 }

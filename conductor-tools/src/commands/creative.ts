@@ -57,7 +57,10 @@ Examples:
         for (const frame of result.frames) {
           const label = frame.sequenceIndex != null ? `${frame.placementKey}[${frame.sequenceIndex}]` : frame.placementKey
           const size = frame.width && frame.height ? `${frame.width}x${frame.height}` : ''
-          console.log(`  ${label}  ${size}  ${frame.url ?? ''}`.trimEnd())
+          // CLIP frames are videos, not JPEGs — durationSeconds is only ever set on those.
+          const duration = frame.durationSeconds != null ? `${frame.durationSeconds}s` : ''
+          const parts = [label, size, duration, frame.url ?? ''].filter(Boolean)
+          console.log(`  ${parts.join('  ')}`)
         }
         if (result.error) console.error(result.error)
         if (!result.ok || result.state === 'FAILED') {

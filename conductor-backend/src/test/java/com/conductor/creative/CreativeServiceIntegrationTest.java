@@ -11,7 +11,9 @@ import com.conductor.generated.v2.model.CopyRule;
 import com.conductor.generated.v2.model.CopyRuleField;
 import com.conductor.generated.v2.model.CreateBrandKitRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
+import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -178,6 +180,90 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(readiness.items()).extracting(CreativeService.ReadinessItem::key).contains("photoProvenance");
         assertThat(readiness.items().stream().filter(i -> i.key().equals("photoProvenance")).findFirst().orElseThrow().ok())
                 .isTrue();
+    }
+
+    // ── CLIP (COND-24 PR1) ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void creatingAClipNeedsNoLayoutThemeHeadlineOrPhoto() {
+        CreativePhoto video = newVideoPhoto();
+        CreateCreativeRequest request = new CreateCreativeRequest();
+        request.setKind(CreativeKind.CLIP);
+        request.setCaption("Watch this.");
+        request.setClipMedia(java.util.Map.of("default", video.getId()));
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        assertThat(created.creative().getKind()).isEqualTo(Creative.KIND_CLIP);
+        assertThat(created.creative().getPhotoId()).isNull();
+        assertThat(created.creative().getHeadline()).isNull();
+    }
+
+    @Test
+    void clipMediaReferencingNonVideoOrBlockedMediaIsRefused() {
+        CreateCreativeRequest notVideo = new CreateCreativeRequest();
+        notVideo.setKind(CreativeKind.CLIP);
+        notVideo.setClipMedia(java.util.Map.of("default", photo.getId()));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), notVideo, admin))
+                .isInstanceOf(CreativeValidationException.class);
+
+        CreativePhoto blockedVideo = newVideoPhoto();
+        blockedVideo.setBlocked(true);
+        photoRepository.save(blockedVideo);
+        CreateCreativeRequest blocked = new CreateCreativeRequest();
+        blocked.setKind(CreativeKind.CLIP);
+        blocked.setClipMedia(java.util.Map.of("default", blockedVideo.getId()));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), blocked, admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
+    @Test
+    void clipGoingReadyNeedsACaptionAndAtLeastOneClip() {
+        CreativePhoto video = newVideoPhoto();
+        CreateCreativeRequest noCaption = new CreateCreativeRequest();
+        noCaption.setKind(CreativeKind.CLIP);
+        noCaption.setState(com.conductor.generated.v2.model.CreativeState.READY);
+        noCaption.setClipMedia(java.util.Map.of("default", video.getId()));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), noCaption, admin))
+                .isInstanceOf(CreativeValidationException.class);
+
+        CreateCreativeRequest ready = new CreateCreativeRequest();
+        ready.setKind(CreativeKind.CLIP);
+        ready.setState(com.conductor.generated.v2.model.CreativeState.READY);
+        ready.setCaption("Watch this.");
+        ready.setClipMedia(java.util.Map.of("default", video.getId()));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), ready, admin);
+        assertThat(created.creative().getState()).isEqualTo(Creative.STATE_READY);
+    }
+
+    @Test
+    void readinessForAClipChecksTheClipInsteadOfAPhoto() {
+        CreativePhoto video = newVideoPhoto();
+        CreateCreativeRequest request = new CreateCreativeRequest();
+        request.setKind(CreativeKind.CLIP);
+        request.setCaption("Watch this.");
+        request.setClipMedia(java.util.Map.of("default", video.getId()));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        CreativeService.Readiness readiness = creativeService.readiness(project.getId(), created.creative().getId(), admin);
+
+        assertThat(readiness.items()).extracting(CreativeService.ReadinessItem::key)
+                .contains("clip", "mediaProvenance")
+                .doesNotContain("photoChecked", "photoProvenance");
+        // Alt text is advisory (non-blocking) for a video, unlike a STILL photo.
+        assertThat(readiness.items().stream().filter(i -> i.key().equals("altText")).findFirst().orElseThrow().blocking())
+                .isFalse();
+    }
+
+    // ── STILL is unchanged ───────────────────────────────────────────────────────────────────────
+
+    @Test
+    void aStillCreativesKindDefaultsToStillAndItsClipMediaStaysNull() {
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                concept("Plan the week in *one sentence*.", "A calm plan."), admin);
+
+        assertThat(created.creative().getKind()).isEqualTo(Creative.KIND_STILL);
+        assertThat(created.creative().getClipMedia()).isNull();
     }
 
     @Test
@@ -399,6 +485,24 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         request.setPhotoId(photo.getId());
         request.setLayout("stacked");
         return request;
+    }
+
+    private CreativePhoto newVideoPhoto() {
+        CreativePhoto p = new CreativePhoto();
+        p.setProjectId(project.getId());
+        p.setGcsPath("projects/" + project.getId() + "/marketing/photos/" + UUID.randomUUID() + ".mp4");
+        p.setContentType("video/mp4");
+        p.setMediaKind(CreativePhoto.MEDIA_KIND_VIDEO);
+        p.setSizeBytes(9_000_000L);
+        p.setWidth(1080);
+        p.setHeight(1920);
+        p.setDurationSeconds(new java.math.BigDecimal("10"));
+        p.setSource("own");
+        p.setLicence("Own work");
+        p.setFocal(objectMapper.createObjectNode());
+        p.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        p.setCreatedBy(admin.getId());
+        return photoRepository.save(p);
     }
 
     private CreativePhoto newPhoto() {

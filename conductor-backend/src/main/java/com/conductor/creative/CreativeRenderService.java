@@ -109,7 +109,12 @@ public class CreativeRenderService {
     public record RenderView(CreativeRender render, List<CreativeRenderFrame> frames) {
     }
 
-    public record CreateRenderResult(CreativeRender render, CreativeRenderSpec spec) {
+    /** {@code frames} is non-empty only for a CLIP creative, whose render is assembled and SUCCEEDED
+     *  synchronously (COND-24 PR1); a STILL render is created RUNNING with no frames yet. */
+    public record CreateRenderResult(CreativeRender render, CreativeRenderSpec spec, List<CreativeRenderFrame> frames) {
+        public CreateRenderResult(CreativeRender render, CreativeRenderSpec spec) {
+            this(render, spec, List.of());
+        }
     }
 
     @Transactional
@@ -117,6 +122,17 @@ public class CreativeRenderService {
                                             User caller) {
         requireEditor(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
+        if (Creative.KIND_MOTION.equals(creative.getKind())) {
+            throw new UnprocessableEntityException("Motion creatives render in the next release");
+        }
+        if (Creative.KIND_CLIP.equals(creative.getKind())) {
+            return requestClipRender(projectId, creative, request, caller);
+        }
+        return requestStillRender(projectId, creative, request, caller);
+    }
+
+    private CreateRenderResult requestStillRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
+                                                  User caller) {
         BrandKit kit = requireKit(projectId, creative.getBrandKitId());
         CreativePhoto mainPhoto = creative.getPhotoId() != null
                 ? photoRepository.findByIdAndProjectId(creative.getPhotoId(), projectId).orElse(null) : null;
@@ -131,7 +147,8 @@ public class CreativeRenderService {
                 mainPhoto != null && mainPhoto.isBlocked(), creative.getSequenceKind(),
                 toValidatorBeats(toSequenceBeats(creative.getSequence())), creative.getCarouselRatio(), Set.of(),
                 extractOverrideInts(creative.getLayoutOverrides(), "band"),
-                extractOverrideInts(creative.getLayoutOverrides(), "padBottom")));
+                extractOverrideInts(creative.getLayoutOverrides(), "padBottom"),
+                creative.getKind(), List.of()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -140,7 +157,7 @@ public class CreativeRenderService {
 
         CreativeRender render = new CreativeRender();
         render.setProjectId(projectId);
-        render.setCreativeId(creativeId);
+        render.setCreativeId(creative.getId());
         render.setCreativeVersion(creative.getVersion());
         render.setState(CreativeRender.STATE_RUNNING);
         render.setPreviewOnly(request != null && Boolean.TRUE.equals(request.getPreviewOnly()));
@@ -152,6 +169,169 @@ public class CreativeRenderService {
 
         CreativeRenderSpec spec = buildSpec(render, creative, kit, mainPhoto, placements);
         return new CreateRenderResult(render, spec);
+    }
+
+    /**
+     * CLIP renders are assembled here, not on the user's machine (COND-24 PR1, contract "Renders for
+     * CLIP"): a real video would take real ffmpeg work no local Playwright job does, so the backend just
+     * copies the chosen media object(s) straight into the render's own path and records one frame per
+     * placement the clip set covers. The render is created — and settles — SUCCEEDED in this one call;
+     * there is no RUNNING interval and no frame PUT.
+     */
+    private CreateRenderResult requestClipRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
+                                                 User caller) {
+        if (request != null && Boolean.TRUE.equals(request.getPreviewOnly())) {
+            throw new UnprocessableEntityException(
+                    "CLIP renders are assembled directly from the chosen media; there is no preview-only sheet");
+        }
+        Map<String, String> clipMedia = toClipMediaMap(creative.getClipMedia());
+        BrandKit kit = requireKit(projectId, creative.getBrandKitId());
+        List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
+                creative.getLayout(), creative.getTheme(), toStringList(creative.getPlacements()),
+                creative.getHeadline(), creative.getBody(), creative.getCaption(),
+                // Force the READY-only checks (caption + at least one clip) regardless of the Creative's
+                // own state, exactly as the STILL path forces its own READY checks above.
+                Creative.STATE_READY, null, true, true, true, false, creative.getSequenceKind(), List.of(),
+                creative.getCarouselRatio(), Set.of(), Map.of(), Map.of(),
+                Creative.KIND_CLIP, resolveClipMediaEntries(projectId, clipMedia)));
+        if (!violations.isEmpty()) {
+            throw new CreativeValidationException(violations);
+        }
+
+        Map<String, String> framePlacements = resolveClipFramePlacements(projectId, clipMedia);
+
+        CreativeRender render = new CreativeRender();
+        render.setProjectId(projectId);
+        render.setCreativeId(creative.getId());
+        render.setCreativeVersion(creative.getVersion());
+        render.setState(CreativeRender.STATE_SUCCEEDED);
+        render.setPreviewOnly(false);
+        render.setRenderer(request != null ? request.getRenderer() : null);
+        render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
+        render.setRequestedBy(caller.getId());
+        render.setRequestedAt(OffsetDateTime.now());
+        render.setFinishedAt(OffsetDateTime.now());
+        render = renderRepository.save(render);
+
+        List<CreativeRenderFrame> frames = new ArrayList<>();
+        for (Map.Entry<String, String> entry : framePlacements.entrySet()) {
+            String placementKey = entry.getKey();
+            CreativePhoto media = photoRepository.findByIdAndProjectId(entry.getValue(), projectId)
+                    .orElseThrow(() -> new BusinessException("No media with id " + entry.getValue() + " in this project"));
+
+            String destPath = clipFramePath(projectId, creative.getId(), render.getId(), placementKey, media.getContentType());
+            storageService.copy(media.getGcsPath(), destPath);
+            String posterDestPath = null;
+            if (media.getPosterGcsPath() != null) {
+                posterDestPath = clipFramePosterPath(projectId, creative.getId(), render.getId(), placementKey);
+                storageService.copy(media.getPosterGcsPath(), posterDestPath);
+            }
+
+            CreativeRenderFrame frame = new CreativeRenderFrame();
+            frame.setRenderId(render.getId());
+            frame.setCreativeId(creative.getId());
+            frame.setPlacementKey(placementKey);
+            frame.setPlatform(registry.hasPlacement(placementKey) ? registry.placements().get(placementKey).platform() : null);
+            frame.setGcsPath(destPath);
+            frame.setContentType(media.getContentType());
+            frame.setWidth(media.getWidth() != null ? media.getWidth() : 0);
+            frame.setHeight(media.getHeight() != null ? media.getHeight() : 0);
+            frame.setSizeBytes(media.getSizeBytes());
+            frame.setDurationSeconds(media.getDurationSeconds());
+            frame.setHasAudio(media.getHasAudio());
+            frame.setPosterGcsPath(posterDestPath);
+            frame.setWarnings(objectMapper.createArrayNode());
+            frameRepository.save(frame);
+            frames.add(frame);
+        }
+
+        return new CreateRenderResult(render, null, frames);
+    }
+
+    private String clipFramePath(String projectId, String creativeId, String renderId, String placementKey, String contentType) {
+        return "projects/" + projectId + "/creatives/" + creativeId + "/renders/" + renderId + "/" + placementKey
+                + "." + videoExtensionFor(contentType);
+    }
+
+    private String clipFramePosterPath(String projectId, String creativeId, String renderId, String placementKey) {
+        return "projects/" + projectId + "/creatives/" + creativeId + "/renders/" + renderId + "/" + placementKey + "-poster.jpg";
+    }
+
+    private static String videoExtensionFor(String contentType) {
+        return switch (contentType == null ? "" : contentType) {
+            case "video/quicktime" -> "mov";
+            case "video/webm" -> "webm";
+            default -> "mp4";
+        };
+    }
+
+    /**
+     * One frame per placement a CLIP creative's {@code clipMedia} covers: an explicit key (other than
+     * {@code "default"}) names its own placement directly; {@code "default"}'s media resolves to the
+     * registry placement whose aspect ratio is closest to its own (excluding {@code story}, whose aspect
+     * is already covered by {@code 9x16} — see {@link #nearestPlacementFor}), and only fills that
+     * placement in when no explicit entry already claims it.
+     */
+    Map<String, String> resolveClipFramePlacements(String projectId, Map<String, String> clipMedia) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : clipMedia.entrySet()) {
+            if (!"default".equals(entry.getKey()) && registry.hasPlacement(entry.getKey())) {
+                resolved.put(entry.getKey(), entry.getValue());
+            }
+        }
+        String defaultMediaId = clipMedia.get("default");
+        if (defaultMediaId != null) {
+            CreativePhoto defaultMedia = photoRepository.findByIdAndProjectId(defaultMediaId, projectId).orElse(null);
+            if (defaultMedia != null && defaultMedia.getWidth() != null && defaultMedia.getHeight() != null
+                    && defaultMedia.getHeight() > 0) {
+                String nearest = nearestPlacementFor((double) defaultMedia.getWidth() / defaultMedia.getHeight());
+                if (nearest != null) {
+                    resolved.putIfAbsent(nearest, defaultMediaId);
+                }
+            }
+        }
+        return resolved;
+    }
+
+    /** The registry placement (excluding {@code story}) whose aspect ratio is nearest {@code videoAspect}. */
+    String nearestPlacementFor(double videoAspect) {
+        String best = null;
+        double bestDiff = Double.MAX_VALUE;
+        for (Map.Entry<String, CreativeRegistry.PlacementInfo> entry : registry.placements().entrySet()) {
+            if ("story".equals(entry.getKey()) || entry.getValue().height() <= 0) {
+                continue;
+            }
+            double placementAspect = (double) entry.getValue().width() / entry.getValue().height();
+            double diff = Math.abs(placementAspect - videoAspect);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                best = entry.getKey();
+            }
+        }
+        return best;
+    }
+
+    /** Mirrors {@code CreativeService#resolveClipMedia} — this service also needs it to run the CLIP
+     *  structural rules at render time, and has no dependency on {@code CreativeService} to reuse from. */
+    private List<CreativeValidator.ClipMediaEntry> resolveClipMediaEntries(String projectId, Map<String, String> clipMedia) {
+        List<CreativeValidator.ClipMediaEntry> entries = new ArrayList<>();
+        for (Map.Entry<String, String> entry : clipMedia.entrySet()) {
+            String mediaId = entry.getValue();
+            CreativePhoto media = mediaId != null ? photoRepository.findByIdAndProjectId(mediaId, projectId).orElse(null) : null;
+            entries.add(new CreativeValidator.ClipMediaEntry(entry.getKey(), mediaId, media != null,
+                    media != null && media.isVideo(), media != null && media.isUploaded(),
+                    media != null && media.isBlocked()));
+        }
+        return entries;
+    }
+
+    /** Mirrors {@code CreativeService#toClipMediaMap}. */
+    private Map<String, String> toClipMediaMap(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(node, new TypeReference<Map<String, String>>() {
+        });
     }
 
     @Transactional
@@ -302,12 +482,17 @@ public class CreativeRenderService {
     private CreativeRenderFrameResponse toFrameResponse(CreativeRenderFrame frame) {
         return new CreativeRenderFrameResponse(frame.getId(), frame.getPlacementKey(),
                 storageService.generateSignedUrl(frame.getGcsPath(), FRAME_URL_EXPIRY_MINUTES),
-                frame.getWidth(), frame.getHeight(), frame.getSizeBytes(), toStringListOfWarnings(frame.getWarnings()))
+                frame.getWidth(), frame.getHeight(), frame.getSizeBytes(), frame.getContentType(),
+                toStringListOfWarnings(frame.getWarnings()))
                 .platform(frame.getPlatform())
-                .sequenceIndex(frame.getSequenceIndex());
+                .sequenceIndex(frame.getSequenceIndex())
+                .durationSeconds(frame.getDurationSeconds())
+                .hasAudio(frame.getHasAudio())
+                .posterUrl(frame.getPosterGcsPath() != null
+                        ? storageService.generateSignedUrl(frame.getPosterGcsPath(), FRAME_URL_EXPIRY_MINUTES) : null);
     }
 
-    /** The frame {@code latestRenderThumbnailUrl} shows: the 4x5 frame, else the first frame. */
+    /** The image {@code latestRenderThumbnailUrl} shows: the 4x5 frame, else the first; a video frame's poster. */
     public String thumbnailUrl(RenderView view) {
         if (view == null || view.frames().isEmpty()) {
             return null;
@@ -316,7 +501,10 @@ public class CreativeRenderService {
                 .filter(f -> "4x5".equals(f.getPlacementKey()))
                 .findFirst()
                 .orElseGet(() -> view.frames().get(0));
-        return storageService.generateSignedUrl(frame.getGcsPath(), FRAME_URL_EXPIRY_MINUTES);
+        // A thumbnail is an <img>: a video frame shows its poster (null when it has none, so the caller falls back).
+        boolean video = frame.getContentType() != null && frame.getContentType().startsWith("video/");
+        String path = video ? frame.getPosterGcsPath() : frame.getGcsPath();
+        return path != null ? storageService.generateSignedUrl(path, FRAME_URL_EXPIRY_MINUTES) : null;
     }
 
     // ── spec building ────────────────────────────────────────────────────────────────────────────

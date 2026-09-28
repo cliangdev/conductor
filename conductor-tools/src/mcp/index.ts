@@ -71,6 +71,7 @@ import {
   getCreative,
   createCreative,
   updateCreative,
+  uploadCreativeMedia,
   uploadCreativePhoto,
   renderCreativeTool,
   previewCreative,
@@ -1106,7 +1107,7 @@ const TOOLS = [
   },
   {
     name: 'create_creative',
-    description: "Create a Creative (photo, headline, layout, theme, body, caption, alt text, optional story/carousel sequence), or, with variantOf, cut a lettered variant of an existing one instead (inherits everything but headline/name — every other field here is ignored). Refused with the failing rule's message on a bad layout/theme/placement, the kit's accent-phrase rule, a copy rule, or (when state is READY) a readiness rule. Call get_creative after to verify.",
+    description: "Create a Creative (photo, headline, layout, theme, body, caption, alt text, optional story/carousel sequence), or, with variantOf, cut a lettered variant of an existing one instead (inherits everything but headline/name — every other field here is ignored). Set kind to CLIP to use a finished video as-is via clipMedia instead — no photo, headline or layout needed. Refused with the failing rule's message on a bad layout/theme/placement, the kit's accent-phrase rule, a copy rule, or (when state is READY) a readiness rule. Call get_creative after to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1114,6 +1115,16 @@ const TOOLS = [
         brandKitId: { type: 'string', description: "Brand Kit this Creative renders with (optional — defaults to the project's default kit)" },
         name: { type: 'string', description: 'Internal name, not shown on the artwork (optional)' },
         state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'], description: 'Defaults to DRAFT (optional)' },
+        kind: {
+          type: 'string',
+          enum: ['STILL', 'MOTION', 'CLIP'],
+          description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. MOTION is accepted but not yet renderable.',
+        },
+        clipMedia: {
+          type: 'object',
+          additionalProperties: { type: 'string' },
+          description: 'CLIP only: media ids per placement from upload_creative_media, e.g. {"default": mediaId, "9x16": mediaId}. "default" covers any placement without its own entry.',
+        },
         layout: { type: 'string', description: "Layout key from the creative registry, e.g. stacked/bleed/card/split (optional — defaults to the registry's first layout)" },
         theme: { type: 'string', enum: ['dark', 'light'], description: 'Optional — defaults to dark' },
         photoId: { type: 'string', description: 'A photo from upload_creative_photo (optional)' },
@@ -1161,6 +1172,8 @@ const TOOLS = [
         brandKitId: { type: 'string' },
         name: { type: 'string' },
         state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'] },
+        kind: { type: 'string', enum: ['STILL', 'MOTION', 'CLIP'] },
+        clipMedia: { type: 'object', additionalProperties: { type: 'string' } },
         layout: { type: 'string' },
         theme: { type: 'string', enum: ['dark', 'light'] },
         photoId: { type: 'string' },
@@ -1197,17 +1210,32 @@ const TOOLS = [
     },
   },
   {
-    name: 'upload_creative_photo',
-    description: "Upload a photo into the project's photo library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Width and height are read from the file itself. Use the returned photo's id as a Creative's photoId.",
+    name: 'upload_creative_media',
+    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL) or a clipMedia entry (CLIP).",
     inputSchema: {
       type: 'object',
       properties: {
         filePath: { type: 'string', description: 'A file on this machine (use this or url)' },
         url: { type: 'string', description: 'A public http(s) URL (use this or filePath)' },
-        label: { type: 'string', description: 'Human label (optional — defaults to the filename)' },
+        label: { type: 'string', description: 'Human label (optional — defaults to the filename, without its extension)' },
         source: { type: 'string', description: 'Provenance note, e.g. a URL or "Generated with <model> on <date>" (optional)' },
         licence: { type: 'string', description: 'e.g. "Own work", "Unsplash Licence", "Generated, house use" (optional)' },
-        aiGenerated: { type: 'boolean', description: 'Whether the photo is AI-generated (optional, informational only)' },
+        aiGenerated: { type: 'boolean', description: 'Whether the file is AI-generated (optional, informational only)' },
+      },
+    },
+  },
+  {
+    name: 'upload_creative_photo',
+    description: 'Deprecated alias for upload_creative_media (same behavior, including for video/audio now) — prefer that name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string' },
+        url: { type: 'string' },
+        label: { type: 'string' },
+        source: { type: 'string' },
+        licence: { type: 'string' },
+        aiGenerated: { type: 'boolean' },
       },
     },
   },
@@ -2058,9 +2086,11 @@ export async function runMcpServer(): Promise<void> {
         case 'update_creative': {
           return successResponse(await updateCreative(params as unknown as UpdateCreativeParams, config))
         }
+        case 'upload_creative_media':
         case 'upload_creative_photo': {
+          const upload = name === 'upload_creative_media' ? uploadCreativeMedia : uploadCreativePhoto
           return successResponse(
-            await uploadCreativePhoto(
+            await upload(
               {
                 filePath: params['filePath'] as string | undefined,
                 url: params['url'] as string | undefined,

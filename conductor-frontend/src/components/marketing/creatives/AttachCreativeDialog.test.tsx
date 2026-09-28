@@ -29,6 +29,7 @@ function creative(overrides: Partial<Creative> = {}): Creative {
     parentCreativeId: null,
     name: 'Paste a link',
     state: 'READY',
+    kind: 'STILL',
     layout: 'stacked',
     theme: 'dark',
     photoId: null,

@@ -4,10 +4,10 @@
 // project's Draft Posts or started fresh. Reuses the same Work Item list fetch WorkItemListView
 // uses (useDraftPosts), scanning every publish-capable Workflow rather than assuming a single one.
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { PlusIcon } from 'lucide-react'
+import { PlusIcon, VideoIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
@@ -16,7 +16,11 @@ import { apiErrorMessage } from '@/lib/api'
 import { workItemDetailPath, workItemListPath } from '@/lib/workflows'
 import { PLATFORM_LABELS } from '@/components/marketing/destinations/publishState'
 import type { PublishPlatform } from '@/components/marketing/destinations/types'
-import { attachCreativeRender, type AttachCreativeResult } from '@/components/marketing/creatives/types'
+import {
+  attachCreativeRender,
+  type AttachCreativeResult,
+  type CreativeRenderFrame,
+} from '@/components/marketing/creatives/types'
 import { useDraftPosts, type DraftPost } from '@/components/marketing/creatives/useDraftPosts'
 
 function platformLabel(platform: string): string {
@@ -30,6 +34,9 @@ export interface UseInPostDialogProps {
   creativeId: string
   creativeDisplayId: string
   renderId: string
+  /** The attached render's frames — used only to flag a target as video in the result (a frame's
+   *  `contentType`). Optional: omitted, no target shows the video icon. */
+  renderFrames?: CreativeRenderFrame[]
   token: string
 }
 
@@ -40,6 +47,7 @@ export function UseInPostDialog({
   creativeId,
   creativeDisplayId,
   renderId,
+  renderFrames,
   token,
 }: UseInPostDialogProps) {
   const router = useRouter()
@@ -47,6 +55,23 @@ export function UseInPostDialog({
   const [attachingId, setAttachingId] = useState<string | null>(null)
   const [attachError, setAttachError] = useState<string | null>(null)
   const [result, setResult] = useState<{ post: DraftPost; data: AttachCreativeResult } | null>(null)
+
+  const frameById = useMemo(() => {
+    const map = new Map<string, CreativeRenderFrame>()
+    for (const frame of renderFrames ?? []) map.set(frame.id, frame)
+    return map
+  }, [renderFrames])
+
+  /** True when any asset a target received traces back to a video frame — `result.assets` maps each
+   *  new asset id to the frame it was copied from. */
+  function targetHasVideo(assetIds: string[]): boolean {
+    if (!result) return false
+    const frameIdByAsset = new Map(result.data.assets.map((a) => [a.assetId, a.frameId]))
+    return assetIds.some((id) => {
+      const frame = frameById.get(frameIdByAsset.get(id) ?? '')
+      return Boolean(frame?.contentType?.startsWith('video/'))
+    })
+  }
 
   function close(nextOpen: boolean) {
     if (!nextOpen) {
@@ -107,7 +132,8 @@ export function UseInPostDialog({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Targets updated</p>
               <ul className="mt-1 space-y-0.5 text-sm">
                 {result.data.targetsUpdated.map((t) => (
-                  <li key={t.targetId}>
+                  <li key={t.targetId} className="flex items-center gap-1.5">
+                    {targetHasVideo(t.assetIds) && <VideoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Video" />}
                     {platformLabel(t.platform)} — {t.assetIds.length} frame{t.assetIds.length === 1 ? '' : 's'}
                   </li>
                 ))}

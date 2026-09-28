@@ -753,8 +753,13 @@
       ]
     },
     {
+      "name": "upload_creative_media",
+      "description": "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance for the readiness checklist. Kind, dimensions, duration and audio are detected automatically; a video also gets a poster frame.",
+      "category": "marketing"
+    },
+    {
       "name": "upload_creative_photo",
-      "description": "Upload a photo into the project's photo library from a local file or a public URL, recording its provenance for the readiness checklist. Width/height are read from the file.",
+      "description": "Deprecated alias for upload_creative_media — same behavior, including for video/audio.",
       "category": "marketing"
     },
     {

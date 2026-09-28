@@ -28,8 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * "Use in Post" (COND-24 T3, AC-P0-3.3): copies a SUCCEEDED render's frames into a Post's own assets and,
@@ -136,6 +138,10 @@ public class CreativeAttachService {
         List<AttachedAsset> attachedAssets = new ArrayList<>();
         // placementKey -> assetIds, in the same order the frames were rendered (never re-sorted).
         Map<String, List<String>> assetIdsByPlacement = new LinkedHashMap<>();
+        // Every placement whose frame(s) are video (a CLIP creative's frames) — decides whether a target
+        // is matched with the image or the video mapping rule, and feeds the video mapping's own
+        // "only when nothing more specific exists" fallbacks (see CreativePlacementTargetMapper#matchesVideo).
+        Set<String> videoPlacementKeys = new LinkedHashSet<>();
 
         // Attaching the same render again (say, to fill a destination added afterwards) reuses the frames
         // already on this Post instead of copying them a second time.
@@ -145,6 +151,9 @@ public class CreativeAttachService {
         }
 
         for (CreativeRenderFrame frame : frames) {
+            if (isVideo(frame)) {
+                videoPlacementKeys.add(frame.getPlacementKey());
+            }
             Asset reused = alreadyAttached.get(frame.getId());
             if (reused != null) {
                 attachedAssets.add(new AttachedAsset(reused.getId(), frame.getId(), frame.getPlacementKey(), frame.getSequenceIndex()));
@@ -159,7 +168,8 @@ public class CreativeAttachService {
 
             Asset asset = assetService.createFromStoredObject(projectId, workItemId, new AssetService.StoredObjectInput(
                     assetType, "Creative " + creative.displayId() + " " + frame.getPlacementKey(), destPath,
-                    frame.getContentType(), frame.getSizeBytes(), frame.getWidth(), frame.getHeight(), frame.getId()));
+                    frame.getContentType(), frame.getSizeBytes(), frame.getWidth(), frame.getHeight(), frame.getId(),
+                    frame.getDurationSeconds()));
 
             attachedAssets.add(new AttachedAsset(asset.getId(), frame.getId(), frame.getPlacementKey(), frame.getSequenceIndex()));
             assetIdsByPlacement.computeIfAbsent(frame.getPlacementKey(), k -> new ArrayList<>()).add(asset.getId());
@@ -176,7 +186,7 @@ public class CreativeAttachService {
                 selections.add(selectionFor(target, currentCustomAssetIds(target)));
                 continue;
             }
-            List<String> matched = matchedAssetIds(target, assetIdsByPlacement);
+            List<String> matched = matchedAssetIds(target, assetIdsByPlacement, videoPlacementKeys);
             if (matched.isEmpty()) {
                 selections.add(selectionFor(target, List.of()));
                 continue;
@@ -190,16 +200,40 @@ public class CreativeAttachService {
         return new AttachResult(attachedAssets, updates, skipped);
     }
 
-    /** Storage copy preserves bytes and content type but not a filename — a frame is JPEG or PNG (see
-     * {@code docs/creatives.md}), and the copied asset's own path must carry a matching extension. */
+    /** Storage copy preserves bytes and content type but not a filename — an image frame is JPEG or PNG
+     * (see {@code docs/creatives.md}); a CLIP frame carries whatever video content type its source media
+     * did. The copied asset's own path must carry a matching extension. */
     private String extensionFor(String contentType) {
-        return "image/png".equals(contentType) ? "png" : "jpg";
+        return switch (contentType == null ? "" : contentType) {
+            case "image/png" -> "png";
+            case "video/quicktime" -> "mov";
+            case "video/webm" -> "webm";
+            case "video/mp4" -> "mp4";
+            default -> "jpg";
+        };
     }
 
-    /** The one placement (if any) this target matches, in the order the frames actually rendered. */
-    private List<String> matchedAssetIds(PostPublishTarget target, Map<String, List<String>> assetIdsByPlacement) {
+    private boolean isVideo(CreativeRenderFrame frame) {
+        return frame.getContentType() != null && frame.getContentType().startsWith("video/");
+    }
+
+    /**
+     * The one placement (if any) this target matches, in the order the frames actually rendered — the
+     * image mapping ({@link CreativePlacementTargetMapper#matches}) for an image placement, the video
+     * mapping ({@link CreativePlacementTargetMapper#matchesVideo}) for one whose frame(s) are video
+     * (COND-24 PR1). A target that could otherwise match two video placements (say both a {@code 9x16}
+     * and a {@code 16x9} frame exist and both claim YouTube) gets whichever comes first here, so it
+     * always ends up with exactly one video, never two.
+     */
+    private List<String> matchedAssetIds(PostPublishTarget target, Map<String, List<String>> assetIdsByPlacement,
+                                         Set<String> videoPlacementKeys) {
+        Set<String> presentPlacementKeys = assetIdsByPlacement.keySet();
         for (Map.Entry<String, List<String>> entry : assetIdsByPlacement.entrySet()) {
-            if (CreativePlacementTargetMapper.matches(entry.getKey(), target)) {
+            String placementKey = entry.getKey();
+            boolean matches = videoPlacementKeys.contains(placementKey)
+                    ? CreativePlacementTargetMapper.matchesVideo(placementKey, target, presentPlacementKeys)
+                    : CreativePlacementTargetMapper.matches(placementKey, target);
+            if (matches) {
                 return entry.getValue();
             }
         }

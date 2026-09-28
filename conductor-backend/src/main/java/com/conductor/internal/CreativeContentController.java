@@ -64,6 +64,15 @@ public class CreativeContentController implements CreativeContentInternalApi {
         return ResponseEntity.ok().build();
     }
 
+    @Override
+    public ResponseEntity<Void> uploadCreativePhotoPosterContent(String projectId, String photoId, Resource body) {
+        if (!photoService.belongsToProject(photoId, projectId)) {
+            return ResponseEntity.notFound().build();
+        }
+        photoService.uploadPosterContentPassthrough(photoId, readAllBytes(body));
+        return ResponseEntity.ok().build();
+    }
+
     private static byte[] readAllBytes(Resource body) {
         try (InputStream in = body.getInputStream()) {
             return in.readAllBytes();
