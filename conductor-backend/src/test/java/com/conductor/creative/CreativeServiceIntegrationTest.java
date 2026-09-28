@@ -1,9 +1,11 @@
 package com.conductor.creative;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
+import com.conductor.entity.WorkItem;
 import com.conductor.exception.ConflictException;
 import com.conductor.generated.v2.model.CopyRule;
 import com.conductor.generated.v2.model.CopyRuleField;
@@ -11,11 +13,17 @@ import com.conductor.generated.v2.model.CreateBrandKitRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.AssetService;
+import com.conductor.service.StorageService;
+import com.conductor.service.WorkItemService;
+import com.conductor.service.WorkflowSeeder;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,11 +42,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @Autowired private CreativeService creativeService;
+    @Autowired private CreativeRepository creativeRepository;
     @Autowired private CreativePhotoRepository photoRepository;
+    @Autowired private CreativeRenderRepository renderRepository;
+    @Autowired private CreativeRenderFrameRepository frameRepository;
+    @Autowired private CreativeExperimentRepository experimentRepository;
     @Autowired private BrandKitService brandKitService;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private ProjectMemberRepository projectMemberRepository;
+    @Autowired private AssetRepository assetRepository;
+    @Autowired private StorageService storageService;
+    @Autowired private WorkItemService workItemService;
+    @Autowired private WorkflowSeeder workflowSeeder;
     @Autowired private ObjectMapper objectMapper;
 
     private User admin;
@@ -218,6 +234,162 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
                     assertThat(cve.violations()).extracting(CreativeValidationException.Violation::message)
                             .contains("No exclamation marks.");
                 });
+    }
+
+    // ── Delete ───────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void deletingACreativeRemovesItAndFreesItsNumberForReuse() {
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                concept("Plan the week in *one sentence*.", "A calm plan."), admin);
+        String id = created.creative().getId();
+        assertThat(created.creative().getNumber()).isEqualTo(1);
+
+        creativeService.deleteCreative(project.getId(), id, admin);
+
+        assertThat(creativeRepository.findById(id)).isEmpty();
+
+        // No stored counter to reset: the next create re-reads MAX(number), which is now null again.
+        CreativeService.CreativeView next = creativeService.createCreative(project.getId(),
+                concept("A second concept.", "A calm plan."), admin);
+        assertThat(next.creative().getNumber()).isEqualTo(1);
+    }
+
+    @Test
+    void deletingAFamilyRootWithVariantsStillPresentIsRefused() {
+        CreativeService.CreativeView root = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin);
+        CreativeService.CreativeView variant = creativeService.createVariant(project.getId(),
+                root.creative().getId(), new CreateCreativeVariantRequest(), admin);
+
+        assertThatThrownBy(() -> creativeService.deleteCreative(project.getId(), root.creative().getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Delete its variants first")
+                .hasMessageContaining(variant.creative().displayId());
+
+        // The variant itself carries no such restriction — deleting it clears the way for the root.
+        creativeService.deleteCreative(project.getId(), variant.creative().getId(), admin);
+        creativeService.deleteCreative(project.getId(), root.creative().getId(), admin);
+        assertThat(creativeRepository.findById(root.creative().getId())).isEmpty();
+    }
+
+    @Test
+    void deletingACreativeWithARenderFrameStillOnAPostIsRefused() {
+        workflowSeeder.seedMarketing(project);
+        WorkItem post = workItemService.createWorkItem(project.getId(), "POST", "Launch teaser", "Caption", "MARKETING", admin);
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin);
+        Creative c = created.creative();
+
+        CreativeRenderFrame frame = newSucceededRenderWithFrame(c);
+        Asset asset = new Asset();
+        asset.setWorkItem(post);
+        asset.setType("facebook_post");
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setRef("marketing-assets/" + frame.getId());
+        asset.setGcsPath("marketing-assets/" + frame.getId());
+        asset.setContentType("image/jpeg");
+        asset.setSizeBytes(500L);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setCreativeFrameId(frame.getId());
+        assetRepository.save(asset);
+
+        assertThatThrownBy(() -> creativeService.deleteCreative(project.getId(), c.getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Remove it from the Post first")
+                .hasMessageContaining(post.getProject().getKey() + "-" + post.getSequenceNumber());
+
+        assertThat(creativeRepository.findById(c.getId())).isPresent();
+    }
+
+    @Test
+    void deletingACreativeDeletesItsOwnExperimentsRendersAndFramesAndTheirStorageObjects() {
+        CreativeService.CreativeView root = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin);
+        Creative c = root.creative();
+        CreativeService.CreativeView variant = creativeService.createVariant(project.getId(),
+                c.getId(), new CreateCreativeVariantRequest(), admin);
+
+        CreativeExperiment experiment = new CreativeExperiment();
+        experiment.setProjectId(project.getId());
+        experiment.setParentCreativeId(c.getId());
+        experiment.setMetric(CreativeExperiment.METRIC_VIEWS);
+        experiment.setWindowHours(72);
+        experiment.setState(CreativeExperiment.STATE_RUNNING);
+        experiment.setCreatedBy(admin.getId());
+        experiment = experimentRepository.save(experiment);
+        String experimentId = experiment.getId();
+
+        CreativeRenderFrame frame = newSucceededRenderWithFrame(c);
+        String gcsPath = frame.getGcsPath();
+        String renderId = frame.getRenderId();
+
+        // The variant carries no restriction on the root's own delete once it is gone itself.
+        creativeService.deleteCreative(project.getId(), variant.creative().getId(), admin);
+        creativeService.deleteCreative(project.getId(), c.getId(), admin);
+
+        assertThat(creativeRepository.findById(c.getId())).isEmpty();
+        assertThat(experimentRepository.findById(experimentId)).isEmpty();
+        assertThat(renderRepository.findById(renderId)).isEmpty();
+        assertThat(frameRepository.findAllByCreativeId(c.getId())).isEmpty();
+        assertThatThrownBy(() -> storageService.download(gcsPath)).isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void deletingACreativeThatIsAnExperimentsWinnerElsewhereNullsOutTheReferenceRatherThanDeletingTheExperiment() {
+        CreativeService.CreativeView root = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin);
+        CreativeService.CreativeView variant = creativeService.createVariant(project.getId(),
+                root.creative().getId(), new CreateCreativeVariantRequest(), admin);
+
+        CreativeExperiment experiment = new CreativeExperiment();
+        experiment.setProjectId(project.getId());
+        experiment.setParentCreativeId(root.creative().getId());
+        experiment.setMetric(CreativeExperiment.METRIC_VIEWS);
+        experiment.setWindowHours(72);
+        experiment.setState(CreativeExperiment.STATE_DECIDED);
+        experiment.setWinnerCreativeId(variant.creative().getId());
+        experiment.setCreatedBy(admin.getId());
+        experiment = experimentRepository.save(experiment);
+        String experimentId = experiment.getId();
+
+        // The variant is the decided winner, but not the family root — deleting it is not blocked.
+        creativeService.deleteCreative(project.getId(), variant.creative().getId(), admin);
+
+        CreativeExperiment reloaded = experimentRepository.findById(experimentId).orElseThrow();
+        assertThat(reloaded.getWinnerCreativeId()).isNull();
+        assertThat(reloaded.getState()).isEqualTo(CreativeExperiment.STATE_DECIDED);
+    }
+
+    /** A SUCCEEDED render with one real, uploaded frame for {@code creative} — mirrors
+     *  {@code CreativeAttachServiceIntegrationTest}'s own render/frame fixtures. */
+    private CreativeRenderFrame newSucceededRenderWithFrame(Creative creative) {
+        CreativeRender render = new CreativeRender();
+        render.setProjectId(project.getId());
+        render.setCreativeId(creative.getId());
+        render.setCreativeVersion(creative.getVersion());
+        render.setState(CreativeRender.STATE_SUCCEEDED);
+        render.setPreviewOnly(false);
+        render.setRequestedBy(admin.getId());
+        render = renderRepository.save(render);
+
+        String gcsPath = "projects/" + project.getId() + "/creatives/" + creative.getId() + "/renders/"
+                + render.getId() + "/9x16.jpg";
+        byte[] bytes = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9};
+        storageService.upload(gcsPath, bytes, "image/jpeg");
+
+        CreativeRenderFrame frame = new CreativeRenderFrame();
+        frame.setRenderId(render.getId());
+        frame.setCreativeId(creative.getId());
+        frame.setPlacementKey("9x16");
+        frame.setPlatform("tiktok");
+        frame.setGcsPath(gcsPath);
+        frame.setContentType("image/jpeg");
+        frame.setWidth(1080);
+        frame.setHeight(1920);
+        frame.setSizeBytes((long) bytes.length);
+        frame.setWarnings(objectMapper.createArrayNode());
+        return frameRepository.save(frame);
     }
 
     private CreateCreativeRequest concept(String headline, String body) {

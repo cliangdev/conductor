@@ -24,7 +24,7 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
-import { apiPost } from '@/lib/api'
+import { apiDelete, apiPost } from '@/lib/api'
 import { PhotoPicker } from './PhotoPicker'
 import type { CreativePhoto } from './types'
 
@@ -180,6 +180,50 @@ describe('PhotoPicker', () => {
     ))
 
     global.Image = originalImage
+  })
+
+  it('deletes a photo after confirmation and refreshes the library', async () => {
+    ;(apiDelete as Mock).mockResolvedValue(undefined)
+    const onPhotosChanged = vi.fn()
+    render(
+      <PhotoPicker
+        projectId="proj-1"
+        token="tok"
+        open
+        onOpenChange={() => {}}
+        photos={[photo()]}
+        onSelect={vi.fn()}
+        onPhotosChanged={onPhotosChanged}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /Delete photo/ }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+
+    await waitFor(() =>
+      expect(apiDelete).toHaveBeenCalledWith(expect.stringContaining('/marketing/photos/photo-1'), 'tok'),
+    )
+    await waitFor(() => expect(onPhotosChanged).toHaveBeenCalled())
+  })
+
+  it('shows the 409 refusal message when a photo is still in use', async () => {
+    ;(apiDelete as Mock).mockRejectedValue({ status: 409, detail: 'Creative 12a uses this photo — remove it there first' })
+    render(
+      <PhotoPicker
+        projectId="proj-1"
+        token="tok"
+        open
+        onOpenChange={() => {}}
+        photos={[photo()]}
+        onSelect={vi.fn()}
+        onPhotosChanged={vi.fn()}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /Delete photo/ }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+
+    expect(await screen.findByText('Could not delete this photo')).toBeInTheDocument()
   })
 
   it('hides upload and check/block controls for a role without creative.manage (REVIEWER)', async () => {

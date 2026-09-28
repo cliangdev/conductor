@@ -464,6 +464,15 @@ export function patchCreative(
   return apiPatch<Creative>(`${creativesBase(projectId)}/${creativeId}`, body, token) as Promise<Creative>
 }
 
+/**
+ * Refused with 409 when a render frame is still on a Post, or this is a family root (`a`) with
+ * lettered variants still present — see docs/creatives-guide.md's "Delete" note. Surface the 409's
+ * `detail` as-is via `apiErrorMessage`.
+ */
+export function deleteCreative(projectId: string, creativeId: string, token: string): Promise<void> {
+  return apiDelete(`${creativesBase(projectId)}/${creativeId}`, token)
+}
+
 export function createCreativeVariant(
   projectId: string,
   creativeId: string,
@@ -528,6 +537,12 @@ export function patchCreativePhoto(
   token: string,
 ): Promise<CreativePhoto> {
   return apiPatch<CreativePhoto>(`${photosBase(projectId)}/${photoId}`, body, token) as Promise<CreativePhoto>
+}
+
+/** Refused with 409 when any Creative still uses this photo (main photo or a sequence beat) — name
+ *  the referencing Creatives and remove it there first. Surface the 409's `detail` as-is. */
+export function deleteCreativePhoto(projectId: string, photoId: string, token: string): Promise<void> {
+  return apiDelete(`${photosBase(projectId)}/${photoId}`, token)
 }
 
 /** displayId, e.g. "12a" — number + variantLetter, matching the backend's own join. */

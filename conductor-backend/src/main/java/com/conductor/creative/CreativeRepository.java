@@ -24,6 +24,10 @@ public interface CreativeRepository extends JpaRepository<Creative, String> {
 
     List<Creative> findAllByNumberAndProjectId(int number, String projectId);
 
+    /** Every Creative whose main photo is this one — the delete-photo 409 guard's main-photo half
+     *  (the sequence-beat half is a JSON scan in {@code CreativePhotoService}). */
+    List<Creative> findAllByPhotoId(String photoId);
+
     boolean existsByProjectIdAndBrandKitId(String projectId, String brandKitId);
 
     /** Highest existing display number in the project, or {@code null} if it has no creatives yet. */

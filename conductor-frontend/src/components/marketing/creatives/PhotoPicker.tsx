@@ -8,10 +8,11 @@
 // before minting rather than leaving the fields optional.
 
 import { useRef, useState } from 'react'
-import { CheckIcon, ImageOffIcon, UploadCloudIcon } from 'lucide-react'
+import { CheckIcon, ImageOffIcon, Trash2Icon, UploadCloudIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
@@ -22,6 +23,7 @@ import { cn } from '@/lib/utils'
 import {
   confirmCreativePhoto,
   createCreativePhoto,
+  deleteCreativePhoto,
   patchCreativePhoto,
   type CreativePhoto,
 } from '@/components/marketing/creatives/types'
@@ -85,6 +87,8 @@ export function PhotoPicker({
   const [licence, setLicence] = useState('')
   const [aiGenerated, setAiGenerated] = useState(false)
   const [busyPhotoId, setBusyPhotoId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CreativePhoto | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // `labelOverride` carries the file-name default computed at selection time — reading the `label`
   // state here instead would race the setLabel call above it (state updates are async), so the file
@@ -137,6 +141,21 @@ export function PhotoPicker({
       setUploadError(apiErrorMessage(err, 'Could not update the photo'))
     } finally {
       setBusyPhotoId(null)
+    }
+  }
+
+  async function handleDeletePhoto() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await deleteCreativePhoto(projectId, deleteTarget.id, token)
+      setDeleteTarget(null)
+      await onPhotosChanged()
+    } catch (err) {
+      setUploadError(apiErrorMessage(err, 'Could not delete this photo'))
+      setDeleteTarget(null)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -245,12 +264,36 @@ export function PhotoPicker({
                   >
                     {photo.blocked ? 'Blocked' : 'Block'}
                   </button>
+                  <button
+                    type="button"
+                    disabled={busyPhotoId === photo.id}
+                    onClick={() => setDeleteTarget(photo)}
+                    className="rounded px-1 text-muted-foreground hover:text-destructive"
+                    title="Delete this photo"
+                    aria-label={`Delete photo${photo.label ? ` ${photo.label}` : ''}`}
+                  >
+                    <Trash2Icon className="h-3 w-3" aria-hidden />
+                  </button>
                 </div>
               )}
             </div>
           ))}
         </div>
       </div>
+
+      <ConfirmModal
+        open={deleteTarget != null}
+        title="Delete this photo"
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        busy={deleting}
+        onConfirm={handleDeletePhoto}
+        onCancel={() => setDeleteTarget(null)}
+      >
+        <p className="text-sm text-foreground">
+          Permanently delete <strong>{deleteTarget?.label || 'this photo'}</strong>? This cannot be undone.
+        </p>
+      </ConfirmModal>
     </Modal>
   )
 }

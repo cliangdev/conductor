@@ -26,4 +26,9 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
 
     @Modifying
     void deleteAllByRenderId(String renderId);
+
+    /** Every frame this Creative has ever produced — {@code CreativeService#deleteCreative}'s cleanup,
+     *  called only after it has confirmed none of them is still referenced by a Post asset. */
+    @Modifying
+    void deleteAllByCreativeId(String creativeId);
 }

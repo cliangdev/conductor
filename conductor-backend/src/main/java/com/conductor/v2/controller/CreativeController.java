@@ -128,6 +128,12 @@ public class CreativeController implements CreativesApi {
         return ResponseEntity.ok(toResponse(photoService.confirmPhoto(projectId, photoId, sizeBytes, currentUser())));
     }
 
+    @Override
+    public ResponseEntity<Void> deleteCreativePhoto(String projectId, String photoId) {
+        photoService.deletePhoto(projectId, photoId, currentUser());
+        return ResponseEntity.noContent().build();
+    }
+
     // ── Registry ─────────────────────────────────────────────────────────
 
     @Override
@@ -165,6 +171,12 @@ public class CreativeController implements CreativesApi {
     @Override
     public ResponseEntity<CreativeResponse> patchCreative(String projectId, String creativeId, PatchCreativeRequest request) {
         return ResponseEntity.ok(toResponse(creativeService.patchCreative(projectId, creativeId, request, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<Void> deleteCreative(String projectId, String creativeId) {
+        creativeService.deleteCreative(projectId, creativeId, currentUser());
+        return ResponseEntity.noContent().build();
     }
 
     @Override

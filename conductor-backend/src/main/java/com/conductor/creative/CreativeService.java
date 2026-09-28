@@ -1,5 +1,6 @@
 package com.conductor.creative;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
@@ -13,6 +14,7 @@ import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
 import com.conductor.generated.v2.model.SequenceBeat;
 import com.conductor.generated.v2.model.SequenceKind;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.StorageService;
@@ -20,16 +22,21 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * The Creative library (COND-24 T2): CRUD, cutting a lettered variant, and readiness — a data-driven
@@ -42,6 +49,7 @@ import java.util.Set;
 public class CreativeService {
 
     private static final int PHOTO_URL_EXPIRY_MINUTES = 15;
+    private static final Logger log = LoggerFactory.getLogger(CreativeService.class);
 
     private final CreativeRepository creativeRepository;
     private final CreativePhotoRepository photoRepository;
@@ -55,6 +63,9 @@ public class CreativeService {
     private final ObjectMapper objectMapper;
     private final CreativeRenderService renderService;
     private final CreativeExperimentRepository experimentRepository;
+    private final CreativeRenderFrameRepository frameRepository;
+    private final CreativeRenderRepository renderRepository;
+    private final AssetRepository assetRepository;
 
     public CreativeService(CreativeRepository creativeRepository,
                            CreativePhotoRepository photoRepository,
@@ -67,7 +78,10 @@ public class CreativeService {
                            StorageService storageService,
                            ObjectMapper objectMapper,
                            CreativeRenderService renderService,
-                           CreativeExperimentRepository experimentRepository) {
+                           CreativeExperimentRepository experimentRepository,
+                           CreativeRenderFrameRepository frameRepository,
+                           CreativeRenderRepository renderRepository,
+                           AssetRepository assetRepository) {
         this.creativeRepository = creativeRepository;
         this.photoRepository = photoRepository;
         this.brandKitRepository = brandKitRepository;
@@ -80,6 +94,9 @@ public class CreativeService {
         this.objectMapper = objectMapper;
         this.renderService = renderService;
         this.experimentRepository = experimentRepository;
+        this.frameRepository = frameRepository;
+        this.renderRepository = renderRepository;
+        this.assetRepository = assetRepository;
     }
 
     /**
@@ -354,6 +371,70 @@ public class CreativeService {
 
         boolean ready = items.stream().noneMatch(i -> i.blocking() && !i.ok());
         return new Readiness(ready, items);
+    }
+
+    /**
+     * Deletes a Creative, in one transaction: its hook experiments (where it is the family root; any
+     * experiment elsewhere naming it as winner is nulled out, not deleted, so the decision record
+     * outlives it), its render frames and renders, then the Creative itself. Refused with 409 when a
+     * render frame is still on a Post ({@code assets.creative_frame_id}), or when this is a family root
+     * with other lettered variants still present. The frame objects a SUCCEEDED render wrote to storage
+     * are removed best-effort once the delete commits — see {@link AfterCommitStorageCleanup}.
+     */
+    @Transactional
+    public void deleteCreative(String projectId, String creativeId, User caller) {
+        requireEditor(projectId, caller);
+        Creative creative = findCreative(projectId, creativeId);
+
+        if (creative.getParentCreativeId() == null) {
+            List<Creative> siblings = creativeRepository.findAllByNumberAndProjectId(creative.getNumber(), projectId)
+                    .stream()
+                    .filter(c -> !c.getId().equals(creative.getId()))
+                    .sorted(Comparator.comparing(Creative::getVariantLetter))
+                    .toList();
+            if (!siblings.isEmpty()) {
+                String names = siblings.stream().map(Creative::displayId).collect(Collectors.joining(", "));
+                throw new ConflictException("Delete its variants first: " + names);
+            }
+        }
+
+        List<CreativeRenderFrame> frames = frameRepository.findAllByCreativeId(creative.getId());
+        if (!frames.isEmpty()) {
+            List<String> frameIds = frames.stream().map(CreativeRenderFrame::getId).toList();
+            List<Asset> referencing = assetRepository.findAllByCreativeFrameIdIn(frameIds);
+            if (!referencing.isEmpty()) {
+                Set<String> postDisplayIds = new TreeSet<>();
+                for (Asset asset : referencing) {
+                    postDisplayIds.add(asset.getWorkItem().getProject().getKey() + "-" + asset.getWorkItem().getSequenceNumber());
+                }
+                String noun = postDisplayIds.size() > 1 ? "Posts" : "Post";
+                throw new ConflictException("Remove it from the " + noun + " first (" + String.join(", ", postDisplayIds) + ")");
+            }
+        }
+
+        List<CreativeExperiment> asFamilyRoot = experimentRepository
+                .findAllByProjectIdAndParentCreativeIdOrderByCreatedAtDesc(projectId, creative.getId());
+        if (!asFamilyRoot.isEmpty()) {
+            experimentRepository.deleteAll(asFamilyRoot);
+        }
+
+        List<CreativeExperiment> asWinnerElsewhere = experimentRepository.findAllByWinnerCreativeId(creative.getId());
+        if (!asWinnerElsewhere.isEmpty()) {
+            asWinnerElsewhere.forEach(e -> e.setWinnerCreativeId(null));
+            experimentRepository.saveAll(asWinnerElsewhere);
+        }
+
+        List<String> gcsPaths = frames.stream().map(CreativeRenderFrame::getGcsPath).toList();
+        if (!frames.isEmpty()) {
+            frameRepository.deleteAllByCreativeId(creative.getId());
+        }
+        if (!renderRepository.findAllByCreativeId(creative.getId()).isEmpty()) {
+            renderRepository.deleteAllByCreativeId(creative.getId());
+        }
+
+        creativeRepository.delete(creative);
+
+        AfterCommitStorageCleanup.deleteAfterCommit(storageService, gcsPaths, log);
     }
 
     // ── Number/letter assignment ──────────────────────────────────────────

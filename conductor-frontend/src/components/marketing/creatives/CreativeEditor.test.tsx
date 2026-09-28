@@ -23,7 +23,7 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
-import { apiGet, apiPatch, apiPost } from '@/lib/api'
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
 import { CreativeEditor } from './CreativeEditor'
 import type { Creative } from './types'
 import type { BrandKit } from '@/components/marketing/brand/types'
@@ -339,6 +339,38 @@ describe('CreativeEditor', () => {
         'tok',
       ),
     )
+  })
+
+  it('deletes the Creative after confirmation and routes back to the library', async () => {
+    mockGetsFor(creative())
+    ;(apiDelete as Mock).mockResolvedValue(undefined)
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+    await screen.findByLabelText('Headline')
+
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete this Creative' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+
+    await waitFor(() =>
+      expect(apiDelete).toHaveBeenCalledWith(expect.stringContaining('/creatives/cr-1'), 'tok'),
+    )
+    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/app/projects/proj-1/marketing/creatives'))
+  })
+
+  it('shows the 409 refusal message and stays on the page when delete is blocked', async () => {
+    mockGetsFor(creative())
+    ;(apiDelete as Mock).mockRejectedValue({ status: 409, detail: 'Remove it from the Post first (AM-1)' })
+
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+    await screen.findByLabelText('Headline')
+
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete this Creative' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(pushSpy).not.toHaveBeenCalledWith('/app/projects/proj-1/marketing/creatives')
   })
 
   it('hides Save actions and disables the form for a role without creative.manage (REVIEWER)', async () => {

@@ -3047,6 +3047,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - creatives
+      summary: Delete a Creative photo
+      description: >-
+        Refused when any Creative still uses this photo, as its main photo or as a sequence beat's
+        photo — name the referencing Creatives and remove it there first. Otherwise deletes the row
+        and the stored object (best-effort, after the delete commits). Requires ADMIN or CREATOR.
+      operationId: deleteCreativePhoto
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Photo not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A Creative still uses this photo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /projects/{projectId}/marketing/photos/{photoId}/confirm:
     post:
@@ -3372,6 +3422,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreativeValidationProblem"
+    delete:
+      tags:
+        - creatives
+      summary: Delete a Creative
+      description: >-
+        Refused when a render frame of this Creative is still referenced by a Post asset (remove it
+        from the Post first), or when this is a family root (variant letter `a`) and other lettered
+        variants still exist (delete those first). Otherwise deletes, in one transaction, this
+        Creative's hook experiments (where it is the family root, and nulling out any experiment
+        elsewhere that names it as winner), its renders and render frames, then the Creative itself;
+        the stored frame objects are removed from storage best-effort after the delete commits.
+        Requires ADMIN or CREATOR.
+      operationId: deleteCreative
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A render frame is still on a Post, or this is a family root with variants still present
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /projects/{projectId}/marketing/creatives/{creativeId}/variants:
     post:

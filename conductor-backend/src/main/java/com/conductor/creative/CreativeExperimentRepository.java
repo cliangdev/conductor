@@ -33,6 +33,11 @@ public interface CreativeExperimentRepository extends JpaRepository<CreativeExpe
     List<CreativeExperiment> findAllByProjectIdAndParentCreativeIdAndStateOrderByCreatedAtDesc(
             String projectId, String parentCreativeId, String state);
 
+    /** Every experiment (any family, any project) that names this Creative as its winner —
+     *  {@code CreativeService#deleteCreative} nulls these out rather than deleting the experiment, since
+     *  the decision record should outlive the winning Creative being deleted. */
+    List<CreativeExperiment> findAllByWinnerCreativeId(String winnerCreativeId);
+
     /** Decided since a cutoff, newest first — the weekly digest's "Hook winners" section. */
     List<CreativeExperiment> findAllByProjectIdAndStateAndDecidedAtAfterOrderByDecidedAtDesc(
             String projectId, String state, OffsetDateTime cutoff);

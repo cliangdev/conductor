@@ -108,6 +108,11 @@ Go to **Marketing → Creatives → New creative**. It opens straight into the C
 **Save** writes the Creative. **Save as variant** copies the photo, layout, and body into a new
 lettered sibling with its own headline — this is how you set up a hook experiment (see below).
 
+**Delete**, in the header's `…` menu, permanently removes a Creative — refused if any of its
+renders is still on a Post (remove it from the Post first) or, for a family root like `12a`, while
+its lettered variants (`12b`, `12c`, …) still exist. A photo in the picker can be deleted the same
+way, refused while any Creative still uses it.
+
 The web editor never renders final images itself — that always happens from Claude Code/Desktop or
 the CLI (`conductor creative render 12a`). The **Renders** panel on the editor page lists what's
 been rendered and shows both the exact prompt and the CLI command, ready to copy, for whenever you

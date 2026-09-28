@@ -2,6 +2,7 @@ package com.conductor.creative;
 
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.PatchCreativePhotoRequest;
 import com.conductor.service.ProjectSecurityService;
@@ -9,6 +10,8 @@ import com.conductor.service.StorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +20,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -35,6 +40,7 @@ public class CreativePhotoService {
     private static final int UPLOAD_URL_EXPIRY_MINUTES = 60;
     private static final long MAX_UPLOAD_BYTES = 100L * 1024 * 1024;
     private static final Pattern FOCAL_PATTERN = Pattern.compile("^\\d{1,3}%\\s\\d{1,3}%$");
+    private static final Logger log = LoggerFactory.getLogger(CreativePhotoService.class);
 
     private static final Map<String, String> ALLOWED_TYPES = Map.of(
             "image/jpeg", "jpg",
@@ -42,6 +48,7 @@ public class CreativePhotoService {
             "image/webp", "webp");
 
     private final CreativePhotoRepository photoRepository;
+    private final CreativeRepository creativeRepository;
     private final CreativeRegistry registry;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
@@ -49,12 +56,14 @@ public class CreativePhotoService {
     private final String backendBaseUrl;
 
     public CreativePhotoService(CreativePhotoRepository photoRepository,
+                                CreativeRepository creativeRepository,
                                 CreativeRegistry registry,
                                 ProjectSecurityService projectSecurityService,
                                 StorageService storageService,
                                 ObjectMapper objectMapper,
                                 @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.photoRepository = photoRepository;
+        this.creativeRepository = creativeRepository;
         this.registry = registry;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
@@ -196,6 +205,50 @@ public class CreativePhotoService {
         }
         photo = photoRepository.save(photo);
         return toView(photo);
+    }
+
+    /**
+     * Deletes a Creative photo's row and its stored object (best-effort, after the delete commits —
+     * see {@link AfterCommitStorageCleanup}). Refused with 409 when any Creative in the project still
+     * uses it, either as its main photo or as a sequence beat's photo.
+     */
+    @Transactional
+    public void deletePhoto(String projectId, String photoId, User caller) {
+        requireEditor(projectId, caller);
+        CreativePhoto photo = findPhoto(projectId, photoId);
+
+        Set<String> usedByDisplayIds = new TreeSet<>();
+        for (Creative c : creativeRepository.findAllByPhotoId(photoId)) {
+            if (projectId.equals(c.getProjectId())) {
+                usedByDisplayIds.add(c.displayId());
+            }
+        }
+        for (Creative c : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId)) {
+            if (sequenceReferencesPhoto(c.getSequence(), photoId)) {
+                usedByDisplayIds.add(c.displayId());
+            }
+        }
+        if (!usedByDisplayIds.isEmpty()) {
+            throw new ConflictException("Creative " + String.join(", ", usedByDisplayIds)
+                    + " uses this photo — remove it there first");
+        }
+
+        photoRepository.delete(photo);
+        AfterCommitStorageCleanup.deleteAfterCommit(storageService, List.of(photo.getGcsPath()), log);
+    }
+
+    /** Whether any beat of a Creative's {@code sequence} JSON array names this photo. */
+    private boolean sequenceReferencesPhoto(JsonNode sequence, String photoId) {
+        if (sequence == null || !sequence.isArray()) {
+            return false;
+        }
+        for (JsonNode beat : sequence) {
+            JsonNode beatPhotoId = beat.get("photoId");
+            if (beatPhotoId != null && beatPhotoId.isTextual() && photoId.equals(beatPhotoId.asText())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private JsonNode validateAndConvertFocal(Map<String, String> focal) {

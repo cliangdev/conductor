@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
 import { attachFocalDrag, enabledPlacements, mountBoard } from '@cliangdev/creative-render/mount'
 import { checkCreativeCopy } from '@cliangdev/creative-render/copy-rules'
 import { placements as renderPlacements } from '@cliangdev/creative-render/placements'
@@ -15,6 +15,13 @@ import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
@@ -34,6 +41,7 @@ import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
 import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
 import {
   createCreativeVariant,
+  deleteCreative,
   getCreative,
   getCreativePhoto,
   getCreativeReadiness,
@@ -229,6 +237,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const [latestSucceededRender, setLatestSucceededRender] = useState<CreativeRender | null>(null)
   const [useInPostOpen, setUseInPostOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     const [loaded, kitRows, reg] = await Promise.all([
@@ -417,6 +427,18 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     await load()
   }
 
+  async function handleDelete() {
+    setDeleting(true)
+    try {
+      await deleteCreative(projectId, creativeId, token)
+      router.push(`/app/projects/${projectId}/marketing/creatives`)
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Could not delete this Creative'), 'error')
+      setDeleting(false)
+      setDeleteConfirmOpen(false)
+    }
+  }
+
   async function handleSaveAsVariant() {
     setVariantBusy(true)
     try {
@@ -479,6 +501,21 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             <Button onClick={handleSave} disabled={saving}>
               {saving ? 'Saving…' : 'Save'}
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="px-2" aria-label="More actions">
+                  <MoreHorizontalIcon className="h-4 w-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  className="cursor-pointer text-destructive focus:text-destructive"
+                >
+                  Delete this Creative
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </Can>
       </div>
@@ -912,6 +949,20 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
         <Label htmlFor="variant-headline">Headline</Label>
         <Textarea id="variant-headline" value={variantHeadline} onChange={(e) => setVariantHeadline(e.target.value)} rows={2} />
       </Modal>
+
+      <ConfirmModal
+        open={deleteConfirmOpen}
+        title="Delete this Creative"
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        busy={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteConfirmOpen(false)}
+      >
+        <p className="text-sm text-foreground">
+          Permanently delete <strong>{creative.displayId}</strong>? This cannot be undone.
+        </p>
+      </ConfirmModal>
 
       {latestSucceededRender && (
         <UseInPostDialog

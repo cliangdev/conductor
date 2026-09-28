@@ -2,6 +2,7 @@ package com.conductor.creative;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
@@ -16,6 +17,12 @@ public interface CreativeRenderRepository extends JpaRepository<CreativeRender, 
     Optional<CreativeRender> findByIdAndCreativeId(String id, String creativeId);
 
     List<CreativeRender> findAllByCreativeIdOrderByRequestedAtDesc(String creativeId, Pageable pageable);
+
+    /** Every render this Creative has ever had — {@code CreativeService#deleteCreative}'s cleanup. */
+    List<CreativeRender> findAllByCreativeId(String creativeId);
+
+    @Modifying
+    void deleteAllByCreativeId(String creativeId);
 
     /** The render {@code CreativeResponse.latestRender} reports: last SUCCEEDED, non-preview render. */
     Optional<CreativeRender> findFirstByCreativeIdAndStateAndPreviewOnlyFalseOrderByRequestedAtDesc(
