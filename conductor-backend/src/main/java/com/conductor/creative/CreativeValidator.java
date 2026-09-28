@@ -338,9 +338,15 @@ public class CreativeValidator {
 
     /**
      * Compiles a Brand Kit copy-rule regex, mapping its {@code flags} string (any combination of
-     * {@code i}/{@code m}) onto {@link Pattern} flags — shared by {@link BrandKitService} (validating a
-     * kit write) and this validator (applying the rule), so the two can never disagree about what
-     * compiles.
+     * {@code i}/{@code m}/{@code s}/{@code u}) onto {@link Pattern} flags — shared by {@link BrandKitService}
+     * (validating a kit write) and this validator (applying the rule), so the two can never disagree about
+     * what compiles.
+     *
+     * <p>Rules are written once and run in two engines: the browser checks copy live with JavaScript, the
+     * backend enforces it with Java. JavaScript spells a code point outside the BMP as a backslash, "u" and
+     * the hex in braces (with the {@code u} flag), which Java rejects; Java's spelling is a backslash, "x"
+     * and the hex in braces. Those escapes are translated here so an emoji rule written for the browser
+     * compiles on the server too.
      *
      * @throws PatternSyntaxException if {@code pattern} is not a valid regex
      */
@@ -349,11 +355,21 @@ public class CreativeValidator {
         if (flags != null) {
             if (flags.indexOf('i') >= 0) {
                 javaFlags |= Pattern.CASE_INSENSITIVE;
+                if (flags.indexOf('u') >= 0) {
+                    javaFlags |= Pattern.UNICODE_CASE;
+                }
             }
             if (flags.indexOf('m') >= 0) {
                 javaFlags |= Pattern.MULTILINE;
             }
+            if (flags.indexOf('s') >= 0) {
+                javaFlags |= Pattern.DOTALL;
+            }
         }
-        return Pattern.compile(pattern, javaFlags);
+        return Pattern.compile(JS_CODE_POINT_ESCAPE.matcher(pattern).replaceAll("$1\\\\x{$2}"), javaFlags);
     }
+
+    /** The JavaScript code-point escape (backslash, "u", hex in braces) when not itself escaped. */
+    private static final Pattern JS_CODE_POINT_ESCAPE =
+            Pattern.compile("(?<!\\\\)((?:\\\\\\\\)*)\\\\u\\{([0-9A-Fa-f]{1,6})\\}");
 }

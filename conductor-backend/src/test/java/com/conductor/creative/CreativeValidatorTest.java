@@ -245,6 +245,28 @@ class CreativeValidatorTest {
         return validator.validate(kit, input).stream().map(CreativeValidationException.Violation::message).toList();
     }
 
+    // A rule written for the browser (JavaScript) must compile and behave the same on the server (Java).
+    // The pattern below is built with (char) 92 so no backslash-u sequence appears in this source file.
+    @Test
+    void aJavaScriptCodePointEscapeCompilesAndMatchesAstralCharacters() {
+        String bs = String.valueOf((char) 92);
+        String emojiRange = "[" + bs + "u{1F300}-" + bs + "u{1FAFF}" + bs + "u{2600}-" + bs + "u{27BF}]";
+        java.util.regex.Pattern p = CreativeValidator.compilePattern(emojiRange, "u");
+
+        assertThat(p.matcher("Dinner sorted " + new String(Character.toChars(0x1F355))).find()).isTrue();
+        assertThat(p.matcher("Sunny " + (char) 0x2600).find()).isTrue();
+        assertThat(p.matcher("Dinner, sorted").find()).isFalse();
+    }
+
+    @Test
+    void anEscapedBackslashBeforeUIsLeftAlone() {
+        String bs = String.valueOf((char) 92);
+        // Two backslashes then u{41}: a literal backslash followed by "u{41}", not a code point escape.
+        java.util.regex.Pattern p = CreativeValidator.compilePattern(bs + bs + "u" + bs + "{41" + bs + "}", null);
+        assertThat(p.matcher(bs + "u{41}").find()).isTrue();
+        assertThat(p.matcher("A").find()).isFalse();
+    }
+
     private List<String> violationRuleIds(CreativeValidator.Input input) {
         return validator.validate(kit, input).stream().map(CreativeValidationException.Violation::ruleId).toList();
     }
