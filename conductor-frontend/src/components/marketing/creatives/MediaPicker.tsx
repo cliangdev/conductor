@@ -122,7 +122,11 @@ function formatMaxBytes(bytes: number): string {
  *  server-side image pipeline, so this is the only place a photo's width/height are ever measured. */
 function measureImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {
-    const objectUrl = URL.createObjectURL(file)
+    const objectUrl = localObjectUrl(file)
+    if (!objectUrl) {
+      resolve(null)
+      return
+    }
     const img = new Image()
     img.onload = () => {
       resolve({ width: img.naturalWidth, height: img.naturalHeight })
@@ -158,10 +162,23 @@ export interface VideoMeta {
   hasAudio: boolean | null
 }
 
+/** An object URL for a local file the user picked — only ever a `blob:` URL, never markup. Anything else
+ *  (which createObjectURL never returns) is refused, so a media element's src can't be fed arbitrary text. */
+function localObjectUrl(file: File): string | null {
+  const url = URL.createObjectURL(file)
+  if (url.startsWith('blob:')) return url
+  URL.revokeObjectURL(url)
+  return null
+}
+
 /** Reads width/height/duration/hasAudio off a throwaway <video> pointed at the local file. */
 export function measureVideoFile(file: File): Promise<VideoMeta | null> {
   return new Promise((resolve) => {
-    const objectUrl = URL.createObjectURL(file)
+    const objectUrl = localObjectUrl(file)
+    if (!objectUrl) {
+      resolve(null)
+      return
+    }
     const video = document.createElement('video')
     video.preload = 'metadata'
     video.muted = true
@@ -187,7 +204,11 @@ export function measureVideoFile(file: File): Promise<VideoMeta | null> {
 /** Reads duration off a throwaway <audio> pointed at the local file. */
 export function measureAudioFile(file: File): Promise<number | null> {
   return new Promise((resolve) => {
-    const objectUrl = URL.createObjectURL(file)
+    const objectUrl = localObjectUrl(file)
+    if (!objectUrl) {
+      resolve(null)
+      return
+    }
     const audio = document.createElement('audio')
     audio.preload = 'metadata'
     audio.onloadedmetadata = () => {
@@ -208,7 +229,11 @@ export function measureAudioFile(file: File): Promise<number | null> {
  *  rather than blocking the upload. */
 export function captureVideoPoster(file: File, atSeconds = 1): Promise<Blob | null> {
   return new Promise((resolve) => {
-    const objectUrl = URL.createObjectURL(file)
+    const objectUrl = localObjectUrl(file)
+    if (!objectUrl) {
+      resolve(null)
+      return
+    }
     const video = document.createElement('video')
     video.preload = 'auto'
     video.muted = true
