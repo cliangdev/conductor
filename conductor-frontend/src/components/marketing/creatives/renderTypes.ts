@@ -3,6 +3,23 @@
 // package's own README documents (`mountBoard`, `renderBoard`, `resolveAd`, ...). Keep them in sync
 // with that README when the package's shape changes; there is no compiler to catch drift.
 
+export interface RenderMotion {
+  preset?: 'fade-up' | 'word-by-word' | 'accent-pop' | 'none'
+  durationSec?: number
+  background?: {
+    source?: 'photo' | 'clip'
+    motion?: 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'none'
+  }
+  endCard?: boolean
+}
+
+export interface RenderAudio {
+  source?: 'clip' | 'track' | 'none'
+  trackUrl?: string
+  volume?: number
+  fadeOutSec?: number
+}
+
 export interface RenderCreative {
   layout?: 'stacked' | 'bleed' | 'card' | 'split'
   theme?: 'dark' | 'light'
@@ -27,6 +44,15 @@ export interface RenderCreative {
     focal?: Record<string, string>
     cta?: boolean
   }>
+  // MOTION only (creative.kind === 'MOTION') — see motion.js's Public API and mount.js's play/pause/
+  // seek/onTime, which only activate when `motion` is present.
+  kind?: 'STILL' | 'MOTION' | 'CLIP'
+  motion?: RenderMotion
+  audio?: RenderAudio
+  /** A clip background's signed URL (`motion.background.source === 'clip'`). */
+  backgroundVideoUrl?: string
+  /** Where that clip starts, in seconds (`motion.background.clipStartSec`). */
+  clipStartSec?: number
 }
 
 export interface RenderBrand {
@@ -58,6 +84,14 @@ export interface MountHandle {
   shell: HTMLElement
   update(next: Partial<MountOptions>): Promise<void>
   destroy(): void
+  /** MOTION preview only — a no-op (resolves immediately) for a STILL/CLIP creative (no
+   *  `creative.motion`) or before the first board has mounted. See motion.js/mount.js. */
+  seek(tSec: number): Promise<void>
+  /** Plays the MOTION preview in real time, looping at `motion.durationSec`. No-op otherwise. */
+  play(): void
+  pause(): void
+  /** Subscribes to every seek() (from play() or a manual scrub); returns an unsubscribe function. */
+  onTime(cb: (tSec: number) => void): () => void
 }
 
 export interface MountOptions {

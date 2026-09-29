@@ -468,15 +468,15 @@ describe('CreativeEditor', () => {
   })
 
   describe('Kind and Clip mode (COND-24 T6)', () => {
-    it('shows a Kind control defaulting to Still, with Motion disabled as "coming next"', async () => {
+    it('shows a Kind control defaulting to Still, with Still, Motion and Clip all selectable', async () => {
       mockGetsFor(creative())
       render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
       await screen.findByLabelText('Headline')
 
       const kindSelect = screen.getByLabelText('Kind') as HTMLSelectElement
       expect(kindSelect.value).toBe('STILL')
-      const motionOption = screen.getByRole('option', { name: /Motion.*coming next/i }) as HTMLOptionElement
-      expect(motionOption.disabled).toBe(true)
+      const motionOption = screen.getByRole('option', { name: 'Motion' }) as HTMLOptionElement
+      expect(motionOption.disabled).toBe(false)
     })
 
     it('switching to Clip hides Still-only fields and shows the Clip media section, keeping name/caption/alt text/state', async () => {

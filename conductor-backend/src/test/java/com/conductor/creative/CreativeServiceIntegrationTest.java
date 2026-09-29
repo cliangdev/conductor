@@ -24,6 +24,7 @@ import com.conductor.service.StorageService;
 import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkflowSeeder;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -251,6 +252,122 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
                 .contains("clip", "mediaProvenance")
                 .doesNotContain("photoChecked", "photoProvenance");
         // Alt text is advisory (non-blocking) for a video, unlike a STILL photo.
+        assertThat(readiness.items().stream().filter(i -> i.key().equals("altText")).findFirst().orElseThrow().blocking())
+                .isFalse();
+    }
+
+    // ── MOTION (COND-24 PR2) ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    void creatingAMotionCreativeAppliesAllWriteTimeDefaults() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setKind(CreativeKind.MOTION);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        assertThat(created.creative().getKind()).isEqualTo(Creative.KIND_MOTION);
+        JsonNode motion = created.creative().getMotion();
+        assertThat(motion.get("preset").asText()).isEqualTo("fade-up");
+        assertThat(motion.get("durationSec").asDouble()).isEqualTo(8.0);
+        assertThat(motion.get("background").get("source").asText()).isEqualTo("photo");
+        assertThat(motion.get("background").get("motion").asText()).isEqualTo("zoom-in");
+        assertThat(motion.get("endCard").asBoolean()).isTrue();
+
+        JsonNode audio = created.creative().getAudio();
+        assertThat(audio.get("source").asText()).isEqualTo("none");
+        assertThat(audio.get("volume").asDouble()).isEqualTo(0.8);
+        assertThat(audio.get("fadeOutSec").asDouble()).isEqualTo(1.0);
+    }
+
+    @Test
+    void motionAudioDefaultsToClipWhenTheBackgroundIsAClipWithSound() {
+        CreativePhoto video = newVideoPhoto();
+        video.setHasAudio(true);
+        photoRepository.save(video);
+
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setKind(CreativeKind.MOTION);
+        com.conductor.generated.v2.model.CreativeMotion motion = new com.conductor.generated.v2.model.CreativeMotion();
+        com.conductor.generated.v2.model.CreativeMotionBackground background = new com.conductor.generated.v2.model.CreativeMotionBackground();
+        background.setSource("clip");
+        background.setClipMediaId(video.getId());
+        motion.setBackground(background);
+        request.setMotion(motion);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        assertThat(created.creative().getAudio().get("source").asText()).isEqualTo("clip");
+
+        // A silent clip background defaults audio to "none" instead.
+        CreativePhoto silentVideo = newVideoPhoto();
+        CreateCreativeRequest silentRequest = concept("Plan the week in *one sentence*.", "A calm plan.");
+        silentRequest.setKind(CreativeKind.MOTION);
+        com.conductor.generated.v2.model.CreativeMotion silentMotion = new com.conductor.generated.v2.model.CreativeMotion();
+        com.conductor.generated.v2.model.CreativeMotionBackground silentBackground = new com.conductor.generated.v2.model.CreativeMotionBackground();
+        silentBackground.setSource("clip");
+        silentBackground.setClipMediaId(silentVideo.getId());
+        silentMotion.setBackground(silentBackground);
+        silentRequest.setMotion(silentMotion);
+        CreativeService.CreativeView silentCreated = creativeService.createCreative(project.getId(), silentRequest, admin);
+        assertThat(silentCreated.creative().getAudio().get("source").asText()).isEqualTo("none");
+    }
+
+    @Test
+    void motionWithAClipBackgroundNeedsNoPhotoGoingReadyButStillNeedsAHeadline() {
+        CreativePhoto video = newVideoPhoto();
+        CreateCreativeRequest request = new CreateCreativeRequest();
+        request.setKind(CreativeKind.MOTION);
+        request.setLayout("stacked");
+        request.setHeadline("A calm *plan*.");
+        request.setState(com.conductor.generated.v2.model.CreativeState.READY);
+        com.conductor.generated.v2.model.CreativeMotion motion = new com.conductor.generated.v2.model.CreativeMotion();
+        com.conductor.generated.v2.model.CreativeMotionBackground background = new com.conductor.generated.v2.model.CreativeMotionBackground();
+        background.setSource("clip");
+        background.setClipMediaId(video.getId());
+        motion.setBackground(background);
+        request.setMotion(motion);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+        assertThat(created.creative().getState()).isEqualTo(Creative.STATE_READY);
+        assertThat(created.creative().getPhotoId()).isNull();
+    }
+
+    @Test
+    void motionBackgroundClipMustBeAnUploadedUnblockedVideoInTheProject() {
+        CreateCreativeRequest notVideo = concept("Plan the week in *one sentence*.", "A calm plan.");
+        notVideo.setKind(CreativeKind.MOTION);
+        com.conductor.generated.v2.model.CreativeMotion motion = new com.conductor.generated.v2.model.CreativeMotion();
+        com.conductor.generated.v2.model.CreativeMotionBackground background = new com.conductor.generated.v2.model.CreativeMotionBackground();
+        background.setSource("clip");
+        background.setClipMediaId(photo.getId());
+        motion.setBackground(background);
+        notVideo.setMotion(motion);
+
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), notVideo, admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
+    @Test
+    void readinessForMotionChecksBackgroundClipOrAudioTrackProvenance() {
+        CreativePhoto video = newVideoPhoto();
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setKind(CreativeKind.MOTION);
+        com.conductor.generated.v2.model.CreativeMotion motion = new com.conductor.generated.v2.model.CreativeMotion();
+        com.conductor.generated.v2.model.CreativeMotionBackground background = new com.conductor.generated.v2.model.CreativeMotionBackground();
+        background.setSource("clip");
+        background.setClipMediaId(video.getId());
+        motion.setBackground(background);
+        request.setMotion(motion);
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        CreativeService.Readiness readiness = creativeService.readiness(project.getId(), created.creative().getId(), admin);
+
+        assertThat(readiness.items()).extracting(CreativeService.ReadinessItem::key)
+                .contains("clipProvenance")
+                .doesNotContain("photoChecked", "photoProvenance");
+        assertThat(readiness.items().stream().filter(i -> i.key().equals("clipProvenance")).findFirst().orElseThrow().ok())
+                .isTrue();
+        // Alt text is advisory (non-blocking) for MOTION, same as CLIP.
         assertThat(readiness.items().stream().filter(i -> i.key().equals("altText")).findFirst().orElseThrow().blocking())
                 .isFalse();
     }

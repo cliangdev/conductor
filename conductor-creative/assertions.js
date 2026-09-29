@@ -118,7 +118,7 @@ function sameRgb(a, b) {
  * registry entry (pixel size, safe zone); `brand` is the same object handed
  * to renderBoard. An empty `errors` array means the frame is safe to ship;
  * `warnings` are non-fatal (e.g. a soft, upscaled photo). */
-export async function runAssertions(board, placement, brand) {
+export async function runAssertions(board, placement, brand, { outputScale = 2 } = {}) {
   const errors = [];
   const warnings = [];
   const br = rectOf(board);
@@ -162,10 +162,10 @@ export async function runAssertions(board, placement, brand) {
     });
     if (!probe.ok) {
       errors.push(`background photo failed to load: ${bgUrlMatch[1]}`);
-    } else if (placement && probe.w < placement.w * 2 && probe.h < placement.h * 2) {
-      // Soft photography check: a source smaller than the 2x frame is
+    } else if (placement && probe.w < placement.w * outputScale && probe.h < placement.h * outputScale) {
+      // Soft photography check: a source smaller than the output frame (2x for images, 1x for video) is
       // upscaled, so the photo goes soft while the text stays crisp.
-      warnings.push(`photo is ${probe.w}x${probe.h}, upscaled to fit ${placement.w * 2}x${placement.h * 2}`);
+      warnings.push(`photo is ${probe.w}x${probe.h}, upscaled to fit ${placement.w * outputScale}x${placement.h * outputScale}`);
     }
   }
 

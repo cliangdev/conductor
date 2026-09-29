@@ -19,8 +19,12 @@
  */
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { startServer } from './server.mjs';
 import { createApiTransport } from './transport.mjs';
+import { motionKeyTimes, normalizeMotionCreative } from '../motion.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = join(HERE, '..'); // conductor-creative/, the static root
@@ -41,6 +45,15 @@ const SHEET_SCREENSHOT = { type: 'jpeg', quality: 85 };
 const SHEET_CONTENT_TYPE = 'image/jpeg';
 const FRAME_SCALE = 2;
 const SHEET_SCALE = 1;
+
+/* MOTION frames are captured at deviceScaleFactor 1 (the placement's true pixel size) — video, unlike
+ * a placement JPEG, is never worth doubling: it would roughly quadruple every per-frame screenshot
+ * and the ffmpeg encode, for no visible gain on any surface that plays this file back. Quality 90 (a
+ * hair below the placement JPEG's 92) keeps each frame small; H.264's own compression dominates the
+ * final file size regardless. */
+const MOTION_FRAME_SCREENSHOT = { type: 'jpeg', quality: 90 };
+const MOTION_DEVICE_SCALE_FACTOR = 1;
+const DEFAULT_FPS = 30;
 
 async function defaultBrowserFactory() {
   const { chromium } = await import('playwright');
@@ -84,21 +97,226 @@ export function framesFor(spec) {
   return (placements || []).map((placementKey) => ({ page: 'frame.html', placementKey }));
 }
 
-/** Renders every frame a spec calls for, uploads each PNG, and reports
- * complete/fail. Options:
+/* ── MOTION: frame-stepped video capture ──────────────────────────────────── */
+
+/* Writes `chunk` to `stream` and resolves once Node has flushed it, which
+ * naturally serializes the capture-then-write pipeline (screenshot, write,
+ * await, screenshot, write, ...) without any separate backpressure/'drain'
+ * handling — the write for frame i+1 never starts until frame i's bytes have
+ * actually left the process. */
+function writeAsync(stream, chunk) {
+  return new Promise((resolve, reject) => {
+    stream.write(chunk, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+/* The URL ffmpeg should read audio from, per spec.creative.audio.source (see
+ * README's Creative fields / motion.js's header comment): 'clip' reuses the
+ * SAME clip already playing as the video background (its own recorded
+ * sound); 'track' is a separate library audio file with its own signed URL.
+ * `null` for 'none' or a spec with no audio at all. */
+function audioSourceUrl(creative) {
+  const audio = creative.audio;
+  if (!audio || audio.source === 'none') return null;
+  if (audio.source === 'clip') return creative.backgroundVideoUrl || null;
+  if (audio.source === 'track') return audio.trackUrl || null;
+  return null;
+}
+
+async function downloadToTemp(url, dir, name) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`failed to download audio (${url}): ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const path = join(dir, name);
+  await writeFile(path, buf);
+  return path;
+}
+
+/* ffmpeg argv for one MOTION placement: JPEGs piped in via stdin (image2pipe,
+ * one concatenated JPEG stream — ffmpeg's own SOI/EOI framing needs no extra
+ * delimiting), an optional audio input trimmed to durationSec, H.264/AAC,
+ * faststart. `-movflags +faststart` needs a seekable output (it rewrites the
+ * moov atom after the first encode pass), so `outPath` is a real temp file,
+ * never stdout. */
+function buildFfmpegArgs({ fps, durationSec, audioPath, audioSource, clipStartSec, volume, fadeOutSec, outPath }) {
+  const args = ['-f', 'image2pipe', '-framerate', String(fps), '-i', '-'];
+  if (audioPath) {
+    if (audioSource === 'clip') {
+      args.push('-ss', String(clipStartSec || 0), '-t', String(durationSec), '-i', audioPath);
+    } else {
+      args.push('-t', String(durationSec), '-i', audioPath);
+    }
+  }
+  // The piped JPEGs are full-range (yuvj420p); platforms expect limited-range yuv420p, so convert the range
+  // explicitly — `-pix_fmt yuv420p` alone keeps the full-range flag and ffprobe still reports yuvj420p.
+  // Map streams explicitly. A clip used for its sound is an MP4 with its own video stream, and ffmpeg's
+  // default picks the highest-resolution video among the inputs — for a 4:5 or 1:1 frame that is the
+  // clip's 9:16 picture, so the output was the raw clip, not the rendered creative.
+  args.push('-map', '0:v:0');
+  if (audioPath) args.push('-map', '1:a:0?');
+  args.push('-vf', 'scale=in_range=pc:out_range=tv,format=yuv420p', '-color_range', 'tv');
+  args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', '-preset', 'veryfast', '-r', String(fps));
+  if (audioPath) {
+    // A clip's own sound plays as recorded — untouched. A library track is a music bed layered under
+    // the creative, so only IT gets volume control and a fade-out (README/the contract: "volume,
+    // afade=t=out..." is listed for 'track', not for 'clip').
+    if (audioSource === 'track') {
+      const v = volume != null ? volume : 0.8;
+      const fadeOut = fadeOutSec != null ? fadeOutSec : 1;
+      const filters = [`volume=${v}`];
+      if (fadeOut > 0) filters.push(`afade=t=out:st=${Math.max(0, durationSec - fadeOut)}:d=${fadeOut}`);
+      args.push('-af', filters.join(','));
+    }
+    // Bound the output by the video's own length, not `-shortest`: the audio file reads instantly while
+    // frames trickle in through the pipe, and `-shortest` could end the file as soon as audio hit EOF
+    // (it raced — one placement would finish, the next would be cut off mid-render).
+    args.push('-c:a', 'aac', '-b:a', '128k', '-t', String(durationSec));
+  }
+  args.push('-movflags', '+faststart', '-y', outPath);
+  return args;
+}
+
+/* Renders ONE placement's MOTION video: one frame.html page load, then N
+ * in-page seeks (frame.js's window.__seekMotion — see its header comment for
+ * why this is not N page loads), streaming each screenshot into an ffmpeg
+ * child process. Runs the layout assertions exactly once, on the final
+ * (end-card) frame; a failure throws before any upload happens. Resolves
+ * `{ bytes, posterBytes, width, height, durationSeconds, hasAudio, warnings }`. */
+async function renderMotionPlacement({ browser, origin, spec, placementKey, ffmpegPath, fps, log }) {
+  const motion = spec.creative.motion || {};
+  const durationSec = motion.durationSec || 8;
+  const frameCount = Math.max(1, Math.round(durationSec * fps));
+  const warnings = [];
+
+  const tmpDir = await mkdtemp(join(tmpdir(), 'cc-motion-'));
+  const page = await browser.newPage({ deviceScaleFactor: MOTION_DEVICE_SCALE_FACTOR });
+  let ffmpeg;
+  try {
+    await page.addInitScript((s) => {
+      window.__RENDER_SPEC__ = s;
+    }, {
+      creative: spec.creative,
+      brand: spec.brand,
+      placementKey,
+      motion: spec.creative.motion,
+      time: 0,
+      clipStartSec: spec.creative.clipStartSec,
+    });
+    await page.goto(`${origin}/frame.html`, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: PAGE_TIMEOUT_MS });
+    const boot = await page.evaluate(() => window.__RENDER_RESULT);
+    if (!boot || !boot.ok) {
+      throw new Error(`${placementKey}: ${(boot && boot.error) || 'failed to build the MOTION board'}`);
+    }
+    const box = await page.locator('.cc-board').first().boundingBox();
+    const width = Math.round((box && box.width) || 0);
+    const height = Math.round((box && box.height) || 0);
+
+    const srcUrl = audioSourceUrl(spec.creative);
+    const audioPath = srcUrl ? await downloadToTemp(srcUrl, tmpDir, 'audio-src') : null;
+    const audio = spec.creative.audio;
+
+    const outPath = join(tmpDir, `${placementKey}.mp4`);
+    const args = buildFfmpegArgs({
+      fps,
+      durationSec,
+      audioPath,
+      audioSource: audio && audio.source,
+      clipStartSec: spec.creative.clipStartSec,
+      volume: audio && audio.volume,
+      fadeOutSec: audio && audio.fadeOutSec,
+      outPath,
+    });
+    ffmpeg = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    // If ffmpeg exits early, the next frame write fails with EPIPE; without a listener that 'error' event
+    // is unhandled and kills the whole process (no failure is reported and the render stays RUNNING).
+    // The write's own callback rejects too, and the loop below turns that into ffmpeg's real message.
+    ffmpeg.stdin.on('error', () => {});
+    let ffmpegErr = '';
+    ffmpeg.stderr.on('data', (chunk) => {
+      ffmpegErr += chunk.toString();
+    });
+    const ffmpegExit = new Promise((resolve, reject) => {
+      ffmpeg.on('error', reject);
+      ffmpeg.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${ffmpegErr.slice(-2000)}`))));
+    });
+    // An end-card assertion failure (below) throws before `await ffmpegExit` is ever reached, and the
+    // `finally` block then kills ffmpeg — which rejects this same promise with nothing left awaiting
+    // it. Without this, that becomes an unhandled rejection; this does not change what the success
+    // path below still awaits and reports.
+    ffmpegExit.catch(() => {});
+
+    let posterBytes = null;
+    let lastLoggedPct = -25;
+    for (let i = 0; i < frameCount; i += 1) {
+      const t = i / fps;
+      const seeked = await page.evaluate((tt) => window.__seekMotion(tt), t);
+      if (!seeked) throw new Error(`${placementKey}: motion seek failed at t=${t.toFixed(2)}s`);
+
+      if (i === frameCount - 1) {
+        const assertion = await page.evaluate(() => window.__assertBoard());
+        if (!assertion || (assertion.errors && assertion.errors.length)) {
+          const detail = (assertion && assertion.errors && assertion.errors.join('; ')) || 'end-card assertions failed';
+          throw new Error(`${placementKey}: ${detail}`);
+        }
+        (assertion.warnings || []).forEach((message) => warnings.push(message));
+      }
+
+      const bytes = await page.locator('.cc-board').first().screenshot(MOTION_FRAME_SCREENSHOT);
+      if (i === frameCount - 1) posterBytes = bytes;
+      try {
+        await writeAsync(ffmpeg.stdin, bytes);
+      } catch (err) {
+        // ffmpeg stopped reading: report why it stopped (its exit message), not the pipe error. Give it a
+        // moment to finish exiting so its stderr is complete.
+        const exitErr = await Promise.race([
+          ffmpegExit.then(() => null, (e) => e),
+          new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+        ]);
+        throw new Error(`${placementKey}: ${exitErr ? exitErr.message : `ffmpeg stopped reading frames (${err.code || err.message}): ${ffmpegErr.slice(-1500)}`}`);
+      }
+
+      const pct = Math.floor(((i + 1) / frameCount) * 100);
+      if (pct >= lastLoggedPct + 25 || i === frameCount - 1) {
+        log(`${placementKey}: ${pct}% (${i + 1}/${frameCount} frames)`);
+        lastLoggedPct = pct;
+      }
+    }
+    ffmpeg.stdin.end();
+    await ffmpegExit;
+    ffmpeg = null;
+
+    const bytes = await readFile(outPath);
+    return { bytes, posterBytes, width, height, durationSeconds: durationSec, hasAudio: Boolean(audioPath), warnings };
+  } finally {
+    if (ffmpeg && ffmpeg.exitCode === null) {
+      try { ffmpeg.kill('SIGKILL'); } catch { /* already gone */ }
+    }
+    await page.close().catch(() => {});
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Renders every frame a spec calls for, uploads each PNG (or, for a MOTION
+ * creative that is not `previewOnly`, one MP4 + poster per placement — see
+ * renderMotionPlacement above), and reports complete/fail. Options:
  *   transport        required. See transport.mjs.
  *   packageRoot       static root to serve (default: this package's own root).
  *   browserFactory    () => Promise<Browser> (default: launches real Playwright chromium).
+ *   ffmpegPath        a local ffmpeg binary's path. Required for a MOTION
+ *                     render (not previewOnly) — ignored otherwise.
+ *   fps               frames per second for a MOTION render (default 30).
  *   log               (...args) => void (default: console.log).
  * Resolves `true` on success, `false` on a reported failure (never throws —
  * a thrown error from a truly unexpected place still gets caught and turned
  * into a `transport.fail()` call before resolving `false`, so a caller never
  * has to guess whether `transport.fail` was already called). */
-export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactory = defaultBrowserFactory, log = console.log }) {
+export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactory = defaultBrowserFactory, ffmpegPath, fps = DEFAULT_FPS, log = console.log }) {
   let spec;
   try {
     log('fetching spec');
     spec = await transport.getSpec();
+    if (spec && spec.creative) spec = { ...spec, creative: normalizeMotionCreative(spec.creative) };
   } catch (err) {
     log(`FAIL ${err.message}`);
     await reportFailure(transport, err.message, log);
@@ -110,6 +328,40 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
   const warnings = [];
   try {
     browser = await browserFactory();
+    const isMotionRender = spec.creative && spec.creative.kind === 'MOTION' && !spec.previewOnly;
+
+    if (isMotionRender) {
+      if (!ffmpegPath) {
+        throw new Error(
+          'a MOTION render needs a local ffmpeg binary — pass `ffmpegPath` to run() (e.g. a system '
+          + '`ffmpeg` found via `which ffmpeg`, or a bundled ffmpeg-static build; conductor-tools '
+          + 'resolves this the same way it resolves Chromium).'
+        );
+      }
+      const placements = spec.placements || [];
+      if (!placements.length) {
+        throw new Error('the render spec names no placements to render (check the Brand Kit\'s enabled placements)');
+      }
+      log(`rendering ${placements.length} MOTION placement(s) at ${fps}fps`);
+      for (const placementKey of placements) {
+        const result = await renderMotionPlacement({ browser, origin, spec, placementKey, ffmpegPath, fps, log });
+        for (const message of result.warnings) warnings.push({ placementKey, message });
+        await transport.putFrame(placementKey, {
+          bytes: result.bytes,
+          contentType: 'video/mp4',
+          width: result.width,
+          height: result.height,
+          durationSeconds: result.durationSeconds,
+          hasAudio: result.hasAudio,
+        });
+        await transport.putPoster(placementKey, result.posterBytes);
+        log(`ok   ${placementKey}  video/mp4  ${result.width}x${result.height}  ${result.durationSeconds}s  audio=${result.hasAudio}`);
+      }
+      await transport.complete(warnings);
+      log(`complete (${warnings.length} warning(s))`);
+      return true;
+    }
+
     const frames = framesFor(spec);
     log(`rendering ${frames.length} frame(s)`);
 
@@ -119,6 +371,7 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
       const scale = isSheet ? SHEET_SCALE : FRAME_SCALE;
       const page = await browser.newPage({ deviceScaleFactor: scale });
       try {
+        const isMotionSheet = isSheet && spec.creative && spec.creative.kind === 'MOTION' && spec.creative.motion;
         await page.addInitScript((s) => {
           window.__RENDER_SPEC__ = s;
         }, {
@@ -127,6 +380,7 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
           placementKey: frame.placementKey,
           sequenceIndex: frame.index,
           placementKeys: spec.placements,
+          ...(isMotionSheet ? { times: motionKeyTimes(spec.creative.motion) } : {}),
         });
         await page.goto(`${origin}/${frame.page}`, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
         await page.waitForFunction(() => window.__ready === true, null, { timeout: PAGE_TIMEOUT_MS });
@@ -191,6 +445,9 @@ if (isMain()) {
   const previewOnly = /^(1|true)$/i.test(process.env.PREVIEW_ONLY || '');
   const renderer = process.env.RENDERER || 'cli';
   const workflowRunId = process.env.WORKFLOW_RUN_ID || undefined;
+  // MOTION only; a STILL/CLIP render, or a previewOnly one, never touches ffmpeg.
+  const ffmpegPath = process.env.FFMPEG_PATH || undefined;
+  const fps = process.env.FPS ? Number(process.env.FPS) : undefined;
   const missing = ['CONDUCTOR_API_URL', 'CONDUCTOR_API_KEY', 'CONDUCTOR_PROJECT_ID', 'CREATIVE_ID'].filter((k) => !process.env[k]);
   if (missing.length) {
     console.error(`missing required env var(s): ${missing.join(', ')}`);
@@ -199,5 +456,5 @@ if (isMain()) {
 
   const transport = createApiTransport({ apiUrl, apiKey, projectId, creativeId, previewOnly, renderer, workflowRunId });
   const log = (...args) => console.log(`[render ${creativeId}]`, ...args);
-  run({ transport, log }).then((ok) => process.exit(ok ? 0 : 1));
+  run({ transport, log, ffmpegPath, ...(fps ? { fps } : {}) }).then((ok) => process.exit(ok ? 0 : 1));
 }

@@ -9,18 +9,37 @@
  *     placementKey: '9x16' | ...,  // required, a key from the placements registry
  *     sequenceIndex?: number,      // required when creative.sequenceKind is set
  *     placements?, layouts?,       // registry overrides (default: the shipped ones)
+ *     motion?,                     // a MOTION creative's `creative.motion` (see motion.js)
+ *     time?: number,               // applied once at load when `motion` is set (default 0)
+ *     clipStartSec?: number,       // creative.clipStartSec, for a clip background's own seek
  *   }
  *
  * Result contract:
  *   window.__RENDER_RESULT = { ok, errors?, warnings?, width, height } | { ok: false, error }
  *   window.__ready = true   // set exactly once, success or failure, when the
  *                           // job's page.waitForFunction should stop waiting
+ *
+ * MOTION mode (`spec.motion` set): the job needs many frames off of ONE page
+ * load (a fresh navigation per frame would be far too slow — 8s at 30fps is
+ * 240 frames), so after applying `spec.time`/`spec.motion` once at load, this
+ * page also exposes a small driver API for the job to call directly via
+ * repeated `page.evaluate()`s against the SAME already-open page:
+ *   window.__seekMotion(t) -> Promise<true>     // applies motion + seeks the
+ *                                                // clip background (if any) to t
+ *   window.__assertBoard() -> Promise<{errors, warnings, width, height}>
+ *                                                // runs the normal assertions once,
+ *                                                // on demand (never per seek — see
+ *                                                // job/render.mjs, which calls this
+ *                                                // only on the final end-card frame)
+ * __RENDER_RESULT in this mode reports whether the board itself built (not
+ * whether it passes assertions, which __assertBoard reports separately).
  */
 import { resolveAd, resolveSequence, renderBoard, fitBoard } from './render.js';
 import { placements as DEFAULT_PLACEMENTS } from './placements.js';
 import { layouts as DEFAULT_LAYOUTS } from './layouts/index.js';
 import { ensureBrandFont } from './font.js';
 import { runAssertions } from './assertions.js';
+import { applyMotion, seekBackgroundVideo } from './motion.js';
 
 function finish(result) {
   window.__RENDER_RESULT = result;
@@ -65,6 +84,26 @@ async function main() {
     await document.fonts.ready;
     await Promise.all([...document.images].map((img) => (img.decode ? img.decode().catch(() => {}) : null)));
     fitBoard(board, placementsReg);
+
+    if (spec.motion) {
+      const durationSec = spec.motion.durationSec || 8;
+      const t0 = spec.time || 0;
+      applyMotion(board, spec.motion, t0, { durationSec });
+      await seekBackgroundVideo(board, t0, spec.clipStartSec);
+
+      // The job's frame-stepped capture driver (see the header comment above): one page load, many
+      // in-page seeks. Assertions are NOT run here — only once, on demand, via __assertBoard.
+      window.__seekMotion = async (t) => {
+        applyMotion(board, spec.motion, t, { durationSec });
+        await seekBackgroundVideo(board, t, spec.clipStartSec);
+        return true;
+      };
+      // A motion frame is captured at 1x (video), so the photo only needs to cover the placement itself.
+      window.__assertBoard = async () => runAssertions(board, placement, spec.brand || {}, { outputScale: 1 });
+
+      finish({ ok: true, width: placement.w, height: placement.h });
+      return;
+    }
 
     const { errors, warnings, width, height } = await runAssertions(board, placement, spec.brand || {});
     finish({ ok: errors.length === 0, errors, warnings, width, height });

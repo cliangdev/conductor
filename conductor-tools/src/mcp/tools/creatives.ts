@@ -173,8 +173,8 @@ export interface CreativeFields {
   name?: string
   state?: string
   /** STILL (default): brand-rendered photo/headline artwork. CLIP: a finished video used as-is, via
-   * clipMedia — no brand layout, no photo/headline required. MOTION: accepted, but rendering it
-   * 422s until PR 2 ships. */
+   * clipMedia — no brand layout, no photo/headline required. MOTION: the same brand layout animated
+   * into a short video — set `motion` (and optionally `audio`) too. */
   kind?: string
   layout?: string
   theme?: string
@@ -182,6 +182,12 @@ export interface CreativeFields {
   /** CLIP only: media ids per placement, e.g. {"default": mediaId, "9x16": mediaId}. "default"
    * covers any placement without its own entry. */
   clipMedia?: Record<string, string>
+  /** MOTION only: the animation timeline (preset, duration, background motion/clip, end card) —
+   * validated server-side; see the create_creative/update_creative tool schemas for the shape. */
+  motion?: Record<string, unknown>
+  /** MOTION only: the audio track (clip's own sound, a library track, or none) — validated
+   * server-side; see the create_creative/update_creative tool schemas for the shape. */
+  audio?: Record<string, unknown>
   focalOverride?: Record<string, string>
   headline?: string
   body?: string
@@ -459,9 +465,14 @@ export async function renderCreativeTool(
   params: { creativeId: string; previewOnly?: boolean; renderer?: string; workflowRunId?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
+  // A MOTION render can run for a while (roughly 20s per placement for an 8s video, streamed one
+  // ffmpeg progress line every ~25% per placement) — this tool call is still synchronous, but the
+  // collected lines are returned so the caller sees what happened rather than just a final result.
+  const progress: string[] = []
   const result = await runLocalRender(
     { creativeId: params.creativeId, previewOnly: !!params.previewOnly, renderer: params.renderer ?? 'mcp', workflowRunId: params.workflowRunId },
-    config
+    config,
+    (...args: unknown[]) => progress.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '))
   )
   return {
     renderId: result.renderId,
@@ -469,6 +480,7 @@ export async function renderCreativeTool(
     ok: result.ok,
     error: result.error,
     frames: result.frames,
+    ...(progress.length ? { log: progress.join('\n') } : {}),
     nextStep: result.ok
       ? 'Call preview_creative to look at the render, or get_creative for the stored frame list.'
       : 'Fix what `error` names and call render_creative again.',
@@ -498,6 +510,42 @@ function findCurrentSheetFrame(
     if (frame && (frame.sizeBytes ?? 0) <= MAX_INLINE_IMAGE_BYTES) return { render, frame }
   }
   return undefined
+}
+
+// The latest SUCCEEDED, non-preview render (of the given version, when given) whose frames are
+// videos (MOTION's MP4 placements, not the previewOnly 'sheet' contact sheet).
+function findLatestMotionVideoRender(renders: RenderApiItem[], version: number | undefined): RenderApiItem | undefined {
+  for (const render of renders) {
+    if (render.state !== 'SUCCEEDED' || render.previewOnly) continue
+    if (version !== undefined && render.creativeVersion !== version) continue
+    const frames = render.frames ?? []
+    if (frames.some((f) => f.durationSeconds != null || f.contentType === 'video/mp4')) return render
+  }
+  return undefined
+}
+
+/**
+ * The text note shown alongside a MOTION creative's key-moments sheet: its animation duration, and
+ * — when a full (non-preview) render of the SAME version already exists — the rendered MP4 URL per
+ * placement, so a caller doesn't have to make a second call just to find them.
+ */
+function motionPreviewNote(
+  motion: { durationSec?: number } | undefined,
+  renders: RenderApiItem[],
+  version: number | undefined
+): string {
+  const durationSec = motion?.durationSec ?? 8
+  let note = `${durationSec}s animation — this image shows three key moments across the timeline, not the finished video.`
+  const videoRender = findLatestMotionVideoRender(renders, version)
+  if (videoRender) {
+    const lines = (videoRender.frames ?? [])
+      .filter((f) => f.url)
+      .map((f) => `${f.placementKey}: ${f.url} (${f.durationSeconds ?? durationSec}s${f.hasAudio ? ', with audio' : ''})`)
+    if (lines.length) {
+      note += ` The current version already has a rendered video:\n${lines.join('\n')}`
+    }
+  }
+  return note
 }
 
 // The latest SUCCEEDED render (of the creative's current version) that actually has frames — CLIP has
@@ -583,9 +631,19 @@ async function previewClip(
   }
 }
 
+/** Joins a MOTION note onto whatever note a fallback path already produced (a too-large image, a
+ * download failure, ...) rather than replacing it — the caller still needs both pieces of context. */
+function withMotionNote(note: string | undefined, motionNote: string | undefined): string | undefined {
+  if (!motionNote) return note
+  return note ? `${motionNote}\n\n${note}` : motionNote
+}
+
 export async function previewCreative(params: { creativeId: string }, config: Config): Promise<PreviewCreativeResult> {
   const [creative, renders] = await Promise.all([
-    apiGet<{ version?: number; kind?: string }>(`${creativesBase(config)}/${params.creativeId}`, config),
+    apiGet<{ version?: number; kind?: string; motion?: { durationSec?: number } }>(
+      `${creativesBase(config)}/${params.creativeId}`,
+      config
+    ),
     apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config),
   ])
 
@@ -593,49 +651,69 @@ export async function previewCreative(params: { creativeId: string }, config: Co
     return previewClip(params.creativeId, creative?.version, renders, config)
   }
 
+  // For MOTION this note (duration, and any already-rendered MP4 URLs for the current version) is
+  // worth attaching to whichever outcome below actually returns — success or a fallback message.
+  const motionNote = creative?.kind === 'MOTION' ? motionPreviewNote(creative.motion, renders, creative.version) : undefined
+
   let found = findCurrentSheetFrame(renders, creative?.version)
 
   if (!found) {
+    // MOTION's previewOnly render produces the same kind of 'sheet' frame as STILL's — a contact
+    // sheet, just of `motionKeyTimes()` moments instead of one composition — so this call needs no
+    // MOTION-specific branch.
     const rendered = await runLocalRender({ creativeId: params.creativeId, previewOnly: true, renderer: 'mcp' }, config)
     if (!rendered.ok || !rendered.renderId) {
       return {
         renderId: rendered.renderId,
         state: rendered.state,
-        note: `Rendering a preview failed${rendered.error ? `: ${rendered.error}` : '.'} There is nothing to show.`,
+        note: withMotionNote(`Rendering a preview failed${rendered.error ? `: ${rendered.error}` : '.'} There is nothing to show.`, motionNote),
       }
     }
     const sheetFrame = rendered.frames.find((f) => f.placementKey === 'sheet')
     if (!sheetFrame) {
-      return { renderId: rendered.renderId, state: rendered.state, note: 'The preview render produced no contact sheet frame.' }
+      return { renderId: rendered.renderId, state: rendered.state, note: withMotionNote('The preview render produced no contact sheet frame.', motionNote) }
     }
     found = { render: { id: rendered.renderId, state: rendered.state ?? 'SUCCEEDED' }, frame: sheetFrame }
   }
 
   const { render, frame } = found
   if (!frame.url) {
-    return { renderId: render.id, state: render.state, note: 'The contact sheet frame has no download URL yet.' }
+    return { renderId: render.id, state: render.state, note: withMotionNote('The contact sheet frame has no download URL yet.', motionNote) }
   }
   if ((frame.sizeBytes ?? 0) > MAX_INLINE_IMAGE_BYTES) {
     return {
       renderId: render.id,
       state: render.state,
       url: frame.url,
-      note: `The rendered image is ${Math.round((frame.sizeBytes ?? 0) / 1024)} KB, larger than this tool can inline (~1 MB) — open the URL directly instead.`,
+      note: withMotionNote(
+        `The rendered image is ${Math.round((frame.sizeBytes ?? 0) / 1024)} KB, larger than this tool can inline (~1 MB) — open the URL directly instead.`,
+        motionNote
+      ),
     }
   }
 
   const response = await fetch(frame.url)
   if (!response.ok) {
-    return { renderId: render.id, state: render.state, url: frame.url, note: `Could not download the frame (HTTP ${response.status}) — open the URL directly instead.` }
+    return {
+      renderId: render.id,
+      state: render.state,
+      url: frame.url,
+      note: withMotionNote(`Could not download the frame (HTTP ${response.status}) — open the URL directly instead.`, motionNote),
+    }
   }
   const bytes = new Uint8Array(await response.arrayBuffer())
   if (bytes.byteLength > MAX_INLINE_IMAGE_BYTES) {
-    return { renderId: render.id, state: render.state, url: frame.url, note: 'The rendered image is larger than this tool can inline — open the URL directly instead.' }
+    return {
+      renderId: render.id,
+      state: render.state,
+      url: frame.url,
+      note: withMotionNote('The rendered image is larger than this tool can inline — open the URL directly instead.', motionNote),
+    }
   }
   // The `sheet` contact sheet is a 1x JPEG; the mime type comes off the response rather than being
   // hardcoded so an older PNG sheet is never mislabelled (see docs/creatives.md).
   const mimeType = (response.headers.get('content-type') || 'image/jpeg').split(';')[0].trim()
-  return { renderId: render.id, state: render.state, url: frame.url, image: { data: Buffer.from(bytes), mimeType } }
+  return { renderId: render.id, state: render.state, url: frame.url, image: { data: Buffer.from(bytes), mimeType }, note: motionNote }
 }
 
 export async function attachCreativeToPost(

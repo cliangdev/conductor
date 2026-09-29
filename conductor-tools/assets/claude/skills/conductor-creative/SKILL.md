@@ -145,6 +145,39 @@ Mind each destination's own duration limit (per docs/publishing.md) — a clip t
 platform may get rejected or trimmed on another; check before attaching to a Post that fans out
 broadly.
 
+## Short videos from a photo or clip
+
+A MOTION Creative animates the same brand layout from steps 1-5 above into a short video, instead
+of a static frame — no separate video tool needed. Use it when a still doesn't hold attention, or a
+destination rewards video over an image.
+
+1. Pick a photo (step 5) or, for a moving background, `upload_creative_media` a video first and
+   note its media id.
+2. `create_creative`/`update_creative` with `kind: "MOTION"` plus:
+   - `motion.preset` — how the copy enters: `fade-up` (default), `word-by-word`, `accent-pop`, or
+     `none` (everything visible from the first frame).
+   - `motion.durationSec` — 3 to 60, default 8.
+   - `motion.background` — `source: "photo"` (default; `motion: "zoom-in"` (default), `zoom-out`,
+     `pan-left`, `pan-right`, or `none`) or `source: "clip"` with `clipMediaId` (from step 1) and
+     `clipStartSec`.
+   - `motion.endCard` — default true: the last 2 seconds hold the finished composition, CTA
+     included, regardless of how short the preset's own entrance would otherwise leave it.
+   - `audio` — `source: "clip"` (the background clip's own recorded sound — the default when there
+     is one), `"track"` (a separate library track: `trackId` from `upload_creative_media`, plus
+     `volume` and `fadeOutSec`), or `"none"`.
+3. `render_creative` runs a local, ffmpeg-driven encode — roughly 20 seconds per placement for an
+   8-second video. No ffmpeg on this machine fails with a clear message naming how to get one rather
+   than silently producing nothing.
+4. `preview_creative` renders three key moments across the timeline into one sheet image (not the
+   finished video). Judge it the same honest way as step 7 above — does the copy's entrance finish
+   before the next beat, does the end card actually hold long enough to read — before spending a
+   full render on it.
+5. `attach_creative_to_post`, same as any Creative — one MP4 per placement.
+
+A library music track's `licence` has to be recorded on upload (same as a photo's provenance) — the
+readiness checklist blocks a MOTION Creative on it whenever `audio.source` is `"track"`. A reel or
+other vertical placement takes exactly one video, same as a CLIP.
+
 ## Failures that are silent (carried over from this skill's predecessor)
 
 Automated checks are real but incomplete. These are the ones worth remembering to look for by eye:

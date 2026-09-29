@@ -260,6 +260,176 @@ class CreativeValidatorTest {
         return baseInput().kind(Creative.KIND_CLIP).clipMedia(List.of(entry)).build();
     }
 
+    // ── MOTION (COND-24 PR2) ──────────────────────────────────────────────────
+
+    private CreativeValidator.Input motionInput(CreativeValidator.MotionInput motion) {
+        return baseInput().kind(Creative.KIND_MOTION).motion(motion).build();
+    }
+
+    @Test
+    void motionPresetMustBeAKnownValue() {
+        CreativeValidator.MotionInput unknown = new CreativeValidator.MotionInput.Builder().preset("spin").build();
+        assertThat(violationRuleIds(motionInput(unknown))).contains("motionPreset");
+
+        CreativeValidator.MotionInput known = new CreativeValidator.MotionInput.Builder().preset("word-by-word").build();
+        assertThat(violationRuleIds(motionInput(known))).doesNotContain("motionPreset");
+    }
+
+    @Test
+    void motionBackgroundSourceAndMotionMustBeKnownValues() {
+        CreativeValidator.MotionInput badSource = new CreativeValidator.MotionInput.Builder().backgroundSource("drawing").build();
+        assertThat(violationRuleIds(motionInput(badSource))).contains("motionBackgroundSource");
+
+        CreativeValidator.MotionInput badMotion = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("photo").backgroundMotion("spiral").build();
+        assertThat(violationRuleIds(motionInput(badMotion))).contains("motionBackgroundMotion");
+
+        CreativeValidator.MotionInput fine = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("photo").backgroundMotion("pan-left").build();
+        assertThat(violationRuleIds(motionInput(fine))).doesNotContain("motionBackgroundSource", "motionBackgroundMotion");
+    }
+
+    @Test
+    void motionDurationSecMustBeBetweenThreeAndSixty() {
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().durationSec(2.0).build())))
+                .contains("motionDuration");
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().durationSec(61.0).build())))
+                .contains("motionDuration");
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().durationSec(null).build())))
+                .contains("motionDuration");
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().durationSec(30.0).build())))
+                .doesNotContain("motionDuration");
+    }
+
+    @Test
+    void clipBackgroundNeedsAResolvableUploadedUnblockedVideo() {
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId(null).build())))
+                .contains("clipRequired");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("gone").backgroundClipResolvable(false).build())))
+                .contains("mediaNotFound");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("photo-1")
+                .backgroundClipResolvable(true).backgroundClipIsVideo(false)
+                .backgroundClipUploaded(true).build())))
+                .contains("mediaNotVideo");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1")
+                .backgroundClipResolvable(true).backgroundClipIsVideo(true).backgroundClipUploaded(false).build())))
+                .contains("mediaUploaded");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1")
+                .backgroundClipResolvable(true).backgroundClipIsVideo(true).backgroundClipUploaded(true)
+                .backgroundClipBlocked(true).build())))
+                .contains("mediaBlocked");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1")
+                .backgroundClipResolvable(true).backgroundClipIsVideo(true).backgroundClipUploaded(true)
+                .build())))
+                .doesNotContain("mediaNotFound", "mediaNotVideo", "mediaUploaded", "mediaBlocked");
+    }
+
+    @Test
+    void clipStartSecMustBeBeforeTheClipsOwnDuration() {
+        CreativeValidator.MotionInput beyond = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1").backgroundClipResolvable(true)
+                .backgroundClipIsVideo(true).backgroundClipUploaded(true)
+                .backgroundClipDurationSeconds(10.0).clipStartSec(10.0).build();
+        assertThat(violationRuleIds(motionInput(beyond))).contains("clipStartBeyondDuration");
+
+        CreativeValidator.MotionInput before = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1").backgroundClipResolvable(true)
+                .backgroundClipIsVideo(true).backgroundClipUploaded(true)
+                .backgroundClipDurationSeconds(10.0).clipStartSec(3.0).build();
+        assertThat(violationRuleIds(motionInput(before))).doesNotContain("clipStartBeyondDuration");
+
+        CreativeValidator.MotionInput negative = new CreativeValidator.MotionInput.Builder().clipStartSec(-1.0).build();
+        assertThat(violationRuleIds(motionInput(negative))).contains("bounds");
+    }
+
+    @Test
+    void audioTrackMustBeAResolvableAudioMedia() {
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .audioSource("track").audioTrackId(null).build())))
+                .contains("trackRequired");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .audioSource("track").audioTrackId("gone").audioTrackResolvable(false).build())))
+                .contains("mediaNotFound");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .audioSource("track").audioTrackId("video-1").audioTrackResolvable(true)
+                .audioTrackIsAudio(false).build())))
+                .contains("mediaNotAudio");
+
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder()
+                .audioSource("track").audioTrackId("audio-1").audioTrackResolvable(true)
+                .audioTrackIsAudio(true).audioTrackUploaded(true).build())))
+                .doesNotContain("trackRequired", "mediaNotFound", "mediaNotAudio", "mediaUploaded", "mediaBlocked");
+    }
+
+    @Test
+    void audioClipNeedsAClipBackgroundWhoseMediaHasSound() {
+        CreativeValidator.MotionInput noClipBackground = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("photo").audioSource("clip").build();
+        assertThat(violationRuleIds(motionInput(noClipBackground))).contains("audioClipNeedsClipBackground");
+
+        CreativeValidator.MotionInput silentClip = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1").backgroundClipResolvable(true)
+                .backgroundClipIsVideo(true).backgroundClipUploaded(true).backgroundClipHasAudio(false)
+                .audioSource("clip").build();
+        assertThat(violationRuleIds(motionInput(silentClip))).contains("audioClipHasNoAudio");
+
+        CreativeValidator.MotionInput soundedClip = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1").backgroundClipResolvable(true)
+                .backgroundClipIsVideo(true).backgroundClipUploaded(true).backgroundClipHasAudio(true)
+                .audioSource("clip").build();
+        assertThat(violationRuleIds(motionInput(soundedClip))).doesNotContain("audioClipNeedsClipBackground", "audioClipHasNoAudio");
+    }
+
+    @Test
+    void audioVolumeAndFadeOutSecMustBeInBounds() {
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().volume(1.5).build())))
+                .contains("bounds");
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().volume(-0.1).build())))
+                .contains("bounds");
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().fadeOutSec(6.0).build())))
+                .contains("bounds");
+        assertThat(violationRuleIds(motionInput(new CreativeValidator.MotionInput.Builder().volume(0.5).fadeOutSec(2.0).build())))
+                .doesNotContain("bounds");
+    }
+
+    @Test
+    void motionGoingReadyNeedsAPhotoOnlyWhenTheBackgroundIsPhoto() {
+        CreativeValidator.MotionInput photoBackground = new CreativeValidator.MotionInput.Builder().backgroundSource("photo").build();
+        CreativeValidator.Input noPhoto = baseInput().kind(Creative.KIND_MOTION).state(Creative.STATE_READY)
+                .headline("A headline").motion(photoBackground).build();
+        assertThat(violationRuleIds(noPhoto)).contains("photoRequired");
+
+        CreativeValidator.Input withPhoto = baseInput().kind(Creative.KIND_MOTION).state(Creative.STATE_READY)
+                .headline("A headline").photoPresent(true).photoUploaded(true).motion(photoBackground).build();
+        assertThat(violationRuleIds(withPhoto)).doesNotContain("photoRequired");
+
+        // A clip background needs no photo at all going READY — the clip itself is the background.
+        CreativeValidator.MotionInput clipBackground = new CreativeValidator.MotionInput.Builder()
+                .backgroundSource("clip").backgroundClipMediaId("video-1").backgroundClipResolvable(true)
+                .backgroundClipIsVideo(true).backgroundClipUploaded(true).build();
+        CreativeValidator.Input clipReady = baseInput().kind(Creative.KIND_MOTION).state(Creative.STATE_READY)
+                .headline("A headline").motion(clipBackground).build();
+        assertThat(violationRuleIds(clipReady)).doesNotContain("photoRequired");
+
+        // Headline is still required either way.
+        CreativeValidator.Input noHeadline = baseInput().kind(Creative.KIND_MOTION).state(Creative.STATE_READY)
+                .motion(clipBackground).build();
+        assertThat(violationRuleIds(noHeadline)).contains("headlineRequired");
+    }
+
     // ── readiness-on-READY gating ────────────────────────────────────────
 
     @Test

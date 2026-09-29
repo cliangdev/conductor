@@ -12,6 +12,9 @@
   width: 100%; height: 100%;
   object-fit: cover;
   object-position: var(--cc-focal, 50% 30%);
+  /* motion.js's Ken Burns pan/zoom (a MOTION creative only); unset for STILL. */
+  transform: var(--cc-bg-transform, none);
+  transform-origin: center center;
 }
 .cc-board__scrim {
   position: absolute; left: 0; right: 0; bottom: 0; height: 220px;

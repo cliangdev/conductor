@@ -58,6 +58,94 @@ public class CreativeValidator {
                                  boolean uploaded, boolean blocked) {
     }
 
+    /**
+     * A MOTION creative's {@code motion}/{@code audio} (COND-24 PR2), with every media reference already
+     * resolved by the caller ({@link CreativeService}/{@link CreativeRenderService}, both of which have
+     * database access) — the validator itself never touches the database. Numeric fields are already
+     * defaulted by the caller before this reaches the validator (see {@code CreativeService#applyMotion
+     * Defaults}), so a null here only ever means "field genuinely omitted from a raw, not-yet-defaulted
+     * write" in a unit test.
+     */
+    public record MotionInput(
+            String preset,
+            Double durationSec,
+            String backgroundSource,
+            String backgroundMotion,
+            String backgroundClipMediaId,
+            boolean backgroundClipResolvable,
+            boolean backgroundClipIsVideo,
+            boolean backgroundClipUploaded,
+            boolean backgroundClipBlocked,
+            Double backgroundClipDurationSeconds,
+            Boolean backgroundClipHasAudio,
+            Double clipStartSec,
+            Boolean endCard,
+            String audioSource,
+            String audioTrackId,
+            boolean audioTrackResolvable,
+            boolean audioTrackIsAudio,
+            boolean audioTrackUploaded,
+            boolean audioTrackBlocked,
+            Double volume,
+            Double fadeOutSec) {
+
+        /** A test-friendly builder — every field defaults to "structurally valid" (fade-up preset, 8s
+         *  duration, photo background at zoom-in, no audio) so a test sets only what its case is about. */
+        public static final class Builder {
+            private String preset = "fade-up";
+            private Double durationSec = 8.0;
+            private String backgroundSource = "photo";
+            private String backgroundMotion = "zoom-in";
+            private String backgroundClipMediaId;
+            private boolean backgroundClipResolvable = true;
+            private boolean backgroundClipIsVideo;
+            private boolean backgroundClipUploaded;
+            private boolean backgroundClipBlocked;
+            private Double backgroundClipDurationSeconds;
+            private Boolean backgroundClipHasAudio;
+            private Double clipStartSec;
+            private Boolean endCard = true;
+            private String audioSource = "none";
+            private String audioTrackId;
+            private boolean audioTrackResolvable = true;
+            private boolean audioTrackIsAudio;
+            private boolean audioTrackUploaded;
+            private boolean audioTrackBlocked;
+            private Double volume = 0.8;
+            private Double fadeOutSec = 1.0;
+
+            public Builder preset(String v) { this.preset = v; return this; }
+            public Builder durationSec(Double v) { this.durationSec = v; return this; }
+            public Builder backgroundSource(String v) { this.backgroundSource = v; return this; }
+            public Builder backgroundMotion(String v) { this.backgroundMotion = v; return this; }
+            public Builder backgroundClipMediaId(String v) { this.backgroundClipMediaId = v; return this; }
+            public Builder backgroundClipResolvable(boolean v) { this.backgroundClipResolvable = v; return this; }
+            public Builder backgroundClipIsVideo(boolean v) { this.backgroundClipIsVideo = v; return this; }
+            public Builder backgroundClipUploaded(boolean v) { this.backgroundClipUploaded = v; return this; }
+            public Builder backgroundClipBlocked(boolean v) { this.backgroundClipBlocked = v; return this; }
+            public Builder backgroundClipDurationSeconds(Double v) { this.backgroundClipDurationSeconds = v; return this; }
+            public Builder backgroundClipHasAudio(Boolean v) { this.backgroundClipHasAudio = v; return this; }
+            public Builder clipStartSec(Double v) { this.clipStartSec = v; return this; }
+            public Builder endCard(Boolean v) { this.endCard = v; return this; }
+            public Builder audioSource(String v) { this.audioSource = v; return this; }
+            public Builder audioTrackId(String v) { this.audioTrackId = v; return this; }
+            public Builder audioTrackResolvable(boolean v) { this.audioTrackResolvable = v; return this; }
+            public Builder audioTrackIsAudio(boolean v) { this.audioTrackIsAudio = v; return this; }
+            public Builder audioTrackUploaded(boolean v) { this.audioTrackUploaded = v; return this; }
+            public Builder audioTrackBlocked(boolean v) { this.audioTrackBlocked = v; return this; }
+            public Builder volume(Double v) { this.volume = v; return this; }
+            public Builder fadeOutSec(Double v) { this.fadeOutSec = v; return this; }
+
+            public MotionInput build() {
+                return new MotionInput(preset, durationSec, backgroundSource, backgroundMotion, backgroundClipMediaId,
+                        backgroundClipResolvable, backgroundClipIsVideo, backgroundClipUploaded, backgroundClipBlocked,
+                        backgroundClipDurationSeconds, backgroundClipHasAudio, clipStartSec, endCard, audioSource,
+                        audioTrackId, audioTrackResolvable, audioTrackIsAudio, audioTrackUploaded, audioTrackBlocked,
+                        volume, fadeOutSec);
+            }
+        }
+    }
+
     /** Everything {@link #validate} needs to know about the intended state of a Creative. */
     public record Input(
             String layout,
@@ -79,7 +167,8 @@ public class CreativeValidator {
             Map<String, Integer> layoutOverrideBand,
             Map<String, Integer> layoutOverridePadBottom,
             String kind,
-            List<ClipMediaEntry> clipMedia) {
+            List<ClipMediaEntry> clipMedia,
+            MotionInput motion) {
 
         /**
          * A test-friendly builder for {@link Input} — every field defaults to "structurally valid and
@@ -108,6 +197,7 @@ public class CreativeValidator {
             private Map<String, Integer> layoutOverridePadBottom = Map.of();
             private String kind = Creative.KIND_STILL;
             private List<ClipMediaEntry> clipMedia = List.of();
+            private MotionInput motion;
 
             public InputBuilder layout(String v) { this.layout = v; return this; }
             public InputBuilder theme(String v) { this.theme = v; return this; }
@@ -129,12 +219,13 @@ public class CreativeValidator {
             public InputBuilder layoutOverridePadBottom(Map<String, Integer> v) { this.layoutOverridePadBottom = v; return this; }
             public InputBuilder kind(String v) { this.kind = v; return this; }
             public InputBuilder clipMedia(List<ClipMediaEntry> v) { this.clipMedia = v; return this; }
+            public InputBuilder motion(MotionInput v) { this.motion = v; return this; }
 
             public Input build() {
                 return new Input(layout, theme, placements, headline, body, caption, state, photoId,
                         photoIdResolvable, photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence,
                         carouselRatio, unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom,
-                        kind, clipMedia);
+                        kind, clipMedia, motion);
             }
         }
     }
@@ -168,6 +259,7 @@ public class CreativeValidator {
 
         validateSequenceBounds(input, violations);
         validateClipMedia(input, violations);
+        validateMotion(input, violations);
 
         if (input.photoId() != null && !input.photoIdResolvable()) {
             violations.add(new Violation("photoId", "photoNotFound",
@@ -348,16 +440,29 @@ public class CreativeValidator {
             }
             return;
         }
-        if (!input.photoPresent()) {
-            violations.add(new Violation("photoId", "photoRequired", "a photo is required before this Creative can go up for review"));
-        } else if (!input.photoUploaded()) {
-            violations.add(new Violation("photoId", "photoUploaded", "the photo has not finished uploading"));
-        } else if (input.photoBlocked()) {
-            violations.add(new Violation("photoId", "photoBlocked", "the photo is blocked and cannot be used"));
+        // MOTION shares STILL's headline/photo READY rules (contract: "source=photo needs photoId
+        // (READY-level, as STILL)") — except a photo is not required at all when the background is a clip.
+        boolean requiresPhoto = !Creative.KIND_MOTION.equals(input.kind()) || isPhotoBackground(input.motion());
+        if (requiresPhoto) {
+            if (!input.photoPresent()) {
+                violations.add(new Violation("photoId", "photoRequired", "a photo is required before this Creative can go up for review"));
+            } else if (!input.photoUploaded()) {
+                violations.add(new Violation("photoId", "photoUploaded", "the photo has not finished uploading"));
+            } else if (input.photoBlocked()) {
+                violations.add(new Violation("photoId", "photoBlocked", "the photo is blocked and cannot be used"));
+            }
         }
         if (input.headline() == null || input.headline().isBlank()) {
             violations.add(new Violation("headline", "headlineRequired", "headline is required before this Creative can go up for review"));
         }
+    }
+
+    private static boolean isPhotoBackground(MotionInput motion) {
+        if (motion == null) {
+            return true;
+        }
+        String source = motion.backgroundSource();
+        return source == null || "photo".equals(source);
     }
 
     /**
@@ -397,6 +502,120 @@ public class CreativeValidator {
                 violations.add(new Violation("clipMedia", "mediaBlocked",
                         "clipMedia[\"" + key + "\"] is blocked and cannot be used"));
             }
+        }
+    }
+
+    private static final Set<String> MOTION_PRESETS = Set.of("fade-up", "word-by-word", "accent-pop", "none");
+    private static final Set<String> MOTION_BACKGROUND_SOURCES = Set.of("photo", "clip");
+    private static final Set<String> MOTION_BACKGROUND_MOTIONS =
+            Set.of("zoom-in", "zoom-out", "pan-left", "pan-right", "none");
+    private static final Set<String> MOTION_AUDIO_SOURCES = Set.of("clip", "track", "none");
+
+    /**
+     * MOTION structural rules (COND-24 PR2), enforced on every write regardless of state — mirrors
+     * {@link #validateClipMedia}. {@code preset}/{@code background.source}/{@code background.motion}/
+     * {@code audio.source} are plain strings, not OpenAPI enums (see {@code CreativeMotion}'s schema doc),
+     * so an unknown value surfaces here as a friendly 422 field-path violation rather than a generic 400
+     * from Jackson.
+     */
+    private void validateMotion(Input input, List<Violation> violations) {
+        if (!Creative.KIND_MOTION.equals(input.kind()) || input.motion() == null) {
+            return;
+        }
+        MotionInput m = input.motion();
+
+        if (m.preset() != null && !MOTION_PRESETS.contains(m.preset())) {
+            violations.add(new Violation("motion.preset", "motionPreset",
+                    "motion.preset must be one of: " + String.join(", ", MOTION_PRESETS)));
+        }
+        if (m.durationSec() == null || m.durationSec() < 3 || m.durationSec() > 60) {
+            violations.add(new Violation("motion.durationSec", "motionDuration",
+                    "motion.durationSec must be between 3 and 60"));
+        }
+
+        String backgroundSource = m.backgroundSource() != null ? m.backgroundSource() : "photo";
+        if (!MOTION_BACKGROUND_SOURCES.contains(backgroundSource)) {
+            violations.add(new Violation("motion.background.source", "motionBackgroundSource",
+                    "motion.background.source must be one of: " + String.join(", ", MOTION_BACKGROUND_SOURCES)));
+        }
+        if ("photo".equals(backgroundSource) && m.backgroundMotion() != null
+                && !MOTION_BACKGROUND_MOTIONS.contains(m.backgroundMotion())) {
+            violations.add(new Violation("motion.background.motion", "motionBackgroundMotion",
+                    "motion.background.motion must be one of: " + String.join(", ", MOTION_BACKGROUND_MOTIONS)));
+        }
+        if ("clip".equals(backgroundSource)) {
+            if (m.backgroundClipMediaId() == null || m.backgroundClipMediaId().isBlank()) {
+                violations.add(new Violation("motion.background.clipMediaId", "clipRequired",
+                        "motion.background.clipMediaId is required when background.source is \"clip\""));
+            } else if (!m.backgroundClipResolvable()) {
+                violations.add(new Violation("motion.background.clipMediaId", "mediaNotFound",
+                        "No media with id " + m.backgroundClipMediaId() + " in this project"));
+            } else {
+                if (!m.backgroundClipIsVideo()) {
+                    violations.add(new Violation("motion.background.clipMediaId", "mediaNotVideo",
+                            "motion.background.clipMediaId must be a VIDEO"));
+                }
+                if (!m.backgroundClipUploaded()) {
+                    violations.add(new Violation("motion.background.clipMediaId", "mediaUploaded",
+                            "motion.background.clipMediaId has not finished uploading"));
+                }
+                if (m.backgroundClipBlocked()) {
+                    violations.add(new Violation("motion.background.clipMediaId", "mediaBlocked",
+                            "motion.background.clipMediaId is blocked and cannot be used"));
+                }
+                if (m.clipStartSec() != null && m.backgroundClipDurationSeconds() != null
+                        && m.clipStartSec() >= m.backgroundClipDurationSeconds()) {
+                    violations.add(new Violation("motion.background.clipStartSec", "clipStartBeyondDuration",
+                            "motion.background.clipStartSec must be less than the clip's own duration"));
+                }
+            }
+        }
+        if (m.clipStartSec() != null && m.clipStartSec() < 0) {
+            violations.add(new Violation("motion.background.clipStartSec", "bounds",
+                    "motion.background.clipStartSec must be >= 0"));
+        }
+
+        String audioSource = m.audioSource();
+        if (audioSource != null && !MOTION_AUDIO_SOURCES.contains(audioSource)) {
+            violations.add(new Violation("audio.source", "audioSource",
+                    "audio.source must be one of: " + String.join(", ", MOTION_AUDIO_SOURCES)));
+        }
+        if ("track".equals(audioSource)) {
+            if (m.audioTrackId() == null || m.audioTrackId().isBlank()) {
+                violations.add(new Violation("audio.trackId", "trackRequired",
+                        "audio.trackId is required when audio.source is \"track\""));
+            } else if (!m.audioTrackResolvable()) {
+                violations.add(new Violation("audio.trackId", "mediaNotFound",
+                        "No media with id " + m.audioTrackId() + " in this project"));
+            } else {
+                if (!m.audioTrackIsAudio()) {
+                    violations.add(new Violation("audio.trackId", "mediaNotAudio",
+                            "audio.trackId must be an AUDIO"));
+                }
+                if (!m.audioTrackUploaded()) {
+                    violations.add(new Violation("audio.trackId", "mediaUploaded",
+                            "audio.trackId has not finished uploading"));
+                }
+                if (m.audioTrackBlocked()) {
+                    violations.add(new Violation("audio.trackId", "mediaBlocked",
+                            "audio.trackId is blocked and cannot be used"));
+                }
+            }
+        }
+        if ("clip".equals(audioSource)) {
+            if (!"clip".equals(backgroundSource)) {
+                violations.add(new Violation("audio.source", "audioClipNeedsClipBackground",
+                        "audio.source \"clip\" needs a clip background"));
+            } else if (Boolean.FALSE.equals(m.backgroundClipHasAudio())) {
+                violations.add(new Violation("audio.source", "audioClipHasNoAudio",
+                        "the background clip has no audio track"));
+            }
+        }
+        if (m.volume() != null && (m.volume() < 0 || m.volume() > 1)) {
+            violations.add(new Violation("audio.volume", "bounds", "audio.volume must be between 0 and 1"));
+        }
+        if (m.fadeOutSec() != null && (m.fadeOutSec() < 0 || m.fadeOutSec() > 5)) {
+            violations.add(new Violation("audio.fadeOutSec", "bounds", "audio.fadeOutSec must be between 0 and 5"));
         }
     }
 

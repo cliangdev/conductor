@@ -14,6 +14,7 @@ import { resolveAd, resolveSequence, renderBoard, fitBoard, enabledPlacements } 
 import { placements as defaultPlacements } from './placements.js';
 import { layouts as defaultLayouts } from './layouts/index.js';
 import { loadFont } from './font.js';
+import { applyMotion, seekBackgroundVideo } from './motion.js';
 
 export { enabledPlacements };
 export { loadFont };
@@ -62,12 +63,32 @@ export function mountBoard(container, options) {
   let destroyed = false;
   let generation = 0;
 
+  // MOTION playback state (see motion.js): currentT is the scrub position, reset to 0 whenever draw()
+  // rebuilds the board (a new creative/brand/placement starts its preview from the top). `playing`
+  // guards the requestAnimationFrame loop so pause() (or a rebuild mid-play) can stop it cleanly.
+  let currentT = 0;
+  let playing = false;
+  // What the caller asked for (play()/pause()), kept across rebuilds and across a play() that lands before
+  // the first board exists; `playing` is only whether the rAF loop is running right now.
+  let wantPlaying = false;
+  let rafId = null;
+  const timeListeners = new Set();
+
+  function motionOf() {
+    return state.creative && state.creative.motion;
+  }
+  function durationSecOf() {
+    const m = motionOf();
+    return (m && m.durationSec) || 8;
+  }
+
   // Each draw owns its board. A draw awaits fonts, so an update() or destroy() can land mid-draw: the
   // generation check drops a superseded draw instead of fitting a board that is gone or replaced.
   async function draw() {
     if (destroyed) return;
     const gen = ++generation;
     const stale = () => destroyed || gen !== generation;
+    stopPlayback();
     await loadFont(state.brand);
     if (stale()) return;
     const placement = state.placementsReg[state.placementKey];
@@ -84,6 +105,18 @@ export function mountBoard(container, options) {
     if (stale()) return;
     fitBoard(next, state.placementsReg);
 
+    // A rebuilt board always starts its MOTION preview from t=0 — STILL creatives (no `motion`) never
+    // touch applyMotion/seekBackgroundVideo at all, leaving their look exactly as before this feature.
+    // Keep the scrub position across a rebuild (an edit while previewing the end card stays on the end
+    // card), clamped to a possibly shorter duration.
+    currentT = Math.min(currentT, durationSecOf());
+    const motion = motionOf();
+    if (motion) {
+      applyMotion(next, motion, currentT, { durationSec: durationSecOf() });
+      await seekBackgroundVideo(next, currentT, state.creative && state.creative.clipStartSec);
+      if (stale()) return;
+    }
+
     // ...then scale the whole board down to fit the container.
     const rect = container.getBoundingClientRect ? container.getBoundingClientRect() : { width: container.clientWidth, height: container.clientHeight };
     const s = state.scale != null
@@ -95,6 +128,77 @@ export function mountBoard(container, options) {
     shell.style.width = Math.round(placement.w * s) + 'px';
     shell.style.height = Math.round(placement.h * s) + 'px';
     next.style.transform = `scale(${s})`;
+
+    // A play() that landed before this board existed, or playback a rebuild interrupted, resumes here.
+    if (wantPlaying) startLoop();
+  }
+
+  /* Applies motion at `tSec` (clamped to [0, durationSec]) to the CURRENT board without rebuilding it,
+   * awaits the clip background's own seek when one is present, and notifies onTime() listeners. A
+   * no-op (resolves immediately) for a STILL creative (no `creative.motion`) or before the first
+   * board exists. */
+  async function seek(tSec) {
+    if (!board || !motionOf()) return;
+    const durationSec = durationSecOf();
+    const t = Math.max(0, Math.min(durationSec, tSec));
+    currentT = t;
+    applyMotion(board, motionOf(), t, { durationSec });
+    await seekBackgroundVideo(board, t, state.creative && state.creative.clipStartSec);
+    timeListeners.forEach((cb) => cb(t));
+  }
+
+  function scheduleFrame(cb) {
+    if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(cb);
+    return setTimeout(() => cb(Date.now()), 16);
+  }
+  function cancelFrame(id) {
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
+    else clearTimeout(id);
+  }
+
+  function stopPlayback() {
+    playing = false;
+    if (rafId != null) {
+      cancelFrame(rafId);
+      rafId = null;
+    }
+  }
+
+  /* Plays the MOTION preview in real time via requestAnimationFrame, looping back to 0 at
+   * durationSec. A no-op for a STILL creative or before the first board exists. */
+  function play() {
+    wantPlaying = true;
+    startLoop();
+  }
+
+  function startLoop() {
+    if (!board || !motionOf() || playing) return;
+    playing = true;
+    let last = null;
+    const step = async (ts) => {
+      if (!playing) return;
+      if (last == null) last = ts;
+      const deltaSec = Math.max(0, (ts - last) / 1000);
+      last = ts;
+      const durationSec = durationSecOf();
+      let next = currentT + deltaSec;
+      if (durationSec > 0 && next >= durationSec) next %= durationSec;
+      await seek(next);
+      if (!playing) return; // pause()/destroy() may have landed during the await
+      rafId = scheduleFrame(step);
+    };
+    rafId = scheduleFrame(step);
+  }
+
+  function pause() {
+    wantPlaying = false;
+    stopPlayback();
+  }
+
+  /* Subscribes to every seek() (from play() or a manual scrub); returns an unsubscribe function. */
+  function onTime(cb) {
+    timeListeners.add(cb);
+    return () => timeListeners.delete(cb);
   }
 
   const ready = draw();
@@ -109,9 +213,15 @@ export function mountBoard(container, options) {
     },
     destroy() {
       destroyed = true;
+      stopPlayback();
+      timeListeners.clear();
       shell.remove();
       board = null;
     },
+    seek,
+    play,
+    pause,
+    onTime,
   };
 }
 

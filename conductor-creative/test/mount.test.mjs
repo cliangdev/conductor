@@ -185,6 +185,239 @@ test('mountBoard: destroy() while fonts are still loading does not throw', async
   }
 });
 
+/* ── MOTION: seek/play/pause/onTime ───────────────────────────────────────
+ * linkedom has no real `requestAnimationFrame`; mount.js falls back to a
+ * setTimeout-based shim when the global is absent, but these tests want
+ * deterministic, hand-driven frames, so they install a fake rAF that just
+ * records the callback and lets the test invoke it with a chosen timestamp. */
+
+function withFakeRaf() {
+  const previousRaf = globalThis.requestAnimationFrame;
+  const previousCaf = globalThis.cancelAnimationFrame;
+  let nextId = 1;
+  const pending = new Map();
+  globalThis.requestAnimationFrame = (cb) => {
+    const id = nextId++;
+    pending.set(id, cb);
+    return id;
+  };
+  globalThis.cancelAnimationFrame = (id) => {
+    pending.delete(id);
+  };
+  return {
+    // Runs the single most-recently-scheduled frame callback at timestamp `ts`, then waits a tick so
+    // any awaited work inside it (seekBackgroundVideo's Promise, in particular) settles.
+    async tick(ts) {
+      const ids = [...pending.keys()];
+      const id = ids[ids.length - 1];
+      const cb = pending.get(id);
+      pending.delete(id);
+      if (cb) await cb(ts);
+      await Promise.resolve();
+    },
+    pendingCount() {
+      return pending.size;
+    },
+    restore() {
+      globalThis.requestAnimationFrame = previousRaf;
+      globalThis.cancelAnimationFrame = previousCaf;
+    },
+  };
+}
+
+test('mountBoard: seek() applies motion to the current board without rebuilding it', async () => {
+  const container = makeContainer();
+  const handle = mountBoard(container, {
+    creative: { layout: 'bleed', headline: 'Plan the week in *one sentence*.', motion: { durationSec: 8 } },
+    brand: {},
+    placementKey: '9x16',
+  });
+  await handle.ready;
+  const headline = handle.board.querySelector('.cc-headline');
+  // draw() already applied motion at t=0.
+  assert.equal(headline.style.opacity, '0');
+
+  await handle.seek(0.9);
+  assert.equal(headline.style.opacity, '1');
+  assert.equal(handle.board.querySelector('.cc-headline'), headline, 'same board, not rebuilt');
+});
+
+test('mountBoard: seek() is a no-op for a STILL creative (no `motion`)', async () => {
+  const container = makeContainer();
+  const handle = mountBoard(container, {
+    creative: { layout: 'bleed', headline: 'x *y*.' },
+    brand: {},
+    placementKey: '9x16',
+  });
+  await handle.ready;
+  const headline = handle.board.querySelector('.cc-headline');
+  assert.equal(headline.style.opacity, '', 'STILL never gets an opacity style at all');
+  await handle.seek(2);
+  assert.equal(headline.style.opacity, '', 'seek() on a STILL creative changes nothing');
+});
+
+test('mountBoard: play() advances currentT via requestAnimationFrame and calls onTime listeners', async () => {
+  const raf = withFakeRaf();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'x *y*.', motion: { durationSec: 8 } },
+      brand: {},
+      placementKey: '9x16',
+    });
+    await handle.ready;
+
+    const times = [];
+    const unsubscribe = handle.onTime((t) => times.push(t));
+
+    handle.play();
+    await raf.tick(0); // first frame establishes the baseline timestamp, no delta yet
+    assert.deepEqual(times, [0]);
+
+    await raf.tick(500); // +0.5s
+    assert.equal(times.length, 2);
+    assert.ok(Math.abs(times[1] - 0.5) < 1e-6, `expected ~0.5, got ${times[1]}`);
+
+    handle.pause();
+    unsubscribe();
+  } finally {
+    raf.restore();
+  }
+});
+
+test('mountBoard: play() loops back to 0 at durationSec', async () => {
+  const raf = withFakeRaf();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'x *y*.', motion: { durationSec: 1 } },
+      brand: {},
+      placementKey: '9x16',
+    });
+    await handle.ready;
+    const times = [];
+    handle.onTime((t) => times.push(t));
+
+    handle.play();
+    await raf.tick(0);
+    await raf.tick(1500); // +1.5s, past the 1s duration -> should wrap
+    assert.ok(times[times.length - 1] < 1, `expected a wrapped time < 1, got ${times[times.length - 1]}`);
+    handle.pause();
+  } finally {
+    raf.restore();
+  }
+});
+
+test('mountBoard: pause() stops scheduling further frames', async () => {
+  const raf = withFakeRaf();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'x *y*.', motion: { durationSec: 8 } },
+      brand: {},
+      placementKey: '9x16',
+    });
+    await handle.ready;
+    handle.play();
+    assert.equal(raf.pendingCount(), 1);
+    handle.pause();
+    assert.equal(raf.pendingCount(), 0, 'pause() cancels the outstanding frame');
+    await raf.tick(0); // nothing left to run; should not throw
+  } finally {
+    raf.restore();
+  }
+});
+
+test('mountBoard: play() is a no-op for a STILL creative', async () => {
+  const raf = withFakeRaf();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'x *y*.' },
+      brand: {},
+      placementKey: '9x16',
+    });
+    await handle.ready;
+    handle.play();
+    assert.equal(raf.pendingCount(), 0, 'no motion, no playback loop scheduled');
+  } finally {
+    raf.restore();
+  }
+});
+
+test('mountBoard: an edit (update) keeps the scrub position instead of jumping back to 0', async () => {
+  const container = makeContainer();
+  const handle = mountBoard(container, {
+    creative: { layout: 'bleed', headline: 'First *one*.', motion: { durationSec: 8 } },
+    brand: {},
+    placementKey: '9x16',
+  });
+  await handle.ready;
+  await handle.seek(5);
+  assert.equal(handle.board.querySelector('.cc-headline').style.opacity, '1');
+
+  await handle.update({ creative: { layout: 'bleed', headline: 'Second *one*.', motion: { durationSec: 8 } } });
+  assert.equal(handle.board.querySelector('.cc-headline').style.opacity, '1', 'still at t=5 after the rebuild');
+});
+
+// The editor calls play() straight after mounting, before the first board has drawn; that call used to
+// be dropped, leaving a "playing" preview frozen at 0:00.
+test('mountBoard: play() before the first draw starts playback once the board exists', async () => {
+  const raf = withFakeRaf();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'x *y*.', motion: { durationSec: 8 } },
+      brand: {},
+      placementKey: '9x16',
+    });
+    handle.play();
+    await handle.ready;
+    assert.equal(raf.pendingCount(), 1, 'the loop is scheduled after the draw');
+  } finally {
+    raf.restore();
+  }
+});
+
+test('mountBoard: playback survives an update() (every keystroke rebuilds the board)', async () => {
+  const raf = withFakeRaf();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'x *y*.', motion: { durationSec: 8 } },
+      brand: {},
+      placementKey: '9x16',
+    });
+    await handle.ready;
+    handle.play();
+    await handle.update({ creative: { layout: 'bleed', headline: 'x *yz*.', motion: { durationSec: 8 } } });
+    assert.equal(raf.pendingCount(), 1, 'still playing after the rebuild');
+    handle.pause();
+    await handle.update({ creative: { layout: 'bleed', headline: 'x *yzz*.', motion: { durationSec: 8 } } });
+    assert.equal(raf.pendingCount(), 0, 'a paused preview stays paused after a rebuild');
+  } finally {
+    raf.restore();
+  }
+});
+
+test('mountBoard: destroy() while playing stops the loop', async () => {
+  const raf = withFakeRaf();
+  try {
+    const container = makeContainer();
+    const handle = mountBoard(container, {
+      creative: { layout: 'bleed', headline: 'x *y*.', motion: { durationSec: 8 } },
+      brand: {},
+      placementKey: '9x16',
+    });
+    await handle.ready;
+    handle.play();
+    handle.destroy();
+    assert.equal(raf.pendingCount(), 0);
+  } finally {
+    raf.restore();
+  }
+});
+
 test('mountBoard: an update() during a pending draw leaves one board showing the latest input', async () => {
   const fonts = withSlowFonts();
   try {

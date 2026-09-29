@@ -31,8 +31,10 @@ import com.conductor.generated.v2.model.CreativePerformanceEntry;
 import com.conductor.generated.v2.model.CreativePerformancePlatform;
 import com.conductor.generated.v2.model.CreativePerformanceResponse;
 import com.conductor.generated.v2.model.CreativePhotoResponse;
+import com.conductor.generated.v2.model.CreativeAudio;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
+import com.conductor.generated.v2.model.CreativeMotion;
 import com.conductor.generated.v2.model.ConfirmCreativePhotoPosterRequest;
 import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.CreativeReadinessItem;
@@ -244,8 +246,17 @@ public class CreativeController implements CreativesApi {
     @Override
     public ResponseEntity<Void> putCreativeRenderFrame(String projectId, String creativeId, String renderId,
                                                        String placementKey, Integer width, Integer height,
-                                                       Resource body, Integer index) {
+                                                       Resource body, Integer index, BigDecimal durationSeconds,
+                                                       Boolean hasAudio) {
         renderService.putFrame(projectId, creativeId, renderId, placementKey, index, width, height,
+                readAllBytes(body), currentRequestContentType(), durationSeconds, hasAudio, currentUser());
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<Void> putCreativeRenderFramePoster(String projectId, String creativeId, String renderId,
+                                                             String placementKey, Resource body, Integer index) {
+        renderService.putFramePoster(projectId, creativeId, renderId, placementKey, index,
                 readAllBytes(body), currentRequestContentType(), currentUser());
         return ResponseEntity.noContent().build();
     }
@@ -423,6 +434,8 @@ public class CreativeController implements CreativesApi {
                 .carouselRatio(c.getCarouselRatio())
                 .layoutOverrides(toLayoutOverrides(c.getLayoutOverrides()))
                 .clipMedia(c.getClipMedia() != null ? toStringMap(c.getClipMedia()) : null)
+                .motion(toMotion(c.getMotion()))
+                .audio(toAudio(c.getAudio()))
                 .createdBy(c.getCreatedBy())
                 .activeExperimentId(view.activeExperimentId());
         if (view.latestRenderSummary() != null) {
@@ -460,6 +473,14 @@ public class CreativeController implements CreativesApi {
 
     private CreativeLayoutOverrides toLayoutOverrides(JsonNode node) {
         return node != null ? objectMapper.convertValue(node, CreativeLayoutOverrides.class) : null;
+    }
+
+    private CreativeMotion toMotion(JsonNode node) {
+        return node != null ? objectMapper.convertValue(node, CreativeMotion.class) : null;
+    }
+
+    private CreativeAudio toAudio(JsonNode node) {
+        return node != null ? objectMapper.convertValue(node, CreativeAudio.class) : null;
     }
 
     private User currentUser() {

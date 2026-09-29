@@ -12,6 +12,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 const { toastSpy, mockCan } = vi.hoisted(() => ({ toastSpy: vi.fn(), mockCan: vi.fn((_cap?: string) => true) }))
+vi.mock('@/components/workitems/MediaUploadPanel', () => ({ putToSignedUrl: vi.fn(() => Promise.resolve()) }))
 vi.mock('@/components/ui/toast', () => ({ useToast: () => ({ showToast: toastSpy }) }))
 vi.mock('@/contexts/PermissionsContext', () => ({
   useCan: (cap: string) => mockCan(cap),
@@ -67,6 +68,24 @@ describe('BrandKitForm', () => {
       if (path.includes('/brand-kits')) return Promise.resolve([kit()])
       return Promise.reject(new Error(`unexpected GET ${path}`))
     })
+  })
+
+  it('keeps unsaved edits when a logo is uploaded', async () => {
+    ;(apiPost as Mock).mockImplementation((path: string) => {
+      if (path.endsWith('/images/mark')) return Promise.resolve({ uploadUrl: 'https://up.example/mark', gcsPath: 'p/mark.png' })
+      if (path.endsWith('/images/mark/confirm')) return Promise.resolve(kit({ markUrl: 'https://cdn.example/mark.png' }))
+      return Promise.reject(new Error(`unexpected POST ${path}`))
+    })
+    const { container } = render(<BrandKitForm projectId="proj-1" token="tok" />)
+
+    const name = await screen.findByLabelText('Name')
+    await userEvent.clear(name)
+    await userEvent.type(name, 'Acme')
+    const fileInput = container.querySelector('input[type=file]') as HTMLInputElement
+    await userEvent.upload(fileInput, new File(['png'], 'mark.png', { type: 'image/png' }))
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith(expect.stringContaining('/images/mark/confirm'), expect.anything(), 'tok'))
+    expect(screen.getByLabelText('Name')).toHaveValue('Acme')
   })
 
   it('runs the kit copy rules live against a test line', async () => {

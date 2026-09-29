@@ -7,7 +7,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, Maximize2Icon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Maximize2Icon,
+  MoreHorizontalIcon,
+  PauseIcon,
+  PlayIcon,
+  PlusIcon,
+  XIcon,
+} from 'lucide-react'
 import { attachFocalDrag, enabledPlacements, mountBoard } from '@cliangdev/creative-render/mount'
 import { checkCreativeCopy } from '@cliangdev/creative-render/copy-rules'
 import { placements as renderPlacements } from '@cliangdev/creative-render/placements'
@@ -27,6 +37,7 @@ import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Slider } from '@/components/ui/slider'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
@@ -52,6 +63,7 @@ import {
   getCreativeRegistry,
   listCreativePhotos,
   patchCreative,
+  type AudioSource,
   type Creative,
   type CreativeKind,
   type CreativeLockup,
@@ -61,6 +73,9 @@ import {
   type CreativeRender,
   type CreativeState,
   type CreativeTheme,
+  type MotionBackgroundMotion,
+  type MotionBackgroundSource,
+  type MotionPreset,
   type SequenceBeat,
   type SequenceKind,
 } from '@/components/marketing/creatives/types'
@@ -77,6 +92,26 @@ type AttachFocalDrag = (
 ) => { detach: () => void }
 const attachFocalDragTyped = attachFocalDrag as unknown as AttachFocalDrag
 
+/** MOTION only. `clipStartSec` is a text input (like the layout-override maps below) so the field can
+ *  sit blank while typing without forcing it to 0. */
+interface MotionFormState {
+  preset: MotionPreset
+  durationSec: number
+  backgroundSource: MotionBackgroundSource
+  backgroundMotion: MotionBackgroundMotion
+  clipMediaId: string | null
+  clipStartSec: string
+  endCard: boolean
+}
+
+/** MOTION only. */
+interface AudioFormState {
+  source: AudioSource
+  trackId: string | null
+  volume: number
+  fadeOutSec: number
+}
+
 interface FormState {
   brandKitId: string
   name: string
@@ -92,6 +127,8 @@ interface FormState {
   altText: string
   /** CLIP only — see the `Creative.clipMedia` doc comment in types.ts. */
   clipMedia: Record<string, string>
+  motion: MotionFormState
+  audio: AudioFormState
   placements: string[]
   sequenceKind: SequenceKind | null
   sequence: SequenceBeat[]
@@ -120,6 +157,32 @@ function toIntMap(map: Record<string, string>): Record<string, number> {
   return out
 }
 
+/** Defaults match the motion contract exactly (see CreativeMotion's doc comment in types.ts) — a
+ *  freshly-switched-to-Motion Creative (no `creative.motion` yet) shows these, not blanks. */
+function toMotionForm(motion: Creative['motion']): MotionFormState {
+  return {
+    preset: motion?.preset ?? 'fade-up',
+    durationSec: motion?.durationSec ?? 8,
+    backgroundSource: motion?.background?.source ?? 'photo',
+    backgroundMotion: motion?.background?.motion ?? 'zoom-in',
+    clipMediaId: motion?.background?.clipMediaId ?? null,
+    clipStartSec: String(motion?.background?.clipStartSec ?? 0),
+    endCard: motion?.endCard ?? true,
+  }
+}
+
+/** See {@link toMotionForm} — `source` defaults to "none" here; the contract's data-dependent default
+ *  ("clip" when the background clip has sound) is instead expressed by disabling the "Clip sound"
+ *  option until it applies (see the Audio panel below), not by guessing a selection for the marketer. */
+function toAudioForm(audio: Creative['audio']): AudioFormState {
+  return {
+    source: audio?.source ?? 'none',
+    trackId: audio?.trackId ?? null,
+    volume: audio?.volume ?? 0.8,
+    fadeOutSec: audio?.fadeOutSec ?? 1,
+  }
+}
+
 function toForm(creative: Creative): FormState {
   return {
     brandKitId: creative.brandKitId,
@@ -135,6 +198,8 @@ function toForm(creative: Creative): FormState {
     caption: creative.caption ?? '',
     altText: creative.altText ?? '',
     clipMedia: { ...(creative.clipMedia ?? {}) },
+    motion: toMotionForm(creative.motion),
+    audio: toAudioForm(creative.audio),
     placements: [...creative.placements],
     sequenceKind: creative.sequenceKind ?? null,
     sequence: creative.sequence.map((b) => ({ ...b })),
@@ -143,6 +208,19 @@ function toForm(creative: Creative): FormState {
     layoutOverrideBand: toStringMap(creative.layoutOverrides?.band),
     layoutOverridePadBottom: toStringMap(creative.layoutOverrides?.padBottom),
   }
+}
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/** m:ss, for the transport's current-time/duration readouts. */
+function formatClock(tSec: number): string {
+  const t = Math.max(0, Math.round(tSec))
+  const m = Math.floor(t / 60)
+  const s = t % 60
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 function violationsFor(err: ApiError | null, field: string): string[] {
@@ -165,6 +243,16 @@ const STATE_HUE: Record<CreativeState, 'gray' | 'teal' | 'slate'> = {
   ARCHIVED: 'slate',
 }
 
+/** MOTION preview only — wires one PlacementBoard's mount handle into the shared transport below the
+ *  boards (see MotionTransport). `onTime` is set on exactly one ("master") board per contract #2: the
+ *  transport's current-time readout and scrub bar follow that one board's own play() clock, and every
+ *  board (master included) is told to play/pause and to seek on a manual scrub. */
+interface MotionControl {
+  playing: boolean
+  scrub: { t: number; nonce: number } | null
+  onTime?: (tSec: number) => void
+}
+
 function PlacementBoard({
   placementKey,
   creative,
@@ -173,6 +261,7 @@ function PlacementBoard({
   onFocalChange,
   draggable,
   onOpen,
+  motionControl,
 }: {
   placementKey: string
   creative: RenderCreative
@@ -185,17 +274,23 @@ function PlacementBoard({
   /** Opens the full-size viewer for this placement — wired to both a plain click on the frame and
    *  the corner "expand" affordance. */
   onOpen: (placementKey: string) => void
+  /** Present only in Motion mode (`creative.motion` set) — see {@link MotionControl}. */
+  motionControl?: MotionControl
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<typeof mountBoard> | null>(null)
   const onFocalChangeRef = useRef(onFocalChange)
   const onOpenRef = useRef(onOpen)
+  const motionControlRef = useRef(motionControl)
   useEffect(() => {
     onFocalChangeRef.current = onFocalChange
   }, [onFocalChange])
   useEffect(() => {
     onOpenRef.current = onOpen
   }, [onOpen])
+  useEffect(() => {
+    motionControlRef.current = motionControl
+  }, [motionControl])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -213,7 +308,15 @@ function PlacementBoard({
           handle.shell.addEventListener('click', onClick)
           return { detach: () => handle.shell.removeEventListener('click', onClick) }
         })()
+    // The "master" board (the one carrying onTime) reports its own play() clock back to the shared
+    // transport — see MotionControl's doc comment. A no-op subscribe for a STILL/CLIP board (no
+    // motionControl at all) or a non-master Motion board (no onTime).
+    const unsubTime = motionControlRef.current?.onTime ? handle.onTime(motionControlRef.current.onTime) : undefined
+    // A remount (placement change, or `draggable` flipping once permissions load) builds a fresh handle
+    // the play effect below won't revisit, so a board that should be playing starts itself here.
+    if (motionControlRef.current?.playing) handle.play()
     return () => {
+      unsubTime?.()
       drag.detach()
       handle.destroy()
       handleRef.current = null
@@ -225,6 +328,28 @@ function PlacementBoard({
   useEffect(() => {
     handleRef.current?.update({ creative, brand, sequenceIndex })
   }, [creative, brand, sequenceIndex])
+
+  // Play/pause follows the shared transport's `playing` flag — this effect also fires right after the
+  // mount effect above on first render (not only on later changes), so a Motion board that starts
+  // already `playing` (autoplay, unless prefers-reduced-motion) begins without a second, redundant
+  // play() call from the mount effect itself.
+  useEffect(() => {
+    if (!handleRef.current || !motionControl) return
+    if (motionControl.playing) handleRef.current.play()
+    else handleRef.current.pause()
+    // Also keyed on motionControl appearing: the board mounts before the creative loads (as a STILL
+    // board with no motionControl), so on a Motion creative `playing` is already true by the time the
+    // control arrives and would never change to trigger the first play().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [motionControl?.playing, motionControl != null])
+
+  // A manual scrub (from the shared transport's scrub bar) seeks every board, this one included —
+  // keyed on `nonce` so scrubbing to the same second twice in a row still re-seeks.
+  useEffect(() => {
+    if (!handleRef.current || !motionControl?.scrub) return
+    void handleRef.current.seek(motionControl.scrub.t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [motionControl?.scrub?.nonce])
 
   const dims = renderPlacements[placementKey as keyof typeof renderPlacements] as { w: number; h: number; label: string } | undefined
   const height = 260
@@ -300,6 +425,9 @@ function PlacementViewerBoard({
     if (!containerRef.current) return
     const handle = mountBoard(containerRef.current, { creative, brand, placementKey, sequenceIndex })
     handleRef.current = handle
+    // The full-size viewer plays the motion too (contract #2) — same reduced-motion default as the
+    // small preview boards, and a no-op for a STILL/CLIP creative (no `creative.motion`).
+    if (creative.motion && !prefersReducedMotion()) handle.play()
     return () => {
       handle.destroy()
       handleRef.current = null
@@ -323,6 +451,53 @@ function PlacementViewerBoard({
       className="relative overflow-hidden rounded-md bg-surface-3"
       style={{ width: size.width, height: size.height }}
     />
+  )
+}
+
+/** The shared transport under the Motion mode preview boards (contract #2): one play/pause button,
+ *  one scrub bar driving every board via {@link MotionControl}, and a loop toggle. Audio is deliberately
+ *  absent here — see the "Audio plays in the rendered video." label CreativeEditor renders alongside
+ *  this (checkCreativeCopy-adjacent copy, not this component's job to own). */
+function MotionTransport({
+  durationSec,
+  playing,
+  onTogglePlay,
+  currentT,
+  onScrub,
+  loop,
+  onLoopChange,
+}: {
+  durationSec: number
+  playing: boolean
+  onTogglePlay: () => void
+  currentT: number
+  onScrub: (tSec: number) => void
+  loop: boolean
+  onLoopChange: (loop: boolean) => void
+}) {
+  return (
+    <div
+      data-testid="motion-transport"
+      className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
+    >
+      <Button type="button" variant="ghost" size="sm" onClick={onTogglePlay} aria-label={playing ? 'Pause' : 'Play'}>
+        {playing ? <PauseIcon className="h-4 w-4" aria-hidden /> : <PlayIcon className="h-4 w-4" aria-hidden />}
+      </Button>
+      <span className="w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+        {formatClock(currentT)}
+      </span>
+      <Slider
+        aria-label="Scrub"
+        min={0}
+        max={Math.max(durationSec, 0.1)}
+        step={0.1}
+        value={Math.min(currentT, durationSec)}
+        onValueChange={onScrub}
+        className="min-w-[8rem] flex-1"
+      />
+      <span className="w-9 shrink-0 text-xs tabular-nums text-muted-foreground">{formatClock(durationSec)}</span>
+      <Checkbox id="motion-loop" checked={loop} onCheckedChange={onLoopChange} label="Loop" />
+    </div>
   )
 }
 
@@ -483,6 +658,26 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   // CLIP mode: which clipMedia slot ('default' or a placement key) the shared video MediaPicker is
   // targeting; null means it's closed.
   const [clipMediaPickerKey, setClipMediaPickerKey] = useState<string | null>(null)
+  // MOTION mode: the background clip picker (locked to VIDEO) and the audio track picker (locked to
+  // AUDIO) — two separate MediaPicker instances, each open/closed on its own.
+  const [motionClipPickerOpen, setMotionClipPickerOpen] = useState(false)
+  const [audioTrackPickerOpen, setAudioTrackPickerOpen] = useState(false)
+  // MOTION mode's shared transport (contract #2). `motionPlaying`'s initial value is the
+  // prefers-reduced-motion default (start paused) — computed once, at this component's first mount,
+  // which is also the earliest a Motion board could ever appear.
+  const [motionPlaying, setMotionPlaying] = useState<boolean>(() => !prefersReducedMotion())
+  const [motionLoop, setMotionLoop] = useState(true)
+  const [motionCurrentT, setMotionCurrentT] = useState(0)
+  const [motionScrub, setMotionScrub] = useState<{ t: number; nonce: number } | null>(null)
+  const motionScrubNonceRef = useRef(0)
+  // The master board's last-reported time — used only to detect a loop wrap-around (t drops back
+  // near 0) so a "Loop" off can stop playback at the end instead of the engine's own unconditional
+  // loop (see conductor-creative/mount.js's play()).
+  const motionLastTRef = useRef(0)
+  const motionLoopRef = useRef(motionLoop)
+  useEffect(() => {
+    motionLoopRef.current = motionLoop
+  }, [motionLoop])
   const [variantOpen, setVariantOpen] = useState(false)
   const [variantHeadline, setVariantHeadline] = useState('')
   const [variantBusy, setVariantBusy] = useState(false)
@@ -555,6 +750,12 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     if (!form) return null
     const band = toIntMap(form.layoutOverrideBand)
     const padBottom = toIntMap(form.layoutOverridePadBottom)
+    const isMotion = form.kind === 'MOTION'
+    const motionClip =
+      isMotion && form.motion.backgroundSource === 'clip' && form.motion.clipMediaId
+        ? photoById.get(form.motion.clipMediaId)
+        : undefined
+    const audioTrack = isMotion && form.audio.trackId ? photoById.get(form.audio.trackId) : undefined
     return {
       layout: form.layout as RenderCreative['layout'],
       theme: form.theme,
@@ -585,6 +786,25 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           focal: beatPhoto?.focal ?? photo?.focal,
         }
       }),
+      kind: form.kind,
+      motion: isMotion
+        ? {
+            preset: form.motion.preset,
+            durationSec: form.motion.durationSec,
+            background: { source: form.motion.backgroundSource, motion: form.motion.backgroundMotion },
+            endCard: form.motion.endCard,
+          }
+        : undefined,
+      audio: isMotion
+        ? {
+            source: form.audio.source,
+            trackUrl: audioTrack?.url ?? undefined,
+            volume: form.audio.volume,
+            fadeOutSec: form.audio.fadeOutSec,
+          }
+        : undefined,
+      backgroundVideoUrl: isMotion && form.motion.backgroundSource === 'clip' ? motionClip?.url ?? undefined : undefined,
+      clipStartSec: isMotion && form.motion.backgroundSource === 'clip' ? Number(form.motion.clipStartSec) || 0 : undefined,
     }
   }, [form, photo, photoById])
 
@@ -629,6 +849,28 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     setViewerIndex(idx === -1 ? 0 : idx)
   }
 
+  // MOTION mode's shared transport (contract #2) — see MotionTransport and PlacementBoard's
+  // motionControl prop. handleMotionTime is stable (no deps) since it's handed to exactly one board
+  // (the "master") at mount time and must not force a re-subscribe on every render.
+  const handleMotionTime = useCallback((t: number) => {
+    if (!motionLoopRef.current && t < motionLastTRef.current - 0.5 && motionLastTRef.current > 0) {
+      // The engine always loops at durationSec (see mount.js's play()) — "Loop" off is a client-side
+      // stop: the moment the master board wraps back near 0, pause every board right where it was.
+      setMotionPlaying(false)
+      motionLastTRef.current = 0
+      return
+    }
+    motionLastTRef.current = t
+    setMotionCurrentT(t)
+  }, [])
+
+  function handleMotionScrub(t: number) {
+    motionScrubNonceRef.current += 1
+    setMotionScrub({ t, nonce: motionScrubNonceRef.current })
+    motionLastTRef.current = t
+    setMotionCurrentT(t)
+  }
+
   async function handleSave() {
     if (!form || !creative) return
     setSaving(true)
@@ -655,6 +897,29 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           caption: form.caption,
           altText: form.altText,
           clipMedia: Object.keys(form.clipMedia).length ? form.clipMedia : null,
+          motion:
+            form.kind === 'MOTION'
+              ? {
+                  preset: form.motion.preset,
+                  durationSec: form.motion.durationSec,
+                  background: {
+                    source: form.motion.backgroundSource,
+                    motion: form.motion.backgroundMotion,
+                    clipMediaId: form.motion.backgroundSource === 'clip' ? form.motion.clipMediaId : null,
+                    clipStartSec: form.motion.backgroundSource === 'clip' ? Number(form.motion.clipStartSec) || 0 : null,
+                  },
+                  endCard: form.motion.endCard,
+                }
+              : null,
+          audio:
+            form.kind === 'MOTION'
+              ? {
+                  source: form.audio.source,
+                  trackId: form.audio.source === 'track' ? form.audio.trackId : null,
+                  volume: form.audio.volume,
+                  fadeOutSec: form.audio.fadeOutSec,
+                }
+              : null,
           placements: form.placements,
           sequenceKind: form.sequenceKind,
           sequence: form.sequence,
@@ -733,7 +998,14 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
 
   const layoutOptions = Object.keys(registry.layouts)
   const themeOptions = registry.layouts[form.layout]?.themes ?? ['dark', 'light']
-  const hasSequence = form.sequenceKind != null && form.sequence.length > 0
+  // MOTION has no sequence/story/carousel — a single animated frame, not a set of beats.
+  const hasSequence = form.kind === 'STILL' && form.sequenceKind != null && form.sequence.length > 0
+  const motionClip =
+    form.kind === 'MOTION' && form.motion.backgroundSource === 'clip' && form.motion.clipMediaId
+      ? photoById.get(form.motion.clipMediaId)
+      : undefined
+  const clipHasAudio = motionClip?.hasAudio === true
+  const audioTrack = form.kind === 'MOTION' && form.audio.trackId ? photoById.get(form.audio.trackId) : undefined
 
   return (
     <div className="space-y-4">
@@ -808,9 +1080,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                 onChange={(e) => update('kind', e.target.value as CreativeKind)}
               >
                 <option value="STILL">Still</option>
-                <option value="MOTION" disabled>
-                  Motion — coming next
-                </option>
+                <option value="MOTION">Motion</option>
                 <option value="CLIP">Clip</option>
               </Select>
             </div>
@@ -1024,7 +1294,240 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             )}
           </Card>
 
-          {form.kind !== 'CLIP' && (
+          {form.kind === 'MOTION' && (
+            <Card className="space-y-3 p-4" data-testid="motion-panel">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Motion</h3>
+
+              <div>
+                <Label htmlFor="motion-preset">Preset</Label>
+                <Select
+                  id="motion-preset"
+                  value={form.motion.preset}
+                  onChange={(e) => update('motion', { ...form.motion, preset: e.target.value as MotionPreset })}
+                >
+                  <option value="fade-up">Fade up — headline and body rise into place</option>
+                  <option value="word-by-word">Word by word — the headline builds in, one word at a time</option>
+                  <option value="accent-pop">Accent pop — headline fades in, then the accent phrase pops</option>
+                  <option value="none">None — everything visible immediately</option>
+                </Select>
+                {violationsFor(saveError, 'motion.preset').map((m) => (
+                  <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                ))}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="motion-duration">Duration</Label>
+                  <span className="text-xs text-muted-foreground">{form.motion.durationSec}s</span>
+                </div>
+                <Slider
+                  id="motion-duration"
+                  min={3}
+                  max={60}
+                  step={1}
+                  value={form.motion.durationSec}
+                  onValueChange={(v) => update('motion', { ...form.motion, durationSec: v })}
+                />
+                {violationsFor(saveError, 'motion.durationSec').map((m) => (
+                  <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                ))}
+              </div>
+
+              <div>
+                <Label htmlFor="motion-bg-source">Background</Label>
+                <Select
+                  id="motion-bg-source"
+                  value={form.motion.backgroundSource}
+                  onChange={(e) => update('motion', { ...form.motion, backgroundSource: e.target.value as MotionBackgroundSource })}
+                >
+                  <option value="photo">Photo</option>
+                  <option value="clip">Clip</option>
+                </Select>
+                {violationsFor(saveError, 'motion.background.source').map((m) => (
+                  <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                ))}
+              </div>
+
+              {form.motion.backgroundSource === 'photo' ? (
+                <div>
+                  <Label htmlFor="motion-bg-motion">Background motion</Label>
+                  <Select
+                    id="motion-bg-motion"
+                    value={form.motion.backgroundMotion}
+                    onChange={(e) => update('motion', { ...form.motion, backgroundMotion: e.target.value as MotionBackgroundMotion })}
+                  >
+                    <option value="zoom-in">Zoom in</option>
+                    <option value="zoom-out">Zoom out</option>
+                    <option value="pan-left">Pan left</option>
+                    <option value="pan-right">Pan right</option>
+                    <option value="none">None</option>
+                  </Select>
+                  {violationsFor(saveError, 'motion.background.motion').map((m) => (
+                    <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Clip</Label>
+                    {motionClip && canManage && (
+                      <button
+                        type="button"
+                        onClick={() => update('motion', { ...form.motion, clipMediaId: null })}
+                        className="text-xs text-muted-foreground hover:text-destructive"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMotionClipPickerOpen(true)}
+                    disabled={!canManage}
+                    className="flex w-full items-center gap-2 rounded-md border border-border-strong px-2 py-1.5 text-left text-sm hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {motionClip?.posterUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={motionClip.posterUrl} alt="" className="h-8 w-8 rounded object-cover" />
+                    ) : (
+                      <span className="h-8 w-8 rounded bg-surface-3" />
+                    )}
+                    <span className="truncate text-muted-foreground">
+                      {motionClip ? motionClip.label || 'Untitled clip' : 'Choose a clip…'}
+                    </span>
+                  </button>
+                  {violationsFor(saveError, 'motion.background.clipMediaId').map((m) => (
+                    <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                  ))}
+
+                  <div>
+                    <Label htmlFor="motion-clip-start">Clip start (seconds)</Label>
+                    <Input
+                      id="motion-clip-start"
+                      type="number"
+                      min={0}
+                      max={motionClip?.durationSeconds ?? undefined}
+                      value={form.motion.clipStartSec}
+                      onChange={(e) => update('motion', { ...form.motion, clipStartSec: e.target.value })}
+                    />
+                    {violationsFor(saveError, 'motion.background.clipStartSec').map((m) => (
+                      <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <Checkbox
+                id="motion-end-card"
+                checked={form.motion.endCard}
+                onCheckedChange={(checked) => update('motion', { ...form.motion, endCard: checked })}
+                label="End card — hold the full composition for the last 2 seconds"
+              />
+              {violationsFor(saveError, 'motion.endCard').map((m) => (
+                <p key={m} className="text-xs text-destructive">{m}</p>
+              ))}
+            </Card>
+          )}
+
+          {form.kind === 'MOTION' && (
+            <Card className="space-y-3 p-4" data-testid="audio-panel">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Audio</h3>
+
+              <div>
+                <Label htmlFor="audio-source">Source</Label>
+                <Select
+                  id="audio-source"
+                  value={form.audio.source}
+                  onChange={(e) => update('audio', { ...form.audio, source: e.target.value as AudioSource })}
+                >
+                  <option value="clip" disabled={!clipHasAudio}>
+                    Clip sound{!clipHasAudio ? ' (clip has no audio)' : ''}
+                  </option>
+                  <option value="track">Music track</option>
+                  <option value="none">None</option>
+                </Select>
+                {violationsFor(saveError, 'audio.source').map((m) => (
+                  <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                ))}
+              </div>
+
+              {form.audio.source === 'track' && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Track</Label>
+                    {audioTrack && canManage && (
+                      <button
+                        type="button"
+                        onClick={() => update('audio', { ...form.audio, trackId: null })}
+                        className="text-xs text-muted-foreground hover:text-destructive"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAudioTrackPickerOpen(true)}
+                    disabled={!canManage}
+                    className="flex w-full items-center gap-2 rounded-md border border-border-strong px-2 py-1.5 text-left text-sm hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span className="truncate text-muted-foreground">
+                      {audioTrack ? audioTrack.label || 'Untitled track' : 'Choose a track…'}
+                    </span>
+                  </button>
+                  {audioTrack?.url && (
+                    <audio controls src={audioTrack.url} data-testid="audio-track-audition" className="w-full">
+                      Your browser does not support the audio element.
+                    </audio>
+                  )}
+                  {violationsFor(saveError, 'audio.trackId').map((m) => (
+                    <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                  ))}
+                </div>
+              )}
+
+              {form.audio.source !== 'none' && (
+                <>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="audio-volume">Volume</Label>
+                      <span className="text-xs text-muted-foreground">{Math.round(form.audio.volume * 100)}%</span>
+                    </div>
+                    <Slider
+                      id="audio-volume"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={form.audio.volume}
+                      onValueChange={(v) => update('audio', { ...form.audio, volume: v })}
+                    />
+                    {violationsFor(saveError, 'audio.volume').map((m) => (
+                      <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                    ))}
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="audio-fadeout">Fade out</Label>
+                      <span className="text-xs text-muted-foreground">{form.audio.fadeOutSec}s</span>
+                    </div>
+                    <Slider
+                      id="audio-fadeout"
+                      min={0}
+                      max={5}
+                      step={0.5}
+                      value={form.audio.fadeOutSec}
+                      onValueChange={(v) => update('audio', { ...form.audio, fadeOutSec: v })}
+                    />
+                    {violationsFor(saveError, 'audio.fadeOutSec').map((m) => (
+                      <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
+                    ))}
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
+          {form.kind === 'STILL' && (
             <Card className="space-y-3 p-4">
               <Label htmlFor="creative-sequence-kind">Sequence</Label>
               <Select
@@ -1130,7 +1633,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             </h3>
             {renderCreative && (
               <div className="flex flex-wrap gap-4">
-                {enabledKeys.map((key) => (
+                {enabledKeys.map((key, i) => (
                   <PlacementBoard
                     key={key}
                     placementKey={key}
@@ -1140,8 +1643,27 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                     onFocalChange={handleFocalChange}
                     draggable={canManage}
                     onOpen={openPlacementViewer}
+                    motionControl={
+                      form.kind === 'MOTION'
+                        ? { playing: motionPlaying, scrub: motionScrub, onTime: i === 0 ? handleMotionTime : undefined }
+                        : undefined
+                    }
                   />
                 ))}
+              </div>
+            )}
+            {form.kind === 'MOTION' && renderCreative && (
+              <div className="space-y-1.5">
+                <MotionTransport
+                  durationSec={form.motion.durationSec}
+                  playing={motionPlaying}
+                  onTogglePlay={() => setMotionPlaying((p) => !p)}
+                  currentT={motionCurrentT}
+                  onScrub={handleMotionScrub}
+                  loop={motionLoop}
+                  onLoopChange={setMotionLoop}
+                />
+                <p className="text-xs text-muted-foreground">Audio plays in the rendered video.</p>
               </div>
             )}
             {hasSequence && (
@@ -1246,6 +1768,34 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             update('clipMedia', { ...form.clipMedia, [clipMediaPickerKey]: m.id })
           }
           setClipMediaPickerKey(null)
+        }}
+      />
+
+      <MediaPicker
+        projectId={projectId}
+        token={token}
+        open={motionClipPickerOpen}
+        onOpenChange={setMotionClipPickerOpen}
+        kind="VIDEO"
+        media={photos}
+        onMediaChanged={() => listCreativePhotos(projectId, token, true).then(setPhotos)}
+        onSelect={(m) => {
+          update('motion', { ...form.motion, clipMediaId: m.id, clipStartSec: '0' })
+          setMotionClipPickerOpen(false)
+        }}
+      />
+
+      <MediaPicker
+        projectId={projectId}
+        token={token}
+        open={audioTrackPickerOpen}
+        onOpenChange={setAudioTrackPickerOpen}
+        kind="AUDIO"
+        media={photos}
+        onMediaChanged={() => listCreativePhotos(projectId, token, true).then(setPhotos)}
+        onSelect={(m) => {
+          update('audio', { ...form.audio, trackId: m.id })
+          setAudioTrackPickerOpen(false)
         }}
       />
 
