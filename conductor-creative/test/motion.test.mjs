@@ -194,23 +194,27 @@ test('applyMotion: word-by-word wraps the headline into .cc-word spans, staggere
 
 /* ── applyMotion: accent-pop ──────────────────────────────────────────── */
 
-test('applyMotion: accent-pop fades the headline then scales/brightens the accent', () => {
+test('applyMotion: accent-pop fades the headline then scales/brightens each accent word', () => {
   const b = board(CREATIVE);
   const headline = b.querySelector('.cc-headline');
   const em = headline.querySelector('em');
 
   applyMotion(b, { preset: 'accent-pop' }, 0, { durationSec: 8 });
   assert.equal(opacityOf(headline), 0);
+  // Transforms don't apply to inline text: the accent's words are wrapped in inline-block spans.
+  const words = em.querySelectorAll('.cc-word');
+  assert.ok(words.length >= 1);
 
   applyMotion(b, { preset: 'accent-pop' }, 0.8, { durationSec: 8 });
   assert.equal(opacityOf(headline), 1, 'headline fade window is 0.3-0.8');
+  assert.match(words[0].style.transform, /scale\(1\.18\)/);
 
-  applyMotion(b, { preset: 'accent-pop' }, 0.8, { durationSec: 8 });
-  const scaleAtStart = em.style.transform;
-  assert.match(scaleAtStart, /scale\(1\.18\)/);
+  applyMotion(b, { preset: 'accent-pop' }, 1.0, { durationSec: 8 });
+  assert.match(words[0].style.filter, /brightness\(1\.\d+\)/, 'brightness peaks mid-pop');
+
   applyMotion(b, { preset: 'accent-pop' }, 1.1, { durationSec: 8 });
-  assert.match(em.style.transform, /scale\(1\)/);
-  assert.match(em.style.filter, /brightness\(1\.3\)/);
+  assert.equal(words[0].style.transform, 'none', 'settled at scale 1');
+  assert.equal(words[0].style.filter, 'none', 'brightness back to 1, so the end card starts without a jump');
 });
 
 /* ── end card ──────────────────────────────────────────────────────────── */

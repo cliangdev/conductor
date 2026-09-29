@@ -87,6 +87,9 @@
 }
 .cc-board--light .cc-headline { color: var(--cc-ink); }
 .cc-headline em { font-style: italic; color: var(--cc-accent); }
+/* Word spans the motion presets animate: inline-block so transforms apply; the spaces between them stay
+ * plain text, so lines wrap exactly as they do without the spans. */
+.cc-word { display: inline-block; }
 
 /* ── Body ─────────────────────────────────────────────────────────────────── */
 .cc-body {
