@@ -173,23 +173,30 @@ function applyHeadline(board, preset, tSec, inEndCard) {
   }
 
   if (preset === 'accent-pop') {
+    // Transforms don't apply to inline text, so the accent phrase's words are wrapped in inline-block
+    // spans (wrapping between words is unchanged) and each word scales about its own centre.
+    const em = headline.querySelector('em');
+    if (em && !em.querySelector('.cc-word')) wrapWordsInPlace(em);
+    const accentWords = em ? em.querySelectorAll('.cc-word') : [];
     if (inEndCard) {
       finalState(headline);
-      const em = headline.querySelector('em');
-      if (em) {
-        em.style.transform = 'scale(1)';
-        em.style.filter = 'brightness(1)';
-      }
+      accentWords.forEach((w) => {
+        w.style.transform = 'none';
+        w.style.filter = 'none';
+      });
       return;
     }
     const fadeProgress = windowProgress(tSec, ACCENT_POP_FADE_WINDOW[0], ACCENT_POP_FADE_WINDOW[1]);
     setFade(headline, fadeProgress, null);
-    const em = headline.querySelector('em');
-    if (em) {
-      const popProgress = windowProgress(tSec, ACCENT_POP_POP_WINDOW[0], ACCENT_POP_POP_WINDOW[1]);
-      em.style.transform = `scale(${round2(lerp(1.18, 1, popProgress))})`;
-      em.style.filter = `brightness(${round2(lerp(0.9, 1.3, popProgress))})`;
-    }
+    const popProgress = windowProgress(tSec, ACCENT_POP_POP_WINDOW[0], ACCENT_POP_POP_WINDOW[1]);
+    // Scale settles 1.18 → 1; brightness pulses up and back to 1, so the end card starts with no jump.
+    const scale = round2(lerp(1.18, 1, popProgress));
+    const brightness = round2(1 + 0.3 * Math.sin(Math.PI * popProgress));
+    accentWords.forEach((w) => {
+      w.style.transformOrigin = '50% 70%';
+      w.style.transform = scale === 1 ? 'none' : `scale(${scale})`;
+      w.style.filter = brightness === 1 ? 'none' : `brightness(${brightness})`;
+    });
     return;
   }
 

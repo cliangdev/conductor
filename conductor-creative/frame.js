@@ -83,6 +83,9 @@ async function main() {
 
     await document.fonts.ready;
     await Promise.all([...document.images].map((img) => (img.decode ? img.decode().catch(() => {}) : null)));
+    // Motion presets restructure the headline (word spans): build that structure, in its final state,
+    // before fitting, so the type is sized for the layout every captured frame will have.
+    if (spec.motion) applyMotion(board, spec.motion, spec.motion.durationSec || 8, { durationSec: spec.motion.durationSec || 8 });
     fitBoard(board, placementsReg);
 
     if (spec.motion) {

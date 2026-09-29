@@ -1412,7 +1412,7 @@ export async function runMcpServer(): Promise<void> {
     return { tools: TOOLS }
   })
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     let config
     try {
       config = getConfig()
@@ -2158,6 +2158,20 @@ export async function runMcpServer(): Promise<void> {
           )
         }
         case 'render_creative': {
+          // A MOTION render runs past a minute. When the client asked for progress, each render log line
+          // goes out as a progress notification, so clients that time out idle tool calls (60s is common)
+          // see a live call instead of giving up on it.
+          const progressToken = request.params._meta?.progressToken
+          let step = 0
+          const onProgress = progressToken === undefined
+            ? undefined
+            : (message: string) => {
+                step += 1
+                void extra.sendNotification({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: step, message },
+                }).catch(() => {})
+              }
           return successResponse(
             await renderCreativeTool(
               {
@@ -2166,7 +2180,8 @@ export async function runMcpServer(): Promise<void> {
                 renderer: params['renderer'] as string | undefined,
                 workflowRunId: params['workflowRunId'] as string | undefined,
               },
-              config
+              config,
+              onProgress
             )
           )
         }

@@ -103,6 +103,9 @@ export function mountBoard(container, options) {
     // Fit at true (unscaled) size first...
     if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) await document.fonts.ready;
     if (stale()) return;
+    // Motion presets restructure the headline (word spans): build it in its final state before fitting so
+    // the preview is sized like the rendered video (see frame.js).
+    if (motionOf()) applyMotion(next, motionOf(), durationSecOf(), { durationSec: durationSecOf() });
     fitBoard(next, state.placementsReg);
 
     // A rebuilt board always starts its MOTION preview from t=0 — STILL creatives (no `motion`) never
