@@ -224,4 +224,41 @@ describe('CreativeLibraryGrid', () => {
     const thumb = await screen.findByTestId('creative-thumb-cr-1')
     expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/render-poster.jpg')
   })
+
+  it('shows a MOTION creative\'s live board with a play badge and its motion.durationSec, when there is no render yet', async () => {
+    mockGets({
+      creatives: [
+        creative({
+          kind: 'MOTION',
+          motion: { preset: 'fade-up', durationSec: 15, background: { source: 'photo', motion: 'zoom-in' }, endCard: true },
+        }),
+      ],
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    const thumb = await screen.findByTestId('creative-thumb-cr-1')
+    expect(thumb).toHaveTextContent('15s')
+    // No render yet — falls back to the live board (no rendered poster <img>).
+    expect(thumb.querySelector('img')).not.toBeInTheDocument()
+  })
+
+  it('prefers the rendered poster over the live board for a MOTION creative once one exists', async () => {
+    mockGets({
+      creatives: [
+        creative({
+          kind: 'MOTION',
+          motion: { durationSec: 9 },
+          latestRenderId: 'render-1',
+          latestRenderThumbnailUrl: 'https://storage.example/12a-motion-poster.jpg',
+        }),
+      ],
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    const thumb = await screen.findByTestId('creative-thumb-cr-1')
+    expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/12a-motion-poster.jpg')
+    expect(thumb).toHaveTextContent('9s')
+  })
 })

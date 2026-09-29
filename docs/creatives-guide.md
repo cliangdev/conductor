@@ -174,9 +174,9 @@ it. Upload video from any source (a phone recording, stock footage, something an
 produced) into the same media library the photo picker uses; tick **This video is AI-generated**
 when it is, same as a photo. Conductor reads the file's own width, height, duration, and (best
 effort) whether it has an audio track, and grabs a poster frame automatically — nothing to fill in
-by hand. **Motion** — a branded animated video (photo with a slow zoom/pan or a clip background,
-animated headline/body/CTA, optional audio) — is coming in the next release; the Kind field shows
-it disabled until then.
+by hand. **Motion** is a branded animated video: your Still creative's layout, theme, photo,
+headline, body and CTA, played out over a few seconds with an animated background and optional
+audio.
 
 ### Make a Clip creative
 
@@ -196,6 +196,36 @@ it disabled until then.
    creative can go Ready — same idea as a Still creative's photo-and-headline requirement, just
    video-shaped.
 
+### Make a Motion creative
+
+1. **Marketing → Creatives → New creative**, then set **Kind** to **Motion**. This keeps every
+   Still field — brand kit, photo, layout, theme, headline, body, caption, alt text, extra
+   placements, lockup/advanced overrides — and adds a **Motion** panel and an **Audio** panel below
+   them. There's no Sequence panel for Motion: it's one animated frame, not a set of story beats.
+2. **Preset** picks how the headline/body/CTA animate in: **Fade up** (rises into place), **Word by
+   word** (the headline builds in one word at a time), **Accent pop** (the headline fades in, then
+   your `*accent phrase*` pops), or **None** (everything visible immediately — useful when you want
+   the background motion alone to carry it).
+3. **Duration** is 3–60 seconds (default 8).
+4. **Background** is either your **Photo** — animated with a slow **zoom in/out** or **pan
+   left/right** (or **None**) over the whole runtime — or a **Clip**, picked from the video library
+   (same picker as a Clip creative's media, locked to video) with a **clip start** (in seconds) for
+   where playback begins.
+5. **End card** (on by default) holds the full composition — headline, body, CTA — for the last 2
+   seconds, regardless of preset, so the video never ends mid-animation.
+6. **Audio** source is **Clip sound** (only offered when the chosen background clip actually has an
+   audio track), a **Music track** (picked from the audio library, with a play control to audition
+   it before you commit), or **None**. A track's **volume** and **fade out** (seconds, at the end)
+   only apply when a track is selected. Mind your track's licence — the same field a Clip's video
+   source/licence uses is there for audio too; don't use a track you don't have the rights to.
+7. The live preview plays the animation right there in the editor — play/pause and a scrub bar
+   under the boards move every placement together, and a clip background plays inline. The preview
+   never plays audio out loud (a label says so); use the Audio panel's own play control to check a
+   track. If your system has "reduce motion" turned on, the preview starts paused instead of
+   autoplaying.
+8. **Readiness** requires the same things a Still creative does (photo, headline, caption) plus a
+   background clip when you chose one, and a track when your audio source is a track.
+
 ### Render it
 
 Rendering a Clip is instant — there's no local Playwright job, because there's nothing to draw: the
@@ -207,9 +237,16 @@ however's convenient:
 - From Claude Code/Desktop or the CLI, the same `render_creative` tool and `conductor creative
   render <id>` command a Still creative uses — it recognizes a Clip and renders it the fast way.
 
+**Motion renders locally**, same as a Still creative — there's no "Prepare for posting" button for
+it, because drawing and encoding each frame takes real compute. From Claude Code/Desktop's
+`render_creative` tool or `conductor creative render <id>` on the CLI, expect roughly 20 seconds per
+placement. The Renders panel shows each finished placement as a playable MP4 with its duration once
+it's done.
+
 ### Put it on a Post
 
-**Use in Post** works the same as for a Still creative, and maps video frames by placement:
+**Use in Post** works the same as for a Still creative, and maps video frames by placement — a
+Motion render's MP4s go through the exact same mapping a Clip's videos do:
 
 | Placement | Goes to |
 |---|---|

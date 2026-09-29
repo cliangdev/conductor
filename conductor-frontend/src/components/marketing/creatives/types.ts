@@ -12,10 +12,45 @@ export type CreativeState = 'DRAFT' | 'READY' | 'ARCHIVED'
 export type CreativeTheme = 'dark' | 'light'
 export type SequenceKind = 'story' | 'carousel'
 export type CreativeLockup = 'plain' | 'chip'
-/** STILL is today's photo+layout Creative. MOTION (branded animated video) ships in PR 2 — the API
- *  accepts it but POST renders refuses it with 422 until then. CLIP is any finished video used as-is,
- *  one file for all placements or one per placement, no brand layout — see video-contract.md. */
+/** STILL is today's photo+layout Creative. MOTION is a branded animated video — the STILL fields for
+ *  copy and look (layout, theme, photo, headline, body, placements) plus a `motion` animation
+ *  timeline and an optional `audio` track; rendered locally like STILL — see docs/creatives-guide.md's
+ *  "Motion videos". CLIP is any finished video used as-is, one file for all placements or one per
+ *  placement, no brand layout — see video-contract.md. */
 export type CreativeKind = 'STILL' | 'MOTION' | 'CLIP'
+
+export type MotionPreset = 'fade-up' | 'word-by-word' | 'accent-pop' | 'none'
+export type MotionBackgroundSource = 'photo' | 'clip'
+export type MotionBackgroundMotion = 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'none'
+export type AudioSource = 'clip' | 'track' | 'none'
+
+/** A MOTION creative's animated background — see conductor-creative/motion.js's header comment for
+ *  the timing/easing this drives. `clipMediaId`/`clipStartSec` only apply when `source` is "clip". */
+export interface CreativeMotionBackground {
+  source?: MotionBackgroundSource | null
+  motion?: MotionBackgroundMotion | null
+  clipMediaId?: string | null
+  clipStartSec?: number | null
+}
+
+/** A MOTION creative's animation timeline — copy and look come from the STILL fields (layout, theme,
+ *  headline, body, photoId, ...) shared on the same Creative; this is the motion-only part. */
+export interface CreativeMotion {
+  preset?: MotionPreset | null
+  durationSec?: number | null
+  background?: CreativeMotionBackground | null
+  endCard?: boolean | null
+}
+
+/** A MOTION creative's audio track. `trackId` only applies when `source` is "track"; a "clip"
+ *  source plays the background clip's own sound as recorded (never mixed in the browser preview —
+ *  see CreativeEditor's live preview). */
+export interface CreativeAudio {
+  source?: AudioSource | null
+  trackId?: string | null
+  volume?: number | null
+  fadeOutSec?: number | null
+}
 /** A media library item's kind (COND-24 T6 video creatives) — the table stays named `creative_photo`
  *  (and photo-only call sites keep talking about "photos"), but the API and UI call it "media" now
  *  that it also holds video and audio. */
@@ -61,6 +96,10 @@ export interface Creative {
    *  `default` entry (if present) covers every placement without its own explicit entry, matched to
    *  its nearest-aspect placement — see clipPlacement.ts's `nearestAspectPlacement`. */
   clipMedia?: Record<string, string> | null
+  /** MOTION only. */
+  motion?: CreativeMotion | null
+  /** MOTION only. */
+  audio?: CreativeAudio | null
   placements: string[]
   sequenceKind?: SequenceKind | null
   sequence: SequenceBeat[]
@@ -96,6 +135,8 @@ export interface CreateCreativeRequest {
   caption?: string | null
   altText?: string | null
   clipMedia?: Record<string, string> | null
+  motion?: CreativeMotion | null
+  audio?: CreativeAudio | null
   placements?: string[]
   sequenceKind?: SequenceKind | null
   sequence?: SequenceBeat[]
@@ -119,6 +160,8 @@ export interface PatchCreativeRequest {
   caption?: string | null
   altText?: string | null
   clipMedia?: Record<string, string> | null
+  motion?: CreativeMotion | null
+  audio?: CreativeAudio | null
   placements?: string[]
   sequenceKind?: SequenceKind | null
   sequence?: SequenceBeat[]
@@ -651,11 +694,19 @@ export function displayId(number: number, variantLetter: string): string {
  * Maps a backend Creative + its photo's signed URL onto @cliangdev/creative-render's `Creative`
  * shape for `mountBoard`. `photo` is optional — a Creative with no photo yet still renders (no
  * background image), which is what the live-preview panel should show while a marketer is mid-edit.
+ *
+ * `motionMedia` resolves the MOTION-only media references the render package needs as signed URLs
+ * rather than ids: `clipMedia` is the background clip (`motion.background.clipMediaId`) and
+ * `audioTrack` is the music track (`audio.trackId`) — both looked up locally by the caller (no
+ * network round trip here), same idea as `photo` above.
  */
 export function creativeToRenderCreative(
   creative: Creative,
   photo?: CreativePhoto | null,
+  motionMedia?: { clipMedia?: CreativePhoto | null; audioTrack?: CreativePhoto | null },
 ): RenderCreative {
+  const motion = creative.motion
+  const audio = creative.audio
   return {
     layout: creative.layout as RenderCreative['layout'],
     theme: creative.theme,
@@ -675,5 +726,29 @@ export function creativeToRenderCreative(
       body: beat.body ?? undefined,
       cta: beat.cta ?? undefined,
     })),
+    kind: creative.kind,
+    motion: motion
+      ? {
+          preset: motion.preset ?? undefined,
+          durationSec: motion.durationSec ?? undefined,
+          background: motion.background
+            ? {
+                source: motion.background.source ?? undefined,
+                motion: motion.background.motion ?? undefined,
+              }
+            : undefined,
+          endCard: motion.endCard ?? undefined,
+        }
+      : undefined,
+    audio: audio
+      ? {
+          source: audio.source ?? undefined,
+          trackUrl: motionMedia?.audioTrack?.url ?? undefined,
+          volume: audio.volume ?? undefined,
+          fadeOutSec: audio.fadeOutSec ?? undefined,
+        }
+      : undefined,
+    backgroundVideoUrl: motion?.background?.source === 'clip' ? motionMedia?.clipMedia?.url ?? undefined : undefined,
+    clipStartSec: motion?.background?.clipStartSec ?? undefined,
   }
 }

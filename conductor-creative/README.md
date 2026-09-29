@@ -85,6 +85,32 @@ type Creative = {
     cta?: boolean;       // forces the CTA row on/off for this frame; default:
                           // only the LAST frame in the sequence shows it
   }>;
+
+  // MOTION only (creative.kind === 'MOTION'; everything above still applies for copy/look — a MOTION
+  // creative is a STILL creative plus an animation timeline). See motion.js's Public API section below.
+  kind?: 'STILL' | 'MOTION' | 'CLIP'; // this package only branches on 'MOTION'; CLIP is raw video,
+                                       // assembled server-side with no rendering (see PR 1)
+  motion?: Motion;
+  audio?: Audio;
+  backgroundVideoUrl?: string;  // a clip background's signed URL (motion.background.source === 'clip')
+  clipStartSec?: number;        // where that clip starts, in seconds (motion.background.clipStartSec)
+};
+
+type Motion = {
+  preset?: 'fade-up' | 'word-by-word' | 'accent-pop' | 'none'; // default 'fade-up'
+  durationSec?: number;                                        // default 8 (3-60)
+  background?: {
+    source?: 'photo' | 'clip';                                              // default 'photo'
+    motion?: 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'none';    // default 'zoom-in'; photo only
+  };
+  endCard?: boolean; // default true: the last 2s hold the full composition, CTA included
+};
+
+type Audio = {
+  source?: 'clip' | 'track' | 'none'; // default depends on the background (see motion.js)
+  trackUrl?: string;   // a library track's signed URL (source === 'track')
+  volume?: number;     // 0-1, default 0.8 (track only — a clip's own sound plays as recorded)
+  fadeOutSec?: number; // default 1 (track only)
 };
 ```
 
@@ -149,7 +175,14 @@ import {
 - **`renderBoard(ad, placementKey, placements, layouts, brand, opts?) -> HTMLElement`**
   — builds and returns one `.cc-board` element, fully painted with `brand`'s
   tokens, logos and CTA claim. `opts.safe: true` draws the safe-zone review
-  guide (never for an export).
+  guide (never for an export). When `ad.backgroundVideoUrl` is set (a MOTION
+  clip background — `resolveAd` carries this through from `creative.backgroundVideoUrl`), also renders
+  a muted `<video class="cc-bg-video" playsinline preload="auto">` covering the photo area, honoring the
+  same focal point/object-fit every layout already gives its photo — one generic rule in `frame.css`
+  handles all four layouts (see motion.js's header comment for how). It layers AFTER the still photo
+  (a same-frame fallback while the video loads) and BEFORE the copy, so plain DOM order keeps the
+  stacking right with no z-index anywhere. This element is muted in every case — the render job mixes
+  audio into the exported MP4 itself; the browser preview never plays clip/track audio out loud.
 - **`fitBoard(board, placements) -> number`** — steps the headline size down
   from the placement's max until the board's copy fits without spilling or
   intruding on the safe zone. Must run after the board is attached to a live
@@ -162,6 +195,50 @@ import {
 - **`tokensToCssVars(tokens) -> Record<string,string>`** / **`applyBrandTokens(el, brand)`**
   — the brand-token-to-CSS-custom-property mapping, exposed separately so a
   caller can compute or apply it without going through `renderBoard`.
+
+### `motion.js` — the MOTION animation timeline (pure function of time)
+
+```js
+import {
+  applyMotion, motionKeyTimes, seekBackgroundVideo, backgroundMotionState, easeOutCubic,
+} from '@cliangdev/creative-render/motion';
+```
+
+Everything here is deterministic: `applyMotion(board, motion, tSec, opts)` computes the exact inline
+styles/CSS vars a `.cc-board` (from `renderBoard`) should show at `tSec`, with no `setTimeout`, no CSS
+`@keyframes`, and no `Date.now()`. The SAME function drives `mount.js`'s real-time `play()` (via
+`requestAnimationFrame`) and the render job's frame-stepped capture (`job/render.mjs`, many discrete
+`t` values) — that purity is what keeps a MOTION creative's live editor preview and its exported MP4
+from ever drifting apart, the same guarantee `render.js` already gives a STILL frame vs. its preview.
+
+- **`applyMotion(board, motion, tSec, opts?) -> { preset, durationSec, inEndCard, background }`** —
+  `board` is a `renderBoard()` result, already `fitBoard`-ed. `opts.durationSec` overrides
+  `motion.durationSec` when the caller has already resolved it. Sets fade/fade-up opacity+translateY on
+  `.cc-lockup` (0.2-0.6s, fade only), `.cc-headline` (0.3-0.9s, preset-dependent — see below), `.cc-body`
+  (1.2-1.7s) and `.cc-cta` (1.8-2.3s); each easeOutCubic. Word-by-word wraps the headline into
+  `<span class="cc-word">` (idempotently — safe to call every frame; the accent phrase's own words stay
+  nested inside `<em>`, keeping its accent color) and staggers each word's own fade over 0.3-1.5s.
+  Accent-pop fades the whole headline 0.3-0.8s, then scales the accent `<em>` 1.18→1 and brightens it
+  0.9→1.3 over 0.8-1.1s. `preset: 'none'` shows everything at every `t`. Independently of `preset`, the
+  background photo/clip motion (`motion.background.motion`) runs the WHOLE duration, eased, via two CSS
+  vars every layout already knows how to consume with no code change: `--cc-bg-transform` (a `scale()
+  translateX()`, read by `.cc-board__band img` / `.cc-board__card img` / `.cc-bg-video`) and
+  `--cc-bg-size`/`--cc-bg-pos` (read by a bleed layout's own `background-image`, which has no
+  `transform`). `motion.endCard !== false` (the default) forces every text/lockup/cta element to its
+  finished, fully-visible state for the last 2 seconds regardless of where its own intro window would
+  otherwise put it — a 3s creative's CTA (window 1.8-2.3s) still needs to be showing throughout a 1-3s
+  hold. The background motion is never affected by the hold.
+- **`motionKeyTimes(motion) -> [number, number, number]`** — three representative moments
+  (`[0.6, durationSec/2, durationSec-0.5]`) for the `previewOnly` key-moments contact sheet
+  (`sheet.html`'s `times`).
+- **`seekBackgroundVideo(board, tSec, clipStartSec) -> Promise<void>`** — finds `board`'s
+  `.cc-bg-video` (if any) and sets its `currentTime` to `clipStartSec + tSec`, resolving once the
+  browser reports `seeked` (or immediately if there is no clip background). Shared by `mount.js`'s
+  `seek()` and `frame.js`'s frame-stepped capture driver, so a clip background is frame-accurate in
+  both places.
+- **`backgroundMotionState(motion, tSec, durationSec) -> { scale, panPct }`** / **`easeOutCubic(x)`** —
+  the pure numbers behind the background motion and every fade, exposed for anything that wants them
+  without touching the DOM (mostly tests).
 
 ### `mount.js` — the browser API for the editor
 
@@ -195,6 +272,22 @@ import { mountBoard, attachFocalDrag, loadFont, enabledPlacements } from '@clian
   placement) and re-fits. `destroy()` removes everything this call added to
   `container`.
 
+  For a MOTION creative (`creative.motion` set), `mountBoard` also applies `motion.js`'s `applyMotion`
+  at `t=0` right after the first `fitBoard`, so the preview opens on the animation's starting frame
+  rather than its (visually different) finished-composition look; `update()` to a new creative resets
+  the scrub position back to `0` the same way. The handle also gains:
+
+  - **`seek(tSec) -> Promise<void>`** — applies motion at `tSec` (clamped to `[0, durationSec]`) to the
+    CURRENT board without rebuilding it, and awaits the clip background's own `seek` (via
+    `seekBackgroundVideo`) when one is present. A no-op for a STILL creative (no `creative.motion`) —
+    STILL behavior is unchanged.
+  - **`play()`** / **`pause()`** — real-time playback via `requestAnimationFrame`, looping back to `0`
+    at `durationSec`. `play()` is a no-op for a STILL creative or before the board is ready.
+  - **`onTime(cb) -> unsubscribe`** — `cb(tSec)` fires on every `seek()` (from `play()` or a manual
+    scrub), for a scrub-bar UI to stay in sync.
+
+  Audio is never mixed into this live preview (only the exported MP4 has it — see the render job
+  below); a MOTION editor panel that lets someone audition a chosen library track does so separately.
 - **`attachFocalDrag(handle, onChange)`** — wires a pointer-drag interaction
   on a `mountBoard()` handle; `onChange(value)` fires with an `"x% y%"`
   string as the pointer moves. This module never persists the value — decide
@@ -304,6 +397,25 @@ payload never hits a URL length limit. Both report
 `window.__ready = true` exactly once, success or failure, for the job's
 `page.waitForFunction` to key off.
 
+**MOTION.** When the spec carries `motion` (and `frame.html`'s `time`, default 0), `frame.js` applies
+`motion.js`'s `applyMotion` at that time (and awaits the clip background's own seek) once, right after
+`fitBoard`, BEFORE running any assertions — then, instead of finishing immediately, it exposes a small
+driver API and reports `{ ok: true, width, height }` (whether the board itself *built*, not yet whether
+it passes assertions):
+
+```js
+window.__seekMotion(t) -> Promise<true>                              // re-applies motion + re-seeks the clip
+window.__assertBoard() -> Promise<{ errors, warnings, width, height }> // runs runAssertions on demand
+```
+
+This exists because a MOTION render needs many frames (8s at 30fps is 240) off of ONE page load — a
+fresh navigation per frame would be far too slow — so `job/render.mjs` opens `frame.html` exactly once
+per placement, then drives `__seekMotion` in a loop via repeated `page.evaluate()` calls against that
+same page, calling `__assertBoard()` only once, on the very last (end-card) frame. `sheet.html`/
+`sheet.js` similarly accept a `times: number[]` (typically `motion.js`'s `motionKeyTimes()`) for a
+`previewOnly` MOTION render: one ROW per time, each row holding every enabled placement's board at that
+moment, so a human can see how the animation progresses without downloading the full MP4.
+
 **`assertions.js`** is the in-page safety net, ported from
 `nexus-marketing/social/export-png.mjs` and made brand-agnostic: text spill,
 bottom safe-zone intrusion (mirrors `render.js`'s own `fitBoard`/`fits()`
@@ -323,7 +435,7 @@ directly with fixture rects/colors in `test/assertions.test.mjs`;
 is not a dependency of `conductor-creative/` itself — the frontend consumes
 that package via a `file:` dependency and must stay dependency-free.
 
-- `job/render.mjs` — the rendering core, `run({ transport, ... })`: fetches
+- `job/render.mjs` — the rendering core, `run({ transport, ffmpegPath?, fps?, ... })`: fetches
   the spec, serves this package's own files over `job/server.mjs`'s tiny
   static server, opens one Playwright page per placement (or per sequence
   beat, or the one contact-sheet page for `previewOnly`) at
@@ -333,16 +445,42 @@ that package via a `file:` dependency and must stay dependency-free.
   any failure — a bad assertion, a load error, or a timeout on any network
   step. Run directly: `node job/render.mjs` with `CONDUCTOR_API_URL`,
   `CONDUCTOR_API_KEY`, `CONDUCTOR_PROJECT_ID` and `CREATIVE_ID` set
-  (`PREVIEW_ONLY`, `RENDERER`, `WORKFLOW_RUN_ID` optional). This standalone
+  (`PREVIEW_ONLY`, `RENDERER`, `WORKFLOW_RUN_ID`, `FFMPEG_PATH`, `FPS`
+  optional). This standalone
   bootstrap is a convenience for running the job directly; `@cliangdev/conductor`'s
   CLI and MCP server call `run()` themselves with their own Playwright-Core
   browser discovery instead of shelling out to this file.
+
+  **MOTION** (`creative.kind === 'MOTION'`, not `previewOnly`) takes a different path per placement,
+  at `deviceScaleFactor: 1` (the placement's true pixel size — doubling a video's resolution for no
+  playback benefit is not worth quadrupling the encode): one `frame.html` page load, then for
+  `i` in `0..N-1` (`N = round(durationSec * fps)`, `fps` defaults to 30) it calls the page's
+  `__seekMotion(i / fps)` driver and screenshots the board as JPEG (quality 90), streaming each frame
+  into a spawned `ffmpeg` child process's stdin (`-f image2pipe -framerate fps -i -`). An optional
+  audio input is downloaded to a temp file first (`creative.audio.source === 'clip'` reuses
+  `creative.backgroundVideoUrl` itself, trimmed `-ss clipStartSec -t durationSec`;
+  `'track'` uses `audio.trackUrl`, trimmed `-t durationSec` with `-af volume=…,afade=t=out:…` — a
+  clip's own recorded sound is never volume/fade-adjusted, only a library track is). Output is
+  `-c:v libx264 -pix_fmt yuv420p -crf 20 -preset veryfast -r fps [-c:a aac -b:a 128k -shortest]
+  -movflags +faststart`, written to a temp file (faststart needs a seekable output, so never stdout)
+  and read back for the upload. The layout assertions (`__assertBoard()`) run exactly ONCE, on the
+  final (end-card) frame; a failure throws before any upload — the ffmpeg process is killed and
+  nothing is written. On success, that same end-card JPEG becomes the poster:
+  `transport.putFrame(key, { bytes: mp4, contentType: 'video/mp4', width, height, durationSeconds,
+  hasAudio })` then `transport.putPoster(key, posterBytes)`. Progress logs roughly every 25%.
+  `ffmpegPath` is required for a MOTION render — `run()` throws a clear, actionable error without it
+  (a STILL/CLIP or `previewOnly` render never needs one). A `previewOnly` MOTION render is unaffected —
+  it renders the normal `sheet.html` contact sheet, just with `times: motionKeyTimes(motion)` added to
+  the spec (see the MOTION paragraph above).
 - `job/transport.mjs` — the render core's ONLY knowledge of how it talks to
-  the backend (`getSpec`/`putFrame`/`complete`/`fail`), against today's
+  the backend (`getSpec`/`putFrame`/`putPoster`/`complete`/`fail`), against today's
   external v2 `/projects/{projectId}/marketing/creatives/{creativeId}/renders`
   contract, authenticated with a plain API key (`Authorization: Bearer
   <apiKey>`) — the same key `conductor login`/a project API key already
-  provides, no separate render token. Deliberately isolated: how this job is
+  provides, no separate render token. `putFrame` sends `durationSeconds`/`hasAudio` query params
+  when given (a MOTION upload); `putPoster(key, bytes, { index? })` PUTs a MOTION frame's poster JPEG
+  to `.../frames/{key}/poster`. Both are upserts and retry once on a 5xx or a timeout. Deliberately
+  isolated: how this job is
   launched and reports back is expected to keep evolving; when it does, only
   this file and `test/transport.test.mjs` change, never `render.mjs`'s
   rendering core or its own tests.
@@ -367,7 +505,9 @@ Workflow runner.
 
 **Tests.** `test/assertions.test.mjs` (pure math, no browser),
 `test/transport.test.mjs` (the HTTP contract, against a fake `node:http`
-backend), `test/job.test.mjs` (the rendering core end to end against a real
+backend, including `putPoster` and `putFrame`'s `durationSeconds`/`hasAudio`
+params), `test/job.test.mjs` (the STILL/CLIP/sequence/previewOnly rendering
+core end to end against a real
 Chromium, with an in-memory fake transport — no HTTP, no coupling to the
 current backend contract; covers single/multi-placement, a story sequence,
 `previewOnly`, an unknown-placement failure with no frames uploaded, and a
@@ -378,6 +518,28 @@ Chromium
 (`cd conductor-creative/job && npx playwright install chromium`); every
 Playwright-dependent test skips itself when one is not available rather than
 failing a machine that never ran that install step.
+
+`test/motion.test.mjs` covers `motion.js`'s pure math (every preset's element
+states at representative key times, word-by-word staggering, the end-card
+hold, `backgroundMotionState`, `motionKeyTimes`) and `seekBackgroundVideo`,
+against `linkedom` — no browser needed. `test/mount.test.mjs` covers
+`seek`/`play`/`pause`/`onTime` against `linkedom` with a hand-driven fake
+`requestAnimationFrame` (records the scheduled callback; the test invokes it
+with a chosen timestamp, so playback timing is deterministic rather than
+racing a real animation frame). `test/render-dom.test.mjs` covers
+`.cc-bg-video`'s placement/DOM order across all four layouts.
+`test/job-motion.test.mjs` exercises the MOTION render path end to end
+against a real Chromium AND a real local `ffmpeg`/`ffprobe` (skips itself
+when either is missing): a 3s photo creative at 10fps for one placement
+produces an MP4 whose `ffprobe` output shows `h264`, the placement's exact
+pixel size, ~3s duration, and a JPEG poster upload; a `track` audio source
+produces an MP4 with an AAC stream; a generated `testsrc` clip background
+(`ffmpeg -f lavfi -i testsrc`) renders successfully; a deliberately broken
+photo URL fails the end-card assertions specifically (not an early boot
+failure) and uploads nothing; a MOTION render with no `ffmpegPath` fails with
+a clear, actionable error. Fixture audio/video files are generated with
+`ffmpeg -f lavfi` and served from a throwaway local `node:http` server (the
+job's `fetch()`-based downloader has no `file://` support), never checked in.
 
 ## Intentional behavior changes from `nexus-marketing/social/`
 

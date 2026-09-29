@@ -180,3 +180,46 @@ test('renderBoard: sequence frames carry cc-board--seq and cc-board--story', () 
   assert.ok(b.className.includes('cc-board--seq'));
   assert.ok(b.className.includes('cc-board--story'));
 });
+
+/* ── backgroundVideoUrl (a MOTION clip background): .cc-bg-video across every layout ── */
+
+test('renderBoard: no backgroundVideoUrl means no .cc-bg-video, on every layout (STILL unchanged)', () => {
+  for (const layout of ['stacked', 'bleed', 'card', 'split']) {
+    const b = board({ layout, headline: 'x *y*.' }, '4x5');
+    assert.equal(b.querySelector('.cc-bg-video'), null, layout);
+  }
+});
+
+test('renderBoard: bleed - .cc-bg-video sits on the board itself, before the panel', () => {
+  const b = board({ layout: 'bleed', headline: 'x *y*.', backgroundVideoUrl: 'https://cdn.example/clip.mp4' }, '4x5');
+  const video = b.querySelector('.cc-bg-video');
+  assert.ok(video);
+  assert.equal(video.tagName.toLowerCase(), 'video');
+  assert.equal(video.src, 'https://cdn.example/clip.mp4');
+  assert.equal(video.hasAttribute('muted'), true);
+  assert.equal(video.hasAttribute('playsinline'), true);
+  assert.equal(video.parentElement, b);
+  const panel = b.querySelector('.cc-board__panel');
+  assert.ok(video.compareDocumentPosition(panel) & 4, 'video sits before the panel (so the panel stacks above it)');
+});
+
+test('renderBoard: band layouts (stacked, split) put .cc-bg-video inside .cc-board__band, after the photo', () => {
+  for (const layout of ['stacked', 'split']) {
+    const b = board(
+      { layout, headline: 'x *y*.', photoUrl: 'https://cdn.example/p.jpg', backgroundVideoUrl: 'https://cdn.example/clip.mp4' },
+      '4x5'
+    );
+    const band = b.querySelector('.cc-board__band');
+    const video = band.querySelector('.cc-bg-video');
+    assert.ok(video, layout);
+    const img = band.querySelector('img');
+    assert.ok(img, layout);
+    assert.ok(img.compareDocumentPosition(video) & 4, `${layout}: video sits after the photo img`);
+  }
+});
+
+test('renderBoard: card layout puts .cc-bg-video inside .cc-board__card', () => {
+  const b = board({ layout: 'card', headline: 'x *y*.', backgroundVideoUrl: 'https://cdn.example/clip.mp4' }, '4x5');
+  const card = b.querySelector('.cc-board__card');
+  assert.ok(card.querySelector('.cc-bg-video'));
+});

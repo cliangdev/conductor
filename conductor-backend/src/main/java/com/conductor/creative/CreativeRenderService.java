@@ -7,15 +7,22 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.v2.model.CompleteCreativeRenderRequest;
 import com.conductor.generated.v2.model.CreateCreativeRenderRequest;
+import com.conductor.generated.v2.model.CreativeAudio;
+import com.conductor.generated.v2.model.CreativeKind;
+import com.conductor.generated.v2.model.CreativeMotion;
+import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderFrameResponse;
 import com.conductor.generated.v2.model.CreativeRenderResponse;
 import com.conductor.generated.v2.model.CreativeRenderSpec;
+import com.conductor.generated.v2.model.CreativeRenderSpecAudio;
 import com.conductor.generated.v2.model.CreativeRenderSpecBeat;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeRenderSpecBrand;
 import com.conductor.generated.v2.model.CreativeRenderSpecCreative;
 import com.conductor.generated.v2.model.CreativeRenderSpecLogos;
+import com.conductor.generated.v2.model.CreativeRenderSpecMotion;
+import com.conductor.generated.v2.model.CreativeRenderSpecMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderState;
 import com.conductor.generated.v2.model.CreativeRenderWarning;
 import com.conductor.generated.v2.model.CreativeTheme;
@@ -60,11 +67,15 @@ public class CreativeRenderService {
 
     static final int RENDER_TIMEOUT_MINUTES = 30;
     static final long MAX_FRAME_BYTES = 20L * 1024 * 1024;
+    /** COND-24 PR2: a MOTION frame is video/mp4, much larger than an image frame. */
+    static final long MAX_VIDEO_FRAME_BYTES = 500L * 1024 * 1024;
     /** A placement frame is JPEG (Instagram feed images and TikTok photo posts both refuse PNG); the
      * `sheet` contact sheet of a preview-only render stays PNG. See {@code docs/creatives.md}. */
     static final String CONTENT_TYPE_JPEG = "image/jpeg";
     static final String CONTENT_TYPE_PNG = "image/png";
-    private static final Set<String> ALLOWED_FRAME_CONTENT_TYPES = Set.of(CONTENT_TYPE_JPEG, CONTENT_TYPE_PNG);
+    /** COND-24 PR2: a MOTION render's frame. */
+    static final String CONTENT_TYPE_MP4 = "video/mp4";
+    private static final Set<String> ALLOWED_FRAME_CONTENT_TYPES = Set.of(CONTENT_TYPE_JPEG, CONTENT_TYPE_PNG, CONTENT_TYPE_MP4);
     private static final int MAX_RENDERS_LISTED = 20;
     private static final int FRAME_URL_EXPIRY_MINUTES = 15;
     /** Contract: signed URLs in a render spec must stay valid at least 30 minutes. */
@@ -122,20 +133,25 @@ public class CreativeRenderService {
                                             User caller) {
         requireEditor(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
-        if (Creative.KIND_MOTION.equals(creative.getKind())) {
-            throw new UnprocessableEntityException("Motion creatives render in the next release");
-        }
         if (Creative.KIND_CLIP.equals(creative.getKind())) {
             return requestClipRender(projectId, creative, request, caller);
         }
         return requestStillRender(projectId, creative, request, caller);
     }
 
+    /**
+     * Handles both STILL and MOTION (COND-24 PR2) — the two kinds share the same local-job spec shape
+     * (brand-layout copy, sequence, photo) and READY-forced validation; MOTION only adds its own
+     * {@code motion}/{@code audio} fields on top, resolved by {@link #resolveMotionForRender}. previewOnly
+     * is allowed for both (unlike CLIP, which has no local job to preview).
+     */
     private CreateRenderResult requestStillRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
                                                   User caller) {
         BrandKit kit = requireKit(projectId, creative.getBrandKitId());
         CreativePhoto mainPhoto = creative.getPhotoId() != null
                 ? photoRepository.findByIdAndProjectId(creative.getPhotoId(), projectId).orElse(null) : null;
+        MotionSpecResolution motionRes = Creative.KIND_MOTION.equals(creative.getKind())
+                ? resolveMotionForRender(projectId, creative) : null;
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 creative.getLayout(), creative.getTheme(), toStringList(creative.getPlacements()),
@@ -148,7 +164,7 @@ public class CreativeRenderService {
                 toValidatorBeats(toSequenceBeats(creative.getSequence())), creative.getCarouselRatio(), Set.of(),
                 extractOverrideInts(creative.getLayoutOverrides(), "band"),
                 extractOverrideInts(creative.getLayoutOverrides(), "padBottom"),
-                creative.getKind(), List.of()));
+                creative.getKind(), List.of(), motionRes != null ? motionRes.input() : null));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -167,8 +183,54 @@ public class CreativeRenderService {
         render.setRequestedAt(OffsetDateTime.now());
         render = renderRepository.save(render);
 
-        CreativeRenderSpec spec = buildSpec(render, creative, kit, mainPhoto, placements);
+        CreativeRenderSpec spec = buildSpec(render, creative, kit, mainPhoto, placements, motionRes);
         return new CreateRenderResult(render, spec);
+    }
+
+    /**
+     * Resolves a MOTION creative's {@code motion}/{@code audio} media references (background clip, audio
+     * track) for a render — the JSON already carries every default {@code CreativeService} applied on
+     * write, so this only needs to look the referenced media up, mirroring {@link #resolveClipMediaEntries}.
+     */
+    private MotionSpecResolution resolveMotionForRender(String projectId, Creative creative) {
+        CreativeMotion motion = toMotion(creative.getMotion());
+        CreativeAudio audio = toAudio(creative.getAudio());
+        CreativeMotionBackground background = motion != null ? motion.getBackground() : null;
+
+        CreativePhoto clipMedia = background != null && background.getClipMediaId() != null
+                ? photoRepository.findByIdAndProjectId(background.getClipMediaId(), projectId).orElse(null) : null;
+        CreativePhoto trackMedia = audio != null && audio.getTrackId() != null
+                ? photoRepository.findByIdAndProjectId(audio.getTrackId(), projectId).orElse(null) : null;
+
+        CreativeValidator.MotionInput input = motion == null ? null : new CreativeValidator.MotionInput(
+                motion.getPreset(),
+                motion.getDurationSec() != null ? motion.getDurationSec().doubleValue() : null,
+                background != null ? background.getSource() : null,
+                background != null ? background.getMotion() : null,
+                background != null ? background.getClipMediaId() : null,
+                background == null || background.getClipMediaId() == null || clipMedia != null,
+                clipMedia != null && clipMedia.isVideo(),
+                clipMedia != null && clipMedia.isUploaded(),
+                clipMedia != null && clipMedia.isBlocked(),
+                clipMedia != null && clipMedia.getDurationSeconds() != null ? clipMedia.getDurationSeconds().doubleValue() : null,
+                clipMedia != null ? clipMedia.getHasAudio() : null,
+                background != null && background.getClipStartSec() != null ? background.getClipStartSec().doubleValue() : null,
+                motion.getEndCard(),
+                audio != null ? audio.getSource() : null,
+                audio != null ? audio.getTrackId() : null,
+                audio == null || audio.getTrackId() == null || trackMedia != null,
+                trackMedia != null && trackMedia.isAudio(),
+                trackMedia != null && trackMedia.isUploaded(),
+                trackMedia != null && trackMedia.isBlocked(),
+                audio != null && audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
+                audio != null && audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null);
+
+        return new MotionSpecResolution(motion, audio, clipMedia, trackMedia, input);
+    }
+
+    /** {@code motion}/{@code audio}, plus the media the render spec needs signed URLs for. */
+    private record MotionSpecResolution(CreativeMotion motion, CreativeAudio audio, CreativePhoto backgroundClip,
+                                        CreativePhoto audioTrack, CreativeValidator.MotionInput input) {
     }
 
     /**
@@ -193,7 +255,7 @@ public class CreativeRenderService {
                 // own state, exactly as the STILL path forces its own READY checks above.
                 Creative.STATE_READY, null, true, true, true, false, creative.getSequenceKind(), List.of(),
                 creative.getCarouselRatio(), Set.of(), Map.of(), Map.of(),
-                Creative.KIND_CLIP, resolveClipMediaEntries(projectId, clipMedia)));
+                Creative.KIND_CLIP, resolveClipMediaEntries(projectId, clipMedia), null));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -338,6 +400,16 @@ public class CreativeRenderService {
     public RenderView putFrame(String projectId, String creativeId, String renderId, String placementKey,
                                Integer index, int width, int height, byte[] frameBytes, String contentType,
                                User caller) {
+        return putFrame(projectId, creativeId, renderId, placementKey, index, width, height, frameBytes,
+                contentType, null, null, caller);
+    }
+
+    /** COND-24 PR2: {@code durationSeconds}/{@code hasAudio} are stored on a MOTION (video/mp4) frame only
+     *  — ignored (and left null) for an image frame, exactly as the query params are documented. */
+    @Transactional
+    public RenderView putFrame(String projectId, String creativeId, String renderId, String placementKey,
+                               Integer index, int width, int height, byte[] frameBytes, String contentType,
+                               BigDecimal durationSeconds, Boolean hasAudio, User caller) {
         requireEditor(projectId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         if (!render.isRunning()) {
@@ -346,16 +418,19 @@ public class CreativeRenderService {
         if (frameBytes == null || frameBytes.length == 0) {
             throw new BusinessException("Frame body must not be empty");
         }
-        if (frameBytes.length > MAX_FRAME_BYTES) {
-            throw new BusinessException("Frame is " + frameBytes.length + " bytes, over the 20 MB ceiling");
-        }
-        if (width <= 0 || height <= 0) {
-            throw new BusinessException("width and height must be positive");
-        }
         String normalizedContentType = AssetUploadPolicy.normalizeContentType(contentType);
         if (!ALLOWED_FRAME_CONTENT_TYPES.contains(normalizedContentType)) {
             throw new UnprocessableEntityException("Content type '" + contentType + "' is not allowed for a render"
                     + " frame. Allowed types: " + ALLOWED_FRAME_CONTENT_TYPES.stream().sorted().toList());
+        }
+        boolean video = CONTENT_TYPE_MP4.equals(normalizedContentType);
+        long maxBytes = video ? MAX_VIDEO_FRAME_BYTES : MAX_FRAME_BYTES;
+        if (frameBytes.length > maxBytes) {
+            throw new BusinessException("Frame is " + frameBytes.length + " bytes, over the "
+                    + (maxBytes / (1024 * 1024)) + " MB ceiling");
+        }
+        if (width <= 0 || height <= 0) {
+            throw new BusinessException("width and height must be positive");
         }
         boolean sheet = CreativeRenderFrame.PLACEMENT_SHEET.equals(placementKey);
         if (!sheet && !registry.hasPlacement(placementKey)) {
@@ -377,11 +452,55 @@ public class CreativeRenderService {
         frame.setWidth(width);
         frame.setHeight(height);
         frame.setSizeBytes(frameBytes.length);
+        frame.setDurationSeconds(video ? durationSeconds : null);
+        frame.setHasAudio(video ? hasAudio : null);
         if (frame.getWarnings() == null) {
             frame.setWarnings(objectMapper.createArrayNode());
         }
         frameRepository.save(frame);
         return new RenderView(render, frameRepository.findAllByRenderIdOrdered(renderId));
+    }
+
+    /**
+     * COND-24 PR2: sets a MOTION frame's poster (the end-card JPEG) — the local job PUTs this once the
+     * frame itself is stored, mirroring how a CLIP frame's poster is a copy of its source media's. Refused
+     * with {@link BusinessException} when no frame is stored yet for this placement/index (a plain 400: the
+     * job called this out of order, not a semantic validation failure).
+     */
+    @Transactional
+    public RenderView putFramePoster(String projectId, String creativeId, String renderId, String placementKey,
+                                     Integer index, byte[] posterBytes, String contentType, User caller) {
+        requireEditor(projectId, caller);
+        CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
+        if (!render.isRunning()) {
+            throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
+        }
+        if (posterBytes == null || posterBytes.length == 0) {
+            throw new BusinessException("Poster body must not be empty");
+        }
+        String normalizedContentType = AssetUploadPolicy.normalizeContentType(contentType);
+        if (!CONTENT_TYPE_JPEG.equals(normalizedContentType)) {
+            throw new UnprocessableEntityException("Content type '" + contentType
+                    + "' is not allowed for a render frame poster. Allowed types: [" + CONTENT_TYPE_JPEG + "]");
+        }
+        if (posterBytes.length > MAX_FRAME_BYTES) {
+            throw new BusinessException("Poster is " + posterBytes.length + " bytes, over the 20 MB ceiling");
+        }
+        CreativeRenderFrame frame = findExistingFrame(renderId, placementKey, index)
+                .orElseThrow(() -> new BusinessException("No frame stored yet at placement " + placementKey
+                        + (index != null ? " index " + index : "") + " to attach a poster to"));
+
+        String posterPath = posterFramePath(projectId, creativeId, renderId, placementKey, index);
+        storageService.upload(posterPath, posterBytes, CONTENT_TYPE_JPEG);
+        frame.setPosterGcsPath(posterPath);
+        frameRepository.save(frame);
+        return new RenderView(render, frameRepository.findAllByRenderIdOrdered(renderId));
+    }
+
+    private String posterFramePath(String projectId, String creativeId, String renderId, String placementKey, Integer index) {
+        String suffix = index != null ? "-" + index : "";
+        return "projects/" + projectId + "/creatives/" + creativeId + "/renders/" + renderId + "/" + placementKey
+                + suffix + "-poster.jpg";
     }
 
     @Transactional
@@ -510,7 +629,7 @@ public class CreativeRenderService {
     // ── spec building ────────────────────────────────────────────────────────────────────────────
 
     private CreativeRenderSpec buildSpec(CreativeRender render, Creative creative, BrandKit kit,
-                                         CreativePhoto mainPhoto, List<String> placements) {
+                                         CreativePhoto mainPhoto, List<String> placements, MotionSpecResolution motionRes) {
         CreativeRenderSpecBrand brand = new CreativeRenderSpecBrand(toStringMap(kit.getTokens()),
                 toStringList(kit.getEnabledPlacements()))
                 .fontFamily(kit.getFontFamily())
@@ -546,7 +665,14 @@ public class CreativeRenderService {
                 .sequence(beats)
                 .photoUrl(photoUrl(mainPhoto))
                 .lockup(CreativeLockup.fromValue(creative.getLockup()))
-                .layoutOverrides(toLayoutOverrides(creative.getLayoutOverrides()));
+                .layoutOverrides(toLayoutOverrides(creative.getLayoutOverrides()))
+                .kind(CreativeKind.fromValue(creative.getKind()));
+
+        if (motionRes != null && motionRes.motion() != null) {
+            creativeSpec.motion(buildMotionSpec(motionRes))
+                    .audio(buildAudioSpec(motionRes))
+                    .clipHasAudio(motionRes.backgroundClip() != null ? motionRes.backgroundClip().getHasAudio() : null);
+        }
 
         return new CreativeRenderSpec(render.getId(), render.isPreviewOnly(), creativeSpec, brand, placements);
     }
@@ -574,6 +700,48 @@ public class CreativeRenderService {
 
     private String signedOrNull(String gcsPath) {
         return gcsPath != null ? storageService.generateSignedUrl(gcsPath, SPEC_URL_EXPIRY_MINUTES) : null;
+    }
+
+    /** Contract: "motion.background.clipUrl (VIDEO media)" — a signed GET, present only when the resolved
+     *  background clip has actually finished uploading (mirrors {@link #photoUrl}). */
+    private CreativeRenderSpecMotion buildMotionSpec(MotionSpecResolution motionRes) {
+        CreativeMotion motion = motionRes.motion();
+        CreativeMotionBackground background = motion.getBackground();
+        CreativePhoto clip = motionRes.backgroundClip();
+        CreativeRenderSpecMotionBackground specBackground = new CreativeRenderSpecMotionBackground()
+                .source(background != null ? background.getSource() : null)
+                .motion(background != null ? background.getMotion() : null)
+                .clipUrl(clip != null && clip.isUploaded() ? signedOrNull(clip.getGcsPath()) : null)
+                .clipStartSec(background != null ? background.getClipStartSec() : null);
+        return new CreativeRenderSpecMotion()
+                .preset(motion.getPreset())
+                .durationSec(motion.getDurationSec())
+                .background(specBackground)
+                .endCard(motion.getEndCard());
+    }
+
+    /** Contract: "audio.trackUrl (AUDIO media)" — a signed GET, present only for a track that finished uploading. */
+    private CreativeRenderSpecAudio buildAudioSpec(MotionSpecResolution motionRes) {
+        CreativeAudio audio = motionRes.audio();
+        if (audio == null) {
+            return null;
+        }
+        CreativePhoto track = motionRes.audioTrack();
+        return new CreativeRenderSpecAudio()
+                .source(audio.getSource())
+                .trackUrl(track != null && track.isUploaded() ? signedOrNull(track.getGcsPath()) : null)
+                .volume(audio.getVolume())
+                .fadeOutSec(audio.getFadeOutSec());
+    }
+
+    /** {@code creative.motion} JSON -&gt; the typed DTO, or null when unset. Mirrors {@code CreativeService#toMotion}. */
+    private CreativeMotion toMotion(JsonNode node) {
+        return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeMotion.class) : null;
+    }
+
+    /** {@code creative.audio} JSON -&gt; the typed DTO, or null when unset. Mirrors {@code CreativeService#toAudio}. */
+    private CreativeAudio toAudio(JsonNode node) {
+        return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeAudio.class) : null;
     }
 
     // ── frame upsert / lazy timeout / warnings ──────────────────────────────────────────────────
@@ -623,7 +791,11 @@ public class CreativeRenderService {
     private String framePath(String projectId, String creativeId, String renderId, String placementKey, Integer index,
                              String contentType) {
         String suffix = index != null ? "-" + index : "";
-        String extension = CONTENT_TYPE_JPEG.equals(contentType) ? "jpg" : "png";
+        String extension = switch (contentType == null ? "" : contentType) {
+            case CONTENT_TYPE_JPEG -> "jpg";
+            case CONTENT_TYPE_MP4 -> "mp4";
+            default -> "png";
+        };
         return "projects/" + projectId + "/creatives/" + creativeId + "/renders/" + renderId + "/" + placementKey
                 + suffix + "." + extension;
     }

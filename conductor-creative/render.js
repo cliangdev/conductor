@@ -123,6 +123,10 @@ export function resolveAd(raw, placements, layouts) {
     theme: raw.theme || 'dark',
     lockup: raw.lockup || 'plain',
     photoUrl: raw.photoUrl || null,
+    // A MOTION creative's clip background (see motion.js/README): renderBoard renders a muted
+    // <video class="cc-bg-video"> over the photo area when this is set, alongside (in front of, as a
+    // fallback while it loads) whatever photoUrl is also set.
+    backgroundVideoUrl: raw.backgroundVideoUrl || null,
     headline: raw.headline || '',
     body: raw.body || '',
     caption: raw.caption || '',
@@ -286,6 +290,26 @@ function buildCta(brand, parent, placement) {
   return row;
 }
 
+/* A MOTION creative's clip background: a muted, inline video layered over the photo area, honoring
+ * the same focal/object-fit every layout already gives its photo (`.cc-bg-video`'s CSS lives in
+ * frame.css — one generic rule for every layout — plus a small addition to each layout's own photo
+ * rule for the pan/zoom transform; see motion.js). Placed AFTER the photo element/background (which
+ * still renders as a same-frame fallback while the video loads) and BEFORE any scrim/panel, so it
+ * layers on top of the photo and under the copy without any explicit z-index. Muted: this element is
+ * never the audio source a viewer hears — the render job mixes audio into the exported MP4 itself
+ * (job/render.mjs); the browser preview never plays clip/track audio (see README). */
+function buildBgVideo(parent, videoUrl) {
+  const video = el('video', 'cc-bg-video', parent);
+  video.src = videoUrl;
+  video.muted = true;
+  video.setAttribute('muted', '');
+  video.playsInline = true;
+  video.setAttribute('playsinline', '');
+  video.preload = 'auto';
+  video.setAttribute('preload', 'auto');
+  return video;
+}
+
 /* Applies a headline size plus its derived leading and tracking. */
 function applyType(board, size, leading, tracking) {
   board.style.setProperty('--cc-h-size', size + 'px');
@@ -411,6 +435,9 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
   let panel;
   if (photoType === 'background') {
     board.style.setProperty('--cc-photo', ad.photoUrl ? 'url("' + ad.photoUrl + '")' : 'none');
+    // The video (when present) must land BEFORE the panel, so the panel's own
+    // stacking (position:relative, later in the DOM) renders above it.
+    if (ad.backgroundVideoUrl) buildBgVideo(board, ad.backgroundVideoUrl);
     // The bottom panel variant hugs the bottom; the fill variant spreads its
     // copy over a full-artboard scrim.
     panel = el('div', 'cc-board__panel cc-board__panel--' + panelVariant, board);
@@ -422,6 +449,7 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
       cimg.src = ad.photoUrl;
       cimg.alt = '';
     }
+    if (ad.backgroundVideoUrl) buildBgVideo(card, ad.backgroundVideoUrl);
     panel = el('div', 'cc-board__panel', board);
   } else {
     const band = el('div', 'cc-board__band', board);
@@ -430,6 +458,7 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
       img.src = ad.photoUrl;
       img.alt = '';
     }
+    if (ad.backgroundVideoUrl) buildBgVideo(band, ad.backgroundVideoUrl);
     if (layouts[kind].bandScrim !== false) {
       el('div', 'cc-board__scrim', band);
       el('div', 'cc-board__glow', board);

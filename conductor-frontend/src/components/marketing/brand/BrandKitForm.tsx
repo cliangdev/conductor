@@ -276,8 +276,8 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
       }, token)
       await putToSignedUrl(ticket.uploadUrl, file, () => {})
       const updated = await confirmBrandKitImage(projectId, selectedKit.id, slot, ticket.gcsPath, token)
+      // Logos save on their own; keep the unsaved edits in the form rather than resetting it to the server copy.
       setKits((prev) => (prev ?? []).map((k) => (k.id === updated.id ? updated : k)))
-      setDraft(toDraft(updated))
     } catch (err) {
       showToast(apiErrorMessage(err, 'Could not upload the image'), 'error')
     } finally {
@@ -290,7 +290,6 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
     try {
       const updated = await deleteBrandKitImage(projectId, selectedKit.id, slot, token)
       setKits((prev) => (prev ?? []).map((k) => (k.id === updated.id ? updated : k)))
-      setDraft(toDraft(updated))
     } catch (err) {
       showToast(apiErrorMessage(err, 'Could not remove the image'), 'error')
     }

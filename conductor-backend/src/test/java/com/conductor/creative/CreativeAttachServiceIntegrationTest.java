@@ -284,6 +284,32 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(findings).noneMatch(PublishFinding::blocks);
     }
 
+    // ── a MOTION render's video frames attach exactly like a CLIP's (COND-24 PR2) ─────────────────
+
+    @Test
+    void aMotionRendersVideoFramesAttachToTikTokAndInstagramReelJustLikeAClips() {
+        creative.setKind(Creative.KIND_MOTION);
+        creativeRepository.save(creative);
+
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId, null, null, null, "reel"),
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId)), admin);
+
+        CreativeRender render = newRender();
+        newVideoFrame(render, "9x16", "tiktok", 1080, 1920);
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(result.targetsSkipped()).isEmpty();
+        assertThat(result.targetsUpdated()).extracting(CreativeAttachService.TargetUpdate::platform)
+                .containsExactlyInAnyOrder("instagram", "tiktok");
+        for (PostPublishTarget target : targetRepository.findAllByWorkItemId(post.getId())) {
+            Asset asset = assetRepository.findById(storedAssetIds(target.getId()).get(0)).orElseThrow();
+            assertThat(asset.getContentType()).startsWith("video/");
+        }
+    }
+
     // ── sequence frames attach in index order, never sorted ─────────────────────────────────────
 
     @Test

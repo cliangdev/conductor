@@ -15,9 +15,13 @@
  *     -> 201 CreativeRenderResponse { id, state: "RUNNING", ..., spec: { renderId, previewOnly, creative, brand, placements } }
  *     `spec` is only ever returned by this call — getSpec() hands back `response.spec` and
  *     remembers `renderId` for the three calls below.
- *   PUT  {apiUrl}/api/v2/projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/frames/{placementKey}?index&width&height
- *     body: raw image bytes, Content-Type: image/jpeg (a placement frame) or image/png (the `sheet`
- *     contact sheet) -> 204
+ *   PUT  {apiUrl}/api/v2/projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/frames/{placementKey}?index&width&height&durationSeconds&hasAudio
+ *     body: raw bytes, Content-Type: image/jpeg (a placement frame), image/png (the `sheet` contact
+ *     sheet), or video/mp4 (a MOTION placement — `durationSeconds`/`hasAudio` are only sent then)
+ *     -> 204
+ *   PUT  {apiUrl}/api/v2/projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/frames/{placementKey}/poster?index
+ *     body: raw JPEG bytes, Content-Type: image/jpeg (a MOTION frame's poster — the end-card frame)
+ *     -> 204
  *   POST {apiUrl}/api/v2/projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/complete
  *     body: { warnings: [{ placementKey, index?, message }] } -> 200 CreativeRenderResponse
  *   POST {apiUrl}/api/v2/projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/fail
@@ -48,6 +52,19 @@ async function safeText(res) {
     return await res.text();
   } catch {
     return '';
+  }
+}
+
+/** Runs `putOnce` (a zero-arg upload attempt), retrying once on a retryable failure (a 5xx, or the
+ * request timing out) — shared by putFrame and putPoster, both upserts, so a retry is always safe. */
+async function uploadWithRetry(putOnce) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await putOnce();
+    } catch (err) {
+      const retryable = err.retryable || /timed out/.test(err.message);
+      if (!retryable || attempt >= UPLOAD_ATTEMPTS) throw err;
+    }
   }
 }
 
@@ -123,11 +140,13 @@ export function createApiTransport({
       return spec;
     },
 
-    async putFrame(placementKey, { index, width, height, bytes, contentType = 'image/jpeg' }) {
+    async putFrame(placementKey, { index, width, height, bytes, contentType = 'image/jpeg', durationSeconds, hasAudio }) {
       const qs = new URLSearchParams({ width: String(width), height: String(height) });
       if (index !== undefined && index !== null) qs.set('index', String(index));
+      if (durationSeconds !== undefined && durationSeconds !== null) qs.set('durationSeconds', String(durationSeconds));
+      if (hasAudio !== undefined && hasAudio !== null) qs.set('hasAudio', String(hasAudio));
       const base = renderBase();
-      const put = () => withTimeout(async (signal) => {
+      return uploadWithRetry(() => withTimeout(async (signal) => {
         const res = await fetchImpl(`${base}/frames/${encodeURIComponent(placementKey)}?${qs}`, {
           method: 'PUT',
           headers: { ...authHeaders, 'Content-Type': contentType },
@@ -139,15 +158,30 @@ export function createApiTransport({
           err.retryable = res.status >= 500;
           throw err;
         }
-      }, uploadTimeoutMs, `PUT frame ${placementKey}`);
-      for (let attempt = 1; ; attempt++) {
-        try {
-          return await put();
-        } catch (err) {
-          const retryable = err.retryable || /timed out/.test(err.message);
-          if (!retryable || attempt >= UPLOAD_ATTEMPTS) throw err;
+      }, uploadTimeoutMs, `PUT frame ${placementKey}`));
+    },
+
+    /** A MOTION frame's poster: the end-card JPEG (job/render.mjs). `index` is only meaningful for a
+     * sequence frame — MOTION creatives never have one today, but the param is accepted for parity
+     * with putFrame. */
+    async putPoster(placementKey, bytes, { index } = {}) {
+      const qs = new URLSearchParams();
+      if (index !== undefined && index !== null) qs.set('index', String(index));
+      const query = qs.toString() ? `?${qs}` : '';
+      const base = renderBase();
+      return uploadWithRetry(() => withTimeout(async (signal) => {
+        const res = await fetchImpl(`${base}/frames/${encodeURIComponent(placementKey)}/poster${query}`, {
+          method: 'PUT',
+          headers: { ...authHeaders, 'Content-Type': 'image/jpeg' },
+          body: bytes,
+          signal,
+        });
+        if (res.status !== 204) {
+          const err = new Error(`PUT poster ${placementKey} failed: ${res.status} ${await safeText(res)}`);
+          err.retryable = res.status >= 500;
+          throw err;
         }
-      }
+      }, uploadTimeoutMs, `PUT poster ${placementKey}`));
     },
 
     async complete(warnings) {

@@ -108,7 +108,7 @@ import {
   deleteProjectFolder,
 } from './tools/project-docs.js'
 
-const TOOLS = [
+export const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
   {
     name: 'create_work_item',
@@ -1118,12 +1118,40 @@ const TOOLS = [
         kind: {
           type: 'string',
           enum: ['STILL', 'MOTION', 'CLIP'],
-          description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. MOTION is accepted but not yet renderable.',
+          description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. MOTION is the same brand layout animated into a short video — set motion (and optionally audio) too.',
         },
         clipMedia: {
           type: 'object',
           additionalProperties: { type: 'string' },
           description: 'CLIP only: media ids per placement from upload_creative_media, e.g. {"default": mediaId, "9x16": mediaId}. "default" covers any placement without its own entry.',
+        },
+        motion: {
+          type: 'object',
+          description: 'MOTION only: the animation timeline. preset: fade-up (default) | word-by-word | accent-pop | none. durationSec: 3-60, default 8. background.source: photo (default, animated by background.motion: zoom-in default | zoom-out | pan-left | pan-right | none) or clip (background.clipMediaId, a VIDEO media id, plus background.clipStartSec). endCard: default true — the last 2s hold the finished composition with the CTA.',
+          properties: {
+            preset: { type: 'string', enum: ['fade-up', 'word-by-word', 'accent-pop', 'none'] },
+            durationSec: { type: 'number' },
+            background: {
+              type: 'object',
+              properties: {
+                source: { type: 'string', enum: ['photo', 'clip'] },
+                motion: { type: 'string', enum: ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'none'] },
+                clipMediaId: { type: 'string' },
+                clipStartSec: { type: 'number' },
+              },
+            },
+            endCard: { type: 'boolean' },
+          },
+        },
+        audio: {
+          type: 'object',
+          description: 'MOTION only: source: clip (the background clip\'s own sound — default when it has one) | track (a library track) | none. trackId: an AUDIO media id from upload_creative_media (source=track). volume: 0-1, default 0.8 (track only). fadeOutSec: 0-5, default 1 (track only).',
+          properties: {
+            source: { type: 'string', enum: ['clip', 'track', 'none'] },
+            trackId: { type: 'string' },
+            volume: { type: 'number' },
+            fadeOutSec: { type: 'number' },
+          },
         },
         layout: { type: 'string', description: "Layout key from the creative registry, e.g. stacked/bleed/card/split (optional — defaults to the registry's first layout)" },
         theme: { type: 'string', enum: ['dark', 'light'], description: 'Optional — defaults to dark' },
@@ -1174,6 +1202,32 @@ const TOOLS = [
         state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'] },
         kind: { type: 'string', enum: ['STILL', 'MOTION', 'CLIP'] },
         clipMedia: { type: 'object', additionalProperties: { type: 'string' } },
+        motion: {
+          type: 'object',
+          properties: {
+            preset: { type: 'string', enum: ['fade-up', 'word-by-word', 'accent-pop', 'none'] },
+            durationSec: { type: 'number' },
+            background: {
+              type: 'object',
+              properties: {
+                source: { type: 'string', enum: ['photo', 'clip'] },
+                motion: { type: 'string', enum: ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'none'] },
+                clipMediaId: { type: 'string' },
+                clipStartSec: { type: 'number' },
+              },
+            },
+            endCard: { type: 'boolean' },
+          },
+        },
+        audio: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', enum: ['clip', 'track', 'none'] },
+            trackId: { type: 'string' },
+            volume: { type: 'number' },
+            fadeOutSec: { type: 'number' },
+          },
+        },
         layout: { type: 'string' },
         theme: { type: 'string', enum: ['dark', 'light'] },
         photoId: { type: 'string' },
@@ -1241,7 +1295,7 @@ const TOOLS = [
   },
   {
     name: 'render_creative',
-    description: 'Render a Creative locally (Playwright on this machine) to upload-ready JPEG frames (one per placement), or a small contact sheet with previewOnly. Runs synchronously — typically well under a minute — and returns the render id, state, frame URLs and any warnings. Call preview_creative to actually look at the result.',
+    description: 'Render a Creative locally (Playwright on this machine) to upload-ready frames — one JPEG per placement for STILL, or one MP4 with a poster per placement for MOTION (ffmpeg-encoded on this machine) — or a small contact sheet with previewOnly. Runs synchronously: a STILL placement takes seconds; a MOTION placement takes roughly 20s per 8s of video, so a multi-placement MOTION render can take a couple of minutes. Returns the render id, state, frame URLs (MOTION frames also carry durationSeconds/hasAudio/posterUrl) and any warnings. Call preview_creative to actually look at the result.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1255,7 +1309,7 @@ const TOOLS = [
   },
   {
     name: 'preview_creative',
-    description: "Look at a Creative: returns its latest contact sheet as an image (rendering a fresh previewOnly one first if none exists yet). Use this to judge the actual artwork — does the headline read at a glance, is the copy sitting on the subject's face — not just the data. If the image is too large to inline it returns the URL instead, with a note saying so.",
+    description: "Look at a Creative: returns its latest contact sheet as an image (rendering a fresh previewOnly one first if none exists yet). For MOTION this is three key moments across the animation, not the finished video, with a text note giving the duration and — once a full render of the current version exists — its rendered MP4 URLs. Use this to judge the actual artwork — does the headline read at a glance, is the copy sitting on the subject's face — not just the data. If the image is too large to inline it returns the URL instead, with a note saying so.",
     inputSchema: {
       type: 'object',
       properties: {

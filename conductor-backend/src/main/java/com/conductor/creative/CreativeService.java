@@ -7,9 +7,12 @@ import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeAudio;
 import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
+import com.conductor.generated.v2.model.CreativeMotion;
+import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
@@ -28,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -169,6 +173,7 @@ public class CreativeService {
         PhotoResolution mainPhoto = resolvePhoto(projectId, request.getPhotoId());
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, clipMedia);
+        MotionResolution motionRes = resolveMotion(projectId, kind, request.getMotion(), request.getAudio());
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, request.getHeadline(), request.getBody(), request.getCaption(),
@@ -176,7 +181,8 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
-                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries));
+                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
+                motionRes.input()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -205,6 +211,8 @@ public class CreativeService {
         creative.setLockup(lockup);
         creative.setKind(kind);
         creative.setClipMedia(clipMedia != null && !clipMedia.isEmpty() ? objectMapper.valueToTree(clipMedia) : null);
+        creative.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
+        creative.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
         creative.setCreatedBy(caller.getId());
 
         creative = saveWithNextNumber(creative);
@@ -242,17 +250,21 @@ public class CreativeService {
                 ? objectMapper.valueToTree(layoutOverridesRequest) : current.getLayoutOverrides();
         Map<String, String> clipMedia = request.getClipMedia() != null
                 ? request.getClipMedia() : toClipMediaMap(current.getClipMedia());
+        CreativeMotion motionRequest = request.getMotion() != null ? request.getMotion() : toMotion(current.getMotion());
+        CreativeAudio audioRequest = request.getAudio() != null ? request.getAudio() : toAudio(current.getAudio());
 
         PhotoResolution mainPhoto = resolvePhoto(projectId, photoId);
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, clipMedia);
+        MotionResolution motionRes = resolveMotion(projectId, kind, motionRequest, audioRequest);
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, headline, body, caption, state, photoId, mainPhoto.resolvable(),
                 mainPhoto.photo() != null, mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(), sequenceKind,
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
-                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries));
+                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
+                motionRes.input()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -290,6 +302,8 @@ public class CreativeService {
         current.setLockup(lockup);
         current.setKind(kind);
         current.setClipMedia(clipMedia.isEmpty() ? null : objectMapper.valueToTree(clipMedia));
+        current.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
+        current.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
 
         current = creativeRepository.save(current);
         return toView(projectId, current, loadPhotos(List.of(current)));
@@ -311,6 +325,7 @@ public class CreativeService {
         PhotoResolution mainPhoto = resolvePhoto(projectId, root.getPhotoId());
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, toClipMediaMap(root.getClipMedia()));
+        MotionResolution motionRes = resolveMotion(projectId, root.getKind(), toMotion(root.getMotion()), toAudio(root.getAudio()));
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 root.getLayout(), root.getTheme(), placements, headline, root.getBody(), root.getCaption(),
@@ -319,7 +334,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides()),
-                root.getKind(), clipMediaEntries));
+                root.getKind(), clipMediaEntries, motionRes.input()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -345,6 +360,8 @@ public class CreativeService {
         variant.setCarouselRatio(root.getCarouselRatio());
         variant.setKind(root.getKind());
         variant.setClipMedia(root.getClipMedia());
+        variant.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
+        variant.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
@@ -359,18 +376,22 @@ public class CreativeService {
         requireMember(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
         boolean isClip = Creative.KIND_CLIP.equals(creative.getKind());
+        boolean isMotion = Creative.KIND_MOTION.equals(creative.getKind());
 
         List<ReadinessItem> items = new ArrayList<>();
         items.add(new ReadinessItem("caption", notBlank(creative.getCaption()), true,
                 notBlank(creative.getCaption()) ? "caption is set" : "caption is missing: the post needs primary text"));
-        // Alt text describes a still photo for the upload; for a CLIP (video), it is advisory only — a
-        // missing alt text never blocks a video the way it blocks a photo (contract: "optional -> warning
-        // only for video").
-        items.add(new ReadinessItem("altText", notBlank(creative.getAltText()), !isClip,
+        // Alt text describes a still photo for the upload; for a CLIP or MOTION (video), it is advisory
+        // only — a missing alt text never blocks a video the way it blocks a photo (contract: "optional ->
+        // warning only for video").
+        boolean isVideoKind = isClip || isMotion;
+        items.add(new ReadinessItem("altText", notBlank(creative.getAltText()), !isVideoKind,
                 notBlank(creative.getAltText()) ? "alt text is set" : "alt text is missing: describe the photo for the upload"));
 
         if (isClip) {
             addClipReadinessItems(projectId, creative, items);
+        } else if (isMotion) {
+            addMotionReadinessItems(projectId, creative, items);
         } else {
             addPhotoReadinessItems(projectId, creative, items);
         }
@@ -401,6 +422,43 @@ public class CreativeService {
         boolean aiGenerated = photo != null && photo.isAiGenerated();
         items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
                 aiGenerated ? "photo is AI-generated: tick the AI-disclosure toggle on upload" : "not AI-generated"));
+    }
+
+    /**
+     * Readiness for MOTION (COND-24 PR2): STILL's photo-verdict items when the background is a photo, or
+     * the background clip's own provenance when it is a clip; plus the audio track's provenance when
+     * {@code audio.source} is {@code track} (contract: "STILL items + track source/licence when
+     * audio.source=track; clip provenance when background is a clip").
+     */
+    private void addMotionReadinessItems(String projectId, Creative creative, List<ReadinessItem> items) {
+        CreativeMotion motion = toMotion(creative.getMotion());
+        CreativeMotionBackground background = motion != null ? motion.getBackground() : null;
+        String backgroundSource = background != null ? background.getSource() : null;
+
+        if ("clip".equals(backgroundSource)) {
+            String clipMediaId = background.getClipMediaId();
+            boolean hasClip = notBlank(clipMediaId);
+            items.add(new ReadinessItem("motionBackground", hasClip, true,
+                    hasClip ? "a background clip is chosen" : "no background clip chosen"));
+            CreativePhoto clipMedia = hasClip ? photoRepository.findByIdAndProjectId(clipMediaId, projectId).orElse(null) : null;
+            if (clipMedia != null) {
+                boolean provenanced = notBlank(clipMedia.getSource()) && notBlank(clipMedia.getLicence());
+                items.add(new ReadinessItem("clipProvenance", provenanced, true,
+                        provenanced ? "the background clip has source and licence"
+                                : "the background clip is missing source and/or licence"));
+            }
+        } else {
+            addPhotoReadinessItems(projectId, creative, items);
+        }
+
+        CreativeAudio audio = toAudio(creative.getAudio());
+        if (audio != null && "track".equals(audio.getSource())) {
+            String trackId = audio.getTrackId();
+            CreativePhoto track = notBlank(trackId) ? photoRepository.findByIdAndProjectId(trackId, projectId).orElse(null) : null;
+            boolean provenanced = track != null && notBlank(track.getSource()) && notBlank(track.getLicence());
+            items.add(new ReadinessItem("audioProvenance", provenanced, true,
+                    provenanced ? "the audio track has source and licence" : "the audio track is missing source and/or licence"));
+        }
     }
 
     /** Readiness for CLIP (COND-24 PR1): caption (above), alt text (advisory), the chosen clip's media
@@ -595,6 +653,99 @@ public class CreativeService {
         }
         return objectMapper.convertValue(node, new TypeReference<Map<String, String>>() {
         });
+    }
+
+    // ── MOTION (COND-24 PR2) ────────────────────────────────────────────────
+
+    /** {@code motion}/{@code audio}, defaults already applied, plus the resolved {@link
+     *  CreativeValidator.MotionInput} to validate against. {@code motion}/{@code input} are null for a
+     *  non-MOTION kind — {@code creative.motion}/{@code audio} stay whatever was passed through untouched. */
+    private record MotionResolution(CreativeMotion motion, CreativeAudio audio, CreativeValidator.MotionInput input) {
+    }
+
+    /**
+     * Applies MOTION's write-time defaults (contract: preset {@code fade-up}, {@code durationSec} 8,
+     * background photo {@code zoom-in}, {@code endCard} true, audio defaulting to {@code clip} when the
+     * background is a clip with sound else {@code none}) and resolves its media references (background
+     * clip, audio track) against the project's library, mirroring {@link #resolveClipMedia}. A non-MOTION
+     * kind passes {@code motionRequest}/{@code audioRequest} through untouched with no validator input.
+     */
+    private MotionResolution resolveMotion(String projectId, String kind, CreativeMotion motionRequest, CreativeAudio audioRequest) {
+        if (!Creative.KIND_MOTION.equals(kind)) {
+            return new MotionResolution(motionRequest, audioRequest, null);
+        }
+        CreativeMotion motion = motionRequest != null ? motionRequest : new CreativeMotion();
+        if (!notBlank(motion.getPreset())) {
+            motion.setPreset("fade-up");
+        }
+        if (motion.getDurationSec() == null) {
+            motion.setDurationSec(BigDecimal.valueOf(8));
+        }
+        CreativeMotionBackground background = motion.getBackground() != null ? motion.getBackground() : new CreativeMotionBackground();
+        if (!notBlank(background.getSource())) {
+            background.setSource("photo");
+        }
+        if ("photo".equals(background.getSource()) && !notBlank(background.getMotion())) {
+            background.setMotion("zoom-in");
+        }
+        motion.setBackground(background);
+        if (motion.getEndCard() == null) {
+            motion.setEndCard(true);
+        }
+
+        PhotoResolution clipRes = resolvePhoto(projectId, background.getClipMediaId());
+        CreativePhoto clipMedia = clipRes.photo();
+
+        CreativeAudio audio = audioRequest != null ? audioRequest : new CreativeAudio();
+        if (!notBlank(audio.getSource())) {
+            boolean clipHasSound = "clip".equals(background.getSource())
+                    && clipMedia != null && Boolean.TRUE.equals(clipMedia.getHasAudio());
+            audio.setSource(clipHasSound ? "clip" : "none");
+        }
+        if (audio.getVolume() == null) {
+            audio.setVolume(BigDecimal.valueOf(0.8));
+        }
+        if (audio.getFadeOutSec() == null) {
+            audio.setFadeOutSec(BigDecimal.ONE);
+        }
+
+        PhotoResolution trackRes = resolvePhoto(projectId, audio.getTrackId());
+        CreativePhoto trackMedia = trackRes.photo();
+
+        CreativeValidator.MotionInput input = new CreativeValidator.MotionInput(
+                motion.getPreset(),
+                motion.getDurationSec() != null ? motion.getDurationSec().doubleValue() : null,
+                background.getSource(),
+                background.getMotion(),
+                background.getClipMediaId(),
+                clipRes.resolvable(),
+                clipMedia != null && clipMedia.isVideo(),
+                clipMedia != null && clipMedia.isUploaded(),
+                clipMedia != null && clipMedia.isBlocked(),
+                clipMedia != null && clipMedia.getDurationSeconds() != null ? clipMedia.getDurationSeconds().doubleValue() : null,
+                clipMedia != null ? clipMedia.getHasAudio() : null,
+                background.getClipStartSec() != null ? background.getClipStartSec().doubleValue() : null,
+                motion.getEndCard(),
+                audio.getSource(),
+                audio.getTrackId(),
+                trackRes.resolvable(),
+                trackMedia != null && trackMedia.isAudio(),
+                trackMedia != null && trackMedia.isUploaded(),
+                trackMedia != null && trackMedia.isBlocked(),
+                audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
+                audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null);
+
+        return new MotionResolution(motion, audio, input);
+    }
+
+    /** {@code creative.motion} JSON -&gt; the typed DTO, or null when unset. */
+    private CreativeMotion toMotion(JsonNode node) {
+        return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeMotion.class) : null;
+    }
+
+    /** {@code creative.audio} JSON -&gt; the typed DTO, or null when unset. */
+    private CreativeAudio toAudio(JsonNode node) {
+        return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeAudio.class) : null;
     }
 
     private BrandKit resolveKit(String projectId, String brandKitId) {

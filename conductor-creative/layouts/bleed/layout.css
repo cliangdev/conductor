@@ -2,8 +2,12 @@
 
 .cc-board--bleed {
   background-image: var(--cc-photo);
-  background-size: cover;
-  background-position: var(--cc-focal, 50% 50%);
+  /* motion.js's Ken Burns pan/zoom (a MOTION creative only) sets --cc-bg-size/--cc-bg-pos on the
+     board; a background-image has no `transform`, so the zoom/pan is expressed as a growing
+     background-size and a shifting background-position instead. Unset for STILL: falls back to the
+     original fixed cover/focal. */
+  background-size: var(--cc-bg-size, cover);
+  background-position: var(--cc-bg-pos, var(--cc-focal, 50% 50%));
   justify-content: flex-end;
 }
 

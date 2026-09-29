@@ -11,6 +11,11 @@
  *                             // the backend); ignored when the creative has a
  *                             // sequence, which always renders every beat
  *     placements?, layouts?,  // registry overrides (default: the shipped ones)
+ *     times?: number[],       // a MOTION creative's key moments (motion.js's
+ *                             // motionKeyTimes()): one ROW per time, each row
+ *                             // holding every placement in placementKeys at
+ *                             // that time. Ignored for a sequence creative
+ *                             // (MOTION creatives never carry a sequence).
  *   }
  *
  * Result contract: window.__RENDER_RESULT = { ok: true, width, height } |
@@ -21,6 +26,7 @@ import { resolveAd, resolveSequence, renderBoard, fitAll } from './render.js';
 import { placements as DEFAULT_PLACEMENTS } from './placements.js';
 import { layouts as DEFAULT_LAYOUTS } from './layouts/index.js';
 import { ensureBrandFont } from './font.js';
+import { applyMotion } from './motion.js';
 
 const SHEET_SCALE = 0.34;
 
@@ -39,8 +45,9 @@ async function main() {
   const layoutsReg = spec.layouts || DEFAULT_LAYOUTS;
   const sheet = document.getElementById('sheet');
   const boards = [];
+  const motionCells = []; // { board, time }, applied after fitAll (see below)
 
-  function addCell(ad, placementKey, label) {
+  function addCell(ad, placementKey, label, container) {
     const placement = placementsReg[placementKey];
     if (!placement) throw new Error(`unknown placement "${placementKey}"`);
     const cell = document.createElement('div');
@@ -56,17 +63,40 @@ async function main() {
     cap.className = 'cap';
     cap.textContent = label;
     cell.appendChild(cap);
-    sheet.appendChild(cell);
+    (container || sheet).appendChild(cell);
     boards.push(board);
+    return board;
   }
 
   try {
     await ensureBrandFont(spec.brand);
     const isSequence = spec.creative.sequenceKind && Array.isArray(spec.creative.sequence) && spec.creative.sequence.length;
+    const motion = spec.creative.motion;
+    const hasKeyTimes = !isSequence && Array.isArray(spec.times) && spec.times.length && motion;
+
     if (isSequence) {
       const frames = resolveSequence(spec.creative, placementsReg, layoutsReg);
       const key = spec.creative.sequenceKind === 'carousel' ? spec.creative.carouselRatio || '4x5' : 'story';
       frames.forEach((frame, i) => addCell(frame, key, `${i + 1} of ${frames.length}`));
+    } else if (hasKeyTimes) {
+      // One row per key moment, each row holding every enabled placement at that time — lets a human
+      // see how the motion progresses without downloading the full MP4 (see job/render.mjs's
+      // previewOnly MOTION path).
+      sheet.classList.add('sheet--rows');
+      const ad = resolveAd(spec.creative, placementsReg, layoutsReg);
+      const keys = Array.isArray(spec.placementKeys) && spec.placementKeys.length
+        ? spec.placementKeys
+        : Object.keys(placementsReg).filter((k) => placementsReg[k].default);
+      spec.times.forEach((t) => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        sheet.appendChild(row);
+        keys.forEach((key) => {
+          const label = `${(placementsReg[key] && placementsReg[key].label) || key} · ${t.toFixed(1)}s`;
+          const board = addCell(ad, key, label, row);
+          motionCells.push({ board, time: t });
+        });
+      });
     } else {
       const ad = resolveAd(spec.creative, placementsReg, layoutsReg);
       const keys = Array.isArray(spec.placementKeys) && spec.placementKeys.length
@@ -79,6 +109,13 @@ async function main() {
     // shrinks the measured rect and would throw fitBoard's line-count math
     // off), then apply the display scale — the same order mount.js uses.
     await fitAll(sheet, placementsReg);
+
+    // Only after fitting (motion's translateY offsets are fixed px, independent of the fitted
+    // headline size, but applying it before fitBoard risked the word-span wrapping interacting with
+    // the auto-fit measurement — see motion.js).
+    const durationSec = (motion && motion.durationSec) || 8;
+    motionCells.forEach(({ board, time }) => applyMotion(board, motion, time, { durationSec }));
+
     boards.forEach((board) => {
       board.style.transformOrigin = 'top left';
       board.style.transform = `scale(${SHEET_SCALE})`;

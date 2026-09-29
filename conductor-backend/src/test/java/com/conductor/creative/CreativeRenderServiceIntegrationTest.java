@@ -412,16 +412,89 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 .isInstanceOf(CreativeValidationException.class);
     }
 
-    @Test
-    void renderingAMotionCreativeIsRefusedForNow() {
-        Creative motion = newClipCreative(Map.of());
-        motion.setKind(Creative.KIND_MOTION);
-        creativeRepository.save(motion);
+    // ── MOTION renders (COND-24 PR2) ────────────────────────────────────────────────────────────
 
-        assertThatThrownBy(() -> renderService.requestRender(project.getId(), motion.getId(),
-                new CreateCreativeRenderRequest(), admin))
-                .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("next release");
+    @Test
+    void motionRenderSpecCarriesKindMotionAndAudioWithSignedUrls() {
+        CreativePhoto clip = newVideoMedia(1080, 1920);
+        clip.setHasAudio(true);
+        clip = photoRepository.save(clip);
+        CreativePhoto track = newAudioMedia();
+        Creative motion = newMotionCreative(clip.getId(), track.getId());
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), motion.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_RUNNING);
+        assertThat(result.spec().getCreative().getKind().getValue()).isEqualTo("MOTION");
+        assertThat(result.spec().getCreative().getMotion().getPreset()).isEqualTo("fade-up");
+        assertThat(result.spec().getCreative().getMotion().getBackground().getClipUrl()).isNotBlank();
+        assertThat(result.spec().getCreative().getAudio().getSource()).isEqualTo("track");
+        assertThat(result.spec().getCreative().getAudio().getTrackUrl()).isNotBlank();
+        assertThat(result.spec().getCreative().getClipHasAudio()).isTrue();
+        // Same placement resolution as STILL: kit-enabled union creative opt-ins, intersected with the registry.
+        assertThat(result.spec().getPlacements()).containsExactlyInAnyOrder("9x16", "4x5", "1x1");
+    }
+
+    @Test
+    void previewOnlyIsAllowedForAMotionRenderUnlikeClip() {
+        Creative motion = newMotionCreative(null, null);
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(project.getId(), motion.getId(),
+                new CreateCreativeRenderRequest().previewOnly(true), admin);
+
+        assertThat(result.render().isPreviewOnly()).isTrue();
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_RUNNING);
+    }
+
+    @Test
+    void puttingAMotionFrameAcceptsVideoMp4WithDurationAndHasAudio() {
+        Creative motion = newMotionCreative(null, null);
+        String renderId = renderService.requestRender(project.getId(), motion.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+
+        renderService.putFrame(project.getId(), motion.getId(), renderId, "9x16", null, 1080, 1920,
+                mp4(), "video/mp4", new BigDecimal("8.000"), true, admin);
+
+        CreativeRenderFrame frame = frameRepository.findAllByRenderId(renderId).get(0);
+        assertThat(frame.getContentType()).isEqualTo("video/mp4");
+        assertThat(frame.getGcsPath()).endsWith(".mp4");
+        assertThat(frame.getDurationSeconds()).isEqualByComparingTo("8.000");
+        assertThat(frame.getHasAudio()).isTrue();
+    }
+
+    @Test
+    void puttingAMotionFramesPosterSetsItAndItIsRefusedAfterTheRenderSucceeds() {
+        Creative motion = newMotionCreative(null, null);
+        String renderId = renderService.requestRender(project.getId(), motion.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+        renderService.putFrame(project.getId(), motion.getId(), renderId, "9x16", null, 1080, 1920,
+                mp4(), "video/mp4", new BigDecimal("8"), true, admin);
+
+        CreativeRenderService.RenderView withPoster = renderService.putFramePoster(
+                project.getId(), motion.getId(), renderId, "9x16", null, jpeg(), "image/jpeg", admin);
+        assertThat(withPoster.frames()).singleElement()
+                .satisfies(f -> assertThat(f.getPosterGcsPath()).isNotNull());
+
+        CreativeRenderResponse response = renderService.toResponse(withPoster);
+        assertThat(response.getFrames()).singleElement().satisfies(f -> assertThat(f.getPosterUrl()).isNotNull());
+
+        renderService.completeRender(project.getId(), motion.getId(), renderId, null, admin);
+
+        assertThatThrownBy(() -> renderService.putFramePoster(project.getId(), motion.getId(), renderId, "9x16",
+                null, jpeg(), "image/jpeg", admin))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void puttingAPosterWithNoFrameStoredYetIsRefused() {
+        Creative motion = newMotionCreative(null, null);
+        String renderId = renderService.requestRender(project.getId(), motion.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+
+        assertThatThrownBy(() -> renderService.putFramePoster(project.getId(), motion.getId(), renderId, "9x16",
+                null, jpeg(), "image/jpeg", admin))
+                .isInstanceOf(com.conductor.exception.BusinessException.class);
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
@@ -434,6 +507,11 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     private byte[] jpeg() {
         // A minimal but nonempty payload (the JPEG SOI marker); content is never interpreted server-side.
         return new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9};
+    }
+
+    private byte[] mp4() {
+        // A minimal but nonempty payload; content is never interpreted server-side.
+        return ("mp4-bytes-" + UUID.randomUUID()).getBytes();
     }
 
     private Creative newCreative(CreativePhoto photo) {
@@ -472,6 +550,78 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         c.setCreatedBy(admin.getId());
         c.setNumber(nextClipNumber++);
         return creativeRepository.save(c);
+    }
+
+    /**
+     * A MOTION creative (COND-24 PR2): {@code clipMediaId}/{@code trackId} null means "photo background,
+     * no audio track" (with a fresh uploaded photo so the READY-forced render validation passes); non-null
+     * means "clip background"/"track audio" referencing that media id. Built directly against the entity
+     * (like {@link #newClipCreative}), not through {@code CreativeService}, so defaults are set by hand
+     * here exactly as {@code CreativeService#resolveMotion} would apply them.
+     */
+    private Creative newMotionCreative(String clipMediaId, String trackId) {
+        Creative c = new Creative();
+        c.setProjectId(project.getId());
+        c.setBrandKitId(defaultKit.getId());
+        c.setVariantLetter("a");
+        c.setState(Creative.STATE_DRAFT);
+        c.setLayout("stacked");
+        c.setTheme(Creative.THEME_DARK);
+        c.setKind(Creative.KIND_MOTION);
+        c.setHeadline("Plan the week in *one sentence*.");
+        c.setBody("A calm plan.");
+        if (clipMediaId == null) {
+            c.setPhotoId(newPhoto().getId());
+        }
+        c.setPlacements(objectMapper.valueToTree(List.of()));
+        c.setSequence(objectMapper.valueToTree(List.of()));
+        c.setTypeOverrides(objectMapper.createObjectNode());
+        c.setCreatedBy(admin.getId());
+        c.setNumber(nextClipNumber++);
+
+        var background = objectMapper.createObjectNode();
+        background.put("source", clipMediaId != null ? "clip" : "photo");
+        background.put("motion", "zoom-in");
+        if (clipMediaId != null) {
+            background.put("clipMediaId", clipMediaId);
+        }
+        var motion = objectMapper.createObjectNode();
+        motion.put("preset", "fade-up");
+        motion.put("durationSec", 8);
+        motion.set("background", background);
+        motion.put("endCard", true);
+        c.setMotion(motion);
+
+        var audio = objectMapper.createObjectNode();
+        audio.put("source", trackId != null ? "track" : "none");
+        if (trackId != null) {
+            audio.put("trackId", trackId);
+        }
+        audio.put("volume", 0.8);
+        audio.put("fadeOutSec", 1.0);
+        c.setAudio(audio);
+
+        return creativeRepository.save(c);
+    }
+
+    private CreativePhoto newAudioMedia() {
+        String id = UUID.randomUUID().toString();
+        CreativePhoto p = new CreativePhoto();
+        p.setId(id);
+        p.setProjectId(project.getId());
+        p.setMediaKind(CreativePhoto.MEDIA_KIND_AUDIO);
+        String gcsPath = "projects/" + project.getId() + "/marketing/photos/" + id + ".mp3";
+        p.setGcsPath(gcsPath);
+        storageService.upload(gcsPath, ("track-bytes-" + id).getBytes(), "audio/mpeg");
+        p.setContentType("audio/mpeg");
+        p.setSizeBytes(500_000L);
+        p.setDurationSeconds(new BigDecimal("30"));
+        p.setSource("own");
+        p.setLicence("Own work");
+        p.setFocal(objectMapper.createObjectNode());
+        p.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        p.setCreatedBy(admin.getId());
+        return photoRepository.save(p);
     }
 
     private CreativePhoto newVideoMedia(int width, int height) {

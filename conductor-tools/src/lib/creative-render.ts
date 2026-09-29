@@ -13,6 +13,11 @@ import { fileURLToPath } from 'node:url'
 import type { Config } from '../mcp/config.js'
 import { apiGet, apiPost, ApiError } from '../mcp/api.js'
 import { findBrowserFactory } from './creative-browser.js'
+import { resolveFfmpegPath } from './media-probe.js'
+
+/** Frames per second for a MOTION render's ffmpeg encode — fixed, not user-configurable (see
+ * conductor-creative/README.md's job/render.mjs section). */
+const MOTION_FPS = 30
 
 export interface RenderFrame {
   id?: string
@@ -51,6 +56,10 @@ interface RenderCore {
     transport: unknown
     browserFactory?: () => Promise<unknown>
     log?: (...args: unknown[]) => void
+    /** Required for a MOTION render (ignored otherwise) — a local ffmpeg binary's path. */
+    ffmpegPath?: string
+    /** Frames per second for a MOTION render's ffmpeg encode (default 30). */
+    fps?: number
   }): Promise<boolean>
 }
 
@@ -101,11 +110,10 @@ async function loadRenderCore(): Promise<{ run: RenderCore['run']; createApiTran
 }
 
 /**
- * A CLIP (or, once PR 2 lands, MOTION) creative has no local browser render path — the backend either
- * assembles the frames itself synchronously (CLIP) or refuses with a 422 explaining why (MOTION, until
- * its renderer ships). Either way this just POSTs the render and relays what came back — `ApiError`'s
- * `message` is already the server's own plain-English sentence (an RFC 7807 `detail`), so a MOTION 422
- * reaches the caller unchanged rather than wrapped in a generic "never started" message.
+ * A CLIP creative has no local browser render path at all — it's a finished video used as-is, and
+ * the backend assembles its frames itself synchronously. This just POSTs the render and relays what
+ * came back — `ApiError`'s `message` is already the server's own plain-English sentence (an RFC 7807
+ * `detail`), so a failure reaches the caller unchanged rather than wrapped in a generic message.
  */
 async function renderViaApi(params: RenderCreativeParams, config: Config): Promise<RenderCreativeResult> {
   try {
@@ -124,10 +132,14 @@ async function renderViaApi(params: RenderCreativeParams, config: Config): Promi
 }
 
 /**
- * Renders a Creative end to end. STILL creatives find a local browser and run the render core against
- * the external API, reading back the stored render (frames with signed URLs, final state) whether or
- * not the render itself succeeded — a FAILED render still has an id and an error message worth
- * returning. CLIP (and MOTION) creatives never launch a browser — see {@link renderViaApi}.
+ * Renders a Creative end to end. STILL and MOTION creatives both find a local browser and run the
+ * render core against the external API, reading back the stored render (frames with signed URLs,
+ * final state) whether or not the render itself succeeded — a FAILED render still has an id and an
+ * error message worth returning. A MOTION render (not previewOnly) additionally needs a local ffmpeg
+ * binary — resolved the same way `upload_creative_media`/`media-probe.ts` finds one (a system binary
+ * on PATH first, else the bundled `ffmpeg-static` fallback) — and runs at a fixed 30fps; a previewOnly
+ * MOTION render (the key-moments contact sheet) needs neither ffmpeg nor a video encode, so it skips
+ * this resolution entirely. CLIP creatives never launch a browser — see {@link renderViaApi}.
  */
 export async function renderCreative(
   params: RenderCreativeParams,
@@ -138,8 +150,17 @@ export async function renderCreative(
     `/api/v2/projects/${config.projectId}/marketing/creatives/${params.creativeId}`,
     config
   )
-  if (creative.kind && creative.kind !== 'STILL') {
+  if (creative.kind === 'CLIP') {
     return renderViaApi(params, config)
+  }
+
+  let ffmpegPath: string | undefined
+  if (creative.kind === 'MOTION' && !params.previewOnly) {
+    try {
+      ffmpegPath = await resolveFfmpegPath()
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), frames: [] }
+    }
   }
 
   const { run, createApiTransport } = await loadRenderCore()
@@ -154,7 +175,9 @@ export async function renderCreative(
   })
   const browserFactory = await findBrowserFactory(log)
 
-  const ok = await run({ transport, browserFactory, log })
+  // fps only matters on the MOTION encode path (run() ignores it otherwise); passing it
+  // unconditionally keeps this call site simple and matches the engine's own default.
+  const ok = await run({ transport, browserFactory, log, ffmpegPath, fps: MOTION_FPS })
   const renderId = transport.getRenderId()
   if (!renderId) {
     return { ok: false, error: 'The render was never started — the API rejected the request before a render id was assigned.', frames: [] }

@@ -155,6 +155,59 @@ run against it exactly as they would a directly-uploaded video.
 The `16x9` placement (1920×1080, YouTube and landscape video) was added to the registry for this — it is
 not in any Brand Kit's default enabled set, since it means nothing to a STILL Creative's brand layout.
 
+## Motion (COND-24 PR2)
+
+`MOTION` is a branded animated video: the same copy and look as a STILL Creative (layout, theme, headline
+with an accent phrase, body, `photoId`, lockup, `layoutOverrides`, placements opt-ins), plus two JSON
+columns nothing else touches, `creative.motion` and `creative.audio`.
+
+`motion` is `{preset, durationSec, background: {source, motion, clipMediaId?, clipStartSec?}, endCard}` —
+`preset` (`fade-up`/`word-by-word`/`accent-pop`/`none`) and `background.source`/`background.motion` are
+plain strings, not OpenAPI enums, so an invalid value comes back from `CreativeValidator` as a 422 with a
+field path like `motion.preset`, the same shape every other Creative violation uses, rather than a generic
+400 from Jackson rejecting an unknown enum literal. A `photo` background reuses the Creative's own
+`photoId`; a `clip` background points `clipMediaId` at a `VIDEO` in the media library (uploaded, unblocked,
+same project, `clipStartSec` less than the clip's own duration). `audio` is
+`{source: clip|track|none, trackId?, volume?, fadeOutSec?}` — `track` needs an `AUDIO` media id; `clip`
+needs a `clip` background whose media actually has an audio track (`hasAudio=true`).
+
+**Defaults are applied on every write**, by `CreativeService#resolveMotion` — never left for the client to
+supply or the renderer to guess: `preset` "fade-up", `durationSec` 8, `background.source` "photo",
+`background.motion` "zoom-in" (photo backgrounds only), `endCard` true, and `audio.source` "clip" when the
+resolved background is a clip whose media has audio, else "none" (`audio.volume` 0.8, `audio.fadeOutSec` 1).
+A `PATCH` that omits `motion`/`audio` keeps the Creative's current (already-defaulted) value, exactly like
+every other field patch semantics here — whole-field replace, not a deep merge.
+
+**READY-state rules mirror STILL's, conditionally**: a headline is always required; a photo is required
+only when `background.source` is `"photo"` (the default) — a `clip` background needs no `photoId` at all,
+since the video itself is the background.
+
+**Rendering is a local job, exactly like STILL** — `POST .../renders` no longer refuses MOTION with 422;
+the render spec (`CreativeRenderSpecCreative`) gains `kind`, `motion` (with `background.clipUrl`, a signed
+GET of the background clip, only when the background is a clip), `audio` (with `trackUrl`, a signed GET,
+only when the source is a track) and `clipHasAudio` (whether the resolved background clip's media has an
+audio track — null when the background is a photo). `previewOnly` is allowed for MOTION (a contact-sheet
+preview of key animation moments), unlike CLIP, which has no local job to preview.
+
+**The frame PUT accepts `video/mp4`** (`durationSeconds`/`hasAudio` query params, stored on the frame — at
+most 500 MB, well above a STILL/`sheet` frame's 20 MB) alongside the existing JPEG/PNG. A second endpoint,
+`PUT .../renders/{renderId}/frames/{placementKey}/poster`, uploads the frame's poster JPEG (the end-card
+frame) once the frame itself is stored — same 20 MB ceiling as an image frame, only accepted while the
+render is `RUNNING` (409 once it has settled), refused with a plain 400 if no frame is stored yet for that
+placement/index to attach a poster to. A frame's `posterUrl` is populated either this way (MOTION) or by
+copying the source media's own poster (CLIP) — the response shape does not distinguish which.
+
+**Attach treats a MOTION frame exactly like a CLIP one** — `CreativeAttachService`'s video/image branch
+keys off the frame's own `content_type` (`video/` prefix), not the Creative's `kind`, so
+`CreativePlacementTargetMapper#matchesVideo` needed no changes at all: a MOTION render's `9x16` frame fills
+TikTok and an Instagram/Facebook reel exactly as a CLIP's would.
+
+**Readiness for MOTION** is STILL's photo-verdict checklist when the background is a photo, or the
+background clip's own source/licence when it is a clip (`clipProvenance`); plus the audio track's own
+source/licence when `audio.source` is `"track"` (`audioProvenance`) — a licensed music track needs the same
+provenance discipline as a photo or a clip. Alt text is advisory (non-blocking) for MOTION, like CLIP,
+since both are video.
+
 ## What this backend does not do
 
 No image processing beyond the screenshot the local job takes: Playwright's own JPEG/PNG encoder does the

@@ -187,7 +187,9 @@ export function RendersPanel({
           description={
             creativeKind === 'CLIP'
               ? 'Rendering a clip is instant — Prepare for posting above, or from Claude Code/Desktop or the CLI.'
-              : 'Rendering runs locally, on your own machine, through Claude Code/Desktop or the CLI — there is nothing to click here.'
+              : creativeKind === 'MOTION'
+                ? 'Rendering a Motion video runs locally, on your own machine, through Claude Code/Desktop or the CLI — about 20 seconds per placement. There is nothing to click here.'
+                : 'Rendering runs locally, on your own machine, through Claude Code/Desktop or the CLI — there is nothing to click here.'
           }
           action={
             <div className="w-full max-w-sm space-y-2 text-left">

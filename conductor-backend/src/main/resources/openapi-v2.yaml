@@ -3916,11 +3916,12 @@ paths:
         - creatives
       summary: Upload one rendered frame
       description: >-
-        The local render job PUTs each placement's frame here as it finishes, one call per frame. Placement
-        frames are JPEG (Instagram feed images and TikTok photo posts both refuse PNG); the `sheet`
-        contact sheet for a preview-only render stays PNG. Upserts the frame row on `(placementKey, index)`;
-        `platform` is derived from the placement registry. Only accepted while the render is RUNNING — 409
-        once it has SUCCEEDED or FAILED. Requires ADMIN or CREATOR.
+        The local render job PUTs each placement's frame here as it finishes, one call per frame. A STILL
+        placement frame is JPEG (Instagram feed images and TikTok photo posts both refuse PNG); the `sheet`
+        contact sheet for a preview-only render stays PNG; a MOTION render's frame is `video/mp4` (COND-24
+        PR2), with `durationSeconds`/`hasAudio` query params stored on the frame. Upserts the frame row on
+        `(placementKey, index)`; `platform` is derived from the placement registry. Only accepted while the
+        render is RUNNING — 409 once it has SUCCEEDED or FAILED. Requires ADMIN or CREATOR.
       operationId: putCreativeRenderFrame
       security:
         - bearerAuth: []
@@ -3962,16 +3963,33 @@ paths:
           required: true
           schema:
             type: integer
+        - name: durationSeconds
+          in: query
+          required: false
+          description: A MOTION (video/mp4) frame's running time, in seconds. Ignored for an image frame.
+          schema:
+            type: number
+        - name: hasAudio
+          in: query
+          required: false
+          description: Whether a MOTION (video/mp4) frame carries an audio track. Ignored for an image frame.
+          schema:
+            type: boolean
       requestBody:
         required: true
         description: >-
-          Raw image bytes, at most 20 MB. A placement frame is JPEG; the `sheet` contact sheet is PNG.
+          Raw bytes. A STILL placement frame is JPEG (at most 20 MB); the `sheet` contact sheet is PNG (at
+          most 20 MB); a MOTION frame is video/mp4 (at most 500 MB).
         content:
           image/jpeg:
             schema:
               type: string
               format: binary
           image/png:
+            schema:
+              type: string
+              format: binary
+          video/mp4:
             schema:
               type: string
               format: binary
@@ -4003,7 +4021,97 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "415":
-          description: Content-Type is not image/jpeg or image/png
+          description: Content-Type is not image/jpeg, image/png or video/mp4
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/renders/{renderId}/frames/{placementKey}/poster:
+    put:
+      tags:
+        - creatives
+      summary: Upload a MOTION render frame's poster
+      description: >-
+        COND-24 PR2: the local render job PUTs a MOTION frame's poster JPEG here (the end-card frame) once
+        the frame itself is stored. Sets the frame's `posterUrl`, exactly as a CLIP frame's poster is a copy
+        of its source media's. Only accepted while the render is RUNNING — 409 once it has SUCCEEDED or
+        FAILED; refused with a plain 400 if no frame is stored yet for this placement/index. Requires ADMIN
+        or CREATOR.
+      operationId: putCreativeRenderFramePoster
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: renderId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: placementKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: index
+          in: query
+          required: false
+          description: Sequence position for a story/carousel frame; omitted for a single-frame placement.
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        description: Raw JPEG bytes, at most 20 MB.
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Poster stored
+        "400":
+          description: No frame is stored yet for this placement/index
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Render not found, does not belong to this Creative, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The render is no longer RUNNING (already SUCCEEDED or FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Content-Type is not image/jpeg
           content:
             application/json:
               schema:
@@ -6960,6 +7068,79 @@ components:
           additionalProperties:
             type: integer
 
+    CreativeMotionBackground:
+      type: object
+      nullable: true
+      description: >-
+        A MOTION creative's animated background (COND-24 PR2). `source` and `motion` are plain strings
+        (not OpenAPI enums) so an invalid value comes back as a 422 CreativeValidationProblem with a
+        `motion.background.source`/`motion.background.motion` field path, not a generic 400.
+      properties:
+        source:
+          type: string
+          nullable: true
+          description: 'photo | clip. Defaults to "photo".'
+        motion:
+          type: string
+          nullable: true
+          description: 'zoom-in | zoom-out | pan-left | pan-right | none — photo backgrounds only. Defaults to "zoom-in".'
+        clipMediaId:
+          type: string
+          nullable: true
+          description: A VIDEO media id, required when source is "clip".
+        clipStartSec:
+          type: number
+          nullable: true
+          description: Where in the source clip the background starts, in seconds. Must be less than the clip's own duration.
+
+    CreativeMotion:
+      type: object
+      nullable: true
+      description: >-
+        The branded animation timeline for a MOTION creative (COND-24 PR2) — copy and look come from the
+        same fields a STILL Creative uses (layout, theme, headline, body, photoId, ...); this is the
+        motion-only part.
+      properties:
+        preset:
+          type: string
+          nullable: true
+          description: 'fade-up | word-by-word | accent-pop | none. Defaults to "fade-up".'
+        durationSec:
+          type: number
+          nullable: true
+          description: 3-60 seconds. Defaults to 8.
+        background:
+          $ref: "#/components/schemas/CreativeMotionBackground"
+        endCard:
+          type: boolean
+          nullable: true
+          description: When true (the default), the last 2 seconds hold the full composition with the CTA.
+
+    CreativeAudio:
+      type: object
+      nullable: true
+      description: >-
+        A MOTION creative's audio track (COND-24 PR2). `source` is a plain string, not an OpenAPI enum —
+        same reasoning as CreativeMotionBackground.
+      properties:
+        source:
+          type: string
+          nullable: true
+          description: >-
+            clip | track | none. Defaults to "clip" when the background is a clip with sound, else "none".
+        trackId:
+          type: string
+          nullable: true
+          description: An AUDIO media id, required when source is "track".
+        volume:
+          type: number
+          nullable: true
+          description: 0-1. Defaults to 0.8.
+        fadeOutSec:
+          type: number
+          nullable: true
+          description: 0-5. Defaults to 1.
+
     SequenceKind:
       type: string
       enum:
@@ -7087,6 +7268,16 @@ components:
           description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
           additionalProperties:
             type: string
+        motion:
+          allOf:
+            - $ref: "#/components/schemas/CreativeMotion"
+          nullable: true
+          description: The animation timeline for a MOTION creative, defaults already applied.
+        audio:
+          allOf:
+            - $ref: "#/components/schemas/CreativeAudio"
+          nullable: true
+          description: The audio track for a MOTION creative, defaults already applied.
         version:
           type: integer
         createdBy:
@@ -7177,6 +7368,16 @@ components:
           description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
           additionalProperties:
             type: string
+        motion:
+          allOf:
+            - $ref: "#/components/schemas/CreativeMotion"
+          nullable: true
+          description: The animation timeline for a MOTION creative. Any field left unset gets its documented default.
+        audio:
+          allOf:
+            - $ref: "#/components/schemas/CreativeAudio"
+          nullable: true
+          description: The audio track for a MOTION creative. Any field left unset gets its documented default.
         layoutOverrides:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
@@ -7252,6 +7453,16 @@ components:
           description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
           additionalProperties:
             type: string
+        motion:
+          allOf:
+            - $ref: "#/components/schemas/CreativeMotion"
+          nullable: true
+          description: The animation timeline for a MOTION creative. Any field left unset gets its documented default.
+        audio:
+          allOf:
+            - $ref: "#/components/schemas/CreativeAudio"
+          nullable: true
+          description: The audio track for a MOTION creative. Any field left unset gets its documented default.
         layoutOverrides:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
@@ -7491,6 +7702,66 @@ components:
         layoutOverrides:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
+          nullable: true
+        kind:
+          $ref: "#/components/schemas/CreativeKind"
+        motion:
+          allOf:
+            - $ref: "#/components/schemas/CreativeRenderSpecMotion"
+          nullable: true
+          description: Set only for a MOTION render.
+        audio:
+          allOf:
+            - $ref: "#/components/schemas/CreativeRenderSpecAudio"
+          nullable: true
+          description: Set only for a MOTION render.
+        clipHasAudio:
+          type: boolean
+          nullable: true
+          description: Whether the resolved background clip has audio; null when the background is a photo or there is no background clip.
+
+    CreativeRenderSpecMotionBackground:
+      type: object
+      description: The resolved background for a MOTION render — `clipUrl` is a signed GET (valid at least 30 minutes), set only when `source` is "clip".
+      properties:
+        source:
+          type: string
+        motion:
+          type: string
+        clipUrl:
+          type: string
+          nullable: true
+        clipStartSec:
+          type: number
+          nullable: true
+
+    CreativeRenderSpecMotion:
+      type: object
+      description: The resolved animation timeline for a MOTION render, defaults already applied.
+      properties:
+        preset:
+          type: string
+        durationSec:
+          type: number
+        background:
+          $ref: "#/components/schemas/CreativeRenderSpecMotionBackground"
+        endCard:
+          type: boolean
+
+    CreativeRenderSpecAudio:
+      type: object
+      description: The resolved audio track for a MOTION render, defaults already applied. `trackUrl` is a signed GET (valid at least 30 minutes), set only when `source` is "track".
+      properties:
+        source:
+          type: string
+        trackUrl:
+          type: string
+          nullable: true
+        volume:
+          type: number
+          nullable: true
+        fadeOutSec:
+          type: number
           nullable: true
 
     CreativeRenderSpec:

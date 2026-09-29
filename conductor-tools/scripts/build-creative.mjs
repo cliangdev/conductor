@@ -13,8 +13,12 @@
  * `PACKAGE_ROOT = join(HERE, '..')` expects".
  *
  * Deliberately excluded: `mount.js`/`copy-rules.js` (editor-only, not
- * imported by frame.js/sheet.js — the render core never reaches for them),
- * `test/`, `node_modules/`, `job/package.json` (its `playwright` dependency
+ * imported by frame.js/sheet.js/job/render.mjs — the render core never
+ * reaches for them; `motion.js`, by contrast, IS imported by all three
+ * (frame.js/sheet.js apply a MOTION creative's timeline in-page, and
+ * job/render.mjs imports `motionKeyTimes` for a previewOnly sheet spec) so
+ * it is included below), `test/`, `node_modules/`, `job/package.json` (its
+ * `playwright` dependency
  * is for running the job directly out of that repo; conductor-tools drives
  * the same `run()` with its own `playwright-core`-based browser discovery —
  * see src/lib/creative-browser.ts), and `README.md`.
@@ -36,6 +40,7 @@ export const DEST_ROOT = join(__dirname, '..', 'dist', 'creative')
 /** Relative paths (from conductor-creative/) this build needs. Order doesn't matter. */
 export const CREATIVE_RUNTIME_FILES = [
   'render.js',
+  'motion.js',
   'assertions.js',
   'placements.js',
   'placements.json',

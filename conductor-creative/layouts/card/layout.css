@@ -16,6 +16,9 @@
   width: 100%; height: 100%;
   object-fit: cover;
   object-position: var(--cc-focal, 50% 40%);
+  /* motion.js's Ken Burns pan/zoom (a MOTION creative only); unset for STILL. */
+  transform: var(--cc-bg-transform, none);
+  transform-origin: center center;
 }
 .cc-board--card .cc-board__panel {
   flex: 1 1 auto; min-height: 0;

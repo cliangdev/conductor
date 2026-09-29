@@ -220,6 +220,94 @@ test('putFrame: omits the index param for a non-sequence frame', async () => {
   }
 });
 
+test('putFrame: sends durationSeconds/hasAudio query params only when given (a MOTION upload)', async () => {
+  const calls = [];
+  const { server, origin } = await startFakeBackend(async (req, res) => {
+    if (req.url.endsWith('/renders')) {
+      res.writeHead(201, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'r1', spec: SPEC }));
+      return;
+    }
+    calls.push(req.url);
+    res.writeHead(204).end();
+  });
+  try {
+    const transport = createApiTransport({ apiUrl: origin, apiKey: 'k', projectId: 'p1', creativeId: 'c1' });
+    await transport.getSpec();
+
+    await transport.putFrame('9x16', { width: 1080, height: 1920, bytes: Buffer.from([0]), contentType: 'video/mp4', durationSeconds: 8, hasAudio: true });
+    let url = new URL(calls[0], origin);
+    assert.equal(url.searchParams.get('durationSeconds'), '8');
+    assert.equal(url.searchParams.get('hasAudio'), 'true');
+
+    await transport.putFrame('4x5', { width: 2160, height: 2700, bytes: Buffer.from([0]) });
+    url = new URL(calls[1], origin);
+    assert.equal(url.searchParams.has('durationSeconds'), false);
+    assert.equal(url.searchParams.has('hasAudio'), false);
+  } finally {
+    server.close();
+  }
+});
+
+test('putPoster: PUTs JPEG bytes to the frame\'s /poster path, with an optional index', async () => {
+  const calls = [];
+  const { server, origin } = await startFakeBackend(async (req, res) => {
+    const body = await readBody(req);
+    if (req.url.endsWith('/renders')) {
+      res.writeHead(201, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'r1', spec: SPEC }));
+      return;
+    }
+    calls.push({ method: req.method, url: req.url, contentType: req.headers['content-type'], auth: req.headers.authorization, body });
+    res.writeHead(204).end();
+  });
+  try {
+    const transport = createApiTransport({ apiUrl: origin, apiKey: 'k', projectId: 'proj1', creativeId: 'cr1' });
+    await transport.getSpec();
+
+    await transport.putPoster('9x16', Buffer.from([9, 9]));
+    let put = calls.find((c) => c.url.includes('/poster'));
+    const url = new URL(put.url, origin);
+    assert.equal(url.pathname, '/api/v2/projects/proj1/marketing/creatives/cr1/renders/r1/frames/9x16/poster');
+    assert.equal(url.searchParams.has('index'), false);
+    assert.equal(put.contentType, 'image/jpeg');
+    assert.equal(put.auth, 'Bearer k');
+    assert.deepEqual([...put.body], [9, 9]);
+
+    calls.length = 0;
+    await transport.putPoster('story', Buffer.from([1]), { index: 2 });
+    put = calls.find((c) => c.url.includes('/poster'));
+    assert.equal(new URL(put.url, origin).searchParams.get('index'), '2');
+  } finally {
+    server.close();
+  }
+});
+
+test('putPoster: retries once on a 5xx, throws on a non-204/non-5xx', async () => {
+  let puts = 0;
+  let statuses = [503, 204];
+  const { server, origin } = await startFakeBackend(async (req, res) => {
+    await readBody(req);
+    if (req.url.endsWith('/renders')) {
+      res.writeHead(201, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'r1', spec: SPEC }));
+      return;
+    }
+    puts += 1;
+    res.writeHead(statuses.shift() ?? 204).end();
+  });
+  try {
+    const transport = createApiTransport({ apiUrl: origin, apiKey: 'k', projectId: 'p1', creativeId: 'c1' });
+    await transport.getSpec();
+    await transport.putPoster('9x16', Buffer.from([1]));
+    assert.equal(puts, 2);
+
+    puts = 0;
+    statuses = [400];
+    await assert.rejects(transport.putPoster('9x16', Buffer.from([1])), /PUT poster 9x16 failed: 400/);
+    assert.equal(puts, 1);
+  } finally {
+    server.close();
+  }
+});
+
 test('putFrame: before getSpec() has run, throws rather than hitting an unknown render id', async () => {
   const transport = createApiTransport({ apiUrl: 'http://127.0.0.1:1', apiKey: 'k', projectId: 'p1', creativeId: 'c1' });
   await assert.rejects(

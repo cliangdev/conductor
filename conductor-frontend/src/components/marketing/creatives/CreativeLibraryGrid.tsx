@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { FilmIcon, ImagesIcon, LayersIcon, PlayIcon } from 'lucide-react'
 import { mountBoard } from '@cliangdev/creative-render/mount'
+import { motionKeyTimes } from '@cliangdev/creative-render/motion'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -46,13 +47,28 @@ const STATE_LABEL: Record<CreativeState, string> = {
   ARCHIVED: 'Archived',
 }
 
-function CreativeThumb({ creative, brand }: { creative: Creative; brand: RenderBrand }) {
+/** STILL and MOTION both mount a live board when there's no rendered thumbnail yet. A MOTION tile
+ *  additionally overlays a play badge + duration (a still frame of a video, not a photo) and, once
+ *  mounted, seeks the board to a representative moment — motion.js's presets start most elements
+ *  hidden/mid-fade at t=0, so a bare mount would show a near-blank frame; `motionKeyTimes`'s last
+ *  entry (inside the end-card hold, per contract) is the fully-composed frame instead. */
+function CreativeThumb({
+  creative,
+  brand,
+  mediaById,
+}: {
+  creative: Creative
+  brand: RenderBrand
+  mediaById: Map<string, CreativePhoto>
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
+  const isMotion = creative.kind === 'MOTION'
 
-  // A rendered PNG (from a local `render_creative`/CLI run) is the real thing the platform will
-  // show — prefer it over the live browser mount, which falls back to whenever no render exists yet.
+  // A rendered PNG/poster (from a local `render_creative`/CLI run) is the real thing the platform
+  // will show — prefer it over the live browser mount, which falls back to whenever no render exists yet.
   const thumbnailUrl = creative.latestRenderThumbnailUrl
+  const motionDurationSec = creative.motion?.durationSec ?? 8
 
   useEffect(() => {
     const el = containerRef.current
@@ -76,30 +92,42 @@ function CreativeThumb({ creative, brand }: { creative: Creative; brand: RenderB
 
   useEffect(() => {
     if (thumbnailUrl || !visible || !containerRef.current) return
+    const clipMedia =
+      isMotion && creative.motion?.background?.source === 'clip' && creative.motion.background.clipMediaId
+        ? mediaById.get(creative.motion.background.clipMediaId)
+        : undefined
     const handle = mountBoard(containerRef.current, {
-      creative: creativeToRenderCreative(creative),
+      creative: creativeToRenderCreative(creative, undefined, { clipMedia }),
       brand,
       placementKey: '4x5',
     })
+    if (isMotion) {
+      const times = motionKeyTimes(creative.motion ?? {})
+      void handle.ready.then(() => void handle.seek(times[times.length - 1]))
+    }
     return () => handle.destroy()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-mount only when the rendered fields change
-  }, [thumbnailUrl, visible, creative.headline, creative.body, creative.layout, creative.theme, creative.photoUrl, brand])
-
-  if (thumbnailUrl) {
-    return (
-      <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
-      </div>
-    )
-  }
+  }, [thumbnailUrl, visible, creative.headline, creative.body, creative.layout, creative.theme, creative.photoUrl, creative.kind, creative.motion, brand, isMotion, mediaById, creative])
 
   return (
-    <div
-      ref={containerRef}
-      data-testid={`creative-thumb-${creative.id}`}
-      className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3"
-    />
+    <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
+      {thumbnailUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <div ref={containerRef} className="h-full w-full" />
+      )}
+      {isMotion && (
+        <>
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <PlayIcon className="h-8 w-8 fill-background text-background drop-shadow" aria-hidden />
+          </span>
+          <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-foreground/70 px-1.5 py-0.5 text-[11px] text-background">
+            {formatDuration(motionDurationSec)}
+          </span>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -349,7 +377,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                 {root.kind === 'CLIP' ? (
                   <ClipThumb creative={root} mediaById={mediaById} />
                 ) : (
-                  <CreativeThumb creative={root} brand={brand} />
+                  <CreativeThumb creative={root} brand={brand} mediaById={mediaById} />
                 )}
                 <div className="flex flex-col gap-1.5 border-t border-border p-3">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">

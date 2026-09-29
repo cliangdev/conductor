@@ -473,15 +473,30 @@ describe('render_creative', () => {
 
     expect(renderCreative).toHaveBeenCalledWith(
       { creativeId: 'c1', previewOnly: false, renderer: 'mcp', workflowRunId: undefined },
-      config
+      config,
+      expect.any(Function)
     )
     expect(result['nextStep']).toMatch(/preview_creative/)
+    expect(result['log']).toBeUndefined()
   })
 
   it('points back at the error on failure instead of preview_creative', async () => {
     mocked(renderCreative).mockResolvedValue({ ok: false, error: 'photo failed to load', frames: [] })
     const result = await renderCreativeTool({ creativeId: 'c1' }, config)
     expect(result['nextStep']).toMatch(/error/)
+  })
+
+  it('collects the render core\'s progress lines into a `log` field for a MOTION render', async () => {
+    mocked(renderCreative).mockImplementation(async (_params, _config, log) => {
+      log?.('fetching spec')
+      log?.('rendering 1 MOTION placement(s) at 30fps')
+      log?.('9x16: 25% (60/240 frames)')
+      return { ok: true, renderId: 'r2', state: 'SUCCEEDED', frames: [{ placementKey: '9x16', url: 'https://x.test/9x16.mp4', durationSeconds: 8, hasAudio: true, posterUrl: 'https://x.test/9x16.jpg' }] }
+    })
+
+    const result = await renderCreativeTool({ creativeId: 'c1' }, config)
+
+    expect(result['log']).toBe('fetching spec\nrendering 1 MOTION placement(s) at 30fps\n9x16: 25% (60/240 frames)')
   })
 })
 
@@ -684,6 +699,100 @@ describe('preview_creative (CLIP)', () => {
 
     expect(result.image).toBeUndefined()
     expect(result.note).toMatch(/media blocked/)
+  })
+})
+
+describe('preview_creative (MOTION)', () => {
+  const fetchMock = vi.fn()
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockReset()
+  })
+  const jpeg = {
+    ok: true,
+    headers: { get: (name: string) => (name === 'content-type' ? 'image/jpeg' : null) },
+    arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+  }
+
+  it('renders a fresh previewOnly key-moments sheet (not a real MOTION render) and notes the duration', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders') ? [] : { id: 'c1', version: 1, kind: 'MOTION', motion: { durationSec: 8 } }) as never
+    )
+    mocked(renderCreative).mockResolvedValue({
+      ok: true,
+      renderId: 'r1',
+      state: 'SUCCEEDED',
+      frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.jpg', sizeBytes: 100 }],
+    })
+    fetchMock.mockResolvedValue(jpeg)
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(renderCreative).toHaveBeenCalledWith({ creativeId: 'c1', previewOnly: true, renderer: 'mcp' }, config)
+    expect(result.image).toBeDefined()
+    expect(result.note).toContain('8s animation')
+    expect(result.note).toContain('three key moments')
+    expect(result.note).not.toMatch(/already has a rendered video/)
+  })
+
+  it('mentions the current version\'s already-rendered MP4 URLs alongside the sheet, without re-rendering', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders')
+        ? [
+            { id: 'sheet-render', state: 'SUCCEEDED', previewOnly: true, creativeVersion: 2, frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.jpg', sizeBytes: 100 }] },
+            {
+              id: 'video-render',
+              state: 'SUCCEEDED',
+              previewOnly: false,
+              creativeVersion: 2,
+              frames: [{ placementKey: '9x16', url: 'https://x.test/9x16.mp4', durationSeconds: 8, hasAudio: true, contentType: 'video/mp4' }],
+            },
+          ]
+        : { id: 'c1', version: 2, kind: 'MOTION', motion: { durationSec: 8 } }) as never
+    )
+    fetchMock.mockResolvedValue(jpeg)
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(renderCreative).not.toHaveBeenCalled()
+    expect(result.image).toBeDefined()
+    expect(result.note).toContain('already has a rendered video')
+    expect(result.note).toContain('9x16: https://x.test/9x16.mp4 (8s, with audio)')
+  })
+
+  it('does not mention a video render made from an older version', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders')
+        ? [
+            { id: 'sheet-render', state: 'SUCCEEDED', previewOnly: true, creativeVersion: 3, frames: [{ placementKey: 'sheet', url: 'https://x.test/sheet.jpg', sizeBytes: 100 }] },
+            {
+              id: 'stale-video-render',
+              state: 'SUCCEEDED',
+              previewOnly: false,
+              creativeVersion: 2,
+              frames: [{ placementKey: '9x16', url: 'https://x.test/old-9x16.mp4', durationSeconds: 8, contentType: 'video/mp4' }],
+            },
+          ]
+        : { id: 'c1', version: 3, kind: 'MOTION', motion: { durationSec: 8 } }) as never
+    )
+    fetchMock.mockResolvedValue(jpeg)
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(result.note).not.toMatch(/already has a rendered video/)
+  })
+
+  it('still attaches the duration note when the preview render fails', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders') ? [] : { id: 'c1', version: 1, kind: 'MOTION', motion: { durationSec: 15 } }) as never
+    )
+    mocked(renderCreative).mockResolvedValue({ ok: false, error: 'photo failed to load', renderId: 'r0', frames: [] })
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(result.image).toBeUndefined()
+    expect(result.note).toContain('15s animation')
+    expect(result.note).toContain('Rendering a preview failed: photo failed to load')
   })
 })
 
