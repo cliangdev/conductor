@@ -463,7 +463,8 @@ interface RenderApiItem {
 
 export async function renderCreativeTool(
   params: { creativeId: string; previewOnly?: boolean; renderer?: string; workflowRunId?: string },
-  config: Config
+  config: Config,
+  onProgress?: (message: string) => void
 ): Promise<Record<string, unknown>> {
   // A MOTION render can run for a while (roughly 20s per placement for an 8s video, streamed one
   // ffmpeg progress line every ~25% per placement) — this tool call is still synchronous, but the
@@ -472,7 +473,11 @@ export async function renderCreativeTool(
   const result = await runLocalRender(
     { creativeId: params.creativeId, previewOnly: !!params.previewOnly, renderer: params.renderer ?? 'mcp', workflowRunId: params.workflowRunId },
     config,
-    (...args: unknown[]) => progress.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '))
+    (...args: unknown[]) => {
+      const line = args.map((a) => (typeof a === 'string' ? a : String(a))).join(' ')
+      progress.push(line)
+      onProgress?.(line)
+    }
   )
   return {
     renderId: result.renderId,

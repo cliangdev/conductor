@@ -461,6 +461,19 @@ describe('upload_creative_photo (deprecated alias)', () => {
 })
 
 describe('render_creative', () => {
+  it('passes each render log line to onProgress (sent to the client as MCP progress notifications)', async () => {
+    mocked(renderCreative).mockImplementation(async (_params, _config, log) => {
+      log?.('9x16: 25% (60/240 frames)')
+      log?.('9x16: 100% (240/240 frames)')
+      return { ok: true, renderId: 'r1', state: 'SUCCEEDED', frames: [] }
+    })
+    const lines: string[] = []
+
+    await renderCreativeTool({ creativeId: 'c1' }, config, (line) => lines.push(line))
+
+    expect(lines).toEqual(['9x16: 25% (60/240 frames)', '9x16: 100% (240/240 frames)'])
+  })
+
   it('returns the render result with a "look at it" next step on success', async () => {
     mocked(renderCreative).mockResolvedValue({
       ok: true,
