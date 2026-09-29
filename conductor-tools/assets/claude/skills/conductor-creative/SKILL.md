@@ -121,6 +121,30 @@ worst. A logo lockup and CTA claim land on the last beat only by default; `cta: 
 beat overrides that. A carousel renders every card at one shared aspect ratio (`carouselRatio`),
 since the destination platforms require that.
 
+## Video you already have
+
+Not every video needs the brand layout above — a finished clip (a demo recording, an existing edit,
+something a person or another tool already produced) can go up as-is. That's a CLIP Creative: no
+photo, headline or layout, just the video.
+
+1. `upload_creative_media` (local path or URL) — same provenance fields as a photo (`source`,
+   `licence`, `aiGenerated`). It detects video vs. audio vs. photo automatically and, for a video,
+   extracts a poster frame. Use the returned media's id below.
+2. `create_creative` with `kind: "CLIP"` and `clipMedia`. One file for every placement:
+   `{"default": mediaId}`. A different cut per placement (e.g. a square edit for feed, a vertical one
+   for Reels): `{"9x16": mediaId, "4x5": mediaId}` — `default` still covers any placement without its
+   own entry. A reel takes exactly one video, so don't split a reel-eligible placement across two.
+3. `render_creative` — instant for a CLIP (the backend assembles the frames; nothing renders locally
+   here the way a STILL creative's browser-driven render does).
+4. `preview_creative` — returns a small poster sheet across placements instead of the STILL contact
+   sheet, plus each placement's duration. Still worth a look: a poster is one frame, not the whole
+   cut, so open the actual video before calling a rough or misframed clip done.
+5. `attach_creative_to_post`, same as any other Creative.
+
+Mind each destination's own duration limit (per docs/publishing.md) — a clip that's fine on one
+platform may get rejected or trimmed on another; check before attaching to a Post that fans out
+broadly.
+
 ## Failures that are silent (carried over from this skill's predecessor)
 
 Automated checks are real but incomplete. These are the ones worth remembering to look for by eye:

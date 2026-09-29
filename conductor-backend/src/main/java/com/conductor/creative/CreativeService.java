@@ -7,6 +7,7 @@ import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeState;
@@ -159,12 +160,15 @@ public class CreativeService {
         String state = enumValue(request.getState(), Creative.STATE_DRAFT);
         String sequenceKind = enumValue(request.getSequenceKind(), null);
         String lockup = enumValue(request.getLockup(), Creative.LOCKUP_PLAIN);
+        String kind = enumValue(request.getKind(), Creative.KIND_STILL);
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : List.of();
         List<SequenceBeat> sequence = request.getSequence() != null ? request.getSequence() : List.of();
         CreativeLayoutOverrides layoutOverrides = request.getLayoutOverrides();
+        Map<String, String> clipMedia = request.getClipMedia();
 
         PhotoResolution mainPhoto = resolvePhoto(projectId, request.getPhotoId());
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
+        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, clipMedia);
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, request.getHeadline(), request.getBody(), request.getCaption(),
@@ -172,7 +176,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
-                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides)));
+                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -199,6 +203,8 @@ public class CreativeService {
         creative.setTypeOverrides(objectMapper.createObjectNode());
         creative.setLayoutOverrides(layoutOverrides != null ? objectMapper.valueToTree(layoutOverrides) : null);
         creative.setLockup(lockup);
+        creative.setKind(kind);
+        creative.setClipMedia(clipMedia != null && !clipMedia.isEmpty() ? objectMapper.valueToTree(clipMedia) : null);
         creative.setCreatedBy(caller.getId());
 
         creative = saveWithNextNumber(creative);
@@ -228,21 +234,25 @@ public class CreativeService {
         String carouselRatio = request.getCarouselRatio() != null ? request.getCarouselRatio() : current.getCarouselRatio();
         String sequenceKind = request.getSequenceKind() != null ? request.getSequenceKind().getValue() : current.getSequenceKind();
         String lockup = request.getLockup() != null ? request.getLockup().getValue() : current.getLockup();
+        String kind = request.getKind() != null ? request.getKind().getValue() : current.getKind();
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : toStringList(current.getPlacements());
         List<SequenceBeat> sequence = request.getSequence() != null ? request.getSequence() : toSequenceBeats(current.getSequence());
         CreativeLayoutOverrides layoutOverridesRequest = request.getLayoutOverrides();
         JsonNode layoutOverrides = layoutOverridesRequest != null
                 ? objectMapper.valueToTree(layoutOverridesRequest) : current.getLayoutOverrides();
+        Map<String, String> clipMedia = request.getClipMedia() != null
+                ? request.getClipMedia() : toClipMediaMap(current.getClipMedia());
 
         PhotoResolution mainPhoto = resolvePhoto(projectId, photoId);
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
+        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, clipMedia);
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, headline, body, caption, state, photoId, mainPhoto.resolvable(),
                 mainPhoto.photo() != null, mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(), sequenceKind,
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
-                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides)));
+                overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -278,6 +288,8 @@ public class CreativeService {
         current.setTypeOverrides(typeOverrides);
         current.setLayoutOverrides(layoutOverrides);
         current.setLockup(lockup);
+        current.setKind(kind);
+        current.setClipMedia(clipMedia.isEmpty() ? null : objectMapper.valueToTree(clipMedia));
 
         current = creativeRepository.save(current);
         return toView(projectId, current, loadPhotos(List.of(current)));
@@ -298,6 +310,7 @@ public class CreativeService {
 
         PhotoResolution mainPhoto = resolvePhoto(projectId, root.getPhotoId());
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
+        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, toClipMediaMap(root.getClipMedia()));
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 root.getLayout(), root.getTheme(), placements, headline, root.getBody(), root.getCaption(),
@@ -305,7 +318,8 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds(),
-                overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides())));
+                overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides()),
+                root.getKind(), clipMediaEntries));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -329,6 +343,8 @@ public class CreativeService {
         variant.setSequenceKind(root.getSequenceKind());
         variant.setSequence(root.getSequence());
         variant.setCarouselRatio(root.getCarouselRatio());
+        variant.setKind(root.getKind());
+        variant.setClipMedia(root.getClipMedia());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
@@ -342,15 +358,35 @@ public class CreativeService {
     public Readiness readiness(String projectId, String creativeId, User caller) {
         requireMember(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
-        CreativePhoto photo = creative.getPhotoId() != null
-                ? photoRepository.findByIdAndProjectId(creative.getPhotoId(), projectId).orElse(null)
-                : null;
+        boolean isClip = Creative.KIND_CLIP.equals(creative.getKind());
 
         List<ReadinessItem> items = new ArrayList<>();
         items.add(new ReadinessItem("caption", notBlank(creative.getCaption()), true,
                 notBlank(creative.getCaption()) ? "caption is set" : "caption is missing: the post needs primary text"));
-        items.add(new ReadinessItem("altText", notBlank(creative.getAltText()), true,
+        // Alt text describes a still photo for the upload; for a CLIP (video), it is advisory only — a
+        // missing alt text never blocks a video the way it blocks a photo (contract: "optional -> warning
+        // only for video").
+        items.add(new ReadinessItem("altText", notBlank(creative.getAltText()), !isClip,
                 notBlank(creative.getAltText()) ? "alt text is set" : "alt text is missing: describe the photo for the upload"));
+
+        if (isClip) {
+            addClipReadinessItems(projectId, creative, items);
+        } else {
+            addPhotoReadinessItems(projectId, creative, items);
+        }
+
+        boolean notDraft = !Creative.STATE_DRAFT.equals(creative.getState());
+        items.add(new ReadinessItem("state", notDraft, true,
+                notDraft ? "not a draft" : "Creative is still a draft"));
+
+        boolean ready = items.stream().noneMatch(i -> i.blocking() && !i.ok());
+        return new Readiness(ready, items);
+    }
+
+    private void addPhotoReadinessItems(String projectId, Creative creative, List<ReadinessItem> items) {
+        CreativePhoto photo = creative.getPhotoId() != null
+                ? photoRepository.findByIdAndProjectId(creative.getPhotoId(), projectId).orElse(null)
+                : null;
         boolean photoChecked = photo != null && photo.isChecked();
         items.add(new ReadinessItem("photoChecked", photoChecked, true,
                 photo == null ? "no photo chosen"
@@ -362,15 +398,38 @@ public class CreativeService {
             items.add(new ReadinessItem("photoProvenance", provenanced, true,
                     provenanced ? "photo has source and licence" : "photo is missing source and/or licence"));
         }
-        boolean notDraft = !Creative.STATE_DRAFT.equals(creative.getState());
-        items.add(new ReadinessItem("state", notDraft, true,
-                notDraft ? "not a draft" : "Creative is still a draft"));
         boolean aiGenerated = photo != null && photo.isAiGenerated();
         items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
                 aiGenerated ? "photo is AI-generated: tick the AI-disclosure toggle on upload" : "not AI-generated"));
+    }
 
-        boolean ready = items.stream().noneMatch(i -> i.blocking() && !i.ok());
-        return new Readiness(ready, items);
+    /** Readiness for CLIP (COND-24 PR1): caption (above), alt text (advisory), the chosen clip's media
+     *  source/licence, and its AI-disclosure flag (informational — mirrors {@link #addPhotoReadinessItems}). */
+    private void addClipReadinessItems(String projectId, Creative creative, List<ReadinessItem> items) {
+        Map<String, String> clipMedia = toClipMediaMap(creative.getClipMedia());
+        boolean hasClip = !clipMedia.isEmpty();
+        items.add(new ReadinessItem("clip", hasClip, true,
+                hasClip ? "a clip is chosen" : "no clip chosen: pick at least one video for this Creative"));
+
+        CreativePhoto media = representativeClipMedia(projectId, clipMedia);
+        if (media != null) {
+            boolean provenanced = notBlank(media.getSource()) && notBlank(media.getLicence());
+            items.add(new ReadinessItem("mediaProvenance", provenanced, true,
+                    provenanced ? "the clip has source and licence" : "the clip is missing source and/or licence"));
+        }
+        boolean aiGenerated = media != null && media.isAiGenerated();
+        items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
+                aiGenerated ? "the clip is AI-generated: tick the AI-disclosure toggle on upload" : "not AI-generated"));
+    }
+
+    /** The {@code "default"} entry's media, or the first entry's if there is no default — the one clip
+     *  {@link #addClipReadinessItems} reads provenance/AI-disclosure off. */
+    private CreativePhoto representativeClipMedia(String projectId, Map<String, String> clipMedia) {
+        if (clipMedia.isEmpty()) {
+            return null;
+        }
+        String mediaId = clipMedia.containsKey("default") ? clipMedia.get("default") : clipMedia.values().iterator().next();
+        return mediaId != null ? photoRepository.findByIdAndProjectId(mediaId, projectId).orElse(null) : null;
     }
 
     /**
@@ -508,6 +567,36 @@ public class CreativeService {
         return new SequencePhotoResolution(unknown);
     }
 
+    /**
+     * Resolves a CLIP creative's {@code clipMedia} map ({@code "default"}/placement key -> media id)
+     * against the project's media library, for {@link CreativeValidator#validate}. A null or empty map
+     * resolves to no entries (a CLIP may be a draft with no clip chosen yet, exactly like a STILL Creative
+     * may be a draft with no photo).
+     */
+    private List<CreativeValidator.ClipMediaEntry> resolveClipMedia(String projectId, Map<String, String> clipMedia) {
+        if (clipMedia == null || clipMedia.isEmpty()) {
+            return List.of();
+        }
+        List<CreativeValidator.ClipMediaEntry> entries = new ArrayList<>();
+        for (Map.Entry<String, String> entry : clipMedia.entrySet()) {
+            String mediaId = entry.getValue();
+            CreativePhoto media = mediaId != null ? photoRepository.findByIdAndProjectId(mediaId, projectId).orElse(null) : null;
+            entries.add(new CreativeValidator.ClipMediaEntry(entry.getKey(), mediaId, media != null,
+                    media != null && media.isVideo(), media != null && media.isUploaded(),
+                    media != null && media.isBlocked()));
+        }
+        return entries;
+    }
+
+    /** {@code creative.clip_media} JSON -&gt; a typed map, or an empty map when unset. */
+    private Map<String, String> toClipMediaMap(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(node, new TypeReference<Map<String, String>>() {
+        });
+    }
+
     private BrandKit resolveKit(String projectId, String brandKitId) {
         return brandKitId != null ? requireKit(projectId, brandKitId) : brandKitService.resolveDefault(projectId);
     }
@@ -595,6 +684,10 @@ public class CreativeService {
 
     private static String enumValue(CreativeLockup lockup, String fallback) {
         return lockup != null ? lockup.getValue() : fallback;
+    }
+
+    private static String enumValue(CreativeKind kind, String fallback) {
+        return kind != null ? kind.getValue() : fallback;
     }
 
     /** {@code layoutOverrides.band}, straight off the request DTO — used on create/variant, before it is ever

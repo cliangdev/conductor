@@ -44,6 +44,7 @@ function creative(overrides: Record<string, unknown> = {}) {
     parentCreativeId: null,
     name: 'Paste a link',
     state: 'READY',
+    kind: 'STILL',
     layout: 'stacked',
     theme: 'dark',
     photoId: null,

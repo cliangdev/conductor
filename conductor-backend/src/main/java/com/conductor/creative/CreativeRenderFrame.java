@@ -9,6 +9,7 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -63,6 +64,18 @@ public class CreativeRenderFrame {
     @Column(name = "warnings", columnDefinition = "jsonb", nullable = false)
     private JsonNode warnings;
 
+    /** Video frame running time, copied from the source media at render assembly time; null for an image frame. */
+    @Column(name = "duration_seconds", precision = 10, scale = 3)
+    private BigDecimal durationSeconds;
+
+    /** Whether a video frame carries an audio track, copied from the source media; null for an image frame. */
+    @Column(name = "has_audio")
+    private Boolean hasAudio;
+
+    /** A copy of the source media's poster JPEG under this render's own path; null for an image frame or a video with no poster. */
+    @Column(name = "poster_gcs_path")
+    private String posterGcsPath;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -115,6 +128,15 @@ public class CreativeRenderFrame {
 
     public JsonNode getWarnings() { return warnings; }
     public void setWarnings(JsonNode warnings) { this.warnings = warnings; }
+
+    public BigDecimal getDurationSeconds() { return durationSeconds; }
+    public void setDurationSeconds(BigDecimal durationSeconds) { this.durationSeconds = durationSeconds; }
+
+    public Boolean getHasAudio() { return hasAudio; }
+    public void setHasAudio(Boolean hasAudio) { this.hasAudio = hasAudio; }
+
+    public String getPosterGcsPath() { return posterGcsPath; }
+    public void setPosterGcsPath(String posterGcsPath) { this.posterGcsPath = posterGcsPath; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

@@ -12,6 +12,14 @@ export type CreativeState = 'DRAFT' | 'READY' | 'ARCHIVED'
 export type CreativeTheme = 'dark' | 'light'
 export type SequenceKind = 'story' | 'carousel'
 export type CreativeLockup = 'plain' | 'chip'
+/** STILL is today's photo+layout Creative. MOTION (branded animated video) ships in PR 2 — the API
+ *  accepts it but POST renders refuses it with 422 until then. CLIP is any finished video used as-is,
+ *  one file for all placements or one per placement, no brand layout — see video-contract.md. */
+export type CreativeKind = 'STILL' | 'MOTION' | 'CLIP'
+/** A media library item's kind (COND-24 T6 video creatives) — the table stays named `creative_photo`
+ *  (and photo-only call sites keep talking about "photos"), but the API and UI call it "media" now
+ *  that it also holds video and audio. */
+export type MediaKind = 'IMAGE' | 'VIDEO' | 'AUDIO'
 
 /** Per-placement overrides of layout-derived numbers, in pixels — an absent placement key falls
  * back to the layout's own default. See conductor-creative/README.md's "the creative shape". */
@@ -37,6 +45,9 @@ export interface Creative {
   parentCreativeId?: string | null
   name?: string | null
   state: CreativeState
+  /** Defaults to STILL on the server; older responses cached before this field existed are treated
+   *  as STILL by every call site below. */
+  kind: CreativeKind
   layout: string
   theme: CreativeTheme
   photoId?: string | null
@@ -46,6 +57,10 @@ export interface Creative {
   body?: string | null
   caption?: string | null
   altText?: string | null
+  /** CLIP only: `{"default": mediaId, "9x16": mediaId, ...}` — per-placement video overrides; the
+   *  `default` entry (if present) covers every placement without its own explicit entry, matched to
+   *  its nearest-aspect placement — see clipPlacement.ts's `nearestAspectPlacement`. */
+  clipMedia?: Record<string, string> | null
   placements: string[]
   sequenceKind?: SequenceKind | null
   sequence: SequenceBeat[]
@@ -71,6 +86,7 @@ export interface CreateCreativeRequest {
   brandKitId?: string | null
   name?: string | null
   state?: CreativeState
+  kind?: CreativeKind
   layout?: string | null
   theme?: CreativeTheme
   photoId?: string | null
@@ -79,6 +95,7 @@ export interface CreateCreativeRequest {
   body?: string | null
   caption?: string | null
   altText?: string | null
+  clipMedia?: Record<string, string> | null
   placements?: string[]
   sequenceKind?: SequenceKind | null
   sequence?: SequenceBeat[]
@@ -92,6 +109,7 @@ export interface PatchCreativeRequest {
   brandKitId?: string
   name?: string
   state?: CreativeState
+  kind?: CreativeKind
   layout?: string
   theme?: CreativeTheme
   photoId?: string | null
@@ -100,6 +118,7 @@ export interface PatchCreativeRequest {
   body?: string | null
   caption?: string | null
   altText?: string | null
+  clipMedia?: Record<string, string> | null
   placements?: string[]
   sequenceKind?: SequenceKind | null
   sequence?: SequenceBeat[]
@@ -134,6 +153,14 @@ export interface CreativePhoto {
   sizeBytes: number
   width?: number | null
   height?: number | null
+  /** Defaults to IMAGE on the server; older cached rows without this field are treated as IMAGE. */
+  mediaKind: MediaKind
+  /** Required for VIDEO/AUDIO, absent for IMAGE. */
+  durationSeconds?: number | null
+  /** VIDEO only — best-effort (see MediaPicker's `detectHasAudio`); null means "could not tell". */
+  hasAudio?: boolean | null
+  /** VIDEO only — a JPEG poster frame's signed URL, once minted and confirmed. */
+  posterUrl?: string | null
   source?: string | null
   licence?: string | null
   aiGenerated: boolean
@@ -149,15 +176,31 @@ export interface CreativePhoto {
   createdAt: string
 }
 
+/** Alias used at video/audio call sites — same wire shape as {@link CreativePhoto}, the table's own
+ *  (unchanged) name. */
+export type CreativeMedia = CreativePhoto
+
 export interface CreateCreativePhotoRequest {
   label?: string | null
-  contentType: 'image/jpeg' | 'image/png' | 'image/webp'
+  contentType: string
   sizeBytes: number
-  width: number
-  height: number
+  /** Required for IMAGE/VIDEO, omitted for AUDIO. */
+  width?: number
+  height?: number
+  /** Defaults to IMAGE on the server. */
+  mediaKind?: MediaKind
+  /** Required for VIDEO/AUDIO. */
+  durationSeconds?: number
+  /** VIDEO only, best-effort. */
+  hasAudio?: boolean
   source?: string | null
   licence?: string | null
   aiGenerated?: boolean
+}
+
+export interface CreativeMediaPosterUpload {
+  uploadUrl: string
+  gcsPath: string
 }
 
 export interface PatchCreativePhotoRequest {
@@ -210,6 +253,14 @@ export interface CreativeRenderFrame {
   height: number
   sizeBytes: number
   warnings: string[]
+  /** Video frame only. */
+  durationSeconds?: number | null
+  /** Video frame only, best-effort. */
+  hasAudio?: boolean | null
+  /** Video frame only — a JPEG poster's signed URL, used as the `<video poster>`. */
+  posterUrl?: string | null
+  /** e.g. "image/png" or "video/mp4" — absent on older cached rows, which are images. */
+  contentType?: string | null
 }
 
 export interface CreativeRender {
@@ -263,6 +314,28 @@ export function listCreativeRenders(
   token: string,
 ): Promise<CreativeRender[]> {
   return apiGet<CreativeRender[]>(`${creativesBase(projectId)}/${creativeId}/renders`, token)
+}
+
+export interface CreateCreativeRenderRequest {
+  previewOnly?: boolean
+  renderer?: string | null
+  workflowRunId?: string | null
+}
+
+/**
+ * Requests a render. For a STILL/MOTION Creative this only records a RUNNING render and returns the
+ * `spec` a local job (MCP tool, CLI, or self-hosted Workflow) renders from — the web app never calls
+ * this for those kinds. For a CLIP Creative the server assembles the frames itself and answers
+ * SUCCEEDED immediately (no local work needed) — this is what the Renders panel's "Prepare for
+ * posting" button calls.
+ */
+export function requestCreativeRender(
+  projectId: string,
+  creativeId: string,
+  body: CreateCreativeRenderRequest,
+  token: string,
+): Promise<CreativeRender> {
+  return apiPost<CreativeRender>(`${creativesBase(projectId)}/${creativeId}/renders`, body, token)
 }
 
 /**
@@ -490,15 +563,18 @@ export function getCreativeReadiness(
   return apiGet<CreativeReadiness>(`${creativesBase(projectId)}/${creativeId}/readiness`, token)
 }
 
+/** `mediaKind` filters to one or more kinds (comma-joined) — omitted, this returns every kind, which
+ *  is what the Creative editor wants (it resolves photo, clip, and beat media off one local map). */
 export function listCreativePhotos(
   projectId: string,
   token: string,
   includeBlocked = false,
+  mediaKind?: MediaKind | MediaKind[],
 ): Promise<CreativePhoto[]> {
-  return apiGet<CreativePhoto[]>(
-    `${photosBase(projectId)}?includeBlocked=${includeBlocked}`,
-    token,
-  )
+  const params = new URLSearchParams({ includeBlocked: String(includeBlocked) })
+  const kinds = mediaKind == null ? [] : Array.isArray(mediaKind) ? mediaKind : [mediaKind]
+  if (kinds.length) params.set('mediaKind', kinds.join(','))
+  return apiGet<CreativePhoto[]>(`${photosBase(projectId)}?${params.toString()}`, token)
 }
 
 export function getCreativePhoto(
@@ -528,6 +604,27 @@ export function confirmCreativePhoto(
     sizeBytes != null ? { sizeBytes } : {},
     token,
   )
+}
+
+/** Mints a signed PUT URL for a VIDEO media row's poster JPEG — call after the video itself confirms.
+ *  See {@link confirmCreativePhotoPoster}. */
+export function createCreativePhotoPoster(
+  projectId: string,
+  photoId: string,
+  token: string,
+): Promise<CreativeMediaPosterUpload> {
+  return apiPost<CreativeMediaPosterUpload>(`${photosBase(projectId)}/${photoId}/poster`, {}, token)
+}
+
+/** Flips the poster uploaded at {@link createCreativePhotoPoster}'s URL live — the returned row's
+ *  `posterUrl` is a fresh signed GET. */
+export function confirmCreativePhotoPoster(
+  projectId: string,
+  photoId: string,
+  gcsPath: string,
+  token: string,
+): Promise<CreativePhoto> {
+  return apiPost<CreativePhoto>(`${photosBase(projectId)}/${photoId}/poster/confirm`, { gcsPath }, token)
 }
 
 export function patchCreativePhoto(

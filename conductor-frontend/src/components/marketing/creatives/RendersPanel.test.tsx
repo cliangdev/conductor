@@ -8,11 +8,17 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }))
 
+const { mockCan } = vi.hoisted(() => ({ mockCan: vi.fn((_cap?: string) => true) }))
+vi.mock('@/contexts/PermissionsContext', () => ({
+  useCan: (cap: string) => mockCan(cap),
+  usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
+}))
+
 Object.assign(navigator, {
   clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
 })
 
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPost } from '@/lib/api'
 import { RendersPanel } from './RendersPanel'
 import type { CreativeRender } from './types'
 
@@ -62,6 +68,7 @@ function setup(props: Partial<React.ComponentProps<typeof RendersPanel>> = {}) {
       creativeId="cr-1"
       creativeDisplayId="12a"
       creativeVersion={3}
+      creativeKind="STILL"
       token="tok"
       registry={{
         layouts: {},
@@ -78,6 +85,7 @@ function setup(props: Partial<React.ComponentProps<typeof RendersPanel>> = {}) {
 describe('RendersPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCan.mockReturnValue(true)
   })
   afterEach(() => {
     vi.useRealTimers()
@@ -221,5 +229,72 @@ describe('RendersPanel', () => {
     expect(apiGet).toHaveBeenCalledTimes(1)
     await userEvent.click(refresh)
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2))
+  })
+
+  it('plays a CLIP video frame inline in the grid and full size in the viewer, with poster and duration', async () => {
+    ;(apiGet as Mock).mockResolvedValue([
+      render_('r-1', {
+        frames: [
+          {
+            id: 'frame-video',
+            placementKey: '9x16',
+            platform: 'tiktok',
+            sequenceIndex: null,
+            url: 'https://storage.example/9x16.mp4',
+            width: 1080,
+            height: 1920,
+            sizeBytes: 2_000_000,
+            warnings: [],
+            durationSeconds: 12.5,
+            hasAudio: true,
+            posterUrl: 'https://storage.example/9x16-poster.jpg',
+            contentType: 'video/mp4',
+          },
+        ],
+      }),
+    ])
+    setup({ creativeKind: 'CLIP' })
+    await waitFor(() => expect(screen.getByTestId('renders-panel')).toBeInTheDocument())
+
+    const video = screen.getByTestId('render-frame-video-frame-video') as HTMLVideoElement
+    expect(video.tagName).toBe('VIDEO')
+    expect(video.poster).toBe('https://storage.example/9x16-poster.jpg')
+    expect(video).toHaveAttribute('controls')
+    expect(screen.getByText(/12s|13s/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'View 9:16 full size' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('video')).not.toBeNull()
+    expect(dialog.querySelector('img')).toBeNull()
+  })
+
+  it('shows a "Prepare for posting" button for CLIP creatives, gated by creative.manage, that requests a render', async () => {
+    ;(apiGet as Mock).mockResolvedValue([])
+    ;(apiPost as Mock).mockResolvedValue({ id: 'r-new', state: 'SUCCEEDED', previewOnly: false, creativeVersion: 3, requestedAt: '2026-09-28T00:00:00Z', frames: [] })
+    setup({ creativeKind: 'CLIP' })
+
+    const button = await screen.findByRole('button', { name: /prepare for posting/i })
+    await userEvent.click(button)
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(expect.stringContaining('/creatives/cr-1/renders'), { renderer: 'web' }, 'tok'),
+    )
+    // Reloads the render list after the server assembles the frames.
+    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2))
+  })
+
+  it('hides "Prepare for posting" without creative.manage', async () => {
+    mockCan.mockReturnValue(false)
+    ;(apiGet as Mock).mockResolvedValue([])
+    setup({ creativeKind: 'CLIP' })
+    await waitFor(() => expect(screen.getByText('No renders yet')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /prepare for posting/i })).not.toBeInTheDocument()
+  })
+
+  it('does not show "Prepare for posting" for a STILL creative', async () => {
+    ;(apiGet as Mock).mockResolvedValue([])
+    setup({ creativeKind: 'STILL' })
+    await waitFor(() => expect(screen.getByText('No renders yet')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /prepare for posting/i })).not.toBeInTheDocument()
   })
 })

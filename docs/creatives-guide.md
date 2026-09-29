@@ -167,7 +167,63 @@ Performance shows up in two places: the **Performance** panel on a Creative's ow
 whole lettered family, side by side), and **Marketing → What's working → Top creatives**, which
 ranks your best-performing variants across the whole project.
 
-## 5. Troubleshooting
+## 5. Video
+
+A **Clip** creative uses a finished video as-is — no brand layout, no headline/body rendered onto
+it. Upload video from any source (a phone recording, stock footage, something an AI generator
+produced) into the same media library the photo picker uses; tick **This video is AI-generated**
+when it is, same as a photo. Conductor reads the file's own width, height, duration, and (best
+effort) whether it has an audio track, and grabs a poster frame automatically — nothing to fill in
+by hand. **Motion** — a branded animated video (photo with a slow zoom/pan or a clip background,
+animated headline/body/CTA, optional audio) — is coming in the next release; the Kind field shows
+it disabled until then.
+
+### Make a Clip creative
+
+1. **Marketing → Creatives → New creative**, then set **Kind** to **Clip**. This swaps the
+   photo/layout/theme/headline/body fields and the live preview boards for the Clip media section —
+   name, caption, alt text, and state stay exactly where they were.
+2. **Default** — the video used for every placement that doesn't have its own file below it.
+   Conductor works out which placement it best serves by matching its aspect ratio to the closest
+   one your project supports (9:16, 4:5, 1:1, or 16:9) — shown under the video once picked.
+3. **Per-placement overrides** — 9:16, 4:5, 1:1, and 16:9 each take their own optional video, for
+   when one clip doesn't crop well to every shape (a vertical TikTok cut and a separate landscape
+   YouTube cut of the same spot, say). A placement with its own video ignores the default entirely.
+4. **Caption** and **alt text** — alt text is optional for video (a warning, not a block) since most
+   platforms don't show it on video the way they do on an image; caption still runs your Brand Kit's
+   copy rules exactly as it does for a Still creative.
+5. **Readiness** requires a caption and at least one clip (default or per-placement) before a Clip
+   creative can go Ready — same idea as a Still creative's photo-and-headline requirement, just
+   video-shaped.
+
+### Render it
+
+Rendering a Clip is instant — there's no local Playwright job, because there's nothing to draw: the
+server just copies your uploaded clip(s) into one render frame per placement they cover. Do it
+however's convenient:
+
+- **Prepare for posting**, in the Renders panel on the Creative's editor page — a plain button, web
+  only, no Claude Code needed.
+- From Claude Code/Desktop or the CLI, the same `render_creative` tool and `conductor creative
+  render <id>` command a Still creative uses — it recognizes a Clip and renders it the fast way.
+
+### Put it on a Post
+
+**Use in Post** works the same as for a Still creative, and maps video frames by placement:
+
+| Placement | Goes to |
+|---|---|
+| `9:16` | TikTok, Instagram and Facebook destinations set to Reel, YouTube when there's no `16:9` video (it goes out as a Short), and a Facebook destination set to Feed when there's no `1:1` video (Facebook publishes a lone Page video as a Reel, vertical recommended) |
+| `4:5` | an Instagram destination set to Feed |
+| `1:1` | a Facebook destination set to Feed |
+| `16:9` | YouTube, and a Facebook destination set to Feed only when there's neither a `1:1` nor a `9:16` video |
+
+A Reel or Story destination takes exactly one video — Conductor never sends it more than one frame.
+Keep an eye on each platform's own duration limits (TikTok, Reels, and Shorts are all built for
+short vertical video; YouTube's own limits depend on the destination format) — Conductor flags a
+clip over about three minutes as a heads-up when you upload it, but doesn't refuse it.
+
+## 6. Troubleshooting
 
 **"headline needs exactly one accent phrase (found 0 asterisks)"** (or 2, or 3) — your Brand Kit
 requires an accent phrase and your headline has the wrong number of `*asterisk*` pairs. Wrap

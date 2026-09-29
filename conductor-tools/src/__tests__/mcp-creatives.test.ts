@@ -19,18 +19,28 @@ vi.mock('../mcp/api.js', () => ({
     }
   },
 }))
-vi.mock('node:fs/promises', () => ({ readFile: vi.fn() }))
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(),
+  mkdtemp: vi.fn(),
+  writeFile: vi.fn(),
+  rm: vi.fn(),
+}))
 vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn() }))
+vi.mock('../lib/media-probe.js', () => ({ probeMedia: vi.fn(), extractPoster: vi.fn() }))
+vi.mock('../lib/poster-sheet.js', () => ({ composePosterSheet: vi.fn() }))
 
-import { readFile } from 'node:fs/promises'
+import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../mcp/api.js'
 import { renderCreative } from '../lib/creative-render.js'
+import { probeMedia, extractPoster } from '../lib/media-probe.js'
+import { composePosterSheet } from '../lib/poster-sheet.js'
 import {
   getBrandKit,
   listCreatives,
   getCreative,
   createCreative,
   updateCreative,
+  uploadCreativeMedia,
   uploadCreativePhoto,
   renderCreativeTool,
   previewCreative,
@@ -58,6 +68,8 @@ const PNG_1X1 = Buffer.from([
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Default happy-path for cleanup calls that most tests don't care about asserting on directly.
+  mocked(rm).mockResolvedValue(undefined)
 })
 
 describe('get_brand_kit', () => {
@@ -233,14 +245,14 @@ describe('update_creative', () => {
   })
 })
 
-describe('upload_creative_photo', () => {
-  it('reads dimensions from a local file, mints, uploads bytes and confirms', async () => {
+describe('upload_creative_media (photo)', () => {
+  it('reads dimensions from a local file, mints, uploads bytes and confirms, trimming the response', async () => {
     mocked(readFile).mockResolvedValue(PNG_1X1)
     mocked(apiPost)
       .mockResolvedValueOnce({ id: 'photo1', uploadUrl: 'https://bucket.test/signed/photo1' })
-      .mockResolvedValueOnce({ id: 'photo1', uploadStatus: 'UPLOADED' })
+      .mockResolvedValueOnce({ id: 'photo1', uploadStatus: 'UPLOADED', mediaKind: 'IMAGE', internalDebugField: 'drop-me' })
 
-    const result = await uploadCreativePhoto(
+    const result = await uploadCreativeMedia(
       { filePath: '/tmp/hero.png', source: 'Own work', licence: 'Own work', aiGenerated: false },
       config
     )
@@ -249,7 +261,7 @@ describe('upload_creative_photo', () => {
       1,
       '/api/v2/projects/proj-1/marketing/photos',
       {
-        label: 'hero.png',
+        label: 'hero',
         contentType: 'image/png',
         sizeBytes: PNG_1X1.byteLength,
         width: 1,
@@ -267,18 +279,184 @@ describe('upload_creative_photo', () => {
       { sizeBytes: PNG_1X1.byteLength },
       config
     )
-    expect(result).toEqual({ id: 'photo1', uploadStatus: 'UPLOADED' })
+    expect(result).toEqual({
+      media: { id: 'photo1', uploadStatus: 'UPLOADED', mediaKind: 'IMAGE' },
+      warnings: [],
+    })
+    expect(probeMedia).not.toHaveBeenCalled()
+  })
+
+  it('defaults the label to the given label when one is passed, overriding the filename', async () => {
+    mocked(readFile).mockResolvedValue(PNG_1X1)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ id: 'photo1', uploadUrl: 'https://bucket.test/signed/photo1' })
+      .mockResolvedValueOnce({ id: 'photo1' })
+
+    await uploadCreativeMedia({ filePath: '/tmp/hero.png', label: 'Hero shot' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({ label: 'Hero shot' }), config)
   })
 
   it('throws when neither filePath nor url is given', async () => {
-    await expect(uploadCreativePhoto({}, config)).rejects.toThrow(/Pass filePath/)
+    await expect(uploadCreativeMedia({}, config)).rejects.toThrow(/Pass filePath/)
   })
 
-  it('throws a clear error when the bytes are not a recognizable image', async () => {
+  it('throws a clear error when the bytes are not a recognizable photo, video or audio file', async () => {
     mocked(readFile).mockResolvedValue(Buffer.from([1, 2, 3, 4]))
-    await expect(uploadCreativePhoto({ filePath: '/tmp/not-an-image.bin' }, config)).rejects.toThrow(
+    mocked(probeMedia).mockRejectedValue(new Error('ffprobe found no usable video or audio stream in "/tmp/not-a-media-file.bin"'))
+
+    await expect(uploadCreativeMedia({ filePath: '/tmp/not-a-media-file.bin' }, config)).rejects.toThrow(
       /Could not read/
     )
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('upload_creative_media (video)', () => {
+  const VIDEO_BYTES = Buffer.from('fake-mp4-bytes-not-a-real-container')
+
+  it('probes duration/dimensions/audio, uploads the file, then extracts and uploads a poster', async () => {
+    mocked(readFile)
+      .mockResolvedValueOnce(VIDEO_BYTES) // the source video, read via readMediaSource
+      .mockResolvedValueOnce(Buffer.from('poster-jpeg-bytes')) // the poster, read after extractPoster
+    mocked(probeMedia).mockResolvedValue({
+      kind: 'VIDEO',
+      contentType: 'video/mp4',
+      width: 1080,
+      height: 1920,
+      durationSeconds: 12.5,
+      hasAudio: true,
+      codec: 'h264',
+    })
+    mocked(extractPoster).mockResolvedValue(undefined)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ id: 'vid1', uploadUrl: 'https://bucket.test/signed/vid1' }) // mint
+      .mockResolvedValueOnce({ id: 'vid1', uploadStatus: 'UPLOADED' }) // confirm
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/vid1-poster', gcsPath: 'gs://bucket/vid1-poster.jpg' }) // poster mint
+      .mockResolvedValueOnce({}) // poster confirm
+    mocked(apiGet).mockResolvedValueOnce({
+      id: 'vid1',
+      mediaKind: 'VIDEO',
+      durationSeconds: 12.5,
+      hasAudio: true,
+      posterUrl: 'https://bucket.test/vid1-poster.jpg',
+    })
+
+    const result = await uploadCreativeMedia({ filePath: '/tmp/clip.mp4', source: 'Own work', licence: 'Own work' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/photos',
+      {
+        mediaKind: 'VIDEO',
+        label: 'clip',
+        contentType: 'video/mp4',
+        sizeBytes: VIDEO_BYTES.byteLength,
+        width: 1080,
+        height: 1920,
+        durationSeconds: 12.5,
+        hasAudio: true,
+        source: 'Own work',
+        licence: 'Own work',
+        aiGenerated: false,
+      },
+      config
+    )
+    expect(putBytes).toHaveBeenNthCalledWith(1, 'https://bucket.test/signed/vid1', 'video/mp4', expect.anything())
+    expect(extractPoster).toHaveBeenCalledWith('/tmp/clip.mp4', expect.stringContaining('vid1'), 1)
+    expect(apiPost).toHaveBeenNthCalledWith(3, '/api/v2/projects/proj-1/marketing/photos/vid1/poster', {}, config)
+    expect(putBytes).toHaveBeenNthCalledWith(2, 'https://bucket.test/signed/vid1-poster', 'image/jpeg', expect.anything())
+    expect(apiPost).toHaveBeenNthCalledWith(
+      4,
+      '/api/v2/projects/proj-1/marketing/photos/vid1/poster/confirm',
+      { gcsPath: 'gs://bucket/vid1-poster.jpg' },
+      config
+    )
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/photos/vid1', config)
+    expect(result.media).toMatchObject({ id: 'vid1', mediaKind: 'VIDEO', posterUrl: 'https://bucket.test/vid1-poster.jpg' })
+    expect(result.warnings).toEqual([])
+  })
+
+  it('warns, but still uploads, a video longer than 180 seconds', async () => {
+    mocked(readFile).mockResolvedValueOnce(VIDEO_BYTES).mockResolvedValueOnce(Buffer.from('poster'))
+    mocked(probeMedia).mockResolvedValue({ kind: 'VIDEO', contentType: 'video/mp4', width: 1920, height: 1080, durationSeconds: 200, hasAudio: false })
+    mocked(extractPoster).mockResolvedValue(undefined)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ id: 'vid2', uploadUrl: 'https://bucket.test/signed/vid2' })
+      .mockResolvedValueOnce({ id: 'vid2' })
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/vid2-poster', gcsPath: 'gs://bucket/vid2-poster.jpg' })
+      .mockResolvedValueOnce({})
+    mocked(apiGet).mockResolvedValueOnce({ id: 'vid2' })
+
+    const result = await uploadCreativeMedia({ filePath: '/tmp/long.mp4' }, config)
+
+    expect(result.warnings).toEqual(['This video is 200s long — longer than most platforms take.'])
+  })
+
+  it('keeps the upload and warns, rather than failing it, when poster extraction fails', async () => {
+    mocked(readFile).mockResolvedValueOnce(VIDEO_BYTES)
+    mocked(probeMedia).mockResolvedValue({ kind: 'VIDEO', contentType: 'video/mp4', width: 1080, height: 1920, durationSeconds: 5, hasAudio: false })
+    mocked(extractPoster).mockRejectedValue(new Error('ffmpeg poster extraction failed'))
+    mocked(apiPost).mockResolvedValueOnce({ id: 'vid3', uploadUrl: 'https://bucket.test/signed/vid3' }).mockResolvedValueOnce({ id: 'vid3' })
+    mocked(apiGet).mockResolvedValueOnce({ id: 'vid3' })
+
+    const result = await uploadCreativeMedia({ filePath: '/tmp/nopo.mp4' }, config)
+
+    expect(result.warnings).toEqual([expect.stringContaining('Could not extract or upload a poster frame')])
+    // Only the two main-upload POSTs happen — no poster mint/confirm once extraction itself failed.
+    expect(apiPost).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('upload_creative_media (audio)', () => {
+  it('probes duration only, and never touches poster extraction', async () => {
+    const audioBytes = Buffer.from('fake-mp3-bytes')
+    mocked(readFile).mockResolvedValueOnce(audioBytes)
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 183.5, codec: 'mp3' })
+    mocked(apiPost)
+      .mockResolvedValueOnce({ id: 'aud1', uploadUrl: 'https://bucket.test/signed/aud1' })
+      .mockResolvedValueOnce({ id: 'aud1', mediaKind: 'AUDIO', durationSeconds: 183.5 })
+
+    const result = await uploadCreativeMedia({ filePath: '/tmp/track.mp3', licence: 'Licensed track' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/photos',
+      {
+        mediaKind: 'AUDIO',
+        label: 'track',
+        contentType: 'audio/mpeg',
+        sizeBytes: audioBytes.byteLength,
+        width: null,
+        height: null,
+        durationSeconds: 183.5,
+        hasAudio: undefined,
+        source: null,
+        licence: 'Licensed track',
+        aiGenerated: false,
+      },
+      config
+    )
+    expect(extractPoster).not.toHaveBeenCalled()
+    expect(apiGet).not.toHaveBeenCalled() // no poster re-fetch needed for audio
+    expect(result).toEqual({ media: { id: 'aud1', mediaKind: 'AUDIO', durationSeconds: 183.5 }, warnings: [] })
+  })
+})
+
+describe('upload_creative_photo (deprecated alias)', () => {
+  it('is the exact same implementation as upload_creative_media', () => {
+    expect(uploadCreativePhoto).toBe(uploadCreativeMedia)
+  })
+
+  it('uploads a photo exactly as upload_creative_media would', async () => {
+    mocked(readFile).mockResolvedValue(PNG_1X1)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ id: 'photo9', uploadUrl: 'https://bucket.test/signed/photo9' })
+      .mockResolvedValueOnce({ id: 'photo9', uploadStatus: 'UPLOADED' })
+
+    const result = await uploadCreativePhoto({ filePath: '/tmp/hero.png' }, config)
+
+    expect(result).toEqual({ media: { id: 'photo9', uploadStatus: 'UPLOADED' }, warnings: [] })
   })
 })
 
@@ -408,6 +586,104 @@ describe('preview_creative', () => {
 
     expect(result.image).toBeUndefined()
     expect(result.note).toMatch(/no photo/)
+  })
+})
+
+describe('preview_creative (CLIP)', () => {
+  const fetchMock = vi.fn()
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockReset()
+    // previewClip writes each downloaded poster into a temp dir before composing/reading them.
+    mocked(mkdtemp).mockResolvedValue('/tmp/conductor-preview-xyz')
+    mocked(writeFile).mockResolvedValue(undefined)
+  })
+
+  function servePoster(url: string, ok = true) {
+    return { ok, arrayBuffer: async () => new TextEncoder().encode(`poster-bytes-${url}`).buffer }
+  }
+
+  it('composes a sheet from every placement frame\'s poster, using the latest render with frames', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders')
+        ? [
+            {
+              id: 'r1',
+              state: 'SUCCEEDED',
+              creativeVersion: 2,
+              frames: [
+                { placementKey: '9x16', url: 'https://x.test/9x16.mp4', posterUrl: 'https://x.test/9x16.jpg', width: 1080, height: 1920, durationSeconds: 6 },
+                { placementKey: '4x5', url: 'https://x.test/4x5.mp4', posterUrl: 'https://x.test/4x5.jpg', width: 1080, height: 1350, durationSeconds: 6 },
+              ],
+            },
+          ]
+        : { id: 'c1', version: 2, kind: 'CLIP' }) as never
+    )
+    fetchMock.mockImplementation(async (url: string) => servePoster(url))
+    mocked(composePosterSheet).mockResolvedValue(Buffer.from('composed-sheet-bytes'))
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(renderCreative).not.toHaveBeenCalled()
+    expect(composePosterSheet).toHaveBeenCalledWith([expect.stringContaining('9x16'), expect.stringContaining('4x5')])
+    expect(result.image).toEqual({ data: Buffer.from('composed-sheet-bytes'), mimeType: 'image/jpeg' })
+    expect(result.note).toContain('9x16: 1080x1920, 6s')
+    expect(result.note).toContain('4x5: 1080x1350, 6s')
+  })
+
+  it('renders a real (non-preview) render first when none exists yet — previewOnly 422s for CLIP', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders') ? [] : { id: 'c1', version: 1, kind: 'CLIP' }) as never
+    )
+    mocked(renderCreative).mockResolvedValue({
+      ok: true,
+      renderId: 'r9',
+      state: 'SUCCEEDED',
+      frames: [{ placementKey: 'default', url: 'https://x.test/default.mp4', posterUrl: 'https://x.test/default.jpg', durationSeconds: 4 }],
+    })
+    fetchMock.mockImplementation(async (url: string) => servePoster(url))
+    mocked(composePosterSheet).mockResolvedValue(Buffer.from('one-poster-sheet'))
+
+    await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(renderCreative).toHaveBeenCalledWith({ creativeId: 'c1', previewOnly: false, renderer: 'mcp' }, config)
+  })
+
+  it('falls back to the first poster on its own when sheet composition fails', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders')
+        ? [
+            {
+              id: 'r1',
+              state: 'SUCCEEDED',
+              creativeVersion: 1,
+              frames: [
+                { placementKey: '9x16', url: 'https://x.test/9x16.mp4', posterUrl: 'https://x.test/9x16.jpg', durationSeconds: 6 },
+                { placementKey: '4x5', url: 'https://x.test/4x5.mp4', posterUrl: 'https://x.test/4x5.jpg', durationSeconds: 6 },
+              ],
+            },
+          ]
+        : { id: 'c1', version: 1, kind: 'CLIP' }) as never
+    )
+    fetchMock.mockImplementation(async (url: string) => servePoster(url))
+    mocked(composePosterSheet).mockRejectedValue(new Error('ffmpeg hstack failed'))
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(result.image?.data.toString()).toBe('poster-bytes-https://x.test/9x16.jpg')
+    expect(result.note).toContain('Could not compose a combined sheet')
+  })
+
+  it('reports failure plainly when the fallback render itself fails', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) =>
+      (path.endsWith('/renders') ? [] : { id: 'c1', version: 1, kind: 'CLIP' }) as never
+    )
+    mocked(renderCreative).mockResolvedValue({ ok: false, error: 'media blocked', renderId: 'r0', frames: [] })
+
+    const result = await previewCreative({ creativeId: 'c1' }, config)
+
+    expect(result.image).toBeUndefined()
+    expect(result.note).toMatch(/media blocked/)
   })
 })
 

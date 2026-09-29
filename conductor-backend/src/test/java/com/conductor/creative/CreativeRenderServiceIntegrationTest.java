@@ -7,6 +7,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.v2.model.CreateCreativeRenderRequest;
+import com.conductor.generated.v2.model.CreativeRenderResponse;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
@@ -18,8 +19,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +51,7 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     private Project project;
     private BrandKit defaultKit;
     private Creative creative;
+    private int nextClipNumber = 100;
 
     @BeforeEach
     void setUp() {
@@ -301,6 +305,125 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 .containsExactlyInAnyOrder("9x16", "4x5", "1x1", "story");
     }
 
+    // ── CLIP renders (COND-24 PR1) ──────────────────────────────────────────────────────────────
+
+    @Test
+    void aClipWithOnlyADefaultVideoAtSixteenByNinePicksThe16x9Placement() {
+        CreativePhoto video = newVideoMedia(1920, 1080);
+        Creative clip = newClipCreative(Map.of("default", video.getId()));
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), clip.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_SUCCEEDED);
+        assertThat(result.spec()).isNull();
+        assertThat(result.frames()).extracting(CreativeRenderFrame::getPlacementKey).containsExactly("16x9");
+    }
+
+    @Test
+    void aClipWithOnlyADefaultVideoAtNineBySixteenPicksThe9x16PlacementNotStory() {
+        CreativePhoto video = newVideoMedia(1080, 1920);
+        Creative clip = newClipCreative(Map.of("default", video.getId()));
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), clip.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.frames()).extracting(CreativeRenderFrame::getPlacementKey).containsExactly("9x16");
+    }
+
+    @Test
+    void anExplicitPlacementOverrideWinsOverTheDefaultsOwnNearestAspectPlacement() {
+        CreativePhoto defaultVideo = newVideoMedia(1080, 1920); // nearest aspect is 9x16
+        CreativePhoto override = newVideoMedia(1080, 1350);
+        Creative clip = newClipCreative(Map.of("default", defaultVideo.getId(), "9x16", override.getId()));
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), clip.getId(), new CreateCreativeRenderRequest(), admin);
+
+        // Only one frame at "9x16" — the explicit override's media, not the default's (no duplicate).
+        assertThat(result.frames()).hasSize(1);
+        CreativeRenderFrame frame = result.frames().get(0);
+        assertThat(frame.getPlacementKey()).isEqualTo("9x16");
+        assertThat(frame.getWidth()).isEqualTo(1080);
+        assertThat(frame.getHeight()).isEqualTo(1350);
+        // The override's own bytes, not the default's.
+        assertThat(storageService.download(frame.getGcsPath())).isEqualTo(storageService.download(override.getGcsPath()));
+    }
+
+    @Test
+    void clipRenderCopiesTheMediaObjectAndCarriesDurationHasAudioAndPoster() {
+        CreativePhoto video = newVideoMedia(1080, 1920);
+        video.setDurationSeconds(new BigDecimal("12.500"));
+        video.setHasAudio(true);
+        video.setPosterGcsPath("projects/" + project.getId() + "/marketing/photos/" + video.getId() + "-poster.jpg");
+        storageService.upload(video.getPosterGcsPath(), jpeg(), "image/jpeg");
+        video = photoRepository.save(video);
+        Creative clip = newClipCreative(Map.of("default", video.getId()));
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), clip.getId(), new CreateCreativeRenderRequest(), admin);
+
+        CreativeRenderFrame frame = result.frames().get(0);
+        assertThat(frame.getContentType()).isEqualTo("video/mp4");
+        assertThat(frame.getDurationSeconds()).isEqualByComparingTo("12.500");
+        assertThat(frame.getHasAudio()).isTrue();
+        assertThat(frame.getPosterGcsPath()).isNotNull().isNotEqualTo(video.getPosterGcsPath());
+        assertThat(frame.getGcsPath()).isNotEqualTo(video.getGcsPath());
+        // A real, independent copy — not a shared reference to the source object.
+        assertThat(storageService.download(frame.getGcsPath())).isEqualTo(storageService.download(video.getGcsPath()));
+
+        CreativeRenderResponse response = renderService.toResponse(new CreativeRenderService.RenderView(
+                result.render(), result.frames()));
+        assertThat(response.getFrames()).singleElement().satisfies(f -> {
+            assertThat(f.getDurationSeconds()).isEqualByComparingTo("12.500");
+            assertThat(f.getHasAudio()).isTrue();
+            assertThat(f.getPosterUrl()).isNotNull();
+            assertThat(f.getContentType()).isEqualTo("video/mp4");
+        });
+
+        // The library thumbnail is an <img>: for a video frame it is the poster, never the MP4.
+        String thumbnail = renderService.thumbnailUrl(new CreativeRenderService.RenderView(result.render(), result.frames()));
+        assertThat(thumbnail).contains(frame.getPosterGcsPath()).doesNotContain(".mp4");
+    }
+
+    @Test
+    void previewOnlyIsRefusedForAClipRender() {
+        CreativePhoto video = newVideoMedia(1080, 1920);
+        Creative clip = newClipCreative(Map.of("default", video.getId()));
+
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), clip.getId(),
+                new CreateCreativeRenderRequest().previewOnly(true), admin))
+                .isInstanceOf(UnprocessableEntityException.class);
+    }
+
+    @Test
+    void renderingAClipWithNoCaptionOrNoClipMediaIsRefused() {
+        CreativePhoto video = newVideoMedia(1080, 1920);
+        Creative noCaption = newClipCreative(Map.of("default", video.getId()));
+        noCaption.setCaption(null);
+        creativeRepository.save(noCaption);
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), noCaption.getId(),
+                new CreateCreativeRenderRequest(), admin))
+                .isInstanceOf(CreativeValidationException.class);
+
+        Creative noClip = newClipCreative(Map.of());
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), noClip.getId(),
+                new CreateCreativeRenderRequest(), admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
+    @Test
+    void renderingAMotionCreativeIsRefusedForNow() {
+        Creative motion = newClipCreative(Map.of());
+        motion.setKind(Creative.KIND_MOTION);
+        creativeRepository.save(motion);
+
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), motion.getId(),
+                new CreateCreativeRenderRequest(), admin))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("next release");
+    }
+
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
 
     private byte[] png() {
@@ -330,6 +453,47 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         c.setCreatedBy(admin.getId());
         c.setNumber(1);
         return creativeRepository.save(c);
+    }
+
+    private Creative newClipCreative(Map<String, String> clipMedia) {
+        Creative c = new Creative();
+        c.setProjectId(project.getId());
+        c.setBrandKitId(defaultKit.getId());
+        c.setVariantLetter("a");
+        c.setState(Creative.STATE_DRAFT);
+        c.setLayout("stacked");
+        c.setTheme(Creative.THEME_DARK);
+        c.setKind(Creative.KIND_CLIP);
+        c.setCaption("Watch this.");
+        c.setClipMedia(clipMedia.isEmpty() ? null : objectMapper.valueToTree(clipMedia));
+        c.setPlacements(objectMapper.valueToTree(List.of()));
+        c.setSequence(objectMapper.valueToTree(List.of()));
+        c.setTypeOverrides(objectMapper.createObjectNode());
+        c.setCreatedBy(admin.getId());
+        c.setNumber(nextClipNumber++);
+        return creativeRepository.save(c);
+    }
+
+    private CreativePhoto newVideoMedia(int width, int height) {
+        String id = UUID.randomUUID().toString();
+        CreativePhoto p = new CreativePhoto();
+        p.setId(id);
+        p.setProjectId(project.getId());
+        p.setMediaKind(CreativePhoto.MEDIA_KIND_VIDEO);
+        String gcsPath = "projects/" + project.getId() + "/marketing/photos/" + id + ".mp4";
+        p.setGcsPath(gcsPath);
+        storageService.upload(gcsPath, ("clip-bytes-" + id).getBytes(), "video/mp4");
+        p.setContentType("video/mp4");
+        p.setSizeBytes(9_000_000L);
+        p.setWidth(width);
+        p.setHeight(height);
+        p.setDurationSeconds(new BigDecimal("10"));
+        p.setSource("own");
+        p.setLicence("Own work");
+        p.setFocal(objectMapper.createObjectNode());
+        p.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        p.setCreatedBy(admin.getId());
+        return photoRepository.save(p);
     }
 
     private CreativePhoto newPhoto() {

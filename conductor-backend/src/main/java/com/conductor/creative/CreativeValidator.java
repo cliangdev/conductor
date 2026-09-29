@@ -49,6 +49,15 @@ public class CreativeValidator {
     public record SequenceBeat(String headline, String body, String photoId) {
     }
 
+    /**
+     * One entry of a CLIP creative's {@code clipMedia} map (COND-24 PR1) — {@code placementKey} is either
+     * {@code "default"} or a real registry placement key, resolved (by {@link CreativeService}, which has
+     * database access) against the project's media library before the validator ever sees it.
+     */
+    public record ClipMediaEntry(String placementKey, String mediaId, boolean resolvable, boolean isVideo,
+                                 boolean uploaded, boolean blocked) {
+    }
+
     /** Everything {@link #validate} needs to know about the intended state of a Creative. */
     public record Input(
             String layout,
@@ -68,7 +77,9 @@ public class CreativeValidator {
             String carouselRatio,
             Set<String> unknownSequencePhotoIds,
             Map<String, Integer> layoutOverrideBand,
-            Map<String, Integer> layoutOverridePadBottom) {
+            Map<String, Integer> layoutOverridePadBottom,
+            String kind,
+            List<ClipMediaEntry> clipMedia) {
 
         /**
          * A test-friendly builder for {@link Input} — every field defaults to "structurally valid and
@@ -95,6 +106,8 @@ public class CreativeValidator {
             private Set<String> unknownSequencePhotoIds = Set.of();
             private Map<String, Integer> layoutOverrideBand = Map.of();
             private Map<String, Integer> layoutOverridePadBottom = Map.of();
+            private String kind = Creative.KIND_STILL;
+            private List<ClipMediaEntry> clipMedia = List.of();
 
             public InputBuilder layout(String v) { this.layout = v; return this; }
             public InputBuilder theme(String v) { this.theme = v; return this; }
@@ -114,11 +127,14 @@ public class CreativeValidator {
             public InputBuilder unknownSequencePhotoIds(Set<String> v) { this.unknownSequencePhotoIds = v; return this; }
             public InputBuilder layoutOverrideBand(Map<String, Integer> v) { this.layoutOverrideBand = v; return this; }
             public InputBuilder layoutOverridePadBottom(Map<String, Integer> v) { this.layoutOverridePadBottom = v; return this; }
+            public InputBuilder kind(String v) { this.kind = v; return this; }
+            public InputBuilder clipMedia(List<ClipMediaEntry> v) { this.clipMedia = v; return this; }
 
             public Input build() {
                 return new Input(layout, theme, placements, headline, body, caption, state, photoId,
                         photoIdResolvable, photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence,
-                        carouselRatio, unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom);
+                        carouselRatio, unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom,
+                        kind, clipMedia);
             }
         }
     }
@@ -151,6 +167,7 @@ public class CreativeValidator {
         }
 
         validateSequenceBounds(input, violations);
+        validateClipMedia(input, violations);
 
         if (input.photoId() != null && !input.photoIdResolvable()) {
             violations.add(new Violation("photoId", "photoNotFound",
@@ -320,6 +337,17 @@ public class CreativeValidator {
     }
 
     private void validateReadyState(Input input, List<Violation> violations) {
+        if (Creative.KIND_CLIP.equals(input.kind())) {
+            if (input.caption() == null || input.caption().isBlank()) {
+                violations.add(new Violation("caption", "captionRequired",
+                        "caption is required before this Creative can go up for review"));
+            }
+            if (input.clipMedia() == null || input.clipMedia().isEmpty()) {
+                violations.add(new Violation("clipMedia", "clipRequired",
+                        "at least one clip is required before this Creative can go up for review"));
+            }
+            return;
+        }
         if (!input.photoPresent()) {
             violations.add(new Violation("photoId", "photoRequired", "a photo is required before this Creative can go up for review"));
         } else if (!input.photoUploaded()) {
@@ -329,6 +357,46 @@ public class CreativeValidator {
         }
         if (input.headline() == null || input.headline().isBlank()) {
             violations.add(new Violation("headline", "headlineRequired", "headline is required before this Creative can go up for review"));
+        }
+    }
+
+    /**
+     * CLIP structural rules (COND-24 PR1), enforced on every write regardless of state — mirrors how
+     * {@code photoId} is checked whenever present, before {@link #validateReadyState} adds the
+     * READY-only "must be present at all" requirement on top. Every entry's placement key must be
+     * {@code "default"} or a real registry placement, and every referenced media must resolve to a
+     * VIDEO in this project that has finished uploading and is not blocked.
+     */
+    private void validateClipMedia(Input input, List<Violation> violations) {
+        if (!Creative.KIND_CLIP.equals(input.kind()) || input.clipMedia() == null) {
+            return;
+        }
+        for (ClipMediaEntry entry : input.clipMedia()) {
+            String key = entry.placementKey();
+            if (!"default".equals(key) && !registry.hasPlacement(key)) {
+                violations.add(new Violation("clipMedia", "placement",
+                        "unknown placement \"" + key + "\" in clipMedia, must be \"default\" or one of: "
+                                + String.join(", ", registry.placements().keySet())));
+                continue;
+            }
+            if (!entry.resolvable()) {
+                violations.add(new Violation("clipMedia", "mediaNotFound",
+                        "No media with id " + entry.mediaId() + " in this project"));
+                continue;
+            }
+            if (!entry.isVideo()) {
+                violations.add(new Violation("clipMedia", "mediaNotVideo",
+                        "clipMedia[\"" + key + "\"] must be a VIDEO"));
+                continue;
+            }
+            if (!entry.uploaded()) {
+                violations.add(new Violation("clipMedia", "mediaUploaded",
+                        "clipMedia[\"" + key + "\"] has not finished uploading"));
+            }
+            if (entry.blocked()) {
+                violations.add(new Violation("clipMedia", "mediaBlocked",
+                        "clipMedia[\"" + key + "\"] is blocked and cannot be used"));
+            }
         }
     }
 

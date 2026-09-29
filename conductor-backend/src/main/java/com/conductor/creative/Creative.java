@@ -37,6 +37,10 @@ public class Creative {
     public static final String LOCKUP_PLAIN = "plain";
     public static final String LOCKUP_CHIP = "chip";
 
+    public static final String KIND_STILL = "STILL";
+    public static final String KIND_MOTION = "MOTION";
+    public static final String KIND_CLIP = "CLIP";
+
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private String id;
@@ -113,6 +117,25 @@ public class Creative {
     @Column(name = "lockup", length = 16, nullable = false)
     private String lockup;
 
+    /** STILL | MOTION | CLIP (COND-24). See {@code V144__creative_video.sql}. */
+    @Column(name = "kind", length = 8, nullable = false)
+    private String kind;
+
+    /** {@code {"default": mediaId, "<placementKey>": mediaId, ...}} for a CLIP creative. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "clip_media", columnDefinition = "jsonb")
+    private JsonNode clipMedia;
+
+    /** PR2: the branded animation timeline for a MOTION creative. Unused by PR1. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "motion", columnDefinition = "jsonb")
+    private JsonNode motion;
+
+    /** PR2: {@code {source: clip|track|none, trackId?, volume?, fadeOutSec?}} for a MOTION creative. Unused by PR1. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "audio", columnDefinition = "jsonb")
+    private JsonNode audio;
+
     @Version
     @Column(name = "version", nullable = false)
     private int version;
@@ -142,6 +165,9 @@ public class Creative {
         }
         if (lockup == null) {
             lockup = LOCKUP_PLAIN;
+        }
+        if (kind == null) {
+            kind = KIND_STILL;
         }
         OffsetDateTime now = OffsetDateTime.now();
         createdAt = now;
@@ -226,6 +252,18 @@ public class Creative {
 
     public String getLockup() { return lockup; }
     public void setLockup(String lockup) { this.lockup = lockup; }
+
+    public String getKind() { return kind; }
+    public void setKind(String kind) { this.kind = kind; }
+
+    public JsonNode getClipMedia() { return clipMedia; }
+    public void setClipMedia(JsonNode clipMedia) { this.clipMedia = clipMedia; }
+
+    public JsonNode getMotion() { return motion; }
+    public void setMotion(JsonNode motion) { this.motion = motion; }
+
+    public JsonNode getAudio() { return audio; }
+    public void setAudio(JsonNode audio) { this.audio = audio; }
 
     public int getVersion() { return version; }
     public void setVersion(int version) { this.version = version; }

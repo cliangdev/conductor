@@ -9,6 +9,7 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -28,6 +29,10 @@ public class CreativePhoto {
 
     public static final String UPLOAD_STATUS_PENDING = "PENDING";
     public static final String UPLOAD_STATUS_UPLOADED = "UPLOADED";
+
+    public static final String MEDIA_KIND_IMAGE = "IMAGE";
+    public static final String MEDIA_KIND_VIDEO = "VIDEO";
+    public static final String MEDIA_KIND_AUDIO = "AUDIO";
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -79,6 +84,26 @@ public class CreativePhoto {
     @Column(name = "upload_status", length = 16, nullable = false)
     private String uploadStatus;
 
+    /** IMAGE | VIDEO | AUDIO (COND-24 PR1). See {@code V144__creative_video.sql}. */
+    @Column(name = "media_kind", length = 8, nullable = false)
+    private String mediaKind;
+
+    /** Running time in seconds; required for VIDEO/AUDIO, null for IMAGE. */
+    @Column(name = "duration_seconds", precision = 10, scale = 3)
+    private BigDecimal durationSeconds;
+
+    /** Whether a VIDEO carries an audio track; null for IMAGE/AUDIO. */
+    @Column(name = "has_audio")
+    private Boolean hasAudio;
+
+    /** A JPEG poster frame for a VIDEO, minted via the poster mint/confirm endpoints; null until set. */
+    @Column(name = "poster_gcs_path")
+    private String posterGcsPath;
+
+    /** Advisory client-declared codec hint (e.g. {@code h264}); never validated. */
+    @Column(name = "codec")
+    private String codec;
+
     @Column(name = "created_by", length = 36)
     private String createdBy;
 
@@ -93,6 +118,9 @@ public class CreativePhoto {
         if (uploadStatus == null) {
             uploadStatus = UPLOAD_STATUS_PENDING;
         }
+        if (mediaKind == null) {
+            mediaKind = MEDIA_KIND_IMAGE;
+        }
         if (createdAt == null) {
             createdAt = OffsetDateTime.now();
         }
@@ -100,6 +128,14 @@ public class CreativePhoto {
 
     public boolean isUploaded() {
         return UPLOAD_STATUS_UPLOADED.equals(uploadStatus);
+    }
+
+    public boolean isVideo() {
+        return MEDIA_KIND_VIDEO.equals(mediaKind);
+    }
+
+    public boolean isAudio() {
+        return MEDIA_KIND_AUDIO.equals(mediaKind);
     }
 
     public String getId() { return id; }
@@ -149,6 +185,21 @@ public class CreativePhoto {
 
     public String getUploadStatus() { return uploadStatus; }
     public void setUploadStatus(String uploadStatus) { this.uploadStatus = uploadStatus; }
+
+    public String getMediaKind() { return mediaKind; }
+    public void setMediaKind(String mediaKind) { this.mediaKind = mediaKind; }
+
+    public BigDecimal getDurationSeconds() { return durationSeconds; }
+    public void setDurationSeconds(BigDecimal durationSeconds) { this.durationSeconds = durationSeconds; }
+
+    public Boolean getHasAudio() { return hasAudio; }
+    public void setHasAudio(Boolean hasAudio) { this.hasAudio = hasAudio; }
+
+    public String getPosterGcsPath() { return posterGcsPath; }
+    public void setPosterGcsPath(String posterGcsPath) { this.posterGcsPath = posterGcsPath; }
+
+    public String getCodec() { return codec; }
+    public void setCodec(String codec) { this.codec = codec; }
 
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }

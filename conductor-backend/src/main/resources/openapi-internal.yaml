@@ -345,6 +345,41 @@ paths:
         "404":
           description: No such Creative photo in this project
 
+  /projects/{projectId}/creative-photos/{photoId}/poster-content:
+    put:
+      tags: [creative-content-internal]
+      summary: Upload a Creative VIDEO's poster JPEG bytes (local profile only)
+      description: >
+        Passthrough upload for a Creative VIDEO's poster, served ONLY on the `local` profile — the exact
+        URL `POST /api/v2/projects/{projectId}/marketing/photos/{photoId}/poster` returns as its
+        `uploadUrl` in that case. Mirrors `uploadCreativePhotoContent` exactly, at the poster's own
+        fixed path rather than the photo's own `gcsPath`.
+      operationId: uploadCreativePhotoPosterContent
+      security: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          "*/*":
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Bytes stored. Confirm the upload via the v2 poster/confirm endpoint.
+        "404":
+          description: No such Creative photo in this project
+
   /publish-targets/{targetId}/dispatch:
     post:
       tags: [publish-internal]

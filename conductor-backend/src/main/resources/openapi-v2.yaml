@@ -2874,6 +2874,15 @@ paths:
             type: boolean
             default: false
           description: Include photos a human has marked blocked (burned-in text, logos or claims).
+        - name: mediaKind
+          in: query
+          required: false
+          explode: true
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/MediaKind"
+          description: Filter to one or more kinds, e.g. `?mediaKind=VIDEO&mediaKind=AUDIO`. Unset returns every kind.
       responses:
         "200":
           description: The project's photos, newest first
@@ -3151,6 +3160,119 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Photo not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/photos/{photoId}/poster:
+    post:
+      tags:
+        - creatives
+      summary: Mint a signed upload for a VIDEO photo's poster JPEG
+      description: >-
+        Mint -> client `PUT`s a JPEG to `uploadUrl` -> confirm via the `/poster/confirm` endpoint.
+        Refused with 422 when the photo is not a VIDEO. Requires ADMIN or CREATOR.
+      operationId: mintCreativePhotoPoster
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: The signed upload URL and the object path the poster will live at
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MintCreativePhotoPosterResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Photo not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The photo is not a VIDEO
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/photos/{photoId}/poster/confirm:
+    post:
+      tags:
+        - creatives
+      summary: Confirm an uploaded poster and set it on the photo
+      operationId: confirmCreativePhotoPoster
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmCreativePhotoPosterRequest"
+      responses:
+        "200":
+          description: The photo, now with a signed posterUrl
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePhotoResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Photo not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The photo is not a VIDEO, or gcsPath does not match this photo's poster prefix
           content:
             application/json:
               schema:
@@ -6574,6 +6696,14 @@ components:
           items:
             $ref: "#/components/schemas/CreativeViolation"
 
+    MediaKind:
+      type: string
+      enum:
+        - IMAGE
+        - VIDEO
+        - AUDIO
+      description: A Creative media library item's kind (COND-24 PR1). Defaults to IMAGE.
+
     CreativePhotoResponse:
       type: object
       required:
@@ -6586,6 +6716,7 @@ components:
         - blocked
         - focal
         - uploadStatus
+        - mediaKind
         - warnings
         - createdAt
       properties:
@@ -6607,6 +6738,20 @@ components:
         height:
           type: integer
           nullable: true
+        mediaKind:
+          $ref: "#/components/schemas/MediaKind"
+        durationSeconds:
+          type: number
+          nullable: true
+          description: Running time in seconds; set for VIDEO/AUDIO.
+        hasAudio:
+          type: boolean
+          nullable: true
+          description: Whether a VIDEO carries an audio track; null for IMAGE/AUDIO.
+        posterUrl:
+          type: string
+          nullable: true
+          description: Short-lived signed GET URL of a VIDEO's poster JPEG, once set.
         source:
           type: string
           nullable: true
@@ -6657,25 +6802,50 @@ components:
       required:
         - contentType
         - sizeBytes
-        - width
-        - height
       properties:
         label:
           type: string
           nullable: true
+        mediaKind:
+          allOf:
+            - $ref: "#/components/schemas/MediaKind"
+          default: IMAGE
         contentType:
           type: string
           enum:
             - image/jpeg
             - image/png
             - image/webp
+            - video/mp4
+            - video/quicktime
+            - video/webm
+            - audio/mpeg
+            - audio/mp4
+            - audio/aac
+            - audio/wav
         sizeBytes:
           type: integer
           format: int64
         width:
           type: integer
+          nullable: true
+          description: Required for IMAGE/VIDEO; ignored for AUDIO.
         height:
           type: integer
+          nullable: true
+          description: Required for IMAGE/VIDEO; ignored for AUDIO.
+        durationSeconds:
+          type: number
+          nullable: true
+          description: Required for VIDEO/AUDIO.
+        hasAudio:
+          type: boolean
+          nullable: true
+          description: Whether a VIDEO carries an audio track. Optional.
+        codec:
+          type: string
+          nullable: true
+          description: Advisory codec hint (e.g. h264); never validated.
         source:
           type: string
           nullable: true
@@ -6694,6 +6864,28 @@ components:
           format: int64
           nullable: true
           description: The byte count actually written, re-validated against the upload ceiling.
+
+    MintCreativePhotoPosterResponse:
+      type: object
+      required:
+        - uploadUrl
+        - gcsPath
+      properties:
+        uploadUrl:
+          type: string
+          description: The signed PUT URL to upload the JPEG poster bytes to.
+        gcsPath:
+          type: string
+          description: The object path the poster will live at — hand back unchanged to the confirm call.
+
+    ConfirmCreativePhotoPosterRequest:
+      type: object
+      required:
+        - gcsPath
+      properties:
+        gcsPath:
+          type: string
+          description: The path this same mint call returned.
 
     PatchCreativePhotoRequest:
       type: object
@@ -6737,6 +6929,18 @@ components:
         - plain
         - chip
       description: '"chip" puts the logo lockup on a white pill instead of bare on the photo, for busy photography.'
+
+    CreativeKind:
+      type: string
+      enum:
+        - STILL
+        - MOTION
+        - CLIP
+      description: >-
+        STILL (default) is today's brand-layout Creative. CLIP is a finished video used as-is, one file
+        for all placements or one per placement (COND-24 PR1) — no brand layout, no local rendering; the
+        backend assembles CLIP renders by copying the chosen media. MOTION (PR2) is a branded animated
+        video; the API accepts it today, but rendering it currently refuses with 422.
 
     CreativeLayoutOverrides:
       type: object
@@ -6795,6 +6999,7 @@ components:
         - sequence
         - typeOverrides
         - lockup
+        - kind
         - version
         - createdAt
         - updatedAt
@@ -6874,6 +7079,14 @@ components:
           nullable: true
         lockup:
           $ref: "#/components/schemas/CreativeLockup"
+        kind:
+          $ref: "#/components/schemas/CreativeKind"
+        clipMedia:
+          type: object
+          nullable: true
+          description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
+          additionalProperties:
+            type: string
         version:
           type: integer
         createdBy:
@@ -6956,6 +7169,14 @@ components:
           nullable: true
         lockup:
           $ref: "#/components/schemas/CreativeLockup"
+        kind:
+          $ref: "#/components/schemas/CreativeKind"
+        clipMedia:
+          type: object
+          nullable: true
+          description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
+          additionalProperties:
+            type: string
         layoutOverrides:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
@@ -7023,6 +7244,14 @@ components:
               type: number
         lockup:
           $ref: "#/components/schemas/CreativeLockup"
+        kind:
+          $ref: "#/components/schemas/CreativeKind"
+        clipMedia:
+          type: object
+          nullable: true
+          description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
+          additionalProperties:
+            type: string
         layoutOverrides:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
@@ -7297,6 +7526,7 @@ components:
         - width
         - height
         - sizeBytes
+        - contentType
         - warnings
       properties:
         id:
@@ -7319,6 +7549,21 @@ components:
         sizeBytes:
           type: integer
           format: int64
+        contentType:
+          type: string
+          description: image/jpeg or image/png for a STILL frame; a video content type for a CLIP frame.
+        durationSeconds:
+          type: number
+          nullable: true
+          description: Set for a CLIP (video) frame; null for an image frame.
+        hasAudio:
+          type: boolean
+          nullable: true
+          description: Set for a CLIP (video) frame; null for an image frame.
+        posterUrl:
+          type: string
+          nullable: true
+          description: Short-lived signed GET URL of a CLIP frame's poster JPEG, if the source media had one.
         warnings:
           type: array
           items:

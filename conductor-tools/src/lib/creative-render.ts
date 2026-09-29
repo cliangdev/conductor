@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Config } from '../mcp/config.js'
-import { apiGet } from '../mcp/api.js'
+import { apiGet, apiPost, ApiError } from '../mcp/api.js'
 import { findBrowserFactory } from './creative-browser.js'
 
 export interface RenderFrame {
@@ -24,6 +24,11 @@ export interface RenderFrame {
   height?: number
   sizeBytes?: number
   warnings?: string[]
+  /** Video-frame fields — only present on a CLIP creative's frames, which reference a video, not a JPEG. */
+  durationSeconds?: number
+  hasAudio?: boolean
+  posterUrl?: string
+  contentType?: string
 }
 
 export interface RenderCreativeParams {
@@ -96,15 +101,47 @@ async function loadRenderCore(): Promise<{ run: RenderCore['run']; createApiTran
 }
 
 /**
- * Renders a Creative end to end: finds a local browser, runs the render core against the external
- * API, and reads back the stored render (frames with signed URLs, final state) whether or not the
- * render itself succeeded — a FAILED render still has an id and an error message worth returning.
+ * A CLIP (or, once PR 2 lands, MOTION) creative has no local browser render path — the backend either
+ * assembles the frames itself synchronously (CLIP) or refuses with a 422 explaining why (MOTION, until
+ * its renderer ships). Either way this just POSTs the render and relays what came back — `ApiError`'s
+ * `message` is already the server's own plain-English sentence (an RFC 7807 `detail`), so a MOTION 422
+ * reaches the caller unchanged rather than wrapped in a generic "never started" message.
+ */
+async function renderViaApi(params: RenderCreativeParams, config: Config): Promise<RenderCreativeResult> {
+  try {
+    const detail = await apiPost<{ id: string; state: string; error?: string | null; frames?: RenderFrame[] }>(
+      `/api/v2/projects/${config.projectId}/marketing/creatives/${params.creativeId}/renders`,
+      { previewOnly: !!params.previewOnly, renderer: params.renderer, workflowRunId: params.workflowRunId },
+      config
+    )
+    return { ok: detail.state === 'SUCCEEDED', renderId: detail.id, state: detail.state, error: detail.error ?? null, frames: detail.frames ?? [] }
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return { ok: false, error: err.message, frames: [] }
+    }
+    throw err
+  }
+}
+
+/**
+ * Renders a Creative end to end. STILL creatives find a local browser and run the render core against
+ * the external API, reading back the stored render (frames with signed URLs, final state) whether or
+ * not the render itself succeeded — a FAILED render still has an id and an error message worth
+ * returning. CLIP (and MOTION) creatives never launch a browser — see {@link renderViaApi}.
  */
 export async function renderCreative(
   params: RenderCreativeParams,
   config: Config,
   log: (...args: unknown[]) => void = () => {}
 ): Promise<RenderCreativeResult> {
+  const creative = await apiGet<{ kind?: string }>(
+    `/api/v2/projects/${config.projectId}/marketing/creatives/${params.creativeId}`,
+    config
+  )
+  if (creative.kind && creative.kind !== 'STILL') {
+    return renderViaApi(params, config)
+  }
+
   const { run, createApiTransport } = await loadRenderCore()
   const transport = createApiTransport({
     apiUrl: config.apiUrl,

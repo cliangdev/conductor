@@ -4,7 +4,9 @@ import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
+import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.PatchCreativePhotoRequest;
@@ -19,8 +21,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -106,6 +110,130 @@ class CreativePhotoServiceIntegrationTest extends AbstractNoneWebIntegrationTest
         assertThat(patched.photo().getFocal().get("9x16").asText()).isEqualTo("50% 30%");
     }
 
+    // ── Media library: VIDEO/AUDIO (COND-24 PR1) ────────────────────────────────────────────────────
+
+    @Test
+    void creatingAVideoRequiresDurationAndDeriveMediaKindFromContentType() {
+        CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
+        request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.VIDEO_MP4);
+        request.setSizeBytes(5_000_000L);
+        request.setWidth(1080);
+        request.setHeight(1920);
+
+        assertThatThrownBy(() -> photoService.createPhoto(project.getId(), request, admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("durationSeconds");
+
+        request.setDurationSeconds(new BigDecimal("12.5"));
+        request.setHasAudio(true);
+        CreativePhotoService.PhotoView created = photoService.createPhoto(project.getId(), request, admin);
+        assertThat(created.photo().getMediaKind()).isEqualTo(CreativePhoto.MEDIA_KIND_VIDEO);
+        assertThat(created.photo().getDurationSeconds()).isEqualByComparingTo("12.5");
+        assertThat(created.photo().getHasAudio()).isTrue();
+        assertThat(created.photo().getWidth()).isEqualTo(1080);
+        assertThat(created.warnings()).isEmpty();
+    }
+
+    @Test
+    void aVideoLongerThan180SecondsWarnsButNeverRefuses() {
+        CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
+        request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.VIDEO_MP4);
+        request.setSizeBytes(5_000_000L);
+        request.setWidth(1080);
+        request.setHeight(1920);
+        request.setDurationSeconds(new BigDecimal("181"));
+
+        CreativePhotoService.PhotoView created = photoService.createPhoto(project.getId(), request, admin);
+        assertThat(created.warnings()).anyMatch(w -> w.contains("longer than most platforms take"));
+    }
+
+    @Test
+    void aVideoOverTheOneGigabyteCeilingIsRefused() {
+        CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
+        request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.VIDEO_MP4);
+        request.setSizeBytes(2L * 1024 * 1024 * 1024);
+        request.setWidth(1080);
+        request.setHeight(1920);
+        request.setDurationSeconds(new BigDecimal("10"));
+
+        assertThatThrownBy(() -> photoService.createPhoto(project.getId(), request, admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("ceiling");
+    }
+
+    @Test
+    void anAudioFileNeedsNoWidthOrHeightButNeedsDuration() {
+        CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
+        request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.AUDIO_MPEG);
+        request.setSizeBytes(1_000_000L);
+
+        assertThatThrownBy(() -> photoService.createPhoto(project.getId(), request, admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("durationSeconds");
+
+        request.setDurationSeconds(new BigDecimal("30"));
+        CreativePhotoService.PhotoView created = photoService.createPhoto(project.getId(), request, admin);
+        assertThat(created.photo().getMediaKind()).isEqualTo(CreativePhoto.MEDIA_KIND_AUDIO);
+        assertThat(created.photo().getWidth()).isNull();
+        assertThat(created.photo().getHeight()).isNull();
+    }
+
+    @Test
+    void anAudioFileOverTheFiftyMegabyteCeilingIsRefused() {
+        CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
+        request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.AUDIO_WAV);
+        request.setSizeBytes(60L * 1024 * 1024);
+        request.setDurationSeconds(new BigDecimal("30"));
+
+        assertThatThrownBy(() -> photoService.createPhoto(project.getId(), request, admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("ceiling");
+    }
+
+    @Test
+    void listPhotosFiltersByMediaKind() {
+        newUploadedPhoto();
+        CreativePhotoService.PhotoView video = newUploadedVideo();
+
+        List<CreativePhotoService.PhotoView> videosOnly =
+                photoService.listPhotos(project.getId(), false, Set.of(CreativePhoto.MEDIA_KIND_VIDEO), admin);
+        assertThat(videosOnly).extracting(v -> v.photo().getId()).containsExactly(video.photo().getId());
+
+        List<CreativePhotoService.PhotoView> everything = photoService.listPhotos(project.getId(), false, Set.of(), admin);
+        assertThat(everything).hasSize(2);
+    }
+
+    // ── Poster (VIDEO only, COND-24 PR1) ─────────────────────────────────────────────────────────
+
+    @Test
+    void mintingAndConfirmingAPosterSetsItOnTheVideoAndSignsAGetUrl() {
+        CreativePhotoService.PhotoView video = newUploadedVideo();
+
+        CreativePhotoService.PosterUploadTicket ticket = photoService.mintPoster(project.getId(), video.photo().getId(), admin);
+        assertThat(ticket.gcsPath()).endsWith("-poster.jpg");
+        storageService.upload(ticket.gcsPath(), new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9}, "image/jpeg");
+
+        CreativePhotoService.PhotoView confirmed = photoService.confirmPoster(project.getId(), video.photo().getId(),
+                ticket.gcsPath(), admin);
+        assertThat(confirmed.photo().getPosterGcsPath()).isEqualTo(ticket.gcsPath());
+        assertThat(confirmed.posterUrl()).isNotNull();
+    }
+
+    @Test
+    void mintingAPosterForANonVideoPhotoIsRefused() {
+        CreativePhotoService.PhotoView photo = newUploadedPhoto();
+        assertThatThrownBy(() -> photoService.mintPoster(project.getId(), photo.photo().getId(), admin))
+                .isInstanceOf(UnprocessableEntityException.class);
+    }
+
+    @Test
+    void confirmingAPosterWithAMismatchedGcsPathIsRefused() {
+        CreativePhotoService.PhotoView video = newUploadedVideo();
+        assertThatThrownBy(() -> photoService.confirmPoster(project.getId(), video.photo().getId(),
+                "projects/elsewhere/not-the-right-path.jpg", admin))
+                .isInstanceOf(UnprocessableEntityException.class);
+    }
+
     // ── Delete ───────────────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -162,6 +290,17 @@ class CreativePhotoServiceIntegrationTest extends AbstractNoneWebIntegrationTest
         assertThatThrownBy(() -> photoService.deletePhoto(project.getId(), beatPhoto.photo().getId(), admin))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining(creative.creative().displayId());
+    }
+
+    private CreativePhotoService.PhotoView newUploadedVideo() {
+        CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
+        request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.VIDEO_MP4);
+        request.setSizeBytes(5_000_000L);
+        request.setWidth(1080);
+        request.setHeight(1920);
+        request.setDurationSeconds(new BigDecimal("15"));
+        CreativePhotoService.PhotoView created = photoService.createPhoto(project.getId(), request, admin);
+        return photoService.confirmPhoto(project.getId(), created.photo().getId(), null, admin);
     }
 
     private CreativePhotoService.PhotoView newUploadedPhoto() {
