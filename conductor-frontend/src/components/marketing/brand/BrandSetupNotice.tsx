@@ -15,7 +15,9 @@ import { cn } from '@/lib/utils'
 import { isBrandKitUnconfigured } from './brandKitStatus'
 import type { BrandKit } from './types'
 
-const ASK_CLAUDE_PROMPT = 'Set up our brand kit in Conductor from <our website>'
+// No URL in the copyable text itself — a placeholder like example.com reads as a real, copy-pasteable
+// address, and Claude will ask for the actual site URL when it needs it.
+const ASK_CLAUDE_PROMPT = 'Set up our brand kit in Conductor from our website'
 
 function storageKey(kitId: string): string {
   return `conductor.brandSetupNoticeDismissed.${kitId}`
@@ -66,7 +68,7 @@ export function BrandSetupNotice({ projectId, kit, className }: BrandSetupNotice
           </Link>
         </p>
         <div className="max-w-md space-y-1">
-          <p className="text-xs text-muted-foreground">Or ask Claude:</p>
+          <p className="text-xs text-muted-foreground">Or ask Claude — it&apos;ll ask for your site&apos;s URL:</p>
           <CopyableCode text={ASK_CLAUDE_PROMPT} label="Copy brand setup prompt" />
         </div>
       </div>

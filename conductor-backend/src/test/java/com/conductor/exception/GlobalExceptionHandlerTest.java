@@ -162,6 +162,23 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.fieldErrors[0].field").value("copyRules[0].pattern"));
     }
 
+    @Test
+    void brandKitValidationExceptionDetailNamesEachFailingField() throws Exception {
+        controller.toThrow = new com.conductor.creative.BrandKitValidationException(List.of(
+                new com.conductor.creative.BrandKitValidationException.FieldError(
+                        "copyRules[0].pattern", "does not compile as a regex: x"),
+                new com.conductor.creative.BrandKitValidationException.FieldError(
+                        "addApprovedLines", "cannot be sent together with approvedLines")));
+
+        mockMvc.perform(get("/boom"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.detail").value(
+                        "copyRules[0].pattern: does not compile as a regex: x; "
+                                + "addApprovedLines: cannot be sent together with approvedLines"))
+                .andExpect(jsonPath("$.fieldErrors[0].field").value("copyRules[0].pattern"))
+                .andExpect(jsonPath("$.fieldErrors[1].field").value("addApprovedLines"));
+    }
+
     @RestController
     static class BoomController {
 

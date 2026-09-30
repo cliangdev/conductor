@@ -6558,6 +6558,7 @@ components:
         - slug
         - name
         - isDefault
+        - configured
         - tokens
         - accentPhraseRequired
         - copyRules
@@ -6577,6 +6578,14 @@ components:
           type: string
         isDefault:
           type: boolean
+        configured:
+          type: boolean
+          description: >-
+            True when this kit carries any customisation beyond the neutral starting point: tokens
+            differ from the default palette, a font family is set, any logo slot is set, a CTA claim is
+            set, copy rules or approved lines are non-empty, an accent phrase is required, or the kit's
+            name differs from the default kit's name. Computed server-side on every read; never based on
+            timestamps.
         tokens:
           type: object
           description: "CSS custom properties the renderer maps to: accent, accent2, darkBg, darkInk, lightBg, lightCard, ink, ink2. Each value is a #RRGGBB hex colour."
@@ -6676,7 +6685,10 @@ components:
 
     PatchBrandKitRequest:
       type: object
-      description: Every field is optional and set-replace; omit a field to leave it unchanged.
+      description: >-
+        Every field is optional; omit a field to leave it unchanged. Most fields are set-replace, except
+        `tokens` (merged — see below) and `approvedLines`/`addApprovedLines` (mutually exclusive — see
+        below).
       properties:
         name:
           type: string
@@ -6685,8 +6697,12 @@ components:
         tokens:
           type: object
           nullable: true
+          description: >-
+            Merged into the kit's existing tokens: keys given here override, keys omitted keep their
+            current value, and a key sent with a JSON `null` value is removed.
           additionalProperties:
             type: string
+            nullable: true
         fontFamily:
           type: string
           nullable: true
@@ -6706,6 +6722,15 @@ components:
         approvedLines:
           type: array
           nullable: true
+          description: Set-replace. Cannot be sent together with `addApprovedLines` — 422 if both are set.
+          items:
+            type: string
+        addApprovedLines:
+          type: array
+          nullable: true
+          description: >-
+            Appended to the kit's existing approved lines server-side (deduped against the existing
+            list, order kept). Cannot be sent together with `approvedLines` — 422 if both are set.
           items:
             type: string
         enabledPlacements:

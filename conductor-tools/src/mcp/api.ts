@@ -1,35 +1,83 @@
 import { Blob } from 'node:buffer'
 import type { Config } from './config.js'
 
+/** One field-scoped validation failure, as a Brand Kit 422 (`FieldValidationProblem`) reports it. */
+export interface ApiFieldError {
+  field?: string
+  message: string
+}
+
+/** One rule-scoped validation failure, as a Creative 422 reports it. */
+export interface ApiViolation {
+  field?: string
+  ruleId?: string
+  message: string
+}
+
 /**
  * An HTTP error from the Conductor API. `message` is the server's own sentence — an RFC 7807
  * problem's `detail`, falling back to `title`, falling back to the raw response body — so a caller
  * can relay it to a person without re-parsing JSON. `status`, `code`, `detail` and `title` are kept
- * as fields for callers that need to branch on more than the message.
+ * as fields for callers that need to branch on more than the message. `fieldErrors`/`violations` are
+ * kept too, verbatim from the problem body, when the endpoint's 422 shape carries them — so a caller
+ * can format its own per-field message instead of re-parsing `message` as JSON (it usually isn't).
  */
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string
   readonly detail?: string
   readonly title?: string
+  readonly fieldErrors?: ApiFieldError[]
+  readonly violations?: ApiViolation[]
 
-  constructor(status: number, message: string, opts: { code?: string; detail?: string; title?: string } = {}) {
+  constructor(
+    status: number,
+    message: string,
+    opts: {
+      code?: string
+      detail?: string
+      title?: string
+      fieldErrors?: ApiFieldError[]
+      violations?: ApiViolation[]
+    } = {}
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = opts.code
     this.detail = opts.detail
     this.title = opts.title
+    this.fieldErrors = opts.fieldErrors
+    this.violations = opts.violations
   }
+}
+
+function asFieldErrors(value: unknown): ApiFieldError[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.filter((v): v is ApiFieldError => !!v && typeof v === 'object' && typeof (v as ApiFieldError).message === 'string')
+}
+
+function asViolations(value: unknown): ApiViolation[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.filter((v): v is ApiViolation => !!v && typeof v === 'object' && typeof (v as ApiViolation).message === 'string')
 }
 
 /**
  * Parses a non-ok response body as an RFC 7807 problem (`{ type, title, status, detail, code? }`) when
  * possible, otherwise treats it as plain text. Never throws — a body that is neither is just "no detail".
+ * Also lifts `fieldErrors`/`violations` off the body when present, cheaply — no extra parsing pass, just
+ * reading two more keys off the object already parsed for `detail`/`title`/`code`.
  */
 async function parseProblem(
   response: Response
-): Promise<{ message: string; code?: string; detail?: string; title?: string }> {
+): Promise<{
+  message: string
+  code?: string
+  detail?: string
+  title?: string
+  fieldErrors?: ApiFieldError[]
+  violations?: ApiViolation[]
+}> {
   const text = await response.text().catch(() => '')
   if (text) {
     try {
@@ -37,8 +85,10 @@ async function parseProblem(
       const detail = typeof body['detail'] === 'string' ? body['detail'] : undefined
       const title = typeof body['title'] === 'string' ? body['title'] : undefined
       const code = typeof body['code'] === 'string' ? body['code'] : undefined
+      const fieldErrors = asFieldErrors(body['fieldErrors'])
+      const violations = asViolations(body['violations'])
       const message = detail || title || text
-      return { message, code, detail, title }
+      return { message, code, detail, title, fieldErrors, violations }
     } catch {
       // Not JSON — the raw text is the only detail there is.
       return { message: text }

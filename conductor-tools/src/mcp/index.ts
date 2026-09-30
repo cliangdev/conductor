@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-import * as path from 'node:path'
-import * as os from 'node:os'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig, resolveProject } from './config.js'
 import { ApiError } from './api.js'
-import { refreshPluginAssetsIfOutdated, getAssetSrcDir } from '../lib/plugin-assets.js'
+import { refreshInstalledPluginAssets } from '../lib/plugin-assets.js'
 import {
   createWorkItem,
   updateWorkItem,
@@ -1084,7 +1082,7 @@ export const TOOLS = [
   // --- Creatives: Brand Kit + Creative library + local rendering ---
   {
     name: 'get_brand_kit',
-    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit. Also carries `configured: false` plus a `nextStep` when the kit has never been edited — check this before writing a Creative against it.",
+    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit. Also carries `configured: false` plus a `nextStep` when the kit looks unset — check this before writing a Creative against it.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1480,27 +1478,8 @@ function errorResponse(error: string | { error: string; status?: number; code?: 
   }
 }
 
-/** Refreshes an existing Claude plugin install (commands/skills under .claude/) in place when it was
- * written by an older package version — same logic `conductor init` uses, scoped to the plugin's own
- * files. Never touches anything when no install exists. Logs one stderr line on an actual refresh;
- * swallows any error so a broken refresh never blocks the server from starting. */
-export function refreshPluginAssetsOnStartup(): void {
-  try {
-    const result = refreshPluginAssetsIfOutdated(
-      getAssetSrcDir(),
-      path.join(os.homedir(), '.claude'),
-      path.join(process.cwd(), '.claude')
-    )
-    if (result.refreshed) {
-      process.stderr.write(`conductor: refreshed Claude plugin assets (${result.location})\n`)
-    }
-  } catch (err) {
-    process.stderr.write(`conductor: could not refresh Claude plugin assets: ${err instanceof Error ? err.message : String(err)}\n`)
-  }
-}
-
 export async function runMcpServer(): Promise<void> {
-  refreshPluginAssetsOnStartup()
+  refreshInstalledPluginAssets({ log: (message) => process.stderr.write(`${message}\n`) })
 
   const server = new Server(
     { name: 'conductor-mcp', version: '0.1.0' },

@@ -5,7 +5,7 @@ import * as os from 'os'
 import { fileURLToPath } from 'url'
 import { Command } from 'commander'
 import { readConfig } from '../lib/config.js'
-import { refreshPluginAssetsIfOutdated, getAssetSrcDir } from '../lib/plugin-assets.js'
+import { refreshInstalledPluginAssets } from '../lib/plugin-assets.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -31,27 +31,9 @@ function tailLog(lines = 5): string {
   }
 }
 
-/** Refreshes an existing Claude plugin install in place when it was written by an older package
- * version — same logic `conductor init` uses, scoped to the plugin's own files under .claude/. Never
- * touches anything when no install exists; swallows any error so it can never block the daemon. */
-export function refreshPluginAssetsOnStartup(): void {
-  try {
-    const result = refreshPluginAssetsIfOutdated(
-      getAssetSrcDir(),
-      path.join(os.homedir(), '.claude'),
-      path.join(process.cwd(), '.claude')
-    )
-    if (result.refreshed) {
-      console.error(`conductor: refreshed Claude plugin assets (${result.location})`)
-    }
-  } catch (err) {
-    console.error(`conductor: could not refresh Claude plugin assets: ${err instanceof Error ? err.message : String(err)}`)
-  }
-}
-
 /** Returns true if the daemon started and stayed alive, false otherwise. */
 export async function startDaemon(): Promise<boolean> {
-  refreshPluginAssetsOnStartup()
+  refreshInstalledPluginAssets({ log: (message) => console.error(message) })
 
   const config = readConfig()
   if (!config) {

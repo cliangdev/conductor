@@ -14,12 +14,13 @@ For how any of this works under the hood, see [docs/creatives.md](creatives.md).
 - Install or update the CLI: `npm install -g @cliangdev/conductor@latest`, then `conductor login`
   and `conductor init` in your project — already set up? Just update; skills refresh automatically
   from 0.25.0.
-- Set up your brand first — **Settings → Brand** in the web app, or ask Claude: "Set up our brand
-  kit in Conductor from \<our website\>."
-- In Claude Code/Desktop, run `/conductor:creative` and describe what you want, e.g. "Make an ad
-  for our spring sale, headline leads with the discount," "Make a 9:16 TikTok video from our latest
-  photo with the headline *half price*," or "Upload this finished video as a Clip and put it on a
-  new Post."
+- Set up your brand first — **Settings → Brand** in the web app, or ask Claude something like "Set
+  up our brand kit in Conductor from our website" (Claude will ask for the URL).
+- In Claude Code, run `/conductor:creative` and describe what you want — e.g. "Make an ad for our
+  spring sale, headline leads with the discount," "Make a 9:16 TikTok video from our latest photo
+  with the headline *half price*," or "Upload this finished video as a Clip and put it on a new
+  Post." In Claude Desktop (or Claude Code), skip the slash command and just ask the same way —
+  Claude uses the same Conductor MCP tools either way.
 - No Claude Code/Desktop? **Marketing → Creatives → New creative** in the web app does the same job.
 
 The rest of this guide is the full walkthrough, starting with your Brand Kit.
@@ -83,7 +84,9 @@ work. Either way, rendering the final artwork always happens locally, not on Con
 - Google Chrome or Microsoft Edge installed, or run `npx playwright install chromium` once.
   Rendering launches whichever it finds first.
 
-Run `/conductor:creative` and describe what you want, or just ask Claude something like:
+In Claude Code, run `/conductor:creative` and describe what you want. In Claude Desktop (or Claude
+Code, if you'd rather skip the slash command), just ask Claude directly — the same MCP tools drive
+either flow, e.g.:
 
 > Make an ad for our spring sale — photo of the new product line, headline should lead with the
 > discount.

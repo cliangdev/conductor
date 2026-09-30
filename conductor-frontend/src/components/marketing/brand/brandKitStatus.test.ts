@@ -24,28 +24,23 @@ function kit(overrides: Partial<BrandKit> = {}): BrandKit {
     knowledgePagePath: '',
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
+    configured: false,
     ...overrides,
   }
 }
 
 describe('isBrandKitUnconfigured', () => {
-  it('is true for a freshly lazily-created kit (never edited, no font, no logo)', () => {
-    expect(isBrandKitUnconfigured(kit())).toBe(true)
+  it('is true when the server says configured: false', () => {
+    expect(isBrandKitUnconfigured(kit({ configured: false }))).toBe(true)
   })
 
-  it('is false once the kit has been edited (updatedAt moved past createdAt)', () => {
-    expect(isBrandKitUnconfigured(kit({ updatedAt: '2026-01-02T00:00:00Z' }))).toBe(false)
+  it('is false when the server says configured: true', () => {
+    expect(isBrandKitUnconfigured(kit({ configured: true }))).toBe(false)
   })
 
-  it('is false when a font family is set, even with updatedAt === createdAt', () => {
-    expect(isBrandKitUnconfigured(kit({ fontFamily: 'Poppins' }))).toBe(false)
-  })
-
-  it('is false when any logo slot is set', () => {
-    expect(isBrandKitUnconfigured(kit({ markUrl: 'https://cdn.example/mark.png' }))).toBe(false)
-    expect(isBrandKitUnconfigured(kit({ wordmarkDarkUrl: 'https://cdn.example/w-dark.png' }))).toBe(false)
-    expect(isBrandKitUnconfigured(kit({ wordmarkLightUrl: 'https://cdn.example/w-light.png' }))).toBe(false)
-    expect(isBrandKitUnconfigured(kit({ badgeUrl: 'https://cdn.example/badge.png' }))).toBe(false)
+  it('is false when `configured` is missing (older backend) — never a false notice', () => {
+    const { configured, ...withoutConfigured } = kit()
+    expect(isBrandKitUnconfigured(withoutConfigured as BrandKit)).toBe(false)
   })
 
   it('is false for null/undefined (nothing to nudge about yet)', () => {

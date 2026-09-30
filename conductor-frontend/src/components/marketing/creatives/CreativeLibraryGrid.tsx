@@ -49,10 +49,13 @@ const STATE_LABEL: Record<CreativeState, string> = {
   ARCHIVED: 'Archived',
 }
 
-/** The empty state's copyable example — /conductor:creative is the CLI's skill-driven slash command
- *  (conductor-tools 0.25.0+); typing it into Claude Code/Desktop starts the same guided flow the
+/** The empty state's copyable examples. `/conductor:creative` is the CLI's skill-driven slash
+ *  command (conductor-tools 0.25.0+) — slash commands only exist in Claude Code, so Claude Desktop
+ *  gets the same request phrased as a plain ask; either way Claude drives the same MCP tools the
  *  "Make a creative" docs walk through. */
-const CREATIVE_SLASH_PROMPT = '/conductor:creative Make a 9:16 TikTok video from our latest photo with the headline …'
+const CREATIVE_EXAMPLE_PROMPT =
+  "Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'"
+const CREATIVE_SLASH_PROMPT = `/conductor:creative ${CREATIVE_EXAMPLE_PROMPT}`
 
 /** STILL and MOTION both mount a live board when there's no rendered thumbnail yet. A MOTION tile
  *  additionally overlays a play badge + duration (a still frame of a video, not a photo) and, once
@@ -363,10 +366,14 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
               !filtered && (
                 <div className="w-full max-w-md space-y-3 text-left">
                   <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">In Claude Code:</p>
+                    <CopyableCode text={CREATIVE_SLASH_PROMPT} label="Copy Claude Code prompt" />
+                  </div>
+                  <div className="space-y-1">
                     <p className="text-xs font-medium text-muted-foreground">
-                      In Claude Code or Claude Desktop:
+                      In Claude Desktop (or Claude Code): ask, e.g.
                     </p>
-                    <CopyableCode text={CREATIVE_SLASH_PROMPT} label="Copy example prompt" />
+                    <CopyableCode text={CREATIVE_EXAMPLE_PROMPT} label="Copy ask-Claude prompt" />
                   </div>
                   <Can do="creative.manage">
                     <Button onClick={handleNewCreative} disabled={creating}>

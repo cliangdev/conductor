@@ -73,6 +73,10 @@ export interface BrandKit {
   knowledgePagePath: string
   createdAt: string
   updatedAt: string
+  /** Server-computed: true once the kit has any customisation (font, logo, tokens edited, etc.).
+   *  Optional so a response from an older backend (no `configured` field yet) doesn't get treated
+   *  as unconfigured — see isBrandKitUnconfigured in ./brandKitStatus. */
+  configured?: boolean
 }
 
 export interface CreateBrandKitRequest {

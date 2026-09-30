@@ -188,8 +188,10 @@ export function RendersPanel({
           action={
             <div className="w-full max-w-sm space-y-2 text-left">
               <p className="text-xs text-muted-foreground">
-                In Claude Code/Desktop, try <code className="text-foreground">/conductor:creative</code>, or
-                copy a prompt or the CLI command:
+                In Claude Code: <code className="text-foreground">/conductor:creative</code>.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                In Claude Desktop (or Claude Code): ask, e.g. copy this prompt, or the CLI command:
               </p>
               <CopyableCode text={prompt} label="Copy render prompt" />
               <CopyableCode text={cliCommand} label="Copy render CLI command" />

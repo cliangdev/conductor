@@ -25,7 +25,9 @@ public class BrandKitValidationException extends RuntimeException {
     }
 
     private static String summarize(List<FieldError> fieldErrors) {
-        return fieldErrors.stream().map(FieldError::message).reduce((a, b) -> a + "; " + b)
+        return fieldErrors.stream()
+                .map(fe -> fe.field() + ": " + fe.message())
+                .reduce((a, b) -> a + "; " + b)
                 .orElse("Brand Kit failed validation");
     }
 }

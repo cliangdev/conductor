@@ -30,6 +30,7 @@ function kit(overrides: Partial<BrandKit> = {}): BrandKit {
     knowledgePagePath: '',
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
+    configured: false,
     ...overrides,
   }
 }
@@ -46,11 +47,11 @@ describe('BrandSetupNotice', () => {
     expect(screen.getByText(/Set up your brand first/)).toBeInTheDocument()
     const link = screen.getByRole('link', { name: /Settings → Brand/ })
     expect(link).toHaveAttribute('href', '/app/projects/proj-1/settings/brand')
-    expect(screen.getByText('Set up our brand kit in Conductor from <our website>')).toBeInTheDocument()
+    expect(screen.getByText('Set up our brand kit in Conductor from our website')).toBeInTheDocument()
   })
 
   it('does not show for a configured kit', () => {
-    render(<BrandSetupNotice projectId="proj-1" kit={kit({ fontFamily: 'Poppins' })} />)
+    render(<BrandSetupNotice projectId="proj-1" kit={kit({ configured: true })} />)
     expect(screen.queryByTestId('brand-setup-notice')).not.toBeInTheDocument()
   })
 

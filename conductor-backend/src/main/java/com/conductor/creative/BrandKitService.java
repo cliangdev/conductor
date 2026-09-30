@@ -13,6 +13,7 @@ import com.conductor.service.StorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,6 +41,7 @@ import java.util.regex.PatternSyntaxException;
 public class BrandKitService {
 
     public static final String DEFAULT_SLUG = "default";
+    private static final String DEFAULT_KIT_NAME = "Default";
     private static final int IMAGE_URL_EXPIRY_MINUTES = 15;
     private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
 
@@ -58,6 +61,12 @@ public class BrandKitService {
             "lightCard", "#FFFFFF",
             "ink", "#18181B",
             "ink2", "#71717A");
+
+    /** {@link #DEFAULT_TOKENS} as a {@link JsonNode}, built exactly once (a plain, unconfigured
+     * {@link ObjectMapper} is enough for a {@code Map<String, String>} — no need for the injected,
+     * request-scoped-config one) and reused everywhere a kit's tokens get compared or seeded against the
+     * default, instead of re-serializing the same constant map on every call. */
+    private static final JsonNode DEFAULT_TOKENS_NODE = new ObjectMapper().valueToTree(DEFAULT_TOKENS);
 
     private static final List<String> DEFAULT_PLACEMENTS = List.of("9x16", "4x5", "1x1");
 
@@ -121,9 +130,9 @@ public class BrandKitService {
         BrandKit kit = new BrandKit();
         kit.setProjectId(projectId);
         kit.setSlug(DEFAULT_SLUG);
-        kit.setName("Default");
+        kit.setName(DEFAULT_KIT_NAME);
         kit.setDefault(true);
-        kit.setTokens(objectMapper.valueToTree(DEFAULT_TOKENS));
+        kit.setTokens(DEFAULT_TOKENS_NODE);
         kit.setCopyRules(objectMapper.createArrayNode());
         kit.setApprovedLines(objectMapper.createArrayNode());
         kit.setEnabledPlacements(objectMapper.valueToTree(DEFAULT_PLACEMENTS));
@@ -157,7 +166,7 @@ public class BrandKitService {
         kit.setSlug(request.getSlug());
         kit.setName(request.getName());
         kit.setDefault(false);
-        kit.setTokens(request.getTokens() != null ? objectMapper.valueToTree(request.getTokens()) : objectMapper.valueToTree(DEFAULT_TOKENS));
+        kit.setTokens(request.getTokens() != null ? objectMapper.valueToTree(request.getTokens()) : DEFAULT_TOKENS_NODE);
         kit.setFontFamily(request.getFontFamily());
         kit.setFontUrl(request.getFontUrl());
         kit.setCtaClaim(request.getCtaClaim());
@@ -177,6 +186,10 @@ public class BrandKitService {
 
         List<BrandKitValidationException.FieldError> errors = new ArrayList<>();
         JsonNode copyRules = request.getCopyRules() != null ? validateAndConvertCopyRules(request.getCopyRules(), errors) : null;
+        if (request.getApprovedLines() != null && request.getAddApprovedLines() != null) {
+            errors.add(new BrandKitValidationException.FieldError("addApprovedLines",
+                    "cannot be sent together with approvedLines"));
+        }
         if (!errors.isEmpty()) {
             throw new BrandKitValidationException(errors);
         }
@@ -185,7 +198,7 @@ public class BrandKitService {
             kit.setName(request.getName());
         }
         if (request.getTokens() != null) {
-            kit.setTokens(objectMapper.valueToTree(request.getTokens()));
+            kit.setTokens(mergeTokens(kit.getTokens(), request.getTokens()));
         }
         if (request.getFontFamily() != null) {
             kit.setFontFamily(request.getFontFamily());
@@ -204,6 +217,8 @@ public class BrandKitService {
         }
         if (request.getApprovedLines() != null) {
             kit.setApprovedLines(objectMapper.valueToTree(request.getApprovedLines()));
+        } else if (request.getAddApprovedLines() != null && !request.getAddApprovedLines().isEmpty()) {
+            kit.setApprovedLines(appendApprovedLines(kit.getApprovedLines(), request.getAddApprovedLines()));
         }
         if (request.getEnabledPlacements() != null) {
             kit.setEnabledPlacements(objectMapper.valueToTree(request.getEnabledPlacements()));
@@ -343,6 +358,52 @@ public class BrandKitService {
         return gcsPath != null ? storageService.generateSignedUrl(gcsPath, IMAGE_URL_EXPIRY_MINUTES) : null;
     }
 
+    /**
+     * True when {@code kit} carries any customisation beyond the neutral starting point (see
+     * {@code BrandKitResponse.configured} in {@code openapi-v2.yaml}). Computed fresh on every read from
+     * the kit's current data — never from {@code createdAt}/{@code updatedAt} — so an internal write that
+     * doesn't touch any of these fields (e.g. switching which kit is default) never changes it.
+     */
+    public boolean isConfigured(BrandKit kit) {
+        return tokensDifferFromDefault(kit.getTokens())
+                || hasText(kit.getFontFamily())
+                || kit.getMarkGcsPath() != null
+                || kit.getWordmarkDarkGcsPath() != null
+                || kit.getWordmarkLightGcsPath() != null
+                || kit.getBadgeGcsPath() != null
+                || hasText(kit.getCtaClaim())
+                || (kit.getCopyRules() != null && !kit.getCopyRules().isEmpty())
+                || (kit.getApprovedLines() != null && !kit.getApprovedLines().isEmpty())
+                || kit.isAccentPhraseRequired()
+                || !DEFAULT_KIT_NAME.equals(kit.getName());
+    }
+
+    /**
+     * True unless {@code tokens} has exactly {@link #DEFAULT_TOKENS}'s keys, each with a value that's
+     * the same hex colour once trimmed and lower-cased — a plain {@link JsonNode#equals} would treat
+     * {@code #3B82F6} and {@code #3b82f6} as a customisation, which they aren't.
+     */
+    private boolean tokensDifferFromDefault(JsonNode tokens) {
+        if (tokens == null || !tokens.isObject() || tokens.size() != DEFAULT_TOKENS.size()) {
+            return true;
+        }
+        for (Map.Entry<String, String> entry : DEFAULT_TOKENS.entrySet()) {
+            JsonNode value = tokens.get(entry.getKey());
+            if (value == null || !value.isTextual() || !normalizeHex(value.asText()).equals(normalizeHex(entry.getValue()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String normalizeHex(String value) {
+        return value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
     private String imagePrefix(String projectId, String kitId, String slot) {
         return "projects/" + projectId + "/brand/" + kitId + "/" + slot;
     }
@@ -357,6 +418,40 @@ public class BrandKitService {
 
     private static String normalizeContentType(String contentType) {
         return contentType == null ? null : contentType.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Merges a PATCH's {@code tokens} onto the kit's current tokens: keys given override, keys omitted
+     * keep their current value, and a key sent with a JSON {@code null} value is removed. The web form
+     * always sends the full map with no nulls, so a full replace and a merge are indistinguishable from
+     * its perspective. {@code current} not being a JSON object (missing, a JSON {@code null}, or —
+     * defensively — anything else malformed) starts the merge from an empty object rather than throwing.
+     */
+    private JsonNode mergeTokens(JsonNode current, Map<String, String> updates) {
+        ObjectNode merged = objectMapper.createObjectNode();
+        if (current != null && current.isObject()) {
+            merged.setAll((ObjectNode) current);
+        }
+        updates.forEach((key, value) -> {
+            if (value == null) {
+                merged.remove(key);
+            } else {
+                merged.put(key, value);
+            }
+        });
+        return merged;
+    }
+
+    /** Appends {@code toAdd} to {@code current}, deduping against the combined list while keeping order. */
+    private JsonNode appendApprovedLines(JsonNode current, List<String> toAdd) {
+        LinkedHashSet<String> lines = new LinkedHashSet<>();
+        if (current != null) {
+            current.forEach(n -> lines.add(n.asText()));
+        }
+        lines.addAll(toAdd);
+        ArrayNode array = objectMapper.createArrayNode();
+        lines.forEach(array::add);
+        return array;
     }
 
     /** Validates every copy rule's {@code pattern}/{@code exceptPattern} compiles, converting to JSON as it goes. */
