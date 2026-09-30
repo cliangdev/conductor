@@ -518,6 +518,10 @@ function MediaKindPanel({ kind, projectId, token, items, onSelect, onMediaChange
             >
               <MediaTile item={item} />
             </button>
+            {/* The label is how a library of many similar photos is told apart (and what Claude calls it). */}
+            <p className="truncate border-t border-border bg-surface px-1.5 py-0.5 text-[11px] text-muted-foreground" title={item.label ?? undefined}>
+              {item.label || 'Untitled'}
+            </p>
             {canManage && (
               <div className="flex items-center justify-between gap-1 border-t border-border bg-surface px-1.5 py-1 text-[11px]">
                 <button

@@ -85,16 +85,122 @@ async function withCreativeErrors<T>(fn: () => Promise<T>): Promise<T> {
 
 // --- Brand Kit ------------------------------------------------------------
 
+/**
+ * The backend's 422 body for a Brand Kit validation failure (`PatchBrandKitRequest`/
+ * `CreateBrandKitRequest`) is `FieldValidationProblem`: `{ message, fieldErrors: [{ field, message }] }`
+ * — a different shape from a Creative's `violations` (no `ruleId`). Reparsed into one readable string
+ * the same way `withCreativeErrors` does for Creatives, so the model gets something actionable instead
+ * of raw JSON text.
+ */
+async function withBrandKitErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 422) {
+      let fieldErrors: Array<{ field?: string; message: string }> | undefined
+      try {
+        const parsed = JSON.parse(err.message) as { fieldErrors?: unknown }
+        if (Array.isArray(parsed.fieldErrors)) fieldErrors = parsed.fieldErrors as typeof fieldErrors
+      } catch {
+        // Not JSON — use the message as-is below.
+      }
+      const message = fieldErrors
+        ? fieldErrors.map((f) => `[${f.field ?? '?'}] ${f.message}`).join('; ')
+        : err.message
+      throw new ApiError(err.status, message, { code: err.code, title: err.title })
+    }
+    throw err
+  }
+}
+
+/**
+ * A kit is "configured" once a person has touched it: edited any field (so `updatedAt` moved past
+ * `createdAt`), set a font, or uploaded any logo slot. A brand-new default kit fails all three and is
+ * brand-free tokens only — worth calling out explicitly rather than letting an agent render against
+ * it unknowingly.
+ */
+function isBrandKitConfigured(kit: Record<string, unknown>): boolean {
+  const neverEdited = kit['updatedAt'] === kit['createdAt']
+  const hasFont = !!kit['fontFamily']
+  const hasLogo = !!(kit['markUrl'] || kit['wordmarkDarkUrl'] || kit['wordmarkLightUrl'] || kit['badgeUrl'])
+  return !(neverEdited && !hasFont && !hasLogo)
+}
+
 export async function getBrandKit(params: { kitId?: string }, config: Config): Promise<Record<string, unknown>> {
+  let kit: Record<string, unknown>
   if (params.kitId) {
-    return apiGet(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
+    kit = await apiGet(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
+  } else {
+    const kits = await apiGet<Array<Record<string, unknown>>>(`${V2_PROJECT(config)}/marketing/brand-kits`, config)
+    const found = kits.find((k) => k['isDefault']) ?? kits[0]
+    if (!found) {
+      throw new Error('This project has no Brand Kit yet — one is created for every workspace by default; check Settings.')
+    }
+    kit = found
   }
-  const kits = await apiGet<Array<Record<string, unknown>>>(`${V2_PROJECT(config)}/marketing/brand-kits`, config)
-  const found = kits.find((k) => k['isDefault']) ?? kits[0]
-  if (!found) {
-    throw new Error('This project has no Brand Kit yet — one is created for every workspace by default; check Settings.')
+  const configured = isBrandKitConfigured(kit)
+  if (configured) return { ...kit, configured }
+  return {
+    ...kit,
+    configured,
+    nextStep:
+      'This Brand Kit has never been set up — call update_brand_kit (name, tokens, font, CTA claim, copy rules) ' +
+      'and upload_brand_image (logo) before creating a Creative with it.',
   }
-  return found
+}
+
+export interface UpdateBrandKitParams {
+  kitId?: string
+  name?: string
+  fontFamily?: string
+  fontUrl?: string
+  /** Merged onto the kit's existing tokens client-side (read, then PATCH the full merged set) — only
+   * the keys given here change; every other existing token is kept. */
+  tokens?: Record<string, string>
+  ctaClaim?: string
+  accentPhraseRequired?: boolean
+  /** Replaces the whole list. */
+  copyRules?: Array<Record<string, unknown>>
+  /** Replaces the whole list. Mutually exclusive with addApprovedLines. */
+  approvedLines?: string[]
+  /** Appends to the existing list instead of replacing it. Mutually exclusive with approvedLines. */
+  addApprovedLines?: string[]
+  enabledPlacements?: string[]
+  knowledgePagePath?: string
+}
+
+export async function updateBrandKit(params: UpdateBrandKitParams, config: Config): Promise<Record<string, unknown>> {
+  if (params.approvedLines !== undefined && params.addApprovedLines !== undefined) {
+    throw new Error('Pass either approvedLines (replaces the whole list) or addApprovedLines (appends), not both.')
+  }
+
+  const current = await getBrandKit({ kitId: params.kitId }, config)
+  const kitId = current['id'] as string
+
+  const patch: Record<string, unknown> = {}
+  if (params.name !== undefined) patch['name'] = params.name
+  if (params.fontFamily !== undefined) patch['fontFamily'] = params.fontFamily
+  if (params.fontUrl !== undefined) patch['fontUrl'] = params.fontUrl
+  if (params.ctaClaim !== undefined) patch['ctaClaim'] = params.ctaClaim
+  if (params.accentPhraseRequired !== undefined) patch['accentPhraseRequired'] = params.accentPhraseRequired
+  if (params.copyRules !== undefined) patch['copyRules'] = params.copyRules
+  if (params.enabledPlacements !== undefined) patch['enabledPlacements'] = params.enabledPlacements
+  if (params.knowledgePagePath !== undefined) patch['knowledgePagePath'] = params.knowledgePagePath
+
+  if (params.tokens !== undefined) {
+    const existingTokens = (current['tokens'] as Record<string, string> | undefined) ?? {}
+    patch['tokens'] = { ...existingTokens, ...params.tokens }
+  }
+
+  if (params.approvedLines !== undefined) {
+    patch['approvedLines'] = params.approvedLines
+  } else if (params.addApprovedLines !== undefined) {
+    const existingLines = (current['approvedLines'] as string[] | undefined) ?? []
+    const additions = params.addApprovedLines.filter((line) => !existingLines.includes(line))
+    patch['approvedLines'] = [...existingLines, ...additions]
+  }
+
+  return withBrandKitErrors(() => apiPatch(`${V2_PROJECT(config)}/marketing/brand-kits/${kitId}`, patch, config))
 }
 
 // --- Creatives --------------------------------------------------------------
@@ -277,6 +383,7 @@ function stripExtension(filename: string): string {
 const MEDIA_RESULT_FIELDS = [
   'id', 'label', 'mediaKind', 'contentType', 'width', 'height', 'durationSeconds', 'hasAudio',
   'posterUrl', 'url', 'sizeBytes', 'source', 'licence', 'aiGenerated', 'uploadStatus', 'checked', 'blocked',
+  'blockedReason',
 ] as const
 
 function trimMedia(media: Record<string, unknown>): Record<string, unknown> {
@@ -285,6 +392,31 @@ function trimMedia(media: Record<string, unknown>): Record<string, unknown> {
     if (key in media) out[key] = media[key]
   }
   return out
+}
+
+export interface ListCreativeMediaParams {
+  kind?: string
+  includeBlocked?: boolean
+}
+
+/**
+ * The project's media library, trimmed to what's worth an agent's context — call this before
+ * uploading a new photo/video/audio file, so an existing, already-checked one gets reused instead
+ * of a duplicate upload.
+ */
+export async function listCreativeMedia(
+  params: ListCreativeMediaParams,
+  config: Config
+): Promise<Array<Record<string, unknown>>> {
+  const query = new URLSearchParams()
+  if (params.kind) query.set('mediaKind', params.kind)
+  if (params.includeBlocked) query.set('includeBlocked', 'true')
+  const qs = query.toString()
+  const items = await apiGet<Array<Record<string, unknown>>>(
+    `${V2_PROJECT(config)}/marketing/photos${qs ? `?${qs}` : ''}`,
+    config
+  )
+  return items.map(trimMedia)
 }
 
 async function uploadPoster(mediaId: string, localVideoPath: string, config: Config, warnings: string[]): Promise<void> {
@@ -432,6 +564,55 @@ export async function uploadCreativeMedia(params: UploadCreativeMediaParams, con
 /** Deprecated alias for {@link uploadCreativeMedia}, kept so existing callers naming the old tool
  * still work — same implementation, same behavior, including for photos. */
 export const uploadCreativePhoto = uploadCreativeMedia
+
+const BRAND_IMAGE_SLOTS = ['mark', 'wordmark_dark', 'wordmark_light', 'badge'] as const
+
+/** Content type for a Brand Kit image slot upload — PNG/JPEG/WebP via the same magic-byte sniff as a
+ * Creative photo, plus SVG (a common logo format the sniff can't parse, so it's inferred from the
+ * file extension instead). */
+function brandImageContentType(bytes: Uint8Array, filename: string): string {
+  const info = readImageDimensions(bytes)
+  if (info) return info.contentType
+  if (extname(filename).toLowerCase() === '.svg') return 'image/svg+xml'
+  throw new Error(`"${filename}" is not a recognizable PNG, JPEG, WebP or SVG image.`)
+}
+
+export interface UploadBrandImageParams {
+  kitId?: string
+  slot: string
+  filePath?: string
+  url?: string
+}
+
+/**
+ * Uploads a workspace's logo mark, wordmark or badge into one Brand Kit image slot from a local file
+ * or a public URL — mint, PUT the bytes, confirm, in one call.
+ */
+export async function uploadBrandImage(params: UploadBrandImageParams, config: Config): Promise<Record<string, unknown>> {
+  if (!(BRAND_IMAGE_SLOTS as readonly string[]).includes(params.slot)) {
+    throw new Error(`slot must be one of ${BRAND_IMAGE_SLOTS.join(', ')}`)
+  }
+  if (!params.filePath && !params.url) {
+    throw new Error('Pass filePath (a file on this machine) or url (a public http(s) URL).')
+  }
+
+  const kit = await getBrandKit({ kitId: params.kitId }, config)
+  const kitId = kit['id'] as string
+  const source = await readMediaSource({ filePath: params.filePath, url: params.url })
+  const contentType = brandImageContentType(source.bytes, source.filename)
+
+  const mint = await apiPost<{ uploadUrl: string; gcsPath: string }>(
+    `${V2_PROJECT(config)}/marketing/brand-kits/${kitId}/images/${params.slot}`,
+    { contentType, sizeBytes: source.bytes.byteLength },
+    config
+  )
+  await putBytes(mint.uploadUrl, contentType, source.bytes)
+  return apiPost(
+    `${V2_PROJECT(config)}/marketing/brand-kits/${kitId}/images/${params.slot}/confirm`,
+    { gcsPath: mint.gcsPath },
+    config
+  )
+}
 
 // --- Rendering ----------------------------------------------------------------
 

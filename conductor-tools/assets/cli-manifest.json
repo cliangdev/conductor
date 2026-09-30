@@ -168,6 +168,10 @@
       {
         "name": "conductor:workflow",
         "description": "Design and create a Conductor workflow \u2014 YAML automation or statechart lifecycle \u2014 via guided discovery and MCP creation."
+      },
+      {
+        "name": "conductor:creative",
+        "description": "One entry point for creative work \u2014 checks the workspace brand (offers to set it up if unconfigured), asks what to make (static ad, short video, an existing clip), then hands off to the conductor-creative skill through render, preview and attach."
       }
     ],
     "agents": [
@@ -191,7 +195,7 @@
       },
       {
         "name": "conductor-creative",
-        "description": "Makes a Creative end to end: reads the Brand Kit and its Knowledge page, picks a photo and an angle, creates the Creative, renders and looks at the result, fixes what's wrong, then hands it to conductor-publisher."
+        "description": "Makes a Creative end to end, static or short video: sets up the Brand Kit if unconfigured, reads it and its Knowledge page, picks media and an angle, creates the Creative, renders and looks at the result, fixes what's wrong, then hands it to conductor-publisher."
       }
     ]
   },
@@ -722,7 +726,25 @@
     },
     {
       "name": "get_brand_kit",
-      "description": "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context.",
+      "description": "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Carries configured: false plus a nextStep when the kit has never been edited.",
+      "category": "marketing"
+    },
+    {
+      "name": "update_brand_kit",
+      "description": "Patch a workspace Brand Kit's name, tokens, font, CTA claim, copy rules, approved lines or enabled placements. tokens merges onto the existing set; every other field is set-replace.",
+      "category": "marketing"
+    },
+    {
+      "name": "upload_brand_image",
+      "description": "Upload a logo mark, wordmark or badge into a Brand Kit image slot from a local file or a public URL, in one call.",
+      "category": "marketing",
+      "requiredParams": [
+        "slot"
+      ]
+    },
+    {
+      "name": "list_creative_media",
+      "description": "The project's media library (photos, videos, audio) with review state and provenance. Call before uploading to reuse existing media.",
       "category": "marketing"
     },
     {

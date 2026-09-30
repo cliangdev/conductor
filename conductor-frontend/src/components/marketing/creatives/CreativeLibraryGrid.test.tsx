@@ -22,6 +22,10 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
+Object.assign(navigator, {
+  clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+})
+
 import { apiGet, apiPost } from '@/lib/api'
 import { CreativeLibraryGrid } from './CreativeLibraryGrid'
 import type { Creative, CreativePhoto } from './types'
@@ -145,6 +149,24 @@ describe('CreativeLibraryGrid', () => {
 
     expect(await screen.findByText('12a')).toBeInTheDocument()
     expect(screen.getByText('b')).toBeInTheDocument()
+  })
+
+  it('shows the empty-state\'s three ways to make a Creative, with a copyable slash-command prompt', async () => {
+    mockGets({ creatives: [] })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    await screen.findByText('No Creatives yet')
+    const promptText = screen.getByText(/\/conductor:creative Make a 9:16 TikTok video/)
+    expect(promptText).toBeInTheDocument()
+    expect(screen.getByText(/upload a finished video as a Clip/i)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copy example prompt' }))
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining('/conductor:creative Make a 9:16 TikTok video'),
+      ),
+    )
   })
 
   it('creates a new Creative and navigates to its editor', async () => {

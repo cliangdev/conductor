@@ -1,12 +1,14 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
+import { createRequire } from 'module'
 
 const PLUGIN_FILES = [
   'commands/conductor/prd.md',
   'commands/conductor/implement.md',
   'commands/conductor/fix.md',
   'commands/conductor/workflow.md',
+  'commands/conductor/creative.md',
   'agents/conductor-researcher.md',
   'skills/conductor-ux-ui-design/SKILL.md',
   'skills/conductor-ux-ui-design/references/design-tokens.md',
@@ -47,6 +49,14 @@ export function getAssetSrcDir(): string {
   const __dirname = path.dirname(__filename)
   // Compiled to dist/lib/plugin-assets.js; assets/claude/ is at ../../assets/claude
   return path.join(__dirname, '..', '..', 'assets', 'claude')
+}
+
+/** The running @cliangdev/conductor package's own version — same resolution path as
+ * getAssetSrcDir (dist/lib/plugin-assets.js -> ../../package.json). */
+export function getPackageVersion(): string {
+  const require = createRequire(import.meta.url)
+  const pkg = require('../../package.json') as { version: string }
+  return pkg.version
 }
 
 function mergeSettingsJson(settingsPath: string): void {
@@ -175,4 +185,61 @@ export function getPluginInstallStatus(
   }
 
   return { location, outdated }
+}
+
+/** Records which package version last (re)installed the plugin assets into targetDir, so a later
+ * startup can tell in one file read whether a refresh is needed — cheaper than diffing every file. */
+export const PLUGIN_VERSION_MARKER = '.conductor-plugin-version'
+
+export function writePluginVersionMarker(targetDir: string, version: string): void {
+  fs.writeFileSync(path.join(targetDir, PLUGIN_VERSION_MARKER), version, 'utf8')
+}
+
+export function readPluginVersionMarker(targetDir: string): string | undefined {
+  try {
+    return fs.readFileSync(path.join(targetDir, PLUGIN_VERSION_MARKER), 'utf8').trim()
+  } catch {
+    return undefined
+  }
+}
+
+export interface RefreshResult {
+  refreshed: boolean
+  location?: 'global' | 'local'
+}
+
+/**
+ * Silently re-installs plugin assets — same file-by-file logic `installPluginAssets` (and `conductor
+ * init`) uses, touching only PLUGIN_FILES, cleaning LEGACY_PATHS, and merging settings.json
+ * permissions, never any file outside those — when an existing install's recorded marker version is
+ * older than the package currently running. Checks the global (~/.claude) location first, then local
+ * (project/.claude), same precedence as {@link getPluginInstallStatus}, and refreshes whichever one is
+ * actually installed. Does nothing when neither location has an install (nothing to refresh), or the
+ * marker there already matches the current version. Call at MCP server / daemon startup, not on every
+ * tool call — this does a few sync file reads.
+ */
+export function refreshPluginAssetsIfOutdated(
+  assetSrcDir: string,
+  globalClaudeDir: string,
+  localClaudeDir: string,
+  currentVersion: string = getPackageVersion()
+): RefreshResult {
+  const anchor = path.join('commands', 'conductor', 'prd.md')
+  let targetDir: string | undefined
+  let location: 'global' | 'local' | undefined
+  if (fs.existsSync(path.join(globalClaudeDir, anchor))) {
+    targetDir = globalClaudeDir
+    location = 'global'
+  } else if (fs.existsSync(path.join(localClaudeDir, anchor))) {
+    targetDir = localClaudeDir
+    location = 'local'
+  }
+  if (!targetDir) return { refreshed: false }
+
+  const installedVersion = readPluginVersionMarker(targetDir)
+  if (installedVersion === currentVersion) return { refreshed: false }
+
+  installPluginAssets(targetDir, assetSrcDir)
+  writePluginVersionMarker(targetDir, currentVersion)
+  return { refreshed: true, location }
 }

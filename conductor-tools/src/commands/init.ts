@@ -10,7 +10,7 @@ import { readConfig, writeConfig } from '../lib/config.js'
 import { apiGet, apiPost } from '../lib/api.js'
 import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
 import { startDaemon } from './start.js'
-import { installPluginAssets, getAssetSrcDir } from '../lib/plugin-assets.js'
+import { installPluginAssets, getAssetSrcDir, writePluginVersionMarker, getPackageVersion } from '../lib/plugin-assets.js'
 import { printNextSteps } from '../lib/next-steps.js'
 
 interface McpServerEntry {
@@ -286,6 +286,7 @@ Examples:
 
       const claudeDir = path.join(projectRoot, '.claude')
       const pluginStatus = installPluginAssets(claudeDir, getAssetSrcDir())
+      writePluginVersionMarker(claudeDir, getPackageVersion())
       if (pluginStatus === 'installed') {
         console.log(chalk.green('✓ Installed conductor Claude plugin'))
       } else if (pluginStatus === 'updated') {

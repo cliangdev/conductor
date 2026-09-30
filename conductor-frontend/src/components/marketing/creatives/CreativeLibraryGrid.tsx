@@ -14,6 +14,7 @@ import { mountBoard } from '@cliangdev/creative-render/mount'
 import { motionKeyTimes } from '@cliangdev/creative-render/motion'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { CopyableCode } from '@/components/ui/copyable-code'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -23,6 +24,7 @@ import { Can } from '@/components/auth/Can'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { formatDuration } from '@/lib/format'
+import { BrandSetupNotice } from '@/components/marketing/brand/BrandSetupNotice'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import {
   creativeToRenderCreative,
@@ -46,6 +48,11 @@ const STATE_LABEL: Record<CreativeState, string> = {
   READY: 'Ready',
   ARCHIVED: 'Archived',
 }
+
+/** The empty state's copyable example — /conductor:creative is the CLI's skill-driven slash command
+ *  (conductor-tools 0.25.0+); typing it into Claude Code/Desktop starts the same guided flow the
+ *  "Make a creative" docs walk through. */
+const CREATIVE_SLASH_PROMPT = '/conductor:creative Make a 9:16 TikTok video from our latest photo with the headline …'
 
 /** STILL and MOTION both mount a live board when there's no rendered thumbnail yet. A MOTION tile
  *  additionally overlays a play badge + duration (a still frame of a video, not a photo) and, once
@@ -246,6 +253,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
   }, [kits])
 
   const showKitName = (kits?.length ?? 0) > 1
+  const defaultKit = useMemo(() => kits?.find((k) => k.isDefault) ?? kits?.[0] ?? null, [kits])
 
   // Group by family (display number): the "a" root plus any lettered variants, so the grid reads
   // like the wireframe ("12a" with "b c" pills) instead of one indistinguishable tile per variant.
@@ -282,6 +290,8 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
   return (
     <div className="space-y-4">
+      <BrandSetupNotice projectId={projectId} kit={defaultKit} />
+
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[9rem]">
           <Label htmlFor="creative-state-filter" className="text-xs font-medium text-muted-foreground">
@@ -347,15 +357,26 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
             description={
               filtered
                 ? 'No Creatives match these filters.'
-                : 'Start a Creative and its layout, theme and copy will preview live as you edit.'
+                : 'Make one three ways: ask Claude, start one here, or upload a finished video as a Clip.'
             }
             action={
               !filtered && (
-                <Can do="creative.manage">
-                  <Button onClick={handleNewCreative} disabled={creating}>
-                    New creative
-                  </Button>
-                </Can>
+                <div className="w-full max-w-md space-y-3 text-left">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      In Claude Code or Claude Desktop:
+                    </p>
+                    <CopyableCode text={CREATIVE_SLASH_PROMPT} label="Copy example prompt" />
+                  </div>
+                  <Can do="creative.manage">
+                    <Button onClick={handleNewCreative} disabled={creating}>
+                      {creating ? 'Creating…' : 'New creative'}
+                    </Button>
+                  </Can>
+                  <p className="text-xs text-muted-foreground">
+                    Already have a finished video? Start a creative here and set its kind to Clip.
+                  </p>
+                </div>
               )
             }
           />

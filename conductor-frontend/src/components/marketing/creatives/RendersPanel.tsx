@@ -7,10 +7,11 @@
 // here that launches anything server-side.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CopyIcon, ImagesIcon, Maximize2Icon, SparklesIcon } from 'lucide-react'
+import { ImagesIcon, Maximize2Icon, SparklesIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { CopyableCode } from '@/components/ui/copyable-code'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/ui/status-badge'
@@ -29,13 +30,6 @@ import {
 } from '@/components/marketing/creatives/types'
 
 const POLL_MS = 5000
-
-function copy(text: string) {
-  navigator.clipboard
-    ?.writeText(text)
-    .then(() => toastSuccess('Copied'))
-    .catch(() => toastError('Could not copy — select and copy manually'))
-}
 
 function placementLabel(registry: CreativeRegistry | null | undefined, key: string): string {
   if (key === 'sheet') return 'Contact sheet'
@@ -193,18 +187,16 @@ export function RendersPanel({
           }
           action={
             <div className="w-full max-w-sm space-y-2 text-left">
-              <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2 py-1.5">
-                <code className="flex-1 truncate text-xs">{prompt}</code>
-                <Button variant="ghost" size="sm" onClick={() => copy(prompt)} aria-label="Copy prompt">
-                  <CopyIcon className="h-3.5 w-3.5" aria-hidden />
-                </Button>
-              </div>
-              <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2 py-1.5">
-                <code className="flex-1 truncate text-xs">{cliCommand}</code>
-                <Button variant="ghost" size="sm" onClick={() => copy(cliCommand)} aria-label="Copy CLI command">
-                  <CopyIcon className="h-3.5 w-3.5" aria-hidden />
-                </Button>
-              </div>
+              <p className="text-xs text-muted-foreground">
+                In Claude Code/Desktop, try <code className="text-foreground">/conductor:creative</code>, or
+                copy a prompt or the CLI command:
+              </p>
+              <CopyableCode text={prompt} label="Copy render prompt" />
+              <CopyableCode text={cliCommand} label="Copy render CLI command" />
+              <p className="text-xs text-muted-foreground">
+                If <code className="text-foreground">render_creative</code> isn&apos;t available, update the
+                CLI: <code className="text-foreground">npm i -g @cliangdev/conductor@latest</code>
+              </p>
             </div>
           }
         />
