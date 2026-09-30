@@ -9,6 +9,22 @@ happen on the Post, exactly as before. This guide is for making the artwork; see
 
 For how any of this works under the hood, see [docs/creatives.md](creatives.md).
 
+## Quick start
+
+- Install or update the CLI: `npm install -g @cliangdev/conductor@latest`, then `conductor login`
+  and `conductor init` in your project — already set up? Just update; skills refresh automatically
+  from 0.25.0.
+- Set up your brand first — **Settings → Brand** in the web app, or ask Claude something like "Set
+  up our brand kit in Conductor from our website" (Claude will ask for the URL).
+- In Claude Code, run `/conductor:creative` and describe what you want — e.g. "Make an ad for our
+  spring sale, headline leads with the discount," "Make a 9:16 TikTok video from our latest photo
+  with the headline *half price*," or "Upload this finished video as a Clip and put it on a new
+  Post." In Claude Desktop (or Claude Code), skip the slash command and just ask the same way —
+  Claude uses the same Conductor MCP tools either way.
+- No Claude Code/Desktop? **Marketing → Creatives → New creative** in the web app does the same job.
+
+The rest of this guide is the full walkthrough, starting with your Brand Kit.
+
 ## 1. Set up your brand
 
 Go to **Settings → Brand**. This is where your workspace's visual identity and copy rules live —
@@ -61,16 +77,19 @@ work. Either way, rendering the final artwork always happens locally, not on Con
 
 **Prerequisites:**
 
-- `npm install -g @cliangdev/conductor` (0.22.0 or later), then `conductor login` and `conductor
-  init` in your project — see the [conductor-tools README](../conductor-tools/README.md) if you
-  haven't set these up before.
+- `npm install -g @cliangdev/conductor` (0.25.0 or later — earlier versions work for creatives but
+  don't have `/conductor:creative`), then `conductor login` and `conductor init` in your project —
+  see the [conductor-tools README](../conductor-tools/README.md) if you haven't set these up
+  before. Already set up? Just update the package; skills refresh automatically from 0.25.0.
 - Google Chrome or Microsoft Edge installed, or run `npx playwright install chromium` once.
   Rendering launches whichever it finds first.
 
-Ask Claude something like:
+In Claude Code, run `/conductor:creative` and describe what you want. In Claude Desktop (or Claude
+Code, if you'd rather skip the slash command), just ask Claude directly — the same MCP tools drive
+either flow, e.g.:
 
-> Make an ad for our spring sale using the conductor-creative skill — photo of the new product
-> line, headline should lead with the discount.
+> Make an ad for our spring sale — photo of the new product line, headline should lead with the
+> discount.
 
 or, to test a headline variant of something that already exists:
 
@@ -80,7 +99,11 @@ Claude reads your Brand Kit and its linked Knowledge page, picks or uploads a ph
 copy against your kit's rules, and renders a preview to check by eye before calling it done. Under
 the hood it's calling these MCP tools in sequence: `get_brand_kit`, `upload_creative_photo`,
 `create_creative`, `render_creative`, `preview_creative`, and — once you're ready to publish —
-`attach_creative_to_post`. `get_post_status` confirms the Post picked it up.
+`attach_creative_to_post`. `get_post_status` confirms the Post picked it up. `get_brand_kit`
+answers with a `configured` flag — when it's false, Claude sets up the kit itself with
+`update_brand_kit` and `upload_brand_image` before writing any copy, rather than rendering against
+an empty kit. `list_creative_media` lists what's already in your photo/video/audio library, so
+Claude can reuse an existing upload instead of asking you for a new one.
 
 Display ids like `12a` (and lettered variants `12b`, `12c`, …) work everywhere you'd type a
 Creative's id — in a prompt, in the MCP tools and in the CLI (`conductor creative render 12a`).

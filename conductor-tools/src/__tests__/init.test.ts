@@ -413,7 +413,28 @@ describe('installPluginAssets', () => {
   })
 
   beforeEach(() => {
+    vi.resetAllMocks()
     tmpDir = realFs.mkdtempSync(path.join(os.tmpdir(), 'conductor-plugin-test-'))
+    // plugin-assets.ts now writes atomically (temp file + rename) and reads real bundled asset files,
+    // so the mocked `fs` module needs every one of those calls proxied to the real filesystem.
+    mockFs.readFileSync.mockImplementation((...args) =>
+      (realFs.readFileSync as (...a: unknown[]) => unknown)(...args) as ReturnType<typeof fs.readFileSync>
+    )
+    mockFs.writeFileSync.mockImplementation((...args) =>
+      (realFs.writeFileSync as (...a: unknown[]) => void)(...args)
+    )
+    mockFs.mkdirSync.mockImplementation((...args) =>
+      (realFs.mkdirSync as (...a: unknown[]) => unknown)(...args) as ReturnType<typeof fs.mkdirSync>
+    )
+    mockFs.renameSync.mockImplementation((...args) =>
+      (realFs.renameSync as (...a: unknown[]) => void)(...args)
+    )
+    mockFs.rmSync.mockImplementation((...args) =>
+      (realFs.rmSync as (...a: unknown[]) => void)(...args)
+    )
+    mockFs.existsSync.mockImplementation((...args) =>
+      (realFs.existsSync as (...a: unknown[]) => boolean)(...args)
+    )
   })
 
   afterEach(() => {

@@ -46,6 +46,7 @@ import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage, type ApiError } from '@/lib/api'
 import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { BrandSetupNotice } from '@/components/marketing/brand/BrandSetupNotice'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import { CLIP_PLACEMENT_KEYS, nearestAspectPlacement } from '@/components/marketing/creatives/clipPlacement'
 import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
@@ -1009,6 +1010,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
 
   return (
     <div className="space-y-4">
+      <BrandSetupNotice projectId={projectId} kit={selectedKit} />
+
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-foreground">
           {creative.displayId} {form.name && <span className="text-muted-foreground">· {form.name}</span>}

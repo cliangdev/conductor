@@ -1,8 +1,8 @@
 ---
 name: conductor-creative
-description: Creates on-brand ad creative through the Conductor MCP tools — a photo plus headline rendered at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1, plus any opt-in placements) from a workspace's Brand Kit, rendered locally on this machine and checked by eye before it's called done. Use when asked to make, design, write or export a social ad, an ad creative, a promo image, a static ad, a story or carousel sequence, or a new lettered variant (headline test) of one.
+description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine and checked by eye before it's called done. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
 user-invocable: true
-allowed-tools: mcp__conductor__*, AskUserQuestion, Read, Glob, Grep
+allowed-tools: mcp__conductor__*, AskUserQuestion, Read, Glob, Grep, WebFetch
 ---
 
 # Conductor Creative
@@ -31,6 +31,14 @@ brand's positioning, message hierarchy, approved verbatim lines and voice in pro
 with `read_knowledge_pages` before writing anything. Quote its approved lines rather than
 paraphrasing them; they were worded and cleared on purpose.
 
+**If `configured` comes back `false`**, this kit has never been touched — a brand-free stock
+default, not this workspace's actual brand. Set it up before writing any ad rather than rendering
+against placeholder tokens: gather colours, font, CTA claim and any copy rules or approved lines
+(from a website via `WebFetch`, a brand doc via `Read`, or by asking directly), then call
+`update_brand_kit` for the data fields and `upload_brand_image` for the mark/wordmark/badge. Confirm
+with `get_brand_kit` afterward — `configured` should now read `true`. (`/conductor:creative` walks
+a person through exactly this when invoked with no brand set up yet, if you'd rather hand it off.)
+
 ### 2. Pick the angle
 
 Lead with whatever the brand's own message hierarchy puts first — the job the product does end to
@@ -56,11 +64,12 @@ it. A kit with no rules configured is not a bug; it simply never fails a save on
 
 ### 5. Choose the photo and look at it
 
-Call `list_creatives`/an existing photo library read, or check what photos are already on hand
-before uploading a new one. A photo needs `checked: true` and not `blocked` before a Creative can
-go to `READY` — see the photo library's own listing for that state.
+Call `list_creative_media` (optionally `kind: "IMAGE"`) to see what's already on hand before
+uploading a new one — id, dimensions, checked/blocked state and provenance for everything already in
+the project's media library. A photo needs `checked: true` and not `blocked` before a Creative can
+go to `READY`.
 
-A new photo goes through `upload_creative_photo` (local path or URL), which requires `source` (a
+A new photo goes through `upload_creative_media` (local path or URL), which requires `source` (a
 URL or a short provenance note, e.g. "Generated with a named model on a given date") and `licence`
 (e.g. "Own work", "Unsplash Licence", "Generated, house use"). This closes a real legal exposure: an
 unattributed or unlicensed photo running as paid or organic media.
@@ -127,9 +136,10 @@ Not every video needs the brand layout above — a finished clip (a demo recordi
 something a person or another tool already produced) can go up as-is. That's a CLIP Creative: no
 photo, headline or layout, just the video.
 
-1. `upload_creative_media` (local path or URL) — same provenance fields as a photo (`source`,
-   `licence`, `aiGenerated`). It detects video vs. audio vs. photo automatically and, for a video,
-   extracts a poster frame. Use the returned media's id below.
+1. Check `list_creative_media({kind: "VIDEO"})` for a clip already in the project before uploading a
+   new one. A new one goes through `upload_creative_media` (local path or URL) — same provenance
+   fields as a photo (`source`, `licence`, `aiGenerated`). It detects video vs. audio vs. photo
+   automatically and, for a video, extracts a poster frame. Use the media's id below either way.
 2. `create_creative` with `kind: "CLIP"` and `clipMedia`. One file for every placement:
    `{"default": mediaId}`. A different cut per placement (e.g. a square edit for feed, a vertical one
    for Reels): `{"9x16": mediaId, "4x5": mediaId}` — `default` still covers any placement without its
@@ -151,8 +161,10 @@ A MOTION Creative animates the same brand layout from steps 1-5 above into a sho
 of a static frame — no separate video tool needed. Use it when a still doesn't hold attention, or a
 destination rewards video over an image.
 
-1. Pick a photo (step 5) or, for a moving background, `upload_creative_media` a video first and
-   note its media id.
+1. Pick a photo (step 5) or, for a moving background, a video — check `list_creative_media({kind:
+   "VIDEO"})` first, then `upload_creative_media` only if nothing already fits — and note its media
+   id. For background music, `list_creative_media({kind: "AUDIO"})` the same way before uploading a
+   new track.
 2. `create_creative`/`update_creative` with `kind: "MOTION"` plus:
    - `motion.preset` — how the copy enters: `fade-up` (default), `word-by-word`, `accent-pop`, or
      `none` (everything visible from the first frame).

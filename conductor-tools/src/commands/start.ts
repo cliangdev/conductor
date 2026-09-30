@@ -5,6 +5,7 @@ import * as os from 'os'
 import { fileURLToPath } from 'url'
 import { Command } from 'commander'
 import { readConfig } from '../lib/config.js'
+import { refreshInstalledPluginAssets } from '../lib/plugin-assets.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -32,6 +33,8 @@ function tailLog(lines = 5): string {
 
 /** Returns true if the daemon started and stayed alive, false otherwise. */
 export async function startDaemon(): Promise<boolean> {
+  refreshInstalledPluginAssets({ log: (message) => console.error(message) })
+
   const config = readConfig()
   if (!config) {
     console.error('Not authenticated — run conductor login')

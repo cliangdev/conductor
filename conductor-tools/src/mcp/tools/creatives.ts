@@ -56,28 +56,19 @@ function trimExperiment(experiment: Record<string, unknown>): Record<string, unk
 
 /**
  * The backend's 422 body for a Creative validation failure is `{ message, violations: [{ field,
- * ruleId, message }] }` — not the RFC 7807 `detail`/`title` shape `ApiError` otherwise expects, so
- * its `message` ends up holding the raw JSON text. This re-parses that into one readable string
- * (`[field] message`, one per violation) so the model gets something it can act on directly rather
- * than a JSON string to parse itself. A 409 (stale `version`) already carries a plain-English
- * `detail` and passes through unchanged.
+ * ruleId, message }] }` — `mcp/api.ts` already lifts that `violations` array verbatim onto the
+ * `ApiError`, same as `fieldErrors` for a Brand Kit. Prefer formatting from `err.violations` when
+ * present (`[field] message`, one per violation) so the model gets something it can act on directly;
+ * otherwise fall back to `err.message` (the RFC 7807 `detail`, already a readable sentence — e.g. a
+ * 409's stale-`version` conflict) as returned, unchanged.
  */
 async function withCreativeErrors<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (err) {
-    if (err instanceof ApiError && (err.status === 422 || err.status === 409)) {
-      let violations: Array<{ field?: string; ruleId?: string; message: string }> | undefined
-      try {
-        const parsed = JSON.parse(err.message) as { violations?: unknown }
-        if (Array.isArray(parsed.violations)) violations = parsed.violations as typeof violations
-      } catch {
-        // Not JSON (e.g. a plain 409 conflict message) — use it as-is below.
-      }
-      const message = violations
-        ? violations.map((v) => `[${v.field ?? v.ruleId ?? '?'}] ${v.message}`).join('; ')
-        : err.message
-      throw new ApiError(err.status, message, { code: err.code, title: err.title })
+    if (err instanceof ApiError && (err.status === 422 || err.status === 409) && err.violations?.length) {
+      const message = err.violations.map((v) => `[${v.field ?? v.ruleId ?? '?'}] ${v.message}`).join('; ')
+      throw new ApiError(err.status, message, { code: err.code, title: err.title, detail: err.detail, violations: err.violations })
     }
     throw err
   }
@@ -85,16 +76,135 @@ async function withCreativeErrors<T>(fn: () => Promise<T>): Promise<T> {
 
 // --- Brand Kit ------------------------------------------------------------
 
-export async function getBrandKit(params: { kitId?: string }, config: Config): Promise<Record<string, unknown>> {
-  if (params.kitId) {
-    return apiGet(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
+/**
+ * The backend's 422 body for a Brand Kit validation failure (`PatchBrandKitRequest`/
+ * `CreateBrandKitRequest`) is an RFC 7807 problem whose `detail` already names each failing field
+ * (e.g. "copyRules[0].pattern: does not compile as a regex"), plus a `fieldErrors` array in the body
+ * that `mcp/api.ts` lifts onto the `ApiError` verbatim. Prefer formatting from `fieldErrors` when
+ * present (covers every field, not just what fit in `detail`); otherwise fall back to `detail` as
+ * returned — it is already a readable sentence, not JSON to re-parse.
+ */
+async function withBrandKitErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 422 && err.fieldErrors?.length) {
+      const message = err.fieldErrors.map((f) => (f.field ? `${f.field}: ${f.message}` : f.message)).join('; ')
+      throw new ApiError(err.status, message, { code: err.code, title: err.title, detail: err.detail, fieldErrors: err.fieldErrors })
+    }
+    throw err
   }
+}
+
+/** The project's default Brand Kit — the "no kitId given" resolution shared by `getBrandKit`,
+ * `updateBrandKit` and `uploadBrandImage`. */
+async function resolveDefaultBrandKit(config: Config): Promise<Record<string, unknown>> {
   const kits = await apiGet<Array<Record<string, unknown>>>(`${V2_PROJECT(config)}/marketing/brand-kits`, config)
   const found = kits.find((k) => k['isDefault']) ?? kits[0]
   if (!found) {
     throw new Error('This project has no Brand Kit yet — one is created for every workspace by default; check Settings.')
   }
   return found
+}
+
+export async function getBrandKit(params: { kitId?: string }, config: Config): Promise<Record<string, unknown>> {
+  const kit = params.kitId
+    ? await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
+    : await resolveDefaultBrandKit(config)
+
+  // A self-hosted backend that predates this field simply won't send it — treat that as configured
+  // (nothing to warn about) rather than as unset. Only an explicit `false` means "looks unset".
+  if (kit['configured'] !== false) return kit
+  return {
+    ...kit,
+    nextStep:
+      'This Brand Kit looks unset — call update_brand_kit (name, tokens, font, CTA claim, copy rules) ' +
+      'and upload_brand_image (logo) before creating a Creative with it.',
+  }
+}
+
+export interface UpdateBrandKitParams {
+  kitId?: string
+  name?: string
+  fontFamily?: string
+  fontUrl?: string
+  /** Merged onto the kit's existing tokens — only the keys given here change; every other existing
+   * token is kept. Against a backend new enough to merge atomically server-side, this is sent as a
+   * partial. Against an older one (no boolean `configured` field in the GET below — see
+   * {@link updateBrandKit}), it's merged client-side from the kit this call just read and sent as the
+   * full map instead, so the older backend's plain "replace tokens with what I sent" PATCH still ends
+   * up correct. */
+  tokens?: Record<string, string>
+  ctaClaim?: string
+  accentPhraseRequired?: boolean
+  /** Replaces the whole list. */
+  copyRules?: Array<Record<string, unknown>>
+  /** Replaces the whole list. Mutually exclusive with addApprovedLines. */
+  approvedLines?: string[]
+  /** Appended to the existing list — atomically server-side against a backend that supports it,
+   * otherwise appended (and deduped) client-side and sent as the full list. Mutually exclusive with
+   * approvedLines. */
+  addApprovedLines?: string[]
+  enabledPlacements?: string[]
+  knowledgePagePath?: string
+}
+
+/**
+ * Always GETs the kit first — both to resolve its id when `kitId` is omitted, and to detect whether
+ * this backend supports the atomic partial-merge PATCH semantics for `tokens`/`addApprovedLines` at
+ * all: a boolean `configured` field in the response is the tell (it shipped alongside partial-merge
+ * support), so its *absence* means an older backend that will simply overwrite `tokens`/`approvedLines`
+ * with whatever this PATCH sends. That older-backend case matters in practice — the CLI can publish
+ * ahead of a self-hosted or slow-to-redeploy backend — so this merges `tokens` (full map) and
+ * `addApprovedLines` (appended + deduped onto the existing list) client-side from the kit just read,
+ * and sends full values instead of partials, rather than losing whatever the GET didn't name.
+ */
+export async function updateBrandKit(params: UpdateBrandKitParams, config: Config): Promise<Record<string, unknown>> {
+  if (params.approvedLines !== undefined && params.addApprovedLines !== undefined) {
+    throw new Error('Pass either approvedLines (replaces the whole list) or addApprovedLines (appends), not both.')
+  }
+
+  const kit = params.kitId
+    ? await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
+    : await resolveDefaultBrandKit(config)
+  const kitId = kit['id'] as string
+  const supportsPartialMerge = typeof kit['configured'] === 'boolean'
+
+  const patch: Record<string, unknown> = {}
+  if (params.name !== undefined) patch['name'] = params.name
+  if (params.fontFamily !== undefined) patch['fontFamily'] = params.fontFamily
+  if (params.fontUrl !== undefined) patch['fontUrl'] = params.fontUrl
+  if (params.ctaClaim !== undefined) patch['ctaClaim'] = params.ctaClaim
+  if (params.accentPhraseRequired !== undefined) patch['accentPhraseRequired'] = params.accentPhraseRequired
+  if (params.copyRules !== undefined) patch['copyRules'] = params.copyRules
+  if (params.enabledPlacements !== undefined) patch['enabledPlacements'] = params.enabledPlacements
+  if (params.knowledgePagePath !== undefined) patch['knowledgePagePath'] = params.knowledgePagePath
+
+  if (params.tokens !== undefined) {
+    if (supportsPartialMerge) {
+      patch['tokens'] = params.tokens
+    } else {
+      const existingTokens =
+        kit['tokens'] && typeof kit['tokens'] === 'object' && !Array.isArray(kit['tokens'])
+          ? (kit['tokens'] as Record<string, string>)
+          : {}
+      patch['tokens'] = { ...existingTokens, ...params.tokens }
+    }
+  }
+
+  if (params.approvedLines !== undefined) {
+    // A full replacement is unambiguous either way — no merge semantics needed.
+    patch['approvedLines'] = params.approvedLines
+  } else if (params.addApprovedLines !== undefined) {
+    if (supportsPartialMerge) {
+      patch['addApprovedLines'] = params.addApprovedLines
+    } else {
+      const existingLines = Array.isArray(kit['approvedLines']) ? (kit['approvedLines'] as string[]) : []
+      patch['approvedLines'] = [...new Set([...existingLines, ...params.addApprovedLines])]
+    }
+  }
+
+  return withBrandKitErrors(() => apiPatch(`${V2_PROJECT(config)}/marketing/brand-kits/${kitId}`, patch, config))
 }
 
 // --- Creatives --------------------------------------------------------------
@@ -243,6 +353,10 @@ interface MediaSource {
    * extractPoster need an actual file, so a URL download without one gets written to a temp file lazily,
    * only once we know it isn't an image (readImageDimensions works on bytes alone). */
   filePath?: string
+  /** For a URL source only: the response's Content-Type header, sans any `; charset=...` suffix.
+   * Untrusted (any server can send anything), but a real `image/svg+xml` is a strong signal a local
+   * file's extension alone isn't — see `brandImageContentType`. */
+  contentType?: string
 }
 
 async function readMediaSource(params: { filePath?: string; url?: string }): Promise<MediaSource> {
@@ -264,7 +378,8 @@ async function readMediaSource(params: { filePath?: string; url?: string }): Pro
     throw new Error(`Fetching ${raw} failed: HTTP ${response.status}`)
   }
   const bytes = new Uint8Array(await response.arrayBuffer())
-  return { bytes, filename: basename(parsed.pathname) || 'media' }
+  const contentType = response.headers.get('content-type')?.split(';')[0]?.trim()
+  return { bytes, filename: basename(parsed.pathname) || 'media', contentType }
 }
 
 function stripExtension(filename: string): string {
@@ -277,6 +392,7 @@ function stripExtension(filename: string): string {
 const MEDIA_RESULT_FIELDS = [
   'id', 'label', 'mediaKind', 'contentType', 'width', 'height', 'durationSeconds', 'hasAudio',
   'posterUrl', 'url', 'sizeBytes', 'source', 'licence', 'aiGenerated', 'uploadStatus', 'checked', 'blocked',
+  'blockedReason',
 ] as const
 
 function trimMedia(media: Record<string, unknown>): Record<string, unknown> {
@@ -285,6 +401,31 @@ function trimMedia(media: Record<string, unknown>): Record<string, unknown> {
     if (key in media) out[key] = media[key]
   }
   return out
+}
+
+export interface ListCreativeMediaParams {
+  kind?: string
+  includeBlocked?: boolean
+}
+
+/**
+ * The project's media library, trimmed to what's worth an agent's context — call this before
+ * uploading a new photo/video/audio file, so an existing, already-checked one gets reused instead
+ * of a duplicate upload.
+ */
+export async function listCreativeMedia(
+  params: ListCreativeMediaParams,
+  config: Config
+): Promise<Array<Record<string, unknown>>> {
+  const query = new URLSearchParams()
+  if (params.kind) query.set('mediaKind', params.kind)
+  if (params.includeBlocked) query.set('includeBlocked', 'true')
+  const qs = query.toString()
+  const items = await apiGet<Array<Record<string, unknown>>>(
+    `${V2_PROJECT(config)}/marketing/photos${qs ? `?${qs}` : ''}`,
+    config
+  )
+  return items.map(trimMedia)
 }
 
 async function uploadPoster(mediaId: string, localVideoPath: string, config: Config, warnings: string[]): Promise<void> {
@@ -432,6 +573,119 @@ export async function uploadCreativeMedia(params: UploadCreativeMediaParams, con
 /** Deprecated alias for {@link uploadCreativeMedia}, kept so existing callers naming the old tool
  * still work — same implementation, same behavior, including for photos. */
 export const uploadCreativePhoto = uploadCreativeMedia
+
+const BRAND_IMAGE_SLOTS = ['mark', 'wordmark_dark', 'wordmark_light', 'badge'] as const
+
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47]
+const JPEG_MAGIC = [0xff, 0xd8, 0xff]
+const GIF_MAGIC = [0x47, 0x49, 0x46, 0x38] // "GIF8" (87a or 89a)
+
+function startsWithBytes(bytes: Uint8Array, magic: number[]): boolean {
+  if (bytes.length < magic.length) return false
+  return magic.every((b, i) => bytes[i] === b)
+}
+
+/** True when `bytes` start with a magic number for a known raster format — PNG, JPEG, GIF or WebP
+ * (RIFF....WEBP). Used to reject a raster file merely named `*.svg` even if, by chance, its bytes
+ * decode to text containing `<svg`. */
+function startsWithRasterMagic(bytes: Uint8Array): boolean {
+  if (startsWithBytes(bytes, PNG_MAGIC)) return true
+  if (startsWithBytes(bytes, JPEG_MAGIC)) return true
+  if (startsWithBytes(bytes, GIF_MAGIC)) return true
+  if (
+    bytes.length >= 12 &&
+    startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46]) && // "RIFF"
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50 // "WEBP"
+  ) {
+    return true
+  }
+  return false
+}
+
+/** Decodes the first 64 KB of `bytes` as text — UTF-16 (LE or BE, by BOM) when a BOM says so,
+ * UTF-8 otherwise (Illustrator and other SVG exporters overwhelmingly write UTF-8 with no BOM). */
+function decodeHead(bytes: Uint8Array): string {
+  const head = bytes.subarray(0, 65536)
+  if (head.length >= 2 && head[0] === 0xff && head[1] === 0xfe) {
+    return Buffer.from(head).toString('utf16le')
+  }
+  if (head.length >= 2 && head[0] === 0xfe && head[1] === 0xff) {
+    const swapped = Buffer.alloc(head.length - (head.length % 2))
+    for (let i = 0; i + 1 < swapped.length; i += 2) {
+      swapped[i] = head[i + 1]
+      swapped[i + 1] = head[i]
+    }
+    return swapped.toString('utf16le')
+  }
+  return Buffer.from(head).toString('utf8')
+}
+
+/**
+ * True when `bytes` look like SVG markup. Deliberately lenient: real-world SVGs (especially
+ * Illustrator exports) can lead with an XML declaration, an `<?xml-stylesheet?>` processing
+ * instruction, a `<!DOCTYPE svg ...>` with a large internal subset, several comments, or just a long
+ * prolog before the root element — so rather than anchoring a regex to the start of the file, this
+ * just checks whether a `<svg` root tag appears anywhere in the first 64 KB (decoded as UTF-16 when a
+ * BOM is present, else UTF-8). SVG has no magic bytes `readImageDimensions` can sniff (it's plain
+ * text), so this is the content-based fallback for a local file; a URL's Content-Type header is
+ * checked first, in `brandImageContentType`, since it's cheaper and doesn't need decoding. A file that
+ * starts with a known raster magic number is never treated as SVG, even if it happens to be named
+ * `*.svg` — its bytes are binary, not markup, whatever a stray `<svg` byte sequence might suggest.
+ */
+function looksLikeSvg(bytes: Uint8Array): boolean {
+  if (startsWithRasterMagic(bytes)) return false
+  return /<svg[\s>]/i.test(decodeHead(bytes))
+}
+
+/**
+ * Content type for a Brand Kit image slot upload — PNG/JPEG/WebP via the same magic-byte sniff as a
+ * Creative photo, or SVG. SVG detection never trusts the filename alone (a non-SVG file named `.svg`
+ * would otherwise be sent to the renderer mislabelled): for a URL source, a fetched `image/svg+xml`
+ * Content-Type is authoritative; otherwise the bytes themselves are sniffed for real SVG/XML markup.
+ */
+function brandImageContentType(bytes: Uint8Array, filename: string, fetchedContentType?: string): string {
+  if (fetchedContentType === 'image/svg+xml') return 'image/svg+xml'
+  const info = readImageDimensions(bytes)
+  if (info) return info.contentType
+  if (looksLikeSvg(bytes)) return 'image/svg+xml'
+  throw new Error(`"${filename}" is not a recognizable PNG, JPEG, WebP or SVG image.`)
+}
+
+export interface UploadBrandImageParams {
+  kitId?: string
+  slot: string
+  filePath?: string
+  url?: string
+}
+
+/**
+ * Uploads a workspace's logo mark, wordmark or badge into one Brand Kit image slot from a local file
+ * or a public URL — mint, PUT the bytes, confirm, in one call.
+ */
+export async function uploadBrandImage(params: UploadBrandImageParams, config: Config): Promise<Record<string, unknown>> {
+  if (!(BRAND_IMAGE_SLOTS as readonly string[]).includes(params.slot)) {
+    throw new Error(`slot must be one of ${BRAND_IMAGE_SLOTS.join(', ')}`)
+  }
+  if (!params.filePath && !params.url) {
+    throw new Error('Pass filePath (a file on this machine) or url (a public http(s) URL).')
+  }
+
+  const kitId = params.kitId ?? ((await resolveDefaultBrandKit(config))['id'] as string)
+  const source = await readMediaSource({ filePath: params.filePath, url: params.url })
+  const contentType = brandImageContentType(source.bytes, source.filename, source.contentType)
+
+  const mint = await apiPost<{ uploadUrl: string; gcsPath: string }>(
+    `${V2_PROJECT(config)}/marketing/brand-kits/${kitId}/images/${params.slot}`,
+    { contentType, sizeBytes: source.bytes.byteLength },
+    config
+  )
+  await putBytes(mint.uploadUrl, contentType, source.bytes)
+  return apiPost(
+    `${V2_PROJECT(config)}/marketing/brand-kits/${kitId}/images/${params.slot}/confirm`,
+    { gcsPath: mint.gcsPath },
+    config
+  )
+}
 
 // --- Rendering ----------------------------------------------------------------
 

@@ -105,6 +105,7 @@ public class BrandKitController implements BrandKitsApi {
             }
         }
         return new BrandKitResponse(kit.getId(), kit.getProjectId(), kit.getSlug(), kit.getName(), kit.isDefault(),
+                brandKitService.isConfigured(kit),
                 toStringMap(kit.getTokens()), kit.isAccentPhraseRequired(), copyRules, toStringList(kit.getApprovedLines()),
                 toStringList(kit.getEnabledPlacements()), kit.getKnowledgePagePath(),
                 kit.getCreatedAt(), kit.getUpdatedAt())

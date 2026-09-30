@@ -6,16 +6,35 @@ vi.mock('../mcp/api.js', () => ({
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   putBytes: vi.fn(),
+  // Mirrors the real mcp/api.ts ApiError: `message` is the RFC 7807 `detail` as returned (already a
+  // readable sentence, never JSON to re-parse), and `fieldErrors`/`violations` are lifted verbatim off
+  // the problem body alongside it.
   ApiError: class ApiError extends Error {
     status: number
     code?: string
+    detail?: string
     title?: string
-    constructor(status: number, message: string, opts: { code?: string; title?: string } = {}) {
+    fieldErrors?: Array<{ field?: string; message: string }>
+    violations?: Array<{ field?: string; ruleId?: string; message: string }>
+    constructor(
+      status: number,
+      message: string,
+      opts: {
+        code?: string
+        detail?: string
+        title?: string
+        fieldErrors?: Array<{ field?: string; message: string }>
+        violations?: Array<{ field?: string; ruleId?: string; message: string }>
+      } = {}
+    ) {
       super(message)
       this.name = 'ApiError'
       this.status = status
       this.code = opts.code
+      this.detail = opts.detail
       this.title = opts.title
+      this.fieldErrors = opts.fieldErrors
+      this.violations = opts.violations
     }
   },
 }))
@@ -36,7 +55,10 @@ import { probeMedia, extractPoster } from '../lib/media-probe.js'
 import { composePosterSheet } from '../lib/poster-sheet.js'
 import {
   getBrandKit,
+  updateBrandKit,
+  uploadBrandImage,
   listCreatives,
+  listCreativeMedia,
   getCreative,
   createCreative,
   updateCreative,
@@ -73,23 +95,462 @@ beforeEach(() => {
 })
 
 describe('get_brand_kit', () => {
-  it('fetches a specific kit by id', async () => {
-    mocked(apiGet).mockResolvedValue({ id: 'kit1', isDefault: true })
+  it('fetches a specific kit by id and passes the server-computed `configured` through', async () => {
+    mocked(apiGet).mockResolvedValue({ id: 'kit1', isDefault: true, configured: false })
     const result = await getBrandKit({ kitId: 'kit1' }, config)
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/brand-kits/kit1', config)
-    expect(result).toEqual({ id: 'kit1', isDefault: true })
+    expect(result['configured']).toBe(false)
+    expect(result['nextStep']).toMatch(/update_brand_kit/)
+    expect(result['nextStep']).toMatch(/looks unset/)
   })
 
   it('lists kits and picks the default when no kitId is given', async () => {
-    mocked(apiGet).mockResolvedValue([{ id: 'a', isDefault: false }, { id: 'b', isDefault: true }])
+    mocked(apiGet).mockResolvedValue([
+      { id: 'a', isDefault: false, configured: true },
+      { id: 'b', isDefault: true, configured: true },
+    ])
     const result = await getBrandKit({}, config)
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/brand-kits', config)
-    expect(result).toEqual({ id: 'b', isDefault: true })
+    expect(result['id']).toBe('b')
   })
 
   it('throws a clear error when the project has no kits at all', async () => {
     mocked(apiGet).mockResolvedValue([])
     await expect(getBrandKit({}, config)).rejects.toThrow(/no Brand Kit/)
+  })
+
+  it('adds no nextStep when the server reports the kit as configured', async () => {
+    mocked(apiGet).mockResolvedValue({ id: 'kit1', configured: true })
+    const result = await getBrandKit({ kitId: 'kit1' }, config)
+    expect(result['configured']).toBe(true)
+    expect(result).not.toHaveProperty('nextStep')
+  })
+
+  it('treats a missing `configured` field (an older backend) as configured, not unset', async () => {
+    mocked(apiGet).mockResolvedValue({ id: 'kit1', name: 'Acme' })
+    const result = await getBrandKit({ kitId: 'kit1' }, config)
+    expect(result).not.toHaveProperty('nextStep')
+  })
+})
+
+describe('update_brand_kit', () => {
+  it('PATCHes only the fields given, resolving the default kit id first', async () => {
+    mocked(apiGet).mockResolvedValueOnce([{ id: 'kit1', isDefault: true, configured: true }])
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1', name: 'Acme' })
+
+    await updateBrandKit({ name: 'Acme' }, config)
+
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/brand-kits/kit1', { name: 'Acme' }, config)
+  })
+
+  it('GETs the kit even when kitId is given, and sends a partial tokens object when the backend supports merge', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1', configured: true, tokens: { accent: '#000000' } })
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1' })
+
+    await updateBrandKit({ kitId: 'kit1', tokens: { accent: '#ff0000' } }, config)
+
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/brand-kits/kit1', config)
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1',
+      { tokens: { accent: '#ff0000' } },
+      config
+    )
+  })
+
+  it('sends addApprovedLines as a partial when the backend supports merge', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1', configured: true, approvedLines: ['Existing'] })
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1' })
+
+    await updateBrandKit({ kitId: 'kit1', addApprovedLines: ['Line A', 'Line B'] }, config)
+
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1',
+      { addApprovedLines: ['Line A', 'Line B'] },
+      config
+    )
+  })
+
+  it('merges tokens client-side into the full map when the backend has no boolean `configured` field', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1', tokens: { accent: '#000000', bg: '#ffffff' } })
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1' })
+
+    await updateBrandKit({ kitId: 'kit1', tokens: { accent: '#ff0000' } }, config)
+
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1',
+      { tokens: { accent: '#ff0000', bg: '#ffffff' } },
+      config
+    )
+  })
+
+  it('merges tokens client-side starting from an empty map when the kit has no tokens yet (no `configured` field)', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1' })
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1' })
+
+    await updateBrandKit({ kitId: 'kit1', tokens: { accent: '#ff0000' } }, config)
+
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1',
+      { tokens: { accent: '#ff0000' } },
+      config
+    )
+  })
+
+  it('appends and dedupes addApprovedLines client-side, sent as the full list, when the backend has no boolean `configured` field', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1', approvedLines: ['Existing', 'Line A'] })
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1' })
+
+    await updateBrandKit({ kitId: 'kit1', addApprovedLines: ['Line A', 'Line B'] }, config)
+
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1',
+      { approvedLines: ['Existing', 'Line A', 'Line B'] },
+      config
+    )
+  })
+
+  it('sends approvedLines (full replace) as-is regardless of backend merge support', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1' })
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1' })
+
+    await updateBrandKit({ kitId: 'kit1', approvedLines: ['Only This'] }, config)
+
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1',
+      { approvedLines: ['Only This'] },
+      config
+    )
+  })
+
+  it('refuses approvedLines and addApprovedLines together, before any network call', async () => {
+    await expect(
+      updateBrandKit({ kitId: 'kit1', approvedLines: ['A'], addApprovedLines: ['B'] }, config)
+    ).rejects.toThrow(/either approvedLines/)
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(apiPatch).not.toHaveBeenCalled()
+  })
+
+  it('relays a 422 detail as returned when the body carries no fieldErrors', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1', configured: true })
+    mocked(apiPatch).mockRejectedValue(
+      new ApiError(422, 'copyRules[0].pattern: does not compile as a regex', {
+        title: 'Constraint Violation',
+        detail: 'copyRules[0].pattern: does not compile as a regex',
+      })
+    )
+
+    await expect(updateBrandKit({ kitId: 'kit1', name: 'x' }, config)).rejects.toThrow(
+      'copyRules[0].pattern: does not compile as a regex'
+    )
+  })
+
+  it('formats a 422 fieldErrors array into one readable, per-field message', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ id: 'kit1', configured: true })
+    mocked(apiPatch).mockRejectedValue(
+      new ApiError(422, 'Validation failed', {
+        title: 'Constraint Violation',
+        fieldErrors: [
+          { field: 'copyRules[0].pattern', message: 'does not compile as a regex' },
+          { field: 'ctaClaim', message: 'must not be blank' },
+        ],
+      })
+    )
+
+    await expect(updateBrandKit({ kitId: 'kit1', name: 'x' }, config)).rejects.toThrow(
+      'copyRules[0].pattern: does not compile as a regex; ctaClaim: must not be blank'
+    )
+  })
+})
+
+describe('upload_brand_image', () => {
+  it('resolves the default kit, mints, uploads bytes and confirms the slot', async () => {
+    mocked(readFile).mockResolvedValue(PNG_1X1)
+    mocked(apiGet).mockResolvedValueOnce([{ id: 'kit1', isDefault: true, configured: true }])
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/mark', gcsPath: 'gs://bucket/mark.png' })
+      .mockResolvedValueOnce({ id: 'kit1', markUrl: 'https://x.test/mark.png' })
+
+    const result = await uploadBrandImage({ slot: 'mark', filePath: '/tmp/mark.png' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/mark',
+      { contentType: 'image/png', sizeBytes: PNG_1X1.byteLength },
+      config
+    )
+    expect(putBytes).toHaveBeenCalledWith('https://bucket.test/signed/mark', 'image/png', expect.anything())
+    expect(apiPost).toHaveBeenNthCalledWith(
+      2,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/mark/confirm',
+      { gcsPath: 'gs://bucket/mark.png' },
+      config
+    )
+    expect(result).toEqual({ id: 'kit1', markUrl: 'https://x.test/mark.png' })
+  })
+
+  it('rejects an unknown slot before doing any I/O', async () => {
+    await expect(uploadBrandImage({ slot: 'favicon', filePath: '/tmp/x.png' }, config)).rejects.toThrow(/slot must be one of/)
+    expect(apiGet).not.toHaveBeenCalled()
+  })
+
+  it('throws when neither filePath nor url is given', async () => {
+    await expect(uploadBrandImage({ slot: 'mark' }, config)).rejects.toThrow(/Pass filePath/)
+  })
+
+  it('does not fetch the kit at all when kitId is given explicitly', async () => {
+    mocked(readFile).mockResolvedValue(PNG_1X1)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/mark', gcsPath: 'gs://bucket/mark.png' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'mark', filePath: '/tmp/mark.png' }, config)
+
+    expect(apiGet).not.toHaveBeenCalled()
+  })
+
+  it('sniffs real SVG content from a local file named .svg', async () => {
+    mocked(readFile).mockResolvedValue(Buffer.from('<svg></svg>'))
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge.svg' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/badge.svg' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/svg+xml', sizeBytes: 11 },
+      config
+    )
+  })
+
+  it('sniffs SVG content preceded by an XML declaration, from a file with no .svg extension', async () => {
+    const xmlSvg = '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+    mocked(readFile).mockResolvedValue(Buffer.from(xmlSvg))
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/badge.logo' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/svg+xml', sizeBytes: Buffer.byteLength(xmlSvg) },
+      config
+    )
+  })
+
+  it('sniffs SVG content behind an Illustrator-style DOCTYPE with an internal subset', async () => {
+    const illustratorSvg = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
+      '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [',
+      '\t<!ENTITY ns_extend "http://ns.adobe.com/Extensibility/1.0/">',
+      '\t<!ENTITY ns_ai "http://ns.adobe.com/AdobeIllustrator/10.0/">',
+      ']>',
+      '<svg version="1.1" xmlns="http://www.w3.org/2000/svg"></svg>',
+    ].join('\n')
+    mocked(readFile).mockResolvedValue(Buffer.from(illustratorSvg))
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge.svg' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/badge.svg' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/svg+xml', sizeBytes: Buffer.byteLength(illustratorSvg) },
+      config
+    )
+  })
+
+  it('sniffs SVG content behind several leading comments', async () => {
+    const commentedSvg = [
+      '<!-- Generator: Adobe Illustrator 27.010, SVG Export Plug-In -->',
+      '<!-- (c) some rights reserved -->',
+      '<!-- Build 0 -->',
+      '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    ].join('\n')
+    mocked(readFile).mockResolvedValue(Buffer.from(commentedSvg))
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge.svg' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/badge.svg' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/svg+xml', sizeBytes: Buffer.byteLength(commentedSvg) },
+      config
+    )
+  })
+
+  it('sniffs SVG content behind an xml-stylesheet processing instruction', async () => {
+    const stylesheetSvg = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<?xml-stylesheet type="text/css" href="style.css"?>',
+      '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    ].join('\n')
+    mocked(readFile).mockResolvedValue(Buffer.from(stylesheetSvg))
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge.svg' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/badge.svg' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/svg+xml', sizeBytes: Buffer.byteLength(stylesheetSvg) },
+      config
+    )
+  })
+
+  it('sniffs SVG content behind a long prolog, as long as <svg appears within the first 64 KB', async () => {
+    const longProlog = `<?xml version="1.0"?>\n<!-- ${'padding '.repeat(2000)} -->\n<svg xmlns="http://www.w3.org/2000/svg"></svg>`
+    mocked(readFile).mockResolvedValue(Buffer.from(longProlog))
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge.svg' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/badge.svg' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/svg+xml', sizeBytes: Buffer.byteLength(longProlog) },
+      config
+    )
+  })
+
+  it('sniffs SVG content encoded as UTF-16 with a BOM', async () => {
+    const svgText = '<?xml version="1.0" encoding="UTF-16"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+    const utf16WithBom = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(svgText, 'utf16le')])
+    mocked(readFile).mockResolvedValue(utf16WithBom)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge.svg' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/badge.svg' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/svg+xml', sizeBytes: utf16WithBom.byteLength },
+      config
+    )
+  })
+
+  it('rejects a PNG file named .svg — never sniffed as SVG just off its extension or stray bytes', async () => {
+    mocked(readFile).mockResolvedValue(PNG_1X1)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge.png' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/fake.svg' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      { contentType: 'image/png', sizeBytes: PNG_1X1.byteLength },
+      config
+    )
+  })
+
+  it('does not send a non-SVG file as SVG just because it is named .svg', async () => {
+    mocked(readFile).mockResolvedValue(Buffer.from('this is not svg or image content at all'))
+
+    await expect(uploadBrandImage({ kitId: 'kit1', slot: 'badge', filePath: '/tmp/fake.svg' }, config)).rejects.toThrow(
+      /not a recognizable/
+    )
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it('trusts a fetched image/svg+xml Content-Type for a URL source, even with no .svg extension', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'image/svg+xml; charset=utf-8' : null) },
+      arrayBuffer: async () => new TextEncoder().encode('plain text that would not sniff as svg').buffer,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/badge', gcsPath: 'gs://bucket/badge' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'badge', url: 'https://x.test/logo-endpoint' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/badge',
+      expect.objectContaining({ contentType: 'image/svg+xml' }),
+      config
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it('does not trust a non-SVG Content-Type from a URL over the actual bytes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/octet-stream' : null) },
+      arrayBuffer: async () => PNG_1X1.buffer.slice(PNG_1X1.byteOffset, PNG_1X1.byteOffset + PNG_1X1.byteLength),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mocked(apiPost)
+      .mockResolvedValueOnce({ uploadUrl: 'https://bucket.test/signed/mark', gcsPath: 'gs://bucket/mark.png' })
+      .mockResolvedValueOnce({ id: 'kit1' })
+
+    await uploadBrandImage({ kitId: 'kit1', slot: 'mark', url: 'https://x.test/logo.png' }, config)
+
+    expect(apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v2/projects/proj-1/marketing/brand-kits/kit1/images/mark',
+      expect.objectContaining({ contentType: 'image/png' }),
+      config
+    )
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('list_creative_media', () => {
+  it('builds the query string from kind and includeBlocked', async () => {
+    mocked(apiGet).mockResolvedValue([])
+    await listCreativeMedia({ kind: 'VIDEO', includeBlocked: true }, config)
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/photos?mediaKind=VIDEO&includeBlocked=true',
+      config
+    )
+  })
+
+  it('omits the query string when no filters are given', async () => {
+    mocked(apiGet).mockResolvedValue([])
+    await listCreativeMedia({}, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/photos', config)
+  })
+
+  it('trims each item to the fields worth an agent\'s context', async () => {
+    mocked(apiGet).mockResolvedValue([
+      {
+        id: 'm1',
+        label: 'Hero',
+        mediaKind: 'IMAGE',
+        contentType: 'image/png',
+        width: 100,
+        height: 100,
+        checked: true,
+        blocked: false,
+        blockedReason: null,
+        source: 'Own work',
+        licence: 'Own work',
+        aiGenerated: false,
+        url: 'https://x.test/m1.png',
+        internalDebugField: 'drop-me',
+      },
+    ])
+    const result = await listCreativeMedia({}, config)
+    expect(result[0]).not.toHaveProperty('internalDebugField')
+    expect(result[0]).toMatchObject({ id: 'm1', label: 'Hero', checked: true, blocked: false })
   })
 })
 
@@ -210,19 +671,25 @@ describe('create_creative', () => {
     )
   })
 
-  it('reformats a 422 violations body into one readable message', async () => {
-    const body = JSON.stringify({
-      message: 'invalid',
-      violations: [
-        { field: 'headline', ruleId: 'accentPhrase', message: 'needs exactly one accent phrase' },
-        { field: 'body', ruleId: 'rule-1', message: 'must not contain "!"' },
-      ],
-    })
-    mocked(apiPost).mockRejectedValue(new ApiError(422, body))
+  it('reformats a 422 violations array (as mcp/api.ts lifts it onto ApiError) into one readable message', async () => {
+    mocked(apiPost).mockRejectedValue(
+      new ApiError(422, 'invalid', {
+        violations: [
+          { field: 'headline', ruleId: 'accentPhrase', message: 'needs exactly one accent phrase' },
+          { field: 'body', ruleId: 'rule-1', message: 'must not contain "!"' },
+        ],
+      })
+    )
 
     await expect(createCreative({ headline: 'no phrase' }, config)).rejects.toThrow(
       '[headline] needs exactly one accent phrase; [body] must not contain "!"'
     )
+  })
+
+  it('falls back to err.message (detail) unchanged when there are no violations', async () => {
+    mocked(apiPost).mockRejectedValue(new ApiError(422, 'headline is required'))
+
+    await expect(createCreative({}, config)).rejects.toThrow('headline is required')
   })
 })
 

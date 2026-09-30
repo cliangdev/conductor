@@ -22,6 +22,10 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
+Object.assign(navigator, {
+  clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+})
+
 import { apiGet, apiPost } from '@/lib/api'
 import { CreativeLibraryGrid } from './CreativeLibraryGrid'
 import type { Creative, CreativePhoto } from './types'
@@ -48,6 +52,7 @@ const KIT: BrandKit = {
   knowledgePagePath: 'marketing/brand.md',
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
+  configured: true,
 }
 
 function creative(overrides: Partial<Creative> = {}): Creative {
@@ -145,6 +150,39 @@ describe('CreativeLibraryGrid', () => {
 
     expect(await screen.findByText('12a')).toBeInTheDocument()
     expect(screen.getByText('b')).toBeInTheDocument()
+  })
+
+  it('shows the empty-state\'s three ways to make a Creative, with copyable Claude Code and Claude Desktop prompts', async () => {
+    mockGets({ creatives: [] })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+
+    await screen.findByText('No Creatives yet')
+    expect(screen.getByText('In Claude Code:')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "/conductor:creative Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'",
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText('In Claude Desktop (or Claude Code): ask, e.g.')).toBeInTheDocument()
+    expect(
+      screen.getByText("Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'"),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/upload a finished video as a Clip/i)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copy Claude Code prompt' }))
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        "/conductor:creative Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'",
+      ),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copy ask-Claude prompt' }))
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        "Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'",
+      ),
+    )
   })
 
   it('creates a new Creative and navigates to its editor', async () => {

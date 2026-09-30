@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig, resolveProject } from './config.js'
 import { ApiError } from './api.js'
+import { refreshInstalledPluginAssets } from '../lib/plugin-assets.js'
 import {
   createWorkItem,
   updateWorkItem,
@@ -67,7 +68,10 @@ import {
 import { getMarketingInsights } from './tools/insights.js'
 import {
   getBrandKit,
+  updateBrandKit,
+  uploadBrandImage,
   listCreatives,
+  listCreativeMedia,
   getCreative,
   createCreative,
   updateCreative,
@@ -79,6 +83,9 @@ import {
   createExperiment,
   type CreateCreativeParams,
   type UpdateCreativeParams,
+  type UpdateBrandKitParams,
+  type UploadBrandImageParams,
+  type ListCreativeMediaParams,
 } from './tools/creatives.js'
 import { resolveCreativeId } from '../lib/creative-id.js'
 
@@ -1075,11 +1082,80 @@ export const TOOLS = [
   // --- Creatives: Brand Kit + Creative library + local rendering ---
   {
     name: 'get_brand_kit',
-    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit.",
+    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit. Also carries `configured: false` plus a `nextStep` when the kit looks unset — check this before writing a Creative against it.",
     inputSchema: {
       type: 'object',
       properties: {
         kitId: { type: 'string', description: "Brand Kit id (optional — omit for the project's default kit)" },
+      },
+    },
+  },
+  {
+    name: 'update_brand_kit',
+    description: "Patch a workspace Brand Kit's name, tokens, font, CTA claim, copy rules, approved lines, enabled placements or Knowledge page path. Every field is set-replace and optional — omit to leave it unchanged — except tokens, which merges onto the kit's existing set (only the keys given change). A 422 names the failing field. Call get_brand_kit after to verify.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kitId: { type: 'string', description: "Brand Kit id (optional — omit for the project's default kit)" },
+        name: { type: 'string', description: 'Kit display name (optional)' },
+        fontFamily: { type: 'string', description: 'Font family name (optional)' },
+        fontUrl: { type: 'string', description: 'URL the renderer loads the font from (optional)' },
+        tokens: {
+          type: 'object',
+          additionalProperties: { type: 'string' },
+          description: 'CSS custom properties the renderer maps to (e.g. accent, accent2, darkBg, darkInk, lightBg, lightCard, ink, ink2), each a #RRGGBB hex colour. Only the keys given here change — every other existing token is kept (optional).',
+        },
+        ctaClaim: { type: 'string', description: 'The call-to-action line rendered on a Creative (optional)' },
+        accentPhraseRequired: { type: 'boolean', description: 'Whether a Creative headline must mark exactly one *accent phrase* (optional)' },
+        copyRules: {
+          type: 'array',
+          description: "Replaces the whole list of brand copy rules (optional). Each is enforced against every field it names on every Creative write.",
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              pattern: { type: 'string', description: 'Regex tested against the field text' },
+              flags: { type: 'string', description: 'Any of "i" (case-insensitive), "m" (multiline) — optional' },
+              message: { type: 'string', description: 'Shown verbatim when the rule fails' },
+              fields: { type: 'array', items: { type: 'string', enum: ['headline', 'body', 'caption'] } },
+              exceptPattern: { type: 'string', description: 'Matches stripped from the text before pattern is tested (optional)' },
+            },
+            required: ['id', 'pattern', 'message', 'fields'],
+          },
+        },
+        approvedLines: { type: 'array', items: { type: 'string' }, description: 'Replaces the whole list of pre-cleared verbatim lines (optional). Mutually exclusive with addApprovedLines.' },
+        addApprovedLines: { type: 'array', items: { type: 'string' }, description: 'Appends to the existing approved lines instead of replacing them (optional). Mutually exclusive with approvedLines.' },
+        enabledPlacements: { type: 'array', items: { type: 'string' }, description: 'Placement keys (from the creative registry) this kit exports by default (optional)' },
+        knowledgePagePath: { type: 'string', description: "Wiki page path holding this brand's prose context (optional)" },
+      },
+    },
+  },
+  {
+    name: 'upload_brand_image',
+    description: "Upload a workspace's logo mark, wordmark or badge into a Brand Kit image slot from a local file or a public URL (mint, PUT, confirm in one call). wordmark_light is light-coloured lettering, for a dark frame; wordmark_dark is dark lettering, for a light frame. Call get_brand_kit after to verify.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kitId: { type: 'string', description: "Brand Kit id (optional — omit for the project's default kit)" },
+        slot: {
+          type: 'string',
+          enum: ['mark', 'wordmark_dark', 'wordmark_light', 'badge'],
+          description: 'mark: standalone logomark. wordmark_dark: dark lettering, for light frames. wordmark_light: light lettering, for dark frames. badge: a compact combined lockup.',
+        },
+        filePath: { type: 'string', description: 'A file on this machine (use this or url)' },
+        url: { type: 'string', description: 'A public http(s) URL (use this or filePath)' },
+      },
+      required: ['slot'],
+    },
+  },
+  {
+    name: 'list_creative_media',
+    description: "The project's media library (photos, videos, audio) — id, label, kind, dimensions/duration, checked/blocked review state (with reason), provenance and a URL to look at it. Call before upload_creative_media to reuse existing, already-checked media instead of uploading a duplicate.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['IMAGE', 'VIDEO', 'AUDIO'], description: 'Filter to one kind (optional — omit for every kind)' },
+        includeBlocked: { type: 'boolean', description: 'Include media a human has marked blocked (optional, default false)' },
       },
     },
   },
@@ -1403,6 +1479,8 @@ function errorResponse(error: string | { error: string; status?: number; code?: 
 }
 
 export async function runMcpServer(): Promise<void> {
+  refreshInstalledPluginAssets({ log: (message) => process.stderr.write(`${message}\n`) })
+
   const server = new Server(
     { name: 'conductor-mcp', version: '0.1.0' },
     { capabilities: { tools: {} } }
@@ -2122,6 +2200,15 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'get_brand_kit': {
           return successResponse(await getBrandKit({ kitId: params['kitId'] as string | undefined }, config))
+        }
+        case 'update_brand_kit': {
+          return successResponse(await updateBrandKit(params as unknown as UpdateBrandKitParams, config))
+        }
+        case 'upload_brand_image': {
+          return successResponse(await uploadBrandImage(params as unknown as UploadBrandImageParams, config))
+        }
+        case 'list_creative_media': {
+          return successResponse(await listCreativeMedia(params as unknown as ListCreativeMediaParams, config))
         }
         case 'list_creatives': {
           return successResponse(
