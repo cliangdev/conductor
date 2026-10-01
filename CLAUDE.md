@@ -56,7 +56,7 @@ src/main/resources/
 └── db/migration/V*.sql        # Flyway migrations (PostgreSQL)
 ```
 
-**Auth**: Firebase Google OAuth → app JWT (HTTP-only cookie). API key auth also supported for CLI.
+**Auth**: Firebase (Google or email/password; email must be verified) → app JWT (HTTP-only cookie). API key auth also supported for CLI.
 
 **Key env vars**: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_KEY`, `JWT_SECRET`, `DATABASE_URL`, `RESEND_API_KEY`, `GCP_STORAGE_BUCKET_NAME`, `GCP_SERVICE_ACCOUNT_KEY`, `FRONTEND_URL`. `GCP_CLOUDRUN_PROJECT_ID`/`GCP_CLOUDRUN_REGION`/`GCP_CLOUDRUN_CLAUDE_JOB_NAME` configure the builtin `claude-code` Cloud Run target — optional once a project designates its own runtime target (Settings → AI Providers → Runtime), see [`docs/workflows.md`](docs/workflows.md#cloud-run).
 

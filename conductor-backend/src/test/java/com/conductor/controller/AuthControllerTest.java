@@ -117,4 +117,18 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.status").value(401))
                 .andExpect(jsonPath("$.detail").value("Invalid Firebase token"));
     }
+
+    @Test
+    void unverifiedEmailReturns403WithCode() throws Exception {
+        when(authService.authenticateWithFirebase("unverified-token"))
+                .thenThrow(new com.conductor.exception.EmailNotVerifiedException("not verified"));
+
+        mockMvc.perform(post("/api/v1/auth/firebase")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"idToken\": \"unverified-token\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.detail").value("Verify your email address before signing in."))
+                .andExpect(jsonPath("$.code").value("EMAIL_NOT_VERIFIED"));
+    }
 }
