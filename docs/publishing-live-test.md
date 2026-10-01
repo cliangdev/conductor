@@ -35,11 +35,11 @@ Keep the workspace to the people doing the test. Every automated destination pub
    and *Instagram* products added. Under *Facebook Login → Settings*, add the redirect URI above.
 3. The app in **Development mode** is enough as long as every account that authorizes holds an app
    role (admin, developer or tester). Posts made by an app in development mode are real; they are
-   just limited to those roles. Going live requires App Review for `pages_manage_posts`,
-   `instagram_content_publish` and `business_management`.
+   just limited to those roles. Going live requires App Review (Advanced Access) for every
+   permission Conductor requests.
 4. Scopes Conductor requests: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`,
-   `instagram_basic`, `instagram_content_publish`, `business_management`. Grant all of them at
-   consent; the Page picker after consent lists only Pages the token can see.
+   `instagram_basic`, `instagram_content_publish`, `instagram_manage_insights`. Grant all of them
+   at consent; the Page picker after consent lists only Pages the token can see.
 5. If you leave the Page picker without choosing (an error, a closed tab), the connection is stored
    but cannot publish, and Posts offer only the manual Facebook and Instagram lanes. The connection
    row on the Meta page then shows **Choose account**; that reopens the picker.

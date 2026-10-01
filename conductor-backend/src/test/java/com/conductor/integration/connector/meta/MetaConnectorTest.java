@@ -85,11 +85,11 @@ class MetaConnectorTest {
 
         assertThat(connector.oauthScopes()).containsExactlyInAnyOrder(
                 "pages_show_list", "pages_manage_posts", "pages_read_engagement",
-                "instagram_basic", "instagram_content_publish", "instagram_manage_insights",
-                "business_management");
+                "instagram_basic", "instagram_content_publish", "instagram_manage_insights");
         for (String scope : connector.oauthScopes()) {
             assertThat(consentUrl).contains(scope);
         }
+        assertThat(consentUrl).doesNotContain("business_management");
     }
 
     // --- [auto] The OAuth callback stores a long-lived Page token plus Page and IG account ids ---
