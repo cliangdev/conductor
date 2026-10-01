@@ -2,8 +2,8 @@ import Link from 'next/link'
 import { ConductorLogo } from '@/components/brand/ConductorLogo'
 
 /**
- * Chrome for the public marketing pages (`/`, `/privacy`, `/terms`), which is what a visitor or a
- * platform's app reviewer sees before signing in.
+ * Chrome for the public marketing pages (`/`, `/privacy`, `/terms`, `/data-deletion`), which is
+ * what a visitor or a platform's app reviewer sees before signing in.
  *
  * Deliberately not `PageContainer`/`PageHeader`: those carry the signed-in app's breadcrumb and
  * status chrome, and they assume a workspace. This is the same token set in a different shell.
@@ -129,6 +129,9 @@ export function SiteFooter() {
           <Link href="/terms" className="transition-colors hover:text-foreground">
             Terms of Service
           </Link>
+          <Link href="/data-deletion" className="transition-colors hover:text-foreground">
+            Data Deletion
+          </Link>
           <a href={`mailto:${CONTACT_EMAIL}`} className="transition-colors hover:text-foreground">
             Contact
           </a>
@@ -150,8 +153,8 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The reading shell for `/privacy` and `/terms`: a 720px column, matching the design system's
- * long-form cap, with a title and a last-updated line.
+ * The reading shell for `/privacy`, `/terms` and `/data-deletion`: a 720px column, matching the
+ * design system's long-form cap, with a title and a last-updated line.
  */
 export function LegalPage({
   title,

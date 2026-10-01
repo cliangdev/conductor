@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/privacy' },
 }
 
-const UPDATED = 'September 18, 2026'
+const UPDATED = 'September 30, 2026'
 
 export default function PrivacyPage() {
   return (
@@ -26,7 +26,7 @@ export default function PrivacyPage() {
         command-line tools, and the integrations you choose to connect.
       </p>
 
-      <h2>Who this applies to</h2>
+      <h2 id="who-this-applies-to">Who this applies to</h2>
       <p>
         Conductor is a business product used by teams. Each team works inside a{' '}
         <strong>workspace</strong>, and the workspace is the boundary for all access: only people
@@ -35,7 +35,7 @@ export default function PrivacyPage() {
         accounts.
       </p>
 
-      <h2>What we collect</h2>
+      <h2 id="what-we-collect">What we collect</h2>
       <h3>Account information</h3>
       <p>
         When you sign in with Google we receive your email address, your display name and the URL
@@ -84,7 +84,7 @@ export default function PrivacyPage() {
         cookies.
       </p>
 
-      <h2>How we use it</h2>
+      <h2 id="how-we-use-it">How we use it</h2>
       <ul>
         <li>To run the product: sign you in, limit access to your workspace, run your workflows and agents, and deliver approved content to the destinations you picked.</li>
         <li>To show your workspace how its published content performed, and to write the weekly summaries your agents read.</li>
@@ -97,7 +97,7 @@ export default function PrivacyPage() {
         and we do not use it to train machine-learning models.
       </p>
 
-      <h2>Who we share it with</h2>
+      <h2 id="who-we-share-it-with">Who we share it with</h2>
       <p>We use a small set of processors, each for one specific job:</p>
       <ul>
         <li><strong>Google Cloud Platform</strong> hosts the application and stores files.</li>
@@ -114,7 +114,7 @@ export default function PrivacyPage() {
         different policy.
       </p>
 
-      <h2>Data from TikTok and other connected platforms</h2>
+      <h2 id="connected-platforms">Data from TikTok, Facebook, Instagram and other connected platforms</h2>
       <p>
         We use data from a platform&rsquo;s API only to provide the features you turned on in your
         workspace, and only for as long as your connection stays active. In TikTok&rsquo;s case
@@ -126,20 +126,43 @@ export default function PrivacyPage() {
         publicly. We do not share it with third parties, and we handle it according to the relevant
         platform&rsquo;s developer terms and policies.
       </p>
+      <p>
+        For Facebook and Instagram, a workspace administrator connects through Facebook Login.
+        Conductor lists the Pages that person manages only so they can pick one, and stores only
+        the chosen Page&rsquo;s ID, name and access token (encrypted), plus the ID and username of
+        the Instagram professional account linked to it. When a person in the workspace approves a
+        post, Conductor publishes it to that Page and/or the linked Instagram account: photos,
+        multi-photo posts and carousels, Reels and Stories, immediately or on a schedule. If your
+        team unschedules a post before it goes live, Conductor deletes the scheduled Facebook post.
+      </p>
+      <p>
+        For posts Conductor itself published, we read back the permalink and publish status, and on
+        a schedule the performance counts: on Facebook, likes, comments and shares; on Instagram,
+        likes, comments, views, reach, saves, shares and total interactions. We do not read comment
+        text, your other posts, followers, audience demographics or messages.
+      </p>
+      <p>
+        These readings are shown only to members of the workspace, on its Insights page and in a
+        weekly internal performance summary. If the workspace has configured an AI model provider,
+        that summary is written by the provider the workspace chose, from aggregated counts. We do
+        not use this data for advertising or profiling, we do not sell it, and we handle it
+        according to Meta&rsquo;s Platform Terms and Developer Policies.
+      </p>
 
-      <h2>How long we keep it</h2>
+      <h2 id="how-long-we-keep-it">How long we keep it</h2>
       <ul>
         <li><strong>Workspace content</strong> stays until you delete it or delete the workspace.</li>
         <li><strong>Connection tokens</strong> stay until you disconnect the account or revoke access on the platform. At that point the stored tokens are deleted.</li>
-        <li><strong>Performance readings</strong> are deleted with the Post they belong to, or when the connection they were read through is removed.</li>
+        <li><strong>Performance readings</strong> are deleted with the Post they belong to. Disconnecting an account stops new readings; the ones already taken stay with their Posts.</li>
         <li><strong>Server logs</strong> are kept for a limited operational period, currently up to 30 days, then rotated out.</li>
         <li><strong>Backups</strong> are kept on a rolling schedule and overwritten in the ordinary course.</li>
       </ul>
 
-      <h2>Your choices and rights</h2>
+      <h2 id="your-choices-and-rights">Your choices and rights</h2>
       <ul>
         <li><strong>See your data.</strong> Everything in your workspace is visible in the application, and reachable through the API and the CLI.</li>
-        <li><strong>Disconnect an account.</strong> Go to Settings, then Integrations, and disconnect any connection whenever you want. You can also revoke Conductor&rsquo;s access from the platform&rsquo;s own security settings.</li>
+        <li><strong>Disconnect an account.</strong> Open Integrations in the workspace sidebar, choose the connector, and disconnect any connection whenever you want. You can also revoke Conductor&rsquo;s access from the platform&rsquo;s own security settings.</li>
+        <li><strong>Delete data from a connected account.</strong> See <a href="/data-deletion">how to delete your data</a>.</li>
         <li><strong>Delete content.</strong> Delete individual Work Items, documents or knowledge pages in the application.</li>
         <li><strong>Delete your account or workspace.</strong> Email us at{' '}
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> from your account address. We will
@@ -153,7 +176,7 @@ export default function PrivacyPage() {
         </li>
       </ul>
 
-      <h2>Security</h2>
+      <h2 id="security">Security</h2>
       <p>
         Traffic is encrypted in transit with TLS. Third-party tokens and model provider keys are
         encrypted at rest. Access to a workspace depends on membership, and we check it on every
@@ -161,28 +184,28 @@ export default function PrivacyPage() {
         affected users of any breach that materially affects them.
       </p>
 
-      <h2>International transfers</h2>
+      <h2 id="international-transfers">International transfers</h2>
       <p>
         Conductor is operated from the United States and your information is processed there. If you
         use Conductor from another country, you are transferring your information to the United
         States.
       </p>
 
-      <h2>Children</h2>
+      <h2 id="children">Children</h2>
       <p>
         Conductor is a workplace product and is not aimed at children. We do not knowingly collect
         information from anyone under 16. If you think a child has given us information, contact us
         and we will delete it.
       </p>
 
-      <h2>Changes</h2>
+      <h2 id="changes">Changes</h2>
       <p>
         We will update this page when our practices change, and revise the &ldquo;last
         updated&rdquo; date at the top. We will announce material changes in the application or by
         email.
       </p>
 
-      <h2>Contact</h2>
+      <h2 id="contact">Contact</h2>
       <p>
         Questions, requests or complaints go to{' '}
         <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.

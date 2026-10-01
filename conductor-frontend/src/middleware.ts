@@ -4,9 +4,9 @@ import type { NextRequest } from 'next/server'
 /**
  * Route gating. Only `/app/**` requires a session.
  *
- * The public marketing pages (`/`, `/privacy` and `/terms`) sit outside the matcher on purpose.
- * They have to be reachable with no cookie at all, because platform app reviewers (TikTok, Meta)
- * check them while signed out. The landing page renders for signed-in visitors too; its header
+ * The public marketing pages (`/`, `/privacy`, `/terms` and `/data-deletion`) sit outside the
+ * matcher on purpose. They have to be reachable with no cookie at all, because platform app
+ * reviewers (TikTok, Meta) check them while signed out. The landing page renders for signed-in visitors too; its header
  * links to `/login`, which forwards an existing session on to the app.
  */
 export function middleware(request: NextRequest) {
