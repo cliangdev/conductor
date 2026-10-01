@@ -24,6 +24,17 @@ export function AuthCard({
   )
 }
 
+/** The "or" rule between the Google button and the email form (and the key picker's alternatives). */
+export function AuthDivider({ className }: { className?: string }) {
+  return (
+    <div className={cn('relative flex items-center py-1', className)}>
+      <div className="flex-grow border-t border-border" />
+      <span className="mx-3 text-xs text-muted-foreground">or</span>
+      <div className="flex-grow border-t border-border" />
+    </div>
+  )
+}
+
 /** The Google "G" mark, shared by every Google sign-in button so it isn't pasted per page. */
 function GoogleGlyph() {
   return (
@@ -37,11 +48,11 @@ function GoogleGlyph() {
   )
 }
 
-/** The "Sign in with Google" button, shared by the login and CLI-login pages. */
+/** The "Continue with Google" button, shared by the login and CLI-login pages. */
 export function GoogleSignInButton({
   onClick,
   loading,
-  label = 'Sign in with Google',
+  label = 'Continue with Google',
   loadingLabel = 'Signing in...',
 }: {
   onClick: () => void

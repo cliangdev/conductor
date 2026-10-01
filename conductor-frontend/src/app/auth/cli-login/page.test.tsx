@@ -14,6 +14,11 @@ vi.mock('firebase/auth', () => ({
   GoogleAuthProvider: class MockGoogleAuthProvider {},
   signInWithPopup: vi.fn(),
   getIdToken: vi.fn(),
+  signInWithEmailAndPassword: vi.fn(),
+  createUserWithEmailAndPassword: vi.fn(),
+  updateProfile: vi.fn(),
+  sendEmailVerification: vi.fn(),
+  sendPasswordResetEmail: vi.fn(),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -50,7 +55,7 @@ beforeEach(() => {
   mockWindowLocation.href = ''
 
   vi.mocked(firebaseAuth.signInWithPopup).mockResolvedValue({
-    user: {},
+    user: { emailVerified: true },
   } as Awaited<ReturnType<typeof firebaseAuth.signInWithPopup>>)
 
   vi.mocked(firebaseAuth.getIdToken).mockResolvedValue('firebase-id-token')
@@ -67,12 +72,12 @@ beforeEach(() => {
 describe('CliLoginPage', () => {
   it('renders sign-in button initially', () => {
     render(<CliLoginPage />)
-    expect(screen.getByRole('button', { name: /sign in with google/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /continue with google/i })).toBeInTheDocument()
   })
 
   it('auto-creates key and redirects when no existing CLI keys', async () => {
     render(<CliLoginPage />)
-    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+    await userEvent.click(screen.getByRole('button', { name: /continue with google/i }))
 
     await waitFor(() => {
       expect(api.apiPost).toHaveBeenCalledWith('/api/v1/api-keys', { label: 'CLI key' }, 'test-access-token')
@@ -89,7 +94,7 @@ describe('CliLoginPage', () => {
     mockApiGetWith(CLI_KEYS_WITH_VALUE)
 
     render(<CliLoginPage />)
-    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+    await userEvent.click(screen.getByRole('button', { name: /continue with google/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/select an api key/i)).toBeInTheDocument()
@@ -104,7 +109,7 @@ describe('CliLoginPage', () => {
     mockApiGetWith(CLI_KEYS_WITH_VALUE)
 
     render(<CliLoginPage />)
-    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+    await userEvent.click(screen.getByRole('button', { name: /continue with google/i }))
     await waitFor(() => screen.getByRole('button', { name: /^use$/i }))
 
     await userEvent.click(screen.getByRole('button', { name: /^use$/i }))
@@ -123,7 +128,7 @@ describe('CliLoginPage', () => {
     })
 
     render(<CliLoginPage />)
-    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+    await userEvent.click(screen.getByRole('button', { name: /continue with google/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/unavailable/i)).toBeInTheDocument()
@@ -136,7 +141,7 @@ describe('CliLoginPage', () => {
     mockApiGetWith(CLI_KEYS_WITH_VALUE)
 
     render(<CliLoginPage />)
-    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+    await userEvent.click(screen.getByRole('button', { name: /continue with google/i }))
     await waitFor(() => screen.getByRole('button', { name: /create a new key/i }))
 
     await userEvent.click(screen.getByRole('button', { name: /create a new key/i }))
@@ -163,7 +168,7 @@ describe('CliLoginPage', () => {
     })
 
     render(<CliLoginPage />)
-    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+    await userEvent.click(screen.getByRole('button', { name: /continue with google/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/select a project/i)).toBeInTheDocument()
@@ -186,10 +191,51 @@ describe('CliLoginPage', () => {
     vi.mocked(firebaseAuth.signInWithPopup).mockRejectedValue(new Error('Popup closed'))
 
     render(<CliLoginPage />)
-    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+    await userEvent.click(screen.getByRole('button', { name: /continue with google/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/popup closed/i)).toBeInTheDocument()
     })
+  })
+
+  it('offers email sign-in and mints a key through the same flow', async () => {
+    const fbUser = { emailVerified: true, reload: vi.fn() }
+    vi.mocked(firebaseAuth.signInWithEmailAndPassword).mockResolvedValue({
+      user: fbUser,
+    } as unknown as Awaited<ReturnType<typeof firebaseAuth.signInWithEmailAndPassword>>)
+
+    render(<CliLoginPage />)
+    await userEvent.type(screen.getByLabelText('Email'), 'user@example.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => {
+      expect(firebaseAuth.signInWithEmailAndPassword).toHaveBeenCalledWith(
+        expect.anything(),
+        'user@example.com',
+        'correct-horse',
+      )
+    })
+    expect(firebaseAuth.getIdToken).toHaveBeenCalledWith(fbUser, true)
+    await waitFor(() => {
+      expect(api.apiPost).toHaveBeenCalledWith('/api/v1/api-keys', { label: 'CLI key' }, 'test-access-token')
+      expect(mockWindowLocation.href).toContain('apiKey=uk_newkey1234')
+    })
+  })
+
+  it('asks an unverified email user to verify instead of calling the backend', async () => {
+    const fbUser = { emailVerified: false, reload: vi.fn().mockResolvedValue(undefined) }
+    vi.mocked(firebaseAuth.signInWithEmailAndPassword).mockResolvedValue({
+      user: fbUser,
+    } as unknown as Awaited<ReturnType<typeof firebaseAuth.signInWithEmailAndPassword>>)
+
+    render(<CliLoginPage />)
+    await userEvent.type(screen.getByLabelText('Email'), 'user@example.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    expect(await screen.findByText(/check your inbox/i)).toBeInTheDocument()
+    expect(api.apiPost).not.toHaveBeenCalled()
+    expect(mockWindowLocation.href).toBe('')
   })
 })

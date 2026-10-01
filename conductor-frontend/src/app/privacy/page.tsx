@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/privacy' },
 }
 
-const UPDATED = 'September 18, 2026'
+const UPDATED = 'September 30, 2026'
 
 export default function PrivacyPage() {
   return (
@@ -41,6 +41,11 @@ export default function PrivacyPage() {
         When you sign in with Google we receive your email address, your display name and the URL
         of your profile image, and we store a Google account identifier so we can recognise you the
         next time you sign in. We never receive or store your Google password.
+      </p>
+      <p>
+        If you create an account with your email and a password instead, sign-in is handled by
+        Google Firebase Authentication, which stores your email address and a hashed copy of your
+        password. Conductor never sees or stores your password.
       </p>
 
       <h3>Content you and your agents create</h3>

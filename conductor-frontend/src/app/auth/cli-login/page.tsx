@@ -5,8 +5,17 @@ export const dynamic = 'force-dynamic'
 import { useSearchParams } from 'next/navigation'
 import { useState, Suspense } from 'react'
 import { Button } from '@/components/ui/button'
-import { AuthCard, GoogleSignInButton } from '@/components/auth/AuthCard'
+import { AuthCard, AuthDivider, GoogleSignInButton } from '@/components/auth/AuthCard'
+import { EmailPasswordForm } from '@/components/auth/EmailPasswordForm'
 import { apiGet, apiPost } from '@/lib/api'
+import { authErrorMessage, isEmailNotVerifiedError } from '@/lib/auth-errors'
+import {
+  createEmailAccount,
+  exchangeFirebaseUser,
+  resendVerificationEmail,
+  sendPasswordReset,
+  signInWithEmailExchange,
+} from '@/lib/firebase-auth-flow'
 
 const CLI_KEY_LABEL = 'CLI key'
 
@@ -71,6 +80,21 @@ function CliLoginContent() {
     redirectToCli(pendingApiKey, project, profileEmail)
   }
 
+  /** Shared continuation once we hold an app accessToken: find or mint the CLI key, then finish. */
+  async function continueWithAccessToken(accessToken: string) {
+    const allKeys = await apiGet<UserApiKey[]>('/api/v1/api-keys', accessToken)
+    const cliKeys = allKeys.filter(k => k.label === CLI_KEY_LABEL)
+
+    if (cliKeys.length === 0) {
+      const created = await apiPost<CreateApiKeyResponse>('/api/v1/api-keys', { label: CLI_KEY_LABEL }, accessToken)
+      await finishWithKey(created.key, accessToken)
+    } else {
+      setExistingKeys(cliKeys)
+      setAccessTokenStore(accessToken)
+      setStatus('pick')
+    }
+  }
+
   async function handleSignIn() {
     if (!port) {
       setError('Missing port parameter')
@@ -80,25 +104,33 @@ function CliLoginContent() {
     setError(null)
     try {
       const { getFirebaseAuth } = await import('@/lib/firebase')
-      const { GoogleAuthProvider, signInWithPopup, getIdToken } = await import('firebase/auth')
+      const { GoogleAuthProvider, signInWithPopup } = await import('firebase/auth')
       const auth = getFirebaseAuth()
       const provider = new GoogleAuthProvider()
       const credential = await signInWithPopup(auth, provider)
-      const idToken = await getIdToken(credential.user)
+      const { accessToken } = await exchangeFirebaseUser(credential.user)
+      await continueWithAccessToken(accessToken)
+    } catch (err) {
+      setError(
+        isEmailNotVerifiedError(err) ? authErrorMessage(err) : ((err as Error).message ?? 'Authentication failed'),
+      )
+      setStatus('error')
+    }
+  }
 
-      const { accessToken } = await apiPost<{ accessToken: string }>('/api/v1/auth/firebase', { idToken })
-
-      const allKeys = await apiGet<UserApiKey[]>('/api/v1/api-keys', accessToken)
-      const cliKeys = allKeys.filter(k => k.label === CLI_KEY_LABEL)
-
-      if (cliKeys.length === 0) {
-        const created = await apiPost<CreateApiKeyResponse>('/api/v1/api-keys', { label: CLI_KEY_LABEL }, accessToken)
-        await finishWithKey(created.key, accessToken)
-      } else {
-        setExistingKeys(cliKeys)
-        setAccessTokenStore(accessToken)
-        setStatus('pick')
-      }
+  /** Email/password path. Auth failures throw back into the form (which owns their messaging);
+   * everything after we hold an accessToken reports on the page, like the Google path. */
+  async function handleEmailSignIn(email: string, password: string) {
+    if (!port) {
+      setError('Missing port parameter')
+      setStatus('error')
+      return
+    }
+    setError(null)
+    const { accessToken } = await signInWithEmailExchange(email, password)
+    setStatus('loading')
+    try {
+      await continueWithAccessToken(accessToken)
     } catch (err) {
       setError((err as Error).message ?? 'Authentication failed')
       setStatus('error')
@@ -162,11 +194,7 @@ function CliLoginContent() {
             </div>
           ))}
         </div>
-        <div className="relative flex items-center py-1 mb-4">
-          <div className="flex-grow border-t border-border" />
-          <span className="mx-3 text-xs text-muted-foreground">or</span>
-          <div className="flex-grow border-t border-border" />
-        </div>
+        <AuthDivider className="mb-4" />
         <Button
           variant="outline"
           className="w-full"
@@ -213,6 +241,13 @@ function CliLoginContent() {
       </p>
       <GoogleSignInButton onClick={handleSignIn} loading={status === 'loading'} />
       {(status === 'error') && error && <p className="mt-3 text-sm text-destructive text-center">{error}</p>}
+      <AuthDivider className="my-4" />
+      <EmailPasswordForm
+        onSignIn={handleEmailSignIn}
+        onSignUp={createEmailAccount}
+        onResendVerification={resendVerificationEmail}
+        onSendPasswordReset={sendPasswordReset}
+      />
     </AuthCard>
   )
 }

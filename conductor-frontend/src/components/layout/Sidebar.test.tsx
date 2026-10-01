@@ -51,7 +51,6 @@ vi.mock('@/contexts/AuthContext', () => ({
     user: { id: 'user-1', name: 'Test User', email: 'test@example.com', avatarUrl: null, displayName: null },
     accessToken: 'test-token',
     loading: false,
-    signIn: vi.fn(),
     signOut: mockSignOut,
   }),
 }))
