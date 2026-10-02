@@ -111,7 +111,7 @@ export default function LandingPage() {
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Link
-              href="/login"
+              href="/login?mode=signup"
               className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-[14px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
             >
               Create your workspace
@@ -125,7 +125,7 @@ export default function LandingPage() {
             </Link>
           </div>
           <p className="mt-4 text-[13px] text-foreground-subtle">
-            Free to start. Sign in with Google and your workspace is created for you.
+            Free to start. Sign up with Google or your email and your workspace is created for you.
           </p>
           <a
             href={REPO_URL}
@@ -328,11 +328,11 @@ export default function LandingPage() {
             Start a workspace
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-[14px] leading-[1.7] text-foreground-muted">
-            Conductor is open to any team: brands, agencies, product teams. Sign in with a Google
-            account to create your workspace, invite your teammates and connect your accounts.
+            Conductor is open to any team: brands, agencies, product teams. Sign up with Google or
+            your email to create your workspace, invite your teammates and connect your accounts.
           </p>
           <Link
-            href="/login"
+            href="/login?mode=signup"
             className="mt-8 inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-[14px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
           >
             Create your workspace

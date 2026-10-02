@@ -42,6 +42,11 @@ export default function PrivacyPage() {
         of your profile image, and we store a Google account identifier so we can recognise you the
         next time you sign in. We never receive or store your Google password.
       </p>
+      <p>
+        If you create an account with your email and a password instead, sign-in is handled by
+        Google Firebase Authentication, which stores your email address and a hashed copy of your
+        password. Conductor never sees or stores your password.
+      </p>
 
       <h3>Content you and your agents create</h3>
       <p>

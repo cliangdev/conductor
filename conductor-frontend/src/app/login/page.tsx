@@ -8,7 +8,8 @@ import { useEffect, useState, Suspense } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AuthCard, GoogleSignInButton } from '@/components/auth/AuthCard'
+import { AuthCard, AuthDivider, GoogleSignInButton } from '@/components/auth/AuthCard'
+import { EmailPasswordForm } from '@/components/auth/EmailPasswordForm'
 import { useAuth } from '@/contexts/AuthContext'
 import { REPO_URL } from '@/components/site/SiteChrome'
 import { ConductorLogo } from '@/components/brand/ConductorLogo'
@@ -63,7 +64,7 @@ function LoginFooter() {
 function LocalLoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { signIn } = useAuth()
+  const { signInWithEmail } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -74,7 +75,7 @@ function LocalLoginForm() {
     setError(null)
     setLoading(true)
     try {
-      await signIn({ email, password })
+      await signInWithEmail(email, password)
       router.push(resolveNext(searchParams.get('next')))
     } catch {
       setError('Invalid email or password')
@@ -116,14 +117,16 @@ function LocalLoginForm() {
   )
 }
 
-function GoogleLoginForm() {
-  const { signIn, signInError } = useAuth()
+function FirebaseLoginForm() {
+  const searchParams = useSearchParams()
+  const { signInWithGoogle, signInWithEmail, signUpWithEmail, resendVerificationEmail, sendPasswordReset, signInError } =
+    useAuth()
   const [loading, setLoading] = useState(false)
 
-  async function handleSignIn() {
+  async function handleGoogle() {
     setLoading(true)
     try {
-      await signIn()
+      await signInWithGoogle()
       // On success the LoginForm effect detects user and navigates; leave loading true
     } catch {
       setLoading(false)
@@ -133,8 +136,16 @@ function GoogleLoginForm() {
   return (
     <AuthCard footer={<LoginFooter />}>
       <Header />
-      <GoogleSignInButton onClick={handleSignIn} loading={loading} />
+      <GoogleSignInButton onClick={handleGoogle} loading={loading} />
       {signInError && <p className="mt-3 text-sm text-destructive text-center">{signInError}</p>}
+      <AuthDivider className="my-4" />
+      <EmailPasswordForm
+        initialMode={searchParams.get('mode') === 'signup' ? 'create' : 'signin'}
+        onSignIn={signInWithEmail}
+        onSignUp={signUpWithEmail}
+        onResendVerification={resendVerificationEmail}
+        onSendPasswordReset={sendPasswordReset}
+      />
     </AuthCard>
   )
 }
@@ -153,7 +164,7 @@ function LoginForm() {
 
   if (!loading && user) return null
 
-  return isLocalMode ? <LocalLoginForm /> : <GoogleLoginForm />
+  return isLocalMode ? <LocalLoginForm /> : <FirebaseLoginForm />
 }
 
 export default function LoginPage() {

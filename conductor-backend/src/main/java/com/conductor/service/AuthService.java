@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.User;
+import com.conductor.exception.EmailNotVerifiedException;
 import com.conductor.generated.model.AuthResponse;
 import com.conductor.generated.model.UserSummary;
 import com.conductor.repository.UserRepository;
@@ -40,6 +41,11 @@ public class AuthService {
     public AuthResponse authenticateWithFirebase(String idToken) throws FirebaseAuthException {
         FirebaseToken firebaseToken = firebaseTokenVerifier.verifyToken(idToken);
 
+        // Email/password accounts are untrusted until verified; refuse before any user row or workspace exists.
+        if (!firebaseToken.isEmailVerified()) {
+            throw new EmailNotVerifiedException("Email address is not verified");
+        }
+
         User user = transactionTemplate.execute(status -> {
             User u = userRepository.findByFirebaseUid(firebaseToken.getUid())
                     .orElseGet(() -> createUser(firebaseToken));
@@ -70,8 +76,15 @@ public class AuthService {
     }
 
     private void syncProfile(User user, FirebaseToken firebaseToken) {
-        user.setName(firebaseToken.getName());
-        String picture = (String) firebaseToken.getClaims().get("picture");
-        user.setAvatarUrl(picture);
+        // A missing or blank claim never overwrites a stored value (email/password users have no
+        // picture and may have no name claim).
+        String name = firebaseToken.getName();
+        if (name != null && !name.isBlank()) {
+            user.setName(name);
+        }
+        Object picture = firebaseToken.getClaims().get("picture");
+        if (picture instanceof String p && !p.isBlank()) {
+            user.setAvatarUrl(p);
+        }
     }
 }

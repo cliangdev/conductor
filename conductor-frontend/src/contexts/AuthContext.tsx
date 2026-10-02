@@ -4,14 +4,28 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import type { User, AuthResponse } from '@/types'
 import { apiPost, setOnUnauthorized } from '@/lib/api'
 import { getFirebaseAuth } from '@/lib/firebase'
-import { GoogleAuthProvider, signInWithPopup, getIdToken, signOut as firebaseSignOut } from 'firebase/auth'
+import {
+  createEmailAccount,
+  exchangeFirebaseUser,
+  resendVerificationEmail as resendFirebaseVerificationEmail,
+  sendPasswordReset as sendFirebasePasswordReset,
+  signInWithEmailExchange,
+} from '@/lib/firebase-auth-flow'
+import { authErrorMessage, isEmailNotVerifiedError } from '@/lib/auth-errors'
+import { GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth'
 
 interface AuthContextValue {
   user: User | null
   accessToken: string | null
   loading: boolean
   signInError: string | null
-  signIn: (credentials?: { email: string; password: string }) => Promise<void>
+  signInWithGoogle: () => Promise<void>
+  /** Local dev mode posts to /api/v1/auth/local; otherwise Firebase email/password. Throws on failure. */
+  signInWithEmail: (email: string, password: string) => Promise<void>
+  /** Creates the Firebase account and sends the verification email. No session until verified. */
+  signUpWithEmail: (name: string, email: string, password: string) => Promise<void>
+  resendVerificationEmail: () => Promise<void>
+  sendPasswordReset: (email: string) => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -73,36 +87,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false)
   }, [])
 
-  async function signIn(credentials?: { email: string; password: string }): Promise<void> {
-    const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
+  function storeSession(response: AuthResponse) {
+    setUser(response.user)
+    setAccessToken(response.accessToken)
+    localStorage.setItem('access_token', response.accessToken)
+    localStorage.setItem('user', JSON.stringify(response.user))
+    setAccessTokenCookie(response.accessToken)
+  }
 
-    if (isLocalMode && credentials) {
-      const response = await apiPost<AuthResponse>('/api/v1/auth/local', credentials)
-      setUser(response.user)
-      setAccessToken(response.accessToken)
-      localStorage.setItem('access_token', response.accessToken)
-      localStorage.setItem('user', JSON.stringify(response.user))
-      setAccessTokenCookie(response.accessToken)
-      return
-    }
-
+  async function signInWithGoogle(): Promise<void> {
     setSignInError(null)
     try {
       const provider = new GoogleAuthProvider()
       provider.setCustomParameters({ prompt: 'select_account' })
       const result = await signInWithPopup(getFirebaseAuth(), provider)
-      const idToken = await getIdToken(result.user)
-      const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
-      setUser(response.user)
-      setAccessToken(response.accessToken)
-      localStorage.setItem('access_token', response.accessToken)
-      localStorage.setItem('user', JSON.stringify(response.user))
-      setAccessTokenCookie(response.accessToken)
+      storeSession(await exchangeFirebaseUser(result.user))
     } catch (err) {
       const code = (err as { code?: string })?.code
-      setSignInError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
+      if (isEmailNotVerifiedError(err)) {
+        setSignInError(authErrorMessage(err))
+      } else {
+        setSignInError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
+      }
       throw err
     }
+  }
+
+  async function signInWithEmail(email: string, password: string): Promise<void> {
+    if (process.env.NEXT_PUBLIC_AUTH_MODE === 'local') {
+      const response = await apiPost<AuthResponse>('/api/v1/auth/local', { email, password })
+      storeSession(response)
+      return
+    }
+    storeSession(await signInWithEmailExchange(email, password))
+  }
+
+  async function signUpWithEmail(name: string, email: string, password: string): Promise<void> {
+    await createEmailAccount(name, email, password)
+  }
+
+  async function resendVerificationEmail(): Promise<void> {
+    await resendFirebaseVerificationEmail()
+  }
+
+  async function sendPasswordReset(email: string): Promise<void> {
+    await sendFirebasePasswordReset(email)
   }
 
   async function signOut(): Promise<void> {
@@ -128,7 +157,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, accessToken, loading, signInError, signIn, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        accessToken,
+        loading,
+        signInError,
+        signInWithGoogle,
+        signInWithEmail,
+        signUpWithEmail,
+        resendVerificationEmail,
+        sendPasswordReset,
+        signOut,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )
