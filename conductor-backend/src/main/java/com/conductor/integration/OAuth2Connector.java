@@ -3,6 +3,7 @@ package com.conductor.integration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Implemented by connectors that authenticate via the shared OAuth2 authorization-code flow
@@ -245,6 +246,21 @@ public interface OAuth2Connector extends Connector {
      */
     default boolean accountSelected(Map<String, Object> config) {
         return true;
+    }
+
+    /**
+     * A stable identifier of the external account a connection acts as, read from the connection's
+     * non-secret {@code config} — used only to recognise a re-authorization of an account that is
+     * already connected, so the flow service refreshes the existing row instead of adding a second one
+     * for the same account. Empty (the default) means the connector has no such identifier, and every
+     * authorization of a multi-connection connector then adds a row, exactly as before this hook existed.
+     *
+     * <p>Pick an identifier that survives a change of OAuth <em>app</em>: TikTok's {@code open_id} is
+     * scoped per app (sandbox vs production), so the creator's username is the identity, not the id.
+     * Never consulted for a single-instance connector, which reuses its one row regardless.
+     */
+    default Optional<String> accountIdentity(Map<String, Object> config) {
+        return Optional.empty();
     }
 
     /**

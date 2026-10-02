@@ -61,6 +61,12 @@ class MetaConnectorTest {
     // --- [auto] MetaConnector overrides all five OAuth2Connector endpoint methods for Meta ---
 
     @Test
+    void accountIdentity_isThePageIdAndAbsentUntilAPageIsPicked() {
+        assertThat(connector.accountIdentity(Map.of("pageId", "page-9", "pageName", "P"))).contains("page-9");
+        assertThat(connector.accountIdentity(Map.of())).isEmpty();
+    }
+
+    @Test
     void oauthEndpoints_targetMeta_notGoogle() {
         assertThat(connector.authorizationUrl()).isEqualTo("https://www.facebook.com/v21.0/dialog/oauth");
         assertThat(connector.tokenUrl()).isEqualTo("https://graph.facebook.com/v21.0/oauth/access_token");

@@ -395,4 +395,11 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
         }
         return output;
     }
+
+    /** Account identity for re-authorization: the YouTube channel id. */
+    @Override
+    public Optional<String> accountIdentity(Map<String, Object> config) {
+        return config != null && config.get(CONFIG_CHANNEL_ID) instanceof String value && !value.isBlank()
+                ? Optional.of(value) : Optional.empty();
+    }
 }

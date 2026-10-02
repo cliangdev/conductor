@@ -42,6 +42,14 @@ class TikTokConnectorTest {
     // --- [auto] TikTokConnector overrides all five OAuth2Connector endpoint methods ---
 
     @Test
+    void accountIdentity_isTheCreatorUsername_becauseOpenIdDiffersPerApp() {
+        assertThat(connector.accountIdentity(java.util.Map.of("creatorUsername", "rexipe", "openId", "app-scoped")))
+                .contains("rexipe");
+        assertThat(connector.accountIdentity(java.util.Map.of("creatorNickname", "Rexipe"))).isEmpty();
+        assertThat(connector.accountIdentity(java.util.Map.of("creatorUsername", " "))).isEmpty();
+    }
+
+    @Test
     void oauthEndpoints_targetTikTok_notGoogle() {
         assertThat(connector.authorizationUrl()).isEqualTo("https://www.tiktok.com/v2/auth/authorize/");
         assertThat(connector.tokenUrl()).isEqualTo("https://open.tiktokapis.com/v2/oauth/token/");

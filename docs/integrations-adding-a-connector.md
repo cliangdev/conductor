@@ -67,6 +67,13 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
    long-lived token swap is app-authenticated, and resolving again inside the connector is how a
    consent granted to the workspace's app gets completed against the deployment's.
 
+   **Reconnecting the same account.** A multi-connection connector (`ConnectorSpec.oauth2(false, ...)`)
+   adds a connection per authorization. Override `accountIdentity(config)` to return a stable id of the
+   external account from non-secret config (TikTok's `creatorUsername`, YouTube's `channelId`, Meta's
+   `pageId`) and re-authorizing that account refreshes the oldest existing connection (same id, new
+   tokens) instead of adding a duplicate; existing duplicates are folded into it. Pick an id that
+   survives a change of OAuth app (TikTok's `open_id` does not).
+
    (Custom, non-OAuth2 auth — like Apple's signed-JWT exchange — skips `OAuth2Connector` entirely and
    stays fully inside your connector package; see `integrations-apple-search-ads.md`.)
 4. **Outbound actions (only if applicable)** — implement `ActionConnector` instead of/in addition to

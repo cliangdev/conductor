@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -29,10 +30,12 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class OAuthFlowService {
@@ -58,6 +61,7 @@ public class OAuthFlowService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final ConnectionHealthService connectionHealthService;
+    private final ConnectionDisconnectService connectionDisconnectService;
 
     @Value("${FRONTEND_URL:http://localhost:3000}")
     private String frontendUrl;
@@ -82,13 +86,18 @@ public class OAuthFlowService {
                             ConnectorRegistry connectorRegistry,
                             ConnectorAppCredentialService appCredentialService,
                             ObjectMapper objectMapper,
-                            ConnectionHealthService connectionHealthService) {
+                            ConnectionHealthService connectionHealthService,
+                            // Lazy: removing a connection reaches publish destinations, whose dispatch path
+                            // depends back on this service (via ActionInvocationService), and the merge
+                            // is only needed at the end of a callback, never while the context builds.
+                            @Lazy ConnectionDisconnectService connectionDisconnectService) {
         this.oAuthStateRepository = oAuthStateRepository;
         this.connectionService = connectionService;
         this.connectorRegistry = connectorRegistry;
         this.appCredentialService = appCredentialService;
         this.objectMapper = objectMapper;
         this.connectionHealthService = connectionHealthService;
+        this.connectionDisconnectService = connectionDisconnectService;
         this.restTemplate = new RestTemplate();
     }
 
@@ -254,7 +263,7 @@ public class OAuthFlowService {
                 new OAuth2Connector.OAuthCompletionRequest(accessToken, refreshToken, null,
                         creds == null ? null : creds.clientId(),
                         creds == null ? null : creds.clientSecret()));
-        applyCompletion(conn, completion, accessToken, refreshToken, expiresAt);
+        applyCompletion(conn, connector, completion, accessToken, refreshToken, expiresAt);
 
         oAuthStateRepository.delete(oauthState);
 
@@ -276,23 +285,107 @@ public class OAuthFlowService {
     }
 
     /**
-     * Persists what the completion hook produced. Credentials go through {@code storeTokens} (the
-     * per-connection DEK envelope); the hook's config is plaintext JSON on the row and so carries
-     * only non-secret identifiers. A hook that reports no token keeps the exchanged one, which is the
-     * no-op default and therefore today's exact behaviour for every Google connector.
+     * Persists what the completion hook produced onto {@code conn}, then — for a multi-connection
+     * connector that can name the account (see {@link OAuth2Connector#accountIdentity}) — folds it into
+     * an existing connection for the same account if there is one. Returns the connection that now holds
+     * the grant: {@code conn} itself, or the older row it was merged into.
+     *
+     * <p>Credentials go through {@code storeTokens} (the per-connection DEK envelope); the hook's config
+     * is plaintext JSON on the row and so carries only non-secret identifiers. A hook that reports no
+     * token keeps the exchanged one, which is the no-op default and therefore today's exact behaviour
+     * for every Google connector.
      */
-    private void applyCompletion(Connection conn, OAuth2Connector.OAuthCompletion completion,
-                                 String exchangedAccessToken, String exchangedRefreshToken,
-                                 OffsetDateTime expiresAt) {
+    private Connection applyCompletion(Connection conn, OAuth2Connector connector,
+                                       OAuth2Connector.OAuthCompletion completion,
+                                       String exchangedAccessToken, String exchangedRefreshToken,
+                                       OffsetDateTime expiresAt) {
         String accessToken = completion.accessToken() != null ? completion.accessToken() : exchangedAccessToken;
         String refreshToken = completion.refreshToken() != null ? completion.refreshToken() : exchangedRefreshToken;
-        connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+
+        Optional<String> identity = connector.getSpec().singleInstance()
+                ? Optional.empty() : identityOf(connector, conn, completion.config());
+        Connection existing = identity.map(id -> findSameAccount(conn, connector, id)).orElse(null);
+        Connection target = existing != null ? existing : conn;
+
+        connectionService.storeTokens(target, accessToken, refreshToken, expiresAt);
         if (!completion.config().isEmpty()) {
-            connectionService.updateConfig(conn, completion.config());
+            connectionService.updateConfig(target, completion.config());
         }
         if (completion.label() != null && !completion.label().isBlank()) {
-            connectionService.updateLabel(conn, completion.label());
+            connectionService.updateLabel(target, completion.label());
         }
+        if (existing != null) {
+            collapseAndDiscard(conn, existing, connector, identity.get());
+        }
+        return target;
+    }
+
+    /**
+     * The oldest other connection in the same project and connector that acts as the same external
+     * account as {@code fresh} will once {@code completion} is applied, or null. The oldest wins so its
+     * id survives: publish destinations, feeds and history all reference connection ids. A row newer than
+     * {@code fresh} is never chosen — {@code fresh} is the authorization that just arrived, so a survivor
+     * younger than it would mean discarding the older, possibly referenced row.
+     */
+    private Connection findSameAccount(Connection fresh, OAuth2Connector connector, String identity) {
+        return sameAccountRows(fresh, connector, identity).stream()
+                .filter(c -> c.getCreatedAt() == null || fresh.getCreatedAt() == null
+                        || !c.getCreatedAt().isAfter(fresh.getCreatedAt()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** {@code row}'s stored config overlaid with {@code overlay} (the config about to be written), read for an identity. */
+    private Optional<String> identityOf(OAuth2Connector connector, Connection row, Map<String, Object> overlay) {
+        Map<String, Object> config = new java.util.HashMap<>(parseConfig(row.getConfigJson()));
+        config.putAll(overlay);
+        return connector.accountIdentity(config);
+    }
+
+    /** Other connections for the same account, oldest first. */
+    private List<Connection> sameAccountRows(Connection fresh, OAuth2Connector connector, String identity) {
+        return connectionService.list(fresh.getProjectId(), fresh.getConnectorId()).stream()
+                .filter(c -> !c.getId().equals(fresh.getId()))
+                .filter(c -> connector.accountIdentity(parseConfig(c.getConfigJson()))
+                        .filter(id -> id.equalsIgnoreCase(identity)).isPresent())
+                .sorted(Comparator.comparing(Connection::getCreatedAt,
+                                Comparator.nullsLast(Comparator.<OffsetDateTime>naturalOrder()))
+                        .thenComparing(Connection::getId))
+                .toList();
+    }
+
+    /**
+     * Finishes a merge: removes the row the authorization created, and every other row that already
+     * duplicates the account (earlier re-authorizations before this merge existed). The fresh row is
+     * seconds old, so no destination, feed run or history points at it and a plain delete is right —
+     * its feeds and cached data go with it by FK cascade — whereas an older duplicate may have Posts
+     * and metrics, so it goes through {@link ConnectionDisconnectService#mergeDuplicate}, which moves
+     * them to the survivor and keeps any row a Post is still waiting on. Cleanup never fails the
+     * authorization.
+     */
+    private void collapseAndDiscard(Connection fresh, Connection survivor, OAuth2Connector connector,
+                                    String identity) {
+        for (Connection duplicate : sameAccountRows(fresh, connector, identity)) {
+            if (duplicate.getId().equals(survivor.getId())) {
+                continue;
+            }
+            try {
+                connectionDisconnectService.mergeDuplicate(duplicate.getId(), survivor.getId());
+            } catch (RuntimeException e) {
+                log.warn("Could not merge duplicate connection={} into connection={}: {}",
+                        duplicate.getId(), survivor.getId(), e.getMessage());
+            }
+        }
+        // Usually seconds old with nothing pointing at it, but the account picker can also finish a row
+        // parked earlier, so it leaves through the same safe path as any other duplicate.
+        try {
+            connectionDisconnectService.mergeDuplicate(fresh.getId(), survivor.getId());
+        } catch (RuntimeException e) {
+            log.warn("Could not remove connection={} after merging it into connection={}: {}",
+                    fresh.getId(), survivor.getId(), e.getMessage());
+        }
+        log.info("OAuth authorization for connector={} project={} merged into existing connection={}",
+                fresh.getConnectorId(), fresh.getProjectId(), survivor.getId());
     }
 
     /**
@@ -356,9 +449,10 @@ public class OAuthFlowService {
                 new OAuth2Connector.OAuthCompletionRequest(creds.accessToken(), creds.refreshToken(), accountId,
                         appCreds == null ? null : appCreds.clientId(),
                         appCreds == null ? null : appCreds.clientSecret()));
-        applyCompletion(conn, completion, creds.accessToken(), creds.refreshToken(), conn.getTokenExpiresAt());
-        log.info("OAuth account selection completed for connection={} account={}", conn.getId(), accountId);
-        return conn;
+        Connection result = applyCompletion(conn, connector, completion, creds.accessToken(),
+                creds.refreshToken(), conn.getTokenExpiresAt());
+        log.info("OAuth account selection completed for connection={} account={}", result.getId(), accountId);
+        return result;
     }
 
     /** A token this close to expiry is refreshed rather than used — an in-flight upload must outlive it. */

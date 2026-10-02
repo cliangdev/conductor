@@ -32,7 +32,6 @@ import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.JwtService;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ProjectSecurityService;
-import com.conductor.service.RuntimeTargetService;
 import com.conductor.verification.Check;
 import com.conductor.verification.CheckStatus;
 import com.conductor.workflow.RunTokenService;
@@ -92,7 +91,7 @@ class ConnectorAppCredentialControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
-    @MockitoBean private com.conductor.service.PublishTargetService publishTargetService;
+    @MockitoBean private com.conductor.service.ConnectionDisconnectService connectionDisconnectService;
 
     @MockitoBean private ConnectorRegistry connectorRegistry;
     @MockitoBean private ConnectionService connectionService;
@@ -103,7 +102,6 @@ class ConnectorAppCredentialControllerTest {
     @MockitoBean private ProjectMemberRepository projectMemberRepository;
     @MockitoBean private ConnectorFeedRepository connectorFeedRepository;
     @MockitoBean private GcpBillingConnector gcpBillingConnector;
-    @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private ConnectorAppCredentialVerificationService verificationService;
     @MockitoBean private ConnectorAppCredentialRepository appCredentialRepository;
     /** The app-credential envelope. Nothing here reads a stored secret back -- the last-4 preview

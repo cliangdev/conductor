@@ -64,7 +64,6 @@ import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.service.ProjectSecurityService;
-import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -96,7 +95,7 @@ public class IntegrationController implements IntegrationsApi {
     private final ConnectionService connectionService;
     private final IntegrationFetchService fetchService;
     private final OAuthFlowService oAuthFlowService;
-    private final com.conductor.service.PublishTargetService publishTargetService;
+    private final com.conductor.service.ConnectionDisconnectService connectionDisconnectService;
     private final ConnectionDataCacheRepository cacheRepository;
     private final WebhookEventRepository webhookEventRepository;
     private final ProjectSecurityService projectSecurityService;
@@ -110,7 +109,6 @@ public class IntegrationController implements IntegrationsApi {
     private final Optional<GcpBillingConnector> gcpBillingConnector;
     /** Present only outside the {@code local} profile (the real {@link GscConnector} is {@code @Profile("!local")}). */
     private final Optional<GscConnector> gscConnector;
-    private final RuntimeTargetService runtimeTargetService;
     private final ConnectorAppCredentialService appCredentialService;
     private final ConnectorAppCredentialVerificationService appCredentialVerificationService;
 
@@ -121,14 +119,13 @@ public class IntegrationController implements IntegrationsApi {
                                 ConnectionService connectionService,
                                 IntegrationFetchService fetchService,
                                 OAuthFlowService oAuthFlowService,
-                                com.conductor.service.PublishTargetService publishTargetService,
+                                com.conductor.service.ConnectionDisconnectService connectionDisconnectService,
                                 ConnectionDataCacheRepository cacheRepository,
                                 WebhookEventRepository webhookEventRepository,
                                 ProjectSecurityService projectSecurityService,
                                 ConnectorFeedRepository connectorFeedRepository,
                                 Optional<GcpBillingConnector> gcpBillingConnector,
                                 Optional<GscConnector> gscConnector,
-                                RuntimeTargetService runtimeTargetService,
                                 ConnectorAppCredentialService appCredentialService,
                                 ConnectorAppCredentialVerificationService appCredentialVerificationService,
                                 ObjectMapper objectMapper) {
@@ -136,14 +133,13 @@ public class IntegrationController implements IntegrationsApi {
         this.connectionService = connectionService;
         this.fetchService = fetchService;
         this.oAuthFlowService = oAuthFlowService;
-        this.publishTargetService = publishTargetService;
+        this.connectionDisconnectService = connectionDisconnectService;
         this.cacheRepository = cacheRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.projectSecurityService = projectSecurityService;
         this.connectorFeedRepository = connectorFeedRepository;
         this.gcpBillingConnector = gcpBillingConnector;
         this.gscConnector = gscConnector;
-        this.runtimeTargetService = runtimeTargetService;
         this.appCredentialService = appCredentialService;
         this.appCredentialVerificationService = appCredentialVerificationService;
         this.objectMapper = objectMapper;
@@ -408,13 +404,7 @@ public class IntegrationController implements IntegrationsApi {
     public ResponseEntity<Void> deleteConnection(String projectId, String connectorId, String connectionId) {
         requireAdminOrCreator(projectId);
         requireConnection(projectId, connectorId, connectionId);
-        // Publish destinations first: a Post still waiting on this account refuses the disconnect by
-        // name (409), and settled ones let go of the row so the FK does not turn this into a 500.
-        publishTargetService.detachFromConnection(connectionId);
-        // Before the row goes away (runtime_targets.connection_id is ON DELETE SET NULL): flip
-        // referencing runtime targets to ERROR and close their cached Cloud Run clients.
-        runtimeTargetService.onConnectionDeleted(connectionId);
-        connectionService.delete(connectionId);
+        connectionDisconnectService.disconnect(connectionId);
         return ResponseEntity.noContent().build();
     }
 

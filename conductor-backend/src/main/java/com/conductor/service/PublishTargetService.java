@@ -353,6 +353,44 @@ public class PublishTargetService {
         }
     }
 
+    /**
+     * Whether any destination on the connection has not gone out yet, i.e. whether
+     * {@link #detachFromConnection} and {@link #repointSettledTargets} would refuse. A plain question
+     * rather than an exception so a caller doing best-effort cleanup inside a larger transaction can ask
+     * first: a refusal thrown through a {@code @Transactional} proxy marks the caller's transaction
+     * rollback-only even when the caller catches it.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasTargetsStillToPublish(String connectionId) {
+        return targetRepository.findAllByConnectionId(connectionId).stream()
+                .anyMatch(t -> STILL_TO_PUBLISH.contains(t.getState()));
+    }
+
+    /**
+     * Moves a connection's settled destinations onto another connection (the same account, connected
+     * twice) so their history and metrics stay attached to a live connection once the first row is
+     * removed. A Post that already has a destination for the same platform on the survivor would break
+     * the one-destination-per-(Post, platform, connection) rule, so that one just lets go of the row, as
+     * {@link #detachFromConnection} does. The caller must have checked {@link #hasTargetsStillToPublish}
+     * first; a destination still to publish is refused by name exactly as in {@link #detachFromConnection}.
+     */
+    @Transactional
+    public void repointSettledTargets(String fromConnectionId, String toConnectionId) {
+        List<PostPublishTarget> targets = targetRepository.findAllByConnectionId(fromConnectionId);
+        if (targets.stream().anyMatch(t -> STILL_TO_PUBLISH.contains(t.getState()))) {
+            detachFromConnection(fromConnectionId); // throws the same named refusal
+        }
+        Set<String> taken = new java.util.HashSet<>();
+        for (PostPublishTarget existing : targetRepository.findAllByConnectionId(toConnectionId)) {
+            taken.add(existing.getWorkItem().getId() + "|" + existing.getPlatform());
+        }
+        for (PostPublishTarget target : targets) {
+            boolean collides = !taken.add(target.getWorkItem().getId() + "|" + target.getPlatform());
+            target.setConnectionId(collides ? null : toConnectionId);
+            targetRepository.save(target);
+        }
+    }
+
     private static String displayIdOf(PostPublishTarget target) {
         WorkItem item = target.getWorkItem();
         if (item == null) {
