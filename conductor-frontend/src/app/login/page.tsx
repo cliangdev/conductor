@@ -45,6 +45,9 @@ function LoginFooter() {
       <Link href="/terms" className="transition-colors hover:text-foreground">
         Terms
       </Link>
+      <Link href="/data-deletion" className="transition-colors hover:text-foreground">
+        Data Deletion
+      </Link>
       <a
         href={REPO_URL}
         target="_blank"

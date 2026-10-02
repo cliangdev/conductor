@@ -54,8 +54,8 @@ describe('middleware', () => {
     expect(location).toContain('next=%2Fapp%2Fprojects%2F123%2Fsettings')
   })
 
-  // `/`, `/privacy` and `/terms` are the public marketing pages: they must render with no cookie,
-  // because platform app reviewers verify them signed out. They are outside the matcher entirely,
+  // `/`, `/privacy`, `/terms` and `/data-deletion` are the public marketing pages: they must render
+  // with no cookie, because platform app reviewers verify them signed out. They are outside the matcher entirely,
   // so these cases assert the middleware would not gate them if it ever ran.
   it('lets the unauthenticated landing page through', () => {
     const response = middleware(makeRequest('/'))
@@ -69,7 +69,7 @@ describe('middleware', () => {
     expect(response.status).toBe(200)
   })
 
-  it.each(['/privacy', '/terms'])('lets the unauthenticated %s page through', (path) => {
+  it.each(['/privacy', '/terms', '/data-deletion'])('lets the unauthenticated %s page through', (path) => {
     const response = middleware(makeRequest(path))
 
     expect(response.status).toBe(200)
