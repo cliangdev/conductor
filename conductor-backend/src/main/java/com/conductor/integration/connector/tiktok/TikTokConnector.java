@@ -317,4 +317,12 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
         }
         return ActionResult.ok(Map.of("metrics", rows));
     }
+
+    /** Account identity for re-authorization: the creator's username. TikTok's open_id differs per OAuth app (sandbox vs production) while the
+     * username does not, so the username is what recognises the same creator re-authorizing. */
+    @Override
+    public Optional<String> accountIdentity(Map<String, Object> config) {
+        return config != null && config.get(CONFIG_CREATOR_USERNAME) instanceof String value && !value.isBlank()
+                ? Optional.of(value) : Optional.empty();
+    }
 }

@@ -86,7 +86,8 @@ class OAuthMultiConnectionTest {
         ConnectorAppCredentialService appCredentialService = new ConnectorAppCredentialService(
                 appCredentialRepository, credentialService, environment, projectSecurityService);
         service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry,
-                appCredentialService, new ObjectMapper(), connectionHealthService);
+                appCredentialService, new ObjectMapper(), connectionHealthService,
+                mock(ConnectionDisconnectService.class));
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://localhost:3000");
     }

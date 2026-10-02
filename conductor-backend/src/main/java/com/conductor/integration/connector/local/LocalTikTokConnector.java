@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -219,5 +220,12 @@ public class LocalTikTokConnector implements OAuth2Connector, ActionConnector {
         }
         String text = value.toString().trim();
         return text.isEmpty() ? fallback : text;
+    }
+
+    /** Account identity for re-authorization: the creator's username, as the real connector does, so re-authorizing the stub creator merges. */
+    @Override
+    public Optional<String> accountIdentity(Map<String, Object> config) {
+        return config != null && config.get(CONFIG_CREATOR_USERNAME) instanceof String value && !value.isBlank()
+                ? Optional.of(value) : Optional.empty();
     }
 }

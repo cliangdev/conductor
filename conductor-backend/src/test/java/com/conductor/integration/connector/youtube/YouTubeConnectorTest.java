@@ -66,6 +66,12 @@ class YouTubeConnectorTest {
     // --- [auto] YouTubeConnector declares the upload scope and inherits Google's OAuth endpoints ---
 
     @Test
+    void accountIdentity_isTheChannelId() {
+        assertThat(connector.accountIdentity(Map.of("channelId", "UC123", "channelTitle", "T"))).contains("UC123");
+        assertThat(connector.accountIdentity(Map.of("channelTitle", "T"))).isEmpty();
+    }
+
+    @Test
     void oauthScopes_declareUploadAndReadonly() {
         assertThat(connector.oauthScopes()).containsExactlyInAnyOrder(UPLOAD_SCOPE, READONLY_SCOPE, ANALYTICS_SCOPE);
     }

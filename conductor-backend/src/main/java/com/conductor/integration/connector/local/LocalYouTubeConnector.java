@@ -18,6 +18,7 @@ import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -268,5 +269,12 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
         }
         String text = value.toString().trim();
         return text.isEmpty() ? null : text;
+    }
+
+    /** Account identity for re-authorization: the channel id, as the real connector does. */
+    @Override
+    public Optional<String> accountIdentity(Map<String, Object> config) {
+        return config != null && config.get(CONFIG_CHANNEL_ID) instanceof String value && !value.isBlank()
+                ? Optional.of(value) : Optional.empty();
     }
 }

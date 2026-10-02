@@ -239,7 +239,8 @@ class ConnectionHealthServiceTest extends AbstractNoneWebIntegrationTest {
                         environment,
                         mock(ProjectSecurityService.class)),
                 new ObjectMapper(),
-                connectionHealthService);
+                connectionHealthService,
+                mock(ConnectionDisconnectService.class));
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         return new OAuthHarness(service, restTemplate);
     }

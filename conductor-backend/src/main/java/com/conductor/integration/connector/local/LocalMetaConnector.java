@@ -18,6 +18,7 @@ import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -413,5 +414,12 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
         }
         String text = value.toString().trim();
         return text.isEmpty() ? fallback : text;
+    }
+
+    /** Account identity for re-authorization: the Page id, as the real connector does. Absent until a Page is picked. */
+    @Override
+    public Optional<String> accountIdentity(Map<String, Object> config) {
+        return config != null && config.get(CONFIG_PAGE_ID) instanceof String value && !value.isBlank()
+                ? Optional.of(value) : Optional.empty();
     }
 }

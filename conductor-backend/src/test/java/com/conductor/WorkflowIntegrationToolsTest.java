@@ -62,7 +62,7 @@ class WorkflowIntegrationToolsTest {
 
     @Autowired
     private MockMvc mockMvc;
-    @MockitoBean private com.conductor.service.PublishTargetService publishTargetService;
+    @MockitoBean private com.conductor.service.ConnectionDisconnectService connectionDisconnectService;
 
     @MockitoBean private ConnectorRegistry connectorRegistry;
     @MockitoBean private ConnectionService connectionService;
@@ -74,7 +74,6 @@ class WorkflowIntegrationToolsTest {
     @MockitoBean private com.conductor.integration.ingest.ConnectorFeedRepository connectorFeedRepository;
     @MockitoBean private Optional<GcpBillingConnector> gcpBillingConnector;
     @MockitoBean private Optional<GscConnector> gscConnector;
-    @MockitoBean private com.conductor.service.RuntimeTargetService runtimeTargetService;
     @MockitoBean private com.conductor.service.ConnectorAppCredentialService appCredentialService;
     @MockitoBean private com.conductor.service.ConnectorAppCredentialVerificationService appCredentialVerificationService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;

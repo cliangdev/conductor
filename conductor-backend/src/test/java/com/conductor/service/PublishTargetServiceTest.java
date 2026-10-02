@@ -725,6 +725,37 @@ class PublishTargetServiceTest {
         verify(targetRepository).save(failed);
     }
 
+    // --- repointSettledTargets: a duplicate connection's history follows the account to the survivor ---
+
+    @Test
+    void repointSettledTargetsMovesHistoryToTheSurvivorAndDetachesAPostThatAlreadyHasADestinationThere() {
+        PostPublishTarget published = onConnection("conn-dup", PostPublishTargetState.PUBLISHED, 70);
+        PostPublishTarget collides = onConnection("conn-dup", PostPublishTargetState.PUBLISHED, 71);
+        PostPublishTarget alreadyOnSurvivor = onConnection("conn-old", PostPublishTargetState.PUBLISHED, 71);
+        when(targetRepository.findAllByConnectionId("conn-dup")).thenReturn(List.of(published, collides));
+        when(targetRepository.findAllByConnectionId("conn-old")).thenReturn(List.of(alreadyOnSurvivor));
+
+        service.repointSettledTargets("conn-dup", "conn-old");
+
+        assertThat(published.getConnectionId()).isEqualTo("conn-old");
+        // (work item, platform, connection) is unique, so the second one cannot also point at the survivor.
+        assertThat(collides.getConnectionId()).isNull();
+        verify(targetRepository).save(published);
+        verify(targetRepository).save(collides);
+    }
+
+    @Test
+    void repointSettledTargetsRefusesWhileAPostStillWaitsOnTheDuplicate() {
+        when(targetRepository.findAllByConnectionId("conn-dup")).thenReturn(List.of(
+                onConnection("conn-dup", PostPublishTargetState.PENDING, 71)));
+
+        assertThat(service.hasTargetsStillToPublish("conn-dup")).isTrue();
+        assertThatThrownBy(() -> service.repointSettledTargets("conn-dup", "conn-old"))
+                .isInstanceOf(com.conductor.exception.ConflictException.class)
+                .hasMessageContaining("RE-71");
+        verify(targetRepository, never()).save(any());
+    }
+
     // --- reviveRevokedTargets: unschedule then schedule again must publish again ---
 
     @Test

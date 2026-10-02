@@ -524,7 +524,8 @@ class ConnectorAppCredentialServiceTest {
 
     private OAuthFlowService oauthFlowService() {
         OAuthFlowService flow = new OAuthFlowService(oAuthStateRepository, connectionService,
-                connectorRegistry, service, new ObjectMapper(), connectionHealthService);
+                connectorRegistry, service, new ObjectMapper(), connectionHealthService,
+                mock(ConnectionDisconnectService.class));
         ReflectionTestUtils.setField(flow, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(flow, "frontendUrl", "http://localhost:3000");
         when(connectorRegistry.findOAuth2(CONNECTOR_ID)).thenReturn(Optional.of(connector));

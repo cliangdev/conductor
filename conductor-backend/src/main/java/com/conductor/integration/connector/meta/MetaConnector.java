@@ -606,4 +606,11 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
             return trimmed.length() <= 500 ? trimmed : trimmed.substring(0, 500) + "…";
         }
     }
+
+    /** Account identity for re-authorization: the Facebook Page id, which account selection writes. Absent until a Page is picked. */
+    @Override
+    public Optional<String> accountIdentity(Map<String, Object> config) {
+        return config != null && config.get(CONFIG_PAGE_ID) instanceof String value && !value.isBlank()
+                ? Optional.of(value) : Optional.empty();
+    }
 }
