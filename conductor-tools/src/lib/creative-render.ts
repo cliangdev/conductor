@@ -61,6 +61,9 @@ interface RenderCore {
     ffmpegPath?: string
     /** Frames per second for a MOTION render's ffmpeg encode (default 30). */
     fps?: number
+    /** On a `previewOnly` spec: also run the full render's per-placement assertions and hand them to the
+     * transport's complete(warnings, checks), without keeping any frame. */
+    checkPlacements?: boolean
   }): Promise<boolean>
 }
 
@@ -215,6 +218,18 @@ export interface DraftManifestFrame {
   poster?: string
 }
 
+/** One finding of the full render's per-placement assertions (spill, safe zone, contrast, fonts, images,
+ * artboard size), run on a placement's frame without keeping the frame. */
+export interface DraftCheck {
+  placementKey: string
+  index?: number
+  /** spill | safeZone | contrast | font | image | accent | size | photoResolution | render */
+  rule: string
+  message: string
+  /** An "error" would fail the full render of that placement; a "warning" would only be reported. */
+  severity: 'error' | 'warning'
+}
+
 export interface DraftManifest {
   ok: boolean
   error?: string
@@ -222,6 +237,10 @@ export interface DraftManifest {
   previewOnly?: boolean
   frames: DraftManifestFrame[]
   warnings: Array<{ placementKey?: string; index?: number; message: string }>
+  /** Present on a preview: the per-placement assertion results the full render would produce. */
+  checks?: DraftCheck[]
+  /** Present with `checks`: true when none of them has severity "error". */
+  passed?: boolean
 }
 
 export interface RenderDraftResult {
@@ -241,7 +260,8 @@ interface FileTransportModule {
  * Renders a DRAFT spec (the backend's `draft-spec` response — nothing about it is saved) with the same
  * render core a saved Creative uses, but through the file transport: the local files behind
  * `local:<key>` are served to the headless browser from this machine, and the frames plus a
- * `manifest.json` land in `outDir`. Never talks to the Conductor API. A MOTION spec that is not
+ * `manifest.json` land in `outDir`. A `previewOnly` spec also gets `manifest.checks` / `manifest.passed`:
+ * the full render's per-placement assertions, run without keeping their frames. Never talks to the Conductor API. A MOTION spec that is not
  * `previewOnly` needs ffmpeg, resolved the same way {@link renderCreative} resolves it.
  */
 export async function renderDraft(
@@ -272,7 +292,10 @@ export async function renderDraft(
 
   let ok: boolean
   try {
-    ok = await run({ transport, browserFactory, log, ffmpegPath, fps: MOTION_FPS })
+    // A preview renders only the contact sheet, which never runs the assertions a full render fails on, so
+    // ask the core to run them per placement too (and drop the frames) — otherwise an approved preview can
+    // still fail its real render.
+    ok = await run({ transport, browserFactory, log, ffmpegPath, fps: MOTION_FPS, checkPlacements: !!spec.previewOnly })
   } finally {
     await transport.close()
   }

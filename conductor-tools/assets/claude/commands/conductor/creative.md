@@ -70,14 +70,21 @@ Nothing is saved to Conductor until the person approves what they have seen:
 1. `preview_creative_draft` with what was gathered (local files go in `photoPath`/`clipPath`/
    `audioPath`; an edit to an existing Creative passes `baseCreativeId`). It renders on this machine
    and returns the image — no Creative is created and nothing is uploaded.
-2. Look at it against the skill's checklist, then show it and ask with `AskUserQuestion`: Approve &
-   upload / Request changes / Stop. On changes, preview again; on Stop, leave it — the draft stays
-   local under `.conductor/drafts/`.
-3. On approval, `commit_creative_draft` with the `draftDir`. It uploads the files, saves the
+2. Read `passed` and `checks` in the result first. The preview runs the full render's per-placement
+   checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts,
+   images), so a design that would fail the real render shows up here. If `passed` is false, fix the
+   design (shorter copy, `layoutOverrides`, `typeOverrides`, a different layout) and preview again
+   **before** showing it or asking anything — never offer Approve & upload while a blocking check
+   fails, and tell the person what you changed. (Bigger or smaller text on one placement is
+   `typeOverrides`, e.g. `{"9x16": [96]}`, not a layout switch.)
+3. Once `passed` is true, look at the image against the skill's checklist, then show it and ask with
+   `AskUserQuestion`: Approve & upload / Request changes / Stop. On changes, preview again; on
+   Stop, leave it — the draft stays local under `.conductor/drafts/`.
+4. On approval, `commit_creative_draft` with the `draftDir`. It uploads the files, saves the
    Creative and does the full render. (A headline variant is previewed with `baseCreativeId` plus the
    new headline, but on approval is saved with `create_creative` and `variantOf` — never commit that
    draft, which would update the original.)
-4. Once the skill's readiness check passes, `attach_creative_to_post` if there's already a Post to
+5. Once the skill's readiness check passes, `attach_creative_to_post` if there's already a Post to
    attach it to (ask for the Post's id if not obvious from context). If there is no Post yet, say so
    plainly and name the next step — creating one via the `conductor-publisher` skill — rather than
    leaving the artwork stranded with no stated destination.

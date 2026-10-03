@@ -112,18 +112,48 @@ draft, since a commit would update the original. Once they approve, call `create
 Pass `full: true` to render every placement at full size instead of the contact sheet (slower; the
 image returned is the first placement).
 
+**Read `checks` and `passed` before you show anything.** The contact sheet never runs the render's
+safety checks, so the preview also runs them for every placement (and, for a video, its end card)
+and returns them as `checks: [{placementKey, index?, rule, message, severity}]` plus `passed`. An
+`error` check (`safeZone`, `spill`, `contrast`, `font`, `image`, ...) is exactly what would fail the
+full render after the person approved: e.g. an App Store badge intruding into the band TikTok/Reels
+reserve on 9:16. A `warning` (a soft, upscaled photo) does not block, but mention it.
+
+When `passed` is false, **do not show the image or ask for approval yet.** Fix the design and
+preview again, repeating until `passed` is true:
+
+- the copy collides with a reserved zone: shorten the headline or drop the body;
+- the photo takes too much of a placement: lower its height there with `layoutOverrides.band`
+  (e.g. `{"band": {"9x16": 1100}}`);
+- the bottom row (CTA/badge) does not clear the safe zone: raise the clearance with
+  `layoutOverrides.padBottom`, or pick a layout that keeps it clear;
+- the text is too large or too small for a placement: set it with `typeOverrides` (below).
+
+Tell the person what you changed and why when you do show it. Never offer **Approve & upload**
+while a blocking check fails.
+
+**Bigger or smaller text on one placement: use `typeOverrides`, not a different layout.** It pins
+the headline per placement as `{"<placementKey>": [fontSize, lineHeight?, letterSpacing?]}`, e.g.
+`{"9x16": [96], "1x1": [88]}` for a bigger headline on 9:16 and 1:1. `fontSize` is in artboard px
+(a 9:16 board is 1080 wide), `lineHeight` a multiplier (e.g. `1.0`) and `letterSpacing` in px
+(usually negative); leave the last two out to take the engine's defaults for that size. A placement
+you do not name stays auto-fitted. A pinned size is not shrunk to fit, so re-check `checks` after
+setting one. It works on `preview_creative_draft` and `create_creative`/`update_creative`; changing
+the headline or layout of a saved Creative clears pinned sizes unless you send them again.
+
 ### 7. Look at the result honestly
 
-**A successful render proves the frame is structurally correct, not that the ad is good.** Its
-in-page checks catch text spilling out of a safe zone, a font that failed to load, a photo that
+**Passing checks prove the frame is structurally correct, not that the ad is good.** The checks
+(`passed: true`) catch text spilling out of a safe zone, a font that failed to load, a photo that
 never decoded, or contrast below the accessible minimum — not whether the headline reads at a
 glance, whether the accent phrase falls on the words that carry the meaning, or whether the copy is
 sitting on the subject's face. Judge those yourself from the image `preview_creative_draft` hands
 back. If the copy collides with the photo, switch layout (see step 5) and preview again rather than
 shrinking text until it technically fits.
 
-Then show the image to the person and ask with `AskUserQuestion` — **Approve & upload**, **Request
-changes**, **Stop**. On changes, preview again with the edits (another draft; nothing was saved). On
+Only once `passed` is true, show the image to the person and ask with `AskUserQuestion` —
+**Approve & upload**, **Request changes**, **Stop**. If `passed` is false you are not at this step
+yet: fix it and re-preview first (step 6). On changes, preview again with the edits (another draft; nothing was saved). On
 Stop, leave it: the draft stays on this machine under `.conductor/drafts/` and is cleaned up
 automatically once it is committed or two weeks old. Only on **Approve & upload**, call
 `commit_creative_draft({draftDir})` with the `draftDir` the approved preview returned.

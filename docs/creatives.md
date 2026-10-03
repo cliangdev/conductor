@@ -101,6 +101,13 @@ last step. Two MCP tools (`conductor-tools/src/mcp/tools/creative-drafts.ts`) ca
   The endpoint runs the same validators as a create, persists nothing, and returns `{ spec, readiness }`
   (or a 422 naming the field, which the tool returns as a structured error without rendering). The spec
   is the shape `getSpec()` returns, with `local:<key>` left in place of every local media URL.
+  `typeOverrides` (`{"<placementKey>": [fontSize, lineHeight?, letterSpacing?]}`) is accepted on create,
+  update and draft-spec alike, validated the same way (real placement keys, sane numbers; else a 422).
+  A contact-sheet preview also returns `checks` and `passed`: the sheet never runs the render's
+  assertions, so `run({ checkPlacements: true })` renders each placement's `frame.html` in the same browser
+  (a MOTION creative at its end card), keeps only the findings and drops the frame bytes. They are written
+  to `manifest.checks` / `manifest.passed`; an `error` severity is exactly what the full render would fail
+  on (e.g. `safeZone`), so the agent fixes the design and re-previews before asking for approval.
 - **`commit_creative_draft`** runs only after the person approved the image: it uploads each local file
   (the `upload_creative_media` code path), swaps `local:<key>` for the returned ids, calls
   `create_creative` (or `update_creative` at the current `version` when the draft has a

@@ -6,6 +6,7 @@ import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +42,12 @@ public class CreativeValidator {
      * override (e.g. a stray extra zero) blow past what any layout could sensibly use. */
     static final int LAYOUT_OVERRIDE_MIN_PX = 0;
     static final int LAYOUT_OVERRIDE_MAX_PX = 4000;
+
+    /** Sane bounds for a pinned {@code typeOverrides} entry {@code [fontSize, lineHeight?, letterSpacing?]}:
+     * a font size in artboard px, a unitless line-height multiplier, and a letter-spacing in px. */
+    static final int TYPE_SIZE_MAX_PX = 600;
+    static final double TYPE_LEADING_MAX = 3.0;
+    static final int TYPE_TRACKING_LIMIT_PX = 100;
 
     private final CreativeRegistry registry;
 
@@ -378,6 +385,53 @@ public class CreativeValidator {
                                 + " and " + LAYOUT_OVERRIDE_MAX_PX + " px"));
             }
         }
+    }
+
+    /**
+     * A write's {@code typeOverrides} ({@code {"<placementKey>": [fontSize, lineHeight?, letterSpacing?]}}):
+     * every key a real placement and every entry one to three sane numbers (only {@code lineHeight} and
+     * {@code letterSpacing} may be null, meaning "use the engine's default for this size"). Shared by create
+     * (and so a draft spec) and update, which only call it when the request carries the field.
+     */
+    public List<Violation> validateTypeOverrides(Map<String, List<BigDecimal>> overrides) {
+        List<Violation> violations = new ArrayList<>();
+        if (overrides == null) {
+            return violations;
+        }
+        for (Map.Entry<String, List<BigDecimal>> entry : overrides.entrySet()) {
+            String placementKey = entry.getKey();
+            String field = "typeOverrides[\"" + placementKey + "\"]";
+            if (!registry.hasPlacement(placementKey)) {
+                violations.add(new Violation("typeOverrides", "placement",
+                        "unknown placement \"" + placementKey + "\" in typeOverrides, must be one of: "
+                                + String.join(", ", registry.placements().keySet())));
+                continue;
+            }
+            List<BigDecimal> value = entry.getValue();
+            if (value == null || value.isEmpty() || value.size() > 3) {
+                violations.add(new Violation("typeOverrides", "shape",
+                        field + " must be [fontSize, lineHeight?, letterSpacing?]: one to three numbers"));
+                continue;
+            }
+            BigDecimal size = value.get(0);
+            if (size == null || size.signum() <= 0 || size.compareTo(BigDecimal.valueOf(TYPE_SIZE_MAX_PX)) > 0) {
+                violations.add(new Violation("typeOverrides", "bounds",
+                        field + " fontSize must be greater than 0 and at most " + TYPE_SIZE_MAX_PX + " px"));
+            }
+            BigDecimal leading = value.size() > 1 ? value.get(1) : null;
+            if (leading != null && (leading.signum() <= 0 || leading.compareTo(BigDecimal.valueOf(TYPE_LEADING_MAX)) > 0)) {
+                violations.add(new Violation("typeOverrides", "bounds",
+                        field + " lineHeight must be greater than 0 and at most " + TYPE_LEADING_MAX
+                                + " (a multiplier of fontSize)"));
+            }
+            BigDecimal tracking = value.size() > 2 ? value.get(2) : null;
+            if (tracking != null && tracking.abs().compareTo(BigDecimal.valueOf(TYPE_TRACKING_LIMIT_PX)) > 0) {
+                violations.add(new Violation("typeOverrides", "bounds",
+                        field + " letterSpacing must be between -" + TYPE_TRACKING_LIMIT_PX + " and "
+                                + TYPE_TRACKING_LIMIT_PX + " px"));
+            }
+        }
+        return violations;
     }
 
     /** nexus's rule: exactly one pair of asterisks around the accent phrase, e.g. {@code "*so easy*"}. */

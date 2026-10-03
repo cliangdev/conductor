@@ -168,3 +168,23 @@ test('run() with a file transport reports a missing local file as a failure', as
   assert.match(transport.getError(), /local:photo/);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('complete() writes checks and a passed flag into manifest.json only when checks were given', async () => {
+  const dir = tmp('cc-ft-');
+  const failing = createFileTransport({ spec: draftSpec(), outDir: join(dir, 'a') });
+  await failing.complete([], [{ placementKey: '9x16', rule: 'safeZone', message: 'm', severity: 'error' }]);
+  const a = JSON.parse(readFileSync(join(dir, 'a', 'manifest.json'), 'utf8'));
+  assert.equal(a.passed, false);
+  assert.equal(a.checks[0].rule, 'safeZone');
+
+  const warnOnly = createFileTransport({ spec: draftSpec(), outDir: join(dir, 'b') });
+  await warnOnly.complete([], [{ placementKey: '1x1', rule: 'photoResolution', message: 'm', severity: 'warning' }]);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'b', 'manifest.json'), 'utf8')).passed, true);
+
+  const plain = createFileTransport({ spec: draftSpec(), outDir: join(dir, 'c') });
+  await plain.complete([]);
+  const c = JSON.parse(readFileSync(join(dir, 'c', 'manifest.json'), 'utf8'));
+  assert.equal('checks' in c, false);
+  assert.equal('passed' in c, false);
+  rmSync(dir, { recursive: true, force: true });
+});

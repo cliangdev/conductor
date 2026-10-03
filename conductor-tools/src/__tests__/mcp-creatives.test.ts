@@ -661,6 +661,16 @@ describe('create_creative', () => {
     )
   })
 
+  it('sends typeOverrides to the create endpoint', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'c1' })
+    await createCreative({ headline: '*hook*', typeOverrides: { '9x16': [96], '1x1': [88, 1, -2.6] } }, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives',
+      { headline: '*hook*', typeOverrides: { '9x16': [96], '1x1': [88, 1, -2.6] } },
+      config
+    )
+  })
+
   it('POSTs to the variants endpoint, with only headline/name, when variantOf is given', async () => {
     mocked(apiPost).mockResolvedValue({ id: 'c12b' })
     await createCreative({ variantOf: 'c12a', headline: '*new hook*', layout: 'ignored' }, config)

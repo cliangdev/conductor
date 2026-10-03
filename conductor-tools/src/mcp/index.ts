@@ -197,6 +197,11 @@ const CREATIVE_FIELD_PROPERTIES = {
       padBottom: { type: 'object', additionalProperties: { type: 'integer' }, description: "Overrides the 9x16 panel's bottom safe-zone clearance per placement" },
     },
   },
+  typeOverrides: {
+    type: 'object',
+    description: 'Pins the headline type per placement (optional): {"<placementKey>": [fontSize, lineHeight?, letterSpacing?]}. fontSize is in artboard px (a 9x16 board is 1080 wide), lineHeight a unitless multiplier of fontSize (e.g. 1.0), letterSpacing in px (usually negative); leave the last two out for the engine\'s defaults at that size, e.g. {"9x16": [96], "1x1": [88]}. A placement with no entry is auto-fitted. A pinned size is not shrunk to fit, so re-check the preview. Changing headline or layout on update clears pinned sizes unless typeOverrides is sent again.',
+    additionalProperties: { type: 'array', items: { type: 'number' }, minItems: 1, maxItems: 3 },
+  },
 } as const
 
 export const TOOLS = [
@@ -1346,6 +1351,7 @@ export const TOOLS = [
             padBottom: { type: 'object', additionalProperties: { type: 'integer' } },
           },
         },
+        typeOverrides: CREATIVE_FIELD_PROPERTIES.typeOverrides,
       },
       required: ['creativeId', 'version'],
     },
@@ -1407,7 +1413,7 @@ export const TOOLS = [
   },
   {
     name: 'preview_creative_draft',
-    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. Show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. Violations come back as a structured error and nothing is rendered.",
+    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
       type: 'object',
       properties: {

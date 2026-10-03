@@ -12,7 +12,9 @@
  *   putFrame    writes `sheet.jpg` (the contact sheet; named by the frame's content type),
  *               `<placement>[-<index>].jpg|.mp4`
  *   putPoster   writes `poster-<placement>[-<index>].jpg`
- *   complete    writes `manifest.json` { ok: true, frames, warnings }
+ *   complete    writes `manifest.json` { ok: true, frames, warnings } — plus, when run() was asked to
+ *               check placements, `checks` (the full render's per-placement assertion results) and
+ *               `passed` (no check has severity "error")
  *   fail        writes `manifest.json` { ok: false, error, frames, warnings }
  *
  * The asset server is started lazily by getSpec() and closed by complete()/fail()/close() (all
@@ -81,6 +83,7 @@ export function createFileTransport({ spec, localFiles = {}, outDir }) {
   let error;
   const frames = [];
   let warnings = [];
+  let checks;
 
   async function startAssetServer(keys) {
     assetDir = await mkdtemp(join(tmpdir(), 'cc-draft-assets-'));
@@ -119,6 +122,7 @@ export function createFileTransport({ spec, localFiles = {}, outDir }) {
       previewOnly: !!spec.previewOnly,
       frames,
       warnings,
+      ...(checks ? { checks, passed: !checks.some((c) => c.severity === 'error') } : {}),
       ...extra,
     };
     await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2));
@@ -171,8 +175,9 @@ export function createFileTransport({ spec, localFiles = {}, outDir }) {
       if (frame) frame.poster = file;
     },
 
-    async complete(w) {
+    async complete(w, c) {
       warnings = Array.isArray(w) ? w : [];
+      checks = Array.isArray(c) ? c : undefined;
       try {
         return await writeManifest();
       } finally {

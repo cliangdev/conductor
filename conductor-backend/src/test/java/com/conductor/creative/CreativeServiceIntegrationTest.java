@@ -427,6 +427,78 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void typeOverridesOnCreatePersistReachTheRenderSpecAndMatchTheDraftSpec() {
+        java.util.Map<String, List<java.math.BigDecimal>> pinned = java.util.Map.of(
+                "9x16", List.of(new java.math.BigDecimal("96"), new java.math.BigDecimal("1.0"), new java.math.BigDecimal("-2.9")),
+                "1x1", List.of(new java.math.BigDecimal("88")));
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setTypeOverrides(pinned);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        JsonNode stored = created.creative().getTypeOverrides();
+        assertThat(stored.get("9x16").get(0).asInt()).isEqualTo(96);
+        assertThat(stored.get("9x16").get(2).asDouble()).isEqualTo(-2.9);
+        assertThat(stored.get("1x1").get(0).asInt()).isEqualTo(88);
+        assertThat(creativeRepository.findById(created.creative().getId()).orElseThrow().getTypeOverrides().get("1x1").get(0).asInt())
+                .isEqualTo(88);
+
+        CreativeRenderService.CreateRenderResult render = renderService.requestRender(project.getId(),
+                created.creative().getId(), new com.conductor.generated.v2.model.CreateCreativeRenderRequest(), admin);
+        assertThat(render.spec().getCreative().getTypeOverrides()).containsOnlyKeys("9x16", "1x1");
+        assertThat(render.spec().getCreative().getTypeOverrides().get("9x16").stream()
+                .map(java.math.BigDecimal::doubleValue).toList()).containsExactly(96.0, 1.0, -2.9);
+
+        CreativeService.DraftSpec draft = creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().headline("Plan the week in *one sentence*.").body("A calm plan.")
+                        .photoId(photo.getId()).layout("stacked").typeOverrides(pinned), admin);
+        JsonNode draftedOverrides = objectMapper.valueToTree(draft.spec().getCreative().getTypeOverrides());
+        JsonNode renderedOverrides = objectMapper.valueToTree(render.spec().getCreative().getTypeOverrides());
+        assertThat(draftedOverrides).isEqualTo(renderedOverrides);
+    }
+
+    @Test
+    void aLaterHeadlineChangeStillClearsTypeOverridesPinnedOnCreate() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setTypeOverrides(java.util.Map.of("9x16", List.of(new java.math.BigDecimal("96"))));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        PatchCreativeRequest unrelated = new PatchCreativeRequest(created.creative().getVersion());
+        unrelated.setCaption("A caption.");
+        CreativeService.CreativeView afterCaption = creativeService.patchCreative(
+                project.getId(), created.creative().getId(), unrelated, admin);
+        assertThat(afterCaption.creative().getTypeOverrides().has("9x16")).isTrue();
+
+        PatchCreativeRequest headline = new PatchCreativeRequest(afterCaption.creative().getVersion());
+        headline.setHeadline("A new *hook* entirely.");
+        CreativeService.CreativeView afterHeadline = creativeService.patchCreative(
+                project.getId(), created.creative().getId(), headline, admin);
+        assertThat(afterHeadline.creative().getTypeOverrides().size()).isZero();
+    }
+
+    @Test
+    void invalidTypeOverridesAreRefusedOnCreateDraftAndPatchAlike() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setTypeOverrides(java.util.Map.of("9x16", List.of(new java.math.BigDecimal("0"))));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), request, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::field).containsExactly("typeOverrides"));
+
+        assertThatThrownBy(() -> creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().headline("Hello").typeOverrides(
+                        java.util.Map.of("not-a-placement", List.of(new java.math.BigDecimal("80")))), admin))
+                .isInstanceOf(CreativeValidationException.class);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                concept("Plan the week in *one sentence*.", "A calm plan."), admin);
+        PatchCreativeRequest patch = new PatchCreativeRequest(created.creative().getVersion());
+        patch.setTypeOverrides(java.util.Map.of("4x5", List.of()));
+        assertThatThrownBy(() -> creativeService.patchCreative(project.getId(), created.creative().getId(), patch, admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
+    @Test
     void aBrandKitCopyRuleFailureSurfacesTheRulesOwnMessage() {
         CopyRule noExclaim = new CopyRule("noExclaim", "!", "No exclamation marks.", List.of(CopyRuleField.HEADLINE));
         BrandKit kit = brandKitService.createKit(project.getId(),

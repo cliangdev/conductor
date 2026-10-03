@@ -50,7 +50,7 @@ let root: string
 let photo: string
 
 /** A render that "succeeds" by writing a sheet and a manifest the way the file transport does. */
-function fakeDraftRender(opts: { sheetBytes?: Buffer } = {}) {
+function fakeDraftRender(opts: { sheetBytes?: Buffer; checks?: Array<Record<string, unknown>> } = {}) {
   mocked(renderDraft).mockImplementation(async ({ outDir }: { outDir: string }) => {
     fs.mkdirSync(outDir, { recursive: true })
     fs.writeFileSync(path.join(outDir, 'sheet.jpg'), opts.sheetBytes ?? Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
@@ -58,6 +58,7 @@ function fakeDraftRender(opts: { sheetBytes?: Buffer } = {}) {
       ok: true,
       frames: [{ placementKey: 'sheet', file: 'sheet.jpg', contentType: 'image/jpeg', width: 100, height: 50 }],
       warnings: [{ placementKey: '4x5', message: 'tight margin' }],
+      ...(opts.checks ? { checks: opts.checks, passed: !opts.checks.some((c) => c.severity === 'error') } : {}),
     }
     fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest))
     return { ok: true, manifest }
@@ -155,6 +156,72 @@ describe('previewCreativeDraft', () => {
     expect(draft.localFiles).toEqual(renderArgs.localFiles)
     expect(draft.specSha256).toMatch(/^[0-9a-f]{64}$/)
     expect(draft.request.photoId).toBe('local:photo')
+  })
+
+  it('asks the renderer to check every placement for a contact-sheet preview, and reports checks and passed', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: { previewOnly: true, creative: {} }, readiness: {} })
+    const warning = { placementKey: '1x1', rule: 'photoResolution', message: 'photo is soft', severity: 'warning' }
+    fakeDraftRender({ checks: [warning] })
+
+    const result = await previewCreativeDraft({ headline: 'Plan *it*.', photoPath: photo }, config, { projectRoot: root })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.checks).toEqual([warning])
+    expect(result.passed).toBe(true)
+    expect(result.nextStep).toMatch(/All placement checks passed/)
+    expect(result.nextStep).not.toMatch(/NOT ready/)
+    // The renderer, not this tool, decides to run the per-placement checks: it gets the previewOnly spec.
+    expect(mocked(renderDraft).mock.calls[0]![0].spec.previewOnly).toBe(true)
+  })
+
+  it('a failing safe-zone check makes passed false and tells the agent to fix and re-preview, not to ask for approval', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: { previewOnly: true, creative: {} }, readiness: {} })
+    const failure = {
+      placementKey: '9x16',
+      rule: 'safeZone',
+      message: 'safe-zone intrusion: cc-cta intrudes 96px into the bottom safe zone (reserves 430px)',
+      severity: 'error',
+    }
+    fakeDraftRender({ checks: [failure] })
+
+    const result = await previewCreativeDraft({ headline: 'Plan *it*.', photoPath: photo }, config, { projectRoot: root })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.passed).toBe(false)
+    expect(result.checks).toEqual([failure])
+    expect(result.image).toBeDefined() // still returned inline, to look at while fixing
+    expect(result.nextStep).toMatch(/NOT ready for approval/)
+    expect(result.nextStep).toMatch(/9x16: safe-zone intrusion/)
+    expect(result.nextStep).toMatch(/do not call commit_creative_draft/)
+  })
+
+  it('a manifest with no checks (a full render that already passed them) reports passed with an empty list', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: { creative: {} }, readiness: {} })
+    fakeDraftRender()
+
+    const result = await previewCreativeDraft({ headline: 'Edited', photoPath: photo, full: true }, config, { projectRoot: root })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.checks).toEqual([])
+    expect(result.passed).toBe(true)
+  })
+
+  it('passes typeOverrides through to draft-spec and keeps them in draft.json', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: { creative: {} }, readiness: {} })
+    fakeDraftRender()
+    const typeOverrides = { '9x16': [96], '1x1': [88, 1.0, -2.6] }
+
+    const result = await previewCreativeDraft({ headline: 'Plan *it*.', photoPath: photo, typeOverrides }, config, { projectRoot: root })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const body = mocked(apiPost).mock.calls[0]![1] as Record<string, unknown>
+    expect(body.typeOverrides).toEqual(typeOverrides)
+    const draft = JSON.parse(fs.readFileSync(path.join(result.draftDir, 'draft.json'), 'utf8'))
+    expect(draft.request.typeOverrides).toEqual(typeOverrides)
   })
 
   it('sends full:true as previewOnly:false and baseCreativeId through', async () => {
@@ -265,6 +332,31 @@ describe('commitCreativeDraft', () => {
     expect(uploadCreativeMedia).not.toHaveBeenCalled()
     expect(updateCreative).toHaveBeenCalledWith(expect.objectContaining({ creativeId: 'creative-7', version: 4, headline: 'Plan *it*.' }), config)
     expect(result.creativeId).toBe('creative-7')
+  })
+
+  it('creates the Creative with the draft\'s typeOverrides', async () => {
+    const typeOverrides = { '9x16': [96], '1x1': [88] }
+    const draftDir = await makeDraft({ typeOverrides })
+    mocked(uploadCreativeMedia).mockResolvedValue({ media: { id: 'media-1' }, warnings: [] })
+    mocked(createCreative).mockResolvedValue({ id: 'creative-1', version: 1 })
+    mocked(renderCreative).mockResolvedValue({ ok: true, renderId: 'r1', state: 'SUCCEEDED', frames: [] })
+    mocked(getCreative).mockResolvedValue({ id: 'creative-1', version: 1 })
+
+    await commitCreativeDraft({ draftDir }, config, { projectRoot: root })
+
+    expect(mocked(createCreative).mock.calls[0]![0]).toMatchObject({ typeOverrides })
+  })
+
+  it('updates the base Creative with the draft\'s typeOverrides', async () => {
+    const typeOverrides = { '4x5': [90, 1.0, -2.7] }
+    const draftDir = await makeDraft({ baseCreativeId: 'creative-7', photoPath: undefined, typeOverrides })
+    mocked(getCreative).mockResolvedValue({ id: 'creative-7', version: 4 })
+    mocked(updateCreative).mockResolvedValue({ id: 'creative-7', version: 5 })
+    mocked(renderCreative).mockResolvedValue({ ok: true, renderId: 'r2', state: 'SUCCEEDED', frames: [] })
+
+    await commitCreativeDraft({ draftDir }, config, { projectRoot: root })
+
+    expect(mocked(updateCreative).mock.calls[0]![0]).toMatchObject({ creativeId: 'creative-7', version: 4, typeOverrides })
   })
 
   it('refuses a second commit of the same draft', async () => {

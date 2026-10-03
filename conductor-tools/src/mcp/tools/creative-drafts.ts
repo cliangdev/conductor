@@ -6,7 +6,7 @@ import { Config } from '../config.js'
 import { apiPost, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia } from '../../lib/media-probe.js'
-import { renderCreative as runLocalRender, renderDraft, type DraftManifest } from '../../lib/creative-render.js'
+import { renderCreative as runLocalRender, renderDraft, type DraftCheck, type DraftManifest } from '../../lib/creative-render.js'
 import {
   createCreative,
   getCreative,
@@ -108,6 +108,14 @@ export interface PreviewCreativeDraftSuccess {
   files: Array<{ placementKey: string; index?: number; file: string; width?: number; height?: number }>
   readiness?: unknown
   warnings: Array<{ placementKey?: string; index?: number; message: string }>
+  /**
+   * What the full render would check on every placement (text spill, the platform-reserved safe zones,
+   * contrast, fonts, images, artboard size), run on the draft BEFORE anything is saved — the contact
+   * sheet alone never runs these. An "error" check would fail that placement's real render.
+   */
+  checks: DraftCheck[]
+  /** True when no check has severity "error". Only then is the draft ready to show for approval. */
+  passed: boolean
   note?: string
   nextStep: string
 }
@@ -272,6 +280,12 @@ function replaceLocalRefs(value: unknown, idFor: (key: string) => string): unkno
 
 // --- preview_creative_draft ---------------------------------------------------------
 
+function summariseChecks(checks: DraftCheck[]): string {
+  return checks
+    .map((c) => `${c.placementKey}${c.index !== undefined ? `[${c.index}]` : ''}: ${c.message}`)
+    .join('; ')
+}
+
 export async function previewCreativeDraft(
   params: PreviewCreativeDraftParams,
   config: Config,
@@ -391,6 +405,12 @@ export async function previewCreativeDraft(
     note = `${secs}s animation — this image shows three key moments across the timeline, not the finished video.${note ? ` ${note}` : ''}`
   }
 
+  // A full draft render already failed (ok: false) on any error, so reaching here with no `checks` means
+  // every placement was rendered and checked.
+  const checks = manifest.checks ?? []
+  const failing = checks.filter((c) => c.severity === 'error')
+  const passed = manifest.passed ?? failing.length === 0
+
   return {
     ok: true,
     committed: false,
@@ -400,10 +420,16 @@ export async function previewCreativeDraft(
     files,
     readiness: response.readiness,
     warnings: manifest.warnings,
+    checks,
+    passed,
     ...(note ? { note } : {}),
-    nextStep:
-      'Nothing has been saved to Conductor. Show the image to the person and ask whether to approve it. ' +
-      'Only after they approve, call commit_creative_draft({draftDir}); to change something, call preview_creative_draft again.',
+    nextStep: passed
+      ? 'Nothing has been saved to Conductor. All placement checks passed. Show the image to the person and ask whether to approve it. ' +
+        'Only after they approve, call commit_creative_draft({draftDir}); to change something, call preview_creative_draft again.'
+      : `NOT ready for approval: ${failing.length} placement check${failing.length === 1 ? '' : 's'} failed (${summariseChecks(failing)}) — ` +
+        'the full render would fail them after the person approved. Nothing has been saved. Fix the design (shorter copy, a different layout, ' +
+        'layoutOverrides, typeOverrides, or drop the body) and call preview_creative_draft again until `passed` is true. Do not ask the person to ' +
+        'approve and do not call commit_creative_draft while a check fails; tell them what you changed.',
   }
 }
 

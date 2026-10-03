@@ -225,6 +225,7 @@ public class CreativeService {
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
                 motionRes.input())));
+        violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -249,7 +250,8 @@ public class CreativeService {
         creative.setSequenceKind(sequenceKind);
         creative.setSequence(objectMapper.valueToTree(sequence));
         creative.setCarouselRatio(request.getCarouselRatio());
-        creative.setTypeOverrides(objectMapper.createObjectNode());
+        creative.setTypeOverrides(request.getTypeOverrides() != null
+                ? objectMapper.valueToTree(request.getTypeOverrides()) : objectMapper.createObjectNode());
         creative.setLayoutOverrides(layoutOverrides != null ? objectMapper.valueToTree(layoutOverrides) : null);
         creative.setLockup(lockup);
         creative.setKind(kind);
@@ -306,6 +308,7 @@ public class CreativeService {
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
                 motionRes.input()));
+        violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -637,10 +640,11 @@ public class CreativeService {
         PreparedCreate prepared = prepareCreate(projectId, effective, media, true);
         BrandKit kit = prepared.kit();
         Creative creative = prepared.creative();
-        if (base != null) {
+        if (base != null && request.getTypeOverrides() == null) {
             boolean headlineChanging = request.getHeadline() != null && !Objects.equals(request.getHeadline(), base.getHeadline());
             boolean layoutChanging = request.getLayout() != null && !Objects.equals(request.getLayout(), base.getLayout());
-            // Same rule as patch: hand-tuned type sizes belong to the headline/layout they were tuned for.
+            // Same rule as patch: hand-tuned type sizes belong to the headline/layout they were tuned for
+            // (unless the draft pins its own typeOverrides, which prepareCreate has already applied).
             creative.setTypeOverrides(headlineChanging || layoutChanging
                     ? objectMapper.createObjectNode() : base.getTypeOverrides());
         }
@@ -718,6 +722,9 @@ public class CreativeService {
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
         if (draft.getAudio() != null) merged.setAudio(draft.getAudio());
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
+        // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
+        // or cleared there by the headline/layout rule; only a draft's own typeOverrides pass through here.
+        if (draft.getTypeOverrides() != null) merged.setTypeOverrides(draft.getTypeOverrides());
         return merged;
     }
 

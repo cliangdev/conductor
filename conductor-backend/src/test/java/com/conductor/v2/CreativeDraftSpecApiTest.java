@@ -80,4 +80,27 @@ class CreativeDraftSpecApiTest extends AbstractE2ETest {
             assertThat(v.get("ruleId")).isEqualTo("localMediaUndeclared");
         });
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void typeOverridesAreAcceptedByDraftSpecAndCreateAndInvalidOnesAre422() {
+        Map<String, Object> pinned = Map.of("9x16", List.of(96, 1.0, -2.9), "1x1", List.of(88));
+
+        var draft = rest.exchange(draftSpecUrl, HttpMethod.POST,
+                new HttpEntity<>(Map.of("headline", "Hello *there*", "typeOverrides", pinned), authHeaders), Map.class);
+        assertThat(draft.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> creative = (Map<String, Object>) ((Map<String, Object>) draft.getBody().get("spec")).get("creative");
+        assertThat((Map<String, Object>) creative.get("typeOverrides")).containsOnlyKeys("9x16", "1x1");
+
+        var created = rest.exchange(creativesUrl, HttpMethod.POST,
+                new HttpEntity<>(Map.of("headline", "Hello *there*", "typeOverrides", pinned), authHeaders), Map.class);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat((Map<String, Object>) created.getBody().get("typeOverrides")).containsOnlyKeys("9x16", "1x1");
+
+        var invalid = rest.exchange(creativesUrl, HttpMethod.POST, new HttpEntity<>(
+                Map.of("headline", "Hello *there*", "typeOverrides", Map.of("9x16", List.of(0))), authHeaders), Map.class);
+        assertThat(invalid.getStatusCode().value()).isEqualTo(422);
+        List<Map<String, String>> violations = (List<Map<String, String>>) invalid.getBody().get("violations");
+        assertThat(violations).singleElement().satisfies(v -> assertThat(v.get("field")).isEqualTo("typeOverrides"));
+    }
 }

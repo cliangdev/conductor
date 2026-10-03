@@ -243,3 +243,107 @@ test('framesFor: a spec with no placements fails with a readable message', () =>
   assert.throws(() => framesFor({ creative: { sequenceKind: 'carousel', sequence: [{}, {}] }, placements: [] }), /names no placements/);
   assert.throws(() => framesFor({ creative: {}, placements: [] }), /names no placements/);
 });
+
+/* ── Draft preview: the full render's per-placement checks, run without the frames ─────────────── */
+
+/* A 480x160 solid badge. In the stacked layout on 9:16 its CTA row lands inside the 430px bottom band
+ * TikTok/Reels reserve for their own overlay — the full render fails that placement. */
+const BADGE = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="160"><rect width="480" height="160" fill="black"/></svg>'
+);
+const BADGE_BRAND = { ...BRAND, logos: { badge: BADGE }, ctaClaim: 'Free on the App Store' };
+
+function checkingTransport() {
+  const t = fakeTransport();
+  t.calls.checks = undefined;
+  const complete = t.complete;
+  t.complete = async function (warnings, checks) {
+    await complete.call(this, warnings);
+    t.calls.checks = checks;
+  };
+  return t;
+}
+
+const BADGE_SPEC = (previewOnly) => ({
+  renderId: 'c1',
+  previewOnly,
+  creative: { layout: 'stacked', theme: 'dark', headline: 'Plan the week in *one sentence*.', body: 'Body copy.' },
+  brand: BADGE_BRAND,
+  placements: ['9x16', '4x5', '1x1'],
+});
+
+test('run(): a preview with checkPlacements reports a badge in the 9:16 overlay band as a safeZone failure', async (t) => {
+  if (!(await browserAvailable())) return t.skip('no local Chromium (run: npx playwright install chromium)');
+
+  const transport = checkingTransport();
+  transport.spec = BADGE_SPEC(true);
+
+  const ok = await run({ transport, checkPlacements: true, log: () => {} });
+
+  assert.equal(ok, true); // the preview itself rendered; a failing check is reported, not thrown
+  // Still only the contact sheet is uploaded; the per-placement frames are discarded.
+  assert.deepEqual(transport.calls.putFrame.map((f) => f.placementKey), ['sheet']);
+  const failures = transport.calls.checks.filter((c) => c.severity === 'error');
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].placementKey, '9x16');
+  assert.equal(failures[0].rule, 'safeZone');
+  assert.match(failures[0].message, /bottom safe zone/);
+});
+
+test('run(): the same spec as a full render fails on that placement, so the preview check agrees with it', async (t) => {
+  if (!(await browserAvailable())) return t.skip('no local Chromium (run: npx playwright install chromium)');
+
+  const transport = checkingTransport();
+  transport.spec = BADGE_SPEC(false);
+
+  const ok = await run({ transport, log: () => {} });
+
+  assert.equal(ok, false);
+  assert.match(transport.calls.fail.message, /9x16.*safe-zone intrusion/);
+});
+
+test('run(): a preview whose placements all pass reports no failing checks', async (t) => {
+  if (!(await browserAvailable())) return t.skip('no local Chromium (run: npx playwright install chromium)');
+
+  const transport = checkingTransport();
+  transport.spec = { ...BADGE_SPEC(true), brand: BRAND };
+
+  const ok = await run({ transport, checkPlacements: true, log: () => {} });
+
+  assert.equal(ok, true);
+  assert.deepEqual(transport.calls.checks.filter((c) => c.severity === 'error'), []);
+});
+
+test('run(): a preview without checkPlacements runs no per-placement checks', async (t) => {
+  if (!(await browserAvailable())) return t.skip('no local Chromium (run: npx playwright install chromium)');
+
+  const transport = checkingTransport();
+  transport.spec = BADGE_SPEC(true);
+
+  const ok = await run({ transport, log: () => {} });
+
+  assert.equal(ok, true);
+  assert.equal(transport.calls.checks, undefined);
+});
+
+test('run(): preview checks cover each beat of a story sequence', async (t) => {
+  if (!(await browserAvailable())) return t.skip('no local Chromium (run: npx playwright install chromium)');
+
+  const transport = checkingTransport();
+  transport.spec = {
+    renderId: 'c2',
+    previewOnly: true,
+    creative: {
+      layout: 'stacked',
+      sequenceKind: 'story',
+      sequence: [{ headline: 'One.' }, { headline: 'Two.' }],
+    },
+    brand: BADGE_BRAND,
+    placements: ['story'],
+  };
+
+  const ok = await run({ transport, checkPlacements: true, log: () => {} });
+
+  assert.equal(ok, true);
+  for (const c of transport.calls.checks) assert.ok(c.index === 0 || c.index === 1, JSON.stringify(c));
+});

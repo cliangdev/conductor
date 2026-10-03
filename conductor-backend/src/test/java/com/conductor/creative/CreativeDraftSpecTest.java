@@ -362,6 +362,46 @@ class CreativeDraftSpecTest {
         assertThat(spec.getCreative().getTypeOverrides()).containsKey("headline");
     }
 
+    @Test
+    void typeOverridesOnTheDraftAppearInTheSpec() {
+        CreativeRenderSpec spec = service.buildDraftSpec(PROJECT, draftRequest("Hello *there*").typeOverrides(Map.of(
+                "9x16", List.of(new BigDecimal("96"), new BigDecimal("1.0"), new BigDecimal("-2.9")),
+                "1x1", List.of(new BigDecimal("88")))), caller).spec();
+
+        assertThat(spec.getCreative().getTypeOverrides()).containsOnlyKeys("9x16", "1x1");
+        assertThat(spec.getCreative().getTypeOverrides().get("9x16").stream().map(BigDecimal::doubleValue).toList())
+                .containsExactly(96.0, 1.0, -2.9);
+    }
+
+    @Test
+    void aDraftWithoutTypeOverridesHasAnEmptyMap() {
+        assertThat(service.buildDraftSpec(PROJECT, draftRequest("Hello"), caller).spec().getCreative().getTypeOverrides())
+                .isEmpty();
+    }
+
+    @Test
+    void aDraftsOwnTypeOverridesWinOverTheBasesEvenWhenTheHeadlineChanges() {
+        Creative base = baseCreative();
+        when(creativeRepository.findByIdAndProjectId("base-1", PROJECT)).thenReturn(Optional.of(base));
+        when(photoRepository.findByIdAndProjectId("photo-1", PROJECT)).thenReturn(Optional.of(libraryPhoto("photo-1")));
+
+        CreativeRenderSpec spec = service.buildDraftSpec(PROJECT, new CreativeDraftSpecRequest()
+                .baseCreativeId("base-1").headline("A new *hook*")
+                .typeOverrides(Map.of("4x5", List.of(new BigDecimal("90")))), caller).spec();
+
+        assertThat(spec.getCreative().getTypeOverrides()).containsOnlyKeys("4x5");
+    }
+
+    @Test
+    void invalidTypeOverridesAre422sNamingTheField() {
+        assertThatThrownBy(() -> service.buildDraftSpec(PROJECT, draftRequest("Hello").typeOverrides(Map.of(
+                "9x16", List.of(new BigDecimal("-5")), "nope", List.of(new BigDecimal("80")))), caller))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::field)
+                        .containsOnly("typeOverrides").hasSize(2));
+    }
+
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
 
     private CreativeValidationException catchValidation(Runnable call) {

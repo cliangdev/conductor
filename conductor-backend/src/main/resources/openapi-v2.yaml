@@ -7480,6 +7480,19 @@ components:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
           nullable: true
+        typeOverrides:
+          type: object
+          nullable: true
+          description: >-
+            Pins the headline's type per placement: `{"<placementKey>": [fontSize, lineHeight?,
+            letterSpacing?]}` — `fontSize` in artboard px (the placement's own pixel size, e.g. 1080
+            wide), `lineHeight` a unitless multiplier of `fontSize` (e.g. 1.0), `letterSpacing` in px
+            (usually negative). Leave out `lineHeight`/`letterSpacing` to take the engine's defaults for
+            that size. A placement with no entry is auto-fitted. Keys must be real placement keys.
+          additionalProperties:
+            type: array
+            items:
+              type: number
 
     PatchCreativeRequest:
       type: object
@@ -7537,6 +7550,12 @@ components:
         typeOverrides:
           type: object
           nullable: true
+          description: >-
+            Pins the headline's type per placement: `{"<placementKey>": [fontSize, lineHeight?,
+            letterSpacing?]}` — `fontSize` in artboard px (the placement's own pixel size, e.g. 1080
+            wide), `lineHeight` a unitless multiplier of `fontSize` (e.g. 1.0), `letterSpacing` in px
+            (usually negative). Leave out `lineHeight`/`letterSpacing` to take the engine's defaults for
+            that size. A placement with no entry is auto-fitted. Keys must be real placement keys.
           additionalProperties:
             type: array
             items:
