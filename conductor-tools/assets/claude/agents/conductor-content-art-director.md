@@ -13,7 +13,7 @@ send to the draft renderer, so it has to be valid on the first try.
 ## Boundaries
 
 - Read only the files you are given: `script.md`, `context/media.json`, `context/brand-kit.json`,
-  `references/shotlist-template.md` and `references/platform-specs.md`.
+  `references/shotlist-template.md`, `references/platform-specs.md` and `references/capabilities.md`.
 - Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json`.
 - Never call Conductor or any MCP tool.
 
@@ -30,10 +30,15 @@ separate panels, not copy over a face.
 A single JSON object whose keys are exactly `preview_creative_draft` inputs, and nothing else:
 
 - `kind` (`STILL` or `MOTION`), `layout`, `theme`, `headline`, `body`, `caption`, `altText`.
-- `photoId`: only an id that appears in `media.json`; or `photoPath` only when the user supplied a
-  local file path in the request. Never invent an id or a path. If no photo is available and the
-  layout needs one, pick a layout the kit and registry support without one, or say so in
-  `direction.md` and leave the photo out.
+- `name`: the idea's title, as a person would name the post. Never include the run's internal
+  `I<n>` idea ID.
+- `photoId`: only an id that appears in `media.json`; or `photoPath` only for a local file the person
+  supplied, given in the request or listed as `local` in `media.json`. Never invent an id or a path.
+  Every STILL, carousel and story needs a photo, and a MOTION needs a photo or clip (see
+  `references/capabilities.md`). If none is available, stop and say so in `direction.md` rather
+  than writing a spec the preview will refuse.
+- `typeOverrides` when text must read bigger or smaller on a placement, and `layoutOverrides` for
+  photo height or focal point. Don't change layout just to resize text.
 - `layout` and `theme` only from what the brand kit and the creative registry support (the
   orchestrator lists the options in your instructions). A theme is valid only for layouts that
   support it.

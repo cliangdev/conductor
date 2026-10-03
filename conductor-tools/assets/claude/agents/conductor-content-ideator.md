@@ -32,9 +32,12 @@ ideas from your angle, not a safe average.
    (two lists, two before/afters). Vary the hook device, the format and the register.
 4. Each idea follows the idea template exactly, within its word caps. Every hook must work both
    spoken and on screen, and must land in the first 3 seconds.
-5. Tag each idea `RENDER` or `FILM` honestly against `media.json`. If it needs footage or a person
-   on camera, it is `FILM`. For `RENDER`, fill the draft-spec block, use only media ids that exist,
-   and respect the copy rules and accent-phrase requirement.
+5. Tag each idea `RENDER` or `FILM` honestly, using `references/capabilities.md` and `media.json`.
+   It is `RENDER` only if every card or frame fits what Conductor can render with media that exists:
+   one photo plus text per card, or motion text over a photo or clip. That covers motion text, which
+   needs no filming. There are no type-only stills, grids, collages, voiceover or screen recordings.
+   Footage, a person on camera or spoken lines make it `FILM`. For `RENDER`, fill the draft-spec
+   block, use only media ids that exist, and respect the copy rules and accent-phrase requirement.
 6. Do not name your angle inside an idea. Do not rank your ideas.
 
 ## Finish
