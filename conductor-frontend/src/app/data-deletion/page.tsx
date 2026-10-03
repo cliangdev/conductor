@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { CONTACT_EMAIL, LegalPage } from '@/components/site/SiteChrome'
+import { CONTACT_EMAIL, LegalPage, OPERATOR_NAME } from '@/components/site/SiteChrome'
 
 export const metadata: Metadata = {
   title: 'Data Deletion',
@@ -8,14 +8,14 @@ export const metadata: Metadata = {
   alternates: { canonical: '/data-deletion' },
 }
 
-const UPDATED = 'September 30, 2026'
+const UPDATED = 'October 2, 2026'
 
 export default function DataDeletionPage() {
   return (
     <LegalPage title="Data Deletion" updated={UPDATED}>
       <p>
-        This page explains how to delete the data Conductor holds about an account you connected,
-        such as a Facebook Page or an Instagram professional account. There are three ways, and you
+        This page explains how to delete the data Conductor, operated by {OPERATOR_NAME}, holds
+        about an account you connected, such as a Facebook Page or an Instagram professional account. There are three ways, and you
         can use whichever suits you.
       </p>
 

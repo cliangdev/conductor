@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { CONTACT_EMAIL, LegalPage } from '@/components/site/SiteChrome'
+import { CONTACT_EMAIL, LegalPage, OPERATOR_NAME } from '@/components/site/SiteChrome'
 
 export const metadata: Metadata = {
   title: 'Terms of Service',
@@ -8,14 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/terms' },
 }
 
-const UPDATED = 'September 18, 2026'
+const UPDATED = 'October 2, 2026'
 
 export default function TermsPage() {
   return (
     <LegalPage title="Terms of Service" updated={UPDATED}>
       <p>
-        These terms govern your use of Conductor (&ldquo;Conductor&rdquo;, &ldquo;we&rdquo;,
-        &ldquo;us&rdquo;): the web application, the API, the command-line tools and the
+        These terms are an agreement between you and <strong>{OPERATOR_NAME}</strong>, which
+        operates Conductor (&ldquo;Conductor&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;). They
+        govern your use of the web application, the API, the command-line tools and the
         integrations. By creating an account or using the service you agree to them. If you are
         agreeing on behalf of a company, you confirm you have the authority to bind it.
       </p>
@@ -68,7 +69,7 @@ export default function TermsPage() {
         platform&rsquo;s own terms and content policies, and you are responsible for anything
         Conductor publishes at your direction. A platform may rate-limit, suspend or revoke access
         at any time, and when that happens the affected feature stops working until you reconnect.
-        You can disconnect any account whenever you want, from Settings, under Integrations.
+        You can disconnect any account whenever you want, from Integrations in your workspace sidebar.
       </p>
 
       <h2>6. AI output</h2>
@@ -143,9 +144,11 @@ export default function TermsPage() {
 
       <h2>14. Governing law and disputes</h2>
       <p>
-        These terms are governed by the laws of the place where Conductor&rsquo;s operator has its
-        principal place of business, without regard to conflict-of-law rules. The courts there have
-        exclusive jurisdiction over any dispute, and you and we each consent to venue there.
+        These terms are governed by the laws of the State of Delaware, USA, without regard to
+        conflict-of-laws rules. Any dispute that is not resolved informally will be brought in the
+        state or federal courts located in Delaware, and you and {OPERATOR_NAME} each consent to
+        that venue. Nothing in these terms removes rights you have under the consumer-protection
+        law of the country you live in.
       </p>
 
       <h2>15. Changes to these terms</h2>
@@ -157,7 +160,7 @@ export default function TermsPage() {
 
       <h2>16. Contact</h2>
       <p>
-        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+        {OPERATOR_NAME}, <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
       </p>
     </LegalPage>
   )

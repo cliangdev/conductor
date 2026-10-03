@@ -1,11 +1,5 @@
 import type { Metadata } from 'next'
-import { CONTACT_EMAIL, LegalPage } from '@/components/site/SiteChrome'
-
-/**
- * TODO(legal): before the next platform submission, confirm with counsel (a) the operating legal
- * entity's name and (b) the governing-law jurisdiction in `/terms`. The substance below describes
- * what the product actually does today.
- */
+import { CONTACT_EMAIL, LegalPage, OPERATOR_NAME } from '@/components/site/SiteChrome'
 
 export const metadata: Metadata = {
   title: 'Privacy Policy',
@@ -14,14 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/privacy' },
 }
 
-const UPDATED = 'September 30, 2026'
+const UPDATED = 'October 2, 2026'
 
 export default function PrivacyPage() {
   return (
     <LegalPage title="Privacy Policy" updated={UPDATED}>
       <p>
-        This policy explains what Conductor (&ldquo;Conductor&rdquo;, &ldquo;we&rdquo;,
-        &ldquo;us&rdquo;) collects, why we collect it, who we share it with, how long we keep it,
+        Conductor is operated by <strong>{OPERATOR_NAME}</strong>, which is responsible for the
+        data described in this policy. This policy explains what Conductor (&ldquo;Conductor&rdquo;,
+        &ldquo;we&rdquo;, &ldquo;us&rdquo;) collects, why we collect it, who we share it with, how long we keep it,
         and how you get rid of it. It covers the Conductor web application, the API, the
         command-line tools, and the integrations you choose to connect.
       </p>

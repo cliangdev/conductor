@@ -12,6 +12,9 @@ import { ConductorLogo } from '@/components/brand/ConductorLogo'
 /** Where review-facing contact links point. */
 export const CONTACT_EMAIL = 'support@rexipe.io'
 
+/** The legal entity that operates Conductor. Named in the footer, the terms and the privacy policy. */
+export const OPERATOR_NAME = 'Rexworks LLC'
+
 /** The public repository. Conductor's source is readable by anyone. */
 export const REPO_URL = 'https://github.com/cliangdev/conductor'
 
@@ -28,8 +31,9 @@ export const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`
 /** Nav rendered in the header of every public page. */
 const NAV = [
   { href: '/#how-it-works', label: 'How it works' },
-  { href: '/#platforms', label: 'Platforms' },
-  { href: '/#insights', label: 'Insights' },
+  { href: '/#use-cases', label: 'Use cases' },
+  { href: '/#agents', label: 'Agents' },
+  { href: '/#trust', label: 'Trust' },
   { href: '/#source', label: 'Source' },
 ]
 
@@ -90,7 +94,9 @@ export function SiteFooter() {
     <footer className="border-t border-border bg-surface">
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-5 py-8 text-[13px] text-foreground-muted sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <p>© {new Date().getFullYear()} Conductor. All rights reserved.</p>
+          <p>
+            © {new Date().getFullYear()} {OPERATOR_NAME}. Conductor is a product of {OPERATOR_NAME}.
+          </p>
           <p>
             Source available on{' '}
             <a
