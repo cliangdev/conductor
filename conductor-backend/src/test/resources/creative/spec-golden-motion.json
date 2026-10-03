@@ -1,0 +1,61 @@
+{
+  "renderId" : "{RENDER}",
+  "previewOnly" : false,
+  "creative" : {
+    "layout" : "stacked",
+    "theme" : "dark",
+    "headline" : "Plan the week in *one sentence*.",
+    "body" : "A calm plan.",
+    "caption" : null,
+    "placements" : [ ],
+    "focalOverride" : null,
+    "sequence" : [ ],
+    "typeOverrides" : { },
+    "photoUrl" : null,
+    "focal" : { },
+    "lockup" : "plain",
+    "layoutOverrides" : null,
+    "kind" : "MOTION",
+    "motion" : {
+      "preset" : "fade-up",
+      "durationSec" : 8,
+      "background" : {
+        "source" : "clip",
+        "motion" : "zoom-in",
+        "clipUrl" : "http://localhost:8080/api/v1/local-files/projects/{PROJECT}/marketing/photos/{MEDIA0}.mp4",
+        "clipStartSec" : null
+      },
+      "endCard" : true
+    },
+    "audio" : {
+      "source" : "track",
+      "trackUrl" : "http://localhost:8080/api/v1/local-files/projects/{PROJECT}/marketing/photos/{MEDIA1}.mp3",
+      "volume" : 0.8,
+      "fadeOutSec" : 1.0
+    },
+    "clipHasAudio" : true
+  },
+  "brand" : {
+    "tokens" : {
+      "ink" : "#18181B",
+      "ink2" : "#71717A",
+      "accent" : "#3B82F6",
+      "darkBg" : "#18181B",
+      "accent2" : "#2563EB",
+      "darkInk" : "#FFFFFF",
+      "lightBg" : "#F4F4F5",
+      "lightCard" : "#FFFFFF"
+    },
+    "fontFamily" : null,
+    "fontUrl" : null,
+    "logos" : {
+      "mark" : null,
+      "wordmarkDark" : null,
+      "wordmarkLight" : null,
+      "badge" : null
+    },
+    "ctaClaim" : null,
+    "enabledPlacements" : [ "9x16", "4x5", "1x1" ]
+  },
+  "placements" : [ "9x16", "4x5", "1x1" ]
+}

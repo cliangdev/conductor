@@ -11,9 +11,14 @@ import com.conductor.generated.v2.model.CopyRule;
 import com.conductor.generated.v2.model.CopyRuleField;
 import com.conductor.generated.v2.model.CreateBrandKitRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
+import com.conductor.generated.v2.model.LocalMediaInfo;
+import com.conductor.generated.v2.model.MediaKind;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeDraftSpecRequest;
 import com.conductor.generated.v2.model.CreativeKind;
+import com.conductor.generated.v2.model.LocalMediaInfo;
+import com.conductor.generated.v2.model.MediaKind;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -32,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,6 +57,8 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     @Autowired private CreativeRenderFrameRepository frameRepository;
     @Autowired private CreativeExperimentRepository experimentRepository;
     @Autowired private BrandKitService brandKitService;
+    @Autowired private BrandKitRepository brandKitRepository;
+    @Autowired private CreativeRenderService renderService;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private ProjectMemberRepository projectMemberRepository;
@@ -422,6 +430,78 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void typeOverridesOnCreatePersistReachTheRenderSpecAndMatchTheDraftSpec() {
+        java.util.Map<String, List<java.math.BigDecimal>> pinned = java.util.Map.of(
+                "9x16", List.of(new java.math.BigDecimal("96"), new java.math.BigDecimal("1.0"), new java.math.BigDecimal("-2.9")),
+                "1x1", List.of(new java.math.BigDecimal("88")));
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setTypeOverrides(pinned);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        JsonNode stored = created.creative().getTypeOverrides();
+        assertThat(stored.get("9x16").get(0).asInt()).isEqualTo(96);
+        assertThat(stored.get("9x16").get(2).asDouble()).isEqualTo(-2.9);
+        assertThat(stored.get("1x1").get(0).asInt()).isEqualTo(88);
+        assertThat(creativeRepository.findById(created.creative().getId()).orElseThrow().getTypeOverrides().get("1x1").get(0).asInt())
+                .isEqualTo(88);
+
+        CreativeRenderService.CreateRenderResult render = renderService.requestRender(project.getId(),
+                created.creative().getId(), new com.conductor.generated.v2.model.CreateCreativeRenderRequest(), admin);
+        assertThat(render.spec().getCreative().getTypeOverrides()).containsOnlyKeys("9x16", "1x1");
+        assertThat(render.spec().getCreative().getTypeOverrides().get("9x16").stream()
+                .map(java.math.BigDecimal::doubleValue).toList()).containsExactly(96.0, 1.0, -2.9);
+
+        CreativeService.DraftSpec draft = creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().headline("Plan the week in *one sentence*.").body("A calm plan.")
+                        .photoId(photo.getId()).layout("stacked").typeOverrides(pinned), admin);
+        JsonNode draftedOverrides = objectMapper.valueToTree(draft.spec().getCreative().getTypeOverrides());
+        JsonNode renderedOverrides = objectMapper.valueToTree(render.spec().getCreative().getTypeOverrides());
+        assertThat(draftedOverrides).isEqualTo(renderedOverrides);
+    }
+
+    @Test
+    void aLaterHeadlineChangeStillClearsTypeOverridesPinnedOnCreate() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setTypeOverrides(java.util.Map.of("9x16", List.of(new java.math.BigDecimal("96"))));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        PatchCreativeRequest unrelated = new PatchCreativeRequest(created.creative().getVersion());
+        unrelated.setCaption("A caption.");
+        CreativeService.CreativeView afterCaption = creativeService.patchCreative(
+                project.getId(), created.creative().getId(), unrelated, admin);
+        assertThat(afterCaption.creative().getTypeOverrides().has("9x16")).isTrue();
+
+        PatchCreativeRequest headline = new PatchCreativeRequest(afterCaption.creative().getVersion());
+        headline.setHeadline("A new *hook* entirely.");
+        CreativeService.CreativeView afterHeadline = creativeService.patchCreative(
+                project.getId(), created.creative().getId(), headline, admin);
+        assertThat(afterHeadline.creative().getTypeOverrides().size()).isZero();
+    }
+
+    @Test
+    void invalidTypeOverridesAreRefusedOnCreateDraftAndPatchAlike() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setTypeOverrides(java.util.Map.of("9x16", List.of(new java.math.BigDecimal("0"))));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), request, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::field).containsExactly("typeOverrides"));
+
+        assertThatThrownBy(() -> creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().headline("Hello").typeOverrides(
+                        java.util.Map.of("not-a-placement", List.of(new java.math.BigDecimal("80")))), admin))
+                .isInstanceOf(CreativeValidationException.class);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                concept("Plan the week in *one sentence*.", "A calm plan."), admin);
+        PatchCreativeRequest patch = new PatchCreativeRequest(created.creative().getVersion());
+        patch.setTypeOverrides(java.util.Map.of("4x5", List.of()));
+        assertThatThrownBy(() -> creativeService.patchCreative(project.getId(), created.creative().getId(), patch, admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
+    @Test
     void aBrandKitCopyRuleFailureSurfacesTheRulesOwnMessage() {
         CopyRule noExclaim = new CopyRule("noExclaim", "!", "No exclamation marks.", List.of(CopyRuleField.HEADLINE));
         BrandKit kit = brandKitService.createKit(project.getId(),
@@ -593,6 +673,99 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         frame.setSizeBytes((long) bytes.length);
         frame.setWarnings(objectMapper.createArrayNode());
         return frameRepository.save(frame);
+    }
+
+    // ── draft spec (preview-first): builds a spec, persists nothing ────────────────────────────────
+
+    @Test
+    void aDraftSpecIsTheSpecARenderOfTheSameSavedCreativeWouldGet() {
+        CreativeService.CreativeView saved = creativeService.createCreative(project.getId(),
+                concept("Plan the week in *one sentence*.", "A calm plan."), admin);
+        CreativeRenderService.CreateRenderResult render = renderService.requestRender(project.getId(),
+                saved.creative().getId(), new com.conductor.generated.v2.model.CreateCreativeRenderRequest(), admin);
+
+        CreativeService.DraftSpec draft = creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().headline("Plan the week in *one sentence*.").body("A calm plan.")
+                        .photoId(photo.getId()).layout("stacked"), admin);
+
+        JsonNode drafted = objectMapper.valueToTree(draft.spec());
+        JsonNode rendered = objectMapper.valueToTree(render.spec());
+        assertThat(drafted.get("renderId").asText()).isEqualTo("draft");
+        assertThat(drafted.get("previewOnly").asBoolean()).isTrue();
+        com.fasterxml.jackson.databind.node.ObjectNode draftedRest = ((com.fasterxml.jackson.databind.node.ObjectNode) drafted).deepCopy();
+        com.fasterxml.jackson.databind.node.ObjectNode renderedRest = ((com.fasterxml.jackson.databind.node.ObjectNode) rendered).deepCopy();
+        draftedRest.remove(List.of("renderId", "previewOnly"));
+        renderedRest.remove(List.of("renderId", "previewOnly"));
+        assertThat((JsonNode) draftedRest).isEqualTo(renderedRest);
+    }
+
+    @Test
+    void aDraftSpecPersistsNothing() {
+        CreativeService.CreativeView saved = creativeService.createCreative(project.getId(),
+                concept("The old *hook*.", "A calm plan."), admin);
+        String baseId = saved.creative().getId();
+        int photosBefore = photoRepository.findAllByProjectIdOrderByCreatedAtDesc(project.getId()).size();
+        int creativesBefore = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(project.getId()).size();
+        long kitsBefore = brandKitRepository.countByProjectId(project.getId());
+
+        CreativeService.DraftSpec draft = creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().baseCreativeId(baseId).headline("A new *hook*.")
+                        .photoId("local:hero").localMedia(java.util.Map.of("hero", new LocalMediaInfo(MediaKind.IMAGE))),
+                admin);
+
+        assertThat(draft.spec().getCreative().getHeadline()).isEqualTo("A new *hook*.");
+        assertThat(draft.spec().getCreative().getPhotoUrl()).isEqualTo("local:hero");
+        assertThat(draft.spec().getCreative().getBody()).isEqualTo("A calm plan.");
+        assertThat(photoRepository.findAllByProjectIdOrderByCreatedAtDesc(project.getId())).hasSize(photosBefore);
+        assertThat(creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(project.getId())).hasSize(creativesBefore);
+        assertThat(renderRepository.findAllByCreativeId(baseId)).isEmpty();
+        assertThat(brandKitRepository.countByProjectId(project.getId())).isEqualTo(kitsBefore);
+        Creative reloaded = creativeRepository.findById(baseId).orElseThrow();
+        assertThat(reloaded.getHeadline()).isEqualTo("The old *hook*.");
+        assertThat(reloaded.getVersion()).isEqualTo(saved.creative().getVersion());
+        assertThat(reloaded.getPhotoId()).isEqualTo(photo.getId());
+    }
+
+    @Test
+    void aDraftSpecInAWorkspaceWithNoBrandKitSeedsNoKit() {
+        Project bare = new Project();
+        bare.setName("Bare");
+        bare.setKey("BR" + UUID.randomUUID().toString().substring(0, 6).toUpperCase());
+        bare.setCreatedBy(admin);
+        bare = projectRepository.save(bare);
+        ProjectMember membership = new ProjectMember();
+        membership.setProject(bare);
+        membership.setUser(admin);
+        membership.setRole(MemberRole.ADMIN);
+        projectMemberRepository.save(membership);
+        assertThat(brandKitRepository.countByProjectId(bare.getId())).isZero();
+
+        CreativeService.DraftSpec draft = creativeService.buildDraftSpec(bare.getId(),
+                new CreativeDraftSpecRequest().headline("Hello").photoId("local:photo")
+                        .localMedia(Map.of("photo", new LocalMediaInfo(MediaKind.IMAGE).width(1200).height(1600))), admin);
+
+        assertThat(draft.spec().getBrand().getTokens()).containsKey("accent");
+        assertThat(draft.spec().getPlacements()).containsExactlyInAnyOrder("9x16", "4x5", "1x1");
+        assertThat(brandKitRepository.countByProjectId(bare.getId())).isZero();
+    }
+
+    @Test
+    void aDraftSpecBreakingACopyRuleIsRefusedWithTheSameViolationsCreateReports() {
+        CopyRule noExclaim = new CopyRule("noExclaim", "!", "No exclamation marks.", List.of(CopyRuleField.HEADLINE));
+        BrandKit strict = brandKitService.createKit(project.getId(),
+                new CreateBrandKitRequest("strict", "Strict Kit").copyRules(List.of(noExclaim)), admin);
+
+        CreateCreativeRequest create = concept("Dinner is ready!", "Body");
+        create.setBrandKitId(strict.getId());
+        CreativeValidationException fromCreate = org.junit.jupiter.api.Assertions.assertThrows(
+                CreativeValidationException.class, () -> creativeService.createCreative(project.getId(), create, admin));
+
+        CreativeDraftSpecRequest draft = new CreativeDraftSpecRequest().brandKitId(strict.getId())
+                .headline("Dinner is ready!").body("Body").photoId(photo.getId()).layout("stacked");
+        CreativeValidationException fromDraft = org.junit.jupiter.api.Assertions.assertThrows(
+                CreativeValidationException.class, () -> creativeService.buildDraftSpec(project.getId(), draft, admin));
+
+        assertThat(fromDraft.violations()).isNotEmpty().isEqualTo(fromCreate.violations());
     }
 
     private CreateCreativeRequest concept(String headline, String body) {

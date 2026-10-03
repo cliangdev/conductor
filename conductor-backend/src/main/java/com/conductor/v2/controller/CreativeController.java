@@ -24,6 +24,8 @@ import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.CreateCreativeRenderRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeDraftSpecRequest;
+import com.conductor.generated.v2.model.CreativeDraftSpecResponse;
 import com.conductor.generated.v2.model.CreativeExperimentMetric;
 import com.conductor.generated.v2.model.CreativeExperimentResponse;
 import com.conductor.generated.v2.model.CreativeExperimentState;
@@ -210,11 +212,21 @@ public class CreativeController implements CreativesApi {
 
     @Override
     public ResponseEntity<CreativeReadinessResponse> getCreativeReadiness(String projectId, String creativeId) {
-        CreativeService.Readiness readiness = creativeService.readiness(projectId, creativeId, currentUser());
+        return ResponseEntity.ok(toResponse(creativeService.readiness(projectId, creativeId, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<CreativeDraftSpecResponse> buildCreativeDraftSpec(String projectId,
+                                                                            CreativeDraftSpecRequest request) {
+        CreativeService.DraftSpec draft = creativeService.buildDraftSpec(projectId, request, currentUser());
+        return ResponseEntity.ok(new CreativeDraftSpecResponse(draft.spec(), toResponse(draft.readiness())));
+    }
+
+    private CreativeReadinessResponse toResponse(CreativeService.Readiness readiness) {
         List<CreativeReadinessItem> items = readiness.items().stream()
                 .map(i -> new CreativeReadinessItem(i.key(), i.ok(), i.blocking(), i.message()))
                 .toList();
-        return ResponseEntity.ok(new CreativeReadinessResponse(readiness.ready(), items));
+        return new CreativeReadinessResponse(readiness.ready(), items);
     }
 
     // ── Renders (COND-24 T3) ─────────────────────────────────────────────

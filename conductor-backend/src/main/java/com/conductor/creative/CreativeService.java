@@ -1,5 +1,6 @@
 package com.conductor.creative;
 
+import com.conductor.creative.CreativeValidationException.Violation;
 import com.conductor.entity.Asset;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -7,14 +8,17 @@ import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
+import com.conductor.generated.v2.model.CreativeDraftSpecRequest;
 import com.conductor.generated.v2.model.CreativeAudio;
 import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeMotion;
 import com.conductor.generated.v2.model.CreativeMotionBackground;
+import com.conductor.generated.v2.model.CreativeRenderSpec;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
+import com.conductor.generated.v2.model.LocalMediaInfo;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
 import com.conductor.generated.v2.model.SequenceBeat;
 import com.conductor.generated.v2.model.SequenceKind;
@@ -33,6 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -41,6 +46,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -63,6 +69,7 @@ public class CreativeService {
     private final ProjectRepository projectRepository;
     private final CreativeRegistry registry;
     private final CreativeValidator validator;
+    private final CreativeSpecBuilder specBuilder;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
     private final ObjectMapper objectMapper;
@@ -79,6 +86,7 @@ public class CreativeService {
                            ProjectRepository projectRepository,
                            CreativeRegistry registry,
                            CreativeValidator validator,
+                           CreativeSpecBuilder specBuilder,
                            ProjectSecurityService projectSecurityService,
                            StorageService storageService,
                            ObjectMapper objectMapper,
@@ -94,6 +102,7 @@ public class CreativeService {
         this.projectRepository = projectRepository;
         this.registry = registry;
         this.validator = validator;
+        this.specBuilder = specBuilder;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
         this.objectMapper = objectMapper;
@@ -127,6 +136,16 @@ public class CreativeService {
     public record Readiness(boolean ready, List<ReadinessItem> items) {
     }
 
+    /** A draft Creative's render spec and readiness — built from a request, never saved. */
+    public record DraftSpec(CreativeRenderSpec spec, Readiness readiness) {
+    }
+
+    /** {@link CreativeRenderSpec#getRenderId()} of a draft: nothing was recorded, so there is no render. */
+    static final String DRAFT_RENDER_ID = "draft";
+
+    /** A {@code local:<key>} media reference's key (draft spec only). */
+    static final Pattern LOCAL_MEDIA_KEY = Pattern.compile("^[a-z0-9][a-z0-9-]{0,63}$");
+
     @Transactional(readOnly = true)
     public List<CreativeView> listCreatives(String projectId, String state, String brandKitId, User caller) {
         requireMember(projectId, caller);
@@ -157,7 +176,30 @@ public class CreativeService {
     @Transactional
     public CreativeView createCreative(String projectId, CreateCreativeRequest request, User caller) {
         requireEditor(projectId, caller);
-        BrandKit kit = resolveKit(projectId, request.getBrandKitId());
+        Creative creative = prepareCreate(projectId, request, new MediaResolver(projectId, null), false).creative();
+        creative.setCreatedBy(caller.getId());
+
+        creative = saveWithNextNumber(creative);
+        return toView(projectId, creative, loadPhotos(List.of(creative)));
+    }
+
+    /** A validated, not-yet-saved Creative, plus what was resolved while validating it. */
+    private record PreparedCreate(BrandKit kit, Creative creative, MotionResolution motion) {
+    }
+
+    /**
+     * Everything {@link #createCreative} does short of saving: resolves the kit, applies the create
+     * defaults, resolves every media reference, runs {@link CreativeValidator#validate} and — when it
+     * passes — returns the new, <b>unsaved</b> {@link Creative}. A draft spec runs exactly this too, so a
+     * draft is judged by the very rules create enforces; {@code draft} only changes how the default Brand
+     * Kit is read (never seeded) — no repository write happens here either way.
+     *
+     * @throws CreativeValidationException every violation found, including {@code media}'s own
+     */
+    private PreparedCreate prepareCreate(String projectId, CreateCreativeRequest request, MediaResolver media,
+                                         boolean draft) {
+        BrandKit kit = request.getBrandKitId() != null ? requireKit(projectId, request.getBrandKitId())
+                : (draft ? brandKitService.peekDefault(projectId) : brandKitService.resolveDefault(projectId));
 
         String layout = request.getLayout() != null ? request.getLayout() : registry.defaultLayout();
         String theme = enumValue(request.getTheme(), Creative.THEME_DARK);
@@ -170,19 +212,25 @@ public class CreativeService {
         CreativeLayoutOverrides layoutOverrides = request.getLayoutOverrides();
         Map<String, String> clipMedia = request.getClipMedia();
 
-        PhotoResolution mainPhoto = resolvePhoto(projectId, request.getPhotoId());
-        SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
-        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, clipMedia);
-        MotionResolution motionRes = resolveMotion(projectId, kind, request.getMotion(), request.getAudio());
+        PhotoResolution mainPhoto = resolvePhoto(media, "photoId", request.getPhotoId(), CreativePhoto.MEDIA_KIND_IMAGE);
+        SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
+        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, clipMedia);
+        MotionResolution motionRes = resolveMotion(media, kind, request.getMotion(), request.getAudio());
 
-        List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
+        // A draft is a render, so it is validated the way requestRender validates one: READY-level
+        // checks forced whatever state was asked for. Otherwise a preview could pass (a still with no
+        // photo, say) and the render then refuse the very Creative the person approved.
+        String validationState = draft ? Creative.STATE_READY : state;
+        List<Violation> violations = new ArrayList<>(validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, request.getHeadline(), request.getBody(), request.getCaption(),
-                state, request.getPhotoId(), mainPhoto.resolvable(), mainPhoto.photo() != null,
+                validationState, request.getPhotoId(), mainPhoto.resolvable(), mainPhoto.photo() != null,
                 mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input()));
+                motionRes.input())));
+        violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
+        violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -206,17 +254,15 @@ public class CreativeService {
         creative.setSequenceKind(sequenceKind);
         creative.setSequence(objectMapper.valueToTree(sequence));
         creative.setCarouselRatio(request.getCarouselRatio());
-        creative.setTypeOverrides(objectMapper.createObjectNode());
+        creative.setTypeOverrides(request.getTypeOverrides() != null
+                ? objectMapper.valueToTree(request.getTypeOverrides()) : objectMapper.createObjectNode());
         creative.setLayoutOverrides(layoutOverrides != null ? objectMapper.valueToTree(layoutOverrides) : null);
         creative.setLockup(lockup);
         creative.setKind(kind);
         creative.setClipMedia(clipMedia != null && !clipMedia.isEmpty() ? objectMapper.valueToTree(clipMedia) : null);
         creative.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
         creative.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
-        creative.setCreatedBy(caller.getId());
-
-        creative = saveWithNextNumber(creative);
-        return toView(projectId, creative, loadPhotos(List.of(creative)));
+        return new PreparedCreate(kit, creative, motionRes);
     }
 
     @Transactional
@@ -253,10 +299,11 @@ public class CreativeService {
         CreativeMotion motionRequest = request.getMotion() != null ? request.getMotion() : toMotion(current.getMotion());
         CreativeAudio audioRequest = request.getAudio() != null ? request.getAudio() : toAudio(current.getAudio());
 
-        PhotoResolution mainPhoto = resolvePhoto(projectId, photoId);
-        SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
-        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, clipMedia);
-        MotionResolution motionRes = resolveMotion(projectId, kind, motionRequest, audioRequest);
+        MediaResolver media = new MediaResolver(projectId, null);
+        PhotoResolution mainPhoto = resolvePhoto(media, "photoId", photoId, CreativePhoto.MEDIA_KIND_IMAGE);
+        SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
+        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, clipMedia);
+        MotionResolution motionRes = resolveMotion(media, kind, motionRequest, audioRequest);
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, headline, body, caption, state, photoId, mainPhoto.resolvable(),
@@ -265,6 +312,7 @@ public class CreativeService {
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
                 motionRes.input()));
+        violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -322,10 +370,11 @@ public class CreativeService {
         List<SequenceBeat> sequence = toSequenceBeats(root.getSequence());
         List<String> placements = toStringList(root.getPlacements());
 
-        PhotoResolution mainPhoto = resolvePhoto(projectId, root.getPhotoId());
-        SequencePhotoResolution sequencePhotos = resolveSequencePhotos(projectId, sequence);
-        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(projectId, toClipMediaMap(root.getClipMedia()));
-        MotionResolution motionRes = resolveMotion(projectId, root.getKind(), toMotion(root.getMotion()), toAudio(root.getAudio()));
+        MediaResolver media = new MediaResolver(projectId, null);
+        PhotoResolution mainPhoto = resolvePhoto(media, "photoId", root.getPhotoId(), CreativePhoto.MEDIA_KIND_IMAGE);
+        SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
+        List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, toClipMediaMap(root.getClipMedia()));
+        MotionResolution motionRes = resolveMotion(media, root.getKind(), toMotion(root.getMotion()), toAudio(root.getAudio()));
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 root.getLayout(), root.getTheme(), placements, headline, root.getBody(), root.getCaption(),
@@ -375,6 +424,15 @@ public class CreativeService {
     public Readiness readiness(String projectId, String creativeId, User caller) {
         requireMember(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
+        return computeReadiness(creative, new MediaResolver(projectId, null));
+    }
+
+    /**
+     * The readiness checklist of a Creative — saved, or (a draft spec) merely built — judged on the media
+     * {@code media} resolves. A {@code local:<key>} file resolves to a {@link MediaFacts#local} one: not yet
+     * checked, no source or licence, so the checklist reports what it still needs once uploaded.
+     */
+    private Readiness computeReadiness(Creative creative, MediaResolver media) {
         boolean isClip = Creative.KIND_CLIP.equals(creative.getKind());
         boolean isMotion = Creative.KIND_MOTION.equals(creative.getKind());
 
@@ -389,11 +447,11 @@ public class CreativeService {
                 notBlank(creative.getAltText()) ? "alt text is set" : "alt text is missing: describe the photo for the upload"));
 
         if (isClip) {
-            addClipReadinessItems(projectId, creative, items);
+            addClipReadinessItems(media, creative, items);
         } else if (isMotion) {
-            addMotionReadinessItems(projectId, creative, items);
+            addMotionReadinessItems(media, creative, items);
         } else {
-            addPhotoReadinessItems(projectId, creative, items);
+            addPhotoReadinessItems(media, creative, items);
         }
 
         boolean notDraft = !Creative.STATE_DRAFT.equals(creative.getState());
@@ -404,10 +462,8 @@ public class CreativeService {
         return new Readiness(ready, items);
     }
 
-    private void addPhotoReadinessItems(String projectId, Creative creative, List<ReadinessItem> items) {
-        CreativePhoto photo = creative.getPhotoId() != null
-                ? photoRepository.findByIdAndProjectId(creative.getPhotoId(), projectId).orElse(null)
-                : null;
+    private void addPhotoReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {
+        MediaFacts photo = media.find("photoId", creative.getPhotoId(), CreativePhoto.MEDIA_KIND_IMAGE);
         boolean photoChecked = photo != null && photo.isChecked();
         items.add(new ReadinessItem("photoChecked", photoChecked, true,
                 photo == null ? "no photo chosen"
@@ -430,7 +486,7 @@ public class CreativeService {
      * {@code audio.source} is {@code track} (contract: "STILL items + track source/licence when
      * audio.source=track; clip provenance when background is a clip").
      */
-    private void addMotionReadinessItems(String projectId, Creative creative, List<ReadinessItem> items) {
+    private void addMotionReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {
         CreativeMotion motion = toMotion(creative.getMotion());
         CreativeMotionBackground background = motion != null ? motion.getBackground() : null;
         String backgroundSource = background != null ? background.getSource() : null;
@@ -440,7 +496,8 @@ public class CreativeService {
             boolean hasClip = notBlank(clipMediaId);
             items.add(new ReadinessItem("motionBackground", hasClip, true,
                     hasClip ? "a background clip is chosen" : "no background clip chosen"));
-            CreativePhoto clipMedia = hasClip ? photoRepository.findByIdAndProjectId(clipMediaId, projectId).orElse(null) : null;
+            MediaFacts clipMedia = hasClip
+                    ? media.find("motion.background.clipMediaId", clipMediaId, CreativePhoto.MEDIA_KIND_VIDEO) : null;
             if (clipMedia != null) {
                 boolean provenanced = notBlank(clipMedia.getSource()) && notBlank(clipMedia.getLicence());
                 items.add(new ReadinessItem("clipProvenance", provenanced, true,
@@ -448,13 +505,14 @@ public class CreativeService {
                                 : "the background clip is missing source and/or licence"));
             }
         } else {
-            addPhotoReadinessItems(projectId, creative, items);
+            addPhotoReadinessItems(media, creative, items);
         }
 
         CreativeAudio audio = toAudio(creative.getAudio());
         if (audio != null && "track".equals(audio.getSource())) {
             String trackId = audio.getTrackId();
-            CreativePhoto track = notBlank(trackId) ? photoRepository.findByIdAndProjectId(trackId, projectId).orElse(null) : null;
+            MediaFacts track = notBlank(trackId)
+                    ? media.find("audio.trackId", trackId, CreativePhoto.MEDIA_KIND_AUDIO) : null;
             boolean provenanced = track != null && notBlank(track.getSource()) && notBlank(track.getLicence());
             items.add(new ReadinessItem("audioProvenance", provenanced, true,
                     provenanced ? "the audio track has source and licence" : "the audio track is missing source and/or licence"));
@@ -463,31 +521,31 @@ public class CreativeService {
 
     /** Readiness for CLIP (COND-24 PR1): caption (above), alt text (advisory), the chosen clip's media
      *  source/licence, and its AI-disclosure flag (informational — mirrors {@link #addPhotoReadinessItems}). */
-    private void addClipReadinessItems(String projectId, Creative creative, List<ReadinessItem> items) {
+    private void addClipReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {
         Map<String, String> clipMedia = toClipMediaMap(creative.getClipMedia());
         boolean hasClip = !clipMedia.isEmpty();
         items.add(new ReadinessItem("clip", hasClip, true,
                 hasClip ? "a clip is chosen" : "no clip chosen: pick at least one video for this Creative"));
 
-        CreativePhoto media = representativeClipMedia(projectId, clipMedia);
-        if (media != null) {
-            boolean provenanced = notBlank(media.getSource()) && notBlank(media.getLicence());
+        MediaFacts clip = representativeClipMedia(media, clipMedia);
+        if (clip != null) {
+            boolean provenanced = notBlank(clip.getSource()) && notBlank(clip.getLicence());
             items.add(new ReadinessItem("mediaProvenance", provenanced, true,
                     provenanced ? "the clip has source and licence" : "the clip is missing source and/or licence"));
         }
-        boolean aiGenerated = media != null && media.isAiGenerated();
+        boolean aiGenerated = clip != null && clip.isAiGenerated();
         items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
                 aiGenerated ? "the clip is AI-generated: tick the AI-disclosure toggle on upload" : "not AI-generated"));
     }
 
     /** The {@code "default"} entry's media, or the first entry's if there is no default — the one clip
      *  {@link #addClipReadinessItems} reads provenance/AI-disclosure off. */
-    private CreativePhoto representativeClipMedia(String projectId, Map<String, String> clipMedia) {
+    private MediaFacts representativeClipMedia(MediaResolver media, Map<String, String> clipMedia) {
         if (clipMedia.isEmpty()) {
             return null;
         }
         String mediaId = clipMedia.containsKey("default") ? clipMedia.get("default") : clipMedia.values().iterator().next();
-        return mediaId != null ? photoRepository.findByIdAndProjectId(mediaId, projectId).orElse(null) : null;
+        return media.findLibrary(mediaId);
     }
 
     /**
@@ -554,6 +612,225 @@ public class CreativeService {
         AfterCommitStorageCleanup.deleteAfterCommit(storageService, gcsPaths, log);
     }
 
+    // ── Draft spec (preview-first) ────────────────────────────────────────
+
+    /**
+     * The render spec — and readiness — of a Creative that has <b>not</b> been saved, so a client can render
+     * a draft locally before anything is uploaded. Judged by exactly the rules {@link #createCreative}
+     * enforces ({@link #prepareCreate}), but persists nothing: no Creative, no render, no media row, no
+     * storage write (read-only URL signing aside), and no default Brand Kit is seeded. The Creative is built
+     * in memory only and is never handed to a repository, so no entity of the draft becomes managed.
+     *
+     * <p>Any media field may name {@code local:<key>} instead of a library id, declared in
+     * {@code request.localMedia}; those are never looked up, and the spec carries them as the literal
+     * {@code local:<key>} for the local job to resolve. With {@code baseCreativeId}, the saved Creative's
+     * fields are the starting point and every field present on the request overlays them.
+     */
+    @Transactional(readOnly = true)
+    public DraftSpec buildDraftSpec(String projectId, CreativeDraftSpecRequest request, User caller) {
+        requireEditor(projectId, caller);
+        Creative base = request.getBaseCreativeId() != null ? findCreative(projectId, request.getBaseCreativeId()) : null;
+        CreateCreativeRequest effective = overlayOnBase(base, request);
+
+        if (Creative.KIND_CLIP.equals(enumValue(effective.getKind(), Creative.KIND_STILL))) {
+            // A CLIP is assembled from its media, not rendered, so there is no spec to preview (cf. the
+            // preview-only refusal on a CLIP render).
+            throw new CreativeValidationException(List.of(new Violation("kind", "clipNoDraft",
+                    "a CLIP is assembled from its chosen media, not rendered: there is no draft spec to build")));
+        }
+
+        MediaResolver media = new MediaResolver(projectId,
+                request.getLocalMedia() != null ? request.getLocalMedia() : Map.of());
+        PreparedCreate prepared = prepareCreate(projectId, effective, media, true);
+        BrandKit kit = prepared.kit();
+        Creative creative = prepared.creative();
+        if (base != null && request.getTypeOverrides() == null) {
+            boolean headlineChanging = request.getHeadline() != null && !Objects.equals(request.getHeadline(), base.getHeadline());
+            boolean layoutChanging = request.getLayout() != null && !Objects.equals(request.getLayout(), base.getLayout());
+            // Same rule as patch: hand-tuned type sizes belong to the headline/layout they were tuned for
+            // (unless the draft pins its own typeOverrides, which prepareCreate has already applied).
+            creative.setTypeOverrides(headlineChanging || layoutChanging
+                    ? objectMapper.createObjectNode() : base.getTypeOverrides());
+        }
+
+        MediaFacts mainPhoto = media.find("photoId", creative.getPhotoId(), CreativePhoto.MEDIA_KIND_IMAGE);
+        Map<String, MediaFacts> beatPhotos = new LinkedHashMap<>();
+        List<SequenceBeat> sequence = toSequenceBeats(creative.getSequence());
+        for (int i = 0; i < sequence.size(); i++) {
+            String photoId = sequence.get(i).getPhotoId();
+            MediaFacts beatPhoto = media.find("sequence[" + i + "].photoId", photoId, CreativePhoto.MEDIA_KIND_IMAGE);
+            if (beatPhoto != null) {
+                beatPhotos.put(photoId, beatPhoto);
+            }
+        }
+        CreativeSpecBuilder.MotionMedia motionMedia = Creative.KIND_MOTION.equals(creative.getKind())
+                ? new CreativeSpecBuilder.MotionMedia(prepared.motion().motion(), prepared.motion().audio(),
+                        prepared.motion().clip(), prepared.motion().track())
+                : null;
+
+        CreativeRenderSpec spec = specBuilder.build(DRAFT_RENDER_ID, !Boolean.FALSE.equals(request.getPreviewOnly()),
+                creative, kit, mainPhoto, beatPhotos, specBuilder.resolvePlacements(kit, creative), motionMedia);
+        return new DraftSpec(spec, computeReadiness(creative, media));
+    }
+
+    /**
+     * The create request a draft stands for: the saved {@code base} Creative's fields (when there is one),
+     * with every field the draft request carries laid over them. A field is "present" when it is non-null;
+     * a list is present when it is non-empty (the generated model cannot tell an omitted list from an empty
+     * one), so a draft cannot clear a base Creative's placements or sequence — only replace them.
+     */
+    private CreateCreativeRequest overlayOnBase(Creative base, CreativeDraftSpecRequest draft) {
+        CreateCreativeRequest merged = new CreateCreativeRequest();
+        if (base != null) {
+            merged.brandKitId(base.getBrandKitId())
+                    .name(base.getName())
+                    .state(CreativeState.fromValue(base.getState()))
+                    .layout(base.getLayout())
+                    .theme(CreativeTheme.fromValue(base.getTheme()))
+                    .photoId(base.getPhotoId())
+                    .focalOverride(base.getFocalOverride() != null ? toStringMap(base.getFocalOverride()) : null)
+                    .headline(base.getHeadline())
+                    .body(base.getBody())
+                    .caption(base.getCaption())
+                    .altText(base.getAltText())
+                    .placements(new ArrayList<>(toStringList(base.getPlacements())))
+                    .sequenceKind(base.getSequenceKind() != null ? SequenceKind.fromValue(base.getSequenceKind()) : null)
+                    .sequence(new ArrayList<>(toSequenceBeats(base.getSequence())))
+                    .carouselRatio(base.getCarouselRatio())
+                    .lockup(CreativeLockup.fromValue(base.getLockup()))
+                    .kind(CreativeKind.fromValue(base.getKind()))
+                    .clipMedia(base.getClipMedia() != null ? new HashMap<>(toClipMediaMap(base.getClipMedia())) : null)
+                    .motion(toMotion(base.getMotion()))
+                    .audio(toAudio(base.getAudio()))
+                    .layoutOverrides(base.getLayoutOverrides() != null
+                            ? objectMapper.convertValue(base.getLayoutOverrides(), CreativeLayoutOverrides.class) : null);
+        }
+        if (draft.getBrandKitId() != null) merged.setBrandKitId(draft.getBrandKitId());
+        if (draft.getName() != null) merged.setName(draft.getName());
+        if (draft.getState() != null) merged.setState(draft.getState());
+        if (draft.getLayout() != null) merged.setLayout(draft.getLayout());
+        if (draft.getTheme() != null) merged.setTheme(draft.getTheme());
+        if (draft.getPhotoId() != null) merged.setPhotoId(draft.getPhotoId());
+        if (draft.getFocalOverride() != null) merged.setFocalOverride(draft.getFocalOverride());
+        if (draft.getHeadline() != null) merged.setHeadline(draft.getHeadline());
+        if (draft.getBody() != null) merged.setBody(draft.getBody());
+        if (draft.getCaption() != null) merged.setCaption(draft.getCaption());
+        if (draft.getAltText() != null) merged.setAltText(draft.getAltText());
+        if (draft.getPlacements() != null && !draft.getPlacements().isEmpty()) merged.setPlacements(draft.getPlacements());
+        if (draft.getSequenceKind() != null) merged.setSequenceKind(draft.getSequenceKind());
+        if (draft.getSequence() != null && !draft.getSequence().isEmpty()) merged.setSequence(draft.getSequence());
+        if (draft.getCarouselRatio() != null) merged.setCarouselRatio(draft.getCarouselRatio());
+        if (draft.getLockup() != null) merged.setLockup(draft.getLockup());
+        if (draft.getKind() != null) merged.setKind(draft.getKind());
+        if (draft.getClipMedia() != null) merged.setClipMedia(draft.getClipMedia());
+        if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
+        if (draft.getAudio() != null) merged.setAudio(draft.getAudio());
+        if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
+        // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
+        // or cleared there by the headline/layout rule; only a draft's own typeOverrides pass through here.
+        if (draft.getTypeOverrides() != null) merged.setTypeOverrides(draft.getTypeOverrides());
+        return merged;
+    }
+
+    /**
+     * Resolves the media references of one request: a library id against the project's library, and — only
+     * when {@code localMedia} was supplied (a draft spec) — a {@code local:<key>} reference against that
+     * declaration. A local reference is never looked up, so it is neither "not found" nor "blocked"; but it
+     * must be a well-formed key, declared, and of the kind its field takes, else {@link #violations()}
+     * names the field. An invalid local reference still resolves (to a stand-in of the expected kind), so
+     * the validator does not pile a second, misleading violation on top of the real one.
+     *
+     * <p>Results are cached for the request, so the validator, the spec and the readiness checklist all see
+     * one lookup and a violation is reported once.
+     */
+    private final class MediaResolver {
+        private final String projectId;
+        /** Null when local references are not accepted (every write other than a draft spec). */
+        private final Map<String, LocalMediaInfo> localMedia;
+        private final Map<String, MediaFacts> resolved = new HashMap<>();
+        private final Set<String> missing = new HashSet<>();
+        private final List<Violation> violations = new ArrayList<>();
+
+        MediaResolver(String projectId, Map<String, LocalMediaInfo> localMedia) {
+            this.projectId = projectId;
+            this.localMedia = localMedia;
+            if (localMedia != null) {
+                for (String key : new TreeSet<>(localMedia.keySet())) {
+                    if (!LOCAL_MEDIA_KEY.matcher(key).matches()) {
+                        report("localMedia", "localMediaKey", "localMedia key \"" + key + "\" must match "
+                                + LOCAL_MEDIA_KEY.pattern());
+                    }
+                }
+            }
+        }
+
+        String projectId() {
+            return projectId;
+        }
+
+        List<Violation> violations() {
+            return violations;
+        }
+
+        boolean isLocalRef(String ref) {
+            return localMedia != null && ref != null && ref.startsWith(MediaFacts.LOCAL_PREFIX);
+        }
+
+        /** The media {@code ref} names, or null when it names nothing. {@code field} and {@code expectedKind}
+         *  matter only to a local reference, which is checked against what its field takes. */
+        MediaFacts find(String field, String ref, String expectedKind) {
+            if (ref == null) {
+                return null;
+            }
+            return isLocalRef(ref) ? findLocal(field, ref, expectedKind) : findLibrary(ref);
+        }
+
+        MediaFacts findLibrary(String id) {
+            if (id == null || missing.contains(id)) {
+                return null;
+            }
+            MediaFacts cached = resolved.get(id);
+            if (cached != null) {
+                return cached;
+            }
+            MediaFacts found = photoRepository.findByIdAndProjectId(id, projectId).map(MediaFacts::of).orElse(null);
+            if (found == null) {
+                missing.add(id);
+            } else {
+                resolved.put(id, found);
+            }
+            return found;
+        }
+
+        private MediaFacts findLocal(String field, String ref, String expectedKind) {
+            String key = ref.substring(MediaFacts.LOCAL_PREFIX.length());
+            LocalMediaInfo declared = localMedia.get(key);
+            LocalMediaInfo usable = null;
+            if (!LOCAL_MEDIA_KEY.matcher(key).matches()) {
+                report(field, "localMediaKey", field + " \"" + ref + "\": the key must match " + LOCAL_MEDIA_KEY.pattern());
+            } else if (declared == null) {
+                report(field, "localMediaUndeclared", field + " \"" + ref + "\" is not declared in localMedia");
+            } else if (declared.getKind() == null || !expectedKind.equals(declared.getKind().getValue())) {
+                report(field, "localMediaKind", field + " \"" + ref + "\" is declared as "
+                        + (declared.getKind() != null ? declared.getKind().getValue() : "no kind")
+                        + " but this field takes a " + expectedKind);
+            } else {
+                usable = declared;
+            }
+            return usable != null
+                    ? MediaFacts.local(key, expectedKind, usable.getDurationSeconds(), usable.getHasAudio(),
+                            usable.getWidth(), usable.getHeight())
+                    : MediaFacts.local(key, expectedKind, null, null, null, null);
+        }
+
+        private void report(String field, String ruleId, String message) {
+            Violation violation = new Violation(field, ruleId, message);
+            if (!violations.contains(violation)) {
+                violations.add(violation);
+            }
+        }
+    }
+
     // ── Number/letter assignment ──────────────────────────────────────────
 
     /**
@@ -590,25 +867,32 @@ public class CreativeService {
 
     // ── Reference resolution ──────────────────────────────────────────────
 
-    private record PhotoResolution(CreativePhoto photo, boolean resolvable) {
+    private record PhotoResolution(MediaFacts photo, boolean resolvable) {
     }
 
-    private PhotoResolution resolvePhoto(String projectId, String photoId) {
+    private PhotoResolution resolvePhoto(MediaResolver media, String field, String photoId, String expectedKind) {
         if (photoId == null) {
             return new PhotoResolution(null, true);
         }
-        CreativePhoto photo = photoRepository.findByIdAndProjectId(photoId, projectId).orElse(null);
+        MediaFacts photo = media.find(field, photoId, expectedKind);
         return new PhotoResolution(photo, photo != null);
     }
 
     private record SequencePhotoResolution(Set<String> unknownIds) {
     }
 
-    private SequencePhotoResolution resolveSequencePhotos(String projectId, List<SequenceBeat> sequence) {
+    private SequencePhotoResolution resolveSequencePhotos(MediaResolver media, List<SequenceBeat> sequence) {
         Set<String> referenced = new HashSet<>();
-        for (SequenceBeat beat : sequence) {
-            if (beat.getPhotoId() != null) {
-                referenced.add(beat.getPhotoId());
+        for (int i = 0; i < sequence.size(); i++) {
+            String photoId = sequence.get(i).getPhotoId();
+            if (photoId == null) {
+                continue;
+            }
+            if (media.isLocalRef(photoId)) {
+                // Not in the library, so never "unknown": declared and the right kind, or a violation of its own.
+                media.find("sequence[" + i + "].photoId", photoId, CreativePhoto.MEDIA_KIND_IMAGE);
+            } else {
+                referenced.add(photoId);
             }
         }
         if (referenced.isEmpty()) {
@@ -616,7 +900,7 @@ public class CreativeService {
         }
         Set<String> existing = new HashSet<>();
         for (CreativePhoto photo : photoRepository.findAllByIdIn(referenced)) {
-            if (projectId.equals(photo.getProjectId())) {
+            if (media.projectId().equals(photo.getProjectId())) {
                 existing.add(photo.getId());
             }
         }
@@ -631,17 +915,17 @@ public class CreativeService {
      * resolves to no entries (a CLIP may be a draft with no clip chosen yet, exactly like a STILL Creative
      * may be a draft with no photo).
      */
-    private List<CreativeValidator.ClipMediaEntry> resolveClipMedia(String projectId, Map<String, String> clipMedia) {
+    private List<CreativeValidator.ClipMediaEntry> resolveClipMedia(MediaResolver media, Map<String, String> clipMedia) {
         if (clipMedia == null || clipMedia.isEmpty()) {
             return List.of();
         }
         List<CreativeValidator.ClipMediaEntry> entries = new ArrayList<>();
         for (Map.Entry<String, String> entry : clipMedia.entrySet()) {
             String mediaId = entry.getValue();
-            CreativePhoto media = mediaId != null ? photoRepository.findByIdAndProjectId(mediaId, projectId).orElse(null) : null;
-            entries.add(new CreativeValidator.ClipMediaEntry(entry.getKey(), mediaId, media != null,
-                    media != null && media.isVideo(), media != null && media.isUploaded(),
-                    media != null && media.isBlocked()));
+            MediaFacts clip = media.findLibrary(mediaId);
+            entries.add(new CreativeValidator.ClipMediaEntry(entry.getKey(), mediaId, clip != null,
+                    clip != null && clip.isVideo(), clip != null && clip.isUploaded(),
+                    clip != null && clip.isBlocked()));
         }
         return entries;
     }
@@ -657,10 +941,11 @@ public class CreativeService {
 
     // ── MOTION (COND-24 PR2) ────────────────────────────────────────────────
 
-    /** {@code motion}/{@code audio}, defaults already applied, plus the resolved {@link
-     *  CreativeValidator.MotionInput} to validate against. {@code motion}/{@code input} are null for a
+    /** {@code motion}/{@code audio}, defaults already applied, the media they reference, and the resolved
+     *  {@link CreativeValidator.MotionInput} to validate against. {@code motion}/{@code input} are null for a
      *  non-MOTION kind — {@code creative.motion}/{@code audio} stay whatever was passed through untouched. */
-    private record MotionResolution(CreativeMotion motion, CreativeAudio audio, CreativeValidator.MotionInput input) {
+    private record MotionResolution(CreativeMotion motion, CreativeAudio audio, MediaFacts clip, MediaFacts track,
+                                    CreativeValidator.MotionInput input) {
     }
 
     /**
@@ -670,9 +955,10 @@ public class CreativeService {
      * clip, audio track) against the project's library, mirroring {@link #resolveClipMedia}. A non-MOTION
      * kind passes {@code motionRequest}/{@code audioRequest} through untouched with no validator input.
      */
-    private MotionResolution resolveMotion(String projectId, String kind, CreativeMotion motionRequest, CreativeAudio audioRequest) {
+    private MotionResolution resolveMotion(MediaResolver media, String kind, CreativeMotion motionRequest,
+                                           CreativeAudio audioRequest) {
         if (!Creative.KIND_MOTION.equals(kind)) {
-            return new MotionResolution(motionRequest, audioRequest, null);
+            return new MotionResolution(motionRequest, audioRequest, null, null, null);
         }
         CreativeMotion motion = motionRequest != null ? motionRequest : new CreativeMotion();
         if (!notBlank(motion.getPreset())) {
@@ -693,8 +979,8 @@ public class CreativeService {
             motion.setEndCard(true);
         }
 
-        PhotoResolution clipRes = resolvePhoto(projectId, background.getClipMediaId());
-        CreativePhoto clipMedia = clipRes.photo();
+        MediaFacts clipMedia = resolvePhoto(media, "motion.background.clipMediaId", background.getClipMediaId(),
+                CreativePhoto.MEDIA_KIND_VIDEO).photo();
 
         CreativeAudio audio = audioRequest != null ? audioRequest : new CreativeAudio();
         if (!notBlank(audio.getSource())) {
@@ -709,33 +995,11 @@ public class CreativeService {
             audio.setFadeOutSec(BigDecimal.ONE);
         }
 
-        PhotoResolution trackRes = resolvePhoto(projectId, audio.getTrackId());
-        CreativePhoto trackMedia = trackRes.photo();
+        MediaFacts trackMedia = resolvePhoto(media, "audio.trackId", audio.getTrackId(),
+                CreativePhoto.MEDIA_KIND_AUDIO).photo();
 
-        CreativeValidator.MotionInput input = new CreativeValidator.MotionInput(
-                motion.getPreset(),
-                motion.getDurationSec() != null ? motion.getDurationSec().doubleValue() : null,
-                background.getSource(),
-                background.getMotion(),
-                background.getClipMediaId(),
-                clipRes.resolvable(),
-                clipMedia != null && clipMedia.isVideo(),
-                clipMedia != null && clipMedia.isUploaded(),
-                clipMedia != null && clipMedia.isBlocked(),
-                clipMedia != null && clipMedia.getDurationSeconds() != null ? clipMedia.getDurationSeconds().doubleValue() : null,
-                clipMedia != null ? clipMedia.getHasAudio() : null,
-                background.getClipStartSec() != null ? background.getClipStartSec().doubleValue() : null,
-                motion.getEndCard(),
-                audio.getSource(),
-                audio.getTrackId(),
-                trackRes.resolvable(),
-                trackMedia != null && trackMedia.isAudio(),
-                trackMedia != null && trackMedia.isUploaded(),
-                trackMedia != null && trackMedia.isBlocked(),
-                audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
-                audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null);
-
-        return new MotionResolution(motion, audio, input);
+        return new MotionResolution(motion, audio, clipMedia, trackMedia,
+                CreativeValidator.MotionInput.resolve(motion, audio, clipMedia, trackMedia));
     }
 
     /** {@code creative.motion} JSON -&gt; the typed DTO, or null when unset. */
@@ -803,6 +1067,12 @@ public class CreativeService {
         }
         return objectMapper.convertValue(node, new TypeReference<List<String>>() {
         });
+    }
+
+    private Map<String, String> toStringMap(JsonNode node) {
+        Map<String, String> map = new LinkedHashMap<>();
+        node.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue().asText()));
+        return map;
     }
 
     private List<SequenceBeat> toSequenceBeats(JsonNode node) {

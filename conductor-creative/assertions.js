@@ -121,12 +121,23 @@ function sameRgb(a, b) {
 export async function runAssertions(board, placement, brand, { outputScale = 2 } = {}) {
   const errors = [];
   const warnings = [];
+  // The same findings with a stable `rule` id each, for callers (the draft preview) that report them
+  // structured. `errors` / `warnings` stay plain message arrays, exactly as before.
+  const checks = [];
+  const fail = (rule, message) => {
+    errors.push(message);
+    checks.push({ rule, severity: 'error', message });
+  };
+  const warn = (rule, message) => {
+    warnings.push(message);
+    checks.push({ rule, severity: 'warning', message });
+  };
   const br = rectOf(board);
 
   const nodes = [...board.querySelectorAll(CHECKED_SELECTOR)].map((n) => ({ name: n.className, rect: rectOf(n) }));
 
   const spill = spillDetect(br, nodes);
-  if (spill.length) errors.push(`text spill: ${spill.join('; ')}`);
+  if (spill.length) fail('spill', `text spill: ${spill.join('; ')}`);
 
   const safe = {
     top: Number(board.dataset.safeTop) || 0,
@@ -134,19 +145,19 @@ export async function runAssertions(board, placement, brand, { outputScale = 2 }
     right: Number(board.dataset.safeRight) || 0,
   };
   const intrusion = safeZoneIntrusion(br, nodes, safe);
-  if (intrusion.length) errors.push(`safe-zone intrusion: ${intrusion.join('; ')}`);
+  if (intrusion.length) fail('safeZone', `safe-zone intrusion: ${intrusion.join('; ')}`);
 
   if (brand && brand.fontFamily) {
     const headlineEl = board.querySelector('.cc-headline');
     const size = Math.round(parseFloat(getComputedStyle(headlineEl).fontSize)) || 16;
     if (!document.fonts.check(`800 ${size}px "${brand.fontFamily}"`)) {
-      errors.push(`font "${brand.fontFamily}" did not load (would export in a fallback face)`);
+      fail('font', `font "${brand.fontFamily}" did not load (would export in a fallback face)`);
     }
   }
 
   const imgs = [...board.querySelectorAll('img')];
   const broken = imgs.filter((i) => !i.complete || i.naturalWidth === 0).map((i) => i.getAttribute('src'));
-  if (broken.length) errors.push(`image(s) failed to load: ${broken.join(', ')}`);
+  if (broken.length) fail('image', `image(s) failed to load: ${broken.join(', ')}`);
 
   // A bleed/card layout paints its photo as a CSS background, invisible to
   // the <img> check above — probe it directly, the same way a typo'd path
@@ -161,11 +172,11 @@ export async function runAssertions(board, placement, brand, { outputScale = 2 }
       img.src = bgUrlMatch[1];
     });
     if (!probe.ok) {
-      errors.push(`background photo failed to load: ${bgUrlMatch[1]}`);
+      fail('image', `background photo failed to load: ${bgUrlMatch[1]}`);
     } else if (placement && probe.w < placement.w * outputScale && probe.h < placement.h * outputScale) {
       // Soft photography check: a source smaller than the output frame (2x for images, 1x for video) is
       // upscaled, so the photo goes soft while the text stays crisp.
-      warnings.push(`photo is ${probe.w}x${probe.h}, upscaled to fit ${placement.w * outputScale}x${placement.h * outputScale}`);
+      warn('photoResolution', `photo is ${probe.w}x${probe.h}, upscaled to fit ${placement.w * outputScale}x${placement.h * outputScale}`);
     }
   }
 
@@ -176,9 +187,9 @@ export async function runAssertions(board, placement, brand, { outputScale = 2 }
     const expectedRaw = getComputedStyle(board).getPropertyValue('--cc-accent').trim();
     const expectedRgb = expectedRaw ? resolveCssColor(expectedRaw) : null;
     if (!emRgb) {
-      errors.push('accent colour did not resolve on the headline');
+      fail('accent', 'accent colour did not resolve on the headline');
     } else if (expectedRgb && !sameRgb(emRgb, expectedRgb)) {
-      errors.push(`accent colour unresolved: headline em is ${getComputedStyle(em).color}, brand accent resolves to ${expectedRaw}`);
+      fail('accent', `accent colour unresolved: headline em is ${getComputedStyle(em).color}, brand accent resolves to ${expectedRaw}`);
     }
   }
 
@@ -207,15 +218,15 @@ export async function runAssertions(board, placement, brand, { outputScale = 2 }
     if (fgRgb && bgRgb) contrast = contrastRatio(fgRgb, bgRgb);
   }
   if (contrast !== null && contrast < 3) {
-    errors.push(`headline contrast is ${contrast}:1 against its background, below the 3:1 floor for large text`);
+    fail('contrast', `headline contrast is ${contrast}:1 against its background, below the 3:1 floor for large text`);
   }
 
   const boxRect = board.getBoundingClientRect();
   const width = Math.round(boxRect.width);
   const height = Math.round(boxRect.height);
   if (placement && (width !== placement.w || height !== placement.h)) {
-    errors.push(`artboard is ${width}x${height}, expected ${placement.w}x${placement.h}`);
+    fail('size', `artboard is ${width}x${height}, expected ${placement.w}x${placement.h}`);
   }
 
-  return { errors, warnings, contrast, width, height };
+  return { errors, warnings, checks, contrast, width, height };
 }

@@ -335,3 +335,41 @@ test('run(): a MOTION render with no ffmpegPath fails with a clear error', async
   assert.equal(transport.calls.putFrame.length, 0);
   assert.match(transport.calls.fail.message, /ffmpeg/);
 });
+
+test('run(): a MOTION preview with checkPlacements checks the end-card frame and encodes no video', async (t) => {
+  if (!(await browserAvailable())) return t.skip('no local Chromium (run: npx playwright install chromium)');
+
+  const badge = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="160"><rect width="480" height="160" fill="black"/></svg>'
+  );
+  const transport = fakeTransport({
+    renderId: 'm-check',
+    previewOnly: true,
+    creative: {
+      kind: 'MOTION',
+      layout: 'stacked',
+      theme: 'dark',
+      headline: 'Plan the week in *one sentence*.',
+      photoUrl: TINY_PHOTO,
+      motion: { durationSec: 3, preset: 'fade-up', background: { source: 'photo', motion: 'zoom-in' } },
+      audio: { source: 'none' },
+    },
+    brand: { logos: { badge }, ctaClaim: 'Free on the App Store' },
+    placements: ['9x16'],
+  });
+  let checks;
+  transport.complete = async (warnings, c) => {
+    checks = c;
+  };
+
+  // No ffmpegPath: a preview must not need (or start) an encoder.
+  const ok = await run({ transport, checkPlacements: true, fps: 10, log: () => {} });
+
+  assert.equal(ok, true);
+  assert.deepEqual(transport.calls.putFrame.map((f) => f.placementKey), ['sheet']);
+  assert.equal(transport.calls.putPoster.length, 0);
+  const failures = checks.filter((c) => c.severity === 'error');
+  assert.equal(failures.length, 1, JSON.stringify(checks));
+  assert.equal(failures[0].rule, 'safeZone');
+  assert.equal(failures[0].placementKey, '9x16');
+});

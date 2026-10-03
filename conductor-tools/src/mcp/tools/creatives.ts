@@ -311,6 +311,9 @@ export interface CreativeFields {
   lockup?: string
   /** Per-placement overrides of layout-derived numbers, in pixels — see conductor-creative/README.md. */
   layoutOverrides?: CreativeLayoutOverrides
+  /** Pinned headline type per placement: {"9x16": [fontSize, lineHeight?, letterSpacing?]} — fontSize in
+   * artboard px, lineHeight a multiplier, letterSpacing in px. A placement with no entry is auto-fitted. */
+  typeOverrides?: Record<string, number[]>
 }
 
 export interface CreateCreativeParams extends CreativeFields {

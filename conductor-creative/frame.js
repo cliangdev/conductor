@@ -15,7 +15,7 @@
  *   }
  *
  * Result contract:
- *   window.__RENDER_RESULT = { ok, errors?, warnings?, width, height } | { ok: false, error }
+ *   window.__RENDER_RESULT = { ok, errors?, warnings?, checks?, width, height } | { ok: false, error }
  *   window.__ready = true   // set exactly once, success or failure, when the
  *                           // job's page.waitForFunction should stop waiting
  *
@@ -108,8 +108,8 @@ async function main() {
       return;
     }
 
-    const { errors, warnings, width, height } = await runAssertions(board, placement, spec.brand || {});
-    finish({ ok: errors.length === 0, errors, warnings, width, height });
+    const { errors, warnings, checks, width, height } = await runAssertions(board, placement, spec.brand || {});
+    finish({ ok: errors.length === 0, errors, warnings, checks, width, height });
   } catch (err) {
     finish({ ok: false, error: String((err && err.message) || err) });
   }

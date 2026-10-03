@@ -1,0 +1,56 @@
+{
+  "renderId" : "{RENDER}",
+  "previewOnly" : false,
+  "creative" : {
+    "layout" : "stacked",
+    "theme" : "dark",
+    "headline" : "Plan the week in *one sentence*.",
+    "body" : "A calm plan.",
+    "caption" : "Caption.",
+    "placements" : [ "story" ],
+    "focalOverride" : {
+      "1x1" : "0.5 0.5"
+    },
+    "sequence" : [ ],
+    "typeOverrides" : { },
+    "photoUrl" : "http://localhost:8080/api/v1/local-files/projects/{PROJECT}/marketing/photos/test.jpg",
+    "focal" : {
+      "x" : "0.3",
+      "y" : "0.7"
+    },
+    "lockup" : "chip",
+    "layoutOverrides" : {
+      "band" : {
+        "9x16" : 1200
+      },
+      "padBottom" : null
+    },
+    "kind" : "STILL",
+    "motion" : null,
+    "audio" : null,
+    "clipHasAudio" : null
+  },
+  "brand" : {
+    "tokens" : {
+      "ink" : "#18181B",
+      "ink2" : "#71717A",
+      "accent" : "#3B82F6",
+      "darkBg" : "#18181B",
+      "accent2" : "#2563EB",
+      "darkInk" : "#FFFFFF",
+      "lightBg" : "#F4F4F5",
+      "lightCard" : "#FFFFFF"
+    },
+    "fontFamily" : null,
+    "fontUrl" : null,
+    "logos" : {
+      "mark" : null,
+      "wordmarkDark" : null,
+      "wordmarkLight" : null,
+      "badge" : null
+    },
+    "ctaClaim" : null,
+    "enabledPlacements" : [ "9x16", "4x5", "1x1" ]
+  },
+  "placements" : [ "9x16", "4x5", "1x1", "story" ]
+}

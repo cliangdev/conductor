@@ -297,6 +297,73 @@ async function renderMotionPlacement({ browser, origin, spec, placementKey, ffmp
   }
 }
 
+/* ── Draft preview: the full render's per-placement checks, without the frames ───────────────── */
+
+/* A draft preview renders only the contact sheet (sheet.html), which never runs the assertions — a
+ * bad frame still shows up in a sheet so a human can see what broke. The full render DOES run them
+ * (spill, the bottom safe zone, contrast, fonts, images, the artboard size) on every placement's
+ * frame.html and fails the render, so a design the person approved from the sheet could still fail
+ * afterwards. This runs those very same checks (assertions.js's runAssertions, via frame.html) for
+ * each placement the full render would produce, in the one already-open browser against the
+ * already-served pages, and throws the screenshot away. A MOTION creative is checked the way its
+ * full render checks it: once, on the end-card (final) frame — no video is encoded.
+ *
+ * Resolves `[{ placementKey, index?, rule, message, severity: 'error' | 'warning' }]`; a board that
+ * would not even build (or a page error) is reported as rule "render". */
+async function checkFrame({ browser, origin, spec, frame, fps, log }) {
+  const label = frame.index !== undefined ? `${frame.placementKey}[${frame.index}]` : frame.placementKey;
+  const tag = (check) => ({
+    placementKey: frame.placementKey,
+    ...(frame.index !== undefined ? { index: frame.index } : {}),
+    rule: check.rule,
+    message: check.message,
+    severity: check.severity,
+  });
+  const isMotion = spec.creative && spec.creative.kind === 'MOTION' && spec.creative.motion;
+  const page = await browser.newPage({ deviceScaleFactor: 1 });
+  try {
+    const motion = isMotion ? spec.creative.motion : undefined;
+    const durationSec = (motion && motion.durationSec) || 8;
+    await page.addInitScript((s) => {
+      window.__RENDER_SPEC__ = s;
+    }, {
+      creative: spec.creative,
+      brand: spec.brand,
+      placementKey: frame.placementKey,
+      sequenceIndex: frame.index,
+      ...(isMotion ? { motion, time: 0, clipStartSec: spec.creative.clipStartSec } : {}),
+    });
+    await page.goto(`${origin}/frame.html`, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: PAGE_TIMEOUT_MS });
+
+    if (isMotion) {
+      const boot = await page.evaluate(() => window.__RENDER_RESULT);
+      if (!boot || !boot.ok) {
+        return [tag({ rule: 'render', severity: 'error', message: (boot && boot.error) || 'failed to build the MOTION board' })];
+      }
+      const frameCount = Math.max(1, Math.round(durationSec * fps));
+      const endTime = (frameCount - 1) / fps;
+      const seeked = await page.evaluate((t) => window.__seekMotion(t), endTime);
+      if (!seeked) return [tag({ rule: 'render', severity: 'error', message: `motion seek failed at t=${endTime.toFixed(2)}s` })];
+      const assertion = await page.evaluate(() => window.__assertBoard());
+      return ((assertion && assertion.checks) || []).map(tag);
+    }
+
+    const result = await page.evaluate(() => window.__RENDER_RESULT);
+    if (!result) return [tag({ rule: 'render', severity: 'error', message: 'render failed for an unknown reason' })];
+    if (result.checks) return result.checks.map(tag);
+    if (!result.ok) {
+      return [tag({ rule: 'render', severity: 'error', message: result.error || (result.errors || []).join('; ') || 'render failed for an unknown reason' })];
+    }
+    return [];
+  } catch (err) {
+    log(`check ${label}: ${err.message}`);
+    return [tag({ rule: 'render', severity: 'error', message: err.message })];
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 /** Renders every frame a spec calls for, uploads each PNG (or, for a MOTION
  * creative that is not `previewOnly`, one MP4 + poster per placement — see
  * renderMotionPlacement above), and reports complete/fail. Options:
@@ -306,12 +373,15 @@ async function renderMotionPlacement({ browser, origin, spec, placementKey, ffmp
  *   ffmpegPath        a local ffmpeg binary's path. Required for a MOTION
  *                     render (not previewOnly) — ignored otherwise.
  *   fps               frames per second for a MOTION render (default 30).
+ *   checkPlacements   true: when the spec is `previewOnly`, also run the full render's per-placement
+ *                     assertions (see checkFrame above) and pass them to `transport.complete(warnings,
+ *                     checks)`. They never fail the run; the caller decides what a failing check means.
  *   log               (...args) => void (default: console.log).
  * Resolves `true` on success, `false` on a reported failure (never throws —
  * a thrown error from a truly unexpected place still gets caught and turned
  * into a `transport.fail()` call before resolving `false`, so a caller never
  * has to guess whether `transport.fail` was already called). */
-export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactory = defaultBrowserFactory, ffmpegPath, fps = DEFAULT_FPS, log = console.log }) {
+export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactory = defaultBrowserFactory, ffmpegPath, fps = DEFAULT_FPS, checkPlacements = false, log = console.log }) {
   let spec;
   try {
     log('fetching spec');
@@ -408,7 +478,19 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
       }
     }
 
-    await transport.complete(warnings);
+    if (checkPlacements && spec.previewOnly) {
+      const checks = [];
+      if ((spec.placements || []).length) {
+        for (const frame of framesFor({ ...spec, previewOnly: false })) {
+          checks.push(...(await checkFrame({ browser, origin, spec, frame, fps, log })));
+        }
+      }
+      const failed = checks.filter((c) => c.severity === 'error').length;
+      log(`checked placements: ${failed} failing, ${checks.length - failed} warning(s)`);
+      await transport.complete(warnings, checks);
+    } else {
+      await transport.complete(warnings);
+    }
     log(`complete (${warnings.length} warning(s))`);
     return true;
   } catch (err) {

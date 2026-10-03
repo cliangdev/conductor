@@ -20,6 +20,7 @@ const PLUGIN_FILES = [
   'skills/conductor-coder/SKILL.md',
   'skills/conductor-publisher/SKILL.md',
   'skills/conductor-creative/SKILL.md',
+  'skills/conductor-creative/references/brand-kit-setup.md',
 ]
 
 // Paths removed in previous versions — deleted on `conductor init` (and a refresh) to clean up stale installs.

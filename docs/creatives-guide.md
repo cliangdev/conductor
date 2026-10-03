@@ -77,8 +77,8 @@ work. Either way, rendering the final artwork always happens locally, not on Con
 
 **Prerequisites:**
 
-- `npm install -g @cliangdev/conductor` (0.25.0 or later — earlier versions work for creatives but
-  don't have `/conductor:creative`), then `conductor login` and `conductor init` in your project —
+- `npm install -g @cliangdev/conductor` (0.26.0 or later — earlier versions work for creatives but
+  don't have the draft preview below), then `conductor login` and `conductor init` in your project —
   see the [conductor-tools README](../conductor-tools/README.md) if you haven't set these up
   before. Already set up? Just update the package; skills refresh automatically from 0.25.0.
 - Google Chrome or Microsoft Edge installed, or run `npx playwright install chromium` once.
@@ -95,15 +95,24 @@ or, to test a headline variant of something that already exists:
 
 > Cut a variant of 12a with the headline "Spring colours, *half price*."
 
-Claude reads your Brand Kit and its linked Knowledge page, picks or uploads a photo, writes the
-copy against your kit's rules, and renders a preview to check by eye before calling it done. Under
-the hood it's calling these MCP tools in sequence: `get_brand_kit`, `upload_creative_photo`,
-`create_creative`, `render_creative`, `preview_creative`, and — once you're ready to publish —
-`attach_creative_to_post`. `get_post_status` confirms the Post picked it up. `get_brand_kit`
+Claude reads your Brand Kit and its linked Knowledge page, picks a photo, writes the copy against
+your kit's rules, and renders a **draft** on your machine for you to look at. **Nothing is saved to
+Conductor — no Creative, no photo upload — until you approve it.** You'll be asked to *Approve &
+upload*, *Request changes* or *Stop*; changes just make another draft. Under the hood it's calling
+these MCP tools in sequence: `get_brand_kit`, `preview_creative_draft` (renders the draft and shows
+you the image), `commit_creative_draft` (after you approve: uploads the photo, saves the Creative,
+renders the final frames), and — once you're ready to publish — `attach_creative_to_post`. `get_post_status` confirms the Post picked it up. `get_brand_kit`
 answers with a `configured` flag — when it's false, Claude sets up the kit itself with
 `update_brand_kit` and `upload_brand_image` before writing any copy, rather than rendering against
 an empty kit. `list_creative_media` lists what's already in your photo/video/audio library, so
 Claude can reuse an existing upload instead of asking you for a new one.
+
+**Where drafts live.** Each preview writes its image and a `draft.json` into
+`.conductor/drafts/<timestamp>-<name>/` in your project (git ignores the folder). Open the image
+there any time. Drafts you've committed, and any older than 14 days, are deleted automatically the
+next time you preview or commit. Editing an existing Creative works the same way — Claude previews
+the change first, and only your approval updates the saved Creative. (Posting a finished video as-is
+has no artwork to preview, so it goes up directly.)
 
 Display ids like `12a` (and lettered variants `12b`, `12c`, …) work everywhere you'd type a
 Creative's id — in a prompt, in the MCP tools and in the CLI (`conductor creative render 12a`).

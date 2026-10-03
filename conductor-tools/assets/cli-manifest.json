@@ -171,7 +171,7 @@
       },
       {
         "name": "conductor:creative",
-        "description": "One entry point for creative work \u2014 checks the workspace brand (offers to set it up if unconfigured), asks what to make (static ad, short video, an existing clip), then hands off to the conductor-creative skill through render, preview and attach."
+        "description": "One entry point for creative work \u2014 checks the workspace brand (offers to set it up if unconfigured), asks what to make (static ad, short video, an existing clip), then hands off to the conductor-creative skill through draft, preview, approval, commit and attach."
       }
     ],
     "agents": [
@@ -195,7 +195,7 @@
       },
       {
         "name": "conductor-creative",
-        "description": "Makes a Creative end to end, static or short video: sets up the Brand Kit if unconfigured, reads it and its Knowledge page, picks media and an angle, creates the Creative, renders and looks at the result, fixes what's wrong, then hands it to conductor-publisher."
+        "description": "Makes a Creative end to end, static or short video: sets up the Brand Kit if unconfigured, reads it and its Knowledge page, picks media and an angle, previews a draft locally and shows it for approval before anything is saved, commits it, fixes what's wrong, then hands it to conductor-publisher."
       }
     ]
   },
@@ -781,7 +781,7 @@
     },
     {
       "name": "upload_creative_photo",
-      "description": "Deprecated alias for upload_creative_media — same behavior, including for video/audio.",
+      "description": "Deprecated alias for upload_creative_media \u2014 same behavior, including for video/audio.",
       "category": "marketing"
     },
     {
@@ -798,6 +798,19 @@
       "category": "marketing",
       "requiredParams": [
         "creativeId"
+      ]
+    },
+    {
+      "name": "preview_creative_draft",
+      "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image. Never writes to Conductor; commit only after the person approves.",
+      "category": "marketing"
+    },
+    {
+      "name": "commit_creative_draft",
+      "description": "Save an approved draft: uploads its local files, creates (or updates) the Creative, and renders the real frames. The first write to Conductor; a draft commits once. Call get_creative to verify.",
+      "category": "marketing",
+      "requiredParams": [
+        "draftDir"
       ]
     },
     {

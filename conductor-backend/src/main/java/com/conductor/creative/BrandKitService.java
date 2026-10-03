@@ -127,6 +127,10 @@ public class BrandKitService {
     }
 
     private BrandKit createDefaultKit(String projectId) {
+        return brandKitRepository.save(newDefaultKit(projectId));
+    }
+
+    private BrandKit newDefaultKit(String projectId) {
         BrandKit kit = new BrandKit();
         kit.setProjectId(projectId);
         kit.setSlug(DEFAULT_SLUG);
@@ -137,7 +141,18 @@ public class BrandKitService {
         kit.setApprovedLines(objectMapper.createArrayNode());
         kit.setEnabledPlacements(objectMapper.valueToTree(DEFAULT_PLACEMENTS));
         kit.setKnowledgePagePath("marketing/brand.md");
-        return brandKitRepository.save(kit);
+        return kit;
+    }
+
+    /**
+     * The project's default kit for a read that must persist nothing (a draft spec): the stored one, or —
+     * when the workspace has never had a kit — an unsaved stand-in with the same neutral defaults
+     * {@link #resolveDefault} would seed. Never writes, never takes the {@code projects} row lock.
+     */
+    @Transactional(readOnly = true)
+    public BrandKit peekDefault(String projectId) {
+        return brandKitRepository.findByProjectIdAndIsDefaultTrue(projectId)
+                .orElseGet(() -> newDefaultKit(projectId));
     }
 
     @Transactional(readOnly = true)
