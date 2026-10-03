@@ -1,5 +1,8 @@
 package com.conductor.creative;
 
+import com.conductor.generated.v2.model.CreativeAudio;
+import com.conductor.generated.v2.model.CreativeMotion;
+import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
@@ -88,6 +91,43 @@ public class CreativeValidator {
             boolean audioTrackBlocked,
             Double volume,
             Double fadeOutSec) {
+
+        /**
+         * The validator's view of a MOTION creative, from its {@code motion}/{@code audio} and the media
+         * they reference ({@code clip}/{@code track}: null when the id is unset or did not resolve) —
+         * shared by the create/patch/variant writes, a render of a saved Creative, and a draft spec, so all
+         * of them judge the same facts the same way. Null when {@code motion} is.
+         */
+        public static MotionInput resolve(CreativeMotion motion, CreativeAudio audio, MediaFacts clip, MediaFacts track) {
+            if (motion == null) {
+                return null;
+            }
+            CreativeMotionBackground background = motion.getBackground();
+            String clipMediaId = background != null ? background.getClipMediaId() : null;
+            String trackId = audio != null ? audio.getTrackId() : null;
+            return new MotionInput(
+                    motion.getPreset(),
+                    motion.getDurationSec() != null ? motion.getDurationSec().doubleValue() : null,
+                    background != null ? background.getSource() : null,
+                    background != null ? background.getMotion() : null,
+                    clipMediaId,
+                    clipMediaId == null || clip != null,
+                    clip != null && clip.isVideo(),
+                    clip != null && clip.isUploaded(),
+                    clip != null && clip.isBlocked(),
+                    clip != null && clip.getDurationSeconds() != null ? clip.getDurationSeconds().doubleValue() : null,
+                    clip != null ? clip.getHasAudio() : null,
+                    background != null && background.getClipStartSec() != null ? background.getClipStartSec().doubleValue() : null,
+                    motion.getEndCard(),
+                    audio != null ? audio.getSource() : null,
+                    trackId,
+                    trackId == null || track != null,
+                    track != null && track.isAudio(),
+                    track != null && track.isUploaded(),
+                    track != null && track.isBlocked(),
+                    audio != null && audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
+                    audio != null && audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null);
+        }
 
         /** A test-friendly builder — every field defaults to "structurally valid" (fade-up preset, 8s
          *  duration, photo background at zoom-in, no audio) so a test sets only what its case is about. */

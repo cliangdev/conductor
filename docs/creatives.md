@@ -85,6 +85,40 @@ caller.
 single-Creative `GET`; list reads carry only `latestRenderId` and `latestRenderThumbnailUrl` (the `4x5`
 frame, or the first one), so a grid of creatives stays cheap.
 
+## Draft, approve, commit — nothing is saved before a person has looked
+
+Creating a Creative used to write a row, and upload its photos, before anyone saw an image. Every
+Claude-driven flow is now **draft → look → approve → commit**, and the backend writes nothing until the
+last step. Two MCP tools (`conductor-tools/src/mcp/tools/creative-drafts.ts`) carry it:
+
+- **`preview_creative_draft`** takes the `create_creative` fields plus local files (`photoPath`,
+  `clipPath`, `audioPath`, a story/carousel beat's own `photoPath`), an optional `baseCreativeId` (preview
+  edits on top of a saved Creative) and `full` (every placement at full size instead of one contact
+  sheet). It reads each local file's metadata the way `upload_creative_media` does, then calls
+  `POST .../creatives/draft-spec` — the create body plus `previewOnly`, `baseCreativeId` and
+  `localMedia` (`{ key: { kind, width, height, durationSeconds, hasAudio } }`). A local file travels as the
+  media id `local:<key>` (`photo`, `clip`, `audio`, `beat-<n>`; keys match `^[a-z0-9][a-z0-9-]{0,63}$`).
+  The endpoint runs the same validators as a create, persists nothing, and returns `{ spec, readiness }`
+  (or a 422 naming the field, which the tool returns as a structured error without rendering). The spec
+  is the shape `getSpec()` returns, with `local:<key>` left in place of every local media URL.
+- **`commit_creative_draft`** runs only after the person approved the image: it uploads each local file
+  (the `upload_creative_media` code path), swaps `local:<key>` for the returned ids, calls
+  `create_creative` (or `update_creative` at the current `version` when the draft has a
+  `baseCreativeId`), then runs the full local render. It refuses a draft that is already committed.
+
+The local render uses `conductor-creative/job/file-transport.mjs`, a fourth transport beside the API one:
+`run()` is unchanged. `getSpec()` rewrites each `local:<key>` to a loopback URL served by a small
+Range-capable server (`job/server.mjs`) rooted at a temp dir holding links to the files — so the headless
+browser and ffmpeg can load them — and `putFrame`/`putPoster`/`complete` write `sheet.jpg`,
+`<placement>[-<index>].jpg|.mp4`, `poster-<placement>.jpg` and `manifest.json` into the draft folder.
+
+Drafts live in `<project>/.conductor/drafts/<YYYYMMDD-HHMMSS>-<slug>/` (with a `.gitignore` that ignores
+them) beside a `draft.json`: the request fields, the local-file map, `baseCreativeId`, a sha256 of the
+spec, and `committed`. Both tools prune that folder (and only that folder) of drafts that are committed
+or older than 14 days. A CLIP Creative has nothing to render, so it has no draft preview; a headline
+variant is previewed with `baseCreativeId` but saved with `create_creative` and `variantOf`, never
+committed.
+
 ## Attach — "Use in Post"
 
 `POST .../creatives/{creativeId}/attach` copies a `SUCCEEDED` render's frames into a Post's own Assets and

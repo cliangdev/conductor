@@ -87,6 +87,11 @@ import {
   type UploadBrandImageParams,
   type ListCreativeMediaParams,
 } from './tools/creatives.js'
+import {
+  previewCreativeDraft,
+  commitCreativeDraft,
+  type PreviewCreativeDraftParams,
+} from './tools/creative-drafts.js'
 import { resolveCreativeId } from '../lib/creative-id.js'
 
 const CREATIVE_TOOLS = [
@@ -95,6 +100,7 @@ const CREATIVE_TOOLS = [
   'update_creative',
   'render_creative',
   'preview_creative',
+  'preview_creative_draft',
   'attach_creative_to_post',
   'create_experiment',
 ] as const
@@ -114,6 +120,84 @@ import {
   moveProjectFolder,
   deleteProjectFolder,
 } from './tools/project-docs.js'
+
+/** The Creative fields shared by create_creative and preview_creative_draft (everything but variantOf). */
+const CREATIVE_FIELD_PROPERTIES = {
+  brandKitId: { type: 'string', description: "Brand Kit this Creative renders with (optional — defaults to the project's default kit)" },
+  name: { type: 'string', description: 'Internal name, not shown on the artwork (optional)' },
+  state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'], description: 'Defaults to DRAFT (optional)' },
+  kind: {
+    type: 'string',
+    enum: ['STILL', 'MOTION', 'CLIP'],
+    description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. MOTION is the same brand layout animated into a short video — set motion (and optionally audio) too.',
+  },
+  clipMedia: {
+    type: 'object',
+    additionalProperties: { type: 'string' },
+    description: 'CLIP only: media ids per placement from upload_creative_media, e.g. {"default": mediaId, "9x16": mediaId}. "default" covers any placement without its own entry.',
+  },
+  motion: {
+    type: 'object',
+    description: 'MOTION only: the animation timeline. preset: fade-up (default) | word-by-word | accent-pop | none. durationSec: 3-60, default 8. background.source: photo (default, animated by background.motion: zoom-in default | zoom-out | pan-left | pan-right | none) or clip (background.clipMediaId, a VIDEO media id, plus background.clipStartSec). endCard: default true — the last 2s hold the finished composition with the CTA.',
+    properties: {
+      preset: { type: 'string', enum: ['fade-up', 'word-by-word', 'accent-pop', 'none'] },
+      durationSec: { type: 'number' },
+      background: {
+        type: 'object',
+        properties: {
+          source: { type: 'string', enum: ['photo', 'clip'] },
+          motion: { type: 'string', enum: ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'none'] },
+          clipMediaId: { type: 'string' },
+          clipStartSec: { type: 'number' },
+        },
+      },
+      endCard: { type: 'boolean' },
+    },
+  },
+  audio: {
+    type: 'object',
+    description: 'MOTION only: source: clip (the background clip\'s own sound — default when it has one) | track (a library track) | none. trackId: an AUDIO media id from upload_creative_media (source=track). volume: 0-1, default 0.8 (track only). fadeOutSec: 0-5, default 1 (track only).',
+    properties: {
+      source: { type: 'string', enum: ['clip', 'track', 'none'] },
+      trackId: { type: 'string' },
+      volume: { type: 'number' },
+      fadeOutSec: { type: 'number' },
+    },
+  },
+  layout: { type: 'string', description: "Layout key from the creative registry, e.g. stacked/bleed/card/split (optional — defaults to the registry's first layout)" },
+  theme: { type: 'string', enum: ['dark', 'light'], description: 'Optional — defaults to dark' },
+  photoId: { type: 'string', description: 'A photo from upload_creative_photo (optional)' },
+  focalOverride: { type: 'object', additionalProperties: { type: 'string' }, description: 'Per-placement focal point override, e.g. {"9x16":"50% 30%"} (optional)' },
+  headline: { type: 'string', description: 'Exactly one *accent phrase* marked with asterisks, when the Brand Kit requires one (optional)' },
+  body: { type: 'string', description: 'Body copy (optional)' },
+  caption: { type: 'string', description: "The post caption this Creative is meant for, carried through but never rendered onto the artwork (optional)" },
+  altText: { type: 'string', description: 'Accessibility description of the photo, not the copy (optional)' },
+  placements: { type: 'array', items: { type: 'string' }, description: "Extra placement keys this Creative opts into beyond the Brand Kit's enabled set (optional)" },
+  sequenceKind: { type: 'string', enum: ['story', 'carousel'], description: 'Set to render a multi-beat sequence instead of one frame (optional)' },
+  sequence: {
+    type: 'array',
+    description: 'Story beats (2-7) or carousel cards (2-10); each inherits the Creative and overrides only what changes (optional)',
+    items: {
+      type: 'object',
+      properties: {
+        headline: { type: 'string' },
+        body: { type: 'string' },
+        photoId: { type: 'string' },
+        cta: { type: 'boolean', description: 'Forces the CTA row on/off for this beat (optional — default: only the last beat shows it)' },
+      },
+    },
+  },
+  carouselRatio: { type: 'string', description: 'Aspect ratio key for a carousel sequence, e.g. 4x5 or 1x1 (optional)' },
+  lockup: { type: 'string', enum: ['plain', 'chip'], description: 'Optional — defaults to plain. "chip" puts the logo lockup on a white pill, for busy photography.' },
+  layoutOverrides: {
+    type: 'object',
+    description: 'Per-placement overrides of layout-derived numbers, in pixels (optional). A placement key not named here keeps the layout\'s own default.',
+    properties: {
+      band: { type: 'object', additionalProperties: { type: 'integer' }, description: 'Overrides the stacked layout\'s photo band height per placement, e.g. {"9x16": 1200}' },
+      padBottom: { type: 'object', additionalProperties: { type: 'integer' }, description: "Overrides the 9x16 panel's bottom safe-zone clearance per placement" },
+    },
+  },
+} as const
 
 export const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
@@ -1188,80 +1272,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         variantOf: { type: 'string', description: 'Cut a lettered variant of this existing Creative instead of creating a fresh one (optional)' },
-        brandKitId: { type: 'string', description: "Brand Kit this Creative renders with (optional — defaults to the project's default kit)" },
-        name: { type: 'string', description: 'Internal name, not shown on the artwork (optional)' },
-        state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'], description: 'Defaults to DRAFT (optional)' },
-        kind: {
-          type: 'string',
-          enum: ['STILL', 'MOTION', 'CLIP'],
-          description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. MOTION is the same brand layout animated into a short video — set motion (and optionally audio) too.',
-        },
-        clipMedia: {
-          type: 'object',
-          additionalProperties: { type: 'string' },
-          description: 'CLIP only: media ids per placement from upload_creative_media, e.g. {"default": mediaId, "9x16": mediaId}. "default" covers any placement without its own entry.',
-        },
-        motion: {
-          type: 'object',
-          description: 'MOTION only: the animation timeline. preset: fade-up (default) | word-by-word | accent-pop | none. durationSec: 3-60, default 8. background.source: photo (default, animated by background.motion: zoom-in default | zoom-out | pan-left | pan-right | none) or clip (background.clipMediaId, a VIDEO media id, plus background.clipStartSec). endCard: default true — the last 2s hold the finished composition with the CTA.',
-          properties: {
-            preset: { type: 'string', enum: ['fade-up', 'word-by-word', 'accent-pop', 'none'] },
-            durationSec: { type: 'number' },
-            background: {
-              type: 'object',
-              properties: {
-                source: { type: 'string', enum: ['photo', 'clip'] },
-                motion: { type: 'string', enum: ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'none'] },
-                clipMediaId: { type: 'string' },
-                clipStartSec: { type: 'number' },
-              },
-            },
-            endCard: { type: 'boolean' },
-          },
-        },
-        audio: {
-          type: 'object',
-          description: 'MOTION only: source: clip (the background clip\'s own sound — default when it has one) | track (a library track) | none. trackId: an AUDIO media id from upload_creative_media (source=track). volume: 0-1, default 0.8 (track only). fadeOutSec: 0-5, default 1 (track only).',
-          properties: {
-            source: { type: 'string', enum: ['clip', 'track', 'none'] },
-            trackId: { type: 'string' },
-            volume: { type: 'number' },
-            fadeOutSec: { type: 'number' },
-          },
-        },
-        layout: { type: 'string', description: "Layout key from the creative registry, e.g. stacked/bleed/card/split (optional — defaults to the registry's first layout)" },
-        theme: { type: 'string', enum: ['dark', 'light'], description: 'Optional — defaults to dark' },
-        photoId: { type: 'string', description: 'A photo from upload_creative_photo (optional)' },
-        focalOverride: { type: 'object', additionalProperties: { type: 'string' }, description: 'Per-placement focal point override, e.g. {"9x16":"50% 30%"} (optional)' },
-        headline: { type: 'string', description: 'Exactly one *accent phrase* marked with asterisks, when the Brand Kit requires one (optional)' },
-        body: { type: 'string', description: 'Body copy (optional)' },
-        caption: { type: 'string', description: "The post caption this Creative is meant for, carried through but never rendered onto the artwork (optional)" },
-        altText: { type: 'string', description: 'Accessibility description of the photo, not the copy (optional)' },
-        placements: { type: 'array', items: { type: 'string' }, description: "Extra placement keys this Creative opts into beyond the Brand Kit's enabled set (optional)" },
-        sequenceKind: { type: 'string', enum: ['story', 'carousel'], description: 'Set to render a multi-beat sequence instead of one frame (optional)' },
-        sequence: {
-          type: 'array',
-          description: 'Story beats (2-7) or carousel cards (2-10); each inherits the Creative and overrides only what changes (optional)',
-          items: {
-            type: 'object',
-            properties: {
-              headline: { type: 'string' },
-              body: { type: 'string' },
-              photoId: { type: 'string' },
-              cta: { type: 'boolean', description: 'Forces the CTA row on/off for this beat (optional — default: only the last beat shows it)' },
-            },
-          },
-        },
-        carouselRatio: { type: 'string', description: 'Aspect ratio key for a carousel sequence, e.g. 4x5 or 1x1 (optional)' },
-        lockup: { type: 'string', enum: ['plain', 'chip'], description: 'Optional — defaults to plain. "chip" puts the logo lockup on a white pill, for busy photography.' },
-        layoutOverrides: {
-          type: 'object',
-          description: 'Per-placement overrides of layout-derived numbers, in pixels (optional). A placement key not named here keeps the layout\'s own default.',
-          properties: {
-            band: { type: 'object', additionalProperties: { type: 'integer' }, description: 'Overrides the stacked layout\'s photo band height per placement, e.g. {"9x16": 1200}' },
-            padBottom: { type: 'object', additionalProperties: { type: 'integer' }, description: "Overrides the 9x16 panel's bottom safe-zone clearance per placement" },
-          },
-        },
+        ...CREATIVE_FIELD_PROPERTIES,
       },
     },
   },
@@ -1395,6 +1406,50 @@ export const TOOLS = [
     },
   },
   {
+    name: 'preview_creative_draft',
+    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. Show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. Violations come back as a structured error and nothing is rendered.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...CREATIVE_FIELD_PROPERTIES,
+        sequence: {
+          type: 'array',
+          description: 'Story beats (2-7) or carousel cards (2-10); each inherits the Creative and overrides only what changes (optional)',
+          items: {
+            type: 'object',
+            properties: {
+              headline: { type: 'string' },
+              body: { type: 'string' },
+              photoPath: { type: 'string', description: 'A photo on this machine for this beat (optional; use instead of photoId)' },
+              photoId: { type: 'string' },
+              cta: { type: 'boolean', description: 'Forces the CTA row on/off for this beat (optional)' },
+            },
+          },
+        },
+        photoPath: { type: 'string', description: 'A photo on this machine (optional; use instead of photoId)' },
+        clipPath: { type: 'string', description: 'MOTION only: a video clip on this machine used as the background (optional; use instead of motion.background.clipMediaId)' },
+        audioPath: { type: 'string', description: 'MOTION only: an audio file on this machine used as the music track (optional; use instead of audio.trackId)' },
+        baseCreativeId: { type: 'string', description: 'Preview edits on top of this saved Creative: only the fields given here change (optional). commit_creative_draft then updates it.' },
+        draftDir: { type: 'string', description: 'Folder to write the draft into (optional — defaults to <project>/.conductor/drafts/<timestamp>-<slug>/)' },
+        full: { type: 'boolean', description: 'Render every placement at full size instead of one contact sheet (optional, default false; slower, and the image shown is the first placement)' },
+      },
+    },
+  },
+  {
+    name: 'commit_creative_draft',
+    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames. Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        draftDir: { type: 'string', description: 'The draftDir preview_creative_draft returned' },
+        source: { type: 'string', description: 'Provenance note recorded on each uploaded file, e.g. a URL or "Generated with <model> on <date>" (optional)' },
+        licence: { type: 'string', description: 'Licence recorded on each uploaded file, e.g. "Own work" (optional)' },
+        aiGenerated: { type: 'boolean', description: 'Whether the uploaded files are AI-generated (optional, informational only)' },
+      },
+      required: ['draftDir'],
+    },
+  },
+  {
     name: 'attach_creative_to_post',
     description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. Uses the latest SUCCEEDED, non-preview render unless renderId is given. Call get_post_status (postId) to verify.",
     inputSchema: {
@@ -1465,7 +1520,7 @@ export function imageResponse(image: { data: Buffer; mimeType: string }, meta?: 
  * catch hand back the server's own status/code/title alongside its message, without changing the
  * top-level `{ error: ... }` JSON shape callers and tests already rely on.
  */
-function errorResponse(error: string | { error: string; status?: number; code?: string; title?: string }) {
+function errorResponse(error: string | { error: string; status?: number; code?: string; title?: string; [extra: string]: unknown }) {
   const payload = typeof error === 'string' ? { error } : error
   return {
     content: [
@@ -1518,7 +1573,7 @@ export async function runMcpServer(): Promise<void> {
 
     try {
       // Creative tools accept a display id ("12a") wherever they take a Creative.
-      for (const key of ['creativeId', 'variantOf'] as const) {
+      for (const key of ['creativeId', 'variantOf', 'baseCreativeId'] as const) {
         if (typeof params[key] === 'string' && (CREATIVE_TOOLS as readonly string[]).includes(name)) {
           params[key] = await resolveCreativeId(params[key] as string, config)
         }
@@ -2283,6 +2338,44 @@ export async function runMcpServer(): Promise<void> {
             })
           }
           return successResponse(result)
+        }
+        case 'preview_creative_draft': {
+          const progressToken = request.params._meta?.progressToken
+          let step = 0
+          const onProgress = progressToken === undefined
+            ? undefined
+            : (...args: unknown[]) => {
+                step += 1
+                void extra.sendNotification({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: step, message: args.map(String).join(' ') },
+                }).catch(() => {})
+              }
+          const result = await previewCreativeDraft(params as unknown as PreviewCreativeDraftParams, config, { log: onProgress })
+          if (!result.ok) {
+            return errorResponse({
+              error: result.error,
+              ...(result.status ? { status: result.status } : {}),
+              ...(result.violations ? { violations: result.violations } : {}),
+              rendered: false,
+              ...(result.draftDir ? { draftDir: result.draftDir } : {}),
+            })
+          }
+          const { image, ...meta } = result
+          return image ? imageResponse(image, meta) : successResponse(meta)
+        }
+        case 'commit_creative_draft': {
+          return successResponse(
+            await commitCreativeDraft(
+              {
+                draftDir: params['draftDir'] as string,
+                source: params['source'] as string | undefined,
+                licence: params['licence'] as string | undefined,
+                aiGenerated: params['aiGenerated'] as boolean | undefined,
+              },
+              config
+            )
+          )
         }
         case 'attach_creative_to_post': {
           return successResponse(

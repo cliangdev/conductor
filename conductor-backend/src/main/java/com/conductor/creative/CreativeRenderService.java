@@ -8,27 +8,15 @@ import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.v2.model.CompleteCreativeRenderRequest;
 import com.conductor.generated.v2.model.CreateCreativeRenderRequest;
 import com.conductor.generated.v2.model.CreativeAudio;
-import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.CreativeMotion;
 import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderFrameResponse;
 import com.conductor.generated.v2.model.CreativeRenderResponse;
 import com.conductor.generated.v2.model.CreativeRenderSpec;
-import com.conductor.generated.v2.model.CreativeRenderSpecAudio;
-import com.conductor.generated.v2.model.CreativeRenderSpecBeat;
-import com.conductor.generated.v2.model.CreativeLayoutOverrides;
-import com.conductor.generated.v2.model.CreativeLockup;
-import com.conductor.generated.v2.model.CreativeRenderSpecBrand;
-import com.conductor.generated.v2.model.CreativeRenderSpecCreative;
-import com.conductor.generated.v2.model.CreativeRenderSpecLogos;
-import com.conductor.generated.v2.model.CreativeRenderSpecMotion;
-import com.conductor.generated.v2.model.CreativeRenderSpecMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderState;
 import com.conductor.generated.v2.model.CreativeRenderWarning;
-import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.FailCreativeRenderRequest;
 import com.conductor.generated.v2.model.SequenceBeat;
-import com.conductor.generated.v2.model.SequenceKind;
 import com.conductor.service.AssetUploadPolicy;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.StorageService;
@@ -46,7 +34,6 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -78,8 +65,6 @@ public class CreativeRenderService {
     private static final Set<String> ALLOWED_FRAME_CONTENT_TYPES = Set.of(CONTENT_TYPE_JPEG, CONTENT_TYPE_PNG, CONTENT_TYPE_MP4);
     private static final int MAX_RENDERS_LISTED = 20;
     private static final int FRAME_URL_EXPIRY_MINUTES = 15;
-    /** Contract: signed URLs in a render spec must stay valid at least 30 minutes. */
-    private static final int SPEC_URL_EXPIRY_MINUTES = 45;
 
     private static final Logger log = LoggerFactory.getLogger(CreativeRenderService.class);
 
@@ -90,6 +75,7 @@ public class CreativeRenderService {
     private final BrandKitRepository brandKitRepository;
     private final CreativeRegistry registry;
     private final CreativeValidator validator;
+    private final CreativeSpecBuilder specBuilder;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
     private final ObjectMapper objectMapper;
@@ -101,6 +87,7 @@ public class CreativeRenderService {
                                  BrandKitRepository brandKitRepository,
                                  CreativeRegistry registry,
                                  CreativeValidator validator,
+                                 CreativeSpecBuilder specBuilder,
                                  ProjectSecurityService projectSecurityService,
                                  StorageService storageService,
                                  ObjectMapper objectMapper) {
@@ -111,6 +98,7 @@ public class CreativeRenderService {
         this.brandKitRepository = brandKitRepository;
         this.registry = registry;
         this.validator = validator;
+        this.specBuilder = specBuilder;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
         this.objectMapper = objectMapper;
@@ -148,9 +136,8 @@ public class CreativeRenderService {
     private CreateRenderResult requestStillRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
                                                   User caller) {
         BrandKit kit = requireKit(projectId, creative.getBrandKitId());
-        CreativePhoto mainPhoto = creative.getPhotoId() != null
-                ? photoRepository.findByIdAndProjectId(creative.getPhotoId(), projectId).orElse(null) : null;
-        MotionSpecResolution motionRes = Creative.KIND_MOTION.equals(creative.getKind())
+        MediaFacts mainPhoto = findMedia(projectId, creative.getPhotoId());
+        CreativeSpecBuilder.MotionMedia motionRes = Creative.KIND_MOTION.equals(creative.getKind())
                 ? resolveMotionForRender(projectId, creative) : null;
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
@@ -164,12 +151,15 @@ public class CreativeRenderService {
                 toValidatorBeats(toSequenceBeats(creative.getSequence())), creative.getCarouselRatio(), Set.of(),
                 extractOverrideInts(creative.getLayoutOverrides(), "band"),
                 extractOverrideInts(creative.getLayoutOverrides(), "padBottom"),
-                creative.getKind(), List.of(), motionRes != null ? motionRes.input() : null));
+                creative.getKind(), List.of(),
+                motionRes != null ? CreativeValidator.MotionInput.resolve(motionRes.motion(), motionRes.audio(),
+                        motionRes.backgroundClip(), motionRes.audioTrack()) : null));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
 
         List<String> placements = resolvePlacements(kit, creative);
+        Map<String, MediaFacts> beatPhotos = findBeatPhotos(projectId, creative);
 
         CreativeRender render = new CreativeRender();
         render.setProjectId(projectId);
@@ -183,7 +173,8 @@ public class CreativeRenderService {
         render.setRequestedAt(OffsetDateTime.now());
         render = renderRepository.save(render);
 
-        CreativeRenderSpec spec = buildSpec(render, creative, kit, mainPhoto, placements, motionRes);
+        CreativeRenderSpec spec = specBuilder.build(render.getId(), render.isPreviewOnly(), creative, kit, mainPhoto,
+                beatPhotos, placements, motionRes);
         return new CreateRenderResult(render, spec);
     }
 
@@ -192,45 +183,36 @@ public class CreativeRenderService {
      * track) for a render — the JSON already carries every default {@code CreativeService} applied on
      * write, so this only needs to look the referenced media up, mirroring {@link #resolveClipMediaEntries}.
      */
-    private MotionSpecResolution resolveMotionForRender(String projectId, Creative creative) {
+    private CreativeSpecBuilder.MotionMedia resolveMotionForRender(String projectId, Creative creative) {
         CreativeMotion motion = toMotion(creative.getMotion());
         CreativeAudio audio = toAudio(creative.getAudio());
         CreativeMotionBackground background = motion != null ? motion.getBackground() : null;
 
-        CreativePhoto clipMedia = background != null && background.getClipMediaId() != null
-                ? photoRepository.findByIdAndProjectId(background.getClipMediaId(), projectId).orElse(null) : null;
-        CreativePhoto trackMedia = audio != null && audio.getTrackId() != null
-                ? photoRepository.findByIdAndProjectId(audio.getTrackId(), projectId).orElse(null) : null;
-
-        CreativeValidator.MotionInput input = motion == null ? null : new CreativeValidator.MotionInput(
-                motion.getPreset(),
-                motion.getDurationSec() != null ? motion.getDurationSec().doubleValue() : null,
-                background != null ? background.getSource() : null,
-                background != null ? background.getMotion() : null,
-                background != null ? background.getClipMediaId() : null,
-                background == null || background.getClipMediaId() == null || clipMedia != null,
-                clipMedia != null && clipMedia.isVideo(),
-                clipMedia != null && clipMedia.isUploaded(),
-                clipMedia != null && clipMedia.isBlocked(),
-                clipMedia != null && clipMedia.getDurationSeconds() != null ? clipMedia.getDurationSeconds().doubleValue() : null,
-                clipMedia != null ? clipMedia.getHasAudio() : null,
-                background != null && background.getClipStartSec() != null ? background.getClipStartSec().doubleValue() : null,
-                motion.getEndCard(),
-                audio != null ? audio.getSource() : null,
-                audio != null ? audio.getTrackId() : null,
-                audio == null || audio.getTrackId() == null || trackMedia != null,
-                trackMedia != null && trackMedia.isAudio(),
-                trackMedia != null && trackMedia.isUploaded(),
-                trackMedia != null && trackMedia.isBlocked(),
-                audio != null && audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
-                audio != null && audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null);
-
-        return new MotionSpecResolution(motion, audio, clipMedia, trackMedia, input);
+        MediaFacts clipMedia = findMedia(projectId, background != null ? background.getClipMediaId() : null);
+        MediaFacts trackMedia = findMedia(projectId, audio != null ? audio.getTrackId() : null);
+        return new CreativeSpecBuilder.MotionMedia(motion, audio, clipMedia, trackMedia);
     }
 
-    /** {@code motion}/{@code audio}, plus the media the render spec needs signed URLs for. */
-    private record MotionSpecResolution(CreativeMotion motion, CreativeAudio audio, CreativePhoto backgroundClip,
-                                        CreativePhoto audioTrack, CreativeValidator.MotionInput input) {
+    /** A library media item by id, or null when {@code mediaId} is null or names nothing in this project. */
+    private MediaFacts findMedia(String projectId, String mediaId) {
+        return mediaId != null
+                ? photoRepository.findByIdAndProjectId(mediaId, projectId).map(MediaFacts::of).orElse(null)
+                : null;
+    }
+
+    /** Each sequence beat's own photo, by the id the beat names; a beat whose id names nothing is left out
+     *  (it then inherits the Creative's own photo in the spec). */
+    private Map<String, MediaFacts> findBeatPhotos(String projectId, Creative creative) {
+        Map<String, MediaFacts> beatPhotos = new LinkedHashMap<>();
+        for (SequenceBeat beat : toSequenceBeats(creative.getSequence())) {
+            if (beat.getPhotoId() != null && !beatPhotos.containsKey(beat.getPhotoId())) {
+                MediaFacts photo = findMedia(projectId, beat.getPhotoId());
+                if (photo != null) {
+                    beatPhotos.put(beat.getPhotoId(), photo);
+                }
+            }
+        }
+        return beatPhotos;
     }
 
     /**
@@ -626,112 +608,10 @@ public class CreativeRenderService {
         return path != null ? storageService.generateSignedUrl(path, FRAME_URL_EXPIRY_MINUTES) : null;
     }
 
-    // ── spec building ────────────────────────────────────────────────────────────────────────────
+    // ── spec building (see CreativeSpecBuilder) ──────────────────────────────────────────────────
 
-    private CreativeRenderSpec buildSpec(CreativeRender render, Creative creative, BrandKit kit,
-                                         CreativePhoto mainPhoto, List<String> placements, MotionSpecResolution motionRes) {
-        CreativeRenderSpecBrand brand = new CreativeRenderSpecBrand(toStringMap(kit.getTokens()),
-                toStringList(kit.getEnabledPlacements()))
-                .fontFamily(kit.getFontFamily())
-                .fontUrl(kit.getFontUrl())
-                .ctaClaim(kit.getCtaClaim())
-                .logos(new CreativeRenderSpecLogos()
-                        .mark(signedOrNull(kit.getMarkGcsPath()))
-                        .wordmarkDark(signedOrNull(kit.getWordmarkDarkGcsPath()))
-                        .wordmarkLight(signedOrNull(kit.getWordmarkLightGcsPath()))
-                        .badge(signedOrNull(kit.getBadgeGcsPath())));
-
-        List<CreativeRenderSpecBeat> beats = new ArrayList<>();
-        for (SequenceBeat beat : toSequenceBeats(creative.getSequence())) {
-            CreativePhoto beatPhoto = beat.getPhotoId() != null
-                    ? photoRepository.findByIdAndProjectId(beat.getPhotoId(), creative.getProjectId()).orElse(mainPhoto)
-                    : mainPhoto;
-            beats.add(new CreativeRenderSpecBeat()
-                    .headline(beat.getHeadline())
-                    .body(beat.getBody())
-                    .cta(beat.getCta())
-                    .photoUrl(photoUrl(beatPhoto))
-                    .focal(toStringMap(beatPhoto != null ? beatPhoto.getFocal() : null)));
-        }
-
-        CreativeRenderSpecCreative creativeSpec = new CreativeRenderSpecCreative(creative.getLayout(),
-                CreativeTheme.fromValue(creative.getTheme()), toStringList(creative.getPlacements()),
-                toTypeOverrides(creative.getTypeOverrides()), toStringMap(mainPhoto != null ? mainPhoto.getFocal() : null))
-                .headline(creative.getHeadline())
-                .body(creative.getBody())
-                .caption(creative.getCaption())
-                .focalOverride(creative.getFocalOverride() != null ? toStringMap(creative.getFocalOverride()) : null)
-                .sequenceKind(creative.getSequenceKind() != null ? SequenceKind.fromValue(creative.getSequenceKind()) : null)
-                .sequence(beats)
-                .photoUrl(photoUrl(mainPhoto))
-                .lockup(CreativeLockup.fromValue(creative.getLockup()))
-                .layoutOverrides(toLayoutOverrides(creative.getLayoutOverrides()))
-                .kind(CreativeKind.fromValue(creative.getKind()));
-
-        if (motionRes != null && motionRes.motion() != null) {
-            creativeSpec.motion(buildMotionSpec(motionRes))
-                    .audio(buildAudioSpec(motionRes))
-                    .clipHasAudio(motionRes.backgroundClip() != null ? motionRes.backgroundClip().getHasAudio() : null);
-        }
-
-        return new CreativeRenderSpec(render.getId(), render.isPreviewOnly(), creativeSpec, brand, placements);
-    }
-
-    static final String DEFAULT_CAROUSEL_RATIO = "4x5";
-
-    /** kit enabled ∪ creative opt-ins ∩ registry — except a sequence Creative, which renders only its own shape. */
     List<String> resolvePlacements(BrandKit kit, Creative creative) {
-        if ("story".equals(creative.getSequenceKind())) {
-            return List.of("story");
-        }
-        if ("carousel".equals(creative.getSequenceKind())) {
-            // nexus's default: a carousel with no ratio set is a 4:5 Instagram carousel.
-            return List.of(creative.getCarouselRatio() != null ? creative.getCarouselRatio() : DEFAULT_CAROUSEL_RATIO);
-        }
-        Set<String> union = new LinkedHashSet<>(toStringList(kit.getEnabledPlacements()));
-        union.addAll(toStringList(creative.getPlacements()));
-        union.retainAll(registry.placements().keySet());
-        return List.copyOf(union);
-    }
-
-    private String photoUrl(CreativePhoto photo) {
-        return photo != null && photo.isUploaded() ? storageService.generateSignedUrl(photo.getGcsPath(), SPEC_URL_EXPIRY_MINUTES) : null;
-    }
-
-    private String signedOrNull(String gcsPath) {
-        return gcsPath != null ? storageService.generateSignedUrl(gcsPath, SPEC_URL_EXPIRY_MINUTES) : null;
-    }
-
-    /** Contract: "motion.background.clipUrl (VIDEO media)" — a signed GET, present only when the resolved
-     *  background clip has actually finished uploading (mirrors {@link #photoUrl}). */
-    private CreativeRenderSpecMotion buildMotionSpec(MotionSpecResolution motionRes) {
-        CreativeMotion motion = motionRes.motion();
-        CreativeMotionBackground background = motion.getBackground();
-        CreativePhoto clip = motionRes.backgroundClip();
-        CreativeRenderSpecMotionBackground specBackground = new CreativeRenderSpecMotionBackground()
-                .source(background != null ? background.getSource() : null)
-                .motion(background != null ? background.getMotion() : null)
-                .clipUrl(clip != null && clip.isUploaded() ? signedOrNull(clip.getGcsPath()) : null)
-                .clipStartSec(background != null ? background.getClipStartSec() : null);
-        return new CreativeRenderSpecMotion()
-                .preset(motion.getPreset())
-                .durationSec(motion.getDurationSec())
-                .background(specBackground)
-                .endCard(motion.getEndCard());
-    }
-
-    /** Contract: "audio.trackUrl (AUDIO media)" — a signed GET, present only for a track that finished uploading. */
-    private CreativeRenderSpecAudio buildAudioSpec(MotionSpecResolution motionRes) {
-        CreativeAudio audio = motionRes.audio();
-        if (audio == null) {
-            return null;
-        }
-        CreativePhoto track = motionRes.audioTrack();
-        return new CreativeRenderSpecAudio()
-                .source(audio.getSource())
-                .trackUrl(track != null && track.isUploaded() ? signedOrNull(track.getGcsPath()) : null)
-                .volume(audio.getVolume())
-                .fadeOutSec(audio.getFadeOutSec());
+        return specBuilder.resolvePlacements(kit, creative);
     }
 
     /** {@code creative.motion} JSON -&gt; the typed DTO, or null when unset. Mirrors {@code CreativeService#toMotion}. */
@@ -827,23 +707,6 @@ public class CreativeRenderService {
         }
         return objectMapper.convertValue(node, new TypeReference<List<String>>() {
         });
-    }
-
-    private Map<String, String> toStringMap(JsonNode node) {
-        Map<String, String> map = new LinkedHashMap<>();
-        if (node != null) {
-            node.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue().asText()));
-        }
-        return map;
-    }
-
-    private Map<String, List<BigDecimal>> toTypeOverrides(JsonNode node) {
-        return node != null ? objectMapper.convertValue(node, new TypeReference<Map<String, List<BigDecimal>>>() {
-        }) : Map.of();
-    }
-
-    private CreativeLayoutOverrides toLayoutOverrides(JsonNode node) {
-        return node != null ? objectMapper.convertValue(node, CreativeLayoutOverrides.class) : null;
     }
 
     private Map<String, Integer> extractOverrideInts(JsonNode layoutOverrides, String key) {

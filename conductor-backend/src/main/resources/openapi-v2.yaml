@@ -3430,6 +3430,79 @@ paths:
               schema:
                 $ref: "#/components/schemas/CreativeValidationProblem"
 
+  /projects/{projectId}/marketing/creatives/draft-spec:
+    post:
+      tags:
+        - creatives
+      summary: Build the render spec for a Creative that has not been saved
+      description: >-
+        Preview-first creatives: validates the proposed Creative exactly as `createCreative` would and
+        returns the render input (`spec`) a local job renders from, plus its readiness checklist, WITHOUT
+        persisting anything — no Creative, no render, no media row, no storage write. Anything that takes
+        a library media id (`photoId`, a sequence beat's `photoId`, `motion.background.clipMediaId`,
+        `audio.trackId`, a `clipMedia` value) may instead be `local:<key>` (key matching
+        `^[a-z0-9][a-z0-9-]{0,63}$`) naming a file on the caller's machine declared in `localMedia`; such a
+        reference is not looked up in the library, and the spec carries the literal `local:<key>` as its
+        URL (with a null focal) for the local job to resolve. `baseCreativeId` starts from a saved Creative's
+        fields and overlays every field present on the request, to preview an edit. CLIP creatives have no
+        render and are refused with 422. `spec.renderId` is the literal `draft`. Requires ADMIN or CREATOR.
+      operationId: buildCreativeDraftSpec
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreativeDraftSpecRequest"
+      responses:
+        "200":
+          description: The draft's render spec and readiness. Nothing was persisted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeDraftSpecResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or `baseCreativeId` not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The draft fails a rule `createCreative` enforces (same shape), a `local:<key>` reference that
+            is not declared in `localMedia` or is the wrong kind for its field, a malformed local key, or
+            a CLIP kind.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeValidationProblem"
+
   /projects/{projectId}/marketing/creatives/{creativeId}:
     get:
       tags:
@@ -7534,6 +7607,66 @@ components:
           items:
             $ref: "#/components/schemas/CreativeReadinessItem"
 
+    LocalMediaInfo:
+      type: object
+      description: >-
+        What the server needs to know about a media file that exists only on the caller's machine and is
+        referenced as `local:<key>` in a draft-spec request. Never persisted.
+      required:
+        - kind
+      properties:
+        kind:
+          $ref: "#/components/schemas/MediaKind"
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        durationSeconds:
+          type: number
+          nullable: true
+          description: A VIDEO or AUDIO file's length. Read wherever motion and clip validation read a library clip's duration.
+        hasAudio:
+          type: boolean
+          nullable: true
+          description: Whether a VIDEO file carries an audio track.
+
+    CreativeDraftSpecRequest:
+      description: >-
+        Every field of `CreateCreativeRequest`, plus the draft-only fields below. Fields absent from the
+        request fall back to the `baseCreativeId` Creative's when one is given.
+      allOf:
+        - $ref: "#/components/schemas/CreateCreativeRequest"
+        - type: object
+          properties:
+            previewOnly:
+              type: boolean
+              default: true
+              description: Echoed into `spec.previewOnly`.
+            baseCreativeId:
+              type: string
+              nullable: true
+              description: A saved Creative to start from; every field present on this request overlays it.
+            localMedia:
+              type: object
+              nullable: true
+              description: >-
+                `local:<key>` references -> what they are. Keys must match `^[a-z0-9][a-z0-9-]{0,63}$`.
+              additionalProperties:
+                $ref: "#/components/schemas/LocalMediaInfo"
+
+    CreativeDraftSpecResponse:
+      type: object
+      required:
+        - spec
+        - readiness
+      properties:
+        spec:
+          $ref: "#/components/schemas/CreativeRenderSpec"
+        readiness:
+          $ref: "#/components/schemas/CreativeReadinessResponse"
+
     CreativeRegistryLayout:
       type: object
       required:
@@ -7791,7 +7924,7 @@ components:
 
     CreativeRenderSpec:
       type: object
-      description: The render input a local job (MCP tool or CLI) renders from. Returned only by the POST that creates a render, never by a GET.
+      description: The render input a local job (MCP tool or CLI) renders from. Returned only by the POST that creates a render (and, with renderId `draft`, by the draft-spec POST), never by a GET.
       required:
         - renderId
         - previewOnly

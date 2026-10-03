@@ -8,6 +8,7 @@
  * launched or what browser it gets — that's `job/transport.mjs`'s and this file's job respectively.
  */
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Config } from '../mcp/config.js'
@@ -197,4 +198,92 @@ export async function renderCreative(
       frames: [],
     }
   }
+}
+
+// --- Draft rendering (preview before anything is saved) -------------------------
+
+export interface DraftManifestFrame {
+  placementKey: string
+  index?: number
+  file: string
+  contentType: string
+  width?: number
+  height?: number
+  sizeBytes?: number
+  durationSeconds?: number
+  hasAudio?: boolean
+  poster?: string
+}
+
+export interface DraftManifest {
+  ok: boolean
+  error?: string
+  renderId?: string
+  previewOnly?: boolean
+  frames: DraftManifestFrame[]
+  warnings: Array<{ placementKey?: string; index?: number; message: string }>
+}
+
+export interface RenderDraftResult {
+  ok: boolean
+  error?: string
+  manifest?: DraftManifest
+}
+
+interface FileTransportModule {
+  createFileTransport(opts: { spec: unknown; localFiles?: Record<string, string>; outDir: string }): {
+    getError(): string | undefined
+    close(): Promise<void>
+  }
+}
+
+/**
+ * Renders a DRAFT spec (the backend's `draft-spec` response — nothing about it is saved) with the same
+ * render core a saved Creative uses, but through the file transport: the local files behind
+ * `local:<key>` are served to the headless browser from this machine, and the frames plus a
+ * `manifest.json` land in `outDir`. Never talks to the Conductor API. A MOTION spec that is not
+ * `previewOnly` needs ffmpeg, resolved the same way {@link renderCreative} resolves it.
+ */
+export async function renderDraft(
+  params: { spec: { creative?: { kind?: string }; previewOnly?: boolean }; localFiles: Record<string, string>; outDir: string },
+  log: (...args: unknown[]) => void = () => {}
+): Promise<RenderDraftResult> {
+  const { spec, localFiles, outDir } = params
+
+  let ffmpegPath: string | undefined
+  if (spec.creative?.kind === 'MOTION' && !spec.previewOnly) {
+    try {
+      ffmpegPath = await resolveFfmpegPath()
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  const { run } = await loadRenderCore()
+  const transportPath = join(jobDir(), 'file-transport.mjs')
+  if (!existsSync(transportPath)) {
+    throw new Error(
+      `Creative draft transport not found at ${transportPath}. This is a packaging bug in @cliangdev/conductor — reinstall the CLI, or in this repo run \`npm run build\`.`
+    )
+  }
+  const { createFileTransport } = (await import(transportPath)) as FileTransportModule
+  const transport = createFileTransport({ spec, localFiles, outDir })
+  const browserFactory = await findBrowserFactory(log)
+
+  let ok: boolean
+  try {
+    ok = await run({ transport, browserFactory, log, ffmpegPath, fps: MOTION_FPS })
+  } finally {
+    await transport.close()
+  }
+
+  let manifest: DraftManifest | undefined
+  try {
+    manifest = JSON.parse(await readFile(join(outDir, 'manifest.json'), 'utf8')) as DraftManifest
+  } catch {
+    manifest = undefined
+  }
+  if (!ok) return { ok: false, error: transport.getError() ?? manifest?.error ?? 'The draft render failed.', manifest }
+  if (!manifest) return { ok: false, error: 'The draft render finished but wrote no manifest.json.' }
+  return { ok: true, manifest }
 }

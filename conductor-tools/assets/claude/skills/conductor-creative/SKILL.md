@@ -1,6 +1,6 @@
 ---
 name: conductor-creative
-description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine and checked by eye before it's called done. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
+description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine as a draft, checked by eye and approved before anything is saved to Conductor. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
 user-invocable: true
 allowed-tools: mcp__conductor__*, AskUserQuestion, Read, Glob, Grep, WebFetch
 ---
@@ -17,7 +17,13 @@ things that already exist for this workspace — a Brand Kit (data: tokens, copy
 lines) and a Knowledge page (prose: positioning, voice, facts). Read them rather than inventing.
 
 Rendering happens locally, through this MCP server, with a browser on this machine — there is no
-separate render service to wait on. `render_creative` typically finishes in well under a minute.
+separate render service to wait on. A preview typically finishes in well under a minute.
+
+**Draft first, save after approval.** Every Creative here goes draft, look, approve, commit:
+`preview_creative_draft` renders the artwork on this machine and writes **nothing** to Conductor — no
+Creative, no upload — then the person looks at it, and only on their approval does
+`commit_creative_draft` upload the media, save the Creative and do the full render. Never commit a
+draft the person has not seen and approved.
 
 ## How to make a Creative
 
@@ -50,8 +56,8 @@ Prefer an approved line from the Knowledge page verbatim. Otherwise write one th
 real and specific, not a generic claim.
 
 If the Brand Kit's `accentPhraseRequired` is true, mark exactly one phrase per headline with
-asterisks: `Every saved link, *finally usable*.` Never zero, never two — `create_creative` and
-`update_creative` refuse a headline that gets this wrong, naming the rule.
+asterisks: `Every saved link, *finally usable*.` Never zero, never two — `preview_creative_draft`,
+`create_creative` and `update_creative` refuse a headline that gets this wrong, naming the rule.
 
 Keep it short — checked at thumbnail size, not read up close.
 
@@ -69,10 +75,13 @@ uploading a new one — id, dimensions, checked/blocked state and provenance for
 the project's media library. A photo needs `checked: true` and not `blocked` before a Creative can
 go to `READY`.
 
-A new photo goes through `upload_creative_media` (local path or URL), which requires `source` (a
-URL or a short provenance note, e.g. "Generated with a named model on a given date") and `licence`
-(e.g. "Own work", "Unsplash Licence", "Generated, house use"). This closes a real legal exposure: an
-unattributed or unlicensed photo running as paid or organic media.
+A photo that is not in the library yet is previewed straight from its local file (`photoPath` on
+`preview_creative_draft`; a URL is downloaded to a local file first) and is only uploaded when the
+draft is committed — pass `source` (a URL or a short provenance note, e.g. "Generated with a named
+model on a given date") and `licence` (e.g. "Own work", "Unsplash Licence", "Generated, house use")
+to `commit_creative_draft`, which records them on every file it uploads. This closes a real legal
+exposure: an unattributed or unlicensed photo running as paid or organic media. A photo already in
+the library is used by its id (`photoId`) with no upload at all.
 
 **Open the photo and look at it before using it.** A picture can break every copy rule with text,
 a logo or a claim burned into its pixels, and no automated check can see that — this is the first
@@ -83,16 +92,25 @@ Match the crop to the subject: a layout that lays copy over the photo (e.g. `ble
 the top third in collision with the headline — prefer a layout that keeps the photo and copy on
 separate panels (e.g. `stacked`) for those.
 
-### 6. Create, then render
+### 6. Preview the draft
 
-`create_creative` with the Brand Kit (if not the default), layout, theme, photo, headline, body,
-caption and alt text. To test a headline variant of an existing concept, pass `variantOf` with that
-Creative's id instead of starting fresh — it inherits everything else and gets the next letter.
-Then call `get_creative` to verify what was actually stored.
+`preview_creative_draft` with the Brand Kit (if not the default), layout, theme, photo (`photoPath`
+for a local file, `photoId` for one already in the library), headline, body, caption and alt text.
+It renders a contact sheet on this machine and returns it as an image, with the `draftDir` it wrote
+to (`.conductor/drafts/<timestamp>-<slug>/`), the readiness gaps and any render warnings. **Nothing
+has been saved to Conductor.** A copy-rule or accent-phrase violation comes back as an error naming
+the rule and field, without rendering — fix the copy and preview again.
 
-`render_creative` (previewOnly: true first, for a quick contact sheet) runs the render locally and
-returns the render id, state, frame URLs and any warnings. Then `preview_creative` to actually look
-at it — it returns the contact sheet as an image directly, not just a URL to trust.
+To change an existing Creative's copy, layout or photo, preview the edit first with `baseCreativeId`:
+only the fields you pass change, and the commit then updates that Creative instead of creating one.
+
+To test a headline variant of an existing concept, preview the new headline the same way
+(`baseCreativeId` plus `headline`) so the person sees it on the artwork — but do **not** commit that
+draft, since a commit would update the original. Once they approve, call `create_creative` with
+`variantOf` and the headline instead: it inherits everything else and gets the next letter.
+
+Pass `full: true` to render every placement at full size instead of the contact sheet (slower; the
+image returned is the first placement).
 
 ### 7. Look at the result honestly
 
@@ -100,31 +118,42 @@ at it — it returns the contact sheet as an image directly, not just a URL to t
 in-page checks catch text spilling out of a safe zone, a font that failed to load, a photo that
 never decoded, or contrast below the accessible minimum — not whether the headline reads at a
 glance, whether the accent phrase falls on the words that carry the meaning, or whether the copy is
-sitting on the subject's face. Judge those yourself from the image `preview_creative` hands back. If
-the copy collides with the photo, switch layout (see step 5) and re-render rather than shrinking
-text until it technically fits.
+sitting on the subject's face. Judge those yourself from the image `preview_creative_draft` hands
+back. If the copy collides with the photo, switch layout (see step 5) and preview again rather than
+shrinking text until it technically fits.
+
+Then show the image to the person and ask with `AskUserQuestion` — **Approve & upload**, **Request
+changes**, **Stop**. On changes, preview again with the edits (another draft; nothing was saved). On
+Stop, leave it: the draft stays on this machine under `.conductor/drafts/` and is cleaned up
+automatically once it is committed or two weeks old. Only on **Approve & upload**, call
+`commit_creative_draft({draftDir})` with the `draftDir` the approved preview returned.
 
 ### 8. Check readiness before calling it done
 
-`get_creative` includes a `readiness` block: caption, alt text, the photo's checked/blocked state
+The preview already lists the readiness gaps, so fix what you can (caption, alt text, a checked
+photo) before asking for approval. After the commit, `get_creative` includes a `readiness` block: caption, alt text, the photo's checked/blocked state
 and provenance, and the Creative's own state (not `DRAFT`) are blocking; an AI-generation disclosure
 is informational only. Do not call a Creative done while `ready` is false.
 
-### 9. Render for real, then hand off
+### 9. Commit, then hand off
 
-Once the preview looks right, `render_creative` again with `previewOnly: false` (or omitted) for the
-full-size placement frames, then `attach_creative_to_post` with the Post's Work Item id — it maps
-each placement to the right destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to
-Facebook, story to story targets) for every destination that has not set its own custom media, and
-never touches one that has. Verify with `get_post_status`. From here, use the `conductor-publisher`
-skill for scheduling, review and publishing — this skill's job ends at attaching the artwork.
+`commit_creative_draft` uploads the draft's local files, creates the Creative (or updates
+`baseCreativeId`'s), and runs the full-size render in one call, then returns the Creative id and
+display id, the frames and the readiness. It can be run once per draft; if its render fails the
+Creative is already saved — call `render_creative`, don't commit again. Verify with `get_creative`.
+Then `attach_creative_to_post` with the Post's Work Item id — it maps each placement to the right
+destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to Facebook, story to story targets)
+for every destination that has not set its own custom media, and never touches one that has. Verify
+with `get_post_status`. From here, use the `conductor-publisher` skill for scheduling, review and
+publishing — this skill's job ends at attaching the artwork.
 
 ## Making a sequence instead of a single ad
 
 For a platform surface that's tapped or swiped through, set `sequenceKind` to `story` (2 to 7
-beats, aim for 3 to 5) or `carousel` (2 to 10 cards, 5 to 7 performs best) on `create_creative` or
-`update_creative`, with a `sequence` array. Each beat inherits the Creative and overrides only its
-own `headline`, and optionally `body`, `photoId` or `cta`. Structure a story hook, mechanism,
+beats, aim for 3 to 5) or `carousel` (2 to 10 cards, 5 to 7 performs best) on
+`preview_creative_draft` (then `commit_creative_draft`), with a `sequence` array. Each beat inherits
+the Creative and overrides only its own `headline`, and optionally `body`, `photoPath` (a local
+photo, uploaded on commit) or `photoId`, or `cta`. Structure a story hook, mechanism,
 payoff — the first beat has to earn the next tap on its own, since that's where the drop-off is
 worst. A logo lockup and CTA claim land on the last beat only by default; `cta: true` on an earlier
 beat overrides that. A carousel renders every card at one shared aspect ratio (`carouselRatio`),
@@ -135,6 +164,9 @@ since the destination platforms require that.
 Not every video needs the brand layout above — a finished clip (a demo recording, an existing edit,
 something a person or another tool already produced) can go up as-is. That's a CLIP Creative: no
 photo, headline or layout, just the video.
+
+A CLIP has no artwork to render, so it is the one flow without a draft preview: open the video
+itself and check it with the person before uploading.
 
 1. Check `list_creative_media({kind: "VIDEO"})` for a clip already in the project before uploading a
    new one. A new one goes through `upload_creative_media` (local path or URL) — same provenance
@@ -162,10 +194,11 @@ of a static frame — no separate video tool needed. Use it when a still doesn't
 destination rewards video over an image.
 
 1. Pick a photo (step 5) or, for a moving background, a video — check `list_creative_media({kind:
-   "VIDEO"})` first, then `upload_creative_media` only if nothing already fits — and note its media
-   id. For background music, `list_creative_media({kind: "AUDIO"})` the same way before uploading a
-   new track.
-2. `create_creative`/`update_creative` with `kind: "MOTION"` plus:
+   "VIDEO"})` first and use its media id if something fits; otherwise pass the local file as
+   `clipPath` (previewed from disk, uploaded on commit). For background music,
+   `list_creative_media({kind: "AUDIO"})` the same way, else `audioPath`.
+2. `preview_creative_draft` with `kind: "MOTION"` (to change a saved MOTION Creative, `baseCreativeId`
+   instead) plus:
    - `motion.preset` — how the copy enters: `fade-up` (default), `word-by-word`, `accent-pop`, or
      `none` (everything visible from the first frame).
    - `motion.durationSec` — 3 to 60, default 8.
@@ -177,13 +210,13 @@ destination rewards video over an image.
    - `audio` — `source: "clip"` (the background clip's own recorded sound — the default when there
      is one), `"track"` (a separate library track: `trackId` from `upload_creative_media`, plus
      `volume` and `fadeOutSec`), or `"none"`.
-3. `render_creative` runs a local, ffmpeg-driven encode — roughly 20 seconds per placement for an
-   8-second video. No ffmpeg on this machine fails with a clear message naming how to get one rather
-   than silently producing nothing.
-4. `preview_creative` renders three key moments across the timeline into one sheet image (not the
-   finished video). Judge it the same honest way as step 7 above — does the copy's entrance finish
-   before the next beat, does the end card actually hold long enough to read — before spending a
-   full render on it.
+3. The preview renders three key moments across the timeline into one sheet image (not the finished
+   video). Judge it the same honest way as step 7 above — does the copy's entrance finish before the
+   next beat, does the end card actually hold long enough to read — and get approval before
+   spending a full render on it.
+4. `commit_creative_draft` then uploads the media, saves the Creative and runs the local,
+   ffmpeg-driven encode — roughly 20 seconds per placement for an 8-second video. No ffmpeg on this
+   machine fails with a clear message naming how to get one rather than silently producing nothing.
 5. `attach_creative_to_post`, same as any Creative — one MP4 per placement.
 
 A library music track's `licence` has to be recorded on upload (same as a photo's provenance) — the
@@ -203,6 +236,9 @@ Automated checks are real but incomplete. These are the ones worth remembering t
 - **A Brand Kit with no copy rules, or no accent-phrase requirement, never fails a save on that
   account.** That is permissive by design, not a bug — but it means the model, not the platform, is
   the only check on brand voice for that workspace until someone configures rules.
+- **A draft is not a saved Creative.** `preview_creative_draft` writes nothing to Conductor, so a
+  Creative or media id does not exist until `commit_creative_draft` runs — don't hand a draft's
+  folder to `attach_creative_to_post` or a Post.
 - **A stale write is refused, not silently overwritten.** `update_creative` requires the Creative's
   current `version`; a mismatch comes back as a 409 naming the conflict rather than clobbering a
   concurrent edit — reread with `get_creative` and reapply, don't retry blind.
