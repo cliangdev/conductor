@@ -30,6 +30,7 @@ const PLUGIN_FILES = [
   'skills/conductor-creative/references/brand-kit-setup.md',
   'skills/conductor-content-studio/SKILL.md',
   'skills/conductor-content-studio/references/rubric.md',
+  'skills/conductor-content-studio/references/capabilities.md',
   'skills/conductor-content-studio/references/platform-specs.md',
   'skills/conductor-content-studio/references/idea-template.md',
   'skills/conductor-content-studio/references/script-template.md',

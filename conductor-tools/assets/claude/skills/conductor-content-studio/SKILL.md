@@ -110,10 +110,17 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    is a valid result.
 4. `list_creative_media` for `IMAGE`, `VIDEO` and `AUDIO` -> `context/media.json` (id, kind, label,
    dimensions or duration, checked, blocked, provenance).
+5. Every renderable idea needs a photo (or, for MOTION, a clip); see `references/capabilities.md`. If
+   `media.json` has no unblocked image and no clip, ask once with `AskUserQuestion` before ideating:
+   **Give a photo or two** (local paths; record them in `context/media.json` as `local` entries the
+   art director may use via `photoPath`) or **Plan for filming** (ideas will be `FILM`). Never let
+   the team design a type-only still; the preview refuses it.
 
 ### S1 — Strategist -> `brief.md`
 
-`Agent(subagent_type: "conductor-content-strategist")` with the five context files and `request.md`.
+`Agent(subagent_type: "conductor-content-strategist")` with the five context files, `request.md`
+and `references/capabilities.md` (so the brief states rendering constraints correctly: motion text
+over a photo is renderable and needs no filming).
 
 ### S2 — Ideators, in parallel -> `ideas/angle-<n>.md`
 
@@ -122,7 +129,8 @@ Three `Agent` calls in ONE message so they run in parallel, `subagent_type:
 
 1. story/emotion  2. utility/education  3. trend/humor (the only one allowed web search)
 
-Each gets `brief.md`, `context/media.json`, `references/idea-template.md`, and writes 4 ideas.
+Each gets `brief.md`, `context/media.json`, `references/idea-template.md` and
+`references/capabilities.md` (the `RENDER`/`FILM` test), and writes 4 ideas.
 With `--quick`: only angles 1 and 2, 3 ideas each.
 
 ### Merge (you) -> `ideas/pool.md`
@@ -152,6 +160,9 @@ draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/final
   retry. If it still fails, mark that finalist unrenderable in `run.json`, keep its text score, and
   move on. It is not dropped.
 - A photo id that is not in `media.json`, or a layout the registry rejects, counts as a refusal.
+- The preview result carries `checks` and `passed` (the full-size safe-zone, spill and contrast
+  checks). If a finalist fails a blocking check, fix it once (`layoutOverrides`, `typeOverrides`, a
+  shorter body) and re-preview; otherwise keep it and record the failure for the judge.
 - `FILM` finalists have no render.
 
 ### S3c — Creative director, visual round -> `decision.md`
@@ -177,7 +188,9 @@ idea from `ideas/pool.md`, `references/script-template.md` and `references/platf
 Tell it the supported options: the kit's enabled placements, and the layouts and themes
 the creative registry supports (at the time of writing `stacked`, `bleed`, `split` dark only, `card` dark or
 light; a refusal from the validator names the valid ones). The spec's keys must be exactly
-`preview_creative_draft` inputs. A `FILM` winner skips S5 and goes to the shoot script, below.
+`preview_creative_draft` inputs. Give it `references/capabilities.md` too. The spec's `name` is the
+idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. A
+`FILM` winner skips S5 and goes to the shoot script, below.
 
 ### S6 — Preview gate (you; `RENDER` winner)
 
@@ -188,19 +201,24 @@ light; a refusal from the validator names the valid ones). The spec's keys must 
 2. Eye-check the image. Load the `conductor-creative` skill with `Skill(skill: "conductor-creative")` and
    apply its review guidance (step 7 and the silent-failures list): does the headline read at a
    glance, does the accent phrase fall on the words that carry the meaning, is copy on a face, are
-   the safe zones clear. Revise by editing the spec yourself and re-previewing, at most twice. If
-   it is still wrong, show it honestly and say what is off.
+   the safe zones clear. Also read the result's `checks`/`passed`: while any blocking check fails,
+   fix it (`layoutOverrides` for photo height, `typeOverrides` for text size, a shorter body) and
+   re-preview **before** showing anything, and never offer Approve & upload while one still fails.
+   Revise at most twice beyond that; if it is still wrong, show it honestly and say what is off.
 3. Show the person: the draft image, the finalist sheets of the runners-up (view them from
    `drafts/finalist-<id>/sheet.jpg`; say when a runner-up could not be rendered), and a short decision
    summary (the winner and why, the runners-up, what was cut and why).
-4. Ask with `AskUserQuestion`, header "Draft", options:
+4. Ask with `AskUserQuestion`, header "Draft", with exactly these four options. `AskUserQuestion`
+   allows at most four, so never add one per runner-up, and **Stop** must always be among them:
    - **Approve & upload**: if the spec used a local file (`photoPath`, `clipPath`, `audioPath`),
      first ask for its provenance (`source`, `licence`, and whether it is AI-generated) and pass
      them to `commit_creative_draft({draftDir, source, licence, aiGenerated})`. Then
      `get_creative` and read its `readiness`. If provenance or anything else blocking is missing,
      say exactly what and ask for it; never call a Creative done while `ready` is false.
-   - **Use runner-up <id>**: set that idea as `winner`, then re-run S4 onward for it (S5 and S6, or the FILM path
-     if it is tagged `FILM`). Offer one option per runner-up (up to two).
+   - **Use a runner-up**: ask a second `AskUserQuestion` listing the runners-up by title (with
+     their tag; label one that could not be rendered as such and say why, rather than offering it as
+     if it would work). Then set the chosen idea as `winner` and re-run S4 onward for it (S5 and S6,
+     or the FILM path if it is tagged `FILM`).
    - **Request changes**: take the free text. If it is about the copy, send it with the current
      script to the scriptwriter (S4), then the art director (S5); if only about the look, send it to
      the art director. Then re-preview. Do not commit the old draft.

@@ -13,7 +13,10 @@ ideas, so be specific and evidence-led.
 ## Boundaries
 
 - Read only the input files you are given (normally `context/brand-kit.json`, `context/knowledge.md`,
-  `context/performance.md`, `context/media.json` and `request.md` in the run folder).
+  `context/performance.md`, `context/media.json` and `request.md` in the run folder, plus
+  `references/capabilities.md`). State rendering constraints from that file, not from memory. For
+  example, motion text over a photo is renderable and needs no filming, but every renderable post
+  needs a photo or clip.
 - Write only the output file you are given (normally `brief.md`).
 - Never call Conductor or any MCP tool. You have no access to them.
 - Do not invent facts about the product, audience or results. If the context does not say, write
