@@ -281,7 +281,7 @@ For v1 tasks (no top-level `schema_version`, or no `files_owned` on tasks), beha
 
 ### Subagent Dispatch
 
-For each batch, spawn `conductor-coder` subagents in parallel using the Agent tool. The conductor-coder skill is defined at `conductor-tools/assets/claude/skills/conductor-coder/SKILL.md` and handles stack detection internally. Pass each agent this prompt:
+For each batch, spawn `conductor-coder` subagents in parallel using the Agent tool, all calls in one message, each with `subagent_type: "conductor-coder"`. The agent (`.claude/agents/conductor-coder.md`) preloads the `conductor-coder` skill, which handles stack detection internally. Pass each agent this prompt:
 
 ```
 # Task: {task.id} - {task.title}

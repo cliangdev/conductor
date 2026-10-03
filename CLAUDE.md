@@ -134,9 +134,9 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 
 `.claude/` at the repo root provides skills and agents for Claude Code users:
 
-- `commands/conductor` — the `conductor` slash command (installed to `~/.claude/` via `conductor init`)
-- `skills/` — `conductor-coder`, `agent-creator`, `ux-ui-design`
-- `agents/` — custom subagent definitions
+- `commands/conductor/` — the `/conductor:*` slash commands: `prd`, `implement`, `fix`, `workflow`, `creative`, `content` (installed via `conductor init`)
+- `skills/` — `conductor-coder`, `conductor-creative`, `conductor-content-studio`, `conductor-publisher`, `conductor-ux-ui-design`
+- `agents/` — subagents: `conductor-coder`, `conductor-researcher`, and the content team (`conductor-content-strategist`, `-ideator`, `-creative-director`, `-scriptwriter`, `-art-director`)
 
 Source of truth for these assets is `conductor-tools/assets/claude/` — edit there, not in `.claude/` directly.
 

@@ -21,6 +21,8 @@ For how any of this works under the hood, see [docs/creatives.md](creatives.md).
   with the headline *half price*," or "Upload this finished video as a Clip and put it on a new
   Post." In Claude Desktop (or Claude Code), skip the slash command and just ask the same way —
   Claude uses the same Conductor MCP tools either way.
+- Not sure what to post? `/conductor:content "<goal and platform>"` has a team of agents propose,
+  judge and draft an idea for you to approve (see "Let a content team choose the idea").
 - No Claude Code/Desktop? **Marketing → Creatives → New creative** in the web app does the same job.
 
 The rest of this guide is the full walkthrough, starting with your Brand Kit.
@@ -77,8 +79,8 @@ work. Either way, rendering the final artwork always happens locally, not on Con
 
 **Prerequisites:**
 
-- `npm install -g @cliangdev/conductor` (0.26.0 or later — earlier versions work for creatives but
-  don't have the draft preview below), then `conductor login` and `conductor init` in your project —
+- `npm install -g @cliangdev/conductor` (0.27.0 or later — earlier versions work for creatives but
+  don't have the draft preview below, and 0.27.0 adds the content team), then `conductor login` and `conductor init` in your project —
   see the [conductor-tools README](../conductor-tools/README.md) if you haven't set these up
   before. Already set up? Just update the package; skills refresh automatically from 0.25.0.
 - Google Chrome or Microsoft Edge installed, or run `npx playwright install chromium` once.
@@ -152,6 +154,58 @@ The web editor never renders final images itself — that always happens from Cl
 the CLI (`conductor creative render 12a`). The **Renders** panel on the editor page lists what's
 been rendered and shows both the exact prompt and the CLI command, ready to copy, for whenever you
 want a fresh one.
+
+### Let a content team choose the idea
+
+If you have a goal rather than a headline, run `/conductor:content "<request>"` in Claude Code, for
+example "a post that gets lapsed users back, for Reels" or "a 20-second explainer on our new report,
+TikTok". Add `--quick` for a lighter run. Without a request it asks one short question: what the post
+is for, which platform, and any line it must say. It first checks your Brand Kit the same way
+`/conductor:creative` does.
+
+A small team of agents then works through stages, passing files between them rather than
+conversation:
+
+1. **Context.** Your Brand Kit, its Knowledge page, `marketing/what-works.md`, persona and positioning
+   pages, recent performance and the media library are saved as a snapshot. Missing pages are noted,
+   not fatal.
+2. **Brief.** A strategist writes the objective, audience tension, must-say and must-avoid lines (from
+   your copy rules and approved lines), the assets on hand and what has worked.
+3. **Ideas.** Three ideators with different angles (story and emotion, utility and education, trend
+   and humor) each write four ideas without seeing each other's.
+4. **Judging.** The ideas are shuffled, stripped of their source and given neutral IDs. A judge on a
+   different model tier scores each against a six-criterion rubric (hook strength, audience
+   relevance, brand fit, feasibility with assets on hand, novelty, shareability), writing its reasoning
+   before each score, and picks three finalists. Each finalist that can be rendered gets a quick local
+   draft, and the judge then looks at the actual images, compares the finalists pairwise in both orders
+   (a split counts as a tie) and argues against its own leader before naming a winner.
+5. **Script and direction.** A scriptwriter writes the hook (landing in the first three seconds),
+   timed beats, payoff, call to action and captions; an art director turns that into visual
+   direction and the exact spec for the draft renderer.
+
+**One approval point.** The team picks the idea itself and does not stop to ask you. You are asked
+once, at the final draft preview: you see the draft, the runners-up's sheets and a summary of why the
+winner won, then choose *Approve & upload*, *Use runner-up*, *Request changes* or *Stop*. Nothing is
+uploaded to Conductor until you approve. The run ends at a committed Creative and **never creates a
+Post**; make the Post afterwards with `/conductor:creative` or the publisher skill. To test a
+runner-up's hook, cut it as a lettered variant of the Creative (see section 4).
+
+**Filming ideas.** An idea is either `RENDER`, meaning Conductor can render it (a still, carousel,
+story sequence, or motion text over photos or clips you already have), or `FILM`, meaning it needs a
+person or real footage. If a filming idea wins, you get a shoot-ready script instead of a draft:
+script, shot list, capture settings, B-roll, safe zones, and on-screen text and captions ready to
+paste. You are asked whether to save it as a project doc under `Content/Shoots/`. Once you have
+filmed it, upload the clip and run `/conductor:creative`, choosing "Video from a clip I have".
+
+**Cost.** A run is about 8 subagent calls, and only the strategist and the judge use the top model
+tier. `--quick` uses two ideators with three ideas each and skips the finalist renders (the judge
+then decides from the text alone), for about 7 calls.
+
+**Where the files live.** Each run keeps everything in
+`.conductor/content-runs/<date-time-slug>/` in your project (git ignores the folder): `brief.md`,
+the ideas and scores, the finalist sheets, `decision.md`, `script.md`, `direction.md` and
+`creative-spec.json`, plus `run.json`, which records progress. If a run is interrupted, running the
+command again offers to resume it.
 
 ## 3. Put it on a Post
 
