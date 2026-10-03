@@ -38,6 +38,9 @@ needs changing until it fits.
 
 - **Layouts:** `stacked`, `bleed` and `split` are dark only; `card` is dark or light. The photo and
   text arrangement is fixed per layout.
+  - **`stacked` drops the body at 4:5.** That includes every card of a 4:5 carousel, and it happens
+    silently. If a body line carries meaning (a claim, the product name, the accent phrase), use
+    `card`, `split` or `bleed`, or move the line into the headline.
 - **Placements:** the kit's enabled placements (usually 9x16, 4x5, 1x1). You can also opt in to
   `story`, `1.91x1`, `2x3` and `16x9`.
 - **`typeOverrides`:** headline size per placement. Use this when text reads too small or too large;
