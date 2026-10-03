@@ -217,9 +217,13 @@ public class CreativeService {
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, clipMedia);
         MotionResolution motionRes = resolveMotion(media, kind, request.getMotion(), request.getAudio());
 
+        // A draft is a render, so it is validated the way requestRender validates one: READY-level
+        // checks forced whatever state was asked for. Otherwise a preview could pass (a still with no
+        // photo, say) and the render then refuse the very Creative the person approved.
+        String validationState = draft ? Creative.STATE_READY : state;
         List<Violation> violations = new ArrayList<>(validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, request.getHeadline(), request.getBody(), request.getCaption(),
-                state, request.getPhotoId(), mainPhoto.resolvable(), mainPhoto.photo() != null,
+                validationState, request.getPhotoId(), mainPhoto.resolvable(), mainPhoto.photo() != null,
                 mainPhoto.photo() != null && mainPhoto.photo().isUploaded(),
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),

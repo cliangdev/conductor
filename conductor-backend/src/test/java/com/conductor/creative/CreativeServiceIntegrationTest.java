@@ -11,6 +11,8 @@ import com.conductor.generated.v2.model.CopyRule;
 import com.conductor.generated.v2.model.CopyRuleField;
 import com.conductor.generated.v2.model.CreateBrandKitRequest;
 import com.conductor.generated.v2.model.CreateCreativeRequest;
+import com.conductor.generated.v2.model.LocalMediaInfo;
+import com.conductor.generated.v2.model.MediaKind;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.CreateCreativeVariantRequest;
 import com.conductor.generated.v2.model.CreativeDraftSpecRequest;
@@ -35,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -738,7 +741,8 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(brandKitRepository.countByProjectId(bare.getId())).isZero();
 
         CreativeService.DraftSpec draft = creativeService.buildDraftSpec(bare.getId(),
-                new CreativeDraftSpecRequest().headline("Hello"), admin);
+                new CreativeDraftSpecRequest().headline("Hello").photoId("local:photo")
+                        .localMedia(Map.of("photo", new LocalMediaInfo(MediaKind.IMAGE).width(1200).height(1600))), admin);
 
         assertThat(draft.spec().getBrand().getTokens()).containsKey("accent");
         assertThat(draft.spec().getPlacements()).containsExactlyInAnyOrder("9x16", "4x5", "1x1");

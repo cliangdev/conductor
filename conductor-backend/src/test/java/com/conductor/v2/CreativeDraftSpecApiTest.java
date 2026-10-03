@@ -86,8 +86,11 @@ class CreativeDraftSpecApiTest extends AbstractE2ETest {
     void typeOverridesAreAcceptedByDraftSpecAndCreateAndInvalidOnesAre422() {
         Map<String, Object> pinned = Map.of("9x16", List.of(96, 1.0, -2.9), "1x1", List.of(88));
 
+        // A draft gets the READY-level checks every render forces, so it needs a photo (a local one here).
         var draft = rest.exchange(draftSpecUrl, HttpMethod.POST,
-                new HttpEntity<>(Map.of("headline", "Hello *there*", "typeOverrides", pinned), authHeaders), Map.class);
+                new HttpEntity<>(Map.of("headline", "Hello *there*", "typeOverrides", pinned,
+                        "photoId", "local:photo", "localMedia", Map.of("photo", Map.of("kind", "IMAGE", "width", 1200, "height", 1600))),
+                        authHeaders), Map.class);
         assertThat(draft.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<String, Object> creative = (Map<String, Object>) ((Map<String, Object>) draft.getBody().get("spec")).get("creative");
         assertThat((Map<String, Object>) creative.get("typeOverrides")).containsOnlyKeys("9x16", "1x1");

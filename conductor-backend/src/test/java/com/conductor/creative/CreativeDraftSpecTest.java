@@ -128,7 +128,7 @@ class CreativeDraftSpecTest {
     @Test
     void previewOnlyFalseIsEchoedIntoTheSpec() {
         CreativeService.DraftSpec draft = service.buildDraftSpec(PROJECT,
-                draftRequest("Hello").previewOnly(false), caller);
+                renderableDraft("Hello").previewOnly(false), caller);
 
         assertThat(draft.spec().getPreviewOnly()).isFalse();
     }
@@ -211,7 +211,7 @@ class CreativeDraftSpecTest {
                 "message", "No exclamation marks.", "fields", List.of("headline")))));
 
         CreativeValidationException fromDraft = catchValidation(() ->
-                service.buildDraftSpec(PROJECT, draftRequest("Dinner is ready!"), caller));
+                service.buildDraftSpec(PROJECT, renderableDraft("Dinner is ready!"), caller));
         CreativeValidationException fromCreate = catchValidation(() ->
                 service.createCreative(PROJECT, new CreateCreativeRequest().headline("Dinner is ready!"), caller));
 
@@ -364,7 +364,7 @@ class CreativeDraftSpecTest {
 
     @Test
     void typeOverridesOnTheDraftAppearInTheSpec() {
-        CreativeRenderSpec spec = service.buildDraftSpec(PROJECT, draftRequest("Hello *there*").typeOverrides(Map.of(
+        CreativeRenderSpec spec = service.buildDraftSpec(PROJECT, renderableDraft("Hello *there*").typeOverrides(Map.of(
                 "9x16", List.of(new BigDecimal("96"), new BigDecimal("1.0"), new BigDecimal("-2.9")),
                 "1x1", List.of(new BigDecimal("88")))), caller).spec();
 
@@ -375,7 +375,7 @@ class CreativeDraftSpecTest {
 
     @Test
     void aDraftWithoutTypeOverridesHasAnEmptyMap() {
-        assertThat(service.buildDraftSpec(PROJECT, draftRequest("Hello"), caller).spec().getCreative().getTypeOverrides())
+        assertThat(service.buildDraftSpec(PROJECT, renderableDraft("Hello"), caller).spec().getCreative().getTypeOverrides())
                 .isEmpty();
     }
 
@@ -394,12 +394,23 @@ class CreativeDraftSpecTest {
 
     @Test
     void invalidTypeOverridesAre422sNamingTheField() {
-        assertThatThrownBy(() -> service.buildDraftSpec(PROJECT, draftRequest("Hello").typeOverrides(Map.of(
+        assertThatThrownBy(() -> service.buildDraftSpec(PROJECT, renderableDraft("Hello").typeOverrides(Map.of(
                 "9x16", List.of(new BigDecimal("-5")), "nope", List.of(new BigDecimal("80")))), caller))
                 .isInstanceOf(CreativeValidationException.class)
                 .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
                         .extracting(CreativeValidationException.Violation::field)
                         .containsOnly("typeOverrides").hasSize(2));
+    }
+
+    @Test
+    void aStillWithNoPhotoIsRefusedAtDraftTimeJustAsTheRenderWouldRefuseIt() {
+        // A draft is a render: the READY-level checks requestRender forces apply here too, so a preview
+        // can never pass for a Creative the full render would then refuse after the person approved it.
+        CreativeValidationException e = catchValidation(() ->
+                service.buildDraftSpec(PROJECT, draftRequest("Cold brew, *on repeat*."), caller));
+
+        assertThat(e.violations()).extracting(CreativeValidationException.Violation::ruleId)
+                .contains("photoRequired");
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
@@ -415,6 +426,11 @@ class CreativeDraftSpecTest {
 
     private CreativeDraftSpecRequest draftRequest(String headline) {
         return new CreativeDraftSpecRequest().headline(headline);
+    }
+
+    /** A draft that clears the READY-level checks every render forces: it has a (local) photo. */
+    private CreativeDraftSpecRequest renderableDraft(String headline) {
+        return draftRequest(headline).photoId("local:photo").localMedia(Map.of("photo", image()));
     }
 
     private LocalMediaInfo image() {
