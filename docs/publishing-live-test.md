@@ -38,7 +38,8 @@ Keep the workspace to the people doing the test. Every automated destination pub
    just limited to those roles. Going live requires App Review (Advanced Access) for every
    permission Conductor requests.
 4. Scopes Conductor requests: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`,
-   `instagram_basic`, `instagram_content_publish`, `instagram_manage_insights`. Grant all of them
+   `instagram_basic`, `instagram_content_publish`, `instagram_manage_insights`, `business_management`
+   (needed so Pages owned by a business portfolio appear in the picker). Grant all of them
    at consent; the Page picker after consent lists only Pages the token can see.
 5. If you leave the Page picker without choosing (an error, a closed tab), the connection is stored
    but cannot publish, and Posts offer only the manual Facebook and Instagram lanes. The connection

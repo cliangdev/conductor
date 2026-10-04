@@ -141,6 +141,12 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
         ));
     }
 
+    /**
+     * {@code business_management} is not for any business endpoint: Conductor calls none. Without it,
+     * {@code /me/accounts} omits every Page a business portfolio owns, even one the user has full control
+     * of through that portfolio, so the Page picker comes back empty for the brands and agencies that keep
+     * their Pages in a portfolio (found live 2026-10-04 on a portfolio-owned Page).
+     */
     @Override
     public List<String> oauthScopes() {
         return List.of(
@@ -149,7 +155,8 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
                 "pages_read_engagement",
                 "instagram_basic",
                 "instagram_content_publish",
-                "instagram_manage_insights");
+                "instagram_manage_insights",
+                "business_management");
     }
 
     @Override
