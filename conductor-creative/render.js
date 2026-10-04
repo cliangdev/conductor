@@ -264,7 +264,13 @@ function buildHeadline(ad, parent) {
     return h;
   }
   if (m[1]) h.appendChild(document.createTextNode(m[1]));
-  el('em', null, h).textContent = m[2];
+  const em = el('em', null, h);
+  em.textContent = m[2];
+  // Italic correction: a slanted accent leans into the upright word before it (and its last letter
+  // overhangs the word after), so a plain word space reads as no space at all ("slightdelay").
+  // Widen only the gaps that are real spaces, never one against glued punctuation.
+  if (/\s$/.test(m[1])) em.classList.add('cc-accent-after-space');
+  if (/^\s/.test(m[3])) em.classList.add('cc-accent-before-space');
   if (m[3]) h.appendChild(document.createTextNode(m[3]));
   return h;
 }

@@ -118,6 +118,44 @@ test('A: the headline text is identical at every moment for every preset (no DOM
   }
 });
 
+test('A: an italic accent after a space gets an italic correction; one glued to punctuation does not', () => {
+  const { window } = parseHTML('<!doctype html><html><body></body></html>');
+  globalThis.document = window.document;
+  return import('../render.js').then(({ renderBoard }) => {
+    const em = (headline) => {
+      const ad = resolveAd({ layout: 'bleed', headline }, PLACEMENTS, LAYOUTS);
+      return renderBoard(ad, '1x1', PLACEMENTS, LAYOUTS, {}).querySelector('.cc-headline em');
+    };
+    const mid = em('omw. slight *delay* today');
+    assert.ok(mid.classList.contains('cc-accent-after-space'));
+    assert.ok(mid.classList.contains('cc-accent-before-space'));
+    const glued = em('*Delay*, again');
+    assert.ok(!glued.classList.contains('cc-accent-after-space'), 'no correction at the start of the headline');
+    assert.ok(!glued.classList.contains('cc-accent-before-space'), 'no correction against glued punctuation');
+  });
+});
+
+test('A: the gap before an italic accent is at least as wide as a plain word space (still and motion)', async (t) => {
+  if (skip(t)) return;
+  for (const kind of ['STILL', 'MOTION']) {
+    const motion = { preset: 'accent-pop', durationSec: 8, background: { source: 'photo', motion: 'zoom-in' } };
+    const spec = kind === 'MOTION'
+      ? motionSpec({ creative: { layout: 'bleed', headline: 'omw. slight *delay*.', photoUrl: PHOTOS.landscape }, motion, placementKey: '1x1', brand: BRAND })
+      : { creative: { kind: 'STILL', layout: 'bleed', headline: 'omw. slight *delay*.', photoUrl: PHOTOS.landscape }, brand: BRAND, placementKey: '1x1' };
+    const page = await fx.open('frame.html', spec);
+    try {
+      if (kind === 'MOTION') await page.evaluate(() => window.__seekMotion(7.9));
+      const plain = await visualGap(page, 'omw.', 'slight');
+      const accent = await visualGap(page, 'slight', 'delay');
+      if (plain !== Infinity && accent !== Infinity) {
+        assert.ok(accent >= plain, `${kind}: accent gap ${accent}px is narrower than a word space ${plain}px`);
+      }
+    } finally {
+      await page.close();
+    }
+  }
+});
+
 /* ── B: the photo layer always covers its frame, never repeats ──────────────────────────────────── */
 
 const BG_MOTIONS = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'none'];
