@@ -410,6 +410,7 @@ export async function previewCreativeDraft(
   const checks = manifest.checks ?? []
   const failing = checks.filter((c) => c.severity === 'error')
   const passed = manifest.passed ?? failing.length === 0
+  const advisories = checks.filter((c) => c.severity !== 'error')
 
   return {
     ok: true,
@@ -425,7 +426,10 @@ export async function previewCreativeDraft(
     ...(note ? { note } : {}),
     nextStep: passed
       ? 'Nothing has been saved to Conductor. All placement checks passed. Show the image to the person and ask whether to approve it. ' +
-        'Only after they approve, call commit_creative_draft({draftDir}); to change something, call preview_creative_draft again.'
+        'Only after they approve, call commit_creative_draft({draftDir}); to change something, call preview_creative_draft again.' +
+        (advisories.length
+          ? ` Warnings (they do not block, but tell the person when you show the image): ${summariseChecks(advisories)}`
+          : '')
       : `NOT ready for approval: ${failing.length} placement check${failing.length === 1 ? '' : 's'} failed (${summariseChecks(failing)}) — ` +
         'the full render would fail them after the person approved. Nothing has been saved. Fix the design (shorter copy, a different layout, ' +
         'layoutOverrides, typeOverrides, or drop the body) and call preview_creative_draft again until `passed` is true. Do not ask the person to ' +

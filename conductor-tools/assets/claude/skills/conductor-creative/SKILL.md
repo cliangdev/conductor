@@ -240,6 +240,10 @@ destination rewards video over an image.
    - `audio` — `source: "clip"` (the background clip's own recorded sound — the default when there
      is one), `"track"` (a separate library track: `trackId` from `upload_creative_media`, plus
      `volume` and `fadeOutSec`), or `"none"`.
+
+   A MOTION Creative is one animated frame per placement: it cannot also be a story or a carousel
+   (`sequenceKind`/`sequence`) — that is refused with a 422 (`motionNoSequence`). For several beats, make
+   one MOTION Creative per beat, or a STILL story/carousel.
 3. The preview renders three key moments across the timeline into one sheet image (not the finished
    video). Judge it the same honest way as step 7 above — does the copy's entrance finish before the
    next beat, does the end card actually hold long enough to read — and get approval before

@@ -37,3 +37,32 @@ export async function ensureBrandFont(brand) {
     await Promise.all([400, 700].map((w) => document.fonts.load(`${w} 32px "${family}"`).catch(() => [])));
   }
 }
+
+/* Waits until every picture under `root` has loaded: each <img> (the logo lockup, the badge, a band/card
+ * photo) AND each bleed photo layer, which is a CSS background and so is not in `document.images` — the
+ * page's `load` event does not wait for it either. Without this a screenshot (the contact sheet most of
+ * all, which never ran this wait) could be taken before the photo or logos had arrived: a board with no
+ * photo and no logo that nothing flagged. A picture that fails to load resolves anyway; it is
+ * assertions.js's job (frame.html) to report it. Browser-only; a no-op outside a document. */
+export async function settleImages(root) {
+  if (typeof document === 'undefined') return;
+  const scope = root || document;
+  const loads = [...scope.querySelectorAll('img')].map((img) => (
+    img.complete ? Promise.resolve() : new Promise((done) => {
+      img.addEventListener('load', done, { once: true });
+      img.addEventListener('error', done, { once: true });
+    })
+  ));
+  for (const layer of scope.querySelectorAll('.cc-bg-photo')) {
+    const m = /url\("?(.+?)"?\)/.exec(getComputedStyle(layer).backgroundImage || '');
+    if (!m) continue;
+    loads.push(new Promise((done) => {
+      const probe = new Image();
+      probe.onload = done;
+      probe.onerror = done;
+      probe.src = m[1];
+    }));
+  }
+  await Promise.all(loads);
+  await Promise.all([...scope.querySelectorAll('img')].map((img) => (img.decode ? img.decode().catch(() => {}) : null)));
+}

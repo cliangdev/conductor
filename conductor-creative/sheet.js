@@ -15,7 +15,7 @@
  *                             // motionKeyTimes()): one ROW per time, each row
  *                             // holding every placement in placementKeys at
  *                             // that time. Ignored for a sequence creative
- *                             // (MOTION creatives never carry a sequence).
+ *                             // (the backend refuses a MOTION creative with a sequence).
  *   }
  *
  * Result contract: window.__RENDER_RESULT = { ok: true, width, height } |
@@ -25,7 +25,7 @@
 import { resolveAd, resolveSequence, renderBoard, fitAll } from './render.js';
 import { placements as DEFAULT_PLACEMENTS } from './placements.js';
 import { layouts as DEFAULT_LAYOUTS } from './layouts/index.js';
-import { ensureBrandFont } from './font.js';
+import { ensureBrandFont, settleImages } from './font.js';
 import { applyMotion } from './motion.js';
 
 const SHEET_SCALE = 0.34;
@@ -104,6 +104,11 @@ async function main() {
         : Object.keys(placementsReg).filter((k) => placementsReg[k].default);
       keys.forEach((key) => addCell(ad, key, (placementsReg[key] && placementsReg[key].label) || key));
     }
+
+    // Every photo and logo must have arrived before fitting (a logo's width shapes the layout) and
+    // before the job screenshots the sheet: a sheet captured mid-load showed boards with no photo and no
+    // logo, which read as a render that had dropped them.
+    await settleImages(sheet);
 
     // Fit every board at its TRUE, unscaled size first (a CSS transform
     // shrinks the measured rect and would throw fitBoard's line-count math

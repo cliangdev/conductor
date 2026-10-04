@@ -171,6 +171,8 @@ describe('previewCreativeDraft', () => {
     expect(result.passed).toBe(true)
     expect(result.nextStep).toMatch(/All placement checks passed/)
     expect(result.nextStep).not.toMatch(/NOT ready/)
+    // A warning does not block, but the agent is told to pass it on to the person.
+    expect(result.nextStep).toMatch(/Warnings.*1x1: photo is soft/)
     // The renderer, not this tool, decides to run the per-placement checks: it gets the previewOnly spec.
     expect(mocked(renderDraft).mock.calls[0]![0].spec.previewOnly).toBe(true)
   })

@@ -100,12 +100,13 @@ test('backgroundMotionState: "none" and the default ("zoom-in" when unset) behav
 
 /* ── applyMotion: background CSS vars land on the board regardless of preset */
 
-test('applyMotion: sets --cc-bg-transform/--cc-bg-size/--cc-bg-pos from the background state', () => {
+test('applyMotion: sets --cc-bg-transform from the background state (translate first, so a pan stays inside the overhang)', () => {
   const b = board({ ...CREATIVE, motion: { background: { motion: 'zoom-in' } } });
   applyMotion(b, { background: { motion: 'zoom-in' } }, 8, { durationSec: 8 });
-  assert.equal(b.style.getPropertyValue('--cc-bg-transform'), 'scale(1.12) translateX(0%)');
-  assert.equal(b.style.getPropertyValue('--cc-bg-size'), '112%');
-  assert.match(b.style.getPropertyValue('--cc-bg-pos'), /^50% /);
+  assert.equal(b.style.getPropertyValue('--cc-bg-transform'), 'translateX(0%) scale(1.12)');
+  // The old width-relative background-size/position vars are gone: the photo is a cover-sized layer now.
+  assert.equal(b.style.getPropertyValue('--cc-bg-size'), '');
+  assert.equal(b.style.getPropertyValue('--cc-bg-pos'), '');
 });
 
 /* ── applyMotion: fade-up (default) ───────────────────────────────────── */

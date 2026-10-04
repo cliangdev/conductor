@@ -82,3 +82,14 @@ test('placements.json carries no brand-specific colors or copy', () => {
   const raw = readFileSync(join(ROOT, 'placements.json'), 'utf8');
   assert.doesNotMatch(raw, /#FF5A5F|coral|rexipe|rex\b/i);
 });
+
+/* ── styles.css is the concatenation of its sources ────────────────────── */
+
+// frame.html and sheet.html (so every render) load styles.css, not the individual files, and it is
+// concatenated by hand: a layout.css edit that never reached it changed nothing on the page.
+for (const name of ['tokens.css', 'frame.css', ...LAYOUT_NAMES_JSON.map((n) => `layouts/${n}/layout.css`)]) {
+  test(`styles.css contains ${name} verbatim`, () => {
+    const bundle = readFileSync(join(ROOT, 'styles.css'), 'utf8');
+    assert.ok(bundle.includes(readFileSync(join(ROOT, name), 'utf8')), `${name} has drifted from styles.css; re-concatenate`);
+  });
+}

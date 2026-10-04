@@ -87,6 +87,8 @@
 }
 .cc-board--light .cc-headline { color: var(--cc-ink); }
 .cc-headline em { font-style: italic; color: var(--cc-accent); }
+.cc-headline em.cc-accent-after-space { margin-left: 0.07em; }
+.cc-headline em.cc-accent-before-space { margin-right: 0.04em; }
 /* Word spans the motion presets animate: inline-block so transforms apply; the spaces between them stay
  * plain text, so lines wrap exactly as they do without the spans. */
 .cc-word { display: inline-block; }

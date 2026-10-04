@@ -108,6 +108,12 @@ last step. Two MCP tools (`conductor-tools/src/mcp/tools/creative-drafts.ts`) ca
   (a MOTION creative at its end card), keeps only the findings and drops the frame bytes. They are written
   to `manifest.checks` / `manifest.passed`; an `error` severity is exactly what the full render would fail
   on (e.g. `safeZone`), so the agent fixes the design and re-previews before asking for approval.
+  Besides spill, safe zone, fonts, images, contrast and size, the assertions fail a frame that lost something
+  the spec requires (`missingPhoto`: the spec has a photo URL but no visible, loaded photo layer;
+  `missingLockup`: the Brand Kit has a logo but the frame has no lockup; `missingHeadline`), and warn
+  (`bodyDropped`, with `placementKey`) when a body was supplied but the layout has no room for it at that
+  placement — `stacked` drops it at `4x5`, every card of a 4:5 carousel included. The warning is not blocking:
+  put the load-bearing words in the headline, or pick another layout.
 - **`commit_creative_draft`** runs only after the person approved the image: it uploads each local file
   (the `upload_creative_media` code path), swaps `local:<key>` for the returned ids, calls
   `create_creative` (or `update_creative` at the current `version` when the draft has a
@@ -211,6 +217,12 @@ field path like `motion.preset`, the same shape every other Creative violation u
 same project, `clipStartSec` less than the clip's own duration). `audio` is
 `{source: clip|track|none, trackId?, volume?, fadeOutSec?}` — `track` needs an `AUDIO` media id; `clip`
 needs a `clip` background whose media actually has an audio track (`hasAudio=true`).
+
+**MOTION has no sequences.** A MOTION creative is one animated frame per placement; `sequenceKind` /
+`sequence` (a story or carousel) belong to STILL creatives. `CreativeValidator` refuses the combination on
+every write — create, patch and draft-spec alike — with a 422 (`ruleId` `motionNoSequence`, field
+`sequenceKind`), before anything renders. (It used to be accepted and rendered only the first beat, with the
+photo and logo missing and every check passing.)
 
 **Defaults are applied on every write**, by `CreativeService#resolveMotion` — never left for the client to
 supply or the renderer to guess: `preset` "fade-up", `durationSec` 8, `background.source` "photo",

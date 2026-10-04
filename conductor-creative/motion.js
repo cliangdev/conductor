@@ -136,6 +136,45 @@ function wrapWordsInPlace(container) {
   container.appendChild(frag);
 }
 
+/* ── accent-pop: how far a word may grow without eating the spaces around it ─────────────────────
+ * A scaled inline-block keeps its layout box, so growing it moves its ink into the neighbouring spaces:
+ * at 1.18x a long accent word swallowed the space before it ("slightdelay") for the first half second.
+ * The pop is therefore limited so each side grows by at most POP_GAP_EM of the font size (two accent words share one space, so each takes only a sliver of it), and only on a
+ * side that HAS a space (a word glued to punctuation, like "delay" in "delay.", does not grow towards it);
+ * the origin is placed so the growth lands on the open sides. Layout-less environments (a DOM shim)
+ * report no width and get the plain, uncapped pop. */
+
+const POP_PEAK = 1.18;
+const POP_GAP_EM = 0.04;
+
+function hasGap(word, direction) {
+  const prop = direction < 0 ? 'previousSibling' : 'nextSibling';
+  let node = word[prop];
+  // The first/last word of the accent <em> neighbours whatever sits beside the <em> itself.
+  if (!node && word.parentNode && word.parentNode.tagName === 'EM') node = word.parentNode[prop];
+  if (!node) return true; // a line edge: nothing to run into
+  if (node.nodeType !== 3) return false;
+  return direction < 0 ? /\s$/.test(node.textContent) : /^\s/.test(node.textContent);
+}
+
+/** Pure-ish (reads the word's measured width and font size): `{ peak, originX }` — the largest pop scale
+ * that keeps the word clear of its neighbours, and the transform-origin x (percent) that puts the growth
+ * on the sides that have a space. */
+function popLimits(word) {
+  const width = word.offsetWidth;
+  const view = word.ownerDocument && word.ownerDocument.defaultView;
+  const size = view && view.getComputedStyle ? parseFloat(view.getComputedStyle(word).fontSize) : NaN;
+  if (!(width > 0) || !(size > 0)) return { peak: POP_PEAK, originX: 50 };
+  const budget = POP_GAP_EM * size;
+  const left = hasGap(word, -1) ? budget : 0;
+  const right = hasGap(word, 1) ? budget : 0;
+  if (left + right === 0) return { peak: 1, originX: 50 };
+  return {
+    peak: Math.min(POP_PEAK, 1 + (left + right) / width),
+    originX: round2((100 * left) / (left + right)),
+  };
+}
+
 /* ── headline (preset-dependent) ──────────────────────────────────────────── */
 
 function applyHeadline(board, preset, tSec, inEndCard) {
@@ -189,11 +228,12 @@ function applyHeadline(board, preset, tSec, inEndCard) {
     const fadeProgress = windowProgress(tSec, ACCENT_POP_FADE_WINDOW[0], ACCENT_POP_FADE_WINDOW[1]);
     setFade(headline, fadeProgress, null);
     const popProgress = windowProgress(tSec, ACCENT_POP_POP_WINDOW[0], ACCENT_POP_POP_WINDOW[1]);
-    // Scale settles 1.18 → 1; brightness pulses up and back to 1, so the end card starts with no jump.
-    const scale = round2(lerp(1.18, 1, popProgress));
+    // Scale settles peak → 1; brightness pulses up and back to 1, so the end card starts with no jump.
     const brightness = round2(1 + 0.3 * Math.sin(Math.PI * popProgress));
     accentWords.forEach((w) => {
-      w.style.transformOrigin = '50% 70%';
+      const { peak, originX } = popLimits(w);
+      const scale = round2(lerp(peak, 1, popProgress));
+      w.style.transformOrigin = `${originX}% 70%`;
       w.style.transform = scale === 1 ? 'none' : `scale(${scale})`;
       w.style.filter = brightness === 1 ? 'none' : `brightness(${brightness})`;
     });
@@ -243,26 +283,28 @@ export function backgroundMotionState(motion, tSec, durationSec) {
   return { scale: 1, panPct: 0 }; // 'none'
 }
 
-/* "50% 30%" + a pan percent -> "54% 30%": keeps the focal point's own Y, only
- * the X drifts (a Ken Burns pan is always horizontal here). */
-function panBackgroundPosition(focal, panPct) {
-  const parts = String(focal || '50% 50%').trim().split(/\s+/);
-  const y = parts[1] || '50%';
-  return `${round2(50 + panPct)}% ${y}`;
+/** Pure: the rect (relative to the board/band/card it fills) the background layer occupies once
+ * `backgroundMotionState`'s transform is applied to a layer that exactly fills a `w` x `h` box. The
+ * transform is `translateX(panPct%) scale(scale)` (translate first, so the pan is in the BOX's own
+ * pixels, not the scaled layer's): a scale >= 1 overhangs each side by (scale - 1) / 2, and the pan is
+ * kept inside that overhang, so the layer covers the box at every `t`. Exported for tests. */
+export function backgroundLayerRect(w, h, state) {
+  const { scale, panPct } = state;
+  const width = w * scale;
+  const height = h * scale;
+  const left = (w - width) / 2 + (panPct / 100) * w;
+  const top = (h - height) / 2;
+  return { left, top, right: left + width, bottom: top + height, width, height };
 }
 
 function applyBackgroundMotion(board, motion, tSec, durationSec) {
   const { scale, panPct } = backgroundMotionState(motion, tSec, durationSec);
-  // Consumed two ways, both with a no-op fallback so a STILL board (which
-  // never calls applyMotion at all) is untouched:
-  //  - `.cc-board__band img` / `.cc-board__card img` / `.cc-bg-video`: a real
-  //    transform (band/card layouts, and any layout's clip background video).
-  //  - `.cc-board--bleed`'s own CSS `background-image`: background-size/
-  //    -position, since `transform` does not apply to a background image.
-  board.style.setProperty('--cc-bg-transform', `scale(${scale}) translateX(${panPct}%)`);
-  board.style.setProperty('--cc-bg-size', `${round2(scale * 100)}%`);
-  const focal = board.style.getPropertyValue('--cc-focal') || '50% 50%';
-  board.style.setProperty('--cc-bg-pos', panBackgroundPosition(focal, panPct));
+  // One CSS var, consumed by every layout's photo layer, with a no-op fallback so a STILL board (which
+  // never calls applyMotion at all) is untouched: `.cc-bg-photo` (bleed's photo layer),
+  // `.cc-board__band img` / `.cc-board__card img` and `.cc-bg-video`. The layer is `cover`-sized, never
+  // scaled below 1 and never panned past its overhang, so no edge or repeat can show (see
+  // backgroundLayerRect). The focal point stays the layer's own object-/background-position.
+  board.style.setProperty('--cc-bg-transform', `translateX(${panPct}%) scale(${scale})`);
 }
 
 /* ── the public entry point ───────────────────────────────────────────────── */
