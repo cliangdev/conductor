@@ -73,6 +73,23 @@ least five sentences: the likeliest way it fails with this audience, the platfor
 brand risk, and what the runner-up does better. Then decide whether the case is strong enough to
 change the winner. State the answer plainly. Do not soften the case to protect the leader.
 
+### Veto questions
+
+The pass must also answer these four about the leader, each yes or no with one line of reasoning.
+They come from `compliance-checklist.md`.
+
+1. Does it rely on an **unsubstantiated claim** (nothing in the brief, knowledge or approved lines
+   confirms it)?
+2. Is there a **trademark or parody risk** (another company's product, brand, logo or likeness)?
+3. Is there a **representation or sensitivity problem**?
+4. Is **disclosure needed** (anyone paid, gifted, an employee or an affiliate) that the brief does
+   not already handle?
+
+A "yes" that a copy edit can fix is fixed or noted for the scriptwriter. A "yes" that cannot be
+fixed in copy disqualifies the idea: record it in `decision.md` under **Veto**, take the next
+leader on the tally and run the same questions on it. Disclosure that only needs a toggle and a
+caption line is not a disqualifier; note it.
+
 ## Tie-break rule
 
 If two ideas are within 3 points of weighted total, or tied on the pairwise tally, prefer in order:

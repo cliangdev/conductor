@@ -12,6 +12,7 @@ Heading: `## Idea <n>: <title>` where the title is 8 words or fewer.
 - **Concept:** <one line, max 25 words: what the viewer sees and why it works>
 - **Hook, spoken:** <max 12 words, or "none (text only)">
 - **Hook, on screen:** <max 12 words>
+- **Hook type:** <question | bold-claim | pattern-interrupt | relatable-pain | how-to | number | curiosity-gap | story | social-proof>
 - **Format:** <still | carousel | story sequence | motion text over photo | motion text over clip | talking head | demo | skit | other>
 - **Platform:** <primary platform, then any others>
 - **Tag:** RENDER | FILM
@@ -30,6 +31,11 @@ Draft spec (RENDER only):
 - sequence: <for a story or carousel only: one line per beat, "headline | body">
 - motion: <MOTION only: preset, durationSec, background>
 ```
+
+## Sound
+
+An idea may not rely on a trending song. A business account cannot license most trending tracks, so
+name original audio or a Commercial Music Library track, or leave sound out of the concept.
 
 ## Tagging honestly
 

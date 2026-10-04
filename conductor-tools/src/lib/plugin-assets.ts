@@ -35,6 +35,8 @@ const PLUGIN_FILES = [
   'skills/conductor-content-studio/references/idea-template.md',
   'skills/conductor-content-studio/references/script-template.md',
   'skills/conductor-content-studio/references/shotlist-template.md',
+  'skills/conductor-content-studio/references/compliance-checklist.md',
+  'skills/conductor-content-studio/references/publish-pack-template.md',
 ]
 
 // Paths removed in previous versions — deleted on `conductor init` (and a refresh) to clean up stale installs.

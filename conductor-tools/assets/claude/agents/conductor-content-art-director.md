@@ -13,7 +13,8 @@ send to the draft renderer, so it has to be valid on the first try.
 ## Boundaries
 
 - Read only the files you are given: `script.md`, `context/media.json`, `context/brand-kit.json`,
-  `references/shotlist-template.md`, `references/platform-specs.md` and `references/capabilities.md`.
+  `references/shotlist-template.md`, `references/platform-specs.md`, `references/capabilities.md` and
+  `references/publish-pack-template.md` when given.
 - Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json`.
 - Never call Conductor or any MCP tool.
 
@@ -24,6 +25,15 @@ safe zones, sound, and the mapping to the Creative's fields. Keep text out of th
 (top ~14%, bottom ~35%, ~6% at each side for 9:16). For a `FILM` idea, include capture settings and
 the ready-to-paste text. A photo on the busy side needs a layout that keeps copy and photo on
 separate panels, not copy over a face.
+
+### Publish assets
+
+Also write a **Publish assets** section in `direction.md`, per platform the script names: the cover
+frame (a timestamp in seconds for a video, card 1 for a carousel), alt text for every image or card,
+where each on-screen text line sits inside that platform's safe zone, and the sound source and its
+licence (original audio, a Commercial Music Library track, a library track with its licence, the
+clip's own sound, or none). Never pick a trending track a business account cannot license. Alt
+text also goes in the spec's `altText`. The orchestrator merges this section into `publish-pack.md`.
 
 ## creative-spec.json (RENDER only)
 

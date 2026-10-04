@@ -27,17 +27,27 @@ Idea: <id>   Source decision: decision.md
 ## CTA
 <one action; use the kit's CTA claim or an approved line where there is one>
 
-## Captions
-- TikTok: <text; the first line carries the hook, keep the visible part to about 150 characters>
-- Instagram: <text, first line carries the hook, max 125 characters shown before "more">
+## Publish copy
+Per platform the brief asks for. The keyword the audience would search for sits in the caption's
+opening words (and in the on-screen text and speech); the first line carries the hook.
+- TikTok: <caption; keep the visible part to about 150 characters>
+- Instagram: <caption; first line carries the hook, max 125 characters shown before "more">
 - YouTube Shorts: <title max 100 characters>
-- Facebook: <text>
+- Facebook: <caption>
 - Hashtags: <3 to 5, no more>
+- First comment: <text, or "none"; posted by hand, because Conductor cannot post comments>
+- Alternate hooks (hook swaps for variantOf experiments):
+  1. <hook line> (<hookType>)
+  2. <hook line> (<hookType>)
+  3. <optional>
+
+Hook types: question, bold-claim, pattern-interrupt, relatable-pain, how-to, number,
+curiosity-gap, story, social-proof.
 
 ## Copy-rule check
 <each must-say / must-avoid item from brief.md, and ok or the fix>
 ```
 
 Rules: a beat every 3 to 5 seconds; no beat longer than 5 seconds without a visual or text change;
-caption limits are in `platform-specs.md` (check current platform guidance); approved lines run
+caption limits are in `platform-specs.md`; alternates differ from the main hook in hook type, not just wording (check current platform guidance); approved lines run
 verbatim; leave out platforms the brief did not ask for.

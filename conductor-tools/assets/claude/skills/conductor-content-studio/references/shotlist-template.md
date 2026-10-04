@@ -20,6 +20,14 @@ the Creative's own fields.
 ## Sound
 <sound on or off by design; music track id if any; voice-over; captions are always on screen>
 
+## Publish assets
+Per platform the script names:
+- Cover frame: <video: timestamp in seconds and what is on it; carousel: card 1; still: n/a>
+- Alt text: <one line per image or card, in order>
+- On-screen text placement: <where each line sits, inside the safe zone for that platform>
+- Sound source and licence: <original audio | Commercial Music Library track | library track id
+  and licence | clip's own sound | none>. Never a trending track a business account cannot license.
+
 ## Capture settings (FILM only)
 9:16 vertical, 1080x1920, 30 fps, sound on, lit from the front, phone steady, shoot extra B-roll.
 

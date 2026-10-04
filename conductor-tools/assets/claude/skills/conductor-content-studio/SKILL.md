@@ -1,6 +1,6 @@
 ---
 name: conductor-content-studio
-description: Runs a small team of subagents (strategist, three ideators, creative director, scriptwriter, art director) that brainstorm competing short-form social post ideas, pick one with a bias-resistant judging method, write the script and visual direction, and render a local draft. The person approves at the preview; only then is the Creative uploaded to Conductor. Ideas are either RENDER (a still, carousel, story sequence or motion text that Conductor can render) or FILM (needs real filming, so the output is a shoot-ready script). A run ends at a committed Creative or a shoot script and never creates a Post. Use when asked to come up with, choose and make a short-form post (TikTok, Reels, Shorts, Facebook) from a goal rather than from a given headline, or via /conductor:content. For a headline or photo already chosen, use conductor-creative instead.
+description: Runs a small team of subagents (strategist, three ideators, creative director, scriptwriter, art director) that brainstorm competing short-form social post ideas, pick one with a bias-resistant judging method, write the script and visual direction, run pre-publish checks (disclosure, AI label, music, claims, third-party material, accessibility), and render a local draft with a publish pack the publisher later pre-fills from. The person approves at the preview; only then is the Creative uploaded to Conductor. Ideas are either RENDER (a still, carousel, story sequence or motion text that Conductor can render) or FILM (needs real filming, so the output is a shoot-ready script). A run ends at a committed Creative or a shoot script and never creates a Post. Use when asked to come up with, choose and make a short-form post (TikTok, Reels, Shorts, Facebook) from a goal rather than from a given headline, or via /conductor:content. For a headline or photo already chosen, use conductor-creative instead.
 user-invocable: true
 allowed-tools: mcp__conductor__*, Agent, AskUserQuestion, Skill, Read, Write, Glob, Grep, WebFetch
 ---
@@ -28,6 +28,7 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   writes reasoning before scores, compares finalists pairwise in both orders, and argues against its
   own leader.
 - **One gate.** The person is asked only at the final draft preview. Do not stop to ask which idea.
+  The one exception is S5b's disclosure question, asked only when disclosure cannot be inferred.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script).
 
 Cost: a run is about 8 subagent calls (strategist 1, ideators 3, director 2, scriptwriter 1, art
@@ -43,10 +44,11 @@ folder; give subagents absolute paths.
 
 ```
 request.md  run.json  brief.md  script.md  direction.md  creative-spec.json  decision.md
-context/   brand-kit.json  knowledge.md  performance.md  media.json
+context/   brand-kit.json  knowledge.md  performance.md  learning.md  media.json
 ideas/     angle-1.md  angle-2.md  angle-3.md  pool.md
 judging/   scores.md
 drafts/    finalist-<id>/   (contact sheets from the finalist renders)
+publish-pack.md  publish-pack.json   (S5b; see references/publish-pack-template.md)
 shoot/     shoot-script.md  (FILM winner only)
 ```
 
@@ -56,9 +58,11 @@ shoot/     shoot-script.md  (FILM winner only)
 {
   "runId": "20261003-1415-spring-sale", "request": "...", "quick": false, "platform": "...",
   "stages": {"S0": "done", "S1": "done", "S2": "pending", "merge": "pending", "S3a": "pending",
-             "S3b": "pending", "S3c": "pending", "S4": "pending", "S5": "pending", "S6": "pending"},
+             "S3b": "pending", "S3c": "pending", "S4": "pending", "S5": "pending", "S5b": "pending",
+             "S6": "pending"},
   "idMap": {"I1": {"angle": "story/emotion", "file": "ideas/angle-1.md", "n": 3}},
   "finalists": [], "winner": null, "tag": null, "runnerUps": [],
+  "tags": {"hookType": null, "angle": null, "format": null},
   "drafts": {"finalist-I3": "<absolute dir>", "final": "<absolute dir>"},
   "creativeId": null, "creativeDisplayId": null, "shootDoc": null
 }
@@ -110,7 +114,14 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    is a valid result.
 4. `list_creative_media` for `IMAGE`, `VIDEO` and `AUDIO` -> `context/media.json` (id, kind, label,
    dimensions or duration, checked, blocked, provenance).
-5. Every renderable idea needs a photo (or, for MOTION, a clip); see `references/capabilities.md`. If
+5. Learning, for `context/learning.md`. Glob `.conductor/content-runs/*/run.json`, skip this run, and
+   keep the runs that have a `creativeId` and `tags`. For each, call `get_creative` (the variants'
+   attributed performance and the family's hook experiment, with its winner once decided) and read
+   its tags (hookType, angle, format). Summarise which hook types and angles did well and which did
+   not, using views, engagement rate, average view percentage, 72 h views and any 3-second or
+   completion figure the insights expose, and any experiment result. Name what you could not
+   measure. With no earlier run or no data, write exactly "No data yet".
+6. Every renderable idea needs a photo (or, for MOTION, a clip); see `references/capabilities.md`. If
    `media.json` has no unblocked image and no clip, ask once with `AskUserQuestion` before ideating:
    **Give a photo or two** (local paths; record them in `context/media.json` as `local` entries the
    art director may use via `photoPath`) or **Plan for filming** (ideas will be `FILM`). Never let
@@ -118,7 +129,7 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 
 ### S1 — Strategist -> `brief.md`
 
-`Agent(subagent_type: "conductor-content-strategist")` with the five context files, `request.md`
+`Agent(subagent_type: "conductor-content-strategist")` with the six context files, `request.md`
 and `references/capabilities.md` (so the brief states rendering constraints correctly: motion text
 over a photo is renderable and needs no filming).
 
@@ -168,29 +179,63 @@ draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/final
 ### S3c — Creative director, visual round -> `decision.md`
 
 Same agent, mode `visual-round`. Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, the
-finalist image paths (`drafts/finalist-<id>/sheet.jpg`; the director views them with Read) and the
-rubric. It compares finalists pairwise in both orders, runs the devil's-advocate pass against the
-leader, and writes `decision.md`: the winner, why it won, the runners-up and one line per cut idea.
-In `--quick` there are no images, so it judges from the text and says so.
+finalist image paths (`drafts/finalist-<id>/sheet.jpg`; the director views them with Read), the
+rubric and `references/compliance-checklist.md`. It compares finalists pairwise in both orders, runs
+the devil's-advocate pass against the leader (including the veto questions: an unsubstantiated
+claim, trademark or parody risk, a representation or sensitivity problem, disclosure needed), and
+writes `decision.md`: the winner, why it won, the runners-up, one line per cut idea and the veto
+answers. A veto "yes" that copy cannot fix disqualifies an idea. In `--quick` there are no images,
+so it judges from the text and says so.
 
-Read `decision.md`, then set `winner`, `tag` and `runnerUps` in `run.json`. Do not ask the person
+Read `decision.md`, then set `winner`, `tag` and `runnerUps` in `run.json`, and the run's own
+`tags`: `hookType` from the winning idea's hook type, `angle` from `idMap` (`story-emotion`,
+`utility-education` or `trend-humor`) and `format` from the idea's format. Do not ask the person
 which idea to take; show the decision at the gate.
 
 ### S4 — Scriptwriter -> `script.md`
 
 `Agent(subagent_type: "conductor-content-scriptwriter")` with `brief.md`, `decision.md`, the winning
-idea from `ideas/pool.md`, `references/script-template.md` and `references/platform-specs.md`.
+idea from `ideas/pool.md`, `references/script-template.md`, `references/platform-specs.md` and
+`references/publish-pack-template.md`. Besides the script it writes the Publish copy section: a
+caption per platform, hashtags, a first comment and 2 to 3 alternate hooks with a hookType each.
 
 ### S5 — Art director (`RENDER` only) -> `direction.md` + `creative-spec.json`
 
 `Agent(subagent_type: "conductor-content-art-director")` with `script.md`, `context/media.json`,
-`context/brand-kit.json`, `references/shotlist-template.md` and `references/platform-specs.md`.
+`context/brand-kit.json`, `references/shotlist-template.md`, `references/platform-specs.md` and
+`references/publish-pack-template.md`. Besides the spec it writes the Publish assets section of
+`direction.md`: cover frame, alt text per card, on-screen text placement and the sound source and
+licence per platform.
 Tell it the supported options: the kit's enabled placements, and the layouts and themes
 the creative registry supports (at the time of writing `stacked`, `bleed`, `split` dark only, `card` dark or
 light; a refusal from the validator names the valid ones). The spec's keys must be exactly
 `preview_creative_draft` inputs. Give it `references/capabilities.md` too. The spec's `name` is the
 idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. A
 `FILM` winner skips S5 and goes to the shoot script, below.
+
+### S5b — Publish pack and pre-publish checks (you; RENDER after S5, FILM after the shoot script)
+
+Before the gate, so the person sees the settings with the draft. Skip nothing here; a check that
+does not apply is answered "not applicable".
+
+1. Run `references/compliance-checklist.md` against `brief.md`, `script.md`, `direction.md` (or the
+   shoot script), `creative-spec.json` and the provenance in `context/media.json` (`aiGenerated`,
+   `licence`).
+2. Merge the scriptwriter's Publish copy and the art director's Publish assets, add the compliance
+   results, and write `publish-pack.md` and `publish-pack.json` in the shapes of
+   `references/publish-pack-template.md`. Real option keys only. The posting window comes from
+   `get_marketing_insights` (`byHour`, `byWeekday`) for the platform, or "no data yet".
+3. Ask at most ONE `AskUserQuestion`, and only when disclosure cannot be inferred: the request,
+   brief or media names a creator, customer, partner or sponsor and the relationship is unclear.
+   Question "Is anyone in or behind this post paid, gifted, an employee/affiliate?" with options
+   **No, this is the brand's own post**, **Yes, paid partnership**, **Yes, gifted or affiliate**.
+   Otherwise assume the brand's own promotional post and set TikTok `brandOrganicToggle`. Paid
+   sets `brandContentToggle`; gifted or affiliate sets `brandContentToggle` and adds the
+   disclosure to the caption's first line.
+4. A claims or trademark check that fails and cannot be fixed by you in one word goes back to the
+   scriptwriter once, with the failing line; re-run S4's merge and S5 only if the copy changed. If
+   it still fails, show it at the gate as a known issue and never hide it.
+5. Set `S5b` to `done`. On any later copy change, redo this stage so the pack matches the draft.
 
 ### S6 — Preview gate (you; `RENDER` winner)
 
@@ -207,21 +252,24 @@ idea's title only: never include the internal `I<n>` ID, which means nothing out
    Revise at most twice beyond that; if it is still wrong, show it honestly and say what is off.
 3. Show the person: the draft image, the finalist sheets of the runners-up (view them from
    `drafts/finalist-<id>/sheet.jpg`; say when a runner-up could not be rendered), and a short decision
-   summary (the winner and why, the runners-up, what was cut and why).
+   summary (the winner and why, the runners-up, what was cut and why), and a short pack summary: the
+   disclosure setting (which toggle, or none), the AI-label setting, the sound and its licence, and
+   the alternate hooks with their types.
 4. Ask with `AskUserQuestion`, header "Draft", with exactly these four options. `AskUserQuestion`
    allows at most four, so never add one per runner-up, and **Stop** must always be among them:
    - **Approve & upload**: if the spec used a local file (`photoPath`, `clipPath`, `audioPath`),
      first ask for its provenance (`source`, `licence`, and whether it is AI-generated) and pass
      them to `commit_creative_draft({draftDir, source, licence, aiGenerated})`. Then
      `get_creative` and read its `readiness`. If provenance or anything else blocking is missing,
-     say exactly what and ask for it; never call a Creative done while `ready` is false.
+     say exactly what and ask for it; never call a Creative done while `ready` is false. After the
+     commit, write the Creative's id into `publish-pack.json` as `creativeId` (and into `run.json`).
    - **Use a runner-up**: ask a second `AskUserQuestion` listing the runners-up by title (with
      their tag; label one that could not be rendered as such and say why, rather than offering it as
-     if it would work). Then set the chosen idea as `winner` and re-run S4 onward for it (S5 and S6,
+     if it would work). Then set the chosen idea as `winner` and re-run S4 onward for it (S5, S5b and S6,
      or the FILM path if it is tagged `FILM`).
    - **Request changes**: take the free text. If it is about the copy, send it with the current
      script to the scriptwriter (S4), then the art director (S5); if only about the look, send it to
-     the art director. Then re-preview. Do not commit the old draft.
+     the art director. Redo S5b, then re-preview. Do not commit the old draft.
    - **Stop**: upload nothing. Tell the person where the drafts are
      (`drafts.final` and the finalist folders) and that the run can be resumed.
 
@@ -231,10 +279,14 @@ idea's title only: never include the internal `I<n>` ID, which means nothing out
    "conductor-content-art-director")` with `script.md`, `context/media.json`, `context/brand-kit.json`
    and `references/shotlist-template.md`, output `shoot/shoot-script.md`: script, shot list, capture
    settings (9:16, 30 fps, sound on), B-roll, safe zones, and the on-screen text and captions ready to
-   paste. It writes no `creative-spec.json` here.
-2. Show the shoot script, then ask with `AskUserQuestion` whether to save it as a project doc:
+   paste. It also writes the Publish assets section there. It writes no `creative-spec.json` here.
+2. Run S5b. The shoot script gets the publish pack too (captions, hashtags, first comment,
+   disclosure, music and its licence) so it can be applied when the clip is posted later; append a
+   short "Publish pack" section to `shoot/shoot-script.md`, and leave `creativeId` null in
+   `publish-pack.json`.
+3. Show the shoot script, then ask with `AskUserQuestion` whether to save it as a project doc:
    **Save to project docs** or **Keep local only**.
-3. On save, `write_project_doc` at path `Content/Shoots/<runId> <title>` with the file's content;
+4. On save, `write_project_doc` at path `Content/Shoots/<runId> <title>` with the file's content;
    verify with `read_project_doc` and record `shootDoc` in `run.json`. Nothing else is uploaded.
 
 ## Final message
@@ -243,6 +295,9 @@ Keep it short:
 
 - the decision summary: winner, one line on why, the runners-up;
 - the Creative display id (and the readiness gaps, if any) or the shoot doc path;
+- `publish-pack.md` (captions, hashtags, first comment, disclosure and AI-label settings, sound,
+  alternate hooks); say the publisher will pre-fill the Post from `publish-pack.json`, and that the
+  first comment is a manual step;
 - next steps:
   - make the Post with `/conductor:creative` or the `conductor-publisher` skill (the Creative is
     not on a Post yet, because a run never creates one);
@@ -263,4 +318,4 @@ Keep it short:
 ## Related
 
 - `conductor-creative`: the single-Creative skill whose checklist S6 uses.
-- `conductor-publisher`: takes the committed Creative onto a Post.
+- `conductor-publisher`: takes the committed Creative onto a Post, pre-filled from `publish-pack.json`.

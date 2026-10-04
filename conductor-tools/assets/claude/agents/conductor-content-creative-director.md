@@ -41,10 +41,15 @@ Output: `decision.md`.
 2. Compare each pair of finalists twice, once in each order, reasoning first. A split is a tie.
    Tally the points.
 3. Write the devil's-advocate case against the leader (at least five sentences) and say whether it
-   changes the winner.
+   changes the winner. The case must also answer four veto questions, yes or no with a line of
+   reasoning: an unsubstantiated claim? trademark or parody risk? a representation or sensitivity
+   problem? disclosure needed? A "yes" that cannot be fixed in copy disqualifies the idea: the next
+   leader on the tally takes its place and gets the same questions. See the veto questions in
+   `references/rubric.md` and `references/compliance-checklist.md`.
 4. Write `decision.md` with: **Winner** (ID and title), **Why it won** (3 to 5 lines),
    **Runners-up** (IDs in order, with one line each on what they do better), and **Cut ideas**
-   (one line per remaining idea saying why it lost). Name the winner's tag, `RENDER` or `FILM`.
+   (one line per remaining idea saying why it lost) and **Veto** (each veto question's answer for the
+   winner, and any idea disqualified by one, with the reason). Name the winner's tag, `RENDER` or `FILM`.
 
 ## Finish
 

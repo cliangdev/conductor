@@ -28,10 +28,14 @@ ideas from your angle, not a safe average.
    - **story/emotion**: a moment, a person or a feeling the audience recognises as their own.
    - **utility/education**: a specific thing the audience can use or learn in seconds.
    - **trend/humor**: a current format, joke or cultural reference, handled so it still fits the brand.
+     The trend may not rely on a trending song: a business account cannot license most of them. Prefer
+     original audio or the Commercial Music Library, and never parody another company's product.
 3. Write the number of ideas the orchestrator asked for (normally 4). No two may share a mechanic
    (two lists, two before/afters). Vary the hook device, the format and the register.
 4. Each idea follows the idea template exactly, within its word caps. Every hook must work both
-   spoken and on screen, and must land in the first 3 seconds.
+   spoken and on screen, and must land in the first 3 seconds. Every idea names a hook type
+   (question, bold-claim, pattern-interrupt, relatable-pain, how-to, number, curiosity-gap, story or
+   social-proof).
 5. Tag each idea `RENDER` or `FILM` honestly, using `references/capabilities.md` and `media.json`.
    It is `RENDER` only if every card or frame fits what Conductor can render with media that exists:
    one photo plus text per card, or motion text over a photo or clip. That covers motion text, which

@@ -167,8 +167,8 @@ A small team of agents then works through stages, passing files between them rat
 conversation:
 
 1. **Context.** Your Brand Kit, its Knowledge page, `marketing/what-works.md`, persona and positioning
-   pages, recent performance and the media library are saved as a snapshot. Missing pages are noted,
-   not fatal.
+   pages, recent performance and the media library are saved as a snapshot, along with a short
+   learning note (see "The learning loop" below). Missing pages are noted, not fatal.
 2. **Brief.** A strategist writes the objective, audience tension, must-say and must-avoid lines (from
    your copy rules and approved lines), the assets on hand and what has worked.
 3. **Ideas.** Three ideators with different angles (story and emotion, utility and education, trend
@@ -182,19 +182,64 @@ conversation:
 5. **Script and direction.** A scriptwriter writes the hook (landing in the first three seconds),
    timed beats, payoff, call to action and captions; an art director turns that into visual
    direction and the exact spec for the draft renderer.
+6. **Publish pack and checks.** Before you see the draft, the team runs a pre-publish checklist and
+   writes a publish pack (below).
 
 **One approval point.** The team picks the idea itself and does not stop to ask you. You are asked
 once, at the final draft preview: you see the draft, the runners-up's sheets and a summary of why the
-winner won, then choose *Approve & upload*, *Use runner-up*, *Request changes* or *Stop*. Nothing is
+winner won and a short pack summary, then choose *Approve & upload*, *Use runner-up*, *Request changes* or *Stop*. Nothing is
 uploaded to Conductor until you approve. The run ends at a committed Creative and **never creates a
 Post**; make the Post afterwards with `/conductor:creative` or the publisher skill. To test a
 runner-up's hook, cut it as a lettered variant of the Creative (see section 4).
+
+**The publish pack.** Each run also leaves `publish-pack.md` (for you) and `publish-pack.json` (for
+the publisher) in its folder. Per platform it holds the final caption with the search keyword in the
+first line, 3 to 5 hashtags, a suggested first comment (you post that by hand; Conductor cannot post
+comments), the cover frame, alt text for every image or card, where the on-screen text sits, the
+sound and its licence, a posting window from your insights (or "no data yet"), and 2 to 3 alternate
+hooks, each tagged with a hook type, ready to cut as lettered variants for a hook test. When you make
+the Post from the Creative with `/conductor:creative` or the publisher skill, it finds the pack and
+pre-fills each destination's caption and publish options. You see them in the confirmation table and
+can change any of them, and the Post still goes through the normal review.
+
+**Pre-publish checks.** Seven yes/no checks run before you are asked to approve, and the results are
+in the pack:
+
+- **Disclosure.** Is anyone paid, gifted, an employee or an affiliate? If so the disclosure goes in the
+  first seconds and the caption, and TikTok's `brandContentToggle` ("Branded content", a paid
+  partnership) is set. A brand promoting its own product on its own account sets
+  `brandOrganicToggle` ("Your brand") instead, which is the default. You are asked one question
+  only when the team cannot tell.
+- **AI label.** Realistic AI-generated imagery, video or voice sets TikTok `isAigc` (video posts) and
+  YouTube `containsSyntheticMedia`; Instagram and Facebook's "AI info" label is turned on in the
+  app. Text, motion graphics and real photos are exempt.
+- **Music.** Each platform's sound source and licence is named. Business accounts cannot use most
+  trending tracks, so the team picks original audio or TikTok's Commercial Music Library (licensed
+  for TikTok only).
+- **Claims.** Each factual or product claim must come from the brief, your Knowledge pages or an
+  approved line; otherwise it is softened or cut.
+- **Third-party material.** Music, footage, logos, memes, likenesses, trademarks and parody of
+  another company's product are listed and cleared or removed.
+- **Representation and sensitivity**, and **accessibility** (alt text per image or card, and on-screen
+  text so the post works with the sound off).
+
+The judge also applies the claim, trademark/parody, sensitivity and disclosure questions as a veto: an
+idea that fails one in a way copy cannot fix is dropped and the decision says so. These checks follow
+public guidance (the FTC's endorsement FAQ and the TikTok, Meta and YouTube AI-disclosure rules) and
+are a safeguard, not legal advice.
+
+**The learning loop.** Each run records its idea's hook type, angle and format. At the start of the
+next run, the team reads those tags for every earlier run that has a Creative, together with how that
+Creative performed (views, engagement, average view percentage and any hook experiment result), and
+writes `context/learning.md`: which hook types and angles did well. The strategist uses it in the
+next brief. With no data yet, it says so. Posting a runner-up's hook as a lettered variant is what
+turns this into a real comparison.
 
 **Filming ideas.** An idea is either `RENDER`, meaning Conductor can render it (a still, carousel,
 story sequence, or motion text over photos or clips you already have), or `FILM`, meaning it needs a
 person or real footage. If a filming idea wins, you get a shoot-ready script instead of a draft:
 script, shot list, capture settings, B-roll, safe zones, and on-screen text and captions ready to
-paste. You are asked whether to save it as a project doc under `Content/Shoots/`. Once you have
+paste, plus the publish pack (captions, hashtags, disclosure, music) to apply when the clip is posted. You are asked whether to save it as a project doc under `Content/Shoots/`. Once you have
 filmed it, upload the clip and run `/conductor:creative`, choosing "Video from a clip I have".
 
 **Cost.** A run is about 8 subagent calls, and only the strategist and the judge use the top model
@@ -203,8 +248,8 @@ then decides from the text alone), for about 7 calls.
 
 **Where the files live.** Each run keeps everything in
 `.conductor/content-runs/<date-time-slug>/` in your project (git ignores the folder): `brief.md`,
-the ideas and scores, the finalist sheets, `decision.md`, `script.md`, `direction.md` and
-`creative-spec.json`, plus `run.json`, which records progress. If a run is interrupted, running the
+the ideas and scores, the finalist sheets, `decision.md`, `script.md`, `direction.md`,
+`creative-spec.json`, `publish-pack.md` and `publish-pack.json`, plus `run.json`, which records progress. If a run is interrupted, running the
 command again offers to resume it.
 
 ## 3. Put it on a Post

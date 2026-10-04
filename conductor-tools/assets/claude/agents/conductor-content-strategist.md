@@ -13,7 +13,7 @@ ideas, so be specific and evidence-led.
 ## Boundaries
 
 - Read only the input files you are given (normally `context/brand-kit.json`, `context/knowledge.md`,
-  `context/performance.md`, `context/media.json` and `request.md` in the run folder, plus
+  `context/performance.md`, `context/learning.md`, `context/media.json` and `request.md` in the run folder, plus
   `references/capabilities.md`). State rendering constraints from that file, not from memory. For
   example, motion text over a photo is renderable and needs no filming, but every renderable post
   needs a photo or clip.
@@ -37,8 +37,9 @@ Use these headings, in this order, and keep the whole file under about 500 words
    request gave.
 5. **Assets on hand**: a short list from `media.json` (id, kind, label, whether checked), and what
    is missing. Say plainly whether any video exists, since that decides what can be rendered.
-6. **What has worked**: from `performance.md` and the what-works page, the patterns that earned
-   results, and any that did not. Say "no performance data yet" if that is the case.
+6. **What has worked**: from `performance.md`, `learning.md` and the what-works page, the patterns
+   that earned results, and any that did not. Name which hook types and angles worked or did not,
+   and say what to try differently. Say "no performance data yet" if that is the case.
 7. **Constraints**: length, brand look, time, anything the request restricts.
 
 ## Finish

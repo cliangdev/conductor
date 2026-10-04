@@ -34,6 +34,28 @@ back here with the rendered frames to attach and schedule.
 Also note any media the person handed you: local paths or public URLs, in the order they should
 appear. Media that must be measured (video) is measured by the tool; you do not need dimensions.
 
+### A publish pack, if one exists
+
+Some earlier steps hand over a publish pack with the content: per-destination copy and options, plus
+a first comment and notes. The content team (`conductor-content-studio`) writes one as
+`.conductor/content-runs/<run>/publish-pack.json` (and a readable `publish-pack.md`); any other
+producer can leave the same shape. When the content is a Creative, look for
+`.conductor/content-runs/*/publish-pack.json` whose `creativeId` matches it, or use the one the
+person points to. If you find one:
+
+- Pre-fill each target's `captionOverride` and `options` (`publishOptions` on `set_publish_targets`)
+  from the pack's matching `platforms[]` entry, by platform and format. The pack has no accounts;
+  resolve those from `list_publish_targets` as usual.
+- Check every option key against that destination's `optionKeys` and drop one it does not list,
+  saying so. Never invent a key the pack did not carry. A cover frame or alt text the pack names
+  that needs a Post's own asset (a cover image, per-card alt text) is a note for the person, not a
+  guess.
+- Show the pre-filled copy and options in the confirmation table (see Step 4) and let the person
+  change any of them before anything is submitted. Their edit wins over the pack.
+- Mention the pack's first comment as a **manual step**: Conductor cannot post comments, so give the
+  text to the person to paste once the post is live.
+- Pack or no pack, the normal review applies. The pack settles copy and options; it approves nothing.
+
 ### Formats
 
 Some platforms publish more than one surface. Ask which one the person means when it is not
@@ -84,7 +106,8 @@ connectors gain capabilities — so read `optionKeys` off that destination's row
 platform, and never invent one because it sounds plausible; an unrecognized key is silently
 dropped rather than acted on. TikTok needs a `privacyLevel` from that account's
 `privacyLevelOptions` before it will publish at all; nothing else needs an option to go out, so
-absent a stated preference, leave every other option unset rather than filling in a default.
+absent a stated preference (a publish pack, below, counts as one), leave every other option unset
+rather than filling in a default.
 
 Then run this checklist against the copy, per destination, and **halt on any failure** — report it
 and ask how to proceed. Do not fix content yourself.
@@ -117,7 +140,8 @@ Read the result before saying anything:
 
 ## Step 4 — The confirmation table is the last line of defense
 
-End every successful run with a table, one row per destination:
+End every successful run with a table, one row per destination (add a column for the options
+set, such as a disclosure toggle or an AI label, whenever any were pre-filled or chosen):
 
 | Post | Destination | Account | When | State |
 |---|---|---|---|---|
