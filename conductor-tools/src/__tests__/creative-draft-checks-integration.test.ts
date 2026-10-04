@@ -56,8 +56,11 @@ describe('renderDraft preview checks (integration)', () => {
     expect(result.ok).toBe(true)
     expect(result.manifest.frames.map((f: { placementKey: string }) => f.placementKey)).toEqual(['sheet'])
     expect(result.manifest.passed).toBe(false)
+    // The 4:5 placement is stacked, which has no room for the body line: that surfaces as a warning in the
+    // same checks (never an error, so it does not fail `passed` on its own).
     expect(result.manifest.checks).toEqual([
       expect.objectContaining({ placementKey: '9x16', rule: 'safeZone', severity: 'error' }),
+      expect.objectContaining({ placementKey: '4x5', rule: 'bodyDropped', severity: 'warning' }),
     ])
   }, 120_000)
 })

@@ -613,6 +613,14 @@ public class CreativeValidator {
      * from Jackson.
      */
     private void validateMotion(Input input, List<Violation> violations) {
+        if (Creative.KIND_MOTION.equals(input.kind()) && input.sequenceKind() != null) {
+            // A MOTION creative is one animated frame per placement: the render takes the first beat of a
+            // sequence only, and a story's or carousel's own placements are not a video's. Refuse it up
+            // front rather than render something other than what was asked for.
+            violations.add(new Violation("sequenceKind", "motionNoSequence",
+                    "a MOTION creative is a single animated frame and cannot be a " + input.sequenceKind()
+                            + " (sequenceKind): drop the sequence, or make this a STILL creative"));
+        }
         if (!Creative.KIND_MOTION.equals(input.kind()) || input.motion() == null) {
             return;
         }

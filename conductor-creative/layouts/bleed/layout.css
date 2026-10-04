@@ -1,14 +1,21 @@
 /* bleed — photo covers the whole artboard, text sits over a scrim. */
 
 .cc-board--bleed {
-  background-image: var(--cc-photo);
-  /* motion.js's Ken Burns pan/zoom (a MOTION creative only) sets --cc-bg-size/--cc-bg-pos on the
-     board; a background-image has no `transform`, so the zoom/pan is expressed as a growing
-     background-size and a shifting background-position instead. Unset for STILL: falls back to the
-     original fixed cover/focal. */
-  background-size: var(--cc-bg-size, cover);
-  background-position: var(--cc-bg-pos, var(--cc-focal, 50% 50%));
   justify-content: flex-end;
+}
+
+/* The photo: a real layer under the copy (render.js adds it first, so plain DOM order keeps the panel and
+   any clip video above it). `cover` + `no-repeat` mean it can never tile or leave a strip uncovered;
+   the focal point is its background-position. motion.js's Ken Burns pan/zoom (a MOTION creative only)
+   is a transform on this layer, kept inside the overhang a scale >= 1 gives it; unset for STILL. */
+.cc-bg-photo {
+  position: absolute; inset: 0;
+  background-image: var(--cc-photo);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: var(--cc-focal, 50% 50%);
+  transform: var(--cc-bg-transform, none);
+  transform-origin: center center;
 }
 
 /* Fill variant (9x16, 4x5, story): the scrim covers the artboard and the

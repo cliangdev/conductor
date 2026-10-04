@@ -245,6 +245,22 @@ class CreativeDraftSpecTest {
     }
 
     @Test
+    void aMotionDraftWithASequenceIs422BeforeAnythingIsRendered() {
+        CreativeDraftSpecRequest request = draftRequest("Four *chores*")
+                .photoId("local:photo")
+                .kind(CreativeKind.MOTION)
+                .motion(new CreativeMotion().preset("word-by-word").durationSec(java.math.BigDecimal.valueOf(12)))
+                .sequenceKind(SequenceKind.STORY)
+                .sequence(List.of(new SequenceBeat().headline("Chore *one*"), new SequenceBeat().headline("Chore *two*")))
+                .localMedia(Map.of("photo", image()));
+
+        CreativeValidationException e = catchValidation(() -> service.buildDraftSpec(PROJECT, request, caller));
+
+        assertThat(e.violations()).extracting(CreativeValidationException.Violation::field, CreativeValidationException.Violation::ruleId)
+                .contains(org.assertj.core.groups.Tuple.tuple("sequenceKind", "motionNoSequence"));
+    }
+
+    @Test
     void aMalformedLocalKeyIs422() {
         CreativeValidationException e = catchValidation(() ->
                 service.buildDraftSpec(PROJECT, draftRequest("Hello")

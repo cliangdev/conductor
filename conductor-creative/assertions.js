@@ -22,6 +22,12 @@
  * loaded (including a bleed layout's CSS background photo, invisible to a
  * plain <img> check), headline contrast, the accent colour, and the
  * rendered box size.
+ *
+ * Presence checks (`missingPhoto`, `missingLockup`, `missingHeadline`): every check above judges what
+ * IS on the board, so a board that silently lost its photo or logo used to pass them all. The caller
+ * says what the spec requires (`expect`, see expectedElements) and a required element that is absent,
+ * collapsed or hidden fails. `bodyDropped` is the one warning in this family: a layout that has no room
+ * for the body line at a placement drops it by design, but the author supplied that copy.
  */
 
 /* ── pure math ─────────────────────────────────────────────────────────── */
@@ -86,6 +92,19 @@ export function safeZoneIntrusion(boardRect, nodes, safe) {
   return issues;
 }
 
+/** Pure: what a render requires on the board, from the resolved ad and the brand kit it renders with —
+ * `{ photo, lockup, headline }`. A photo is required when the ad has a photo URL (a clip-only background
+ * does not need one); a lockup when the kit has a mark or a wordmark (a kit without logos renders none,
+ * by design); a headline when the ad has one. Pass the result as `runAssertions`'s `expect`. */
+export function expectedElements(ad, brand) {
+  const logos = (brand && brand.logos) || {};
+  return {
+    photo: Boolean(ad && ad.photoUrl),
+    lockup: Boolean(logos.mark || logos.wordmarkLight || logos.wordmarkDark),
+    headline: Boolean(ad && ad.headline && String(ad.headline).trim()),
+  };
+}
+
 /* ── DOM-dependent (real browser only) ────────────────────────────────────── */
 
 const CHECKED_SELECTOR = '.cc-headline, .cc-body, .cc-cta, .cc-lockup';
@@ -116,9 +135,10 @@ function sameRgb(a, b) {
 /* Runs every check against a live, fitted `.cc-board` and returns
  * `{ errors, warnings, width, height }`. `placement` is this placement's own
  * registry entry (pixel size, safe zone); `brand` is the same object handed
- * to renderBoard. An empty `errors` array means the frame is safe to ship;
- * `warnings` are non-fatal (e.g. a soft, upscaled photo). */
-export async function runAssertions(board, placement, brand, { outputScale = 2 } = {}) {
+ * to renderBoard; `expect` (optional, see expectedElements) names the elements the spec requires, so a
+ * missing one fails. An empty `errors` array means the frame is safe to ship; `warnings` are non-fatal
+ * (e.g. a soft, upscaled photo, or a body line the layout drops at this placement). */
+export async function runAssertions(board, placement, brand, { outputScale = 2, expect = null } = {}) {
   const errors = [];
   const warnings = [];
   // The same findings with a stable `rule` id each, for callers (the draft preview) that report them
@@ -128,9 +148,9 @@ export async function runAssertions(board, placement, brand, { outputScale = 2 }
     errors.push(message);
     checks.push({ rule, severity: 'error', message });
   };
-  const warn = (rule, message) => {
+  const warn = (rule, message, extra) => {
     warnings.push(message);
-    checks.push({ rule, severity: 'warning', message });
+    checks.push({ rule, severity: 'warning', message, ...extra });
   };
   const br = rectOf(board);
 
@@ -155,14 +175,44 @@ export async function runAssertions(board, placement, brand, { outputScale = 2 }
     }
   }
 
+  // ── required elements: present, sized and visible (a spec that names them must get them) ──
+  if (expect) {
+    const shown = (n) => {
+      if (!n) return false;
+      const r = n.getBoundingClientRect();
+      const cs = getComputedStyle(n);
+      return r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden';
+    };
+    if (expect.headline) {
+      const h = board.querySelector('.cc-headline');
+      if (!h || !h.textContent.trim() || !shown(h)) fail('missingHeadline', 'the headline is missing from the rendered frame');
+    }
+    if (expect.lockup && !shown(board.querySelector('.cc-lockup:not(.cc-lockup--spacer)'))) {
+      fail('missingLockup', 'the brand logo lockup is missing from the rendered frame (the brand kit has a logo)');
+    }
+    if (expect.photo) {
+      const layer = board.querySelector('.cc-bg-photo') || board.querySelector('.cc-board__band img, .cc-board__card img');
+      const hasImage = layer && (layer.tagName === 'IMG'
+        ? Boolean(layer.getAttribute('src')) && layer.complete && layer.naturalWidth > 0
+        : /url\(/.test(getComputedStyle(layer).backgroundImage || ''));
+      if (!shown(layer) || !hasImage) fail('missingPhoto', 'the photo is missing from the rendered frame (the spec has a photo URL)');
+    }
+  }
+  if (board.dataset.bodyDropped === 'true') {
+    const layout = board.dataset.layout || 'this layout';
+    const key = board.dataset.ratio;
+    warn('bodyDropped', `the body line is not shown: the ${layout} layout drops the body at ${key}. Put the words in the headline, or pick another layout or placement.`, { placementKey: key });
+  }
+
   const imgs = [...board.querySelectorAll('img')];
   const broken = imgs.filter((i) => !i.complete || i.naturalWidth === 0).map((i) => i.getAttribute('src'));
   if (broken.length) fail('image', `image(s) failed to load: ${broken.join(', ')}`);
 
-  // A bleed/card layout paints its photo as a CSS background, invisible to
+  // A bleed layout paints its photo as a CSS background (the `.cc-bg-photo` layer), invisible to
   // the <img> check above — probe it directly, the same way a typo'd path
   // would otherwise export a flat, photo-less board and pass everything else.
-  const bgImage = getComputedStyle(board).backgroundImage;
+  const photoLayer = board.querySelector('.cc-bg-photo');
+  const bgImage = getComputedStyle(photoLayer || board).backgroundImage;
   const bgUrlMatch = /url\("?(.+?)"?\)/.exec(bgImage || '');
   if (bgUrlMatch && bgUrlMatch[1]) {
     const probe = await new Promise((done) => {

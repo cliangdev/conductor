@@ -218,13 +218,17 @@ from ever drifting apart, the same guarantee `render.js` already gives a STILL f
   (1.2-1.7s) and `.cc-cta` (1.8-2.3s); each easeOutCubic. Word-by-word wraps the headline into
   `<span class="cc-word">` (idempotently — safe to call every frame; the accent phrase's own words stay
   nested inside `<em>`, keeping its accent color) and staggers each word's own fade over 0.3-1.5s.
-  Accent-pop fades the whole headline 0.3-0.8s, then scales the accent `<em>` 1.18→1 and brightens it
-  0.9→1.3 over 0.8-1.1s. `preset: 'none'` shows everything at every `t`. Independently of `preset`, the
-  background photo/clip motion (`motion.background.motion`) runs the WHOLE duration, eased, via two CSS
-  vars every layout already knows how to consume with no code change: `--cc-bg-transform` (a `scale()
-  translateX()`, read by `.cc-board__band img` / `.cc-board__card img` / `.cc-bg-video`) and
-  `--cc-bg-size`/`--cc-bg-pos` (read by a bleed layout's own `background-image`, which has no
-  `transform`). `motion.endCard !== false` (the default) forces every text/lockup/cta element to its
+  Accent-pop fades the whole headline 0.3-0.8s, then scales each accent word down from up to 1.18→1 and
+  brightens it 0.9→1.3 over 0.8-1.1s; the peak is capped so a word never grows into the space beside it
+  (0.04em per side, none toward glued punctuation) — an uncapped 1.18 swallowed the space before the accent
+  phrase ("slightdelay"). `preset: 'none'` shows everything at every `t`. Independently of `preset`, the
+  background photo/clip motion (`motion.background.motion`) runs the WHOLE duration, eased, via one CSS
+  var every layout's photo layer reads: `--cc-bg-transform` (`translateX(pan%) scale(s)`, read by
+  `.cc-bg-photo` (a bleed layout's photo, a cover-sized, `no-repeat` layer `renderBoard` adds first),
+  `.cc-board__band img` / `.cc-board__card img` and `.cc-bg-video`). The scale is never below 1 and the pan
+  stays inside the overhang it gives, so the layer covers its frame at every `t` (`backgroundLayerRect`
+  computes the rect; tests assert it) — the earlier background-size percentage was relative to the photo's
+  width, which tiled a landscape photo on a tall board. `motion.endCard !== false` (the default) forces every text/lockup/cta element to its
   finished, fully-visible state for the last 2 seconds regardless of where its own intro window would
   otherwise put it — a 3s creative's CTA (window 1.8-2.3s) still needs to be showing throughout a 1-3s
   hold. The background motion is never affected by the hold.
@@ -425,7 +429,11 @@ a bleed/card layout's CSS background photo probed directly (invisible to a
 plain `<img>` check), the accent colour actually resolving on the headline's
 `<em>` (reads the board's own `--cc-accent`, not a hardcoded brand color),
 headline contrast ≥ 3:1, and the rendered box matching the placement's pixel
-size. Its pure math (`relativeLuminance`, `parseRgb`, `contrastRatio`,
+size. Given `expect` (`expectedElements(ad, brand)`: what the spec requires) it also fails a frame that
+lost a required element: `missingPhoto` (a photo URL but no visible, loaded photo layer), `missingLockup`
+(a kit with a logo but no lockup) and `missingHeadline`; and it warns `bodyDropped` (with the frame's
+`placementKey`) when a body was supplied but the layout drops it at that placement (`stacked` at `4x5`).
+Every finding is a `{ rule, severity, message }` entry in `checks`, which the draft preview returns. Its pure math (`relativeLuminance`, `parseRgb`, `contrastRatio`,
 `spillDetect`, `safeZoneIntrusion`) has no DOM dependency and is unit-tested
 directly with fixture rects/colors in `test/assertions.test.mjs`;
 `runAssertions` itself needs a real browser and is exercised end-to-end by
@@ -511,7 +519,8 @@ dependency (a full, browser-bundling install) is only for running this job
 directly out of this repo, e.g. inside a Docker image on a self-hosted
 Workflow runner.
 
-**Tests.** `test/assertions.test.mjs` (pure math, no browser),
+**Tests.** `test/assertions.test.mjs` (pure math, no browser), `test/render-bugs.test.mjs` (regressions measured in
+a real Chromium: motion text spacing, photo layer cover/no-repeat, missing-element checks, `bodyDropped`),
 `test/transport.test.mjs` (the HTTP contract, against a fake `node:http`
 backend, including `putPoster` and `putFrame`'s `durationSeconds`/`hasAudio`
 params), `test/job.test.mjs` (the STILL/CLIP/sequence/previewOnly rendering

@@ -37,8 +37,8 @@
 import { resolveAd, resolveSequence, renderBoard, fitBoard } from './render.js';
 import { placements as DEFAULT_PLACEMENTS } from './placements.js';
 import { layouts as DEFAULT_LAYOUTS } from './layouts/index.js';
-import { ensureBrandFont } from './font.js';
-import { runAssertions } from './assertions.js';
+import { ensureBrandFont, settleImages } from './font.js';
+import { runAssertions, expectedElements } from './assertions.js';
 import { applyMotion, seekBackgroundVideo } from './motion.js';
 
 function finish(result) {
@@ -83,10 +83,13 @@ async function main() {
 
     await document.fonts.ready;
     await Promise.all([...document.images].map((img) => (img.decode ? img.decode().catch(() => {}) : null)));
+    await settleImages(board); // also the bleed photo layer, a CSS background `document.images` does not list
     // Motion presets restructure the headline (word spans): build that structure, in its final state,
     // before fitting, so the type is sized for the layout every captured frame will have.
     if (spec.motion) applyMotion(board, spec.motion, spec.motion.durationSec || 8, { durationSec: spec.motion.durationSec || 8 });
     fitBoard(board, placementsReg);
+    // What this spec requires on the board: a required element that did not render fails the checks.
+    const expect = expectedElements(ad, spec.brand);
 
     if (spec.motion) {
       const durationSec = spec.motion.durationSec || 8;
@@ -102,13 +105,13 @@ async function main() {
         return true;
       };
       // A motion frame is captured at 1x (video), so the photo only needs to cover the placement itself.
-      window.__assertBoard = async () => runAssertions(board, placement, spec.brand || {}, { outputScale: 1 });
+      window.__assertBoard = async () => runAssertions(board, placement, spec.brand || {}, { outputScale: 1, expect });
 
       finish({ ok: true, width: placement.w, height: placement.h });
       return;
     }
 
-    const { errors, warnings, checks, width, height } = await runAssertions(board, placement, spec.brand || {});
+    const { errors, warnings, checks, width, height } = await runAssertions(board, placement, spec.brand || {}, { expect });
     finish({ ok: errors.length === 0, errors, warnings, checks, width, height });
   } catch (err) {
     finish({ ok: false, error: String((err && err.message) || err) });

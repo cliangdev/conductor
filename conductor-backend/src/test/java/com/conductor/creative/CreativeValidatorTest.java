@@ -295,6 +295,41 @@ class CreativeValidatorTest {
     }
 
     @Test
+    void motionCannotBeAStoryOrCarousel() {
+        List<CreativeValidator.SequenceBeat> beats = List.of(
+                new CreativeValidator.SequenceBeat("One *a*.", null, null),
+                new CreativeValidator.SequenceBeat("Two *b*.", null, null));
+        CreativeValidator.MotionInput motion = new CreativeValidator.MotionInput.Builder().preset("word-by-word").build();
+
+        for (String kind : List.of("story", "carousel")) {
+            CreativeValidator.Input input = baseInput().kind(Creative.KIND_MOTION).motion(motion)
+                    .sequenceKind(kind).sequence(beats).build();
+            var violations = validator.validate(kit, input);
+            assertThat(violations).filteredOn(v -> "motionNoSequence".equals(v.ruleId()))
+                    .singleElement()
+                    .satisfies(v -> {
+                        assertThat(v.field()).isEqualTo("sequenceKind");
+                        assertThat(v.message()).contains("MOTION").contains(kind);
+                    });
+        }
+
+        // The refusal does not depend on the motion block being present or valid.
+        assertThat(violationRuleIds(baseInput().kind(Creative.KIND_MOTION).sequenceKind("story").sequence(beats).build()))
+                .contains("motionNoSequence");
+    }
+
+    @Test
+    void motionWithoutASequenceAndASequenceOnAStillAreBothFine() {
+        List<CreativeValidator.SequenceBeat> beats = List.of(
+                new CreativeValidator.SequenceBeat("One *a*.", null, null),
+                new CreativeValidator.SequenceBeat("Two *b*.", null, null));
+        CreativeValidator.MotionInput motion = new CreativeValidator.MotionInput.Builder().preset("word-by-word").build();
+
+        assertThat(violationRuleIds(motionInput(motion))).doesNotContain("motionNoSequence");
+        assertThat(violationRuleIds(baseInput().sequenceKind("story").sequence(beats).build())).doesNotContain("motionNoSequence");
+    }
+
+    @Test
     void motionPresetMustBeAKnownValue() {
         CreativeValidator.MotionInput unknown = new CreativeValidator.MotionInput.Builder().preset("spin").build();
         assertThat(violationRuleIds(motionInput(unknown))).contains("motionPreset");

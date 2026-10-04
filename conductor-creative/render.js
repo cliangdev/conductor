@@ -159,7 +159,11 @@ export function resolveSequence(raw, placements, layouts) {
   if (!raw.sequenceKind || !Array.isArray(seq) || !seq.length) return [];
   const last = seq.length - 1;
   return seq.map((frame, i) => {
-    const merged = resolveAd({ ...raw, ...frame, sequence: undefined, sequenceKind: undefined }, placements, layouts);
+    // A beat inherits the creative for anything it leaves out, and the API sends an unset beat field as
+    // null: a null must not overwrite the creative's own value (a beat with `photoUrl: null` rendered
+    // with no photo at all).
+    const own = Object.fromEntries(Object.entries(frame).filter(([, v]) => v != null));
+    const merged = resolveAd({ ...raw, ...own, sequence: undefined, sequenceKind: undefined }, placements, layouts);
     // null and undefined both mean "not set" (the API sends null): the CTA then lands on the last frame only.
     merged.showCta = frame.cta != null ? frame.cta : i === last;
     // Body is per-frame opt-in: a hook frame can be a headline and nothing else.
@@ -405,6 +409,7 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
     (ad.isSequence ? ' cc-board--seq' : '') +
     (ad.isStory ? ' cc-board--story' : ''));
   board.dataset.ratio = placementKey;
+  board.dataset.layout = kind;
 
   applyBrandTokens(board, brand);
   board.style.setProperty('--cc-board-w', placement.w + 'px');
@@ -435,6 +440,11 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
   let panel;
   if (photoType === 'background') {
     board.style.setProperty('--cc-photo', ad.photoUrl ? 'url("' + ad.photoUrl + '")' : 'none');
+    // The photo is its own layer, not the board's background: a MOTION creative's Ken Burns zoom/pan is a
+    // transform on this layer, which always covers the board (cover, no-repeat) whatever the zoom. A
+    // background-size percentage on the board did not: it was relative to the photo's WIDTH, so a
+    // landscape photo on a tall board ended up shorter than the board and tiled (see motion.js).
+    if (ad.photoUrl) el('div', 'cc-bg-photo', board).setAttribute('aria-hidden', 'true');
     // The video (when present) must land BEFORE the panel, so the panel's own
     // stacking (position:relative, later in the DOM) renders above it.
     if (ad.backgroundVideoUrl) buildBgVideo(board, ad.backgroundVideoUrl);
@@ -474,6 +484,9 @@ export function renderBoard(ad, placementKey, placements, layouts, brand, opts) 
   if (ad.body && !dropBody) {
     el('p', 'cc-body', panel).textContent = ad.body;
   }
+  // A layout may not have room for a body line at some placements (stacked at 4x5): keep that behaviour,
+  // but record it on the board so runAssertions can warn that supplied copy is not on the artwork.
+  if (ad.body && dropBody) board.dataset.bodyDropped = 'true';
   if (ad.showCta !== false) buildCta(brand, panel, placement);
 
   if (opts.safe && placement.safe.bottom) {
