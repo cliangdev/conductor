@@ -497,6 +497,74 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 .isInstanceOf(com.conductor.exception.BusinessException.class);
     }
 
+    // ── spec parity (draft-spec refactor): the persisted path's spec must not change ─────────────
+
+    @Test
+    void stillRenderSpecMatchesGolden() throws Exception {
+        CreativePhoto hero = newPhoto();
+        hero.setFocal(objectMapper.valueToTree(Map.of("x", "0.3", "y", "0.7")));
+        hero = photoRepository.save(hero);
+        Creative still = newCreative(hero);
+        still.setCaption("Caption.");
+        still.setLockup(Creative.LOCKUP_CHIP);
+        still.setPlacements(objectMapper.valueToTree(List.of("story")));
+        still.setFocalOverride(objectMapper.valueToTree(Map.of("1x1", "0.5 0.5")));
+        still.setLayoutOverrides(objectMapper.valueToTree(Map.of("band", Map.of("9x16", 1200))));
+        still = creativeRepository.save(still);
+
+        assertSpecMatchesGolden("still", still, hero);
+    }
+
+    @Test
+    void storyRenderSpecWithBeatPhotosMatchesGolden() throws Exception {
+        CreativePhoto hero = newPhoto();
+        hero.setFocal(objectMapper.valueToTree(Map.of("x", "0.3", "y", "0.7")));
+        hero = photoRepository.save(hero);
+        CreativePhoto beatPhoto = newPhoto();
+        beatPhoto.setFocal(objectMapper.valueToTree(Map.of("x", "0.9", "y", "0.1")));
+        beatPhoto = photoRepository.save(beatPhoto);
+        Creative story = newCreative(hero);
+        story.setSequenceKind("story");
+        story.setSequence(objectMapper.valueToTree(List.of(
+                Map.of("headline", "One *beat*", "body", "first"),
+                Map.of("headline", "Two *beat*", "photoId", beatPhoto.getId()),
+                Map.of("headline", "Three *beat*", "cta", true))));
+        story = creativeRepository.save(story);
+
+        assertSpecMatchesGolden("story", story, hero, beatPhoto);
+    }
+
+    @Test
+    void motionRenderSpecMatchesGolden() throws Exception {
+        CreativePhoto clip = newVideoMedia(1080, 1920);
+        clip.setHasAudio(true);
+        clip = photoRepository.save(clip);
+        CreativePhoto track = newAudioMedia();
+        Creative motion = newMotionCreative(clip.getId(), track.getId());
+
+        assertSpecMatchesGolden("motion", motion, clip, track);
+    }
+
+    /** Compares the spec {@code requestRender} returns, structurally, against a checked-in golden file
+     *  (ids normalised to placeholders). Run with {@code -Dgolden.update=true} to rewrite the golden. */
+    private void assertSpecMatchesGolden(String name, Creative target, CreativePhoto... photos) throws Exception {
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), target.getId(), new CreateCreativeRenderRequest(), admin);
+        String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result.spec());
+        json = json.replace(result.render().getId(), "{RENDER}").replace(project.getId(), "{PROJECT}");
+        for (int i = 0; i < photos.length; i++) {
+            json = json.replace(photos[i].getId(), "{MEDIA" + i + "}");
+        }
+        java.nio.file.Path golden = java.nio.file.Path.of("src/test/resources/creative/spec-golden-" + name + ".json");
+        if (Boolean.getBoolean("golden.update")) {
+            java.nio.file.Files.createDirectories(golden.getParent());
+            java.nio.file.Files.writeString(golden, json + "\n");
+        }
+        assertThat(objectMapper.readTree(json))
+                .as("spec for %s must be unchanged by the spec-builder refactor", name)
+                .isEqualTo(objectMapper.readTree(java.nio.file.Files.readString(golden)));
+    }
+
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
 
     private byte[] png() {
@@ -529,7 +597,7 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         c.setSequence(objectMapper.valueToTree(List.of()));
         c.setTypeOverrides(objectMapper.createObjectNode());
         c.setCreatedBy(admin.getId());
-        c.setNumber(1);
+        c.setNumber(nextClipNumber++);
         return creativeRepository.save(c);
     }
 

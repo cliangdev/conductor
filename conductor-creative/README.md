@@ -484,10 +484,18 @@ that package via a `file:` dependency and must stay dependency-free.
   launched and reports back is expected to keep evolving; when it does, only
   this file and `test/transport.test.mjs` change, never `render.mjs`'s
   rendering core or its own tests.
+- `job/file-transport.mjs` — a transport that talks to no backend: `createFileTransport({ spec,
+  localFiles, outDir })` renders a DRAFT spec (the backend's `draft-spec` response, which persists
+  nothing) into a local folder. `getSpec()` swaps every `local:<key>` in the spec for a loopback URL
+  served from a temp dir of links to `localFiles[key]`; `putFrame`/`putPoster` write `sheet.jpg`,
+  `<placement>[-<index>].jpg|.mp4` and `poster-<placement>.jpg`; `complete`/`fail` write
+  `manifest.json` (frames, sizes, warnings, or the error). It is how a Creative is previewed before
+  anything is uploaded or saved. Tested in `test/file-transport.test.mjs`.
 - `job/server.mjs` — a dependency-free `node:http` static server (ported from
   nexus-marketing's `social/server.mjs`) scoped to this package's root, so
   `frame.html`/`sheet.html`'s `type="module"` imports and stylesheet
-  `<link>`s resolve (both are blocked under `file://`).
+  `<link>`s resolve (both are blocked under `file://`). Honours `Range` requests (a `<video>` cannot
+  seek without them) and, with `{ cors: true }`, serves the file transport's local media.
 
 **Running it from `@cliangdev/conductor`.** `conductor-tools`' build copies this
 package's runtime files (everything above, minus `mount.js`, `copy-rules.js`,

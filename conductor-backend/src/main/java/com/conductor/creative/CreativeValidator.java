@@ -1,8 +1,12 @@
 package com.conductor.creative;
 
+import com.conductor.generated.v2.model.CreativeAudio;
+import com.conductor.generated.v2.model.CreativeMotion;
+import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +42,12 @@ public class CreativeValidator {
      * override (e.g. a stray extra zero) blow past what any layout could sensibly use. */
     static final int LAYOUT_OVERRIDE_MIN_PX = 0;
     static final int LAYOUT_OVERRIDE_MAX_PX = 4000;
+
+    /** Sane bounds for a pinned {@code typeOverrides} entry {@code [fontSize, lineHeight?, letterSpacing?]}:
+     * a font size in artboard px, a unitless line-height multiplier, and a letter-spacing in px. */
+    static final int TYPE_SIZE_MAX_PX = 600;
+    static final double TYPE_LEADING_MAX = 3.0;
+    static final int TYPE_TRACKING_LIMIT_PX = 100;
 
     private final CreativeRegistry registry;
 
@@ -88,6 +98,43 @@ public class CreativeValidator {
             boolean audioTrackBlocked,
             Double volume,
             Double fadeOutSec) {
+
+        /**
+         * The validator's view of a MOTION creative, from its {@code motion}/{@code audio} and the media
+         * they reference ({@code clip}/{@code track}: null when the id is unset or did not resolve) —
+         * shared by the create/patch/variant writes, a render of a saved Creative, and a draft spec, so all
+         * of them judge the same facts the same way. Null when {@code motion} is.
+         */
+        public static MotionInput resolve(CreativeMotion motion, CreativeAudio audio, MediaFacts clip, MediaFacts track) {
+            if (motion == null) {
+                return null;
+            }
+            CreativeMotionBackground background = motion.getBackground();
+            String clipMediaId = background != null ? background.getClipMediaId() : null;
+            String trackId = audio != null ? audio.getTrackId() : null;
+            return new MotionInput(
+                    motion.getPreset(),
+                    motion.getDurationSec() != null ? motion.getDurationSec().doubleValue() : null,
+                    background != null ? background.getSource() : null,
+                    background != null ? background.getMotion() : null,
+                    clipMediaId,
+                    clipMediaId == null || clip != null,
+                    clip != null && clip.isVideo(),
+                    clip != null && clip.isUploaded(),
+                    clip != null && clip.isBlocked(),
+                    clip != null && clip.getDurationSeconds() != null ? clip.getDurationSeconds().doubleValue() : null,
+                    clip != null ? clip.getHasAudio() : null,
+                    background != null && background.getClipStartSec() != null ? background.getClipStartSec().doubleValue() : null,
+                    motion.getEndCard(),
+                    audio != null ? audio.getSource() : null,
+                    trackId,
+                    trackId == null || track != null,
+                    track != null && track.isAudio(),
+                    track != null && track.isUploaded(),
+                    track != null && track.isBlocked(),
+                    audio != null && audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
+                    audio != null && audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null);
+        }
 
         /** A test-friendly builder — every field defaults to "structurally valid" (fade-up preset, 8s
          *  duration, photo background at zoom-in, no audio) so a test sets only what its case is about. */
@@ -338,6 +385,53 @@ public class CreativeValidator {
                                 + " and " + LAYOUT_OVERRIDE_MAX_PX + " px"));
             }
         }
+    }
+
+    /**
+     * A write's {@code typeOverrides} ({@code {"<placementKey>": [fontSize, lineHeight?, letterSpacing?]}}):
+     * every key a real placement and every entry one to three sane numbers (only {@code lineHeight} and
+     * {@code letterSpacing} may be null, meaning "use the engine's default for this size"). Shared by create
+     * (and so a draft spec) and update, which only call it when the request carries the field.
+     */
+    public List<Violation> validateTypeOverrides(Map<String, List<BigDecimal>> overrides) {
+        List<Violation> violations = new ArrayList<>();
+        if (overrides == null) {
+            return violations;
+        }
+        for (Map.Entry<String, List<BigDecimal>> entry : overrides.entrySet()) {
+            String placementKey = entry.getKey();
+            String field = "typeOverrides[\"" + placementKey + "\"]";
+            if (!registry.hasPlacement(placementKey)) {
+                violations.add(new Violation("typeOverrides", "placement",
+                        "unknown placement \"" + placementKey + "\" in typeOverrides, must be one of: "
+                                + String.join(", ", registry.placements().keySet())));
+                continue;
+            }
+            List<BigDecimal> value = entry.getValue();
+            if (value == null || value.isEmpty() || value.size() > 3) {
+                violations.add(new Violation("typeOverrides", "shape",
+                        field + " must be [fontSize, lineHeight?, letterSpacing?]: one to three numbers"));
+                continue;
+            }
+            BigDecimal size = value.get(0);
+            if (size == null || size.signum() <= 0 || size.compareTo(BigDecimal.valueOf(TYPE_SIZE_MAX_PX)) > 0) {
+                violations.add(new Violation("typeOverrides", "bounds",
+                        field + " fontSize must be greater than 0 and at most " + TYPE_SIZE_MAX_PX + " px"));
+            }
+            BigDecimal leading = value.size() > 1 ? value.get(1) : null;
+            if (leading != null && (leading.signum() <= 0 || leading.compareTo(BigDecimal.valueOf(TYPE_LEADING_MAX)) > 0)) {
+                violations.add(new Violation("typeOverrides", "bounds",
+                        field + " lineHeight must be greater than 0 and at most " + TYPE_LEADING_MAX
+                                + " (a multiplier of fontSize)"));
+            }
+            BigDecimal tracking = value.size() > 2 ? value.get(2) : null;
+            if (tracking != null && tracking.abs().compareTo(BigDecimal.valueOf(TYPE_TRACKING_LIMIT_PX)) > 0) {
+                violations.add(new Violation("typeOverrides", "bounds",
+                        field + " letterSpacing must be between -" + TYPE_TRACKING_LIMIT_PX + " and "
+                                + TYPE_TRACKING_LIMIT_PX + " px"));
+            }
+        }
+        return violations;
     }
 
     /** nexus's rule: exactly one pair of asterisks around the accent phrase, e.g. {@code "*so easy*"}. */

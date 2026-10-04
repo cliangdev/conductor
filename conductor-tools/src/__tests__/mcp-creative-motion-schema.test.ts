@@ -50,3 +50,20 @@ describe('create_creative / update_creative schemas accept motion/audio', () => 
     expect(kind.description).not.toMatch(/not yet renderable/)
   })
 })
+
+describe('typeOverrides is accepted wherever a Creative is created or edited', () => {
+  for (const name of ['create_creative', 'update_creative', 'preview_creative_draft']) {
+    it(`${name} takes typeOverrides as {placementKey: [fontSize, lineHeight?, letterSpacing?]}`, () => {
+      const { properties } = schemaFor(name)
+      const typeOverrides = properties['typeOverrides'] as unknown as {
+        type: string
+        description: string
+        additionalProperties: { type: string; items: { type: string } }
+      }
+      expect(typeOverrides.type).toBe('object')
+      expect(typeOverrides.additionalProperties).toMatchObject({ type: 'array', items: { type: 'number' } })
+      expect(typeOverrides.description).toMatch(/fontSize/)
+      expect(typeOverrides.description).toMatch(/px/)
+    })
+  }
+})

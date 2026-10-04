@@ -1,6 +1,6 @@
 ---
 name: conductor:creative
-description: One entry point for Conductor creative work — checks the workspace brand, offers to set it up if it's never been configured, asks what to make (static ad, short video, an existing clip), gathers the few inputs needed, then hands off to the conductor-creative skill through render, preview and attach.
+description: One entry point for Conductor creative work — checks the workspace brand, offers to set it up if it's never been configured, asks what to make (static ad, short video, an existing clip), gathers the few inputs needed, then hands off to the conductor-creative skill through draft, preview, approval, commit and attach.
 allowed-tools: mcp__conductor__*, AskUserQuestion, Skill, WebFetch, Read, Glob, Grep
 ---
 
@@ -18,39 +18,10 @@ follow it.
 
 ## Step 1 — Check the brand
 
-Call `get_brand_kit` (pass `kitId` only if the person already named a specific brand).
-
-**If `configured` is `false`**, this workspace has no brand set up yet — offer to fix that before
-making anything:
-
-```json
-{
-  "questions": [{
-    "question": "This workspace's Brand Kit hasn't been set up yet (default colours, no font, no logo). Set it up now?",
-    "header": "Brand Kit",
-    "options": [
-      {"label": "From a website", "description": "Fetch a URL and infer colours, voice and name"},
-      {"label": "From a brand doc", "description": "Read a local file (guidelines, style doc)"},
-      {"label": "Answer a few questions", "description": "Name, colours, font, CTA line, approved lines"},
-      {"label": "Skip for now", "description": "Proceed with the default kit as-is"}
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-- **From a website**: ask for the URL, `WebFetch` it, infer a plausible accent colour, name, CTA
-  claim and a couple of approved lines from the copy on the page. Show what you inferred and confirm
-  before writing.
-- **From a brand doc**: ask for the file path, `Read` it, extract the same fields, confirm before
-  writing.
-- **Answer a few questions**: ask for name, primary/accent colour (hex or a description you convert),
-  font (if any), the CTA claim, and any lines that must run verbatim. Keep it to one AskUserQuestion
-  batch, not a long interview.
-- Once confirmed, call `update_brand_kit` with whatever was gathered. If a logo file or URL is
-  available, `upload_brand_image` for the `mark` slot at least. Verify with `get_brand_kit` —
-  `configured` should now read `true`.
-- **Skip for now**: proceed; the skill below will render against the default kit as given.
+Read `references/brand-kit-setup.md` in the `conductor-creative` skill
+(`.claude/skills/conductor-creative/references/brand-kit-setup.md`, in this project or under `~/.claude`)
+and follow it: check the Brand Kit, and offer to set it up if it has never been configured. Then
+continue with Step 2.
 
 ## Step 2 — What to make
 
@@ -77,22 +48,43 @@ Keep this light — one or two follow-up questions, not a form:
 
 - **Static ad / short video from a photo**: the headline (or let the skill draft one from the
   Knowledge page), and a photo. Call `list_creative_media({kind: "IMAGE"})` first and offer what's
-  already on hand before asking for a new upload.
+  already on hand before asking for a new photo. A new photo is a local file path (a URL: download it
+  to a local file first) — it is only uploaded after the person approves the preview.
 - **Video from a clip I have / Post an existing video as-is**: call
-  `list_creative_media({kind: "VIDEO"})` first; if nothing fits, ask for a local path or URL.
+  `list_creative_media({kind: "VIDEO"})` first; if nothing fits, ask for a local path (a URL:
+  download it first). A clip used as a MOTION background is previewed from the local file too.
 - **Test a headline variant**: ask which existing Creative (id or display id like `12a`) and the new
   headline.
 
 ## Step 4 — Hand off to the skill
 
 Call `Skill(skill: "conductor-creative")` and follow it from wherever this command's gathering left
-off — angle, copy rules, layout, `create_creative`/`update_creative`, render, look at the result
-honestly, readiness. Don't re-derive what that skill already covers.
+off — angle, copy rules, layout, then the draft-first flow: `preview_creative_draft`, look at the
+image, ask for approval, and only then `commit_creative_draft`. Don't re-derive what that skill
+already covers.
 
-## Step 5 — Finish with a render → preview → attach, or a clear next step
+## Step 5 — Preview, approve, commit, attach
 
-Once the skill's readiness check passes: full `render_creative`, `preview_creative` to show the
-result, and `attach_creative_to_post` if there's already a Post to attach it to (ask for the Post's
-id if not obvious from context). If there is no Post yet, say so plainly and name the next step —
-creating one via the `conductor-publisher` skill — rather than leaving the artwork stranded with no
-stated destination.
+Nothing is saved to Conductor until the person approves what they have seen:
+
+1. `preview_creative_draft` with what was gathered (local files go in `photoPath`/`clipPath`/
+   `audioPath`; an edit to an existing Creative passes `baseCreativeId`). It renders on this machine
+   and returns the image — no Creative is created and nothing is uploaded.
+2. Read `passed` and `checks` in the result first. The preview runs the full render's per-placement
+   checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts,
+   images), so a design that would fail the real render shows up here. If `passed` is false, fix the
+   design (shorter copy, `layoutOverrides`, `typeOverrides`, a different layout) and preview again
+   **before** showing it or asking anything — never offer Approve & upload while a blocking check
+   fails, and tell the person what you changed. (Bigger or smaller text on one placement is
+   `typeOverrides`, e.g. `{"9x16": [96]}`, not a layout switch.)
+3. Once `passed` is true, look at the image against the skill's checklist, then show it and ask with
+   `AskUserQuestion`: Approve & upload / Request changes / Stop. On changes, preview again; on
+   Stop, leave it — the draft stays local under `.conductor/drafts/`.
+4. On approval, `commit_creative_draft` with the `draftDir`. It uploads the files, saves the
+   Creative and does the full render. (A headline variant is previewed with `baseCreativeId` plus the
+   new headline, but on approval is saved with `create_creative` and `variantOf` — never commit that
+   draft, which would update the original.)
+5. Once the skill's readiness check passes, `attach_creative_to_post` if there's already a Post to
+   attach it to (ask for the Post's id if not obvious from context). If there is no Post yet, say so
+   plainly and name the next step — creating one via the `conductor-publisher` skill — rather than
+   leaving the artwork stranded with no stated destination.

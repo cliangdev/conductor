@@ -65,6 +65,7 @@ export const CREATIVE_RUNTIME_FILES = [
   'job/render.mjs',
   'job/server.mjs',
   'job/transport.mjs',
+  'job/file-transport.mjs',
 ]
 
 export function copyCreativeRuntime(sourceRoot = SOURCE_ROOT, destRoot = DEST_ROOT) {

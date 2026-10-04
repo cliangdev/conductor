@@ -158,6 +158,34 @@ class CreativeValidatorTest {
     // ── sequence bounds (story 2-7, carousel 2-10) ─────────────────────────
 
     @Test
+    void typeOverridesWithRealPlacementsAndSaneNumbersPass() {
+        var overrides = new java.util.LinkedHashMap<String, java.util.List<java.math.BigDecimal>>();
+        overrides.put("9x16", java.util.List.of(new java.math.BigDecimal("96"), new java.math.BigDecimal("1.0"), new java.math.BigDecimal("-2.9")));
+        overrides.put("1x1", java.util.List.of(new java.math.BigDecimal("88")));
+        overrides.put("4x5", java.util.Arrays.asList(new java.math.BigDecimal("80"), null, new java.math.BigDecimal("-2")));
+        assertThat(validator.validateTypeOverrides(overrides)).isEmpty();
+        assertThat(validator.validateTypeOverrides(null)).isEmpty();
+    }
+
+    @Test
+    void typeOverridesRejectUnknownPlacementsBadShapesAndOutOfRangeNumbers() {
+        var overrides = new java.util.LinkedHashMap<String, java.util.List<java.math.BigDecimal>>();
+        overrides.put("not-a-placement", java.util.List.of(new java.math.BigDecimal("80")));
+        overrides.put("9x16", java.util.List.of());
+        overrides.put("1x1", java.util.List.of(new java.math.BigDecimal("0")));
+        overrides.put("4x5", java.util.List.of(new java.math.BigDecimal("80"), new java.math.BigDecimal("9")));
+        overrides.put("story", java.util.List.of(new java.math.BigDecimal("80"), new java.math.BigDecimal("1"), new java.math.BigDecimal("500")));
+        overrides.put("16x9", java.util.List.of(new java.math.BigDecimal("1"), new java.math.BigDecimal("1"), new java.math.BigDecimal("1"), new java.math.BigDecimal("1")));
+
+        var violations = validator.validateTypeOverrides(overrides);
+
+        assertThat(violations).extracting(CreativeValidationException.Violation::field).containsOnly("typeOverrides");
+        assertThat(violations).extracting(CreativeValidationException.Violation::ruleId)
+                .contains("placement", "shape", "bounds");
+        assertThat(violations.size()).isGreaterThanOrEqualTo(5);
+    }
+
+    @Test
     void storyMustHaveAtLeastTwoBeats() {
         List<CreativeValidator.SequenceBeat> oneBeat = List.of(new CreativeValidator.SequenceBeat("One *a*.", null, null));
         assertThat(violationRuleIds(baseInput().sequenceKind("story").sequence(oneBeat).build())).contains("sequenceBounds");

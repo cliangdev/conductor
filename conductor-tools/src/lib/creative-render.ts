@@ -8,6 +8,7 @@
  * launched or what browser it gets — that's `job/transport.mjs`'s and this file's job respectively.
  */
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Config } from '../mcp/config.js'
@@ -60,6 +61,9 @@ interface RenderCore {
     ffmpegPath?: string
     /** Frames per second for a MOTION render's ffmpeg encode (default 30). */
     fps?: number
+    /** On a `previewOnly` spec: also run the full render's per-placement assertions and hand them to the
+     * transport's complete(warnings, checks), without keeping any frame. */
+    checkPlacements?: boolean
   }): Promise<boolean>
 }
 
@@ -197,4 +201,112 @@ export async function renderCreative(
       frames: [],
     }
   }
+}
+
+// --- Draft rendering (preview before anything is saved) -------------------------
+
+export interface DraftManifestFrame {
+  placementKey: string
+  index?: number
+  file: string
+  contentType: string
+  width?: number
+  height?: number
+  sizeBytes?: number
+  durationSeconds?: number
+  hasAudio?: boolean
+  poster?: string
+}
+
+/** One finding of the full render's per-placement assertions (spill, safe zone, contrast, fonts, images,
+ * artboard size), run on a placement's frame without keeping the frame. */
+export interface DraftCheck {
+  placementKey: string
+  index?: number
+  /** spill | safeZone | contrast | font | image | accent | size | photoResolution | render */
+  rule: string
+  message: string
+  /** An "error" would fail the full render of that placement; a "warning" would only be reported. */
+  severity: 'error' | 'warning'
+}
+
+export interface DraftManifest {
+  ok: boolean
+  error?: string
+  renderId?: string
+  previewOnly?: boolean
+  frames: DraftManifestFrame[]
+  warnings: Array<{ placementKey?: string; index?: number; message: string }>
+  /** Present on a preview: the per-placement assertion results the full render would produce. */
+  checks?: DraftCheck[]
+  /** Present with `checks`: true when none of them has severity "error". */
+  passed?: boolean
+}
+
+export interface RenderDraftResult {
+  ok: boolean
+  error?: string
+  manifest?: DraftManifest
+}
+
+interface FileTransportModule {
+  createFileTransport(opts: { spec: unknown; localFiles?: Record<string, string>; outDir: string }): {
+    getError(): string | undefined
+    close(): Promise<void>
+  }
+}
+
+/**
+ * Renders a DRAFT spec (the backend's `draft-spec` response — nothing about it is saved) with the same
+ * render core a saved Creative uses, but through the file transport: the local files behind
+ * `local:<key>` are served to the headless browser from this machine, and the frames plus a
+ * `manifest.json` land in `outDir`. A `previewOnly` spec also gets `manifest.checks` / `manifest.passed`:
+ * the full render's per-placement assertions, run without keeping their frames. Never talks to the Conductor API. A MOTION spec that is not
+ * `previewOnly` needs ffmpeg, resolved the same way {@link renderCreative} resolves it.
+ */
+export async function renderDraft(
+  params: { spec: { creative?: { kind?: string }; previewOnly?: boolean }; localFiles: Record<string, string>; outDir: string },
+  log: (...args: unknown[]) => void = () => {}
+): Promise<RenderDraftResult> {
+  const { spec, localFiles, outDir } = params
+
+  let ffmpegPath: string | undefined
+  if (spec.creative?.kind === 'MOTION' && !spec.previewOnly) {
+    try {
+      ffmpegPath = await resolveFfmpegPath()
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  const { run } = await loadRenderCore()
+  const transportPath = join(jobDir(), 'file-transport.mjs')
+  if (!existsSync(transportPath)) {
+    throw new Error(
+      `Creative draft transport not found at ${transportPath}. This is a packaging bug in @cliangdev/conductor — reinstall the CLI, or in this repo run \`npm run build\`.`
+    )
+  }
+  const { createFileTransport } = (await import(transportPath)) as FileTransportModule
+  const transport = createFileTransport({ spec, localFiles, outDir })
+  const browserFactory = await findBrowserFactory(log)
+
+  let ok: boolean
+  try {
+    // A preview renders only the contact sheet, which never runs the assertions a full render fails on, so
+    // ask the core to run them per placement too (and drop the frames) — otherwise an approved preview can
+    // still fail its real render.
+    ok = await run({ transport, browserFactory, log, ffmpegPath, fps: MOTION_FPS, checkPlacements: !!spec.previewOnly })
+  } finally {
+    await transport.close()
+  }
+
+  let manifest: DraftManifest | undefined
+  try {
+    manifest = JSON.parse(await readFile(join(outDir, 'manifest.json'), 'utf8')) as DraftManifest
+  } catch {
+    manifest = undefined
+  }
+  if (!ok) return { ok: false, error: transport.getError() ?? manifest?.error ?? 'The draft render failed.', manifest }
+  if (!manifest) return { ok: false, error: 'The draft render finished but wrote no manifest.json.' }
+  return { ok: true, manifest }
 }
