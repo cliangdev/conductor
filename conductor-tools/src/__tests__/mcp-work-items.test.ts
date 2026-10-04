@@ -50,6 +50,18 @@ describe('canonical work_item MCP tools target v2', () => {
     )
   })
 
+  it('create_work_item resolves the project directory through the projects map, not only the top-level localPath', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w2', displayId: 'C-2', status: 'DRAFT' })
+    const multiProject: Config = {
+      ...config,
+      localPath: undefined as unknown as string,
+      projects: { 'proj-1': { localPath: '/tmp/proj', projectName: 'P' } },
+    }
+    const result = await createWorkItem({ type: 'POST', title: 'T', workflow: 'MARKETING' }, multiProject)
+    expect(result).not.toHaveProperty('error')
+    expect(apiPost).toHaveBeenCalled()
+  })
+
   it('create_work_item surfaces a permanent 4xx instead of queuing a phantom item', async () => {
     ;(apiPost as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error("API error 400: Type 'BAD' is not allowed by workflow ENGINEERING")
