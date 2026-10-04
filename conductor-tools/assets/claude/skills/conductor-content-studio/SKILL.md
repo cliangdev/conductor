@@ -198,6 +198,8 @@ which idea to take; show the decision at the gate.
 idea from `ideas/pool.md`, `references/script-template.md`, `references/platform-specs.md` and
 `references/publish-pack-template.md`. Besides the script it writes the Publish copy section: a
 caption per platform, hashtags, a first comment and 2 to 3 alternate hooks with a hookType each.
+When merging into `publish-pack.json`, append each platform's hashtags to its `captionOverride`
+(caption, blank line, hashtags): that field is posted verbatim.
 
 ### S5 — Art director (`RENDER` only) -> `direction.md` + `creative-spec.json`
 

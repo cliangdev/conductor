@@ -90,6 +90,9 @@ Rules:
   `captionOverride`, and `options`. Name `options` `publishOptions` for `set_publish_targets`. They
   carry no account: the publisher resolves the account (`account` or `connectionId`) from
   `list_publish_targets`. `captionOverride` is ignored on a story.
+- `captionOverride` is the **complete text that gets posted**: the caption, then a blank line, then that
+  platform's hashtags. The publisher posts it as-is, so hashtags listed only in `publish-pack.md` never
+  reach the platform. The first comment is the one thing that stays out: it is posted by hand.
 - `options` holds real option keys only, in the camelCase the destination reports under
   `optionKeys`. Never add a key that is not in this table, and never `privacyLevel` (the person
   picks it from the account's allowed levels at publish time):
