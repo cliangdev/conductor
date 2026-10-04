@@ -53,7 +53,11 @@ async function createWorkItemImpl(
   config: Config,
   endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
-  if (!config.localPath) {
+  // Resolve through the per-project map like everything below does; the top-level localPath is only
+  // the last project initialised, so checking it alone refused (or misplaced) multi-project setups.
+  try {
+    resolveLocalPath(config)
+  } catch {
     return { error: 'Run conductor init to set up local project directory' }
   }
 

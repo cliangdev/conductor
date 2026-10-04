@@ -172,12 +172,40 @@
       {
         "name": "conductor:creative",
         "description": "One entry point for creative work \u2014 checks the workspace brand (offers to set it up if unconfigured), asks what to make (static ad, short video, an existing clip), then hands off to the conductor-creative skill through draft, preview, approval, commit and attach."
+      },
+      {
+        "name": "conductor:content",
+        "description": "Run a content team: agents brainstorm competing short-form post ideas, pick one with a bias-resistant judge, write the script and direction, and render a local draft. You approve at the preview; only then is the Creative uploaded. Never creates a Post."
       }
     ],
     "agents": [
       {
         "name": "conductor-researcher",
         "description": "Researches unfamiliar technologies, libraries, and APIs for PRD creation. Auto-triggered by conductor:prd when confidence is low."
+      },
+      {
+        "name": "conductor-coder",
+        "description": "Implements one task test-first. Spawned in parallel by conductor:implement with the conductor-coder skill preloaded."
+      },
+      {
+        "name": "conductor-content-strategist",
+        "description": "Writes the content brief (objective, audience tension, must-say/avoid, assets, what has worked) from a workspace context snapshot. Stage of conductor-content-studio."
+      },
+      {
+        "name": "conductor-content-ideator",
+        "description": "Brainstorms distinct short-form post ideas from one assigned angle, tagging each RENDER or FILM. Three run in parallel inside conductor-content-studio."
+      },
+      {
+        "name": "conductor-content-creative-director",
+        "description": "Judges ideas with a fixed rubric: scores anonymized ideas, compares finalists pairwise from rendered drafts, argues against its own leader. Stage of conductor-content-studio."
+      },
+      {
+        "name": "conductor-content-scriptwriter",
+        "description": "Writes the winning idea's script: hook, timed beats, payoff, CTA and captions per platform. Stage of conductor-content-studio."
+      },
+      {
+        "name": "conductor-content-art-director",
+        "description": "Writes visual direction and the creative-spec.json for the draft renderer (or a shoot script for a filming idea). Stage of conductor-content-studio."
       }
     ],
     "skills": [
@@ -196,6 +224,10 @@
       {
         "name": "conductor-creative",
         "description": "Makes a Creative end to end, static or short video: sets up the Brand Kit if unconfigured, reads it and its Knowledge page, picks media and an angle, previews a draft locally and shows it for approval before anything is saved, commits it, fixes what's wrong, then hands it to conductor-publisher."
+      },
+      {
+        "name": "conductor-content-studio",
+        "description": "Orchestrates the content team: context snapshot, parallel ideators, anonymized judging, finalist drafts, script and direction, then a local draft preview you approve before anything is uploaded. Ends at a committed Creative or a shoot script; never creates a Post."
       }
     ]
   },

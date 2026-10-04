@@ -88,3 +88,11 @@ Nothing is saved to Conductor until the person approves what they have seen:
    attach it to (ask for the Post's id if not obvious from context). If there is no Post yet, say so
    plainly and name the next step — creating one via the `conductor-publisher` skill — rather than
    leaving the artwork stranded with no stated destination.
+
+When the Creative came from a content-team run, or the person points to a publish pack, its
+`publish-pack.json` carries per-destination captions and publish options (disclosure, AI label,
+cover frame, alt text) and a first comment. Look for `.conductor/content-runs/*/publish-pack.json`
+whose `creativeId` matches the Creative. When you go on to create or edit the Post with the
+`conductor-publisher` skill, pre-fill each target's `captionOverride` and options from it, show them
+in the confirmation table and let the person change them. Mention the first comment as a manual
+step, since Conductor cannot post comments. The Post still goes through the normal review.
