@@ -91,6 +91,8 @@ class MetaConnectorTest {
 
         assertThat(connector.oauthScopes()).containsExactlyInAnyOrder(
                 "pages_show_list", "pages_manage_posts", "pages_read_engagement",
+                // Graph refuses a Page post's comments.summary without it.
+                "pages_read_user_content",
                 "instagram_basic", "instagram_content_publish", "instagram_manage_insights",
                 // Without it /me/accounts omits Pages a business portfolio owns.
                 "business_management");
