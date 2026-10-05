@@ -307,10 +307,14 @@ class FacebookPublishActionTest {
      * every check against a post that is live.
      */
     @Test
-    void getFacebookPost_bareIdThatIsAPhotoPost_fallsBackToThePageRead() {
+    void getFacebookPost_bareIdThatIsNeitherVideoNorPhoto_fallsBackToThePageRead() {
         onGetThrow("id,status,permalink_url", HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request",
                 new HttpHeaders(),
                 "{\"error\":{\"message\":\"(#100) Tried accessing nonexisting field (status)\",\"code\":100}}".getBytes(),
+                null));
+        onGetThrow("page_story_id", HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request",
+                new HttpHeaders(),
+                "{\"error\":{\"message\":\"(#100) Tried accessing nonexisting field (page_story_id)\",\"code\":100}}".getBytes(),
                 null));
         onGet("is_published", new MetaGraphClient.PostResponse("122136896193347721", true,
                 "https://www.facebook.com/page-1/posts/122136896193347721", null));
@@ -320,6 +324,36 @@ class FacebookPublishActionTest {
         assertThat(result.success()).isTrue();
         assertThat(result.output()).containsEntry("is_published", true);
         assertThat(result.output()).containsEntry("permalink", "https://www.facebook.com/page-1/posts/122136896193347721");
+    }
+
+    private static final HttpClientErrorException NOT_A_VIDEO = HttpClientErrorException.create(HttpStatus.BAD_REQUEST,
+            "Bad Request", new HttpHeaders(),
+            "{\"error\":{\"message\":\"(#100) Tried accessing nonexisting field (status)\",\"code\":100}}".getBytes(),
+            null);
+
+    @Test
+    void getFacebookPost_scheduledPhotoThatHasGoneLive_isLive_underItsPagePostId() {
+        onGetThrow("id,status,permalink_url", NOT_A_VIDEO);
+        onGet("page_story_id", new MetaGraphClient.PhotoResponse("1234567890", "page-1_987654321",
+                "https://www.facebook.com/photo.php?fbid=1234567890"));
+
+        ActionResult result = connector.invoke("get_facebook_post", Map.of("post_id", "1234567890"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("is_published", true);
+        assertThat(result.output()).containsEntry("post_id", "page-1_987654321");
+        assertThat(result.output()).containsEntry("permalink", "https://www.facebook.com/page-1_987654321");
+    }
+
+    @Test
+    void getFacebookPost_scheduledPhotoNotYetOut_isNotLive() {
+        onGetThrow("id,status,permalink_url", NOT_A_VIDEO);
+        onGet("page_story_id", new MetaGraphClient.PhotoResponse("1234567890", null, null));
+
+        ActionResult result = connector.invoke("get_facebook_post", Map.of("post_id", "1234567890"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("is_published", false);
     }
 
     @Test

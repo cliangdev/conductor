@@ -113,6 +113,17 @@ public class MetaGraphClient {
         }
     }
 
+    /**
+     * A Page photo as Meta currently sees it. A scheduled single-photo post is known only by its photo id
+     * until it fires, and a Photo node has no {@code is_published}; {@code page_story_id} is the signal
+     * instead — Meta sets it only once the photo is published, and it is the Page post's own id.
+     */
+    public record PhotoStatus(String id, String pageStoryId, String link) {
+        public boolean published() {
+            return pageStoryId != null && !pageStoryId.isBlank();
+        }
+    }
+
     /** A Page post as Meta currently sees it — the answer to "has the scheduled post gone live yet?". */
     public record PagePost(String id, boolean published, String permalink, Instant scheduledPublishTime) {}
 
@@ -395,6 +406,20 @@ public class MetaGraphClient {
                 body.path("permalink_url").isTextual() ? body.path("permalink_url").asText() : null);
         String id = body.path("id").isTextual() ? body.path("id").asText() : videoId;
         return new VideoStatus(id, published, permalink);
+    }
+
+    /** Reads a Page photo's publish state — see {@link PhotoStatus}. */
+    public PhotoStatus readPhoto(String photoId, String pageToken) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + photoId)
+                .queryParam("fields", "id,page_story_id,link")
+                .encode().build().toUri());
+        ResponseEntity<PhotoResponse> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), PhotoResponse.class);
+        PhotoResponse body = response.getBody();
+        if (body == null) {
+            throw new IllegalStateException("Facebook returned no body for photo " + photoId);
+        }
+        return new PhotoStatus(body.id() != null ? body.id() : photoId, body.pageStoryId(), body.link());
     }
 
     /**
@@ -785,6 +810,11 @@ public class MetaGraphClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record MediaListResponse(@JsonProperty("data") List<ContainerResponse> data) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record PhotoResponse(@JsonProperty("id") String id,
+                         @JsonProperty("page_story_id") String pageStoryId,
+                         @JsonProperty("link") String link) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ContainerStatusResponse(@JsonProperty("status_code") String statusCode,
