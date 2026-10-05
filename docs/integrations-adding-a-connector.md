@@ -47,20 +47,23 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
 
    - `WORKSPACE_OR_DEPLOYMENT` (default): the workspace may store its own app, and inherits the
      deployment's from the two properties above when it has not. Right for the Google family, which
-     shares one OAuth client across GSC, GCP Billing and the rest.
+     shares one OAuth client across GSC, GCP Billing and the rest. YouTube is not in it: it has its
+     own Google app.
    - `DEPLOYMENT_ONLY`: Conductor registers the app, gets it reviewed once, and every workspace
-     authorizes its own account through it. Right for a platform built around that model, as TikTok
-     and Meta are. `ConnectorAppCredentialService` reads only the environment for these, refuses
+     authorizes its own account through it. Right for a platform built around that model, as TikTok,
+     Meta and YouTube are (YouTube's unaudited API project keeps uploads private, and its upload
+     quota is per API project, so one audited app serves everyone). `ConnectorAppCredentialService` reads only the environment for these, refuses
      writes to the app-credential endpoints, and reports a status carrying neither the client id nor
      the secret's last four characters, because the integrations list is member-readable and those
-     identifiers belong to the deployment rather than to any one tenant.
+     identifiers belong to the deployment rather than to any one tenant. Bind the connector's own
+     `clientIdProperty()`/`clientSecretProperty()` pair from Secret Manager in `backend-cd.yml`.
    - `WORKSPACE_ONLY`: nothing reads the environment, the property names survive only as
-     identifiers, and a project with no stored row cannot connect until an admin enters one. Right
-     where the platform grants verification to a single OAuth client and meters quota per project,
-     as YouTube does with `youtube.upload`.
+     identifiers, and a project with no stored row cannot connect until an admin enters one. No
+     connector uses it today; reach for it only where the platform grants verification to one OAuth
+     client per workspace.
 
-   Because a stored credential is keyed on the connector id, opting one Google-backed connector out
-   (YouTube) leaves the others inheriting as before.
+   Because a stored credential is keyed on the connector id, giving one Google-backed connector its own
+   app (YouTube) leaves the others inheriting as before.
 
    **Completion hooks that call the provider as the app.** `OAuthCompletionRequest` carries the
    `clientId`/`clientSecret` the code exchange ran as. Use those rather than re-resolving: Meta's

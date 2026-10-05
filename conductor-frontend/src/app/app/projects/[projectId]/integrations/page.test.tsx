@@ -138,11 +138,11 @@ describe('IntegrationsPage — JSON field (gcp connector)', () => {
 
 type AppOwnership = 'DEPLOYMENT_ONLY' | 'WORKSPACE_ONLY' | 'WORKSPACE_OR_DEPLOYMENT'
 
-// One shape per ownership: YouTube never inherits (WORKSPACE_ONLY), Meta now publishes through
-// Conductor's own reviewed app and never exposes a client id or secret to a workspace
-// (DEPLOYMENT_ONLY), and Search Console can inherit or be overridden (WORKSPACE_OR_DEPLOYMENT).
+// One shape per ownership: a hypothetical connector never inherits (WORKSPACE_ONLY; no real
+// connector uses it today), Meta publishes through Conductor's own reviewed app and never exposes
+// a client id or secret to a workspace (DEPLOYMENT_ONLY), and Search Console can inherit or be overridden (WORKSPACE_OR_DEPLOYMENT).
 const CONNECTOR_BY_OWNERSHIP: Record<AppOwnership, { connectorId: string; name: string; iconLabel: string }> = {
-  WORKSPACE_ONLY: { connectorId: 'youtube', name: 'YouTube', iconLabel: 'YT' },
+  WORKSPACE_ONLY: { connectorId: 'acme', name: 'Acme Connect', iconLabel: 'AC' },
   DEPLOYMENT_ONLY: { connectorId: 'meta', name: 'Meta', iconLabel: 'MT' },
   WORKSPACE_OR_DEPLOYMENT: { connectorId: 'gsc', name: 'Google Search Console', iconLabel: 'GS' },
 }
@@ -200,9 +200,9 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
     vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('WORKSPACE_ONLY', 'NONE')])
     await openBrowse()
 
-    const link = (await screen.findByText('YouTube')).closest('a') as HTMLAnchorElement
+    const link = (await screen.findByText('Acme Connect')).closest('a') as HTMLAnchorElement
     expect(link).not.toBeNull()
-    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations/youtube')
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations/acme')
     expect(within(link).getByText(/enter this workspace's app credentials/i)).toBeInTheDocument()
     // The label points at the fix, not at a connect action that would fail.
     expect(within(link).getByText('Set up')).toBeInTheDocument()
@@ -228,12 +228,12 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
 
     // A click on the card body bubbles to whatever wrapper the card rendered — so this fails
     // loudly if the connect affordance is ever restored for an unconfigured connector.
-    fireEvent.click(await screen.findByText('YouTube'))
+    fireEvent.click(await screen.findByText('Acme Connect'))
 
     expect(api.apiPost).not.toHaveBeenCalled()
-    expect((await screen.findByText('YouTube')).closest('a')).toHaveAttribute(
+    expect((await screen.findByText('Acme Connect')).closest('a')).toHaveAttribute(
       'href',
-      '/app/projects/proj-1/integrations/youtube',
+      '/app/projects/proj-1/integrations/acme',
     )
   })
 

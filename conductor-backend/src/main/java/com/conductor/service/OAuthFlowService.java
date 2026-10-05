@@ -125,10 +125,10 @@ public class OAuthFlowService {
      * {@link ConnectorAppCredentialService}'s {@code missingProperties} is what tells them apart
      * rather than the connector's ownership directly. A connector whose deployment resolve can
      * succeed with the right env vars set ({@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY}
-     * (Meta, TikTok: Conductor's own app) and {@link OAuth2Connector.AppOwnership#WORKSPACE_OR_DEPLOYMENT}
+     * (Meta, TikTok, YouTube: Conductor's own app) and {@link OAuth2Connector.AppOwnership#WORKSPACE_OR_DEPLOYMENT}
      * (the Google family) alike) comes back with the missing property named, which is an operator
      * problem: the deployment is missing an env var. {@link OAuth2Connector.AppOwnership#WORKSPACE_ONLY}
-     * (YouTube) has no env var that would ever resolve it, so {@code missingProperties} is empty and
+     * has no env var that would ever resolve it, so {@code missingProperties} is empty and
      * the fix named instead is an admin entering the workspace's own app under Settings ->
      * Integrations.
      */

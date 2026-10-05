@@ -1,4 +1,4 @@
-# Testing publishing against live Facebook, Instagram and TikTok
+# Testing publishing against live Facebook, Instagram, TikTok and YouTube
 
 Everything in the publishing pipeline has been exercised against stub connectors and a real browser,
 but nothing has yet published to a real Facebook Page, Instagram account or TikTok creator. This is
@@ -12,8 +12,8 @@ Pages and accounts you control. Two reasons it cannot be a laptop:
 
 - Meta and TikTok fetch media from a URL Conductor hands them (a signed storage URL, valid for
   `GCP_SIGNED_URL_EXPIRY_MINUTES`, 15 by default). A laptop's `LOCAL_STORAGE_PATH` is not reachable.
-- OAuth consent redirects to `https://<backend>/api/v1/oauth/callback` (`BACKEND_URL`), which each
-  platform app must list as an allowed redirect. The production backend URL is the one to register.
+- OAuth consent redirects to `https://conductor.rexipe.io/api/v1/oauth/callback`
+  (`OAUTH_CALLBACK_BASE_URL`), which each platform app must list as an allowed redirect.
 
 Do not use a PR preview deploy for this: its migrations and rows land in the production database.
 
@@ -64,16 +64,35 @@ Keep the workspace to the people doing the test. Every automated destination pub
    `docs/publishing.md`), and enter the origin under Settings → General → Publishing. Without it every
    photo post fails with a message naming this; video posts upload their bytes and are unaffected.
 
+### YouTube
+
+1. A Google Cloud project dedicated to this app (not the one behind `GOOGLE_OAUTH_*`), with the
+   **YouTube Data API v3** and the **YouTube Analytics API** both enabled.
+2. The consent screen (*Google Auth Platform*) configured with a homepage and a privacy policy on the
+   same domain, naming the scopes Conductor requests: `youtube.upload`, `youtube.readonly` and
+   `yt-analytics.readonly`. The privacy page already carries the YouTube API Services and Limited Use
+   clauses the audit checks for.
+3. An OAuth client of type **Web application** with `https://conductor.rexipe.io/api/v1/oauth/callback`
+   as its authorized redirect URI. Store its id and secret in Secret Manager as
+   `YOUTUBE_OAUTH_CLIENT_ID` and `YOUTUBE_OAUTH_CLIENT_SECRET`, bound to the backend service.
+4. **While the consent screen is in Testing**, add every account that will connect under *Test users*;
+   anyone else is refused at Google's screen. Their authorization expires after 7 days, so a lapsed
+   connection means reconnect.
+5. The authorizing Google account must own or manage a channel. One connection is one channel: with
+   brand accounts, Google's account picker chooses which.
+6. **Until the app passes a YouTube API Services audit, every upload lands private**, even scheduled
+   public. That is Google's lock on the API project, not a Conductor bug. Upload quota is about 100 a day
+   for the whole app; check the live quota page.
+
 ## Connect the accounts in Conductor
 
 Only a workspace **ADMIN** can authorize a connection.
 
-1. Nothing to configure for Meta or TikTok. Both publish through Conductor's own reviewed app, whose
-   credentials come from the deployment environment, so the connector page shows a read-only note
-   rather than a credential form. If it instead says the deployment has not configured the platform
-   app, the `TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET` or `META_APP_ID`/`META_APP_SECRET` secrets are
-   missing from the backend service. (YouTube is the exception and still needs the workspace's own
-   client id and secret under **Platform app credentials**.)
+1. Nothing to configure for Meta, TikTok or YouTube. All three publish through Conductor's own app,
+   whose credentials come from the deployment environment, so the connector page shows a read-only
+   note rather than a credential form. If it instead says the deployment has not configured the
+   platform app, the `TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET`, `META_APP_ID`/`META_APP_SECRET` or
+   `YOUTUBE_OAUTH_CLIENT_ID`/`YOUTUBE_OAUTH_CLIENT_SECRET` secrets are missing from the backend service.
 2. **Authorize** → consent as the account that holds the app role → pick the Page. The connection
    card should show the Page and, if linked, the Instagram username. For TikTok the card shows the
    creator's nickname and caches the privacy levels the account may use.
@@ -113,6 +132,10 @@ the Post reaching Published or Failed.
 | 10 | 2–35 JPEG/WEBP, `photoCoverIndex`, `autoAddMusic` | TikTok photo post | Needs the verified URL prefix; cover from the chosen index |
 | 11 | Any of 1–3 | Unschedule from Scheduled | Native post disappears from the Page's scheduled posts (`REVOKED`), Post back to Approved |
 | 12 | Any failed row | **Retry** on the Post | Row back to `PENDING` with a fresh idempotency key, fires again |
+| 13 | One vertical MP4 under 3 min, title, scheduled | YouTube | Uploaded as private with a publish time; the row hands off and the permalink appears. **Until the audit, it stays private after the time** (expected); after it, YouTube flips it public |
+
+For YouTube, row 13 is preceded by connecting a channel (the card shows its title), and followed by a metrics pull
+(views, likes, comments, watch time and average view percentage; the last two need `yt-analytics.readonly`).
 
 Also worth one deliberate failure: a TikTok Post with `privacyLevel: PUBLIC_TO_EVERYONE` on an
 unaudited app must be refused at the gate, naming the allowed levels.

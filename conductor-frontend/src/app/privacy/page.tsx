@@ -149,6 +149,45 @@ export default function PrivacyPage() {
         according to Meta&rsquo;s Platform Terms and Developer Policies.
       </p>
 
+      <h2 id="youtube">YouTube API Services</h2>
+      <p>
+        Conductor uses YouTube API Services when you connect a YouTube channel. By connecting one,
+        you are also agreeing to be bound by the{' '}
+        <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">
+          YouTube Terms of Service
+        </a>
+        , and Google&rsquo;s{' '}
+        <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">
+          Privacy Policy
+        </a>{' '}
+        applies to the information Google handles.
+      </p>
+      <p>
+        From your channel we read and store the channel ID and title, and the IDs of the videos
+        Conductor published for you. For those videos we read view, like, comment, watch-time and
+        average-view-percentage counts, on a schedule. We use them only to show your workspace how
+        its own videos performed.
+      </p>
+      <p>
+        You can disconnect the channel from Integrations in your workspace sidebar, and you can
+        also revoke Conductor&rsquo;s access at any time from your Google account at{' '}
+        <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">
+          myaccount.google.com/connections
+        </a>
+        .
+      </p>
+      <p>
+        Conductor&rsquo;s use and transfer of information received from Google APIs adheres to the{' '}
+        <a
+          href="https://developers.google.com/terms/api-services-user-data-policy"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Google API Services User Data Policy
+        </a>
+        , including the Limited Use requirements.
+      </p>
+
       <h2 id="how-long-we-keep-it">How long we keep it</h2>
       <ul>
         <li><strong>Workspace content</strong> stays until you delete it or delete the workspace.</li>
