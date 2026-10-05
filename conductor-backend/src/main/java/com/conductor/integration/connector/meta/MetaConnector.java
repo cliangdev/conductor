@@ -146,6 +146,11 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
      * {@code /me/accounts} omits every Page a business portfolio owns, even one the user has full control
      * of through that portfolio, so the Page picker comes back empty for the brands and agencies that keep
      * their Pages in a portfolio (found live 2026-10-04 on a portfolio-owned Page).
+     *
+     * <p>{@code pages_read_user_content} is what Graph asks for before it answers a Page post's
+     * {@code comments.summary} (and {@code reactions}); {@code pages_read_engagement} alone gets
+     * "(#10) requires pages_read_user_content" on those, so the Facebook comment count was always a gap.
+     * Conductor reads only the count, never comment text.
      */
     @Override
     public List<String> oauthScopes() {
@@ -153,6 +158,7 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
                 "pages_show_list",
                 "pages_manage_posts",
                 "pages_read_engagement",
+                "pages_read_user_content",
                 "instagram_basic",
                 "instagram_content_publish",
                 "instagram_manage_insights",

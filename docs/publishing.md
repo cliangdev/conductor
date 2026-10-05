@@ -451,7 +451,9 @@ saves and shares through the insights edge (`instagram_manage_insights`) alongsi
 connection made before that scope was added keeps its likes and comments flowing and just gets a reconnect
 prompt for the rest, rather than the pull failing outright; and YouTube adds watch time and average view
 percentage from the Analytics API (`yt-analytics.readonly`), with the same reconnect-for-the-rest treatment
-for a connection that predates it.
+for a connection that predates it. Facebook's like count needs `pages_read_engagement` and its comment count
+`pages_read_user_content`; a count Graph refuses (a connection made before that scope, or an app whose
+permission isn't approved yet) is left a gap — shown as a dash, never 0 — rather than marking the post gone.
 
 A second, built-in connector reads that same `post_publish_target_metric` table from the other
 direction: `conductor-marketing` (no credential, provisioned automatically onto every project that has the

@@ -136,6 +136,7 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
                 "pages_show_list",
                 "pages_manage_posts",
                 "pages_read_engagement",
+                "pages_read_user_content",
                 "instagram_basic",
                 "instagram_content_publish",
                 "business_management");
