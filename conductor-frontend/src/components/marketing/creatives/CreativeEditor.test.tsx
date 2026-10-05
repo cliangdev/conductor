@@ -460,7 +460,12 @@ describe('CreativeEditor', () => {
     render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
 
     const board = await screen.findByTestId('placement-board-4x5')
-    const shell = board.firstElementChild as HTMLElement
+    // The board mounts before its preview shell does; clicking too early hits nothing (flaked in CI).
+    const shell = await waitFor(() => {
+      const el = board.firstElementChild
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
     fireEvent.click(shell)
 
     const dialog = await screen.findByRole('dialog')
