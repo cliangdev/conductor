@@ -271,7 +271,21 @@ class InstagramPublishAction {
                 }
             }
 
-            String mediaId = graphClient.publishMediaContainer(igUserId, token, containerId);
+            String mediaId;
+            try {
+                mediaId = graphClient.publishMediaContainer(igUserId, token, containerId);
+            } catch (HttpClientErrorException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // No answer (a timeout, a 5xx) is not "it didn't publish": Instagram may well have put the
+                // post live. A blind retry builds a fresh container and publishes it again — a duplicate
+                // post. So ask the container what happened before letting anything retry.
+                PublishOutcome outcome = settleLostPublish(igUserId, token, containerId, e);
+                if (outcome.error() != null) {
+                    return outcome.error();
+                }
+                mediaId = outcome.mediaId();
+            }
 
             output.put("media_id", mediaId);
             output.put("creation_id", containerId);
@@ -288,6 +302,49 @@ class InstagramPublishAction {
             // thrown rather than returned — the caller must not treat it as a settled permanent failure.
             throw new IllegalStateException("Interrupted while waiting for the Instagram container to finish", e);
         }
+    }
+
+    private record PublishOutcome(String mediaId, ActionResult error) {}
+
+    /**
+     * Decides what a {@code media_publish} with no answer actually did. The container says: {@code PUBLISHED}
+     * means the post is live, and its id is the account's newest media; still {@code FINISHED} means it never
+     * went out, so the original failure is rethrown and the retry is safe. Anything else — including not
+     * being able to ask — is reported as a permanent failure, because retrying an unknown outcome is exactly
+     * how one post becomes three.
+     */
+    private PublishOutcome settleLostPublish(String igUserId, String token, String containerId,
+                                             RuntimeException cause) {
+        MetaGraphClient.ContainerStatus status;
+        try {
+            status = graphClient.readContainerStatus(containerId, token);
+        } catch (RuntimeException statusError) {
+            log.warn("Instagram media_publish for container {} got no answer ({}) and its status could not be "
+                    + "read ({}); not retrying", containerId, cause.getMessage(), statusError.getMessage());
+            return new PublishOutcome(null, unknownOutcome(containerId));
+        }
+        if ("PUBLISHED".equalsIgnoreCase(status.statusCode())) {
+            String mediaId = null;
+            try {
+                mediaId = graphClient.latestMediaId(igUserId, token);
+            } catch (RuntimeException lookupError) {
+                log.warn("Instagram container {} is PUBLISHED but the new media id could not be read: {}",
+                        containerId, lookupError.getMessage());
+            }
+            log.info("Instagram media_publish for container {} got no answer ({}), but the container is "
+                    + "PUBLISHED; recording it as published (media {})", containerId, cause.getMessage(), mediaId);
+            return mediaId != null ? new PublishOutcome(mediaId, null)
+                    : new PublishOutcome(null, unknownOutcome(containerId));
+        }
+        if (status.finished()) {
+            throw cause;
+        }
+        return new PublishOutcome(null, unknownOutcome(containerId));
+    }
+
+    private static ActionResult unknownOutcome(String containerId) {
+        return ActionResult.error("Instagram didn't confirm whether the post went live (container " + containerId
+                + "). Check the account before retrying, or it may be posted twice.");
     }
 
     /**

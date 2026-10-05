@@ -642,15 +642,38 @@ public class MetaGraphClient {
         return new ContainerStatus(body.statusCode(), body.status());
     }
 
-    /** Publishes a finished container, yielding the live media object. */
+    /**
+     * Publishes a finished container, yielding the live media object. On the long upload timeout: Instagram
+     * routinely takes well over the default 8 seconds to answer this for a Reel, and a client that gives up
+     * first cannot tell whether the post went live.
+     */
     public String publishMediaContainer(String igUserId, String token, String creationId) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("creation_id", creationId);
-        ContainerResponse response = postForm(edge(igUserId, "media_publish"), token, form, ContainerResponse.class);
+        ContainerResponse response = postForm(uploadRestTemplate, edge(igUserId, "media_publish"), token, form,
+                ContainerResponse.class);
         if (response.id() == null || response.id().isBlank()) {
             throw new IllegalStateException("Instagram media_publish returned no media id");
         }
         return response.id();
+    }
+
+    /**
+     * The account's most recent media id, or null when it has none. Used only to recover the id of a post
+     * whose {@code media_publish} answer was lost after its container reported {@code PUBLISHED}.
+     */
+    public String latestMediaId(String igUserId, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + igUserId + "/media")
+                .queryParam("fields", "id,timestamp")
+                .queryParam("limit", 1)
+                .encode().build().toUri());
+        ResponseEntity<MediaListResponse> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), MediaListResponse.class);
+        MediaListResponse body = response.getBody();
+        if (body == null || body.data() == null || body.data().isEmpty()) {
+            return null;
+        }
+        return body.data().get(0).id();
     }
 
     /** The published media's own permalink, which only exists once {@code media_publish} has run. */
@@ -685,10 +708,15 @@ public class MetaGraphClient {
     }
 
     private <T> T postForm(URI uri, String token, MultiValueMap<String, String> form, Class<T> responseType) {
+        return postForm(restTemplate, uri, token, form, responseType);
+    }
+
+    private <T> T postForm(RestTemplate template, URI uri, String token, MultiValueMap<String, String> form,
+                           Class<T> responseType) {
         HttpHeaders headers = bearer(token);
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         ResponseEntity<T> response =
-                restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(form, headers), responseType);
+                template.exchange(uri, HttpMethod.POST, new HttpEntity<>(form, headers), responseType);
         T body = response.getBody();
         if (body == null) {
             throw new IllegalStateException("Meta returned an empty body for " + uri.getPath());
@@ -754,6 +782,9 @@ public class MetaGraphClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ContainerResponse(@JsonProperty("id") String id) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record MediaListResponse(@JsonProperty("data") List<ContainerResponse> data) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ContainerStatusResponse(@JsonProperty("status_code") String statusCode,
