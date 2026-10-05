@@ -49,7 +49,9 @@ export function DestinationsPanel({
   const [completingKey, setCompletingKey] = useState<string | null>(null)
 
   // A row that stops existing (unticked, revoked) simply no longer matches its key; nothing to reset.
-  const visible = rows.filter((r) => !r.hidden)
+  // Unchosen destinations are choices, so they only belong in the picker. Once the post is in review or later
+  // ('outcome'), show just the ones it actually goes to, matching the "N destinations" summary.
+  const visible = rows.filter((r) => !r.hidden && (mode === 'pick' || r.checked))
   const lowerNoun = noun.toLowerCase()
 
   const notices: React.ReactNode[] = []

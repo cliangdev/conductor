@@ -207,6 +207,16 @@ describe('DestinationsPanel — picking', () => {
   })
 })
 
+describe('DestinationsPanel — outcome shows only the chosen destinations', () => {
+  it('hides unchosen accounts and manual destinations once the post is in review or later', () => {
+    const fb = selection(facebook, WORK_ITEM)
+    renderPanel(state([fb], { mode: 'outcome', revertsOnEdit: true }))
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.queryByText(/@rexipe\.ig/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\(manual\)/)).not.toBeInTheDocument()
+  })
+})
+
 describe('DestinationsPanel — notices', () => {
   it('says it is locked while in review, and offers Edit destinations once approved', async () => {
     const fb = selection(facebook, WORK_ITEM)
