@@ -174,6 +174,46 @@ class PublishPreflightServiceTest {
     }
 
     @Test
+    void aScheduledPostIsNotToldItsArmedTimeIsTooSoonInTheFinalMinute() {
+        post.setCurrentStatus("SCHEDULED");
+        post.setScheduledFor(OffsetDateTime.now().plusSeconds(30));
+        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(
+                List.of(PublishFinding.blocker(PostScheduleValidator.FIRE_TIME_TOO_SOON,
+                        "6:25 PM is too soon: Instagram needs at least 1 minute's notice. Move it later.")),
+                List.of()));
+
+        PublishPreflightService.Preflight preflight = service.preflight(PROJECT, "post-1", caller);
+
+        assertThat(preflight.blockers()).isEmpty();
+    }
+
+    @Test
+    void aScheduledPostWhoseTimeHasPassedStillSaysSo() {
+        post.setCurrentStatus("SCHEDULED");
+        post.setScheduledFor(OffsetDateTime.now().minusMinutes(5));
+        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(
+                List.of(PublishFinding.blocker(PostScheduleValidator.FIRE_TIME_TOO_SOON,
+                        "6:25 PM is in the past. Move it to a future time.")),
+                List.of()));
+
+        PublishPreflightService.Preflight preflight = service.preflight(PROJECT, "post-1", caller);
+
+        assertThat(preflight.blockers()).extracting(PublishFinding::code).containsExactly("FIRE_TIME_TOO_SOON");
+    }
+
+    @Test
+    void aDraftChoosingATimeTooSoonIsStillTold() {
+        post.setScheduledFor(OffsetDateTime.now().plusSeconds(30));
+        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(
+                List.of(PublishFinding.blocker(PostScheduleValidator.FIRE_TIME_TOO_SOON, "too soon")),
+                List.of()));
+
+        PublishPreflightService.Preflight preflight = service.preflight(PROJECT, "post-1", caller);
+
+        assertThat(preflight.blockers()).extracting(PublishFinding::code).containsExactly("FIRE_TIME_TOO_SOON");
+    }
+
+    @Test
     void anApprovedPostsNextGateMoveIsScheduling() {
         post.setCurrentStatus("APPROVED");
         when(workflowService.isReviewSatisfied(eq(PROJECT), eq(post), any())).thenReturn(true);

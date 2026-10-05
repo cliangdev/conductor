@@ -117,12 +117,34 @@ public class PublishPreflightService {
         return preflight(projectId, workItem, statechart);
     }
 
+    /**
+     * A destination's minimum notice is a rule about <em>choosing</em> a time. Once the Post sits in its
+     * scheduled status with a time still ahead, that time was accepted and is armed; the last minutes before
+     * it fires are simply the countdown, not a problem to fix. Without this, a scheduled Post showed "too
+     * soon … Move it later" during the final minute before going out. A time already past still reports.
+     */
+    private static PublishGateEvaluator.Evaluation withoutCommittedLeadTime(
+            PublishGateEvaluator.Evaluation evaluation, WorkItem workItem, Statechart statechart) {
+        boolean committed = PublishingWorkflow.isScheduledStatus(statechart, workItem.getCurrentStatus())
+                && workItem.getScheduledFor() != null
+                && workItem.getScheduledFor().isAfter(java.time.OffsetDateTime.now());
+        if (!committed) {
+            return evaluation;
+        }
+        return new PublishGateEvaluator.Evaluation(
+                evaluation.blockers().stream()
+                        .filter(f -> !PostScheduleValidator.FIRE_TIME_TOO_SOON.equals(f.code()))
+                        .toList(),
+                evaluation.warnings());
+    }
+
     /** The gate's answer for an item whose statechart the caller already holds. */
     public Preflight preflight(String projectId, WorkItem workItem, Statechart statechart) {
         if (!publishingWorkflow.declaresPublishing(statechart)) {
             return Preflight.notPublishing();
         }
-        PublishGateEvaluator.Evaluation evaluation = publishGateEvaluator.evaluate(workItem);
+        PublishGateEvaluator.Evaluation evaluation = withoutCommittedLeadTime(
+                publishGateEvaluator.evaluate(workItem), workItem, statechart);
         List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItem.getId());
 
         PublishConsentService.Verdict verdict = publishConsentService.verdict(workItem);
