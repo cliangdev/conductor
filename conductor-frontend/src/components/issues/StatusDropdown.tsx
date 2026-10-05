@@ -1,10 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Loader2 } from 'lucide-react'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { StatusRing } from '@/components/workitems/StatusRing'
-import { toastError } from '@/components/ui/toast'
+import { toastError, toastSuccess } from '@/components/ui/toast'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -78,6 +78,9 @@ export function StatusDropdown({
   blockedMoves,
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
+  // What is happening while a move is in flight — some (Unschedule, Approve) call out to a platform
+  // and take seconds, and a menu that just closes looks like nothing happened.
+  const [pending, setPending] = useState<string | null>(null)
 
   const view = useWorkflowView(projectId, workflowSlug, token)
   const { label: displayLabel, category } = statusMeta(view, currentStatus)
@@ -100,16 +103,18 @@ export function StatusDropdown({
   async function handleVerdict() {
     if (!reviewVerdict) return
     setLoading(true)
+    setPending(reviewVerdict.label)
     try {
       await reviewVerdict.submit()
     } catch (err) {
       toastError(apiErrorMessage(err, 'Could not record your approval'))
     } finally {
       setLoading(false)
+      setPending(null)
     }
   }
 
-  async function handleSelect(newStatus: string) {
+  async function handleSelect(newStatus: string, actionLabel: string) {
     // A Post going to TikTok can't enter a review-gated status until the creator has consented.
     const blocked = blockedReason(newStatus)
     if (blocked) {
@@ -117,6 +122,7 @@ export function StatusDropdown({
       return
     }
     setLoading(true)
+    setPending(actionLabel)
     try {
       await apiPatch(
         `/api/v2/projects/${projectId}/work-items/${issueId}`,
@@ -124,11 +130,13 @@ export function StatusDropdown({
         token
       )
       onStatusChanged(newStatus)
+      toastSuccess(`${actionLabel}: now ${statusMeta(view, newStatus).label}`)
     } catch (err) {
       // Transition rejected (e.g. an unsatisfied gate); UI stays at the current status.
       toastError(apiErrorMessage(err, 'Failed to update status'))
     } finally {
       setLoading(false)
+      setPending(null)
     }
   }
 
@@ -145,14 +153,26 @@ export function StatusDropdown({
             <StatusRing status={currentStatus} category={category} className="cursor-pointer hover:opacity-80 transition-opacity" />
           </button>
         ) : (
-          <button ref={triggerRef} disabled={loading} className="inline-flex items-center gap-1 focus:outline-none">
+          <button
+            ref={triggerRef}
+            disabled={loading}
+            aria-busy={loading}
+            className="inline-flex items-center gap-1 focus:outline-none"
+          >
             <StatusBadge
               status={currentStatus}
               category={category}
               label={displayLabel}
-              className="cursor-pointer hover:opacity-80 transition-opacity"
+              className={loading ? 'opacity-60' : 'cursor-pointer hover:opacity-80 transition-opacity'}
             />
-            <ChevronDown className="h-3 w-3 opacity-60" />
+            {pending ? (
+              <span role="status" className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                {pending}…
+              </span>
+            ) : (
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            )}
           </button>
         )}
       </DropdownMenuTrigger>
@@ -180,7 +200,7 @@ export function StatusDropdown({
               key={t.toStatus}
               disabled={!!blocked}
               title={blocked ?? undefined}
-              onClick={() => handleSelect(t.toStatus)}
+              onClick={() => handleSelect(t.toStatus, t.label || meta.label)}
               className={
                 blocked
                   ? 'max-w-xs items-start whitespace-normal'
