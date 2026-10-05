@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Instagram">
+  <!-- Simplified brand mark drawn for this UI, not an official asset. Replace with the official
+       logo from Meta's brand guidelines before any public release. -->
+  <defs>
+    <linearGradient id="ig" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#FEDA75"/>
+      <stop offset="0.3" stop-color="#FA7E1E"/>
+      <stop offset="0.6" stop-color="#D62976"/>
+      <stop offset="1" stop-color="#4F5BD5"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#ig)"/>
+  <rect x="8.5" y="8.5" width="15" height="15" rx="4.5" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+  <circle cx="16" cy="16" r="3.6" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+  <circle cx="20.6" cy="11.4" r="1.2" fill="#ffffff"/>
+</svg>

@@ -61,6 +61,11 @@ ramp's `red`). Token names mirror the backend's `AgentAvatarDefaults.COLOR_TOKEN
 through `AgentAvatar` (and chosen via `AgentAvatarPicker`). Everywhere else the no-emoji-as-chrome
 rule stands — lucide remains the one icon set for UI chrome.
 
+**Brand marks** are identity content too, not chrome: a connector or publishing platform is shown by
+its logo from `public/integrations/{id}.svg`, through `ConnectorIcon` (integrations) or
+`PlatformIcon` (Post destinations, insights), each falling back to a text monogram if the asset is
+missing.
+
 ## Typography
 
 Inter (existing `--font-sans`), weights 400/500/600–650 only.
