@@ -201,6 +201,11 @@ class MetaGraphClientTest {
                 .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
                         .withBadRequest().body("{\"error\":{\"message\":\"Unsupported get request\",\"code\":100}}")
                         .contentType(MediaType.APPLICATION_JSON));
+        // A refused read is only "gone" when the id won't read on its own either.
+        server.expect(requestTo(containsString("/v21.0/p2?fields=id")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body("{\"error\":{\"message\":\"Unsupported get request\",\"code\":100}}")
+                        .contentType(MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("p1", "p2"), "page-token");
 
@@ -211,6 +216,41 @@ class MetaGraphClientTest {
         assertThat(metrics.get(0).shares()).isEqualTo(4L);
         assertThat(metrics.get(0).unavailable()).isFalse();
         assertThat(metrics.get(1).unavailable()).isTrue();
+        server.verify();
+    }
+
+    /**
+     * Graph refuses the whole read when it refuses one field. A live post must not then read as deleted:
+     * the id reads on its own, so each count is read by itself and the refused one falls back or is a gap.
+     */
+    @Test
+    void readPostMetrics_aRefusedFieldOnALivePost_isNotUnavailable() {
+        String refused = "{\"error\":{\"message\":\"(#12) deprecated field\",\"code\":12}}";
+        server.expect(requestTo(containsString("/v21.0/page_1?fields=id,shares")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body(refused).contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/page_1?fields=id")))
+                .andRespond(withSuccess("{\"id\":\"page_1\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("fields=likes.summary")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body(refused).contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("fields=reactions.summary")))
+                .andRespond(withSuccess("{\"id\":\"page_1\",\"reactions\":{\"summary\":{\"total_count\":6}}}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("fields=comments.summary")))
+                .andRespond(withSuccess("{\"id\":\"page_1\",\"comments\":{\"summary\":{\"total_count\":1}}}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("fields=shares")))
+                .andRespond(withSuccess("{\"id\":\"page_1\"}", MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("page_1"), "page-token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.unavailable()).isFalse();
+            assertThat(m.likes()).isEqualTo(6L);
+            assertThat(m.comments()).isEqualTo(1L);
+            assertThat(m.shares()).isEqualTo(0L);
+        });
         server.verify();
     }
 

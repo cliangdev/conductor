@@ -478,19 +478,44 @@ public class MetaGraphClient {
         // v26+ ("The ids query parameter is deprecated"), and a new app is pinned there from day one.
         List<PostMetrics> metrics = new ArrayList<>();
         for (String id : postIds) {
-            JsonNode node = readNodeOrNull(id,
-                    "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)", pageToken);
+            JsonNode node = readNodeOrNull(id, FACEBOOK_POST_COUNT_FIELDS, pageToken);
             if (node == null) {
-                metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, true, false));
+                // Graph refuses the whole read when it refuses any one field, so a refusal here does not
+                // mean the post is gone. Only an id that won't read on its own is "no longer on the
+                // platform"; otherwise each count is read by itself and a refused one is left a gap.
+                if (readNodeOrNull(id, "id", pageToken) == null) {
+                    metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, true, false));
+                    continue;
+                }
+                JsonNode likes = readNodeOrNull(id, "likes.summary(true).limit(0)", pageToken);
+                if (likes == null) {
+                    likes = readNodeOrNull(id, "reactions.summary(true).limit(0)", pageToken);
+                }
+                JsonNode comments = readNodeOrNull(id, "comments.summary(true).limit(0)", pageToken);
+                JsonNode shares = readNodeOrNull(id, "shares", pageToken);
+                metrics.add(new PostMetrics(id, null,
+                        likes == null ? null : summaryCount(likes.has("likes") ? likes.path("likes") : likes.path("reactions")),
+                        comments == null ? null : summaryCount(comments.path("comments")),
+                        shares == null ? null : sharesCount(shares),
+                        null, null, null, false, false));
                 continue;
             }
             metrics.add(new PostMetrics(id, null,
                     summaryCount(node.path("likes")),
                     summaryCount(node.path("comments")),
-                    node.path("shares").path("count").isNumber() ? node.path("shares").path("count").asLong() : null,
+                    sharesCount(node),
                     null, null, null, false, false));
         }
         return metrics;
+    }
+
+    private static final String FACEBOOK_POST_COUNT_FIELDS =
+            "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)";
+
+    /** A post's share count; a post nobody has shared carries no {@code shares} field at all, read as 0. */
+    private static Long sharesCount(JsonNode node) {
+        JsonNode count = node.path("shares").path("count");
+        return count.isNumber() ? count.asLong() : 0L;
     }
 
     /**
@@ -511,6 +536,10 @@ public class MetaGraphClient {
         } catch (HttpClientErrorException e) {
             int status = e.getStatusCode().value();
             if (status == 400 || status == 404) {
+                // Graph's own words for the refusal: without them a refused field and a deleted post look
+                // the same in the logs. The body carries no token.
+                log.warn("Graph refused fields [{}] on node {} ({}): {}", fields, id, status,
+                        e.getResponseBodyAsString());
                 return null;
             }
             throw e;
