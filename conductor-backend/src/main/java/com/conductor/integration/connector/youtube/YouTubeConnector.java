@@ -87,7 +87,8 @@ import java.util.Optional;
  *       the scheduled publish never flips the video public, and the upload call still returns 200.</li>
  *   <li><b>{@code youtube.upload} is a sensitive scope.</b> It requires Google OAuth verification of
  *       the app; until that passes, the consent screen is capped at 100 test users, so anyone outside
- *       that list cannot connect at all. {@code yt-analytics.readonly} is sensitive too, and only gates
+ *       that list cannot connect at all. {@code youtube.readonly} is sensitive as well; the Cloud Console
+ *       lists {@code yt-analytics.readonly} as non-sensitive (checked 2026-10-05). That scope only gates
  *       the retention half of {@link #getVideoStatistics}: a connection made before this scope was added
  *       still reads its Data API view/like/comment counts, it just can't reach the Analytics API for
  *       watch time until reconnected.</li>
@@ -191,8 +192,9 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     /**
      * {@code youtube.upload} to publish, {@code youtube.readonly} to resolve the channel identity and
      * to read back a published video, {@code yt-analytics.readonly} to read watch time and retention for
-     * the {@code post_metrics} feed ({@link #getVideoStatistics}). All three are sensitive scopes — see
-     * the class javadoc.
+     * the {@code post_metrics} feed ({@link #getVideoStatistics}). The first two are sensitive scopes and
+     * {@code yt-analytics.readonly} is non-sensitive, per the Cloud Console on 2026-10-05; none is
+     * restricted, so no CASA assessment — see the class javadoc.
      */
     @Override
     public List<String> oauthScopes() {
