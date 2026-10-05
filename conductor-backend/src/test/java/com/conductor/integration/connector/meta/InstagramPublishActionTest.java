@@ -196,6 +196,66 @@ class InstagramPublishActionTest {
                 .isInstanceOf(HttpServerErrorException.class);
     }
 
+    // --- A media_publish with no answer is settled from the container, never blindly retried ---
+
+    private static final org.springframework.web.client.ResourceAccessException READ_TIMEOUT =
+            new org.springframework.web.client.ResourceAccessException("Read timed out");
+
+    @Test
+    void publishTimesOutButTheContainerIsPublished_recordsItAsPublished_withoutPublishingAgain() {
+        mediaResolver.media = List.of(new PublishMedia("https://signed.example/clip.mp4",
+                "assets/proj/wi-1/clip.mp4", "video/mp4", 4096L));
+        quotaAvailable(0);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-7"));
+        AtomicInteger publishes = new AtomicInteger();
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse(
+                publishes.get() == 0 ? "FINISHED" : "PUBLISHED", null));
+        onPost("/ig-1/media_publish", call -> {
+            publishes.incrementAndGet();
+            throw READ_TIMEOUT;
+        });
+        onGet("timestamp", call -> new MetaGraphClient.MediaListResponse(
+                List.of(new MetaGraphClient.ContainerResponse("media-77"))));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-77",
+                "https://www.instagram.com/reel/LIVE/"));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "Clip", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("media_id", "media-77");
+        assertThat(result.output()).containsEntry("permalink", "https://www.instagram.com/reel/LIVE/");
+        assertThat(publishes.get()).isEqualTo(1);
+    }
+
+    @Test
+    void publishTimesOutAndTheContainerIsStillUnpublished_throws_soARetryIsSafe() {
+        mediaResolver.media = List.of(image());
+        quotaAvailable(0);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-8"));
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> { throw READ_TIMEOUT; });
+
+        assertThatThrownBy(() -> connector.invoke("publish_instagram_media",
+                Map.of("caption", "hi", "work_item_id", "wi-1"), CTX))
+                .isSameAs(READ_TIMEOUT);
+    }
+
+    @Test
+    void publishTimesOutAndTheOutcomeCannotBeRead_failsPermanently_ratherThanRiskADuplicate() {
+        mediaResolver.media = List.of(image());
+        quotaAvailable(0);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("container-9"));
+        onPost("/ig-1/media_publish", call -> { throw READ_TIMEOUT; });
+        onGet("status_code", call -> { throw READ_TIMEOUT; });
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "hi", "work_item_id", "wi-1"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("Check the account before retrying");
+    }
+
     @Test
     void metaReturns400_returnsPermanentError_soTheInvocationDeadLetters() {
         mediaResolver.media = List.of(image());
