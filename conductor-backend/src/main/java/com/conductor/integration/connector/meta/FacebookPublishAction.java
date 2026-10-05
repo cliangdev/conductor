@@ -240,6 +240,24 @@ class FacebookPublishAction {
                         throw e;
                     }
                 }
+                // Not a video, so most likely the photo of a scheduled single-photo post. A Photo node has
+                // no is_published — asking the Page-post read for it reported "not live" on every check of
+                // a post that had gone out — so ask the photo itself: page_story_id appears once it is
+                // published, and is the Page post's id from then on.
+                try {
+                    MetaGraphClient.PhotoStatus photo = graphClient.readPhoto(postId, token);
+                    Map<String, Object> output = new LinkedHashMap<>();
+                    output.put("post_id", photo.published() ? photo.pageStoryId() : photo.id());
+                    output.put("is_published", photo.published());
+                    if (photo.published()) {
+                        output.put("permalink", "https://www.facebook.com/" + photo.pageStoryId());
+                    }
+                    return ActionResult.ok(output);
+                } catch (HttpClientErrorException e) {
+                    if (!isNotAVideo(e)) {
+                        throw e;
+                    }
+                }
             }
 
             MetaGraphClient.PagePost post = graphClient.readPost(postId, token);
