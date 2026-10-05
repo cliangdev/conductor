@@ -985,6 +985,15 @@ class MediaTargetValidatorTest {
     }
 
     @Test
+    void aReelInheritingAPostWithOneVideoAndACoverImageSendsJustTheVideo() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
+        givenTargets(reel);
+        givenAssets(video("a.mp4", 10L * 1024 * 1024, 1080, 1920, "20"), image("cover.jpg", "image/jpeg", 1080, 1920));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
     void blocksAReelTargetWithTwoVideos() {
         PostPublishTarget reel = target("instagram", "conn-meta", "@acme", "REEL");
         givenTargets(reel);

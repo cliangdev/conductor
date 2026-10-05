@@ -31,6 +31,11 @@ import java.util.Map;
  * real: an author can select two images and then delete them (only possible before review), and the right
  * answer is "this target has no media", which the approval gate refuses. Falling back to the Post's set
  * there would publish files the author had deselected for this platform.
+ *
+ * <p>One exception narrows the inherited set: a <b>reel</b> is exactly one video, so an inheriting reel
+ * target on a Post with exactly one video sends just that video. The Post's images are then its cover or
+ * other destinations' media; sending them too could only ever be refused. With no video, or more than
+ * one, the whole set is inherited as usual and the gate says why that is not a reel.
  */
 @Component
 public class PublishTargetMediaResolver {
@@ -106,9 +111,23 @@ public class PublishTargetMediaResolver {
         for (PostPublishTarget target : targets) {
             resolved.put(target.getId(), target.isCustomMedia()
                     ? new EffectiveMedia(selectionsByTarget.getOrDefault(target.getId(), List.of()), true)
-                    : new EffectiveMedia(shared, false));
+                    : new EffectiveMedia(inherited(target, shared), false));
         }
         return resolved;
+    }
+
+    /** The Post's set as an inheriting target sees it: just the one video for a reel, else all of it. */
+    private static List<Asset> inherited(PostPublishTarget target, List<Asset> shared) {
+        if (!"reel".equalsIgnoreCase(target.getFormat())) {
+            return shared;
+        }
+        List<Asset> videos = shared.stream().filter(PublishTargetMediaResolver::isVideo).toList();
+        return videos.size() == 1 ? videos : shared;
+    }
+
+    private static boolean isVideo(Asset asset) {
+        String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+        return contentType != null && contentType.startsWith("video/");
     }
 
     /** One target's media, for a caller that genuinely has only one (the dispatchers). */
