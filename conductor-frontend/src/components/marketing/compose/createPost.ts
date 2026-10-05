@@ -10,9 +10,40 @@ import {
   putToSignedUrl,
 } from '@/components/workitems/MediaUploadPanel'
 import { buildSelectionPayload, type DestinationDraft } from '@/components/marketing/destinations/selectionState'
-import type { PublishTargetOption } from '@/components/marketing/destinations/types'
+import type { PublishTargetOption, PublishTargetSelectionPayload } from '@/components/marketing/destinations/types'
 import { nextSlot, wallClockToInstant } from '@/lib/schedule'
 import { attachCreativeRender } from '@/components/marketing/creatives/types'
+
+/** Prefix of the stand-in ids the New Post form gives files that are not uploaded yet. */
+export const PENDING_ASSET_PREFIX = 'pending-'
+
+/**
+ * Swaps the form's stand-in file ids for the asset ids the uploads produced, in the two places a
+ * destination refers to media: its own media list and an Instagram reel's cover. A stand-in whose upload
+ * failed (or whose file was removed) is dropped rather than sent, so it can't point at nothing.
+ */
+export function resolvePendingAssetIds(
+  targets: PublishTargetSelectionPayload[],
+  uploaded: Record<string, string>
+): PublishTargetSelectionPayload[] {
+  const resolve = (id: string): string | undefined =>
+    id.startsWith(PENDING_ASSET_PREFIX) ? uploaded[id] : id
+  return targets.map((target) => {
+    const next: PublishTargetSelectionPayload = { ...target }
+    if (target.assetIds) {
+      next.assetIds = target.assetIds.map(resolve).filter((id): id is string => Boolean(id))
+    }
+    const cover = (target.publishOptions as Record<string, unknown> | undefined)?.['coverAssetId']
+    if (typeof cover === 'string') {
+      const options = { ...(target.publishOptions as Record<string, unknown>) }
+      const real = resolve(cover)
+      if (real) options['coverAssetId'] = real
+      else delete options['coverAssetId']
+      next.publishOptions = options as PublishTargetSelectionPayload['publishOptions']
+    }
+    return next
+  })
+}
 
 export interface CreatedWorkItem {
   id: string
@@ -40,6 +71,8 @@ export interface CreatePostInput {
   title: string
   caption: string
   files: File[]
+  /** The form's stand-in id for each file, by index, as destinations referred to it. */
+  fileIds?: string[]
   options: PublishTargetOption[]
   draft: DestinationDraft
   schedule: { onApproval: boolean; local: string; timeZone: string }
@@ -82,6 +115,7 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
 
   const base = `/api/v2/projects/${projectId}/work-items/${created.id}`
   const problems: string[] = []
+  const uploaded: Record<string, string> = {}
   for (const [index, file] of input.files.entries()) {
     try {
       onStep?.(`Uploading ${index + 1} of ${input.files.length}…`)
@@ -102,6 +136,8 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
       )
       await putToSignedUrl(ticket.uploadUrl, file, () => {})
       await apiPost<void>(`${base}/assets/${ticket.assetId}/confirm`, { sizeBytes: file.size }, token)
+      const pendingId = input.fileIds?.[index]
+      if (pendingId) uploaded[pendingId] = ticket.assetId
     } catch (err) {
       problems.push(`${file.name}: ${apiErrorMessage(err, 'upload failed')}`)
     }
@@ -111,7 +147,8 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
     onStep?.('Choosing destinations…')
     // The same payload the Post page saves — format, the platform's options, a caption or media of the
     // destination's own — which the modal this replaces could not carry.
-    await apiPut(`${base}/publish-targets`, { targets: buildSelectionPayload(input.options, input.draft) }, token)
+    const targets = resolvePendingAssetIds(buildSelectionPayload(input.options, input.draft), uploaded)
+    await apiPut(`${base}/publish-targets`, { targets }, token)
   } catch (err) {
     problems.push(apiErrorMessage(err, 'Could not save the destinations'))
   }
