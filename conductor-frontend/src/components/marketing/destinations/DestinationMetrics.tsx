@@ -41,14 +41,16 @@ export const COLUMNS: { key: keyof PublishMetricSnapshot; label: string }[] = [
 ]
 
 /**
- * What each platform hands out through its public API without extra permissions. A dash is the
- * platform not reporting it, never a zero, and this is what lets the footnote say so in words.
+ * What each platform hands out to Conductor. A dash is the platform not reporting it, never a zero, and
+ * this is what lets the footnote say so in words. Instagram's views and shares come from the media
+ * insights edge (instagram_manage_insights), which the Meta connection requests; Facebook's views would
+ * need Page insights (read_insights), which it does not.
  */
 export const REPORTED: Record<string, ReadonlySet<keyof PublishMetricSnapshot>> = {
   tiktok: new Set(['views', 'likes', 'comments', 'shares']),
   youtube: new Set(['views', 'likes', 'comments']),
   facebook: new Set(['likes', 'comments', 'shares']),
-  instagram: new Set(['likes', 'comments']),
+  instagram: new Set(['views', 'likes', 'comments', 'shares']),
 }
 
 /** "Facebook doesn't report views; Instagram doesn't report views or shares." for the platforms present. */

@@ -6,9 +6,9 @@ describe('unreportedNote', () => {
   it('says in words which numbers a platform does not hand out', () => {
     expect(unreportedNote(['tiktok'])).toBeNull()
     expect(unreportedNote(['facebook'])).toBe("Facebook doesn't report views.")
-    expect(unreportedNote(['instagram', 'facebook', 'instagram'])).toBe(
-      "Instagram doesn't report views or shares; Facebook doesn't report views."
-    )
+    // Instagram's views and shares come from the insights edge the Meta connection is granted.
+    expect(unreportedNote(['instagram', 'facebook', 'instagram'])).toBe("Facebook doesn't report views.")
+    expect(unreportedNote(['instagram'])).toBeNull()
     expect(unreportedNote(['mastodon'])).toBeNull()
   })
 })
@@ -24,6 +24,15 @@ describe('compactCount', () => {
 })
 
 describe('DestinationMetrics', () => {
+  it('shows an Instagram post its views and shares, which the insights edge reports', () => {
+    render(
+      <DestinationMetrics
+        metrics={{ targetId: 't', platform: 'instagram', latest: { observedAt: '2026-10-05T03:49:43Z', views: 1234, likes: 5, comments: 1, shares: 2 }, series: [] }}
+      />
+    )
+    expect(screen.getByTestId('destination-metrics')).toHaveTextContent('1.2K views · 5 likes · 1 comments · 2 shares')
+  })
+
   it('lists only the counters this platform reports, with a dash for a missing one', () => {
     render(
       <DestinationMetrics
