@@ -34,21 +34,36 @@ import java.util.Optional;
 /**
  * YouTube publishing connector: uploads videos to one YouTube channel.
  *
- * <p>A Google-backed {@link OAuth2Connector}, so it overrides <b>only</b> {@link #oauthScopes()} and
- * inherits the shared Google flow — {@code accounts.google.com} consent, {@code oauth2.googleapis.com}
- * token exchange, {@code GOOGLE_OAUTH_CLIENT_ID}/{@code GOOGLE_OAUTH_CLIENT_SECRET}, and
- * {@code access_type=offline}+{@code prompt=consent} (which is what yields the refresh token an
- * upload weeks later depends on). Do not re-declare those five here; a change to Google's shared flow
- * must reach this connector without an edit.
+ * <p>A Google-backed {@link OAuth2Connector} that inherits Google's <i>flow</i> and owns its <i>client</i>.
+ * It does not re-declare the flow: {@code accounts.google.com} consent, {@code oauth2.googleapis.com}
+ * token exchange, and {@code access_type=offline}+{@code prompt=consent} (which is what yields the
+ * refresh token an upload weeks later depends on) all come from {@link OAuth2Connector}, so a change
+ * to Google's shared flow reaches this connector without an edit. What it does override is
+ * {@link #oauthScopes()}, {@link #clientIdProperty()}, {@link #clientSecretProperty()} and
+ * {@link #appOwnership()}.
  *
- * <p>It does, however, override {@link #appOwnership()} to
- * {@link OAuth2Connector.AppOwnership#WORKSPACE_ONLY}. Sharing Google's <i>flow</i> is not sharing
- * Google's <i>app</i>: {@code youtube.upload} is a sensitive scope whose verification is granted to
- * one OAuth client, and upload quota is metered against that client's Google Cloud project, so a
- * workspace publishing to its own channel must publish as its own verified app rather than draining
- * a deployment-wide quota bucket shared with every other workspace. Because a stored credential is
- * keyed on the connector id, entering one here leaves GSC and GCP Billing inheriting the deployment
- * client exactly as before.
+ * <p><b>The client is Conductor's own, like Meta and TikTok.</b> {@link #appOwnership()} is
+ * {@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY} and the credentials are
+ * {@code YOUTUBE_OAUTH_CLIENT_ID}/{@code YOUTUBE_OAUTH_CLIENT_SECRET}: one Google Cloud project that
+ * Conductor registers once, and every workspace authorizes its own channel through it. Deliberately
+ * <i>not</i> the {@code GOOGLE_OAUTH_*} client that GSC and GCP Billing share, so YouTube's OAuth
+ * verification and API audit stay separate from theirs and neither can hold up the other. Why one
+ * Conductor-owned project rather than a project per workspace:
+ * <ul>
+ *   <li><b>The upload lock is per API project.</b> Google forces videos uploaded through an unaudited
+ *       API project (one created after 28 July 2020) to private, so a workspace-owned project would
+ *       each need its own YouTube API audit. One Conductor project needs one audit, and one
+ *       sensitive-scope OAuth verification, for every workspace.</li>
+ *   <li><b>YouTube Developer Policies III.D.1.c</b> require exactly one API project per API client, so
+ *       the one client maps to the one project that is audited.</li>
+ *   <li><b>The old quota argument is stale.</b> Since 2025-12, {@code videos.insert} costs about one
+ *       unit, and since 2026-06 it draws on its own bucket of 100 uploads per day per project, which
+ *       the audit can raise. Sharing a project no longer means draining a general quota.</li>
+ * </ul>
+ * Because the connector is {@code DEPLOYMENT_ONLY}, {@code OAuthFlowService.oauthCallbackUri} gives it
+ * the branded {@code OAUTH_CALLBACK_BASE_URL} callback ({@code https://conductor.rexipe.io/api/v1/oauth/callback}
+ * in production), a domain Conductor can verify for Google's consent screen, unlike the backend's
+ * {@code run.app} host. A project can store no app of its own for this connector.
  *
  * <p><b>Post-callback completion.</b> The shared {@code OAuthFlowService} only swaps a code for a
  * token; the channel identity has to be read afterwards, which is what
@@ -187,14 +202,26 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
                 "https://www.googleapis.com/auth/yt-analytics.readonly");
     }
 
+    /** Conductor's own Google client for YouTube, not the {@code GOOGLE_OAUTH_CLIENT_ID} GSC and GCP Billing share. */
+    @Override
+    public String clientIdProperty() {
+        return "YOUTUBE_OAUTH_CLIENT_ID";
+    }
+
+    /** Secret half of {@link #clientIdProperty()}; likewise separate from {@code GOOGLE_OAUTH_CLIENT_SECRET}. */
+    @Override
+    public String clientSecretProperty() {
+        return "YOUTUBE_OAUTH_CLIENT_SECRET";
+    }
+
     /**
-     * The workspace brings its own Google OAuth client for YouTube — see the class javadoc on why
-     * sharing Google's flow is not sharing Google's app. The inherited {@code GOOGLE_OAUTH_*} property
-     * names stay only as identifiers; nothing reads them for this connector.
+     * Conductor registers one Google app for YouTube, audits it once, and every workspace connects its
+     * channel through it — see the class javadoc on why the audit and verification are per project.
+     * Nothing a workspace stores is ever read for this connector.
      */
     @Override
     public AppOwnership appOwnership() {
-        return AppOwnership.WORKSPACE_ONLY;
+        return AppOwnership.DEPLOYMENT_ONLY;
     }
 
     /**

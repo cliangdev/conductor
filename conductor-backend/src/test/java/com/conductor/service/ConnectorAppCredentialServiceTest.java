@@ -117,7 +117,7 @@ class ConnectorAppCredentialServiceTest {
     }
 
     /**
-     * A connector whose app must belong to the workspace: YouTube's shape. Identical to
+     * A connector whose app must belong to the workspace: a generic workspace-only connector. Identical to
      * {@link AcmeConnector} but for {@link OAuth2Connector#appOwnership()}, so any difference in
      * resolution is attributable to that one override.
      */

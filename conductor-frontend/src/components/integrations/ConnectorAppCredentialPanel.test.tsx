@@ -113,10 +113,10 @@ const META_DEPLOYMENT_ONLY_UNCONFIGURED: ConnectorAppCredentialStatus = {
   updatedAt: null,
 }
 
-// YouTube's shape: its app carries its own App Review, so there is no deployment app to inherit
+// A hypothetical WORKSPACE_ONLY connector (none ships today): its app carries its own App Review, so there is no deployment app to inherit
 // and no env var whose absence explains a NONE.
-const YOUTUBE_NONE: ConnectorAppCredentialStatus = {
-  connectorId: 'youtube',
+const ACME_NONE: ConnectorAppCredentialStatus = {
+  connectorId: 'acme',
   credentialSource: 'NONE',
   configured: false,
   clientId: null,
@@ -127,8 +127,8 @@ const YOUTUBE_NONE: ConnectorAppCredentialStatus = {
   updatedAt: null,
 }
 
-const YOUTUBE_PROJECT: ConnectorAppCredentialStatus = {
-  connectorId: 'youtube',
+const ACME_PROJECT: ConnectorAppCredentialStatus = {
+  connectorId: 'acme',
   credentialSource: 'PROJECT',
   configured: true,
   clientId: 'proj-client-5678',
@@ -233,12 +233,12 @@ describe('ConnectorAppCredentialPanel — readiness states', () => {
   })
 
   it('tells a workspace to enter its own app, naming no env var, when none can be inherited', () => {
-    renderPanel(YOUTUBE_NONE, { connectorId: 'youtube', connectorName: 'YouTube' })
+    renderPanel(ACME_NONE, { connectorId: 'acme', connectorName: 'Acme Connect' })
 
     expect(screen.getByText('Not configured')).toBeInTheDocument()
     expect(screen.getByText(/needs this workspace's own app/i)).toBeInTheDocument()
     // Naming an env var here would send an admin to set something nothing reads for this connector.
-    expect(screen.queryByText(/YOUTUBE_CLIENT_ID/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/ACME_CLIENT_ID/)).not.toBeInTheDocument()
     expect(screen.queryByText(/on the deployment/i)).not.toBeInTheDocument()
   })
 
@@ -280,11 +280,11 @@ describe('ConnectorAppCredentialPanel — readiness states', () => {
   })
 
   it('warns that clearing takes the connector offline when no deployment app can take over', () => {
-    renderPanel(YOUTUBE_PROJECT, { connectorId: 'youtube', connectorName: 'YouTube' })
+    renderPanel(ACME_PROJECT, { connectorId: 'acme', connectorName: 'Acme Connect' })
     fireEvent.click(screen.getByRole('button', { name: /^clear$/i }))
 
-    expect(screen.getByText(/Remove this workspace's YouTube app\?/i)).toBeInTheDocument()
-    expect(screen.getByText(/Nobody can connect YouTube until another app is entered/i)).toBeInTheDocument()
+    expect(screen.getByText(/Remove this workspace's Acme Connect app\?/i)).toBeInTheDocument()
+    expect(screen.getByText(/Nobody can connect Acme Connect until another app is entered/i)).toBeInTheDocument()
   })
 })
 
@@ -331,7 +331,7 @@ describe('ConnectorAppCredentialPanel — permissions', () => {
 
   it('offers no write controls when nothing is configured and the viewer is not an ADMIN', () => {
     mockRole = 'CREATOR'
-    renderPanel(YOUTUBE_NONE, { connectorId: 'youtube', connectorName: 'YouTube' })
+    renderPanel(ACME_NONE, { connectorId: 'acme', connectorName: 'Acme Connect' })
 
     expect(screen.queryByRole('button', { name: /credential for this workspace/i })).not.toBeInTheDocument()
     expect(screen.getByText(/needs this workspace's own app/i)).toBeInTheDocument()
@@ -380,7 +380,7 @@ describe('ConnectorAppCredentialPanel — set, replace and clear', () => {
   })
 
   it('masks the secret input so it is never readable on screen', () => {
-    renderPanel(YOUTUBE_NONE, { connectorId: 'youtube', connectorName: 'YouTube' })
+    renderPanel(ACME_NONE, { connectorId: 'acme', connectorName: 'Acme Connect' })
     fireEvent.click(screen.getByRole('button', { name: /credential for this workspace/i }))
 
     expect(screen.getByLabelText('Client secret')).toHaveAttribute('type', 'password')
@@ -405,7 +405,7 @@ describe('ConnectorAppCredentialPanel — set, replace and clear', () => {
 
   it('reports a failed save instead of swallowing it', async () => {
     vi.mocked(api.apiPut).mockRejectedValue({ detail: 'Client id is not valid' })
-    renderStatefulPanel(YOUTUBE_NONE, { connectorId: 'youtube', connectorName: 'YouTube' })
+    renderStatefulPanel(ACME_NONE, { connectorId: 'acme', connectorName: 'Acme Connect' })
 
     fireEvent.click(screen.getByRole('button', { name: /credential for this workspace/i }))
     fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'x' } })
@@ -531,7 +531,7 @@ describe('appCredentialOf', () => {
   })
 
   it('returns the status when the catalog carries one', () => {
-    expect(appCredentialOf(entry(YOUTUBE_NONE))).toEqual(YOUTUBE_NONE)
+    expect(appCredentialOf(entry(ACME_NONE))).toEqual(ACME_NONE)
   })
 })
 
@@ -540,38 +540,38 @@ describe('ConnectorCard readiness', () => {
     render(
       <ConnectorCard
         icon={<span />}
-        name="YouTube"
+        name="Acme Connect"
         description="Marketing"
-        href="/app/projects/proj-1/integrations/youtube"
+        href="/app/projects/proj-1/integrations/acme"
         unavailableReason="Enter this workspace's app credentials to let members connect."
       />
     )
 
     // No connect handler exists at all, so no click can reach a flow that would fail.
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
-    expect(screen.getByRole('link')).toHaveAttribute('href', '/app/projects/proj-1/integrations/youtube')
+    expect(screen.getByRole('link')).toHaveAttribute('href', '/app/projects/proj-1/integrations/acme')
     expect(
       screen.getByText("Enter this workspace's app credentials to let members connect.")
     ).toBeInTheDocument()
   })
 
   it('stays a plain connect button when nothing blocks it', () => {
-    render(<ConnectorCard icon={<span />} name="YouTube" description="Marketing" onClick={() => {}} />)
+    render(<ConnectorCard icon={<span />} name="Acme Connect" description="Marketing" onClick={() => {}} />)
     expect(screen.getByRole('button')).toBeInTheDocument()
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 })
 
 describe('GenericConnectorPage app credential readiness: WORKSPACE_ONLY', () => {
-  const youtubeConnector = (appCredential: ConnectorAppCredentialStatus | null) => ({
-    connectorId: 'youtube',
-    name: 'YouTube',
+  const acmeConnector = (appCredential: ConnectorAppCredentialStatus | null) => ({
+    connectorId: 'acme',
+    name: 'Acme Connect',
     category: 'Marketing',
     authType: 'OAUTH2' as const,
     capabilities: ['publish'],
     singleInstance: true,
-    description: 'Publish video to YouTube',
-    iconLabel: 'YT',
+    description: 'Publish video to Acme Connect',
+    iconLabel: 'AC',
     connected: false,
     configFields: [],
     connections: [],
@@ -581,14 +581,14 @@ describe('GenericConnectorPage app credential readiness: WORKSPACE_ONLY', () => 
   function renderPage(item: unknown) {
     vi.mocked(api.listIntegrations).mockResolvedValue([item as never])
     return render(
-      <ConnectorCatalogProvider projectId="proj-1" connectorId="youtube">
-        <GenericConnectorPage projectId="proj-1" connectorId="youtube" />
+      <ConnectorCatalogProvider projectId="proj-1" connectorId="acme">
+        <GenericConnectorPage projectId="proj-1" connectorId="acme" />
       </ConnectorCatalogProvider>
     )
   }
 
   it('does not offer Connect when the platform app is not configured', async () => {
-    renderPage(youtubeConnector(YOUTUBE_NONE))
+    renderPage(acmeConnector(ACME_NONE))
 
     expect(await screen.findByRole('button', { name: /^authorize$/i })).toBeDisabled()
     expect(screen.getByText(/needs this workspace's own app/i)).toBeInTheDocument()
@@ -597,18 +597,18 @@ describe('GenericConnectorPage app credential readiness: WORKSPACE_ONLY', () => 
   // The browse grid sends a blocked connector here instead of into a doomed consent flow, so this
   // page has to actually carry the fix — otherwise that redirect is just a nicer dead end.
   it('renders the credential panel the browse grid routes a blocked connector to', async () => {
-    renderPage(youtubeConnector(YOUTUBE_NONE))
+    renderPage(acmeConnector(ACME_NONE))
 
     expect(await screen.findByText('Platform app credentials')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /set a credential for this workspace/i })).toBeInTheDocument()
   })
 
   it('unblocks the connector once an admin sets the credential, without a reload', async () => {
-    renderPage(youtubeConnector(YOUTUBE_NONE))
+    renderPage(acmeConnector(ACME_NONE))
 
     expect(await screen.findByRole('button', { name: /^authorize$/i })).toBeDisabled()
 
-    vi.mocked(api.apiPut).mockResolvedValue(YOUTUBE_PROJECT)
+    vi.mocked(api.apiPut).mockResolvedValue(ACME_PROJECT)
     fireEvent.click(screen.getByRole('button', { name: /set a credential for this workspace/i }))
     fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'proj-client-5678' } })
     fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 'sup3r-s3cret' } })
@@ -618,9 +618,9 @@ describe('GenericConnectorPage app credential readiness: WORKSPACE_ONLY', () => 
   })
 
   it('renders no credential panel for a connector with no app credential', async () => {
-    renderPage({ ...youtubeConnector(null), authType: 'API_KEY' as const })
+    renderPage({ ...acmeConnector(null), authType: 'API_KEY' as const })
 
-    await screen.findByRole('heading', { name: 'YouTube' })
+    await screen.findByRole('heading', { name: 'Acme Connect' })
     expect(screen.queryByText('Platform app credentials')).not.toBeInTheDocument()
   })
 })

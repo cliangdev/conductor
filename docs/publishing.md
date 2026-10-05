@@ -133,7 +133,7 @@ refuses every other edit: its record is done.
 A publishing connector authenticates to its platform as an **OAuth app**, and who owns that app differs
 per platform. `OAuth2Connector.appOwnership()` names which of three models applies.
 
-**`DEPLOYMENT_ONLY`, for TikTok and Meta.** Conductor registers one app per platform and gets it
+**`DEPLOYMENT_ONLY`, for TikTok, Meta and YouTube.** Conductor registers one app per platform and gets it
 reviewed once; every workspace then authorizes its own account through that app. This is the model both
 platforms are built around: the app is granted its scopes once, and each user separately grants the app
 access to their account. It is also the only model that works. TikTok caps an unaudited client at
@@ -142,33 +142,40 @@ audit, and an app whose only purpose is posting to its own owner's account is pr
 declines to approve.
 
 The credentials come from the deployment environment (`TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET`,
-`META_APP_ID`/`META_APP_SECRET`), bound from Secret Manager in `backend-cd.yml`. A workspace has nothing
+`META_APP_ID`/`META_APP_SECRET`, `YOUTUBE_OAUTH_CLIENT_ID`/`YOUTUBE_OAUTH_CLIENT_SECRET`), bound from Secret Manager in `backend-cd.yml`. A workspace has nothing
 to enter and no way to override it: the app-credential endpoints refuse writes for these connectors, and
 the status they report carries neither the client id nor the secret's last four characters. That last
 part matters because the integrations list and catalog are readable by any project **member**, not just
 an admin, so returning Conductor's own app identifiers there would hand them to every tenant.
 
-**`WORKSPACE_ONLY`, for YouTube.** A project admin enters the pair at **Settings → Integrations →
-*YouTube***: the client id (public, shown back in full) and the client secret (stored under the same KMS
-envelope as every other Integrations secret, and never returned, only its last four characters).
-**Verify** probes the provider and reports what it proved. Until a pair is stored the connector is
-offered but not connectable, and its card says so rather than sending anyone into a consent flow that
-would fail. YouTube is not simply an oversight here: `youtube.upload` verification is granted to one
-specific OAuth client, and upload quota is per-project and small, so a workspace publishing to its own
-channel is better served publishing as its own verified app.
+**YouTube follows the same model**, for three reasons. Google keeps videos uploaded through a YouTube API
+project private until that project passes a YouTube API Services audit, so the audit belongs to one
+Conductor project rather than to each workspace. Quota is per API project, and uploads have their own
+small bucket (about 100 a day) that the whole deployment shares. And a Google API project holds one OAuth
+client per use, so YouTube has its own client, in a Google Cloud project separate from the
+`GOOGLE_OAUTH_*` client that Search Console and GCP Billing share. Members just click Authorize and sign
+in with Google; each connection is one channel, chosen in Google's account picker.
 
-**`WORKSPACE_OR_DEPLOYMENT`, the default, for the Google family.** GSC and GCP Billing inherit the
+**`WORKSPACE_ONLY`** is still an available ownership mode, with no connector using it today. A project
+admin would enter the client id (public, shown back in full) and the client secret (stored under the
+same KMS envelope as every other Integrations secret, and never returned, only its last four characters)
+at **Settings → Integrations → *connector***, and **Verify** probes the provider. Until a pair is stored
+the connector is offered but not connectable, and its card says so rather than sending anyone into a
+consent flow that would fail. Choose it only where the platform grants verification to a single OAuth
+client per workspace.
+
+**`WORKSPACE_OR_DEPLOYMENT`, the default, for Google Search Console and GCP Billing.** They inherit the
 deployment's `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET` and a workspace may store its own pair to override it.
-The credential is keyed on the connector, so YouTube opting out of that shared client took nothing away
-from them.
+The credential is keyed on the connector, so YouTube leaving that shared client took nothing away from
+them.
 
 Two consequences worth knowing:
 
 - **Consent, exchange and completion all run as the same app.** The credentials resolved when the
   consent URL is built are carried through the token exchange and into the connector's completion hook,
   which is what Meta's long-lived token swap authenticates with. Nothing re-reads them halfway.
-- **Clearing a credential takes the connector offline for new connections.** True for YouTube, the one
-  connector a workspace can clear. Connections that already exist keep working on their stored tokens
+- **Clearing a credential takes the connector offline for new connections.** Only a connector whose ownership allows
+  a workspace credential (`WORKSPACE_OR_DEPLOYMENT` or `WORKSPACE_ONLY`) can be cleared. Connections that already exist keep working on their stored tokens
   until a refresh needs the app again.
 
 ## Publish targets and lanes

@@ -80,30 +80,29 @@ class YouTubeConnectorTest {
     void oauthEndpoints_areGooglesDefaults() {
         assertThat(connector.authorizationUrl()).isEqualTo("https://accounts.google.com/o/oauth2/v2/auth");
         assertThat(connector.tokenUrl()).isEqualTo("https://oauth2.googleapis.com/token");
-        assertThat(connector.clientIdProperty()).isEqualTo("GOOGLE_OAUTH_CLIENT_ID");
-        assertThat(connector.clientSecretProperty()).isEqualTo("GOOGLE_OAUTH_CLIENT_SECRET");
         assertThat(connector.extraAuthorizationParams())
                 .containsEntry("access_type", "offline")
                 .containsEntry("prompt", "consent");
     }
 
     @Test
-    void appOwnership_isWorkspaceOnly_soTheDeploymentGoogleClientIsNeverAStandIn() {
-        assertThat(connector.appOwnership()).isEqualTo(OAuth2Connector.AppOwnership.WORKSPACE_ONLY);
+    void appOwnership_isDeploymentOnly_withItsOwnClientSeparateFromGoogles() {
+        assertThat(connector.appOwnership()).isEqualTo(OAuth2Connector.AppOwnership.DEPLOYMENT_ONLY);
+        assertThat(connector.clientIdProperty()).isEqualTo("YOUTUBE_OAUTH_CLIENT_ID");
+        assertThat(connector.clientSecretProperty()).isEqualTo("YOUTUBE_OAUTH_CLIENT_SECRET");
     }
 
     @Test
     void connector_inheritsRatherThanOverridesTheGoogleEndpointMethods() {
-        // Only oauthScopes() may be declared here; the other five must come from OAuth2Connector so a
-        // change to Google's shared flow reaches this connector without an edit.
-        List<String> inheritedMethods = List.of("authorizationUrl", "tokenUrl", "clientIdProperty",
-                "clientSecretProperty", "extraAuthorizationParams");
+        // The Google flow (endpoints, consent params) must come from OAuth2Connector so a change to it
+        // reaches this connector without an edit; only the scopes and its own client are declared here.
+        List<String> inheritedMethods = List.of("authorizationUrl", "tokenUrl", "extraAuthorizationParams");
         List<String> declared = Arrays.stream(YouTubeConnector.class.getDeclaredMethods())
                 .map(Method::getName)
                 .toList();
 
         assertThat(declared).doesNotContainAnyElementsOf(inheritedMethods);
-        assertThat(declared).contains("oauthScopes");
+        assertThat(declared).contains("oauthScopes", "clientIdProperty", "clientSecretProperty");
         assertThat(connector).isInstanceOf(OAuth2Connector.class);
     }
 

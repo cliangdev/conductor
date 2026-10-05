@@ -133,10 +133,22 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
         return true;
     }
 
-    /** Mirrors the real connector: this platform's app belongs to the workspace, not the deployment. */
+    /** Mirrors the real connector: Conductor's own YouTube app, not one the workspace brings. */
     @Override
     public AppOwnership appOwnership() {
-        return AppOwnership.WORKSPACE_ONLY;
+        return AppOwnership.DEPLOYMENT_ONLY;
+    }
+
+    /** Mirrors the real connector's own client, separate from the {@code GOOGLE_OAUTH_*} one. */
+    @Override
+    public String clientIdProperty() {
+        return "YOUTUBE_OAUTH_CLIENT_ID";
+    }
+
+    /** Mirrors the real connector's own client secret. */
+    @Override
+    public String clientSecretProperty() {
+        return "YOUTUBE_OAUTH_CLIENT_SECRET";
     }
 
     /**

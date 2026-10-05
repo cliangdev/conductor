@@ -317,7 +317,7 @@ class ConnectorAppCredentialVerificationServiceTest {
         return new StubConnector("tiktok", "TikTok", "https://open.tiktokapis.com/v2/oauth/token/", "client_key");
     }
 
-    /** Stands in for YouTube: a real connector whose app must be the workspace's own. */
+    /** Stands in for a workspace-only connector: its app must be the workspace's own. */
     private StubConnector workspaceOnlyConnector() {
         return new StubConnector("youtube", "YouTube", "https://oauth2.googleapis.com/token", "client_id",
                 OAuth2Connector.AppOwnership.WORKSPACE_ONLY);

@@ -1,30 +1,34 @@
 const doc = `## What it does
 
-Uploads video to a **YouTube channel**, optionally scheduled — Conductor uploads the video as private with a publish time, and YouTube flips it public at that moment. A workspace can connect several channels.
+Uploads video to a **YouTube channel**, optionally scheduled — Conductor uploads the video as private with a publish time, and YouTube flips it public at that moment. A workspace can connect several channels, one connection each.
 
 ## Before you connect
 
-1. In Google Cloud Console, create or select a project and enable the **YouTube Data API v3**.
-2. Create an OAuth 2.0 Client ID of type **Web application**, and register \`{BACKEND_URL}/api/v1/oauth/callback\` under *Authorized redirect URIs*. Mismatches here — a trailing slash, http vs https — are the most common setup failure.
-3. Configure the consent screen (*APIs & Services → Google Auth Platform*) with a public homepage and a privacy policy on the same domain that names the scopes you request. A vague or missing privacy policy is the most common verification rejection.
-4. Request **OAuth verification** for the \`youtube.upload\` and \`youtube.readonly\` scopes. Until it passes, only 100 users total can authorize the app.
-5. Request a **YouTube API audit** using the *API Services — Audit and Quota Extension* form. See below; this one matters more than it looks.
+YouTube publishes through Conductor's own Google app, so there is no Google Cloud project to create, no API to enable, and no redirect URI to enter. You need a **Google account that owns or manages a YouTube channel**. Click **Authorize** and sign in with that account when Google asks.
 
-> **The audit is the thing that will catch you out.** Videos uploaded by an unaudited API project are **locked to private**, server-side, regardless of the privacy status your request asks for. There is no error and no appeal — the upload succeeds, the schedule is accepted, and the video simply never goes public. Google gives no timeline; developer reports range from weeks to months. Start it before you need it, and confirm with a real scheduled test video before relying on it.
+> **Until Conductor's app passes Google's YouTube API Services audit, every upload is locked to private**, server-side, regardless of the privacy status the request asks for. There is no error and no appeal: the upload succeeds, the schedule is accepted, and the video simply never goes public. Google gives no timeline for the audit. Until it passes, treat YouTube as a way to stage private videos, and confirm with a real scheduled test video before relying on it.
+
+While Conductor's app is in Google's **Testing** status, only Google accounts on its test-user list can connect, and their authorization **expires after 7 days**, so those users reconnect weekly. A connection that has lapsed shows as needing attention in Integrations.
 
 ## Account requirements
 
 The authorizing Google account must actually own or manage a channel. A brand-new account with no channel returns an empty channel list, which looks like a broken integration but isn't.
 
+**One channel per connection.** If the Google account manages several channels (brand accounts), Google's account picker asks which one to authorize, and that channel is the one the connection posts to. To post to another channel, connect again and pick it.
+
 ## How authentication works
 
-Standard Google OAuth. Conductor requests \`youtube.upload\` and \`youtube.readonly\`, then resolves the channel via \`channels.list\` and stores its id and title.
+Standard Google OAuth, with three scopes:
 
-The OAuth client is shared with Conductor's other Google integrations (Search Console, GCP Billing) — adding YouTube's scopes to it means that client goes through verification, which affects those integrations too.
+- \`youtube.upload\` publishes videos to the channel.
+- \`youtube.readonly\` reads the channel's identity (id and title) and reads a video back after it is published.
+- \`yt-analytics.readonly\` reads watch time and average view percentage for performance reporting.
+
+Conductor resolves the channel via \`channels.list\` and stores its id and title. The app is dedicated to YouTube, separate from the Google client Search Console and GCP Billing use, so its verification doesn't affect them.
 
 ## Limits and behaviour
 
-- **Quota changed substantially and recently.** A video upload used to cost ~1600 units against a shared 10,000/day pool, giving roughly six uploads a day. Since December 2025 uploads draw on their own dedicated bucket of about **100 per day**. Check Google's live quota page rather than trusting any fixed number, including this one — Google has described the change as an ongoing transition. Note also that upload quota no longer shows up in general quota monitoring.
+- **Quota changed substantially and recently.** A video upload used to cost ~1600 units against a shared 10,000/day pool, giving roughly six uploads a day. Since December 2025 uploads draw on their own dedicated bucket of about **100 per day**, shared by every workspace on this deployment because they all use Conductor's one app. Check Google's live quota page rather than trusting any fixed number, including this one — Google has described the change as an ongoing transition. Note also that upload quota no longer shows up in general quota monitoring.
 - **Scheduling**: a video must be uploaded as private for a publish time to apply, which is what Conductor does. A time in the past publishes immediately. Google documents no maximum how-far-ahead limit.
 - **Shorts**: a vertical (9:16) or square video of three minutes or less is automatically classified as a Short, regardless of any metadata. Conductor warns at approval rather than blocking, since this is usually intended.
 - Uploads are resumable and Conductor checkpoints progress, so a retry resumes rather than restarting.

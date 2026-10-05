@@ -493,7 +493,7 @@ class OAuthFlowServiceTest {
         public AppOwnership appOwnership() { return AppOwnership.DEPLOYMENT_ONLY; }
     }
 
-    /** Same fake, but an app a workspace must bring, the way YouTube is. */
+    /** Same fake, but an app a workspace must bring (a workspace-only connector). */
     private static class WorkspaceOwnedConnector extends FakeOAuth2Connector {
         @Override
         public AppOwnership appOwnership() { return AppOwnership.WORKSPACE_ONLY; }
@@ -518,6 +518,18 @@ class OAuthFlowServiceTest {
 
         when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(new FakeOAuth2Connector()));
         assertThat(service.oauthCallbackUri("acme")).isEqualTo(BACKEND + "/api/v1/oauth/callback");
+    }
+
+    @Test
+    void oauthCallbackUri_forYouTube_isTheBrandedCallback() {
+        useCallbackBases(BACKEND, BRANDED);
+        // Real class, real appOwnership(): the constructor is package-private and wires clients this
+        // test does not need, so a real-methods mock stands in for the instance.
+        when(connectorRegistry.findOAuth2("youtube")).thenReturn(Optional.of(
+                mock(com.conductor.integration.connector.youtube.YouTubeConnector.class,
+                        org.mockito.Mockito.CALLS_REAL_METHODS)));
+
+        assertThat(service.oauthCallbackUri("youtube")).isEqualTo(BRANDED + "/api/v1/oauth/callback");
     }
 
     @Test

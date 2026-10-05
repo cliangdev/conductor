@@ -6423,7 +6423,7 @@ components:
             null here, since this endpoint is member-level and must never expose Conductor's own app
             id or secret fragment, and there is nothing for a project to set or clear.
             WORKSPACE_ONLY: the workspace must bring its own app, with no deployment fallback
-            (YouTube, whose OAuth verification and upload quota are both tied to one client);
+            (a platform whose app verification is tied to one client the workspace owns);
             `missingProperties` is empty when unconfigured, because no environment variable would
             resolve it. WORKSPACE_OR_DEPLOYMENT: the project's own row wins if present, otherwise the
             deployment's environment variables are a valid fallback (the Google family).

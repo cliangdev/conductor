@@ -82,12 +82,10 @@ public interface OAuth2Connector extends Connector {
         DEPLOYMENT_ONLY,
         /**
          * The app must belong to the workspace: a deployment-wide app is never a valid stand-in. This
-         * is the shape for a platform whose OAuth verification is granted to one specific client and
-         * whose quota is metered per project rather than per end user: YouTube's {@code youtube.upload}
-         * scope is sensitive, Google verifies it against one OAuth client, and upload quota is granted
-         * to that client's project on Google Cloud, so sharing Conductor's own app across workspaces
-         * would mean every workspace draining the same quota bucket and inheriting the same
-         * verification exposure. A project with no row of its own simply cannot connect.
+         * is the shape for a platform whose verification and quota are tied to one client the
+         * workspace itself owns, so sharing Conductor's own app across workspaces would not be valid
+         * for it. No connector uses it today: YouTube moved to {@link #DEPLOYMENT_ONLY} with its own
+         * Google client. A project with no row of its own simply cannot connect.
          */
         WORKSPACE_ONLY,
         /**

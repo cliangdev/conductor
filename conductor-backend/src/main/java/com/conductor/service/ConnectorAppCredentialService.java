@@ -36,14 +36,13 @@ import java.util.stream.Collectors;
  * every existing deployment keeps working untouched and one workspace's own app never leaks into
  * another's flows.
  *
- * <p><b>{@link OAuth2Connector.AppOwnership#WORKSPACE_ONLY} (YouTube) never reads the environment.</b>
- * Google verifies {@code youtube.upload} against one OAuth client and meters upload quota against that
- * client's Google Cloud project, so a shared deployment app would mean every workspace draining the
- * same quota. No row means {@link CredentialSource#NONE} with <em>no</em> missing-property names, which
+ * <p><b>{@link OAuth2Connector.AppOwnership#WORKSPACE_ONLY} never reads the environment.</b>
+ * Its verification and quota are tied to one client the workspace owns, so a shared deployment app
+ * would not be valid. (No connector uses this today; YouTube is now {@code DEPLOYMENT_ONLY}.) No row means {@link CredentialSource#NONE} with <em>no</em> missing-property names, which
  * is how a caller tells "this workspace has entered nothing" apart from "the deployment is missing an
  * env var".
  *
- * <p><b>{@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY} (Meta, TikTok) never reads a project row,
+ * <p><b>{@link OAuth2Connector.AppOwnership#DEPLOYMENT_ONLY} (Meta, TikTok, YouTube) never reads a project row,
  * even if one is present.</b> Conductor registers one app per platform, carries it through that
  * platform's app review once, and every workspace authorizes through it: there is no per-project app
  * to bring, so {@link #put}/{@link #clear} refuse outright and {@link #resolve}/{@link #status} do not
