@@ -10,7 +10,7 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }))
 
-vi.mock('@/components/ui/toast', () => ({ toastError: vi.fn() }))
+vi.mock('@/components/ui/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }))
 
 // Flatten the portal-based Radix dropdown so items are visible in jsdom (same approach as
 // RuntimeTargetsPanel.test.tsx). The item stub mirrors Radix: `disabled` only marks the element
@@ -90,7 +90,7 @@ vi.mock('@/lib/workflows', async (importActual) => {
 })
 
 import { apiGet, apiPatch } from '@/lib/api'
-import { toastError } from '@/components/ui/toast'
+import { toastError, toastSuccess } from '@/components/ui/toast'
 
 const baseProps = {
   projectId: 'proj-1',
@@ -134,6 +134,28 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     )
     // current status badge renders, resolved from the WorkflowView
     expect(screen.getByText('Draft')).toBeInTheDocument()
+  })
+
+  it('says what it is doing while a move is in flight, then confirms it', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue({
+      workflow: 'ENGINEERING',
+      currentStatus: 'DRAFT',
+      transitions: [{ toStatus: 'IN_REVIEW', label: 'Submit for review' }],
+    })
+    let finish: () => void = () => {}
+    ;(apiPatch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise<void>((resolve) => { finish = resolve }))
+    const onStatusChanged = vi.fn()
+    render(<StatusDropdown {...baseProps} onStatusChanged={onStatusChanged} userRole="CREATOR" />)
+
+    fireEvent.click(await waitFor(() => itemFor('Submit for review')))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Submit for review…')
+    expect(screen.getByRole('status').closest('button')).toHaveAttribute('aria-busy', 'true')
+
+    finish()
+    await waitFor(() => expect(onStatusChanged).toHaveBeenCalledWith('IN_REVIEW'))
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('Submit for review'))
   })
 
   it('does not offer gated transitions the backend withholds', async () => {
