@@ -7,6 +7,8 @@ import userEvent from '@testing-library/user-event'
 vi.mock('@/components/workitems/MediaUploadPanel', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/components/workitems/MediaUploadPanel')>()),
   putToSignedUrl: vi.fn(async () => {}),
+  // jsdom never loads video metadata.
+  measureVideoMetadata: vi.fn(async () => ({ width: 1080, height: 1920, durationSeconds: 10 })),
 }))
 import type { WorkflowView } from '@/types/workItem'
 import { ComposePostPage } from './ComposePostPage'
@@ -58,6 +60,7 @@ let accounts: unknown[] = ACCOUNTS
 let calls: Array<{ method: string; url: string; body: unknown }> = []
 let createRejection: { status: number; detail: string } | null = null
 let targetsRejection: { status: number; detail: string } | null = null
+let uploadCount = 0
 
 function json(status: number, body: unknown) {
   return { ok: status >= 200 && status < 300, status, headers: { get: () => 'application/json' }, json: async () => body }
@@ -78,10 +81,12 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     return json(200, [])
   }
   if (method === 'POST' && url.endsWith('/assets/uploads')) {
-    return json(201, { assetId: 'asset-1', uploadUrl: 'http://storage.test/put/asset-1', gcsPath: 'x', expiresAt: 'y' })
+    uploadCount += 1
+    const assetId = `asset-${uploadCount}`
+    return json(201, { assetId, uploadUrl: `http://storage.test/put/${assetId}`, gcsPath: 'x', expiresAt: 'y' })
   }
   if (method === 'PUT' && url.startsWith('http://storage.test/')) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
-  if (method === 'POST' && url.endsWith('/assets/asset-1/confirm')) return { ok: true, status: 204, headers: { get: () => null }, json: async () => ({}) }
+  if (method === 'POST' && /\/assets\/asset-\d+\/confirm$/.test(url)) return { ok: true, status: 204, headers: { get: () => null }, json: async () => ({}) }
   if (method === 'PATCH') return json(200, {})
   if (method === 'POST' && url.endsWith('/attach')) return json(200, { assets: [], targetsUpdated: [], targetsSkipped: [] })
   throw new Error(`unexpected ${method} ${url}`)
@@ -92,6 +97,7 @@ beforeEach(() => {
   calls = []
   createRejection = null
   targetsRejection = null
+  uploadCount = 0
   searchParamsRef.current = new URLSearchParams()
   pushSpy.mockClear()
   toastErrorSpy.mockClear()
@@ -176,6 +182,29 @@ describe('ComposePostPage', () => {
     expect(targets?.body).toEqual({
       targets: [{ platform: 'instagram', connectionId: 'c-ig', format: 'reel', captionOverride: 'Reel-only words' }],
     })
+  })
+
+  it('lets a reel pick one of the not-yet-uploaded images as its cover, and sends the real asset id', async () => {
+    renderPage()
+    await userEvent.type(screen.getByLabelText('Caption'), 'Plan the week, shop once.')
+    const video = new File([new Uint8Array([1])], 'reel.mp4', { type: 'video/mp4' })
+    const cover = new File([new Uint8Array([2])], 'cover.jpg', { type: 'image/jpeg' })
+    await userEvent.upload(document.getElementById('compose-media') as HTMLInputElement, [video, cover])
+
+    await userEvent.click(await account('@acme'))
+    const row = screen.getByTestId('destination-row-instagram-c-ig')
+    await userEvent.click(within(row).getByRole('button', { name: 'Show details' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Reel' }))
+    await userEvent.selectOptions(screen.getByLabelText('Cover image'), screen.getByRole('option', { name: 'cover.jpg' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT' && c.url.endsWith('/publish-targets'))).toBe(true))
+    const put = calls.find((c) => c.method === 'PUT' && c.url.endsWith('/publish-targets'))
+    // cover.jpg was the second file uploaded, so its real id is asset-2; no stand-in id leaks out.
+    expect(JSON.stringify(put?.body)).not.toContain('pending-')
+    const [target] = (put?.body as { targets: Array<Record<string, unknown>> }).targets
+    expect(target).toMatchObject({ platform: 'instagram', connectionId: 'c-ig', format: 'reel' })
+    expect((target.publishOptions as Record<string, unknown>).coverAssetId).toBe('asset-2')
   })
 
   it('shows a chosen file as a thumbnail and uploads it before the destinations are saved', async () => {

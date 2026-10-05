@@ -21,12 +21,12 @@ import { browserTimeZone } from '@/lib/schedule'
 import { workItemDetailPath, workItemListPath } from '@/lib/workflows'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { ALLOWED_MEDIA_CONTENT_TYPES, isVideoContentType } from '@/components/workitems/MediaUploadPanel'
+import { ALLOWED_MEDIA_CONTENT_TYPES, isVideoContentType, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { ScheduleEditor, type ScheduleEditorValue } from '@/components/workitems/WorkItemScheduleField'
 import { DestinationsPanel } from '@/components/marketing/destinations/DestinationsPanel'
 import { useDraftDestinations } from '@/components/marketing/destinations/useDraftDestinations'
 import type { WorkflowView } from '@/types/workItem'
-import { createPost } from './createPost'
+import { createPost, PENDING_ASSET_PREFIX } from './createPost'
 
 export interface ComposePostPageProps {
   projectId: string
@@ -55,6 +55,11 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
   const [title, setTitle] = useState('')
   const [caption, setCaption] = useState('')
   const [files, setFiles] = useState<File[]>([])
+  // Nothing is uploaded until the Post exists, but a destination can already choose among these files (a
+  // reel's cover, media of its own). Each file gets a stand-in id when it is added, parallel to `files`;
+  // createPost swaps it for the real asset id once the file is uploaded.
+  const [fileIds, setFileIds] = useState<string[]>([])
+  const nextFileId = useRef(0)
   const [schedule, setSchedule] = useState<ScheduleEditorValue>({ onApproval: false, local: '', tz: browserTimeZone() })
   const [saving, setSaving] = useState(false)
   const [step, setStep] = useState<string | null>(null)
@@ -74,9 +79,25 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
   // Object URLs for the thumbnails; revoked when the file leaves the list.
   const previews = useMemo(() => files.map((f) => ({ file: f, url: URL.createObjectURL(f) })), [files])
 
+  const pendingAssets: MediaAsset[] = useMemo(() => previews.map(({ file, url }, index) => ({
+    id: fileIds[index] ?? `${PENDING_ASSET_PREFIX}unassigned-${index}`,
+    issueId: '',
+    type: isVideoContentType(file.type) ? 'video' : 'image',
+    label: file.name,
+    kind: 'file',
+    ref: '',
+    done: false,
+    createdAt: '',
+    updatedAt: '',
+    contentType: file.type,
+    uploadStatus: null,
+    previewUrl: url,
+  })), [previews, fileIds])
+
   function removeFile(index: number) {
     URL.revokeObjectURL(previews[index]?.url ?? '')
     setFiles((prev) => prev.filter((_, i) => i !== index))
+    setFileIds((prev) => prev.filter((_, i) => i !== index))
   }
 
   async function submit(event: React.FormEvent) {
@@ -94,6 +115,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
         title,
         caption,
         files,
+        fileIds,
         options: destinations.options,
         draft: destinations.draft,
         schedule: { onApproval: schedule.onApproval, local: schedule.local, timeZone: schedule.tz },
@@ -169,7 +191,9 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                     // Read the list now: the updater below runs after this handler, by which time the
                     // input has been cleared so the same file can be picked again.
                     const chosen = Array.from(e.target.files ?? [])
+                    const ids = chosen.map(() => `${PENDING_ASSET_PREFIX}${nextFileId.current++}`)
                     setFiles((prev) => [...prev, ...chosen])
+                    setFileIds((prev) => [...prev, ...ids])
                     e.target.value = ''
                   }}
                 />
@@ -217,7 +241,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
           <div className="space-y-6">
             <DestinationsPanel
               state={destinations}
-              assets={[]}
+              assets={pendingAssets}
               caption={caption}
               canEdit
               noun={noun}
