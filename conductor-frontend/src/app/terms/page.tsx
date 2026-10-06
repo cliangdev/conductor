@@ -96,6 +96,7 @@ export default function TermsPage() {
       <ul>
         <li>break the law, or infringe intellectual property, privacy, or publicity rights;</li>
         <li>publish spam, deceptive content, malware, or content that a destination platform prohibits;</li>
+        <li>create, publish or share sexually explicit content, or intimate imagery of anyone without their consent, including AI-generated or altered imagery;</li>
         <li>impersonate anyone, or misrepresent who created or approved content;</li>
         <li>generate coordinated inauthentic activity, engagement farming, or automated posting meant to get around a platform&rsquo;s limits;</li>
         <li>probe, scrape, overload, or circumvent the security or rate limits of the service or any connected platform;</li>

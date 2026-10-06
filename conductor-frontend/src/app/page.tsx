@@ -85,6 +85,15 @@ const AGENT_TOOLS = [
   "Bring your own model keys, stored encrypted",
 ];
 
+/** What Conductor does with a YouTube channel a workspace connects — stated on the homepage because
+ * Google's OAuth review reads the homepage, not just the privacy policy, for the app's purpose. */
+const YOUTUBE_USES = [
+  "Upload a video your team approved to your channel, with the title, description, privacy setting and publish time you chose.",
+  "Read your channel’s name and ID, so you can confirm which channel the workspace publishes to.",
+  "Read views, likes, comments, watch time and average view percentage for the videos Conductor uploaded, and show them only to your workspace.",
+  "Set a video it uploaded back to private when your team unschedules it, and add it to the playlists you chose.",
+];
+
 const TRUST_POINTS = [
   "You connect each account through the platform’s own sign-in screen, and you can disconnect it any time from Integrations.",
   "Conductor only publishes what a person in your workspace approved.",
@@ -286,6 +295,67 @@ export default function LandingPage() {
             >
               Data Deletion
             </Link>
+          </p>
+        </div>
+      </section>
+
+      {/* Google user data */}
+      <section id="google-data" className="scroll-mt-14 border-b border-border">
+        <div className="mx-auto max-w-6xl px-5 py-16">
+          <SectionLabel>Google user data</SectionLabel>
+          <h2 className="mt-3 max-w-2xl text-[28px] font-semibold tracking-[-0.015em] text-foreground">
+            How Conductor uses YouTube
+          </h2>
+          <p className="mt-4 max-w-3xl text-[14px] leading-[1.7] text-foreground-muted">
+            Conductor uses YouTube API Services so a team can publish the videos it approved to its
+            own YouTube channel and see how they performed. When a member of your workspace connects
+            a channel through Google&rsquo;s sign-in screen, Conductor will only:
+          </p>
+          <ul className="mt-6 grid gap-5 sm:grid-cols-2">
+            {YOUTUBE_USES.map((use) => (
+              <li
+                key={use}
+                className="flex gap-3 rounded-lg border border-border bg-surface p-5 text-[13px] leading-[1.6] text-foreground-muted"
+              >
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <span>{use}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-6 max-w-3xl text-[14px] leading-[1.7] text-foreground-muted">
+            Conductor does not read your other videos, subscribers or comment text, does not sell or
+            share YouTube data, does not use it for advertising, and does not use it to train AI
+            models. Conductor&rsquo;s use and transfer of information received from Google APIs adheres
+            to the{' '}
+            <a
+              href="https://developers.google.com/terms/api-services-user-data-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary transition-colors hover:text-primary-hover"
+            >
+              Google API Services User Data Policy
+            </a>
+            , including the Limited Use requirements. You can disconnect a channel in Integrations, or
+            revoke access any time at{' '}
+            <a
+              href="https://myaccount.google.com/connections"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary transition-colors hover:text-primary-hover"
+            >
+              myaccount.google.com/connections
+            </a>
+            .
+          </p>
+          <p className="mt-4 max-w-3xl text-[14px] leading-[1.7] text-foreground-muted">
+            Conductor is for business marketing and engineering work. It does not generate images or
+            video of people: its creative tools lay out the photos, clips, logo and text your team
+            uploads. Sexual content, including AI-generated non-consensual intimate imagery, is
+            prohibited under our{' '}
+            <Link href="/terms" className="text-primary transition-colors hover:text-primary-hover">
+              Terms
+            </Link>
+            .
           </p>
         </div>
       </section>
