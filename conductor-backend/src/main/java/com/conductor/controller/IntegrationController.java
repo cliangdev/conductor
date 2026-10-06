@@ -479,7 +479,15 @@ public class IntegrationController implements IntegrationsApi {
     }
 
     @Override
-    public ResponseEntity<Void> handleOAuthCallback(String code, String state) {
+    public ResponseEntity<Void> handleOAuthCallback(String code, String state, String error, String errorDescription) {
+        if ((error != null && !error.isBlank()) || code == null || code.isBlank()) {
+            String url = oAuthFlowService.handleCallbackError(state, error, errorDescription);
+            return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(url)).build();
+        }
+        if (state == null || state.isBlank()) {
+            String url = oAuthFlowService.handleCallbackError(null, "invalid_state", null);
+            return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(url)).build();
+        }
         String frontendUrl = oAuthFlowService.handleCallback(code, state, oAuthFlowService.oauthCallbackUri());
         return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(frontendUrl)).build();
     }

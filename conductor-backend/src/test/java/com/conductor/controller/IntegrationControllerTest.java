@@ -861,4 +861,24 @@ class IntegrationControllerTest {
         assertThat(saved.getNextRunAt()).isBeforeOrEqualTo(java.time.OffsetDateTime.now());
         assertThat(saved.getNextRunAt()).isAfter(java.time.OffsetDateTime.now().minusSeconds(30));
     }
+
+    @Test
+    void oauthCallbackWithProviderErrorRedirectsInsteadOfFailing() throws Exception {
+        when(oAuthFlowService.handleCallbackError("x", "access_denied", null))
+                .thenReturn("http://localhost:3000/app/projects/p/integrations/youtube?oauthError=access_denied");
+
+        mockMvc.perform(get("/api/v1/oauth/callback").param("error", "access_denied").param("state", "x"))
+                .andExpect(status().isFound())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Location", "http://localhost:3000/app/projects/p/integrations/youtube?oauthError=access_denied"));
+    }
+
+    @Test
+    void oauthCallbackWithNoParamsRedirectsInsteadOfFailing() throws Exception {
+        when(oAuthFlowService.handleCallbackError(isNull(), isNull(), isNull()))
+                .thenReturn("http://localhost:3000/app");
+
+        mockMvc.perform(get("/api/v1/oauth/callback"))
+                .andExpect(status().isFound());
+    }
 }

@@ -27,6 +27,8 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -269,6 +271,37 @@ public class OAuthFlowService {
 
         log.info("OAuth callback completed for connector={} project={}", connectorId, projectId);
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;
+    }
+
+    /**
+     * The provider sent the user back with an error instead of a code (they cancelled, or the provider
+     * refused, e.g. a Google app in Testing mode). Not a failure of ours: the state is consumed so the
+     * denied authorization cannot be replayed, and the browser goes back to the connector page with
+     * {@code ?oauthError=<code>} for the page to explain. A missing/expired state sends the user to the
+     * app root, since there is no connector page to return to.
+     */
+    @Transactional
+    public String handleCallbackError(String state, String error, String errorDescription) {
+        String code = (error == null || error.isBlank()) ? "unknown" : error.trim();
+        String description = errorDescription == null ? "" : errorDescription.trim();
+        if (description.length() > 200) {
+            description = description.substring(0, 200) + "...";
+        }
+        Optional<IntegrationOAuthState> found = (state == null || state.isBlank())
+                ? Optional.empty() : oAuthStateRepository.findById(state);
+        if (found.isEmpty() || found.get().getExpiresAt().isBefore(OffsetDateTime.now())) {
+            found.ifPresent(oAuthStateRepository::delete);
+            log.info("OAuth callback returned error={} with unknown or expired state; description={}",
+                    code, description);
+            return frontendUrl + "/app";
+        }
+        IntegrationOAuthState oauthState = found.get();
+        oAuthStateRepository.delete(oauthState);
+        log.info("OAuth authorization not granted for connector={} project={} error={} description={}",
+                oauthState.getConnectorId(), oauthState.getProjectId(), code, description);
+        return frontendUrl + "/app/projects/" + oauthState.getProjectId() + "/integrations/"
+                + oauthState.getConnectorId() + "?oauthError="
+                + URLEncoder.encode(code, StandardCharsets.UTF_8);
     }
 
     /**
