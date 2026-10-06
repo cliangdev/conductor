@@ -18,11 +18,14 @@ The authorizing Google account must actually own or manage a channel. A brand-ne
 
 ## How authentication works
 
-Standard Google OAuth, with three scopes:
+Standard Google OAuth, with four scopes:
 
 - \`youtube.upload\` publishes videos to the channel.
 - \`youtube.readonly\` reads the channel's identity (id and title) and reads a video back after it is published.
 - \`yt-analytics.readonly\` reads watch time and average view percentage for performance reporting.
+- \`youtube.force-ssl\` sets a video back to private when its Post is unscheduled, so a cancelled video never goes public, and adds a video to the playlists chosen on the Post. Google's sign-in screen describes it as permission to see, edit and delete your videos; Conductor only changes the privacy and schedule of videos it uploaded, and adds them to playlists.
+
+A channel connected before \`youtube.force-ssl\` was added needs reconnecting for Unschedule and playlists to work.
 
 Conductor resolves the channel via \`channels.list\` and stores its id and title. The app is dedicated to YouTube, separate from the Google client Search Console and GCP Billing use, so its verification doesn't affect them.
 

@@ -53,6 +53,7 @@ class YouTubeConnectorTest {
     private static final String UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload";
     private static final String READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
     private static final String ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
+    private static final String FORCE_SSL_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl";
 
     private YouTubeDataClient dataClient;
     private YouTubeConnector connector;
@@ -72,8 +73,9 @@ class YouTubeConnectorTest {
     }
 
     @Test
-    void oauthScopes_declareUploadAndReadonly() {
-        assertThat(connector.oauthScopes()).containsExactlyInAnyOrder(UPLOAD_SCOPE, READONLY_SCOPE, ANALYTICS_SCOPE);
+    void oauthScopes_declareUploadReadonlyAnalyticsAndForceSsl() {
+        assertThat(connector.oauthScopes())
+                .containsExactlyInAnyOrder(UPLOAD_SCOPE, READONLY_SCOPE, ANALYTICS_SCOPE, FORCE_SSL_SCOPE);
     }
 
     @Test

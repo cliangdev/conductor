@@ -166,7 +166,9 @@ export default function PrivacyPage() {
         From your channel we read and store the channel ID and title, and the IDs of the videos
         Conductor published for you. For those videos we read view, like, comment, watch-time and
         average-view-percentage counts, on a schedule. We use them only to show your workspace how
-        its own videos performed.
+        its own videos performed. Beyond uploading, Conductor changes a video only when your team asks it
+        to: it sets a video it uploaded back to private when its post is unscheduled, and adds it to the
+        playlists chosen for that post. It never deletes videos or reads or writes comments.
       </p>
       <p>
         You can disconnect the channel from Integrations in your workspace sidebar, and you can
