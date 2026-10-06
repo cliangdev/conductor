@@ -192,16 +192,23 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     /**
      * {@code youtube.upload} to publish, {@code youtube.readonly} to resolve the channel identity and
      * to read back a published video, {@code yt-analytics.readonly} to read watch time and retention for
-     * the {@code post_metrics} feed ({@link #getVideoStatistics}). The first two are sensitive scopes and
-     * {@code yt-analytics.readonly} is non-sensitive, per the Cloud Console on 2026-10-05; none is
-     * restricted, so no CASA assessment — see the class javadoc.
+     * the {@code post_metrics} feed ({@link #getVideoStatistics}), and {@code youtube.force-ssl} for the
+     * two writes the first two don't permit: {@code videos.update} ({@code unpublish_video}, which is how
+     * Unschedule keeps a cancelled video from going public at its {@code publishAt}) and
+     * {@code playlistItems.insert} (the {@code playlistIds} option). Google's reference accepts only
+     * {@code youtube}, {@code youtube.force-ssl} or {@code youtubepartner} for those two, and
+     * {@code force-ssl} is the narrowest. It also covers upload and read, so {@code youtube.upload} and
+     * {@code youtube.readonly} are likely redundant now; they stay until a connection holding only
+     * {@code force-ssl} + analytics is shown to resolve its channel. All but {@code yt-analytics.readonly}
+     * are sensitive (Cloud Console, 2026-10-05); none is restricted, so no CASA assessment.
      */
     @Override
     public List<String> oauthScopes() {
         return List.of(
                 "https://www.googleapis.com/auth/youtube.upload",
                 "https://www.googleapis.com/auth/youtube.readonly",
-                "https://www.googleapis.com/auth/yt-analytics.readonly");
+                "https://www.googleapis.com/auth/yt-analytics.readonly",
+                "https://www.googleapis.com/auth/youtube.force-ssl");
     }
 
     /** Conductor's own Google client for YouTube, not the {@code GOOGLE_OAUTH_CLIENT_ID} GSC and GCP Billing share. */

@@ -69,8 +69,9 @@ Keep the workspace to the people doing the test. Every automated destination pub
 1. A Google Cloud project dedicated to this app (not the one behind `GOOGLE_OAUTH_*`), with the
    **YouTube Data API v3** and the **YouTube Analytics API** both enabled.
 2. The consent screen (*Google Auth Platform*) configured with a homepage and a privacy policy on the
-   same domain, naming the scopes Conductor requests: `youtube.upload`, `youtube.readonly` and
-   `yt-analytics.readonly`. The privacy page already carries the YouTube API Services and Limited Use
+   same domain, naming the scopes Conductor requests: `youtube.upload`, `youtube.readonly`,
+   `yt-analytics.readonly` and `youtube.force-ssl` (Unschedule's `videos.update` and the playlist option's
+   `playlistItems.insert` accept nothing narrower). The privacy page already carries the YouTube API Services and Limited Use
    clauses the audit checks for.
 3. An OAuth client of type **Web application** with `https://conductor.rexipe.io/api/v1/oauth/callback`
    as its authorized redirect URI. Store its id and secret in Secret Manager as
