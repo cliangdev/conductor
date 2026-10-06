@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Facebook">
+  <!-- Simplified brand mark drawn for this UI, not an official asset. Replace with the official
+       logo from Meta's brand guidelines before any public release. -->
+  <rect width="32" height="32" rx="7" fill="#1877F2"/>
+  <path d="M17.6 26v-8.4h2.8l.45-3.3H17.6v-2.1c0-.95.27-1.6 1.63-1.6h1.72V7.65A23 23 0 0 0 18.43 7.5c-2.5 0-4.2 1.52-4.2 4.32v2.48H11.4v3.3h2.83V26z" fill="#ffffff"/>
+</svg>

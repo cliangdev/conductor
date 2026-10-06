@@ -1,3 +1,6 @@
+'use client'
+
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { PublishPlatform } from './types'
 
@@ -16,15 +19,33 @@ const NAME: Record<PublishPlatform, string> = {
 }
 
 /**
- * A 20px monogram tile that says which platform a row is for. A monogram rather than a brand mark on
- * purpose: the icon set is lucide, which has no brand icons, and the design system admits no other.
+ * A 20px tile that says which platform a row is for: the platform's brand mark from
+ * `/public/integrations/{platform}.svg` (the same folder `ConnectorIcon` reads), falling back to a
+ * monogram when the asset is missing or fails to load. A brand mark is identity content, like a
+ * connector logo, not UI chrome — lucide stays the one icon set for chrome.
  */
 export function PlatformIcon({ platform, className }: { platform: PublishPlatform; className?: string }) {
+  const [failed, setFailed] = useState(false)
+  const name = NAME[platform] ?? platform
+
+  if (!failed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={`/integrations/${platform}.svg`}
+        alt={name}
+        title={name}
+        className={cn('h-5 w-5 shrink-0 rounded-[5px]', className)}
+        onError={() => setFailed(true)}
+      />
+    )
+  }
+
   return (
     <span
       role="img"
-      aria-label={NAME[platform] ?? platform}
-      title={NAME[platform] ?? platform}
+      aria-label={name}
+      title={name}
       className={cn(
         'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] bg-surface-3 text-[10px] font-semibold tracking-wide text-muted-foreground',
         className
