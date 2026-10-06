@@ -17,6 +17,7 @@ import { OAuthAccountPicker } from './OAuthAccountPicker';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useCan } from '@/contexts/PermissionsContext';
+import { toastError } from '@/components/ui/toast';
 
 /**
  * Fallback overview page for any connector without a bespoke dashboard (e.g. action-only connectors
@@ -61,6 +62,22 @@ export default function GenericConnectorPage({
   useEffect(() => {
     const connectionId = new URLSearchParams(window.location.search).get('selectAccount');
     if (connectionId) setPendingAccountConnectionId(connectionId);
+  }, []);
+
+  // The OAuth callback sends a refused or cancelled authorization back here as `?oauthError=<code>`.
+  // Say so once, then drop the param so a reload doesn't repeat the toast.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get('oauthError');
+    if (!oauthError) return;
+    toastError(
+      oauthError === 'access_denied'
+        ? "Authorization was cancelled or refused. If the platform's app is in testing mode, your account must be added as a tester."
+        : `Authorization failed (${oauthError}). Please try again.`,
+    );
+    params.delete('oauthError');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
   }, []);
 
   // Drop the marker from the URL too, so a reload (or a back-navigation) doesn't reopen a picker

@@ -9,6 +9,11 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   useCan: () => mockCanMutate,
 }))
 
+vi.mock('@/components/ui/toast', () => ({
+  toastError: vi.fn(),
+  useToast: () => ({ showToast: vi.fn() }),
+}))
+
 vi.mock('@/lib/api', () => ({
   listIntegrations: vi.fn(),
   createConnection: vi.fn(),
@@ -23,6 +28,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import * as api from '@/lib/api'
+import { toastError } from '@/components/ui/toast'
 import GenericConnectorPage from './GenericConnectorPage'
 import { ConnectorCatalogProvider } from './ConnectorCatalogContext'
 
@@ -114,5 +120,25 @@ describe('GenericConnectorPage', () => {
         'test-token'
       )
     )
+  })
+
+  it('toasts once when the OAuth callback returns ?oauthError=access_denied, then clears the param', async () => {
+    vi.mocked(api.listIntegrations).mockResolvedValue([discordConnector])
+    window.history.replaceState(null, '', '/integrations/discord?oauthError=access_denied')
+    renderPage('discord')
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toastError).mock.calls[0][0]).toMatch(/cancelled or refused/i)
+    expect(window.location.search).toBe('')
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('names any other OAuth error code in the toast', async () => {
+    vi.mocked(api.listIntegrations).mockResolvedValue([discordConnector])
+    window.history.replaceState(null, '', '/integrations/discord?oauthError=server_error')
+    renderPage('discord')
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Authorization failed (server_error). Please try again.'))
+    window.history.replaceState(null, '', '/')
   })
 })

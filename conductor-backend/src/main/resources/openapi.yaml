@@ -4595,15 +4595,29 @@ paths:
     get:
       tags: [integrations]
       summary: OAuth2 callback from provider (browser redirect, fixed path for Google registration)
+      description: >-
+        Success carries `code` and `state`. A provider error response (RFC 6749 section 4.1.2.1, e.g. the
+        user cancelled or the provider refused) carries `error` (and optionally `error_description`)
+        instead; that is not a failure here: the pending state is discarded and the browser is redirected
+        back to the connector page with `?oauthError=<error>` (or to the app root when the state is
+        unknown or expired).
       operationId: handleOAuthCallback
       parameters:
         - name: code
           in: query
-          required: true
+          required: false
           schema: {type: string}
         - name: state
           in: query
-          required: true
+          required: false
+          schema: {type: string}
+        - name: error
+          in: query
+          required: false
+          schema: {type: string}
+        - name: error_description
+          in: query
+          required: false
           schema: {type: string}
       responses:
         '302':

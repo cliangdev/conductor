@@ -218,6 +218,33 @@ class OAuthFlowServiceTest {
     }
 
     @Test
+    void handleCallbackErrorWithKnownStateDeletesItAndReturnsConnectorPageWithOauthError() {
+        IntegrationOAuthState oauthState = new IntegrationOAuthState();
+        oauthState.setState("deniedstate");
+        oauthState.setProjectId(PROJECT_ID);
+        oauthState.setConnectorId("acme");
+        oauthState.setExpiresAt(OffsetDateTime.now().plusMinutes(5));
+        when(oAuthStateRepository.findById("deniedstate")).thenReturn(Optional.of(oauthState));
+
+        String redirect = service.handleCallbackError("deniedstate", "access_denied", "x".repeat(500));
+
+        verify(oAuthStateRepository).delete(oauthState);
+        assertThat(redirect).isEqualTo(
+                "http://localhost:3000/app/projects/proj-1/integrations/acme?oauthError=access_denied");
+    }
+
+    @Test
+    void handleCallbackErrorWithUnknownStateReturnsAppRoot() {
+        when(oAuthStateRepository.findById("missing")).thenReturn(Optional.empty());
+
+        assertThat(service.handleCallbackError("missing", "access_denied", null))
+                .isEqualTo("http://localhost:3000/app");
+        assertThat(service.handleCallbackError(null, null, null))
+                .isEqualTo("http://localhost:3000/app");
+        verify(oAuthStateRepository, never()).delete(any());
+    }
+
+    @Test
     void handleCallbackWithUnknownStateThrowsBadRequest() {
         when(oAuthStateRepository.findById("missing")).thenReturn(Optional.empty());
 
