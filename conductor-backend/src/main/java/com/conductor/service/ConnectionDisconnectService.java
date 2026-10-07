@@ -20,13 +20,16 @@ public class ConnectionDisconnectService {
     private final ConnectionService connectionService;
     private final PublishTargetService publishTargetService;
     private final RuntimeTargetService runtimeTargetService;
+    private final OAuthRevocationService revocationService;
 
     public ConnectionDisconnectService(ConnectionService connectionService,
                                        PublishTargetService publishTargetService,
-                                       RuntimeTargetService runtimeTargetService) {
+                                       RuntimeTargetService runtimeTargetService,
+                                       OAuthRevocationService revocationService) {
         this.connectionService = connectionService;
         this.publishTargetService = publishTargetService;
         this.runtimeTargetService = runtimeTargetService;
+        this.revocationService = revocationService;
     }
 
     /**
@@ -34,11 +37,15 @@ public class ConnectionDisconnectService {
      * this account refuses the disconnect by name (409), and settled ones let go of the row so the FK does
      * not turn this into a 500. Then runtime targets, before the row goes away: referencing targets flip
      * to ERROR and their cached Cloud Run clients are closed.
+     *
+     * <p>Finally the provider-side grant is revoked where the connector supports it (YouTube), read
+     * before the row goes and sent after commit; see {@link OAuthRevocationService}.
      */
     @Transactional
     public void disconnect(String connectionId) {
         publishTargetService.detachFromConnection(connectionId);
         runtimeTargetService.onConnectionDeleted(connectionId);
+        connectionService.getById(connectionId).ifPresent(revocationService::revokeAfterCommit);
         connectionService.delete(connectionId);
     }
 
@@ -51,6 +58,9 @@ public class ConnectionDisconnectService {
      * is kept and logged, because silently stranding a scheduled Post is worse than showing two rows.
      * The question is asked up front rather than caught, since a refusal thrown through a
      * {@code @Transactional} proxy would mark the caller's transaction rollback-only.
+     *
+     * <p>Never revokes the provider grant: the survivor holds a token from the same grant, and revoking
+     * would kill it too.
      *
      * @return whether the duplicate was removed
      */

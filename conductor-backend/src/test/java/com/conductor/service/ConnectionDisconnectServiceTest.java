@@ -1,8 +1,11 @@
 package com.conductor.service;
 
+import com.conductor.entity.Connection;
 import com.conductor.exception.ConflictException;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -12,6 +15,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ConnectionDisconnectServiceTest {
@@ -19,8 +23,9 @@ class ConnectionDisconnectServiceTest {
     private final ConnectionService connectionService = mock(ConnectionService.class);
     private final PublishTargetService publishTargetService = mock(PublishTargetService.class);
     private final RuntimeTargetService runtimeTargetService = mock(RuntimeTargetService.class);
-    private final ConnectionDisconnectService service =
-            new ConnectionDisconnectService(connectionService, publishTargetService, runtimeTargetService);
+    private final OAuthRevocationService revocationService = mock(OAuthRevocationService.class);
+    private final ConnectionDisconnectService service = new ConnectionDisconnectService(
+            connectionService, publishTargetService, runtimeTargetService, revocationService);
 
     @Test
     void disconnectDetachesDestinationsThenFlipsRuntimeTargetsThenDeletesTheRow() {
@@ -30,6 +35,19 @@ class ConnectionDisconnectServiceTest {
         InOrder order = inOrder(publishTargetService, runtimeTargetService, connectionService);
         order.verify(publishTargetService).detachFromConnection("conn-9");
         order.verify(runtimeTargetService).onConnectionDeleted("conn-9");
+        order.verify(connectionService).delete("conn-9");
+    }
+
+    @Test
+    void disconnectRevokesTheGrantBeforeTheRowIsDeleted() {
+        Connection conn = new Connection();
+        conn.setId("conn-9");
+        when(connectionService.getById("conn-9")).thenReturn(Optional.of(conn));
+
+        service.disconnect("conn-9");
+
+        InOrder order = inOrder(revocationService, connectionService);
+        order.verify(revocationService).revokeAfterCommit(conn);
         order.verify(connectionService).delete("conn-9");
     }
 
@@ -53,6 +71,8 @@ class ConnectionDisconnectServiceTest {
         order.verify(publishTargetService).repointSettledTargets("conn-dup", "conn-old");
         order.verify(runtimeTargetService).onConnectionDeleted("conn-dup");
         order.verify(connectionService).delete("conn-dup");
+        // The survivor holds a token from the same Google grant; revoking would kill it too.
+        verifyNoInteractions(revocationService);
     }
 
     @Test

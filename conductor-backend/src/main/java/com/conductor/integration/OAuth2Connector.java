@@ -262,6 +262,32 @@ public interface OAuth2Connector extends Connector {
     }
 
     /**
+     * Endpoint that revokes the user's grant (RFC 7009 style: a form POST of {@code token=<token>}),
+     * or empty (the default) when the connector does not revoke on disconnect.
+     * {@link com.conductor.service.OAuthRevocationService} calls it after a member disconnects, so the
+     * app disappears from the user's provider-side account connections.
+     *
+     * <p>Only YouTube opts in today (Google: {@code https://oauth2.googleapis.com/revoke}), because
+     * YouTube Developer Policies and Google's OAuth review expect it. The GSC and GCP Billing Google
+     * connectors could adopt it later; they are deliberately unchanged. A connector that returns a URL
+     * must also declare {@link #accountIdentityConfigKey()}: a revoke kills the whole grant for that
+     * user and client, so it is skipped while another connection still uses the same account.
+     */
+    default Optional<String> revocationUrl() {
+        return Optional.empty();
+    }
+
+    /**
+     * The key in a connection's non-secret config that holds the external account's id (YouTube's
+     * {@code channelId}), so other connections to the same account can be found by a config lookup.
+     * Empty (the default) means unknown; {@link com.conductor.service.OAuthRevocationService} then
+     * refuses to revoke, since it cannot rule out another connection sharing the grant.
+     */
+    default Optional<String> accountIdentityConfigKey() {
+        return Optional.empty();
+    }
+
+    /**
      * Whether this connector authorizes against no provider at all: the flow service then skips the
      * client-credential requirement, sends the browser straight back to its own callback with a
      * synthetic code, and answers the code-for-token exchange with canned tokens instead of a POST.
