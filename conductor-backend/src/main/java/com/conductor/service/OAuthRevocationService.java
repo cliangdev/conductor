@@ -7,6 +7,7 @@ import com.conductor.integration.OAuth2Connector;
 import com.conductor.repository.ConnectionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -56,6 +57,7 @@ public class OAuthRevocationService {
     private final ConnectorRegistry connectorRegistry;
     private final RestTemplate restTemplate;
 
+    @Autowired
     public OAuthRevocationService(ConnectionService connectionService,
                                   ConnectionRepository connectionRepository,
                                   ConnectorRegistry connectorRegistry) {
