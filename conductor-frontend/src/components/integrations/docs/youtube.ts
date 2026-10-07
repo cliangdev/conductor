@@ -29,6 +29,8 @@ A channel connected before \`youtube.force-ssl\` was added needs reconnecting fo
 
 Conductor resolves the channel via \`channels.list\` and stores its id and title. The app is dedicated to YouTube, separate from the Google client Search Console and GCP Billing use, so its verification doesn't affect them.
 
+Disconnecting also removes Conductor's access in your Google Account, unless the same channel is still connected in another workspace.
+
 ## Limits and behaviour
 
 - **Quota changed substantially and recently.** A video upload used to cost ~1600 units against a shared 10,000/day pool, giving roughly six uploads a day. Since December 2025 uploads draw on their own dedicated bucket of about **100 per day**, shared by every workspace on this deployment because they all use Conductor's one app. Check Google's live quota page rather than trusting any fixed number, including this one — Google has described the change as an ongoing transition. Note also that upload quota no longer shows up in general quota monitoring.

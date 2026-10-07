@@ -197,6 +197,13 @@ Automated targets are derived from the project's ACTIVE connections — connect 
 appears, disconnect it and it stops being offered. A manual target is derived from nothing and is
 always offered, one per platform.
 
+**Disconnecting a YouTube connection also revokes Conductor's Google grant** (YouTube Developer
+Policies and Google's OAuth review expect it), so the app leaves the user's Google Account connections.
+The revoke is sent after the disconnect commits and is best-effort: a failure is logged and never blocks
+the disconnect. It is skipped if the same channel is still connected in another workspace, because Google
+revokes per grant and would break that connection too, and it never runs on a duplicate-row merge for the
+same reason. See `OAuthRevocationService`.
+
 ## Over MCP
 
 An agent drives the whole pipeline with four tools, in the shape Blotato made familiar:

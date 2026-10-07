@@ -438,4 +438,16 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
         return config != null && config.get(CONFIG_CHANNEL_ID) instanceof String value && !value.isBlank()
                 ? Optional.of(value) : Optional.empty();
     }
+
+    /** Google's token revocation endpoint; see {@link OAuth2Connector#revocationUrl()}. */
+    @Override
+    public Optional<String> revocationUrl() {
+        return Optional.of("https://oauth2.googleapis.com/revoke");
+    }
+
+    /** The grant's account is the channel, so another connection to the same channel shares the grant. */
+    @Override
+    public Optional<String> accountIdentityConfigKey() {
+        return Optional.of(CONFIG_CHANNEL_ID);
+    }
 }
