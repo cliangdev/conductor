@@ -136,8 +136,9 @@ committed.
 
 When the media library has no fitting photo, `generate_creative_image({prompt, aspect?, count?,
 referenceImagePaths?})` makes one on the person's machine by running their local Codex CLI
-(`codex exec`, built-in image_gen). It needs Codex installed and `codex login` done (`conductor
-doctor` reports it), takes about 30-90 s and uses the person's Codex/ChatGPT quota. `aspect` is
+(`codex exec`, built-in image_gen). It needs Codex installed and `codex login` done on a ChatGPT plan that
+includes image generation (Plus or higher; on Free, `codex exec` has no image tool) — `conductor
+doctor` reports the install and login — takes about 30-90 s and uses the person's Codex/ChatGPT quota. `aspect` is
 `portrait` (default, 1024x1536), `square` (1024x1024) or `landscape` (1536x1024); `count` is 1-3.
 
 - **Prompt.** The caller writes the scene; the tool adds fixed rules: photographic unless asked

@@ -87,7 +87,7 @@ the library is used by its id (`photoId`) with no upload at all.
 `generate_creative_image` with a scene prompt drawn from the brand's Knowledge page and the angle:
 the scene, subject, light, framing and where the headline's negative space sits. The tool adds its own
 fixed rules (photographic, no text, letters, logos, UI or phone screens) and runs the person's local
-Codex CLI, so it needs `codex login` (`conductor doctor` reports it), takes about 30-90 s and uses
+Codex CLI, so it needs `codex login` on a ChatGPT Plus (or higher) plan (`conductor doctor` reports the login), takes about 30-90 s and uses
 their Codex quota. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
 `sequence[].photoPath`). When the real product must appear, list a real shot in
 `referenceImagePaths` — never describe an invented product. Each file gets a provenance sidecar

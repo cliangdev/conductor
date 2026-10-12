@@ -104,6 +104,7 @@ const CREATIVE_TOOLS = [
   'attach_creative_to_post',
   'create_experiment',
 ] as const
+import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1412,6 +1413,20 @@ export const TOOLS = [
     },
   },
   {
+    name: 'generate_creative_image',
+    description: "Generate a photo on this machine with the person's Codex CLI (needs `codex login`; takes about a minute and uses their Codex quota). The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'The scene to photograph: subject, setting, light, mood' },
+        aspect: { type: 'string', enum: ['portrait', 'square', 'landscape'], description: 'portrait (default) suits 9:16 and 4:5; square 1:1; landscape 3:2' },
+        count: { type: 'number', description: 'How many images, 1-3 (default 1)' },
+        referenceImagePaths: { type: 'array', items: { type: 'string' }, description: 'Local images to stay faithful to, such as a real product shot (optional)' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
     name: 'preview_creative_draft',
     description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
@@ -2344,6 +2359,21 @@ export async function runMcpServer(): Promise<void> {
             })
           }
           return successResponse(result)
+        }
+        case 'generate_creative_image': {
+          const progressToken = request.params._meta?.progressToken
+          let step = 0
+          const onProgress = progressToken === undefined
+            ? undefined
+            : (message: string) => {
+                step += 1
+                void extra.sendNotification({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: step, message },
+                }).catch(() => {})
+              }
+          const { image, ...meta } = await generateCreativeImage(params as unknown as GenerateCreativeImageParams, { log: onProgress })
+          return image ? imageResponse(image, meta) : successResponse(meta)
         }
         case 'preview_creative_draft': {
           const progressToken = request.params._meta?.progressToken

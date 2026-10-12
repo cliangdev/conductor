@@ -833,6 +833,14 @@
       ]
     },
     {
+      "name": "generate_creative_image",
+      "description": "Generate a photo locally with the Codex CLI (needs codex login): no text in the image, returns it with local paths and a provenance sidecar. Pass a path as photoPath to preview_creative_draft.",
+      "category": "marketing",
+      "requiredParams": [
+        "prompt"
+      ]
+    },
+    {
       "name": "preview_creative_draft",
       "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image. Never writes to Conductor; commit only after the person approves.",
       "category": "marketing"
