@@ -1358,7 +1358,7 @@ export const TOOLS = [
   },
   {
     name: 'upload_creative_media',
-    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL) or a clipMedia entry (CLIP).",
+    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL) or a clipMedia entry (CLIP). A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; source/licence/aiGenerated apply only when there is none.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1443,7 +1443,7 @@ export const TOOLS = [
   },
   {
     name: 'commit_creative_draft',
-    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames. Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
+    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames. Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
     inputSchema: {
       type: 'object',
       properties: {

@@ -158,6 +158,30 @@ describe('previewCreativeDraft', () => {
     expect(draft.request.photoId).toBe('local:photo')
   })
 
+  it('records sidecar provenance in draft.json and reports which keys still need it', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    fs.writeFileSync(`${photo}.provenance.json`, JSON.stringify({ source: 'Generated', licence: 'House use', aiGenerated: true, prompt: 'p' }))
+    mocked(apiPost).mockResolvedValueOnce({ spec: { creative: {} }, readiness: {} })
+    fakeDraftRender()
+
+    const result = await previewCreativeDraft({ headline: 'H', photoPath: photo, audioPath: music }, config, { projectRoot: root })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.provenance).toEqual({ recorded: ['photo'], needed: ['audio'] })
+    const draft = JSON.parse(fs.readFileSync(path.join(result.draftDir, 'draft.json'), 'utf8'))
+    expect(draft.localProvenance).toEqual({ photo: { source: 'Generated', licence: 'House use', aiGenerated: true } })
+  })
+
+  it('refuses a malformed sidecar before calling the API', async () => {
+    fs.writeFileSync(`${photo}.provenance.json`, '{nope')
+    const result = await previewCreativeDraft({ headline: 'H', photoPath: photo }, config, { projectRoot: root })
+    expect(result.ok).toBe(false)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
   it('asks the renderer to check every placement for a contact-sheet preview, and reports checks and passed', async () => {
     mocked(apiPost).mockResolvedValueOnce({ spec: { previewOnly: true, creative: {} }, readiness: {} })
     const warning = { placementKey: '1x1', rule: 'photoResolution', message: 'photo is soft', severity: 'warning' }
@@ -320,6 +344,40 @@ describe('commitCreativeDraft', () => {
     const draft = JSON.parse(fs.readFileSync(path.join(draftDir, 'draft.json'), 'utf8'))
     expect(draft.committed).toBe(true)
     expect(draft.creativeId).toBe('creative-1')
+  })
+
+  function stubCommit() {
+    mocked(uploadCreativeMedia).mockImplementation(async (p: { filePath: string }) => ({ media: { id: `id-${path.basename(p.filePath)}` }, warnings: [] }))
+    mocked(createCreative).mockResolvedValue({ id: 'creative-1' })
+    mocked(renderCreative).mockResolvedValue({ ok: true, renderId: 'r', state: 'SUCCEEDED', frames: [] })
+    mocked(getCreative).mockResolvedValue({ id: 'creative-1', readiness: {} })
+  }
+
+  it('uploads a file with its sidecar provenance and the rest with the call params', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    fs.writeFileSync(`${photo}.provenance.json`, JSON.stringify({ source: 'Generated', licence: 'House use', aiGenerated: true }))
+    const draftDir = await makeDraft({ audioPath: music })
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir, source: 'Own work', licence: 'Own work', aiGenerated: false }, config, { projectRoot: root })
+
+    expect(uploadCreativeMedia).toHaveBeenCalledWith({ filePath: photo, source: 'Generated', licence: 'House use', aiGenerated: true }, config)
+    expect(uploadCreativeMedia).toHaveBeenCalledWith({ filePath: music, source: 'Own work', licence: 'Own work', aiGenerated: false }, config)
+  })
+
+  it('still commits a legacy draft.json without localProvenance, using the call params', async () => {
+    const draftDir = await makeDraft()
+    const file = path.join(draftDir, 'draft.json')
+    const draft = JSON.parse(fs.readFileSync(file, 'utf8'))
+    delete draft.localProvenance
+    fs.writeFileSync(file, JSON.stringify(draft))
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir, source: 'Own work' }, config, { projectRoot: root })
+
+    expect(uploadCreativeMedia).toHaveBeenCalledWith({ filePath: photo, source: 'Own work', licence: undefined, aiGenerated: undefined }, config)
   })
 
   it('with a baseCreativeId, updates that Creative at its current version instead of creating one', async () => {

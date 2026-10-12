@@ -47,12 +47,14 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn() }))
 vi.mock('../lib/media-probe.js', () => ({ probeMedia: vi.fn(), extractPoster: vi.fn() }))
 vi.mock('../lib/poster-sheet.js', () => ({ composePosterSheet: vi.fn() }))
+vi.mock('../lib/provenance-sidecar.js', () => ({ readProvenanceSidecar: vi.fn() }))
 
 import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../mcp/api.js'
 import { renderCreative } from '../lib/creative-render.js'
 import { probeMedia, extractPoster } from '../lib/media-probe.js'
 import { composePosterSheet } from '../lib/poster-sheet.js'
+import { readProvenanceSidecar } from '../lib/provenance-sidecar.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -761,6 +763,43 @@ describe('upload_creative_media (photo)', () => {
       warnings: [],
     })
     expect(probeMedia).not.toHaveBeenCalled()
+  })
+
+  describe('sidecar provenance', () => {
+    const sidecar = { source: 'Generated with gpt-image-1', licence: 'Generated, house use', aiGenerated: true }
+    function mintResponses() {
+      mocked(readFile).mockResolvedValue(PNG_1X1)
+      mocked(apiPost)
+        .mockResolvedValueOnce({ id: 'photo1', uploadUrl: 'https://bucket.test/signed/photo1' })
+        .mockResolvedValueOnce({ id: 'photo1' })
+    }
+
+    it('uses the sidecar when the caller passed no provenance', async () => {
+      mintResponses()
+      mocked(readProvenanceSidecar).mockResolvedValue(sidecar)
+      await uploadCreativeMedia({ filePath: '/tmp/gen.png' }, config)
+      expect(readProvenanceSidecar).toHaveBeenCalledWith('/tmp/gen.png')
+      expect(apiPost).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining(sidecar), config)
+    })
+
+    it('lets caller-provided values win over the sidecar', async () => {
+      mintResponses()
+      mocked(readProvenanceSidecar).mockResolvedValue(sidecar)
+      await uploadCreativeMedia({ filePath: '/tmp/gen.png', licence: 'Own work' }, config)
+      expect(apiPost).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({ source: null, licence: 'Own work', aiGenerated: false }),
+        config
+      )
+    })
+
+    it('uploads with no provenance when there is no sidecar', async () => {
+      mintResponses()
+      mocked(readProvenanceSidecar).mockResolvedValue(null)
+      await uploadCreativeMedia({ filePath: '/tmp/plain.png' }, config)
+      expect(apiPost).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({ source: null, licence: null, aiGenerated: false }), config)
+    })
   })
 
   it('defaults the label to the given label when one is passed, overriding the filename', async () => {
