@@ -31,10 +31,10 @@ export const NOT_LOGGED_IN_HINT = 'Codex CLI is not logged in — run `codex log
 export type ImageQuality = 'low' | 'medium' | 'high'
 export const IMAGE_QUALITIES: readonly ImageQuality[] = ['low', 'medium', 'high']
 
-/** Cheapest settings by default; each has an env override. */
+/** Cheapest agent model (it only drives image_gen, so it does not affect the image) and best image quality by default; each has an env override. */
 export const DEFAULT_IMAGE_MODEL = 'gpt-6-luna'
 export const DEFAULT_IMAGE_REASONING = 'low'
-export const DEFAULT_IMAGE_QUALITY: ImageQuality = 'low'
+export const DEFAULT_IMAGE_QUALITY: ImageQuality = 'high'
 
 export function resolveModel(): string {
   return process.env['CONDUCTOR_CODEX_IMAGE_MODEL']?.trim() || DEFAULT_IMAGE_MODEL
@@ -44,7 +44,7 @@ export function resolveReasoning(): string {
   return process.env['CONDUCTOR_CODEX_IMAGE_REASONING']?.trim() || DEFAULT_IMAGE_REASONING
 }
 
-/** Explicit value, else `CONDUCTOR_CODEX_IMAGE_QUALITY`, else `low`. An invalid explicit value throws. */
+/** Explicit value, else `CONDUCTOR_CODEX_IMAGE_QUALITY`, else `high`. An invalid explicit value throws. */
 export function resolveQuality(explicit?: string): ImageQuality {
   const envValue = process.env['CONDUCTOR_CODEX_IMAGE_QUALITY']?.trim().toLowerCase()
   const value = explicit ?? (envValue && (IMAGE_QUALITIES as readonly string[]).includes(envValue) ? envValue : DEFAULT_IMAGE_QUALITY)

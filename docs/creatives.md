@@ -146,9 +146,9 @@ includes image generation (Plus or higher; on Free, `codex exec` has no image to
 doctor` reports the install and login — takes about 30-90 s and uses the person's Codex/ChatGPT quota. `aspect` is
 `portrait` (default, 1024x1536), `square` (1024x1024) or `landscape` (1536x1024); `count` is 1-3.
 
-- **Cost.** Cheapest settings by default: `codex exec -m gpt-6-luna -c model_reasoning_effort="low"` and
-  image `quality` `low` (`low|medium|high`). Ask for `medium`/`high` only when a photo is the hero of a
-  paid ad. Env overrides: `CONDUCTOR_CODEX_IMAGE_MODEL`, `CONDUCTOR_CODEX_IMAGE_REASONING`,
+- **Cost and quality.** The Codex model only orchestrates the image_gen call, so it runs on the cheapest
+  settings, `codex exec -m gpt-6-luna -c model_reasoning_effort="low"`, while the image itself is asked
+  for at `quality` `high` (`low|medium|high`). Use `medium`/`low` only for throwaway drafts. Env overrides: `CONDUCTOR_CODEX_IMAGE_MODEL`, `CONDUCTOR_CODEX_IMAGE_REASONING`,
   `CONDUCTOR_CODEX_IMAGE_QUALITY`. If Codex rejects the model for the account, the run retries once on
   the person's default model.
 

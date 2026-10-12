@@ -88,7 +88,7 @@ the library is used by its id (`photoId`) with no upload at all.
 the scene, subject, light, framing and where the headline's negative space sits. The tool adds its own
 fixed rules (photographic, no text, letters, logos, UI or phone screens) and runs the person's local
 Codex CLI, so it needs `codex login` on a ChatGPT Plus (or higher) plan (`conductor doctor` reports the login), takes about 30-90 s and uses
-their Codex quota. It defaults to the cheapest model and `quality: "low"`; pass `quality: "medium"` or `"high"` only when the photo is the hero of a paid ad. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
+their Codex quota. It drives image_gen with the cheapest Codex model and defaults to `quality: "high"`; pass `"medium"` or `"low"` only for throwaway drafts. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
 `sequence[].photoPath`). When the real product must appear, list a real shot in
 `referenceImagePaths` — never describe an invented product. Each file gets a provenance sidecar
 (`aiGenerated: true`) that the preview and commit use automatically, so don't ask about it, and the

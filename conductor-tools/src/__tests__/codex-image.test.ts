@@ -110,7 +110,7 @@ describe('generateImages', () => {
     expect(stdin).toContain('a kitchen')
     expect(stdin).toContain('1536x1024')
     expect(stdin).toMatch(/NO text/)
-    expect(stdin).toContain('low quality')
+    expect(stdin).toContain('high quality')
   })
 
   it('falls back to new files in generated_images', async () => {
@@ -190,22 +190,22 @@ describe('cost settings', () => {
   const execCalls = () => spawnMock.mock.calls.filter((c) => (c[1] as string[])[0] === 'exec').map((c) => c[1] as string[])
   const flag = (args: string[], f: string) => args[args.indexOf(f) + 1]
 
-  it('buildPrompt carries the quality, defaulting to low', () => {
-    expect(lib.buildPrompt('s', 'square', 1, false)).toContain('1024x1024, low quality.')
-    expect(lib.buildPrompt('s', 'square', 2, false, 'high')).toContain('2 images at size 1024x1024, high quality.')
-    expect(lib.buildPrompt('s', 'square', 1, false)).not.toContain('high quality')
+  it('buildPrompt carries the quality, defaulting to high', () => {
+    expect(lib.buildPrompt('s', 'square', 1, false)).toContain('1024x1024, high quality.')
+    expect(lib.buildPrompt('s', 'square', 2, false, 'low')).toContain('2 images at size 1024x1024, low quality.')
+    expect(lib.buildPrompt('s', 'square', 1, false)).not.toContain('low quality')
   })
 
-  it('defaults to gpt-6-luna, low reasoning and low quality, recorded in the sidecar', async () => {
+  it('defaults to gpt-6-luna, low reasoning and high quality, recorded in the sidecar', async () => {
     handlers.exec = okExec
     const out = path.join(tmp, 'o')
     const res = await lib.generateImages({ prompt: 'p', outDir: out })
     const [args] = execCalls()
     expect(flag(args!, '-m')).toBe('gpt-6-luna')
     expect(args).toContain('model_reasoning_effort="low"')
-    expect(res).toMatchObject({ model: 'gpt-6-luna', quality: 'low' })
+    expect(res).toMatchObject({ model: 'gpt-6-luna', quality: 'high' })
     const sidecar = JSON.parse(fs.readFileSync(path.join(out, 'image-1.png.provenance.json'), 'utf8'))
-    expect(sidecar).toMatchObject({ model: 'gpt-6-luna', quality: 'low', aiGenerated: true })
+    expect(sidecar).toMatchObject({ model: 'gpt-6-luna', quality: 'high', aiGenerated: true })
   })
 
   it('honours env overrides and an explicit quality over the env', async () => {
@@ -218,11 +218,11 @@ describe('cost settings', () => {
     expect(flag(args!, '-m')).toBe('gpt-x')
     expect(args).toContain('model_reasoning_effort="medium"')
     expect(res.quality).toBe('medium')
-    res = await lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'b'), quality: 'high' })
-    expect(res.quality).toBe('high')
+    res = await lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'b'), quality: 'low' })
+    expect(res.quality).toBe('low')
     expect(lib.resolveQuality()).toBe('medium')
     process.env['CONDUCTOR_CODEX_IMAGE_QUALITY'] = 'bogus'
-    expect(lib.resolveQuality()).toBe('low')
+    expect(lib.resolveQuality()).toBe('high')
     expect(() => lib.resolveQuality('ultra')).toThrow(/quality must be/)
     ;[args] = execCalls()
   })
