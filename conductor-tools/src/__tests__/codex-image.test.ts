@@ -40,6 +40,7 @@ beforeEach(async () => {
   fs.mkdirSync(codexHome)
   process.env['CODEX_HOME'] = codexHome
   delete process.env['CONDUCTOR_CODEX_PATH']
+  for (const k of ['MODEL', 'REASONING', 'QUALITY']) delete process.env[`CONDUCTOR_CODEX_IMAGE_${k}`]
   handlers = {
     version: (c) => done(c, 0, 'codex-cli 0.162.1\n'),
     login: (c) => done(c, 0, 'Logged in using ChatGPT\n'),
@@ -109,6 +110,7 @@ describe('generateImages', () => {
     expect(stdin).toContain('a kitchen')
     expect(stdin).toContain('1536x1024')
     expect(stdin).toMatch(/NO text/)
+    expect(stdin).toContain('low quality')
   })
 
   it('falls back to new files in generated_images', async () => {
@@ -175,6 +177,82 @@ describe('generateImages', () => {
     handlers.exec = (c) => void (child = c)
     await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o'), timeoutMs: 20 })).rejects.toThrow(/timed out after/)
     expect(child?.kill).toHaveBeenCalled()
+  })
+})
+
+describe('cost settings', () => {
+  const okExec: Handler = (c, args) => {
+    const img = path.join(outDirOf(args), 'image-1.png')
+    fs.writeFileSync(img, PNG)
+    fs.writeFileSync(lastOf(args), JSON.stringify({ files: [img], revisedPrompt: 'r' }))
+    done(c, 0)
+  }
+  const execCalls = () => spawnMock.mock.calls.filter((c) => (c[1] as string[])[0] === 'exec').map((c) => c[1] as string[])
+  const flag = (args: string[], f: string) => args[args.indexOf(f) + 1]
+
+  it('buildPrompt carries the quality, defaulting to low', () => {
+    expect(lib.buildPrompt('s', 'square', 1, false)).toContain('1024x1024, low quality.')
+    expect(lib.buildPrompt('s', 'square', 2, false, 'high')).toContain('2 images at size 1024x1024, high quality.')
+    expect(lib.buildPrompt('s', 'square', 1, false)).not.toContain('high quality')
+  })
+
+  it('defaults to gpt-6-luna, low reasoning and low quality, recorded in the sidecar', async () => {
+    handlers.exec = okExec
+    const out = path.join(tmp, 'o')
+    const res = await lib.generateImages({ prompt: 'p', outDir: out })
+    const [args] = execCalls()
+    expect(flag(args!, '-m')).toBe('gpt-6-luna')
+    expect(args).toContain('model_reasoning_effort="low"')
+    expect(res).toMatchObject({ model: 'gpt-6-luna', quality: 'low' })
+    const sidecar = JSON.parse(fs.readFileSync(path.join(out, 'image-1.png.provenance.json'), 'utf8'))
+    expect(sidecar).toMatchObject({ model: 'gpt-6-luna', quality: 'low', aiGenerated: true })
+  })
+
+  it('honours env overrides and an explicit quality over the env', async () => {
+    handlers.exec = okExec
+    process.env['CONDUCTOR_CODEX_IMAGE_MODEL'] = 'gpt-x'
+    process.env['CONDUCTOR_CODEX_IMAGE_REASONING'] = 'medium'
+    process.env['CONDUCTOR_CODEX_IMAGE_QUALITY'] = 'medium'
+    let res = await lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'a') })
+    let [args] = execCalls()
+    expect(flag(args!, '-m')).toBe('gpt-x')
+    expect(args).toContain('model_reasoning_effort="medium"')
+    expect(res.quality).toBe('medium')
+    res = await lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'b'), quality: 'high' })
+    expect(res.quality).toBe('high')
+    expect(lib.resolveQuality()).toBe('medium')
+    process.env['CONDUCTOR_CODEX_IMAGE_QUALITY'] = 'bogus'
+    expect(lib.resolveQuality()).toBe('low')
+    expect(() => lib.resolveQuality('ultra')).toThrow(/quality must be/)
+    ;[args] = execCalls()
+  })
+
+  it('retries once without -m when the model is unavailable', async () => {
+    let n = 0
+    handlers.exec = (c, args) => {
+      n += 1
+      if (args.includes('-m')) {
+        c.stdout.emit('data', JSON.stringify({ type: 'error', message: 'The model `gpt-6-luna` is not supported for this account' }) + '\n')
+        done(c, 1)
+      } else okExec(c, args)
+    }
+    const progress: string[] = []
+    const res = await lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o'), onProgress: (m) => progress.push(m) })
+    const calls = execCalls()
+    expect(n).toBe(2)
+    expect(calls[0]).toContain('-m')
+    expect(calls[1]).not.toContain('-m')
+    expect(res.model).toBe('default')
+    expect(progress.some((m) => /retrying with the default model/.test(m))).toBe(true)
+  })
+
+  it('does not retry unrelated failures', async () => {
+    handlers.exec = (c) => {
+      c.stdout.emit('data', JSON.stringify({ type: 'error', message: 'quota exceeded' }) + '\n')
+      done(c, 1)
+    }
+    await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow('quota exceeded')
+    expect(execCalls()).toHaveLength(1)
   })
 })
 

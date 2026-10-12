@@ -140,11 +140,17 @@ committed.
 ## Generated photos (Codex)
 
 When the media library has no fitting photo, `generate_creative_image({prompt, aspect?, count?,
-referenceImagePaths?})` makes one on the person's machine by running their local Codex CLI
+quality?, referenceImagePaths?})` makes one on the person's machine by running their local Codex CLI
 (`codex exec`, built-in image_gen). It needs Codex installed and `codex login` done on a ChatGPT plan that
 includes image generation (Plus or higher; on Free, `codex exec` has no image tool) — `conductor
 doctor` reports the install and login — takes about 30-90 s and uses the person's Codex/ChatGPT quota. `aspect` is
 `portrait` (default, 1024x1536), `square` (1024x1024) or `landscape` (1536x1024); `count` is 1-3.
+
+- **Cost.** Cheapest settings by default: `codex exec -m gpt-6-luna -c model_reasoning_effort="low"` and
+  image `quality` `low` (`low|medium|high`). Ask for `medium`/`high` only when a photo is the hero of a
+  paid ad. Env overrides: `CONDUCTOR_CODEX_IMAGE_MODEL`, `CONDUCTOR_CODEX_IMAGE_REASONING`,
+  `CONDUCTOR_CODEX_IMAGE_QUALITY`. If Codex rejects the model for the account, the run retries once on
+  the person's default model.
 
 - **Prompt.** The caller writes the scene; the tool adds fixed rules: photographic unless asked
   otherwise, no text, letters, logos, watermarks, UI or phone screens, and clean negative space for
@@ -153,7 +159,7 @@ doctor` reports the install and login — takes about 30-90 s and uses the perso
   pruned after 14 days). The result returns the first image inline plus `files: [{path, width,
   height}]`, `provenance` and `revisedPrompt`. Look at every image before using it.
 - **Provenance.** Each file gets a sidecar `<file>.provenance.json` (source "Generated with Codex
-  image_gen on <date>", licence "Generated, house use", `aiGenerated: true`).
+  image_gen on <date>", licence "Generated, house use", `aiGenerated: true`, plus the `model` and `quality` used).
   `preview_creative_draft` records it and `commit_creative_draft` / `upload_creative_media` use it
   automatically for that file, so a draft mixing a generated photo with the person's own music keeps
   each file's own provenance. The preview reports which local files still need provenance.

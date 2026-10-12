@@ -28,6 +28,33 @@ export const NO_CODEX_HINT =
   'Codex CLI not found — install it (npm i -g @openai/codex) and run `codex login`, or set CONDUCTOR_CODEX_PATH.'
 export const NOT_LOGGED_IN_HINT = 'Codex CLI is not logged in — run `codex login` (see `conductor doctor`).'
 
+export type ImageQuality = 'low' | 'medium' | 'high'
+export const IMAGE_QUALITIES: readonly ImageQuality[] = ['low', 'medium', 'high']
+
+/** Cheapest settings by default; each has an env override. */
+export const DEFAULT_IMAGE_MODEL = 'gpt-6-luna'
+export const DEFAULT_IMAGE_REASONING = 'low'
+export const DEFAULT_IMAGE_QUALITY: ImageQuality = 'low'
+
+export function resolveModel(): string {
+  return process.env['CONDUCTOR_CODEX_IMAGE_MODEL']?.trim() || DEFAULT_IMAGE_MODEL
+}
+
+export function resolveReasoning(): string {
+  return process.env['CONDUCTOR_CODEX_IMAGE_REASONING']?.trim() || DEFAULT_IMAGE_REASONING
+}
+
+/** Explicit value, else `CONDUCTOR_CODEX_IMAGE_QUALITY`, else `low`. An invalid explicit value throws. */
+export function resolveQuality(explicit?: string): ImageQuality {
+  const envValue = process.env['CONDUCTOR_CODEX_IMAGE_QUALITY']?.trim().toLowerCase()
+  const value = explicit ?? (envValue && (IMAGE_QUALITIES as readonly string[]).includes(envValue) ? envValue : DEFAULT_IMAGE_QUALITY)
+  if (!(IMAGE_QUALITIES as readonly string[]).includes(value)) throw new Error(`quality must be one of ${IMAGE_QUALITIES.join(', ')}.`)
+  return value as ImageQuality
+}
+
+/** Codex rejecting the requested model (not on this plan/account, or unknown). */
+const MODEL_UNAVAILABLE = /model.*(not (available|supported|found|exist)|unavailable|unsupported|does not exist|access)|(unsupported|unknown|invalid|unavailable).*model/i
+
 const MAX_INLINE_IMAGE_BYTES = 1_000_000
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 
@@ -45,6 +72,7 @@ export interface GenerateImagesParams {
   prompt: string
   aspect?: ImageAspect
   count?: number
+  quality?: ImageQuality
   referenceImagePaths?: string[]
   outDir: string
   onProgress?: (message: string) => void
@@ -62,6 +90,10 @@ export interface GenerateImagesResult {
   provenance: { source: string; licence: string; aiGenerated: true }
   revisedPrompt: string
   outDir: string
+  /** Quality requested from image_gen. */
+  quality: ImageQuality
+  /** Codex model used; 'default' when the run fell back to the user's own default model. */
+  model: string
   /** JPEG (or small PNG) of the first image for inline display; absent when none fits ~1 MB. */
   preview?: { data: Buffer; mimeType: string }
 }
@@ -138,12 +170,12 @@ export async function checkCodexCli(): Promise<CodexStatus> {
   }
 }
 
-export function buildPrompt(scene: string, aspect: ImageAspect, count: number, hasReferences: boolean): string {
+export function buildPrompt(scene: string, aspect: ImageAspect, count: number, hasReferences: boolean, quality: ImageQuality = DEFAULT_IMAGE_QUALITY): string {
   return [
     scene.trim(),
     '',
     'Rules:',
-    `- Use the image_gen tool to create exactly ${count} image${count === 1 ? '' : 's'} at size ${ASPECT_SIZES[aspect]}, high quality.`,
+    `- Use the image_gen tool to create exactly ${count} image${count === 1 ? '' : 's'} at size ${ASPECT_SIZES[aspect]}, ${quality} quality.`,
     '- Photographic unless the scene above asks for another style.',
     '- NO text, letters, numbers, logos, watermarks, UI, or phone/computer screens anywhere in the image.',
     '- Leave clean negative space for a headline.',
@@ -309,14 +341,29 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
   const before = new Set((await listImages(genRoot)).map((f) => f.path))
   const startedAt = Date.now() - 1000
 
-  const args = [
+  const quality = resolveQuality(params.quality)
+  const requestedModel = resolveModel()
+  const buildArgs = (withModel: boolean): string[] => [
     'exec', '--ephemeral', '--skip-git-repo-check', '-s', 'workspace-write',
+    ...(withModel ? ['-m', requestedModel] : []),
+    '-c', `model_reasoning_effort="${resolveReasoning()}"`,
     '-C', outRoot, '--output-schema', schemaPath, '-o', lastPath, '--json',
     ...refs.flatMap((r) => ['-i', r]),
     '-',
   ]
-  onProgress?.('Starting Codex image generation')
-  const outcome = await runCodexExec(codex, args, buildPrompt(params.prompt, aspect, count, refs.length > 0), timeoutMs, onProgress)
+  const prompt = buildPrompt(params.prompt, aspect, count, refs.length > 0, quality)
+  let model = requestedModel
+  onProgress?.(`Starting Codex image generation (model ${requestedModel}, ${quality} quality)`)
+  let outcome: ExecOutcome
+  try {
+    outcome = await runCodexExec(codex, buildArgs(true), prompt, timeoutMs, onProgress)
+  } catch (err) {
+    // A plan without the cheap model must not hard-fail: retry once on the person's own default model.
+    if (!(err instanceof Error) || !MODEL_UNAVAILABLE.test(err.message)) throw err
+    onProgress?.(`Codex model ${requestedModel} is unavailable on this account; retrying with the default model`)
+    model = 'default'
+    outcome = await runCodexExec(codex, buildArgs(false), prompt, timeoutMs, onProgress)
+  }
 
   let revisedPrompt = ''
   const found: GeneratedImage[] = []
@@ -363,9 +410,9 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
   const date = new Date().toISOString().slice(0, 10)
   const provenance = { source: `Generated with Codex image_gen on ${date}`, licence: 'Generated, house use', aiGenerated: true as const }
   for (const img of found) {
-    await writeProvenanceSidecar(img.path, { ...provenance, prompt: params.prompt, revisedPrompt })
+    await writeProvenanceSidecar(img.path, { ...provenance, prompt: params.prompt, revisedPrompt, model, quality })
   }
 
   const preview = await jpegPreview(found[0]!.path, outRoot)
-  return { files: found, provenance, revisedPrompt, outDir: outRoot, ...(preview ? { preview } : {}) }
+  return { files: found, provenance, revisedPrompt, outDir: outRoot, quality, model, ...(preview ? { preview } : {}) }
 }

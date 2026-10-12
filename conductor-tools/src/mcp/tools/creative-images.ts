@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs'
 import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve, sep } from 'node:path'
-import { generateImages, type GeneratedImage, type ImageAspect } from '../../lib/codex-image.js'
+import { generateImages, type GeneratedImage, type ImageAspect, type ImageQuality } from '../../lib/codex-image.js'
 import { findProjectRoot, slugify, stamp } from './creative-drafts.js'
 
 /**
@@ -12,12 +12,14 @@ import { findProjectRoot, slugify, stamp } from './creative-drafts.js'
 
 export const GENERATED_SUBDIR = join('.conductor', 'generated')
 const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000
+const QUALITIES: readonly ImageQuality[] = ['low', 'medium', 'high']
 const ASPECTS: readonly ImageAspect[] = ['portrait', 'square', 'landscape']
 
 export interface GenerateCreativeImageParams {
   prompt: string
   aspect?: string
   count?: number
+  quality?: string
   referenceImagePaths?: string[]
 }
 
@@ -34,6 +36,8 @@ export interface GenerateCreativeImageResult {
   provenance: { source: string; licence: string; aiGenerated: true }
   revisedPrompt: string
   outDir: string
+  quality: ImageQuality
+  model: string
   nextStep: string
   image?: { data: Buffer; mimeType: string }
 }
@@ -75,6 +79,9 @@ export async function generateCreativeImage(
   if (!ASPECTS.includes(aspect)) throw new Error(`aspect must be one of ${ASPECTS.join(', ')}.`)
   const count = params.count ?? 1
   if (!Number.isInteger(count) || count < 1 || count > 3) throw new Error('count must be a whole number from 1 to 3.')
+  if (params.quality !== undefined && !QUALITIES.includes(params.quality as ImageQuality)) {
+    throw new Error(`quality must be one of ${QUALITIES.join(', ')}.`)
+  }
   const refs = params.referenceImagePaths ?? []
   const referenceImagePaths: string[] = []
   for (const r of refs) {
@@ -97,6 +104,7 @@ export async function generateCreativeImage(
     prompt,
     aspect,
     count,
+    ...(params.quality ? { quality: params.quality as ImageQuality } : {}),
     referenceImagePaths,
     outDir,
     onProgress: options.log,
@@ -108,6 +116,8 @@ export async function generateCreativeImage(
     provenance: result.provenance,
     revisedPrompt: result.revisedPrompt,
     outDir: result.outDir,
+    quality: result.quality,
+    model: result.model,
     nextStep:
       'Look at the image for pseudo-text, warped hands or a fake product; if it is good, pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft. Its .provenance.json sidecar carries the AI-generated label.',
     ...(result.preview ? { image: result.preview } : {}),

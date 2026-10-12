@@ -11,6 +11,8 @@ export interface SidecarProvenance {
 export interface SidecarData extends SidecarProvenance {
   prompt?: string
   revisedPrompt?: string
+  model?: string
+  quality?: string
 }
 
 export const sidecarPath = (filePath: string): string => `${filePath}.provenance.json`

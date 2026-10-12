@@ -1414,13 +1414,14 @@ export const TOOLS = [
   },
   {
     name: 'generate_creative_image',
-    description: "Generate a photo on this machine with the person's Codex CLI (needs `codex login`; takes about a minute and uses their Codex quota). The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
+    description: "Generate a photo on this machine with the person's Codex CLI (needs `codex login`; takes about a minute and uses their Codex quota). Uses the cheapest Codex model and `low` image quality by default; pass quality medium or high only when a photo is the hero of a paid ad. The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
     inputSchema: {
       type: 'object',
       properties: {
         prompt: { type: 'string', description: 'The scene to photograph: subject, setting, light, mood' },
         aspect: { type: 'string', enum: ['portrait', 'square', 'landscape'], description: 'portrait (default) suits 9:16 and 4:5; square 1:1; landscape 3:2' },
         count: { type: 'number', description: 'How many images, 1-3 (default 1)' },
+        quality: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Image quality (default low, the cheapest; env CONDUCTOR_CODEX_IMAGE_QUALITY changes the default). Use medium/high only when a photo is the hero of a paid ad' },
         referenceImagePaths: { type: 'array', items: { type: 'string' }, description: 'Local images to stay faithful to, such as a real product shot (optional)' },
       },
       required: ['prompt'],

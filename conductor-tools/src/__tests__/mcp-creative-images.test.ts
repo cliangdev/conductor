@@ -19,6 +19,8 @@ beforeEach(() => {
     provenance: { source: 'Generated with Codex image_gen on 2026-10-12', licence: 'Generated, house use', aiGenerated: true },
     revisedPrompt: 'rp',
     outDir: '/x',
+    quality: 'low',
+    model: 'gpt-6-luna',
     preview: { data: Buffer.from('jpg'), mimeType: 'image/jpeg' },
   })
 })
@@ -31,7 +33,15 @@ describe('generateCreativeImage', () => {
     await expect(generateCreativeImage({ prompt: 'a', count: 0 }, { outDir: tmp })).rejects.toThrow(/count must be/)
     await expect(generateCreativeImage({ prompt: 'a', count: 4 }, { outDir: tmp })).rejects.toThrow(/count must be/)
     await expect(generateCreativeImage({ prompt: 'a', referenceImagePaths: [path.join(tmp, 'nope.png')] }, { outDir: tmp })).rejects.toThrow(/Reference image not found/)
+    await expect(generateCreativeImage({ prompt: 'a', quality: 'ultra' }, { outDir: tmp })).rejects.toThrow(/quality must be/)
     expect(gen).not.toHaveBeenCalled()
+  })
+
+  it('passes quality through and returns the model and quality used', async () => {
+    gen.mockResolvedValueOnce({ files: [], provenance: { source: 's', licence: 'l', aiGenerated: true }, revisedPrompt: '', outDir: '/x', quality: 'high', model: 'gpt-6-luna' })
+    const res = await generateCreativeImage({ prompt: 'a', quality: 'high' }, { outDir: tmp })
+    expect(gen).toHaveBeenCalledWith(expect.objectContaining({ quality: 'high' }))
+    expect(res).toMatchObject({ quality: 'high', model: 'gpt-6-luna' })
   })
 
   it('returns files, provenance, next step and the preview', async () => {
