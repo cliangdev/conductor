@@ -58,6 +58,8 @@ When `media.json` has `generate: true`, one generated photo per card or beat (or
 background) is renderable. It comes from `generate_creative_image` (the person's local Codex CLI):
 photographic, no text, logos or screens in the picture, and no depiction of the product unless a real
 reference image is supplied. It is `aiGenerated: true`. Collages, charts and text-in-image stay out.
+Ask for a mid-tone scene: `bleed` lays a dark scrim over the photo, so a dark or night scene
+can render almost black. For a dark scene, use `card` or `stacked`.
 
 ## What it cannot do (so the idea needs filming or a rethink)
 
