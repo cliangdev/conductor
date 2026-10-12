@@ -83,7 +83,20 @@ to `commit_creative_draft`, which records them on every file it uploads. This cl
 exposure: an unattributed or unlicensed photo running as paid or organic media. A photo already in
 the library is used by its id (`photoId`) with no upload at all.
 
-**Open the photo and look at it before using it.** A picture can break every copy rule with text,
+**Nothing in the library fits, or the person asks for a generated one?** Call
+`generate_creative_image` with a scene prompt drawn from the brand's Knowledge page and the angle:
+the scene, subject, light, framing and where the headline's negative space sits. The tool adds its own
+fixed rules (photographic, no text, letters, logos, UI or phone screens) and runs the person's local
+Codex CLI, so it needs `codex login` on a ChatGPT Plus (or higher) plan (`conductor doctor` reports the login), takes about 30-90 s and uses
+their Codex quota. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
+`sequence[].photoPath`). When the real product must appear, list a real shot in
+`referenceImagePaths` — never describe an invented product. Each file gets a provenance sidecar
+(`aiGenerated: true`) that the preview and commit use automatically, so don't ask about it, and the
+AI label applies. A 1024x1536 image cropped to 9:16 may draw the "soft, upscaled photo" warning:
+mention it, don't fight it.
+
+**Open the photo and look at it before using it** — a generated one most of all (pseudo-text, warped
+hands or faces, a fake product or app screen). A picture can break every copy rule with text,
 a logo or a claim burned into its pixels, and no automated check can see that — this is the first
 of this skill's silent failure modes (the full list is below). A human or a prior pass marks a bad
 photo `blocked`; if you notice one that should be, say so rather than using it anyway.
@@ -155,15 +168,25 @@ Only once `passed` is true, show the image to the person and ask with `AskUserQu
 **Approve & upload**, **Request changes**, **Stop**. If `passed` is false you are not at this step
 yet: fix it and re-preview first (step 6). On changes, preview again with the edits (another draft; nothing was saved). On
 Stop, leave it: the draft stays on this machine under `.conductor/drafts/` and is cleaned up
-automatically once it is committed or two weeks old. Only on **Approve & upload**, call
-`commit_creative_draft({draftDir})` with the `draftDir` the approved preview returned.
+automatically once it is committed or two weeks old. Say in the question that approving
+also confirms the photo carries no burned-in text, logo or claim. Only on **Approve & upload**, call
+`commit_creative_draft({draftDir, photoChecked: true})` with the `draftDir` the approved preview
+returned, plus provenance (`source`, `licence`, `aiGenerated`) only for local files the preview
+lists in `provenance.needed`. Pass `photoChecked` only after that approval, never on your own
+judgement.
 
 ### 8. Check readiness before calling it done
 
-The preview already lists the readiness gaps, so fix what you can (caption, alt text, a checked
-photo) before asking for approval. After the commit, `get_creative` includes a `readiness` block: caption, alt text, the photo's checked/blocked state
-and provenance, and the Creative's own state (not `DRAFT`) are blocking; an AI-generation disclosure
-is informational only. Do not call a Creative done while `ready` is false.
+The preview already lists the readiness gaps (including a local file's sidecar provenance), so fix
+what you can (caption, alt text) before asking for approval; the photo check is cleared by the
+approval itself (`photoChecked: true` on the commit, for files that commit uploads; a library photo
+keeps its own verdict). After the commit, `get_creative` includes a `readiness` block: caption, alt
+text, the photo's checked/blocked state and provenance, and the Creative's own state (not `DRAFT`)
+are blocking; an AI-generation disclosure is informational only (when publishing, turn on the
+platform's AI-generated label). If the only blocking item left is `state`, call
+`update_creative({creativeId, state: "READY"})` and verify with `get_creative`; the backend refuses
+READY while anything else blocking fails. Otherwise name exactly what is missing and ask. Do not
+call a Creative done while `ready` is false.
 
 ### 9. Commit, then hand off
 
@@ -223,7 +246,7 @@ A MOTION Creative animates the same brand layout from steps 1-5 above into a sho
 of a static frame — no separate video tool needed. Use it when a still doesn't hold attention, or a
 destination rewards video over an image.
 
-1. Pick a photo (step 5) or, for a moving background, a video — check `list_creative_media({kind:
+1. Pick a photo (step 5; a generated photo works here too) or, for a moving background, a video — check `list_creative_media({kind:
    "VIDEO"})` first and use its media id if something fits; otherwise pass the local file as
    `clipPath` (previewed from disk, uploaded on commit). For background music,
    `list_creative_media({kind: "AUDIO"})` the same way, else `audioPath`.
@@ -264,6 +287,8 @@ Automated checks are real but incomplete. These are the ones worth remembering t
 - **A photo with text, a logo or a claim burned into its pixels** passes every copy-rule and
   render check, because none of them look at pixels for meaning — only step 5's "open and look at
   it" catches this.
+- **A generated image depicting a product, result or claim that isn't real** (a made-up app screen,
+  a before/after, an invented package) passes every check — only looking at it catches it.
 - **A structurally valid render is not necessarily a good one.** The render's own assertions check
   spill, safe zones, fonts and contrast — never whether the headline reads at a glance or the copy
   sits on the subject's face. Step 7 exists because of this gap.

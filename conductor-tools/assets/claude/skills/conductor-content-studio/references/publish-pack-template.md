@@ -60,6 +60,7 @@ Run: <runId>   Creative: <display id, or "not yet committed">   Tags: hook <type
 ```json
 {
   "creativeId": null,
+  "creativeState": null,
   "platforms": [
     {
       "platform": "tiktok",
@@ -84,6 +85,7 @@ Rules:
 
 - `creativeId` is null until the person approves the commit (S6, On Approve), then it is the
   Creative's id. A `FILM` run leaves it null: the publisher is pointed at the pack by the person.
+- `creativeState` is the Creative's state after S6 (`READY`, or `DRAFT` if something still blocks it).
 - `platforms[]` items are shaped to drop straight into `create_post` targets or
   `set_publish_targets` targets: `platform`, `format` (`feed`, `reel` or `story`, and only one the destination's `formats` offers: at the time
   of writing TikTok and YouTube are feed only, Facebook and Instagram offer all three),
@@ -117,5 +119,5 @@ Rules:
 - `alternateHooks` and `tags` are for learning and experiments, not for publishing. `tags` is also
   copied into `run.json`.
 - `tags.angle` is the ideator's angle: `story-emotion`, `utility-education` or `trend-humor`.
-  `tags.format` is the idea's format (`still`, `carousel`, `story`, `motion`, `clip` or `film`).
+  `tags.format` is the idea's format (`still`, `carousel`, `story`, `motion`, `clip` or `film`; map the idea template's formats: story sequence -> `story`, motion text over photo or clip -> `motion`, talking head, demo, skit or other -> `film`; `clip` is for a finished video posted as-is).
 - Valid JSON, no comments.

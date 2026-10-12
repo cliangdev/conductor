@@ -22,6 +22,10 @@ anything.
 1. Follow the script template exactly: hook, beats table, payoff, CTA, publish copy, copy-rule check.
 2. The hook lands within 3 seconds, spoken and on screen, and is what the winning idea promised.
 3. A new beat or pattern interrupt every 3 to 5 seconds. Everything works with the sound off.
+   Exception, a `MOTION` idea: Conductor renders exactly one headline and one optional body
+   (animated by preset) plus an end card that holds the final frame. Write one on-screen headline
+   and body, not timed beats of on-screen text; extra beats belong in a story or carousel sequence
+   or the caption.
 4. Respect the brief's must-say and must-avoid lists. Use approved lines verbatim. If the brand kit
    requires an accent phrase, mark exactly one `*phrase*` in on-screen headlines. Check every line
    against the copy rules and write the result in the final section.

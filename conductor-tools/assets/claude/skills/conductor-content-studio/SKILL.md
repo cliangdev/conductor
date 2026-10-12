@@ -44,8 +44,9 @@ folder; give subagents absolute paths.
 
 ```
 request.md  run.json  brief.md  script.md  direction.md  creative-spec.json  decision.md
+image-prompts.json   (S5, only when generation is enabled)
 context/   brand-kit.json  knowledge.md  performance.md  learning.md  media.json
-ideas/     angle-1.md  angle-2.md  angle-3.md  pool.md
+ideas/     angle-1.md  angle-2.md  angle-3.md  pool.md  winner.md
 judging/   scores.md
 drafts/    finalist-<id>/   (contact sheets from the finalist renders)
 publish-pack.md  publish-pack.json   (S5b; see references/publish-pack-template.md)
@@ -124,8 +125,16 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 6. Every renderable idea needs a photo (or, for MOTION, a clip); see `references/capabilities.md`. If
    `media.json` has no unblocked image and no clip, ask once with `AskUserQuestion` before ideating:
    **Give a photo or two** (local paths; record them in `context/media.json` as `local` entries the
-   art director may use via `photoPath`) or **Plan for filming** (ideas will be `FILM`). Never let
-   the team design a type-only still; the preview refuses it.
+   art director may use via `photoPath`), **Generate with Codex** (record `"generate": true` in
+   `context/media.json`; ideas can then be `RENDER` with no library photo, each giving an
+   `imagePrompt`, and photos are made with `generate_creative_image` from the person's local Codex CLI)
+   or **Plan for filming** (ideas will be `FILM`). Never let the team design a type-only still; the
+   preview refuses it.
+   When the library does have usable images, or the request itself asks for generated imagery, set
+   `"generate": true` without asking: ideas use a library photo when one fits and give an
+   `imagePrompt` only when none does. If `generate_creative_image` later fails (Codex missing, logged
+   out, or a plan without image generation), treat that finalist as unrenderable in S3b; at S6, say
+   why and ask for a photo instead of offering Approve & upload.
 
 ### S1 — Strategist -> `brief.md`
 
@@ -165,7 +174,9 @@ before each score, and names the top 3. Store the finalists in `run.json`.
 
 For each `RENDER` finalist, call `preview_creative_draft` with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
-`full: false`. Record each draft dir in `run.json`.
+`full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
+`imagePrompt`, call `generate_creative_image({prompt})` first, eye-check the result, and use its
+path as `photoPath` (generate only for finalists, not the whole pool).
 
 - If the validator refuses the copy (accent phrase or a copy rule), fix the copy once yourself and
   retry. If it still fails, mark that finalist unrenderable in `run.json`, keep its text score, and
@@ -176,7 +187,7 @@ draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/final
   shorter body) and re-preview; otherwise keep it and record the failure for the judge.
 - `FILM` finalists have no render.
 
-### S3c — Creative director, visual round -> `decision.md`
+### S3c — Creative director, visual round (text-only with `--quick`) -> `decision.md`
 
 Same agent, mode `visual-round`. Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, the
 finalist image paths (`drafts/finalist-<id>/sheet.jpg`; the director views them with Read), the
@@ -194,11 +205,13 @@ which idea to take; show the decision at the gate.
 
 ### S4 — Scriptwriter -> `script.md`
 
-`Agent(subagent_type: "conductor-content-scriptwriter")` with `brief.md`, `decision.md`, the winning
-idea from `ideas/pool.md`, `references/script-template.md`, `references/platform-specs.md` and
+First copy the winning idea's block from `ideas/pool.md` to `ideas/winner.md`. Then
+`Agent(subagent_type: "conductor-content-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md` and
 `references/publish-pack-template.md`. Besides the script it writes the Publish copy section: a
 caption per platform, hashtags, a first comment and 2 to 3 alternate hooks with a hookType each.
-When merging into `publish-pack.json`, append each platform's hashtags to its `captionOverride`
+For a `MOTION` winner tell it that the render shows one headline and one optional body, animated
+by preset, then an end card that holds the final frame: no timed multi-beat on-screen text. Extra
+beats belong in a story or carousel sequence, or in the caption. When merging into `publish-pack.json`, append each platform's hashtags to its `captionOverride`
 (caption, blank line, hashtags): that field is posted verbatim.
 
 ### S5 — Art director (`RENDER` only) -> `direction.md` + `creative-spec.json`
@@ -212,8 +225,12 @@ Tell it the supported options: the kit's enabled placements, and the layouts and
 the creative registry supports (at the time of writing `stacked`, `bleed`, `split` dark only, `card` dark or
 light; a refusal from the validator names the valid ones). The spec's keys must be exactly
 `preview_creative_draft` inputs. Give it `references/capabilities.md` too. The spec's `name` is the
-idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. A
-`FILM` winner skips S5 and goes to the shoot script, below.
+idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. When
+`media.json` has `generate: true`, the art director may also write `image-prompts.json`
+(`{"photo": "...", "beats": {"2": "..."}}`) next to the spec. Before S6, call
+`generate_creative_image` for each prompt, eye-check each image, and set `photoPath` (or
+`sequence[i].photoPath`) in `creative-spec.json`. A `FILM` winner skips S5 and goes to the shoot
+script, below.
 
 ### S5b — Publish pack and pre-publish checks (you; RENDER after S5, FILM after the shoot script)
 
@@ -253,18 +270,23 @@ does not apply is answered "not applicable".
    re-preview **before** showing anything, and never offer Approve & upload while one still fails.
    Revise at most twice beyond that; if it is still wrong, show it honestly and say what is off.
 3. Show the person: the draft image, the finalist sheets of the runners-up (view them from
-   `drafts/finalist-<id>/sheet.jpg`; say when a runner-up could not be rendered), and a short decision
+   `drafts/finalist-<id>/sheet.jpg`; say when a runner-up could not be rendered; with `--quick` no
+   sheets exist, so show runners-up by title and tag only), and a short decision
    summary (the winner and why, the runners-up, what was cut and why), and a short pack summary: the
    disclosure setting (which toggle, or none), the AI-label setting, the sound and its licence, and
    the alternate hooks with their types.
 4. Ask with `AskUserQuestion`, header "Draft", with exactly these four options. `AskUserQuestion`
    allows at most four, so never add one per runner-up, and **Stop** must always be among them:
-   - **Approve & upload**: if the spec used a local file (`photoPath`, `clipPath`, `audioPath`),
-     first ask for its provenance (`source`, `licence`, and whether it is AI-generated) and pass
-     them to `commit_creative_draft({draftDir, source, licence, aiGenerated})`. Then
-     `get_creative` and read its `readiness`. If provenance or anything else blocking is missing,
-     say exactly what and ask for it; never call a Creative done while `ready` is false. After the
-     commit, write the Creative's id into `publish-pack.json` as `creativeId` (and into `run.json`).
+   - **Approve & upload**: the question says approving also confirms the photo carries no burned-in
+     text, logo or claim. Ask for provenance (`source`, `licence`, and whether it is AI-generated)
+     only for local files the preview lists in `provenance.needed` (a file from
+     `generate_creative_image` already carries it), then
+     `commit_creative_draft({draftDir, photoChecked: true, source, licence, aiGenerated})` (provenance
+     fields only when needed). Then `get_creative` and read its `readiness`. If `state` is the only
+     blocking item, `update_creative({creativeId, state: "READY"})` and verify with `get_creative`;
+     otherwise say exactly what is missing and ask for it. Never call a Creative done while `ready`
+     is false. After the commit, write the Creative's id into `publish-pack.json` as `creativeId` and
+     its state into `publish-pack.json` as `creativeState` (and both into `run.json`).
    - **Use a runner-up**: ask a second `AskUserQuestion` listing the runners-up by title (with
      their tag; label one that could not be rendered as such and say why, rather than offering it as
      if it would work). Then set the chosen idea as `winner` and re-run S4 onward for it (S5, S5b and S6,

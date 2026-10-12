@@ -35,7 +35,12 @@ theme, the kit's accent-phrase and copy rules apply to every text field (includi
 sequence bounds are enforced (a story is 2–7 beats, a carousel 2–10 cards, every beat after the first
 needs its own headline), and every referenced photo must exist in the project. A separate, non-blocking
 **readiness** read (`CreativeService.readiness`) checks caption, alt text, the photo's checked/provenance
-verdicts and AI disclosure — useful for a pre-publish checklist, but never a reason to refuse a write.
+verdicts and AI disclosure (a local file's sidecar provenance counts in the preview too) — useful for a pre-publish checklist, but never a reason to refuse a write.
+
+Approving a draft is also the photo check: `commit_creative_draft({photoChecked: true})` records that the person
+saw no burned-in text, logo or claim in the files that commit uploads (a library photo keeps its own verdict).
+A Creative then leaves DRAFT with `update_creative({state: "READY"})`, which is refused while any other blocking
+readiness item fails.
 
 Photos (`creative_photo`) carry provenance (source, licence, AI disclosure), a checked/blocked verdict and
 per-placement focal points, and go through the same mint → signed PUT → confirm upload shape as a Post's
@@ -131,6 +136,31 @@ spec, and `committed`. Both tools prune that folder (and only that folder) of dr
 or older than 14 days. A CLIP Creative has nothing to render, so it has no draft preview; a headline
 variant is previewed with `baseCreativeId` but saved with `create_creative` and `variantOf`, never
 committed.
+
+## Generated photos (Codex)
+
+When the media library has no fitting photo, `generate_creative_image({prompt, aspect?, count?,
+referenceImagePaths?})` makes one on the person's machine by running their local Codex CLI
+(`codex exec`, built-in image_gen). It needs Codex installed and `codex login` done on a ChatGPT plan that
+includes image generation (Plus or higher; on Free, `codex exec` has no image tool) — `conductor
+doctor` reports the install and login — takes about 30-90 s and uses the person's Codex/ChatGPT quota. `aspect` is
+`portrait` (default, 1024x1536), `square` (1024x1024) or `landscape` (1536x1024); `count` is 1-3.
+
+- **Prompt.** The caller writes the scene; the tool adds fixed rules: photographic unless asked
+  otherwise, no text, letters, logos, watermarks, UI or phone screens, and clean negative space for
+  the headline. Pass `referenceImagePaths` when a real product must appear; never invent one.
+- **Output.** `<projectRoot>/.conductor/generated/<timestamp>-<slug>/image-N.png` (git-ignored,
+  pruned after 14 days). The result returns the first image inline plus `files: [{path, width,
+  height}]`, `provenance` and `revisedPrompt`. Look at every image before using it.
+- **Provenance.** Each file gets a sidecar `<file>.provenance.json` (source "Generated with Codex
+  image_gen on <date>", licence "Generated, house use", `aiGenerated: true`).
+  `preview_creative_draft` records it and `commit_creative_draft` / `upload_creative_media` use it
+  automatically for that file, so a draft mixing a generated photo with the person's own music keeps
+  each file's own provenance. The preview reports which local files still need provenance.
+  `aiGenerated: true` means the AI label applies when the Post is published.
+- **Use.** Pass a file's `path` as `photoPath` (or `sequence[].photoPath`) to
+  `preview_creative_draft`. A 1024x1536 image cropped to 9:16 may draw the preview's non-blocking
+  "soft, upscaled photo" warning.
 
 ## Attach — "Use in Post"
 

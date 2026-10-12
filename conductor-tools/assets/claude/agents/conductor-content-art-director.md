@@ -15,7 +15,7 @@ send to the draft renderer, so it has to be valid on the first try.
 - Read only the files you are given: `script.md`, `context/media.json`, `context/brand-kit.json`,
   `references/shotlist-template.md`, `references/platform-specs.md`, `references/capabilities.md` and
   `references/publish-pack-template.md` when given.
-- Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json`.
+- Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json`, plus `image-prompts.json` when `media.json` has `generate: true`.
 - Never call Conductor or any MCP tool.
 
 ## direction.md
@@ -45,7 +45,9 @@ A single JSON object whose keys are exactly `preview_creative_draft` inputs, and
 - `photoId`: only an id that appears in `media.json`; or `photoPath` only for a local file the person
   supplied, given in the request or listed as `local` in `media.json`. Never invent an id or a path.
   Every STILL, carousel and story needs a photo, and a MOTION needs a photo or clip (see
-  `references/capabilities.md`). If none is available, stop and say so in `direction.md` rather
+  `references/capabilities.md`). If `media.json` has `generate: true` and no library photo fits,
+  write `image-prompts.json` instead (below) and omit `photoPath`/`photoId` for those slots; the
+  orchestrator fills them. Otherwise, if none is available, stop and say so in `direction.md` rather
   than writing a spec the preview will refuse.
 - `typeOverrides` when text must read bigger or smaller on a placement, and `layoutOverrides` for
   photo height or focal point. Don't change layout just to resize text.
@@ -57,10 +59,20 @@ A single JSON object whose keys are exactly `preview_creative_draft` inputs, and
 - A story or carousel: `sequenceKind` (`story` 2 to 7 beats, `carousel` 2 to 10 cards, plus
   `carouselRatio` such as `4x5` or `1x1`) and a `sequence` array of beats, each with `headline`
   and optional `body`, `photoId` or `photoPath`, `cta`.
-- MOTION: `motion` (`preset`, `durationSec` 3 to 60, `background`, `endCard`) and optionally
-  `audio`. A clip background uses `background.clipMediaId` from `media.json`, or `clipPath` for a
+- MOTION: `motion.preset` (`fade-up`, `word-by-word`, `accent-pop` or `none`), `motion.durationSec`
+  (3 to 60), `motion.background` (`{source: "photo", motion: zoom-in|zoom-out|pan-left|pan-right|none}`
+  or `{source: "clip", clipMediaId}`), `motion.endCard`, and optionally top-level `audio`. A MOTION
+  renders one headline and one optional body plus an end card holding the final frame: no timed
+  multi-beat on-screen text (extra beats go in a story or carousel sequence, or the caption). A clip background uses `background.clipMediaId` from `media.json`, or `clipPath` for a
   user-supplied local file.
 - Omit any field you do not need. Do not add comments or fields the tool does not take.
+
+## image-prompts.json (only when `generate: true`)
+
+`{"photo": "<scene prompt>", "beats": {"2": "<scene prompt>"}}` next to the spec: `photo` for the
+main photo, `beats` keyed by sequence position for cards or beats that need their own. Each prompt
+describes the scene, subject, light, framing and where the negative space for the headline sits. No
+text in the image, and no product depiction unless a reference image is listed in `media.json`.
 
 ## Finish
 

@@ -6,6 +6,7 @@ import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
 import { composePosterSheet } from '../../lib/poster-sheet.js'
+import { readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
 import { renderCreative as runLocalRender } from '../../lib/creative-render.js'
 
 /**
@@ -473,6 +474,11 @@ export interface UploadCreativeMediaResult {
 export async function uploadCreativeMedia(params: UploadCreativeMediaParams, config: Config): Promise<UploadCreativeMediaResult> {
   if (!params.filePath && !params.url) {
     throw new Error('Pass filePath (a file on this machine) or url (a public http(s) URL).')
+  }
+  // A local file's sidecar supplies provenance only when the caller passed none of it.
+  if (params.filePath && params.source === undefined && params.licence === undefined && params.aiGenerated === undefined) {
+    const sidecar = await readProvenanceSidecar(params.filePath)
+    if (sidecar) params = { ...params, ...sidecar }
   }
   const source = await readMediaSource(params)
   const label = params.label ?? stripExtension(source.filename)

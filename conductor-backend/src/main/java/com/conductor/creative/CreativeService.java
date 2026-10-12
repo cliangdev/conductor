@@ -477,7 +477,7 @@ public class CreativeService {
         }
         boolean aiGenerated = photo != null && photo.isAiGenerated();
         items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
-                aiGenerated ? "photo is AI-generated: tick the AI-disclosure toggle on upload" : "not AI-generated"));
+                aiGenerated ? "photo is AI-generated: turn on the platform's AI-generated label when publishing" : "not AI-generated"));
     }
 
     /**
@@ -535,7 +535,7 @@ public class CreativeService {
         }
         boolean aiGenerated = clip != null && clip.isAiGenerated();
         items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
-                aiGenerated ? "the clip is AI-generated: tick the AI-disclosure toggle on upload" : "not AI-generated"));
+                aiGenerated ? "the clip is AI-generated: turn on the platform's AI-generated label when publishing" : "not AI-generated"));
     }
 
     /** The {@code "default"} entry's media, or the first entry's if there is no default — the one clip
@@ -819,7 +819,8 @@ public class CreativeService {
             }
             return usable != null
                     ? MediaFacts.local(key, expectedKind, usable.getDurationSeconds(), usable.getHasAudio(),
-                            usable.getWidth(), usable.getHeight())
+                            usable.getWidth(), usable.getHeight(), usable.getSource(), usable.getLicence(),
+                            usable.getAiGenerated())
                     : MediaFacts.local(key, expectedKind, null, null, null, null);
         }
 

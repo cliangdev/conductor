@@ -21,6 +21,9 @@ vi.mock('../lib/next-steps.js', () => ({
   printNextSteps: vi.fn(),
 }))
 
+const mockCheckCodexCli = vi.fn()
+vi.mock('../lib/codex-image.js', () => ({ checkCodexCli: mockCheckCodexCli }))
+
 vi.mock('fs')
 
 const mockFs = vi.mocked(fs)
@@ -28,6 +31,7 @@ const mockFs = vi.mocked(fs)
 describe('doctor command', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    mockCheckCodexCli.mockResolvedValue({ state: 'ready', version: 'codex-cli 0.162.1' })
     mockGetAssetSrcDir.mockReturnValue('/mock/assets')
     mockGetPluginInstallStatus.mockReturnValue({ location: 'global', outdated: false })
   })
@@ -129,6 +133,66 @@ describe('doctor command', () => {
       vi.unstubAllGlobals()
       writeSpy.mockRestore()
       exitSpy.mockRestore()
+    })
+  })
+
+  describe('codex check', () => {
+    const runJson = async () => {
+      mockFs.existsSync.mockReturnValue(true)
+      mockReadConfig.mockReturnValue({ apiKey: 'k', projectId: 'p', projectName: 'T', email: 'e@x.test', apiUrl: 'http://localhost:8080' })
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+      const { registerDoctor } = await import('../commands/doctor.js')
+      const program = new Command()
+      program.exitOverride()
+      registerDoctor(program)
+      await program.parseAsync(['node', 'conductor', 'doctor', '--json'])
+      const parsed = JSON.parse(writeSpy.mock.calls.map(c => c[0]).join('')) as { checks: Array<{ name: string; status: string; message: string }> }
+      const exitCode = exitSpy.mock.calls[0]?.[0]
+      writeSpy.mockRestore()
+      exitSpy.mockRestore()
+      vi.unstubAllGlobals()
+      return { check: parsed.checks.find(c => c.name === 'codex'), exitCode }
+    }
+
+    it('passes with the version when installed and logged in', async () => {
+      const { check, exitCode } = await runJson()
+      expect(check?.status).toBe('pass')
+      expect(check?.message).toContain('codex-cli 0.162.1')
+      expect(exitCode).toBe(0)
+    })
+
+    it('warns, without failing the exit code, when logged out', async () => {
+      mockCheckCodexCli.mockResolvedValue({ state: 'logged-out', version: 'codex-cli 0.162.1' })
+      const { check, exitCode } = await runJson()
+      expect(check?.status).toBe('warn')
+      expect(check?.message).toContain('codex login')
+      expect(exitCode).toBe(0)
+    })
+
+    it('warns, without failing the exit code, when missing', async () => {
+      mockCheckCodexCli.mockResolvedValue({ state: 'missing' })
+      const { check, exitCode } = await runJson()
+      expect(check?.status).toBe('warn')
+      expect(check?.message).toContain('npm i -g @openai/codex')
+      expect(exitCode).toBe(0)
+    })
+
+    it('prints a warning line in pretty mode', async () => {
+      mockCheckCodexCli.mockResolvedValue({ state: 'missing' })
+      mockFs.existsSync.mockReturnValue(true)
+      mockReadConfig.mockReturnValue({ apiKey: 'k', projectId: 'p', projectName: 'T', email: 'e@x.test', apiUrl: 'http://localhost:8080' })
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const { registerDoctor } = await import('../commands/doctor.js')
+      const program = new Command()
+      program.exitOverride()
+      registerDoctor(program)
+      await program.parseAsync(['node', 'conductor', 'doctor'])
+      expect(logSpy.mock.calls.map(c => String(c[0])).join('\n')).toContain('Codex CLI (image generation)')
+      logSpy.mockRestore()
+      vi.unstubAllGlobals()
     })
   })
 

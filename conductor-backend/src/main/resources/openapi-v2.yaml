@@ -7650,6 +7650,20 @@ components:
           type: boolean
           nullable: true
           description: Whether a VIDEO file carries an audio track.
+        source:
+          type: string
+          nullable: true
+          description: >-
+            Provenance the caller already holds for this file, e.g. from a sidecar; used only for the draft's
+            readiness, never persisted.
+        licence:
+          type: string
+          nullable: true
+          description: Licence the caller already holds for this file; used only for the draft's readiness, never persisted.
+        aiGenerated:
+          type: boolean
+          nullable: true
+          description: Whether the caller knows this file is AI-generated; used only for the draft's readiness, never persisted.
 
     CreativeDraftSpecRequest:
       description: >-

@@ -103,6 +103,21 @@ describe('previewCreativeDraft', () => {
     expect(result.nextStep).toMatch(/Nothing has been saved/)
   })
 
+  it('sends provenance in localMedia only for keys with a sidecar', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    fs.writeFileSync(`${photo}.provenance.json`, JSON.stringify({ source: 'Generated', licence: 'House use', aiGenerated: true }))
+    mocked(apiPost).mockResolvedValueOnce({ spec: { creative: {} }, readiness: {} })
+    fakeDraftRender()
+
+    await previewCreativeDraft({ headline: 'H', photoPath: photo, audioPath: music }, config, { projectRoot: root })
+
+    const body = mocked(apiPost).mock.calls[0]![1] as Record<string, any>
+    expect(body.localMedia.photo).toEqual({ kind: 'IMAGE', width: 1, height: 1, source: 'Generated', licence: 'House use', aiGenerated: true })
+    expect(body.localMedia.audio).toEqual({ kind: 'AUDIO', durationSeconds: 30 })
+  })
+
   it('maps local files to local:<key> media ids and sends their metadata as localMedia', async () => {
     const clip = path.join(root, 'bg.mp4')
     const music = path.join(root, 'bed.mp3')
@@ -156,6 +171,30 @@ describe('previewCreativeDraft', () => {
     expect(draft.localFiles).toEqual(renderArgs.localFiles)
     expect(draft.specSha256).toMatch(/^[0-9a-f]{64}$/)
     expect(draft.request.photoId).toBe('local:photo')
+  })
+
+  it('records sidecar provenance in draft.json and reports which keys still need it', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    fs.writeFileSync(`${photo}.provenance.json`, JSON.stringify({ source: 'Generated', licence: 'House use', aiGenerated: true, prompt: 'p' }))
+    mocked(apiPost).mockResolvedValueOnce({ spec: { creative: {} }, readiness: {} })
+    fakeDraftRender()
+
+    const result = await previewCreativeDraft({ headline: 'H', photoPath: photo, audioPath: music }, config, { projectRoot: root })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.provenance).toEqual({ recorded: ['photo'], needed: ['audio'] })
+    const draft = JSON.parse(fs.readFileSync(path.join(result.draftDir, 'draft.json'), 'utf8'))
+    expect(draft.localProvenance).toEqual({ photo: { source: 'Generated', licence: 'House use', aiGenerated: true } })
+  })
+
+  it('refuses a malformed sidecar before calling the API', async () => {
+    fs.writeFileSync(`${photo}.provenance.json`, '{nope')
+    const result = await previewCreativeDraft({ headline: 'H', photoPath: photo }, config, { projectRoot: root })
+    expect(result.ok).toBe(false)
+    expect(apiPost).not.toHaveBeenCalled()
   })
 
   it('asks the renderer to check every placement for a contact-sheet preview, and reports checks and passed', async () => {
@@ -320,6 +359,64 @@ describe('commitCreativeDraft', () => {
     const draft = JSON.parse(fs.readFileSync(path.join(draftDir, 'draft.json'), 'utf8'))
     expect(draft.committed).toBe(true)
     expect(draft.creativeId).toBe('creative-1')
+  })
+
+  function stubCommit() {
+    mocked(uploadCreativeMedia).mockImplementation(async (p: { filePath: string }) => ({ media: { id: `id-${path.basename(p.filePath)}` }, warnings: [] }))
+    mocked(createCreative).mockResolvedValue({ id: 'creative-1' })
+    mocked(renderCreative).mockResolvedValue({ ok: true, renderId: 'r', state: 'SUCCEEDED', frames: [] })
+    mocked(getCreative).mockResolvedValue({ id: 'creative-1', readiness: {} })
+  }
+
+  it('PATCHes photoChecked only on uploaded IMAGE files, and only when asked', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    const draftDir = await makeDraft({ audioPath: music, sequence: [{ headline: 'a', photoId: 'library-1' }, { headline: 'b' }] })
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir }, config, { projectRoot: root })
+    expect(apiPatch).not.toHaveBeenCalled()
+  })
+
+  it('with photoChecked, marks uploaded images checked but not audio or library photos', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    const draftDir = await makeDraft({ audioPath: music, sequence: [{ headline: 'a', photoId: 'library-1' }, { headline: 'b' }] })
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir, photoChecked: true }, config, { projectRoot: root })
+
+    expect(apiPatch).toHaveBeenCalledTimes(1)
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/photos/id-' + path.basename(photo), { checked: true }, config)
+  })
+
+  it('uploads a file with its sidecar provenance and the rest with the call params', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    fs.writeFileSync(`${photo}.provenance.json`, JSON.stringify({ source: 'Generated', licence: 'House use', aiGenerated: true }))
+    const draftDir = await makeDraft({ audioPath: music })
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir, source: 'Own work', licence: 'Own work', aiGenerated: false }, config, { projectRoot: root })
+
+    expect(uploadCreativeMedia).toHaveBeenCalledWith({ filePath: photo, source: 'Generated', licence: 'House use', aiGenerated: true }, config)
+    expect(uploadCreativeMedia).toHaveBeenCalledWith({ filePath: music, source: 'Own work', licence: 'Own work', aiGenerated: false }, config)
+  })
+
+  it('still commits a legacy draft.json without localProvenance, using the call params', async () => {
+    const draftDir = await makeDraft()
+    const file = path.join(draftDir, 'draft.json')
+    const draft = JSON.parse(fs.readFileSync(file, 'utf8'))
+    delete draft.localProvenance
+    fs.writeFileSync(file, JSON.stringify(draft))
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir, source: 'Own work' }, config, { projectRoot: root })
+
+    expect(uploadCreativeMedia).toHaveBeenCalledWith({ filePath: photo, source: 'Own work', licence: undefined, aiGenerated: undefined }, config)
   })
 
   it('with a baseCreativeId, updates that Creative at its current version instead of creating one', async () => {

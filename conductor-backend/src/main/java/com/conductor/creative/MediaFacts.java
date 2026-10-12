@@ -68,8 +68,14 @@ public final class MediaFacts {
      */
     public static MediaFacts local(String key, String mediaKind, BigDecimal durationSeconds, Boolean hasAudio,
                                    Integer width, Integer height) {
-        return new MediaFacts(LOCAL_PREFIX + key, key, null, mediaKind, true, false, false, false, null, null,
-                durationSeconds, hasAudio, width, height, null);
+        return local(key, mediaKind, durationSeconds, hasAudio, width, height, null, null, null);
+    }
+
+    /** As above, carrying provenance the caller declared for the file (still unchecked; never persisted). */
+    public static MediaFacts local(String key, String mediaKind, BigDecimal durationSeconds, Boolean hasAudio,
+                                   Integer width, Integer height, String source, String licence, Boolean aiGenerated) {
+        return new MediaFacts(LOCAL_PREFIX + key, key, null, mediaKind, true, false, false,
+                Boolean.TRUE.equals(aiGenerated), source, licence, durationSeconds, hasAudio, width, height, null);
     }
 
     /** The id (library) or {@code local:<key>} this media was referenced by. */

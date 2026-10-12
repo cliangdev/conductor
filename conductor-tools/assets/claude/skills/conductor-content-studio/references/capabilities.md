@@ -26,7 +26,8 @@ needs changing until it fits.
 
 - **A photo.** Every STILL needs one, and so does a carousel or story, whose beats inherit the main
   photo. A MOTION needs a photo or a clip as its background. There are no type-only stills. If
-  `media.json` has no usable (unblocked) image, a `RENDER` idea needs the person to supply a photo.
+  `media.json` has no usable (unblocked) image, a `RENDER` idea needs the person to supply a photo,
+  or `media.json` must have `generate: true` so the photo is made with `generate_creative_image`.
 - **A headline.** If the Brand Kit requires an accent phrase, the headline needs exactly one
   `*accent phrase*`.
 - **Copy rules and approved lines.** Every Brand Kit copy rule applies to the headline, body,
@@ -51,11 +52,19 @@ needs changing until it fits.
   text or a badge under the platform's buttons, is fixed before anyone is asked to approve.
 - **The caption is never drawn on the artwork.** It goes with the post.
 
+## Generated photos
+
+When `media.json` has `generate: true`, one generated photo per card or beat (or as a MOTION
+background) is renderable. It comes from `generate_creative_image` (the person's local Codex CLI):
+photographic, no text, logos or screens in the picture, and no depiction of the product unless a real
+reference image is supplied. It is `aiGenerated: true`. Collages, charts and text-in-image stay out.
+Ask for a mid-tone scene: under `bleed`, a dark or night scene can render almost black. For a dark scene, use `card` or `stacked`.
+
 ## What it cannot do (so the idea needs filming or a rethink)
 
 - Footage of people, places, cooking or the product in use. Screen recordings of an app.
 - Voiceover or spoken dialogue: MOTION has music or clip sound, not speech.
-- Grids, charts, collages of several photos on one card, illustrations, or generated images.
+- Grids, charts, collages of several photos on one card, illustrations, or text inside an image.
   Each card is one photo plus text.
 - Anything that relies on a product claim the brief can't confirm. That's a copy problem, not a
   rendering one: soften the claim or drop the idea.

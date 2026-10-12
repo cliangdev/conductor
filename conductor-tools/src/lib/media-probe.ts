@@ -134,7 +134,7 @@ let cachedFfmpegPath: string | undefined
 /** True once the named command launches at all (any exit code) rather than failing to spawn
  * (ENOENT) — that's enough to know it's a real binary on PATH, without caring what `-version`
  * prints. Bounded by a timeout so a binary that launches but hangs doesn't wedge discovery forever. */
-function systemBinaryAvailable(command: string): Promise<boolean> {
+export function binaryAvailable(command: string, args: string[] = ['-version']): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false
     const finish = (ok: boolean) => {
@@ -144,7 +144,7 @@ function systemBinaryAvailable(command: string): Promise<boolean> {
     }
     let child
     try {
-      child = spawn(command, ['-version'], { stdio: 'ignore' })
+      child = spawn(command, args, { stdio: 'ignore' })
     } catch {
       finish(false)
       return
@@ -154,6 +154,10 @@ function systemBinaryAvailable(command: string): Promise<boolean> {
     const timer = setTimeout(() => finish(false), 5000)
     timer.unref?.()
   })
+}
+
+function systemBinaryAvailable(command: string): Promise<boolean> {
+  return binaryAvailable(command)
 }
 
 export async function resolveFfprobePath(): Promise<string> {

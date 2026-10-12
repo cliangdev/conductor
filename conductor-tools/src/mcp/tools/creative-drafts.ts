@@ -3,9 +3,10 @@ import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { Config } from '../config.js'
-import { apiPost, ApiError } from '../api.js'
+import { apiPatch, apiPost, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia } from '../../lib/media-probe.js'
+import { readProvenanceSidecar, type SidecarProvenance } from '../../lib/provenance-sidecar.js'
 import { renderCreative as runLocalRender, renderDraft, type DraftCheck, type DraftManifest } from '../../lib/creative-render.js'
 import {
   createCreative,
@@ -70,6 +71,8 @@ export interface DraftFile {
   /** key -> absolute path of the local file behind `local:<key>`. */
   localFiles: Record<string, string>
   localMedia: Record<string, LocalMediaMeta>
+  /** key -> provenance from the file's `.provenance.json` sidecar (only keys that have one; absent in older drafts). */
+  localProvenance?: Record<string, SidecarProvenance>
   /** sha256 of the spec the backend returned. */
   specSha256: string
   /** key -> media id, filled in as `commit_creative_draft` uploads (so a retry never re-uploads). */
@@ -116,6 +119,8 @@ export interface PreviewCreativeDraftSuccess {
   checks: DraftCheck[]
   /** True when no check has severity "error". Only then is the draft ready to show for approval. */
   passed: boolean
+  /** Which local files carry sidecar provenance already, and which still need it from commit_creative_draft's params. */
+  provenance: { recorded: string[]; needed: string[] }
   note?: string
   nextStep: string
 }
@@ -142,12 +147,12 @@ function draftsRoot(projectRoot: string): string {
   return join(resolve(projectRoot), DRAFTS_SUBDIR)
 }
 
-function stamp(now: Date): string {
+export function stamp(now: Date): string {
   const p = (n: number, w = 2) => String(n).padStart(w, '0')
   return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
 }
 
-function slugify(text: string | undefined): string {
+export function slugify(text: string | undefined): string {
   const slug = (text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '')
   return slug || 'draft'
 }
@@ -314,6 +319,7 @@ export async function previewCreativeDraft(
   const { request, localFiles } = built
 
   const localMedia: Record<string, LocalMediaMeta> = {}
+  const localProvenance: Record<string, SidecarProvenance> = {}
   try {
     for (const [key, path] of Object.entries(localFiles)) {
       try {
@@ -322,6 +328,8 @@ export async function previewCreativeDraft(
         throw new Error(`The file for local:${key} does not exist: ${path}`)
       }
       localMedia[key] = await readLocalMediaMeta(path)
+      const recorded = await readProvenanceSidecar(path)
+      if (recorded) localProvenance[key] = recorded
     }
   } catch (err) {
     return { ok: false, rendered: false, error: err instanceof Error ? err.message : String(err) }
@@ -330,7 +338,15 @@ export async function previewCreativeDraft(
   const full = !!params.full
   const body: Record<string, unknown> = { ...request, previewOnly: !full }
   if (params.baseCreativeId) body['baseCreativeId'] = params.baseCreativeId
-  if (Object.keys(localMedia).length) body['localMedia'] = localMedia
+  if (Object.keys(localMedia).length) {
+    // Keys with sidecar provenance also tell the backend where the file came from (readiness checks it).
+    body['localMedia'] = Object.fromEntries(
+      Object.entries(localMedia).map(([key, meta]) => {
+        const p = localProvenance[key]
+        return [key, p ? { ...meta, source: p.source, licence: p.licence, aiGenerated: p.aiGenerated } : meta]
+      })
+    )
+  }
 
   let response: { spec: Record<string, unknown>; readiness?: unknown }
   try {
@@ -367,6 +383,7 @@ export async function previewCreativeDraft(
     request,
     localFiles,
     localMedia,
+    ...(Object.keys(localProvenance).length ? { localProvenance } : {}),
     specSha256: createHash('sha256').update(JSON.stringify(spec)).digest('hex'),
   }
   await writeFile(join(draftDir, 'draft.json'), JSON.stringify(draft, null, 2))
@@ -423,6 +440,10 @@ export async function previewCreativeDraft(
     warnings: manifest.warnings,
     checks,
     passed,
+    provenance: {
+      recorded: Object.keys(localProvenance),
+      needed: Object.keys(localFiles).filter((k) => !localProvenance[k]),
+    },
     ...(note ? { note } : {}),
     nextStep: passed
       ? 'Nothing has been saved to Conductor. All placement checks passed. Show the image to the person and ask whether to approve it. ' +
@@ -445,6 +466,8 @@ export interface CommitCreativeDraftParams {
   source?: string
   licence?: string
   aiGenerated?: boolean
+  /** True only when the person approved the draft after looking at it: records that the uploaded photo(s) carry no burned-in text, logo or claim. */
+  photoChecked?: boolean
 }
 
 export interface CommitCreativeDraftResult {
@@ -502,8 +525,10 @@ export async function commitCreativeDraft(
   const uploaded: Record<string, string> = { ...(draft.uploaded ?? {}) }
   for (const [key, path] of Object.entries(draft.localFiles)) {
     if (uploaded[key]) continue
+    // A file's own sidecar provenance wins; the call's params cover files without one.
+    const own = draft.localProvenance?.[key]
     const result = await uploadCreativeMedia(
-      { filePath: path, source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
+      own ? { filePath: path, ...own } : { filePath: path, source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
       config
     )
     const id = result.media['id'] as string | undefined
@@ -512,6 +537,14 @@ export async function commitCreativeDraft(
     warnings.push(...result.warnings)
     // Persist as we go: a failure further on must not re-upload what already landed.
     await writeFile(join(draftDir, 'draft.json'), JSON.stringify({ ...draft, uploaded }, null, 2))
+  }
+
+  if (params.photoChecked === true) {
+    // Only files this draft uploaded (never library photos); re-PATCHing on a retry is idempotent.
+    for (const [key, id] of Object.entries(uploaded)) {
+      if (draft.localMedia?.[key]?.kind !== 'IMAGE') continue
+      await apiPatch(`${V2_PROJECT(config)}/marketing/photos/${id}`, { checked: true }, config)
+    }
   }
 
   const fields = replaceLocalRefs(draft.request, (key) => {

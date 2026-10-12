@@ -104,6 +104,7 @@ const CREATIVE_TOOLS = [
   'attach_creative_to_post',
   'create_experiment',
 ] as const
+import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1358,7 +1359,7 @@ export const TOOLS = [
   },
   {
     name: 'upload_creative_media',
-    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL) or a clipMedia entry (CLIP).",
+    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL) or a clipMedia entry (CLIP). A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; source/licence/aiGenerated apply only when there is none.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1412,6 +1413,20 @@ export const TOOLS = [
     },
   },
   {
+    name: 'generate_creative_image',
+    description: "Generate a photo on this machine with the person's Codex CLI (needs `codex login`; takes about a minute and uses their Codex quota). The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'The scene to photograph: subject, setting, light, mood' },
+        aspect: { type: 'string', enum: ['portrait', 'square', 'landscape'], description: 'portrait (default) suits 9:16 and 4:5; square 1:1; landscape 3:2' },
+        count: { type: 'number', description: 'How many images, 1-3 (default 1)' },
+        referenceImagePaths: { type: 'array', items: { type: 'string' }, description: 'Local images to stay faithful to, such as a real product shot (optional)' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
     name: 'preview_creative_draft',
     description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
@@ -1443,7 +1458,7 @@ export const TOOLS = [
   },
   {
     name: 'commit_creative_draft',
-    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames. Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
+    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames. Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1451,6 +1466,7 @@ export const TOOLS = [
         source: { type: 'string', description: 'Provenance note recorded on each uploaded file, e.g. a URL or "Generated with <model> on <date>" (optional)' },
         licence: { type: 'string', description: 'Licence recorded on each uploaded file, e.g. "Own work" (optional)' },
         aiGenerated: { type: 'boolean', description: 'Whether the uploaded files are AI-generated (optional, informational only)' },
+        photoChecked: { type: 'boolean', description: 'true only when the person approved the draft after looking at it — records their check that the uploaded photo(s) carry no burned-in text, logo or claim (readiness item photoChecked).' },
       },
       required: ['draftDir'],
     },
@@ -2345,6 +2361,21 @@ export async function runMcpServer(): Promise<void> {
           }
           return successResponse(result)
         }
+        case 'generate_creative_image': {
+          const progressToken = request.params._meta?.progressToken
+          let step = 0
+          const onProgress = progressToken === undefined
+            ? undefined
+            : (message: string) => {
+                step += 1
+                void extra.sendNotification({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: step, message },
+                }).catch(() => {})
+              }
+          const { image, ...meta } = await generateCreativeImage(params as unknown as GenerateCreativeImageParams, { log: onProgress })
+          return image ? imageResponse(image, meta) : successResponse(meta)
+        }
         case 'preview_creative_draft': {
           const progressToken = request.params._meta?.progressToken
           let step = 0
@@ -2378,6 +2409,7 @@ export async function runMcpServer(): Promise<void> {
                 source: params['source'] as string | undefined,
                 licence: params['licence'] as string | undefined,
                 aiGenerated: params['aiGenerated'] as boolean | undefined,
+                photoChecked: params['photoChecked'] as boolean | undefined,
               },
               config
             )

@@ -48,7 +48,8 @@ Keep this light — one or two follow-up questions, not a form:
 
 - **Static ad / short video from a photo**: the headline (or let the skill draft one from the
   Knowledge page), and a photo. Call `list_creative_media({kind: "IMAGE"})` first and offer what's
-  already on hand before asking for a new photo. A new photo is a local file path (a URL: download it
+  already on hand before asking for a new photo; no photo fits and none is offered? Offer to generate one with
+  `generate_creative_image` (needs Codex installed and `codex login`). A new photo is a local file path (a URL: download it
   to a local file first) — it is only uploaded after the person approves the preview.
 - **Video from a clip I have / Post an existing video as-is**: call
   `list_creative_media({kind: "VIDEO"})` first; if nothing fits, ask for a local path (a URL:

@@ -41,6 +41,7 @@ disclose paid, gifted, employee and affiliate relationships; in video, disclose 
 **Is any realistic imagery, video or voice AI-generated or AI-altered?** Check the Creative's and
 each media file's provenance (`aiGenerated` in `context/media.json`) and the script's visuals.
 
+- A photo from `generate_creative_image` is `aiGenerated: true`, so this is a **Yes**: the AI label / `isAigc` applies.
 - **Yes**: set TikTok `isAigc: true` on a video post. Conductor does not send `isAigc` on a TikTok
   photo post, so for a photo post note "turn on TikTok's AI label by hand" as a manual step. Set
   YouTube `containsSyntheticMedia: true`. Meta has no option: note that Instagram's and Facebook's

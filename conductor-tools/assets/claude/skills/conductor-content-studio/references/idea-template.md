@@ -28,9 +28,14 @@ Draft spec (RENDER only):
 - body: <max 20 words, or none>
 - caption: <the post caption, within the platform's limit>
 - photoId: <id from media.json, or none>
+- imagePrompt: <only when media.json has `generate: true` and no library photo fits: the scene in one line, no text in the image, no product depiction>
 - sequence: <for a story or carousel only: one line per beat, "headline | body">
 - motion: <MOTION only: preset, durationSec, background>
 ```
+
+The idea's format maps to the publish pack's `tags.format` as: still -> `still`; carousel ->
+`carousel`; story sequence -> `story`; motion text over photo or clip -> `motion`; talking head,
+demo, skit or other -> `film`.
 
 ## Sound
 
@@ -40,7 +45,7 @@ name original audio or a Commercial Music Library track, or leave sound out of t
 ## Tagging honestly
 
 - `RENDER` means Conductor can make it end to end: a still, a carousel, a story sequence, or motion
-  text over photos or clips that exist in `media.json` (or need no photo at all). Nothing in it
+  text over photos or clips that exist in `media.json` (or a generated photo, via `imagePrompt`, when `media.json` has `generate: true`; there are no type-only renders). Nothing in it
   requires a person to be filmed or footage that is not on hand.
 - `FILM` means it needs real filming: a person speaking to camera, a demonstration, a skit, a
   product in use. A `FILM` idea has no draft spec; it gets a shoot-ready script instead.

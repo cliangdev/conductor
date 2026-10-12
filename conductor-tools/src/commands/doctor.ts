@@ -5,6 +5,7 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import { readConfig, CONFIG_PATH } from '../lib/config.js'
 import { getAssetSrcDir, getPluginInstallStatus } from '../lib/plugin-assets.js'
+import { checkCodexCli, type CodexStatus } from '../lib/codex-image.js'
 import { printNextSteps } from '../lib/next-steps.js'
 
 export async function checkApiHealth(apiUrl: string): Promise<boolean> {
@@ -22,6 +23,16 @@ export function checkMcpJson(workingDir: string): boolean {
 
 export function checkConfigFile(): boolean {
   return fs.existsSync(CONFIG_PATH)
+}
+
+const CODEX_CHECK_NAME = 'Codex CLI (image generation)'
+
+export function describeCodexStatus(status: CodexStatus): { status: 'pass' | 'warn'; message: string } {
+  if (status.state === 'ready') return { status: 'pass', message: `${CODEX_CHECK_NAME}: ${status.version}, logged in` }
+  if (status.state === 'logged-out') {
+    return { status: 'warn', message: `${CODEX_CHECK_NAME}: ${status.version} installed but not logged in — run \`codex login\`` }
+  }
+  return { status: 'warn', message: `${CODEX_CHECK_NAME}: not found — npm i -g @openai/codex, then \`codex login\` (optional; only needed to generate photos)` }
 }
 
 export function registerDoctor(program: Command): void {
@@ -82,6 +93,9 @@ Examples:
           checks.push({ name: 'plugin-version', status: 'warn', message: 'Claude plugin outdated — re-run conductor init to update' })
         }
 
+        const codex = describeCodexStatus(await checkCodexCli())
+        checks.push({ name: 'codex', status: codex.status, message: codex.message })
+
         const allPass = checks.every(c => c.status !== 'fail')
         process.stdout.write(JSON.stringify({ checks }, null, 2) + '\n')
         process.exit(allPass ? 0 : 1)
@@ -128,6 +142,14 @@ Examples:
 
       if (location !== 'none' && outdated) {
         console.log(`${chalk.yellow('⚠')} Claude plugin outdated — re-run conductor init to update`)
+        warnings++
+      }
+
+      const codex = describeCodexStatus(await checkCodexCli())
+      if (codex.status === 'pass') {
+        console.log(`${chalk.green('✓')} ${codex.message}`)
+      } else {
+        console.log(`${chalk.yellow('⚠')} ${codex.message}`)
         warnings++
       }
 
