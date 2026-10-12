@@ -48,6 +48,6 @@ curiosity-gap, story, social-proof.
 <each must-say / must-avoid item from brief.md, and ok or the fix>
 ```
 
-Rules: a beat every 3 to 5 seconds; no beat longer than 5 seconds without a visual or text change;
+Rules: a beat every 3 to 5 seconds (a `MOTION` idea instead has one headline, one optional body and an end card, with no timed on-screen beats); no beat longer than 5 seconds without a visual or text change;
 caption limits are in `platform-specs.md`; alternates differ from the main hook in hook type, not just wording (check current platform guidance); approved lines run
 verbatim; leave out platforms the brief did not ask for.

@@ -100,7 +100,7 @@ or, to test a headline variant of something that already exists:
 Claude reads your Brand Kit and its linked Knowledge page, picks a photo, writes the copy against
 your kit's rules, and renders a **draft** on your machine for you to look at. **Nothing is saved to
 Conductor — no Creative, no photo upload — until you approve it.** You'll be asked to *Approve &
-upload*, *Request changes* or *Stop*; changes just make another draft. Under the hood it's calling
+upload*, *Request changes* or *Stop*; changes just make another draft. Approving also confirms the photo has no text, logo or claim burned into it; Claude then moves the Creative from DRAFT to READY once nothing else is missing. Under the hood it's calling
 these MCP tools in sequence: `get_brand_kit`, `preview_creative_draft` (renders the draft and shows
 you the image), `commit_creative_draft` (after you approve: uploads the photo, saves the Creative,
 renders the final frames), and — once you're ready to publish — `attach_creative_to_post`. `get_post_status` confirms the Post picked it up. `get_brand_kit`

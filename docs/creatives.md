@@ -35,7 +35,12 @@ theme, the kit's accent-phrase and copy rules apply to every text field (includi
 sequence bounds are enforced (a story is 2–7 beats, a carousel 2–10 cards, every beat after the first
 needs its own headline), and every referenced photo must exist in the project. A separate, non-blocking
 **readiness** read (`CreativeService.readiness`) checks caption, alt text, the photo's checked/provenance
-verdicts and AI disclosure — useful for a pre-publish checklist, but never a reason to refuse a write.
+verdicts and AI disclosure (a local file's sidecar provenance counts in the preview too) — useful for a pre-publish checklist, but never a reason to refuse a write.
+
+Approving a draft is also the photo check: `commit_creative_draft({photoChecked: true})` records that the person
+saw no burned-in text, logo or claim in the files that commit uploads (a library photo keeps its own verdict).
+A Creative then leaves DRAFT with `update_creative({state: "READY"})`, which is refused while any other blocking
+readiness item fails.
 
 Photos (`creative_photo`) carry provenance (source, licence, AI disclosure), a checked/blocked verdict and
 per-placement focal points, and go through the same mint → signed PUT → confirm upload shape as a Post's

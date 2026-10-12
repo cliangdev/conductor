@@ -59,8 +59,11 @@ A single JSON object whose keys are exactly `preview_creative_draft` inputs, and
 - A story or carousel: `sequenceKind` (`story` 2 to 7 beats, `carousel` 2 to 10 cards, plus
   `carouselRatio` such as `4x5` or `1x1`) and a `sequence` array of beats, each with `headline`
   and optional `body`, `photoId` or `photoPath`, `cta`.
-- MOTION: `motion` (`preset`, `durationSec` 3 to 60, `background`, `endCard`) and optionally
-  `audio`. A clip background uses `background.clipMediaId` from `media.json`, or `clipPath` for a
+- MOTION: `motion.preset` (`fade-up`, `word-by-word`, `accent-pop` or `none`), `motion.durationSec`
+  (3 to 60), `motion.background` (`{source: "photo", motion: zoom-in|zoom-out|pan-left|pan-right|none}`
+  or `{source: "clip", clipMediaId}`), `motion.endCard`, and optionally top-level `audio`. A MOTION
+  renders one headline and one optional body plus an end card holding the final frame: no timed
+  multi-beat on-screen text (extra beats go in a story or carousel sequence, or the caption). A clip background uses `background.clipMediaId` from `media.json`, or `clipPath` for a
   user-supplied local file.
 - Omit any field you do not need. Do not add comments or fields the tool does not take.
 

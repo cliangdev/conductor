@@ -168,15 +168,25 @@ Only once `passed` is true, show the image to the person and ask with `AskUserQu
 **Approve & upload**, **Request changes**, **Stop**. If `passed` is false you are not at this step
 yet: fix it and re-preview first (step 6). On changes, preview again with the edits (another draft; nothing was saved). On
 Stop, leave it: the draft stays on this machine under `.conductor/drafts/` and is cleaned up
-automatically once it is committed or two weeks old. Only on **Approve & upload**, call
-`commit_creative_draft({draftDir})` with the `draftDir` the approved preview returned.
+automatically once it is committed or two weeks old. Say in the question that approving
+also confirms the photo carries no burned-in text, logo or claim. Only on **Approve & upload**, call
+`commit_creative_draft({draftDir, photoChecked: true})` with the `draftDir` the approved preview
+returned, plus provenance (`source`, `licence`, `aiGenerated`) only for local files the preview
+lists in `provenance.needed`. Pass `photoChecked` only after that approval, never on your own
+judgement.
 
 ### 8. Check readiness before calling it done
 
-The preview already lists the readiness gaps, so fix what you can (caption, alt text, a checked
-photo) before asking for approval. After the commit, `get_creative` includes a `readiness` block: caption, alt text, the photo's checked/blocked state
-and provenance, and the Creative's own state (not `DRAFT`) are blocking; an AI-generation disclosure
-is informational only. Do not call a Creative done while `ready` is false.
+The preview already lists the readiness gaps (including a local file's sidecar provenance), so fix
+what you can (caption, alt text) before asking for approval; the photo check is cleared by the
+approval itself (`photoChecked: true` on the commit, for files that commit uploads; a library photo
+keeps its own verdict). After the commit, `get_creative` includes a `readiness` block: caption, alt
+text, the photo's checked/blocked state and provenance, and the Creative's own state (not `DRAFT`)
+are blocking; an AI-generation disclosure is informational only (when publishing, turn on the
+platform's AI-generated label). If the only blocking item left is `state`, call
+`update_creative({creativeId, state: "READY"})` and verify with `get_creative`; the backend refuses
+READY while anything else blocking fails. Otherwise name exactly what is missing and ask. Do not
+call a Creative done while `ready` is false.
 
 ### 9. Commit, then hand off
 

@@ -33,6 +33,10 @@ Draft spec (RENDER only):
 - motion: <MOTION only: preset, durationSec, background>
 ```
 
+The idea's format maps to the publish pack's `tags.format` as: still -> `still`; carousel ->
+`carousel`; story sequence -> `story`; motion text over photo or clip -> `motion`; talking head,
+demo, skit or other -> `film`.
+
 ## Sound
 
 An idea may not rely on a trending song. A business account cannot license most trending tracks, so
