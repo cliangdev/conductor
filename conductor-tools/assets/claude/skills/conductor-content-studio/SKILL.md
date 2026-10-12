@@ -130,6 +130,11 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    `imagePrompt`, and photos are made with `generate_creative_image` from the person's local Codex CLI)
    or **Plan for filming** (ideas will be `FILM`). Never let the team design a type-only still; the
    preview refuses it.
+   When the library does have usable images, or the request itself asks for generated imagery, set
+   `"generate": true` without asking: ideas use a library photo when one fits and give an
+   `imagePrompt` only when none does. If `generate_creative_image` later fails (Codex missing, logged
+   out, or a plan without image generation), treat that finalist as unrenderable in S3b; at S6, say
+   why and ask for a photo instead of offering Approve & upload.
 
 ### S1 — Strategist -> `brief.md`
 
