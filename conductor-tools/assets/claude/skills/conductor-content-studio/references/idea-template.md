@@ -28,6 +28,7 @@ Draft spec (RENDER only):
 - body: <max 20 words, or none>
 - caption: <the post caption, within the platform's limit>
 - photoId: <id from media.json, or none>
+- imagePrompt: <only when media.json has `generate: true` and no library photo fits: the scene in one line, no text in the image, no product depiction>
 - sequence: <for a story or carousel only: one line per beat, "headline | body">
 - motion: <MOTION only: preset, durationSec, background>
 ```

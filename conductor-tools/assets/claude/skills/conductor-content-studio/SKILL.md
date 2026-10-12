@@ -44,6 +44,7 @@ folder; give subagents absolute paths.
 
 ```
 request.md  run.json  brief.md  script.md  direction.md  creative-spec.json  decision.md
+image-prompts.json   (S5, only when generation is enabled)
 context/   brand-kit.json  knowledge.md  performance.md  learning.md  media.json
 ideas/     angle-1.md  angle-2.md  angle-3.md  pool.md
 judging/   scores.md
@@ -124,8 +125,11 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 6. Every renderable idea needs a photo (or, for MOTION, a clip); see `references/capabilities.md`. If
    `media.json` has no unblocked image and no clip, ask once with `AskUserQuestion` before ideating:
    **Give a photo or two** (local paths; record them in `context/media.json` as `local` entries the
-   art director may use via `photoPath`) or **Plan for filming** (ideas will be `FILM`). Never let
-   the team design a type-only still; the preview refuses it.
+   art director may use via `photoPath`), **Generate with Codex** (record `"generate": true` in
+   `context/media.json`; ideas can then be `RENDER` with no library photo, each giving an
+   `imagePrompt`, and photos are made with `generate_creative_image` from the person's local Codex CLI)
+   or **Plan for filming** (ideas will be `FILM`). Never let the team design a type-only still; the
+   preview refuses it.
 
 ### S1 — Strategist -> `brief.md`
 
@@ -165,7 +169,9 @@ before each score, and names the top 3. Store the finalists in `run.json`.
 
 For each `RENDER` finalist, call `preview_creative_draft` with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
-`full: false`. Record each draft dir in `run.json`.
+`full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
+`imagePrompt`, call `generate_creative_image({prompt})` first, eye-check the result, and use its
+path as `photoPath` (generate only for finalists, not the whole pool).
 
 - If the validator refuses the copy (accent phrase or a copy rule), fix the copy once yourself and
   retry. If it still fails, mark that finalist unrenderable in `run.json`, keep its text score, and
@@ -212,8 +218,12 @@ Tell it the supported options: the kit's enabled placements, and the layouts and
 the creative registry supports (at the time of writing `stacked`, `bleed`, `split` dark only, `card` dark or
 light; a refusal from the validator names the valid ones). The spec's keys must be exactly
 `preview_creative_draft` inputs. Give it `references/capabilities.md` too. The spec's `name` is the
-idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. A
-`FILM` winner skips S5 and goes to the shoot script, below.
+idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. When
+`media.json` has `generate: true`, the art director may also write `image-prompts.json`
+(`{"photo": "...", "beats": {"2": "..."}}`) next to the spec. Before S6, call
+`generate_creative_image` for each prompt, eye-check each image, and set `photoPath` (or
+`sequence[i].photoPath`) in `creative-spec.json`. A `FILM` winner skips S5 and goes to the shoot
+script, below.
 
 ### S5b — Publish pack and pre-publish checks (you; RENDER after S5, FILM after the shoot script)
 
@@ -260,8 +270,9 @@ does not apply is answered "not applicable".
 4. Ask with `AskUserQuestion`, header "Draft", with exactly these four options. `AskUserQuestion`
    allows at most four, so never add one per runner-up, and **Stop** must always be among them:
    - **Approve & upload**: if the spec used a local file (`photoPath`, `clipPath`, `audioPath`),
-     first ask for its provenance (`source`, `licence`, and whether it is AI-generated) and pass
-     them to `commit_creative_draft({draftDir, source, licence, aiGenerated})`. Then
+     first ask for provenance (`source`, `licence`, and whether it is AI-generated) only for local
+     files the preview reports as still needing it (a file from `generate_creative_image` already
+     carries it), and pass the answers to `commit_creative_draft({draftDir, source, licence, aiGenerated})`. Then
      `get_creative` and read its `readiness`. If provenance or anything else blocking is missing,
      say exactly what and ask for it; never call a Creative done while `ready` is false. After the
      commit, write the Creative's id into `publish-pack.json` as `creativeId` (and into `run.json`).

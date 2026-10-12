@@ -83,7 +83,20 @@ to `commit_creative_draft`, which records them on every file it uploads. This cl
 exposure: an unattributed or unlicensed photo running as paid or organic media. A photo already in
 the library is used by its id (`photoId`) with no upload at all.
 
-**Open the photo and look at it before using it.** A picture can break every copy rule with text,
+**Nothing in the library fits, or the person asks for a generated one?** Call
+`generate_creative_image` with a scene prompt drawn from the brand's Knowledge page and the angle:
+the scene, subject, light, framing and where the headline's negative space sits. The tool adds its own
+fixed rules (photographic, no text, letters, logos, UI or phone screens) and runs the person's local
+Codex CLI, so it needs `codex login` (`conductor doctor` reports it), takes about 30-90 s and uses
+their Codex quota. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
+`sequence[].photoPath`). When the real product must appear, list a real shot in
+`referenceImagePaths` — never describe an invented product. Each file gets a provenance sidecar
+(`aiGenerated: true`) that the preview and commit use automatically, so don't ask about it, and the
+AI label applies. A 1024x1536 image cropped to 9:16 may draw the "soft, upscaled photo" warning:
+mention it, don't fight it.
+
+**Open the photo and look at it before using it** — a generated one most of all (pseudo-text, warped
+hands or faces, a fake product or app screen). A picture can break every copy rule with text,
 a logo or a claim burned into its pixels, and no automated check can see that — this is the first
 of this skill's silent failure modes (the full list is below). A human or a prior pass marks a bad
 photo `blocked`; if you notice one that should be, say so rather than using it anyway.
@@ -223,7 +236,7 @@ A MOTION Creative animates the same brand layout from steps 1-5 above into a sho
 of a static frame — no separate video tool needed. Use it when a still doesn't hold attention, or a
 destination rewards video over an image.
 
-1. Pick a photo (step 5) or, for a moving background, a video — check `list_creative_media({kind:
+1. Pick a photo (step 5; a generated photo works here too) or, for a moving background, a video — check `list_creative_media({kind:
    "VIDEO"})` first and use its media id if something fits; otherwise pass the local file as
    `clipPath` (previewed from disk, uploaded on commit). For background music,
    `list_creative_media({kind: "AUDIO"})` the same way, else `audioPath`.
@@ -264,6 +277,8 @@ Automated checks are real but incomplete. These are the ones worth remembering t
 - **A photo with text, a logo or a claim burned into its pixels** passes every copy-rule and
   render check, because none of them look at pixels for meaning — only step 5's "open and look at
   it" catches this.
+- **A generated image depicting a product, result or claim that isn't real** (a made-up app screen,
+  a before/after, an invented package) passes every check — only looking at it catches it.
 - **A structurally valid render is not necessarily a good one.** The render's own assertions check
   spill, safe zones, fonts and contrast — never whether the headline reads at a glance or the copy
   sits on the subject's face. Step 7 exists because of this gap.
