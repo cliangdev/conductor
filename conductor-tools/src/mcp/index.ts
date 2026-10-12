@@ -1466,6 +1466,7 @@ export const TOOLS = [
         source: { type: 'string', description: 'Provenance note recorded on each uploaded file, e.g. a URL or "Generated with <model> on <date>" (optional)' },
         licence: { type: 'string', description: 'Licence recorded on each uploaded file, e.g. "Own work" (optional)' },
         aiGenerated: { type: 'boolean', description: 'Whether the uploaded files are AI-generated (optional, informational only)' },
+        photoChecked: { type: 'boolean', description: 'true only when the person approved the draft after looking at it — records their check that the uploaded photo(s) carry no burned-in text, logo or claim (readiness item photoChecked).' },
       },
       required: ['draftDir'],
     },
@@ -2408,6 +2409,7 @@ export async function runMcpServer(): Promise<void> {
                 source: params['source'] as string | undefined,
                 licence: params['licence'] as string | undefined,
                 aiGenerated: params['aiGenerated'] as boolean | undefined,
+                photoChecked: params['photoChecked'] as boolean | undefined,
               },
               config
             )

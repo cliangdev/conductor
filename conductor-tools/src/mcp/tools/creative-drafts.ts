@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { Config } from '../config.js'
-import { apiPost, ApiError } from '../api.js'
+import { apiPatch, apiPost, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia } from '../../lib/media-probe.js'
 import { readProvenanceSidecar, type SidecarProvenance } from '../../lib/provenance-sidecar.js'
@@ -338,7 +338,15 @@ export async function previewCreativeDraft(
   const full = !!params.full
   const body: Record<string, unknown> = { ...request, previewOnly: !full }
   if (params.baseCreativeId) body['baseCreativeId'] = params.baseCreativeId
-  if (Object.keys(localMedia).length) body['localMedia'] = localMedia
+  if (Object.keys(localMedia).length) {
+    // Keys with sidecar provenance also tell the backend where the file came from (readiness checks it).
+    body['localMedia'] = Object.fromEntries(
+      Object.entries(localMedia).map(([key, meta]) => {
+        const p = localProvenance[key]
+        return [key, p ? { ...meta, source: p.source, licence: p.licence, aiGenerated: p.aiGenerated } : meta]
+      })
+    )
+  }
 
   let response: { spec: Record<string, unknown>; readiness?: unknown }
   try {
@@ -458,6 +466,8 @@ export interface CommitCreativeDraftParams {
   source?: string
   licence?: string
   aiGenerated?: boolean
+  /** True only when the person approved the draft after looking at it: records that the uploaded photo(s) carry no burned-in text, logo or claim. */
+  photoChecked?: boolean
 }
 
 export interface CommitCreativeDraftResult {
@@ -527,6 +537,14 @@ export async function commitCreativeDraft(
     warnings.push(...result.warnings)
     // Persist as we go: a failure further on must not re-upload what already landed.
     await writeFile(join(draftDir, 'draft.json'), JSON.stringify({ ...draft, uploaded }, null, 2))
+  }
+
+  if (params.photoChecked === true) {
+    // Only files this draft uploaded (never library photos); re-PATCHing on a retry is idempotent.
+    for (const [key, id] of Object.entries(uploaded)) {
+      if (draft.localMedia?.[key]?.kind !== 'IMAGE') continue
+      await apiPatch(`${V2_PROJECT(config)}/marketing/photos/${id}`, { checked: true }, config)
+    }
   }
 
   const fields = replaceLocalRefs(draft.request, (key) => {

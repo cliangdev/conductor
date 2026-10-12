@@ -103,6 +103,21 @@ describe('previewCreativeDraft', () => {
     expect(result.nextStep).toMatch(/Nothing has been saved/)
   })
 
+  it('sends provenance in localMedia only for keys with a sidecar', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    fs.writeFileSync(`${photo}.provenance.json`, JSON.stringify({ source: 'Generated', licence: 'House use', aiGenerated: true }))
+    mocked(apiPost).mockResolvedValueOnce({ spec: { creative: {} }, readiness: {} })
+    fakeDraftRender()
+
+    await previewCreativeDraft({ headline: 'H', photoPath: photo, audioPath: music }, config, { projectRoot: root })
+
+    const body = mocked(apiPost).mock.calls[0]![1] as Record<string, any>
+    expect(body.localMedia.photo).toEqual({ kind: 'IMAGE', width: 1, height: 1, source: 'Generated', licence: 'House use', aiGenerated: true })
+    expect(body.localMedia.audio).toEqual({ kind: 'AUDIO', durationSeconds: 30 })
+  })
+
   it('maps local files to local:<key> media ids and sends their metadata as localMedia', async () => {
     const clip = path.join(root, 'bg.mp4')
     const music = path.join(root, 'bed.mp3')
@@ -352,6 +367,30 @@ describe('commitCreativeDraft', () => {
     mocked(renderCreative).mockResolvedValue({ ok: true, renderId: 'r', state: 'SUCCEEDED', frames: [] })
     mocked(getCreative).mockResolvedValue({ id: 'creative-1', readiness: {} })
   }
+
+  it('PATCHes photoChecked only on uploaded IMAGE files, and only when asked', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    const draftDir = await makeDraft({ audioPath: music, sequence: [{ headline: 'a', photoId: 'library-1' }, { headline: 'b' }] })
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir }, config, { projectRoot: root })
+    expect(apiPatch).not.toHaveBeenCalled()
+  })
+
+  it('with photoChecked, marks uploaded images checked but not audio or library photos', async () => {
+    const music = path.join(root, 'bed.mp3')
+    fs.writeFileSync(music, 'y')
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 30 })
+    const draftDir = await makeDraft({ audioPath: music, sequence: [{ headline: 'a', photoId: 'library-1' }, { headline: 'b' }] })
+    stubCommit()
+
+    await commitCreativeDraft({ draftDir, photoChecked: true }, config, { projectRoot: root })
+
+    expect(apiPatch).toHaveBeenCalledTimes(1)
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/photos/id-' + path.basename(photo), { checked: true }, config)
+  })
 
   it('uploads a file with its sidecar provenance and the rest with the call params', async () => {
     const music = path.join(root, 'bed.mp3')
