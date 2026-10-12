@@ -150,6 +150,38 @@ class CreativeDraftSpecTest {
     }
 
     @Test
+    void aLocalPhotoWithDeclaredProvenanceSatisfiesProvenanceAndFlagsAiDisclosure() {
+        LocalMediaInfo info = image().source("codex").licence("generated").aiGenerated(true);
+        CreativeService.DraftSpec draft = service.buildDraftSpec(PROJECT,
+                draftRequest("Hello").photoId("local:hero").localMedia(Map.of("hero", info)), caller);
+
+        assertThat(draft.readiness().items()).filteredOn(i -> i.key().equals("photoProvenance"))
+                .singleElement().satisfies(i -> assertThat(i.ok()).isTrue());
+        assertThat(draft.readiness().items()).filteredOn(i -> i.key().equals("photoChecked"))
+                .singleElement().satisfies(i -> assertThat(i.ok()).isFalse());
+        assertThat(draft.readiness().items()).filteredOn(i -> i.key().equals("aiDisclosure"))
+                .singleElement().satisfies(i -> {
+                    assertThat(i.ok()).isFalse();
+                    assertThat(i.message()).isEqualTo(
+                            "photo is AI-generated: turn on the platform's AI-generated label when publishing");
+                });
+    }
+
+    @Test
+    void aLocalPhotoWithoutProvenanceKeepsTheMissingAndNotAiMessages() {
+        CreativeService.DraftSpec draft = service.buildDraftSpec(PROJECT,
+                draftRequest("Hello").photoId("local:hero").localMedia(Map.of("hero", image())), caller);
+
+        assertThat(draft.readiness().items()).filteredOn(i -> i.key().equals("photoProvenance"))
+                .singleElement().satisfies(i -> assertThat(i.ok()).isFalse());
+        assertThat(draft.readiness().items()).filteredOn(i -> i.key().equals("aiDisclosure"))
+                .singleElement().satisfies(i -> {
+                    assertThat(i.ok()).isTrue();
+                    assertThat(i.message()).isEqualTo("not AI-generated");
+                });
+    }
+
+    @Test
     void aLocalSequenceBeatPhotoIsEmittedAsLocalAndTheOtherBeatsInheritTheMainPhoto() {
         CreativePhoto photo = libraryPhoto("photo-1");
         when(photoRepository.findByIdAndProjectId("photo-1", PROJECT)).thenReturn(Optional.of(photo));
