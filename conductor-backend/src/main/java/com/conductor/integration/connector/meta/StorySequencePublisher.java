@@ -30,8 +30,16 @@ import java.util.Optional;
  * path ({@code PublishOutcomeService#retryFailedTargets}) mints a <em>fresh</em> idempotency key — the
  * invocation row, and any checkpoint on it, belongs to the failed attempt. The target row is the one thing
  * both attempts share. It carries the media fingerprint (the ordered storage paths) too: if the author
- * swapped a file between attempts the checkpoint no longer describes this sequence and is discarded rather
- * than resumed into. Without a {@code target_id} (an ad-hoc invocation) nothing is checkpointed.
+ * changed the files between attempts, only the published stories whose file is still at the same position,
+ * counting from the first, are kept — those are live and posting them again would duplicate them — and the
+ * sequence resumes after that prefix. A change at the first position keeps nothing. Without a
+ * {@code target_id} (an ad-hoc invocation) nothing is checkpointed.
+ *
+ * <h2>Cancellation</h2>
+ * The invocation deadline cancels the publishing thread with an interrupt, and a target whose invocation
+ * timed out is {@code FAILED} and retryable at once. Nothing on the image path ever blocks interruptibly, so
+ * the loop checks the interrupt itself before each story: a cancelled sequence stops instead of racing the
+ * retry for the same next story. A story that went live while the interrupt landed is still checkpointed.
  *
  * <p>The checkpoint is left in place on success: it is the complete record of every story id, of which the
  * target's {@code platform_post_id} holds only the first.
@@ -81,7 +89,11 @@ final class StorySequencePublisher {
 
     @FunctionalInterface
     interface ItemPublisher {
-        Item publish(int index, PublishMedia item) throws InterruptedException;
+        /**
+         * @param publishedIds the ids of the stories this sequence already put live, so a lookup of "the
+         *                     newest story" (a lost publish answer) can rule them out
+         */
+        Item publish(int index, PublishMedia item, java.util.Set<String> publishedIds) throws InterruptedException;
     }
 
     private final Store store;
@@ -109,9 +121,15 @@ final class StorySequencePublisher {
         }
 
         for (int index = published.size(); index < total; index++) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Cancelled after " + published.size() + " of " + total
+                        + " stories to " + platformLabel);
+            }
             Item result;
             try {
-                result = publisher.publish(index, media.get(index));
+                java.util.Set<String> publishedIds = new java.util.HashSet<>();
+                published.forEach(story -> publishedIds.add(story.id()));
+                result = publisher.publish(index, media.get(index), publishedIds);
             } catch (HttpClientErrorException e) {
                 if (e.getStatusCode().value() == 429) {
                     throw progressed(e, published.size(), total, platformLabel, accountLabel, e);
@@ -187,14 +205,19 @@ final class StorySequencePublisher {
             }
             List<String> media = new ArrayList<>();
             node.path("media").forEach(n -> media.add(n.asText()));
-            if (!media.equals(fingerprint)) {
-                log.warn("Discarding the story checkpoint on target {}: the media changed since it was written",
-                        targetId);
-                return List.of();
-            }
             List<Story> stories = new ArrayList<>();
             for (JsonNode n : node.path("stories")) {
+                int index = stories.size();
+                if (index >= media.size() || index >= fingerprint.size()
+                        || !media.get(index).equals(fingerprint.get(index))) {
+                    break;
+                }
                 stories.add(new Story(n.path("id").asText(), n.path("permalink").asText(null)));
+            }
+            if (!media.equals(fingerprint)) {
+                log.warn("The media on target {} changed since its story checkpoint was written; keeping the {} "
+                        + "live stories whose files are unchanged at the start of the sequence", targetId,
+                        stories.size());
             }
             return stories;
         } catch (JsonProcessingException | RuntimeException e) {
@@ -217,7 +240,18 @@ final class StorySequencePublisher {
                 m.put("permalink", s.permalink());
                 return m;
             }).toList());
-            store.save(targetId, MAPPER.writeValueAsString(json));
+            String serialized = MAPPER.writeValueAsString(json);
+            // A cancel can land while the story's publish call is in flight: the story is live, so record it.
+            // The interrupt is set aside for the write (a pooled connection checkout refuses an interrupted
+            // thread) and restored, so the loop still stops before the next story.
+            boolean interrupted = Thread.interrupted();
+            try {
+                store.save(targetId, serialized);
+            } finally {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         } catch (Exception e) {
             // Losing the checkpoint risks a duplicate story on a later retry, but failing here would turn a
             // story that is already live into a reported failure — which invites exactly that retry.

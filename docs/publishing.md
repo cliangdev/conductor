@@ -327,8 +327,13 @@ A story is live the moment it publishes and can't be recalled in bulk, so a retr
 that already went out. After **each** story the ids published so far are written to the target row's
 `resume_checkpoint` (no new column), together with the ordered media paths. The checkpoint is on the
 target, not the action invocation, because `retry_failed_publish_targets` mints a fresh idempotency key
-and with it a fresh invocation. A retry reads it back and resumes at the first story without an id;
-if a file was swapped in between, the paths no longer match and the checkpoint is discarded.
+and with it a fresh invocation. A retry reads it back and resumes at the first story without an id.
+If the files changed in between, the stories whose file is still at the same position, counting from the
+first, are kept (they are live, and posting them again would duplicate them) and the rest are published;
+a change at the first position keeps nothing. A cancelled attempt (the invocation's deadline) stops
+before its next story rather than racing the retry. An Instagram story whose `media_publish` answer was
+lost but whose container is `PUBLISHED` takes its id from the account's live stories (`/stories`), not
+from `/media`, which never lists stories.
 
 - **Partial failure.** The target is `FAILED` with `Published 3 of 5 stories to Instagram (@acme);
   retrying resumes at story 4.` followed by the platform's reason, and its `platform_post_id` and

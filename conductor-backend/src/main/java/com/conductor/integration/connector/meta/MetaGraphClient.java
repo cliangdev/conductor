@@ -730,6 +730,66 @@ public class MetaGraphClient {
         return body.data().get(0).id();
     }
 
+    /**
+     * The id of the account's newest live story that is not in {@code exclude}, or null when it cannot be told
+     * for certain. Stories are not on the {@code /media} edge {@link #latestMediaId} reads — Instagram serves
+     * them only from {@code /stories} — so a story whose {@code media_publish} answer was lost is found here.
+     * The edge promises no order, so the newest is picked by {@code timestamp}; a story with no readable
+     * timestamp, or two sharing the newest one, make the answer ambiguous and it is null rather than a guess.
+     *
+     * @param exclude ids already accounted for (the stories this sequence published before this one)
+     */
+    public String latestStoryId(String igUserId, String token, java.util.Set<String> exclude) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + igUserId + "/stories")
+                .queryParam("fields", "id,timestamp")
+                .queryParam("limit", 100)
+                .encode().build().toUri());
+        ResponseEntity<StoryListResponse> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), StoryListResponse.class);
+        StoryListResponse body = response.getBody();
+        if (body == null || body.data() == null) {
+            return null;
+        }
+        String newestId = null;
+        java.time.OffsetDateTime newest = null;
+        boolean tied = false;
+        for (StoryListEntry entry : body.data()) {
+            if (entry == null || entry.id() == null || entry.id().isBlank()
+                    || (exclude != null && exclude.contains(entry.id()))) {
+                continue;
+            }
+            java.time.OffsetDateTime at = parseGraphTimestamp(entry.timestamp());
+            if (at == null) {
+                return null;
+            }
+            if (newest == null || at.isAfter(newest)) {
+                newest = at;
+                newestId = entry.id();
+                tied = false;
+            } else if (at.isEqual(newest)) {
+                tied = true;
+            }
+        }
+        return tied ? null : newestId;
+    }
+
+    /** Graph's {@code 2026-10-12T10:00:00+0000}, or an ISO offset timestamp; null when it is neither. */
+    private static java.time.OffsetDateTime parseGraphTimestamp(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.time.OffsetDateTime.parse(value,
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ"));
+        } catch (java.time.format.DateTimeParseException e) {
+            try {
+                return java.time.OffsetDateTime.parse(value);
+            } catch (java.time.format.DateTimeParseException ignored) {
+                return null;
+            }
+        }
+    }
+
     /** The published media's own permalink, which only exists once {@code media_publish} has run. */
     public InstagramMedia readMedia(String mediaId, String token) {
         URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + mediaId)
@@ -839,6 +899,13 @@ public class MetaGraphClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record MediaListResponse(@JsonProperty("data") List<ContainerResponse> data) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record StoryListResponse(@JsonProperty("data") List<StoryListEntry> data) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record StoryListEntry(@JsonProperty("id") String id,
+                          @JsonProperty("timestamp") String timestamp) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record PhotoResponse(@JsonProperty("id") String id,

@@ -286,7 +286,8 @@ class InstagramPublishAction {
                 // No answer (a timeout, a 5xx) is not "it didn't publish": Instagram may well have put the
                 // post live. A blind retry builds a fresh container and publishes it again — a duplicate
                 // post. So ask the container what happened before letting anything retry.
-                PublishOutcome outcome = settleLostPublish(igUserId, token, containerId, e);
+                PublishOutcome outcome = settleLostPublish(igUserId, token, containerId, e,
+                        () -> graphClient.latestMediaId(igUserId, token));
                 if (outcome.error() != null) {
                     return outcome.error();
                 }
@@ -325,7 +326,7 @@ class InstagramPublishAction {
         String username = MetaActions.stringConfig(ctx, MetaConnector.CONFIG_IG_USERNAME);
         String account = username == null ? null : (username.startsWith("@") ? username : "@" + username);
         StorySequencePublisher.Outcome outcome = storySequences.publish(MetaActions.string(input, "target_id"),
-                media, "Instagram", account, "Instagram rejected the post", (index, item) -> {
+                media, "Instagram", account, "Instagram rejected the post", (index, item, publishedIds) -> {
                     String containerId = graphClient.createMediaContainer(igUserId, token,
                             storyContainerParams(item));
                     if (item.isVideo()) {
@@ -340,7 +341,10 @@ class InstagramPublishAction {
                     } catch (HttpClientErrorException e) {
                         throw e;
                     } catch (RuntimeException e) {
-                        PublishOutcome settled = settleLostPublish(igUserId, token, containerId, e);
+                        // A story is not on the account's /media edge, so the id is looked up among its live
+                        // stories, never the newest feed post.
+                        PublishOutcome settled = settleLostPublish(igUserId, token, containerId, e,
+                                () -> graphClient.latestStoryId(igUserId, token, publishedIds));
                         if (settled.error() != null) {
                             return StorySequencePublisher.Item.failed(settled.error());
                         }
@@ -365,13 +369,15 @@ class InstagramPublishAction {
 
     /**
      * Decides what a {@code media_publish} with no answer actually did. The container says: {@code PUBLISHED}
-     * means the post is live, and its id is the account's newest media; still {@code FINISHED} means it never
-     * went out, so the original failure is rethrown and the retry is safe. Anything else — including not
+     * means the post is live, and its id is the account's newest media ({@code newestMediaId}: the newest feed
+     * media, or for a story the newest live story); still {@code FINISHED} means it never went out, so the
+     * original failure is rethrown and the retry is safe. Anything else — including not
      * being able to ask — is reported as a permanent failure, because retrying an unknown outcome is exactly
      * how one post becomes three.
      */
     private PublishOutcome settleLostPublish(String igUserId, String token, String containerId,
-                                             RuntimeException cause) {
+                                             RuntimeException cause,
+                                             java.util.function.Supplier<String> newestMediaId) {
         MetaGraphClient.ContainerStatus status;
         try {
             status = graphClient.readContainerStatus(containerId, token);
@@ -383,7 +389,7 @@ class InstagramPublishAction {
         if ("PUBLISHED".equalsIgnoreCase(status.statusCode())) {
             String mediaId = null;
             try {
-                mediaId = graphClient.latestMediaId(igUserId, token);
+                mediaId = newestMediaId.get();
             } catch (RuntimeException lookupError) {
                 log.warn("Instagram container {} is PUBLISHED but the new media id could not be read: {}",
                         containerId, lookupError.getMessage());

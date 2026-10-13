@@ -311,7 +311,7 @@ class FacebookPublishAction {
         StorySequencePublisher.Outcome outcome;
         try {
             outcome = storySequences.publish(targetId, media, "Facebook", pageName,
-                    "Facebook rejected the story", (index, item) -> {
+                    "Facebook rejected the story", (index, item, publishedIds) -> {
                         MetaGraphClient.PublishedPost published;
                         if (item.isVideo()) {
                             published = graphClient.publishVideoStory(pageId, token, item.url());
