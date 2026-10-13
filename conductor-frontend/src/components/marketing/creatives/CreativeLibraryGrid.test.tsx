@@ -299,4 +299,46 @@ describe('CreativeLibraryGrid', () => {
     expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/12a-motion-poster.jpg')
     expect(thumb).toHaveTextContent('9s')
   })
+
+  describe('CAROUSEL tiles', () => {
+    const image = (id: string, url: string) =>
+      clipMedia({ id, mediaKind: 'IMAGE', url, posterUrl: null, durationSeconds: null, width: 1080, height: 1350 })
+    const slides = (n: number) => Array.from({ length: n }, (_, i) => `img-${i + 1}`)
+
+    it('falls back to slide 1 of the 4x5 list, with an "N slides" badge, when there is no render', async () => {
+      mockGets({
+        creatives: [creative({ kind: 'CAROUSEL', layout: '', name: null, slides: { '9x16': ['other'], '4x5': slides(7) } })],
+        media: [image('img-1', 'https://storage.example/img-1.jpg'), image('other', 'https://storage.example/other.jpg')],
+      })
+
+      render(<CreativeLibraryGrid projectId="proj-1" />)
+
+      const thumb = await screen.findByTestId('creative-thumb-cr-1')
+      await waitFor(() => expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/img-1.jpg'))
+      expect(thumb).toHaveTextContent('7 slides')
+      expect(screen.getByText('Carousel')).toBeInTheDocument()
+    })
+
+    it('prefers the latest render thumbnail, and says "1 slide" / "Image" for a single image', async () => {
+      mockGets({
+        creatives: [
+          creative({
+            kind: 'CAROUSEL',
+            layout: '',
+            name: null,
+            slides: { default: ['img-1'] },
+            latestRenderThumbnailUrl: 'https://storage.example/render.jpg',
+          }),
+        ],
+      })
+
+      render(<CreativeLibraryGrid projectId="proj-1" />)
+
+      const thumb = await screen.findByTestId('creative-thumb-cr-1')
+      expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/render.jpg')
+      expect(thumb).toHaveTextContent('1 slide')
+      expect(thumb).not.toHaveTextContent('1 slides')
+      expect(screen.getByText('Image')).toBeInTheDocument()
+    })
+  })
 })

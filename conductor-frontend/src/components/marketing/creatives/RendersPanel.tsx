@@ -125,7 +125,7 @@ export function RendersPanel({
   const prompt = `Render creative ${creativeDisplayId} with render_creative`
   const cliCommand = `conductor creative render ${creativeDisplayId}`
 
-  /** CLIP only — see the `creativeKind` prop doc comment. The server assembles the frames itself
+  /** CLIP and CAROUSEL — see the `creativeKind` prop doc comment. The server assembles the frames itself
    *  (a copy per covered placement) and answers SUCCEEDED immediately; no local job to wait on. */
   async function handlePrepare() {
     setPreparing(true)
@@ -154,13 +154,17 @@ export function RendersPanel({
   // The contact sheet frame has nothing of its own to view full size — only the real per-placement
   // outputs go in the grid and the viewer.
   const frames = latestSucceeded?.frames.filter((f) => f.placementKey !== 'sheet') ?? []
+  // A CAROUSEL render has one frame per slide per placement — say which slide it is.
+  const frameLabel = (f: { placementKey: string; sequenceIndex?: number | null }) =>
+    placementLabel(registry, f.placementKey) +
+    (creativeKind === 'CAROUSEL' && f.sequenceIndex != null ? ` · slide ${f.sequenceIndex + 1}` : '')
 
   return (
     <Card className="space-y-3 p-4" data-testid="renders-panel">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Renders</h3>
         <div className="flex items-center gap-2">
-          {creativeKind === 'CLIP' && canManage && (
+          {(creativeKind === 'CLIP' || creativeKind === 'CAROUSEL') && canManage && (
             <Button size="sm" onClick={() => void handlePrepare()} disabled={preparing}>
               <SparklesIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
               {preparing ? 'Preparing…' : 'Prepare for posting'}
@@ -179,7 +183,9 @@ export function RendersPanel({
           icon={ImagesIcon}
           title="No renders yet"
           description={
-            creativeKind === 'CLIP'
+            creativeKind === 'CAROUSEL'
+              ? 'Preparing finished images is instant — Prepare for posting above, or from Claude Code/Desktop or the CLI.'
+              : creativeKind === 'CLIP'
               ? 'Rendering a clip is instant — Prepare for posting above, or from Claude Code/Desktop or the CLI.'
               : creativeKind === 'MOTION'
                 ? 'Rendering a Motion video runs locally, on your own machine, through Claude Code/Desktop or the CLI — about 20 seconds per placement. There is nothing to click here.'
@@ -240,7 +246,7 @@ export function RendersPanel({
                       <button
                         type="button"
                         onClick={() => setViewerFrameIndex(i)}
-                        aria-label={`View ${placementLabel(registry, frame.placementKey)} full size`}
+                        aria-label={`View ${frameLabel(frame)} full size`}
                         className="block w-full"
                       >
                         <video
@@ -255,13 +261,13 @@ export function RendersPanel({
                       <button
                         type="button"
                         onClick={() => setViewerFrameIndex(i)}
-                        aria-label={`View ${placementLabel(registry, frame.placementKey)} full size`}
+                        aria-label={`View ${frameLabel(frame)} full size`}
                         className="block w-full"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={frame.url}
-                          alt={placementLabel(registry, frame.placementKey)}
+                          alt={frameLabel(frame)}
                           className="aspect-square w-full bg-surface-3 object-contain"
                         />
                       </button>
@@ -273,7 +279,7 @@ export function RendersPanel({
                       <Maximize2Icon className="h-3.5 w-3.5" />
                     </span>
                     <div className="space-y-0.5 px-2 pb-2 text-xs">
-                      <p className="font-medium text-foreground">{placementLabel(registry, frame.placementKey)}</p>
+                      <p className="font-medium text-foreground">{frameLabel(frame)}</p>
                       <p className="text-muted-foreground">
                         {frame.platform ?? '—'} · {frame.width}×{frame.height} · {formatBytes(frame.sizeBytes)}
                         {frame.durationSeconds != null && ` · ${formatDuration(frame.durationSeconds)}`}
@@ -302,7 +308,7 @@ export function RendersPanel({
               onOpenChange={(open) => {
                 if (!open) setViewerFrameIndex(null)
               }}
-              title={placementLabel(registry, frames[viewerFrameIndex].placementKey)}
+              title={frameLabel(frames[viewerFrameIndex])}
               subtitle={`${frames[viewerFrameIndex].width}×${frames[viewerFrameIndex].height}px`}
               onPrev={viewerFrameIndex > 0 ? () => setViewerFrameIndex(viewerFrameIndex - 1) : undefined}
               onNext={viewerFrameIndex < frames.length - 1 ? () => setViewerFrameIndex(viewerFrameIndex + 1) : undefined}
@@ -318,7 +324,7 @@ export function RendersPanel({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={frames[viewerFrameIndex].url}
-                  alt={placementLabel(registry, frames[viewerFrameIndex].placementKey)}
+                  alt={frameLabel(frames[viewerFrameIndex])}
                   className="max-h-[90vh] max-w-[85vw] object-contain"
                 />
               )}

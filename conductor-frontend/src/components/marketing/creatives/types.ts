@@ -16,8 +16,9 @@ export type CreativeLockup = 'plain' | 'chip'
  *  copy and look (layout, theme, photo, headline, body, placements) plus a `motion` animation
  *  timeline and an optional `audio` track; rendered locally like STILL — see docs/creatives-guide.md's
  *  "Motion videos". CLIP is any finished video used as-is, one file for all placements or one per
- *  placement, no brand layout — see video-contract.md. */
-export type CreativeKind = 'STILL' | 'MOTION' | 'CLIP'
+ *  placement, no brand layout — see video-contract.md. CAROUSEL ("Finished images") is finished images
+ *  used as-is, ordered per placement; a 1-slide CAROUSEL is a finished still. */
+export type CreativeKind = 'STILL' | 'MOTION' | 'CLIP' | 'CAROUSEL'
 
 export type MotionPreset = 'fade-up' | 'word-by-word' | 'accent-pop' | 'none'
 export type MotionBackgroundSource = 'photo' | 'clip'
@@ -96,6 +97,10 @@ export interface Creative {
    *  `default` entry (if present) covers every placement without its own explicit entry, matched to
    *  its nearest-aspect placement — see clipPlacement.ts's `nearestAspectPlacement`. */
   clipMedia?: Record<string, string> | null
+  /** CAROUSEL only: `{"4x5": [mediaId…], "9x16": [...], "default": [...]}` — ordered slides per placement. */
+  slides?: Record<string, string[]> | null
+  /** CAROUSEL only: index-aligned alt text; entry N describes slide N in every placement. */
+  slideAltText?: string[] | null
   /** MOTION only. */
   motion?: CreativeMotion | null
   /** MOTION only. */
@@ -135,6 +140,8 @@ export interface CreateCreativeRequest {
   caption?: string | null
   altText?: string | null
   clipMedia?: Record<string, string> | null
+  slides?: Record<string, string[]> | null
+  slideAltText?: string[] | null
   motion?: CreativeMotion | null
   audio?: CreativeAudio | null
   placements?: string[]
@@ -160,6 +167,8 @@ export interface PatchCreativeRequest {
   caption?: string | null
   altText?: string | null
   clipMedia?: Record<string, string> | null
+  slides?: Record<string, string[]> | null
+  slideAltText?: string[] | null
   motion?: CreativeMotion | null
   audio?: CreativeAudio | null
   placements?: string[]
@@ -613,10 +622,12 @@ export function listCreativePhotos(
   token: string,
   includeBlocked = false,
   mediaKind?: MediaKind | MediaKind[],
+  labelPrefix?: string,
 ): Promise<CreativePhoto[]> {
   const params = new URLSearchParams({ includeBlocked: String(includeBlocked) })
   const kinds = mediaKind == null ? [] : Array.isArray(mediaKind) ? mediaKind : [mediaKind]
   if (kinds.length) params.set('mediaKind', kinds.join(','))
+  if (labelPrefix) params.set('labelPrefix', labelPrefix)
   return apiGet<CreativePhoto[]>(`${photosBase(projectId)}?${params.toString()}`, token)
 }
 
@@ -726,7 +737,8 @@ export function creativeToRenderCreative(
       body: beat.body ?? undefined,
       cta: beat.cta ?? undefined,
     })),
-    kind: creative.kind,
+    // CAROUSEL is never rendered by the layout engine; map to STILL so callers stay type-safe.
+    kind: creative.kind === 'CAROUSEL' ? 'STILL' : creative.kind,
     motion: motion
       ? {
           preset: motion.preset ?? undefined,
