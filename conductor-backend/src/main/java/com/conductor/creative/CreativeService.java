@@ -310,11 +310,27 @@ public class CreativeService {
         CreativeMotion motionRequest = request.getMotion() != null ? request.getMotion() : toMotion(current.getMotion());
         CreativeAudio audioRequest = request.getAudio() != null ? request.getAudio() : toAudio(current.getAudio());
 
+        // Switching to or from CAROUSEL: the media fields of the kind being left, when merely carried over
+        // from the row, no longer apply and would fail kindFields. A PATCH null means "keep", so without
+        // this a client could never clear them (photoId, sequenceKind) and the switch could never save.
+        boolean kindChanging = request.getKind() != null && !Objects.equals(kind, current.getKind());
+        if (kindChanging && Creative.KIND_CAROUSEL.equals(kind)) {
+            if (request.getPhotoId() == null) photoId = null;
+            if (request.getSequenceKind() == null) sequenceKind = null;
+            if (request.getSequence() == null) sequence = List.of();
+            if (request.getClipMedia() == null) clipMedia = Map.of();
+        } else if (kindChanging && Creative.KIND_CAROUSEL.equals(current.getKind())) {
+            if (request.getSlides() == null) slides = Map.of();
+            if (request.getSlideAltText() == null) slideAltText = List.of();
+        }
+
         MediaResolver media = new MediaResolver(projectId, null);
         if (Creative.KIND_CAROUSEL.equals(kind) && request.getPlacements() == null
-                && (request.getSlides() != null || placements.isEmpty())) {
+                && (request.getSlides() != null || placements.isEmpty() || kindChanging)) {
             List<String> derived = deriveCarouselPlacements(media, slides);
-            if (!derived.isEmpty()) {
+            // The old kind's placements say nothing about a carousel's, so a switch takes the derived set
+            // even when it is still empty (no slides chosen yet).
+            if (!derived.isEmpty() || kindChanging) {
                 placements = derived;
             }
         }

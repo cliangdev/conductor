@@ -801,6 +801,41 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void switchingAStillWithAPhotoToCarouselAndBackDropsTheFieldsTheOtherKindCannotCarry() {
+        CreateCreativeRequest still = concept("Plan the week in *one sentence*.", "A calm plan.");
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), still, admin);
+        assertThat(created.creative().getPhotoId()).isNotNull();
+
+        // What the editor sends: photoId null (= keep, in a PATCH), and no placements before any slide is chosen.
+        PatchCreativeRequest toCarousel = new PatchCreativeRequest(created.creative().getVersion());
+        toCarousel.setKind(CreativeKind.CAROUSEL);
+        toCarousel.setSlides(Map.of());
+        toCarousel.setSequence(List.of());
+        CreativeService.CreativeView carousel = creativeService.patchCreative(project.getId(),
+                created.creative().getId(), toCarousel, admin);
+        assertThat(carousel.creative().getKind()).isEqualTo(Creative.KIND_CAROUSEL);
+        assertThat(carousel.creative().getPhotoId()).isNull();
+        assertThat(carousel.creative().getPlacements()).isEmpty();
+
+        PatchCreativeRequest addSlides = new PatchCreativeRequest(carousel.creative().getVersion());
+        addSlides.setSlides(Map.of("4x5", imageIds(2, 1080, 1350, true)));
+        addSlides.setSlideAltText(List.of("One", "Two"));
+        CreativeService.CreativeView withSlides = creativeService.patchCreative(project.getId(),
+                created.creative().getId(), addSlides, admin);
+        assertThat(withSlides.creative().getPlacements()).extracting(JsonNode::asText).containsExactly("4x5");
+
+        // And back: the slides are only carried over from the row, so the switch drops them.
+        PatchCreativeRequest toStill = new PatchCreativeRequest(withSlides.creative().getVersion());
+        toStill.setKind(CreativeKind.STILL);
+        toStill.setPhotoId(photo.getId());
+        CreativeService.CreativeView back = creativeService.patchCreative(project.getId(),
+                created.creative().getId(), toStill, admin);
+        assertThat(back.creative().getKind()).isEqualTo(Creative.KIND_STILL);
+        assertThat(back.creative().getSlides()).isNull();
+        assertThat(back.creative().getSlideAltText()).isNull();
+    }
+
+    @Test
     void aCarouselDraftSpecJudgesLocalSlidesByTheirDeclaredSizeAndProvenance() {
         LocalMediaInfo good = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1350).source("own").licence("Own work");
         LocalMediaInfo wrong = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1080);
