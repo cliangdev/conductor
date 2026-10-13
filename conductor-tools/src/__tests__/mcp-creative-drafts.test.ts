@@ -22,7 +22,8 @@ vi.mock('../mcp/api.js', () => ({
     }
   },
 }))
-vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn(), renderDraft: vi.fn() }))
+vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn(), renderDraft: vi.fn(), renderViaApi: vi.fn() }))
+vi.mock('../lib/poster-sheet.js', () => ({ composePosterSheet: vi.fn() }))
 vi.mock('../lib/media-probe.js', () => ({ probeMedia: vi.fn(), extractPoster: vi.fn() }))
 vi.mock('../mcp/tools/creatives.js', () => ({
   createCreative: vi.fn(),
@@ -32,7 +33,8 @@ vi.mock('../mcp/tools/creatives.js', () => ({
 }))
 
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../mcp/api.js'
-import { renderCreative, renderDraft } from '../lib/creative-render.js'
+import { renderCreative, renderDraft, renderViaApi } from '../lib/creative-render.js'
+import { composePosterSheet } from '../lib/poster-sheet.js'
 import { probeMedia } from '../lib/media-probe.js'
 import { createCreative, updateCreative, getCreative, uploadCreativeMedia } from '../mcp/tools/creatives.js'
 import { previewCreativeDraft, commitCreativeDraft, pruneDrafts } from '../mcp/tools/creative-drafts.js'
@@ -561,5 +563,102 @@ describe('pruneDrafts', () => {
     const old2 = makeDraftDir('old2', { createdAt: '2020-01-01T00:00:00Z', committed: false })
     await expect(commitCreativeDraft({ draftDir: root }, config, { projectRoot: root })).rejects.toThrow()
     expect(fs.existsSync(old2)).toBe(false)
+  })
+})
+
+describe('CAROUSEL drafts', () => {
+  let s1: string
+  let s2: string
+  beforeEach(() => {
+    s1 = path.join(root, '01.png')
+    s2 = path.join(root, '02.png')
+    fs.writeFileSync(s1, PNG)
+    fs.writeFileSync(s2, PNG)
+    mocked(composePosterSheet).mockResolvedValue(Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+  })
+
+  it('maps slidePaths to local refs, calls draft-spec, composes a sheet per placement and renders nothing', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: {}, readiness: { ready: false } })
+
+    const result = await previewCreativeDraft(
+      { kind: 'CAROUSEL', caption: 'C', slidePaths: { '4x5': [s1, s2], '9x16': [s2] } },
+      config,
+      { projectRoot: root }
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const [url, body] = mocked(apiPost).mock.calls[0]! as [string, Record<string, any>]
+    expect(url).toBe('/api/v2/projects/proj-1/marketing/creatives/draft-spec')
+    expect(body.slides).toEqual({ '4x5': ['local:slide-1', 'local:slide-2'], '9x16': ['local:slide-2'] })
+    expect(body.slidePaths).toBeUndefined()
+    expect(body.localMedia['slide-1']).toEqual({ kind: 'IMAGE', width: 1, height: 1 })
+    expect(renderDraft).not.toHaveBeenCalled()
+    expect(composePosterSheet).toHaveBeenCalledWith([s1, s2])
+    expect(composePosterSheet).toHaveBeenCalledWith([s2])
+    expect(result.sheets?.map((x) => x.placementKey)).toEqual(['4x5', '9x16'])
+    expect(result.image?.mimeType).toBe('image/jpeg')
+    expect(result.readiness).toEqual({ ready: false })
+    expect(result.passed).toBe(true)
+    expect(fs.existsSync(path.join(result.draftDir, 'sheet-4x5.jpg'))).toBe(true)
+  })
+
+  it('accepts an existing media id in slidePaths and refuses a path that does not exist', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ readiness: {} })
+    const id = '123e4567-e89b-12d3-a456-426614174000'
+    const ok = await previewCreativeDraft({ kind: 'CAROUSEL', slidePaths: { default: [id, s1] } }, config, { projectRoot: root })
+    expect(ok.ok).toBe(true)
+    expect((mocked(apiPost).mock.calls[0]![1] as any).slides.default).toEqual([id, 'local:slide-1'])
+
+    const bad = await previewCreativeDraft({ kind: 'CAROUSEL', slidePaths: { default: ['/nope.png'] } }, config, { projectRoot: root })
+    expect(bad).toMatchObject({ ok: false })
+  })
+
+  it('refuses slidePaths on another kind', async () => {
+    const r = await previewCreativeDraft({ kind: 'STILL', slidePaths: { default: [s1] } }, config, { projectRoot: root })
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/CAROUSEL/) })
+  })
+
+  it('surfaces slide violations as a structured 422', async () => {
+    mocked(apiPost).mockRejectedValueOnce(
+      new ApiError(422, 'bad', { violations: [{ field: 'slides.4x5[0]', ruleId: 'slideAspect', message: 'wrong aspect' }] })
+    )
+    const r = await previewCreativeDraft({ kind: 'CAROUSEL', slidePaths: { '4x5': [s1] } }, config, { projectRoot: root })
+    expect(r).toMatchObject({ ok: false, status: 422, error: '[slides.4x5[0]] wrong aspect' })
+  })
+
+  it('commit uploads slides in order, rewrites slides, then requests the server render', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: {}, readiness: {} })
+    const preview = await previewCreativeDraft(
+      { kind: 'CAROUSEL', caption: 'C', slidePaths: { '4x5': [s1, s2] } },
+      config,
+      { projectRoot: root }
+    )
+    if (!preview.ok) throw new Error(preview.error)
+    mocked(apiPost).mockReset()
+
+    const order: string[] = []
+    mocked(uploadCreativeMedia).mockImplementation(async ({ filePath }: { filePath: string }) => {
+      order.push(`upload ${path.basename(filePath)}`)
+      return { media: { id: 'm-' + path.basename(filePath, '.png') }, warnings: [] }
+    })
+    mocked(createCreative).mockImplementation(async () => {
+      order.push('create')
+      return { id: 'c1', kind: 'CAROUSEL', version: 1 }
+    })
+    mocked(renderViaApi).mockImplementation(async () => {
+      order.push('render')
+      return { ok: true, renderId: 'r1', state: 'SUCCEEDED', frames: [{ placementKey: '4x5' }] }
+    })
+    mocked(getCreative).mockResolvedValue({ id: 'c1', version: 1, readiness: {} })
+
+    const result = await commitCreativeDraft({ draftDir: preview.draftDir, photoChecked: true, licence: 'Own work' }, config, { projectRoot: root })
+
+    expect(order).toEqual(['upload 01.png', 'upload 02.png', 'create', 'render'])
+    expect((mocked(createCreative).mock.calls[0]![0] as any).slides).toEqual({ '4x5': ['m-01', 'm-02'] })
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/photos/m-01', { checked: true }, config)
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/photos/m-02', { checked: true }, config)
+    expect(renderCreative).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ ok: true, creativeId: 'c1' })
   })
 })

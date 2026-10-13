@@ -88,8 +88,9 @@ type Creative = {
 
   // MOTION only (creative.kind === 'MOTION'; everything above still applies for copy/look — a MOTION
   // creative is a STILL creative plus an animation timeline). See motion.js's Public API section below.
-  kind?: 'STILL' | 'MOTION' | 'CLIP'; // this package only branches on 'MOTION'; CLIP is raw video,
-                                       // assembled server-side with no rendering (see PR 1)
+  kind?: 'STILL' | 'MOTION' | 'CLIP' | 'CAROUSEL'; // this package only branches on 'MOTION'; CLIP is raw video
+                                       // and CAROUSEL finished images, both assembled server-side with no
+                                       // rendering, so CAROUSEL never reaches this package
   motion?: Motion;
   audio?: Audio;
   backgroundVideoUrl?: string;  // a clip background's signed URL (motion.background.source === 'clip')

@@ -27,9 +27,9 @@ channel and title strip, take comparable space (check current platform guidance)
 
 | Platform | Format and aspect | Length | What the ranking rewards | Sound and captions |
 |---|---|---|---|---|
-| TikTok | Video 9:16 (photo carousels also exist) | Up to several minutes; short pieces of about 15 to 45 s are the planning default | Watch time and completion, rewatches, shares, comments; TikTok's Creative Codes frame a piece as hook, body, close | Built for sound on; on-screen captions still matter. Caption text up to about 2,200 characters, but only the first line is visible before "more" |
+| TikTok | Video 9:16 (photo carousels also exist: CAROUSEL Creatives use 9:16, up to 35 images) | Up to several minutes; short pieces of about 15 to 45 s are the planning default | Watch time and completion, rewatches, shares, comments; TikTok's Creative Codes frame a piece as hook, body, close | Built for sound on; on-screen captions still matter. Caption text up to about 2,200 characters, but only the first line is visible before "more" |
 | Instagram Reels | Video 9:16 | Up to 3 minutes; about 15 to 30 s is the planning default | Watch time, likes and sends (shares by direct message); originality | Captions on screen; sound-off viewing is common. Caption up to 2,200 characters, about 125 shown before "more" |
-| Instagram feed | Image or carousel 4:5 (also 1:1) | Carousels 2 to 10 cards | Saves, sends, likes; carousel swipes | No sound; the first card carries the hook |
+| Instagram feed | Image or carousel 4:5 (also 1:1); finished-image CAROUSEL Creatives use 4:5, else 1:1 | Carousels 2 to 10 cards | Saves, sends, likes; carousel swipes | No sound; the first card carries the hook |
 | Instagram Stories | 9:16, 2 to 7 beats | Each story card is short; sequences aim for 3 to 5 beats | Taps forward and replies; completion of the sequence | Text on screen; stickers and links sit in the UI zones |
 | YouTube Shorts | Video 9:16 | Up to 3 minutes (older limits were 60 s) | Viewed vs swiped away, then average view duration | Sound on, captions on screen; title up to 100 characters |
 | Facebook | Reels 9:16; feed image or video 1:1 | Reels are short vertical video; feed video varies | Watch time, shares, meaningful comments | Most feed video is watched muted: captions are required |

@@ -314,6 +314,23 @@ row in `list_publish_targets`) is refused at selection, before anything is uploa
   first at approval-check time (`STORY_SINGLE_ITEM`); a caller building the selection itself should
   send exactly one rather than rely on that.
 
+### Carousels from a Creative
+
+A `CAROUSEL` Creative (see [`creatives.md`](creatives.md#finished-images-carousel)) attaches as an
+ordered multi-image selection, one explicit list per destination, picked by format and platform:
+
+| Destination | Slides used | Limit |
+|---|---|---|
+| Instagram feed | `4x5`, else `1x1` | 10 |
+| Facebook feed | `1x1`, else `4x5` | 10 |
+| TikTok (photo post) | `9x16`, else `4x5` | 35 |
+| Instagram reel, any story, YouTube | none | not supported |
+
+A destination that cannot take a multi-image post gets an explicit empty selection and the preflight
+raises the blocker `MULTI_IMAGE_UNSUPPORTED` ("Instagram Reel (@acct) can't take a multi-image post --
+switch it to Feed or remove it."). A one-slide carousel is a finished still and publishes as a
+single image. Order is content: slides attach in the order of their list.
+
 Meanwhile the two long-standing Facebook feed numbers move: **75 days** is the actual scheduling
 ceiling for a Page feed post (the doc previously said 30, which was never the real limit), and the
 new 29-day figure is a Reels-only cap layered under it.

@@ -114,12 +114,12 @@ async function loadRenderCore(): Promise<{ run: RenderCore['run']; createApiTran
 }
 
 /**
- * A CLIP creative has no local browser render path at all — it's a finished video used as-is, and
- * the backend assembles its frames itself synchronously. This just POSTs the render and relays what
+ * A CLIP or CAROUSEL creative has no local browser render path at all — it's finished media used
+ * as-is (a video, or ordered images), and the backend assembles its frames itself synchronously. This just POSTs the render and relays what
  * came back — `ApiError`'s `message` is already the server's own plain-English sentence (an RFC 7807
  * `detail`), so a failure reaches the caller unchanged rather than wrapped in a generic message.
  */
-async function renderViaApi(params: RenderCreativeParams, config: Config): Promise<RenderCreativeResult> {
+export async function renderViaApi(params: RenderCreativeParams, config: Config): Promise<RenderCreativeResult> {
   try {
     const detail = await apiPost<{ id: string; state: string; error?: string | null; frames?: RenderFrame[] }>(
       `/api/v2/projects/${config.projectId}/marketing/creatives/${params.creativeId}/renders`,
@@ -143,7 +143,7 @@ async function renderViaApi(params: RenderCreativeParams, config: Config): Promi
  * binary — resolved the same way `upload_creative_media`/`media-probe.ts` finds one (a system binary
  * on PATH first, else the bundled `ffmpeg-static` fallback) — and runs at a fixed 30fps; a previewOnly
  * MOTION render (the key-moments contact sheet) needs neither ffmpeg nor a video encode, so it skips
- * this resolution entirely. CLIP creatives never launch a browser — see {@link renderViaApi}.
+ * this resolution entirely. CLIP and CAROUSEL creatives never launch a browser — see {@link renderViaApi}.
  */
 export async function renderCreative(
   params: RenderCreativeParams,
@@ -154,7 +154,7 @@ export async function renderCreative(
     `/api/v2/projects/${config.projectId}/marketing/creatives/${params.creativeId}`,
     config
   )
-  if (creative.kind === 'CLIP') {
+  if (creative.kind === 'CLIP' || creative.kind === 'CAROUSEL') {
     return renderViaApi(params, config)
   }
 

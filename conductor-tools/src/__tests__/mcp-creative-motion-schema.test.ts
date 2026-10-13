@@ -46,7 +46,7 @@ describe('create_creative / update_creative schemas accept motion/audio', () => 
   it('create_creative\'s kind description no longer claims MOTION is unrenderable', () => {
     const { properties } = schemaFor('create_creative')
     const kind = properties['kind'] as unknown as { enum: string[]; description: string }
-    expect(kind.enum).toEqual(['STILL', 'MOTION', 'CLIP'])
+    expect(kind.enum).toEqual(['STILL', 'MOTION', 'CLIP', 'CAROUSEL'])
     expect(kind.description).not.toMatch(/not yet renderable/)
   })
 })

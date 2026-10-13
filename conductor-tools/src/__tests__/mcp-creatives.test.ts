@@ -40,18 +40,19 @@ vi.mock('../mcp/api.js', () => ({
 }))
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
+  readdir: vi.fn(),
   mkdtemp: vi.fn(),
   writeFile: vi.fn(),
   rm: vi.fn(),
 }))
-vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn() }))
+vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn(), renderViaApi: vi.fn() }))
 vi.mock('../lib/media-probe.js', () => ({ probeMedia: vi.fn(), extractPoster: vi.fn() }))
 vi.mock('../lib/poster-sheet.js', () => ({ composePosterSheet: vi.fn() }))
 vi.mock('../lib/provenance-sidecar.js', () => ({ readProvenanceSidecar: vi.fn() }))
 
-import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../mcp/api.js'
-import { renderCreative } from '../lib/creative-render.js'
+import { renderCreative, renderViaApi } from '../lib/creative-render.js'
 import { probeMedia, extractPoster } from '../lib/media-probe.js'
 import { composePosterSheet } from '../lib/poster-sheet.js'
 import { readProvenanceSidecar } from '../lib/provenance-sidecar.js'
@@ -65,6 +66,8 @@ import {
   createCreative,
   updateCreative,
   uploadCreativeMedia,
+  uploadCreativeMediaAny,
+  uploadCreativeMediaBatch,
   uploadCreativePhoto,
   renderCreativeTool,
   previewCreative,
@@ -521,6 +524,15 @@ describe('list_creative_media', () => {
     await listCreativeMedia({ kind: 'VIDEO', includeBlocked: true }, config)
     expect(apiGet).toHaveBeenCalledWith(
       '/api/v2/projects/proj-1/marketing/photos?mediaKind=VIDEO&includeBlocked=true',
+      config
+    )
+  })
+
+  it('sends labelPrefix as a query param', async () => {
+    mocked(apiGet).mockResolvedValue([])
+    await listCreativeMedia({ labelPrefix: '01-import 4x5' }, config)
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/photos?labelPrefix=01-import+4x5',
       config
     )
   })
@@ -1385,5 +1397,170 @@ describe('attach_creative_to_post', () => {
     await expect(attachCreativeToPost({ creativeId: 'c1', renderId: 'r9' }, config)).rejects.toThrow(/postId is required/)
     expect(apiGet).not.toHaveBeenCalled()
     expect(apiPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('CAROUSEL creatives', () => {
+  it('create_creative passes kind, slides and slideAltText through unchanged', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'c1' })
+    await createCreative(
+      { kind: 'CAROUSEL', slides: { '4x5': ['m1', 'm2'], default: ['m3'] }, slideAltText: ['a', 'b'], caption: 'Hi' },
+      config
+    )
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives',
+      expect.objectContaining({ kind: 'CAROUSEL', slides: { '4x5': ['m1', 'm2'], default: ['m3'] }, slideAltText: ['a', 'b'] }),
+      config
+    )
+  })
+
+  it('update_creative patches slides', async () => {
+    mocked(apiPatch).mockResolvedValue({ id: 'c1' })
+    await updateCreative({ creativeId: 'c1', version: 2, slides: { '9x16': ['m1'] } }, config)
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives/c1',
+      { version: 2, slides: { '9x16': ['m1'] } },
+      config
+    )
+  })
+
+  it('get_creative returns slides and slideAltText', async () => {
+    mocked(apiGet).mockImplementation(async (url: string) => {
+      if (url.endsWith('/c1')) return { id: 'c1', number: 1, kind: 'CAROUSEL', slides: { default: ['m1'] }, slideAltText: ['x'] }
+      if (url.endsWith('/readiness')) return { ready: false }
+      if (url.endsWith('/performance')) return { family: [] }
+      return []
+    })
+    const result = await getCreative({ creativeId: 'c1' }, config)
+    expect(result).toMatchObject({ slides: { default: ['m1'] }, slideAltText: ['x'] })
+  })
+
+  it('attach renders a CAROUSEL server-side first when it has no render', async () => {
+    mocked(apiGet).mockImplementation(async (url: string) =>
+      url.endsWith('/renders') ? [] : { kind: 'CAROUSEL' }
+    )
+    mocked(renderViaApi).mockResolvedValue({ ok: true, renderId: 'r7', state: 'SUCCEEDED', frames: [] })
+    mocked(apiPost).mockResolvedValue({ assets: [] })
+    await attachCreativeToPost({ creativeId: 'c1', postId: 'w1' }, config)
+    expect(renderViaApi).toHaveBeenCalledWith({ creativeId: 'c1', previewOnly: false, renderer: 'mcp' }, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives/c1/attach',
+      { renderId: 'r7', workItemId: 'w1' },
+      config
+    )
+  })
+
+  it('attach does not auto-render a STILL, and surfaces a failed CLIP render', async () => {
+    mocked(apiGet).mockImplementation(async (url: string) => (url.endsWith('/renders') ? [] : { kind: 'STILL' }))
+    await expect(attachCreativeToPost({ creativeId: 'c1', postId: 'w1' }, config)).rejects.toThrow(/No SUCCEEDED render/)
+    expect(renderViaApi).not.toHaveBeenCalled()
+
+    mocked(apiGet).mockImplementation(async (url: string) => (url.endsWith('/renders') ? [] : { kind: 'CLIP' }))
+    mocked(renderViaApi).mockResolvedValue({ ok: false, error: 'no media', frames: [] })
+    await expect(attachCreativeToPost({ creativeId: 'c1', postId: 'w1' }, config)).rejects.toThrow(/no media/)
+  })
+})
+
+describe('upload_creative_media batch', () => {
+  function stubUploads(failLabels: string[] = []) {
+    mocked(readFile).mockResolvedValue(PNG_1X1)
+    mocked(apiPost).mockImplementation(async (url: string, body: Record<string, unknown>) => {
+      if (url.endsWith('/photos')) {
+        if (failLabels.includes(body['label'] as string)) throw new Error('boom ' + body['label'])
+        return { id: 'id-' + body['label'], uploadUrl: 'https://bucket.test/' + body['label'] }
+      }
+      const id = url.split('/photos/')[1]!.replace('/confirm', '')
+      return { id }
+    })
+    mocked(readProvenanceSidecar).mockResolvedValue(null)
+  }
+
+  it('uploads every file, keeps going past a failure and returns per-file results with counts', async () => {
+    stubUploads(['b'])
+    const result = await uploadCreativeMediaBatch(
+      { files: [{ filePath: '/x/a.png' }, { filePath: '/x/b.png' }, { filePath: '/x/c.png', label: 'cee' }] },
+      config
+    )
+    expect(result).toMatchObject({ total: 3, uploaded: 2, failed: 1 })
+    expect(result.results[0]).toEqual({ file: '/x/a.png', label: 'a', id: 'id-a' })
+    expect(result.results[1]).toMatchObject({ file: '/x/b.png', label: 'b', error: 'boom b' })
+    expect(result.results[2]).toMatchObject({ label: 'cee', id: 'id-cee' })
+  })
+
+  it('folder mode: sorts by name, filters by default extensions, applies labelTemplate and shared provenance', async () => {
+    stubUploads()
+    mocked(readdir).mockResolvedValue(
+      ['10.png', '2.png', 'notes.txt', '1.png.provenance.json', '.hidden.png'].map((name) => ({ name, isFile: () => true }))
+    )
+    const result = await uploadCreativeMediaBatch(
+      { folder: '/slides', labelTemplate: '01-import {stem}', licence: 'Own work' },
+      config
+    )
+    expect(result.results.map((r) => r.label)).toEqual(['01-import 2', '01-import 10'])
+    expect(result.results[0]!.file).toBe('/slides/2.png')
+    const body = mocked(apiPost).mock.calls.find((c) => (c[1] as Record<string, unknown>)['label'] === '01-import 2')![1]
+    expect(body).toMatchObject({ licence: 'Own work' })
+  })
+
+  it('folder mode: glob narrows the files', async () => {
+    stubUploads()
+    mocked(readdir).mockResolvedValue(['slide-1.png', 'cover.png', 'slide-2.png'].map((name) => ({ name, isFile: () => true })))
+    const result = await uploadCreativeMediaBatch({ folder: '/s', glob: 'slide-*.png' }, config)
+    expect(result.results.map((r) => r.label)).toEqual(['slide-1', 'slide-2'])
+  })
+
+  it('a sidecar wins over shared provenance; a per-file value wins over the sidecar', async () => {
+    stubUploads()
+    mocked(readProvenanceSidecar).mockImplementation(async (p: string) =>
+      p === '/x/a.png' ? { source: 'gen', licence: 'house', aiGenerated: true } : null
+    )
+    await uploadCreativeMediaBatch(
+      { files: [{ filePath: '/x/a.png' }, { filePath: '/x/b.png', source: 'mine' }], source: 'shared', licence: 'Own work' },
+      config
+    )
+    const bodyFor = (label: string) => mocked(apiPost).mock.calls.find((c) => (c[1] as Record<string, unknown>)?.['label'] === label)![1]
+    expect(bodyFor('a')).toMatchObject({ source: 'gen', licence: 'house', aiGenerated: true })
+    expect(bodyFor('b')).toMatchObject({ source: 'mine', licence: 'Own work' })
+  })
+
+  it('warns, without truncating, when a label is over 200 characters', async () => {
+    stubUploads()
+    const long = 'x'.repeat(201)
+    const result = await uploadCreativeMediaBatch({ files: [{ filePath: '/x/a.png', label: long }] }, config)
+    expect(result.warnings[0]).toMatch(/label is 201 characters/)
+    expect(mocked(apiPost).mock.calls[0]![1]).toMatchObject({ label: long })
+  })
+
+  it('refuses more than 100 files and requires exactly one source form', async () => {
+    const files = Array.from({ length: 101 }, (_, i) => ({ filePath: `/x/${i}.png` }))
+    await expect(uploadCreativeMediaBatch({ files }, config)).rejects.toThrow(/100-file limit/)
+    await expect(uploadCreativeMediaAny({ filePath: '/x/a.png', folder: '/x' }, config)).rejects.toThrow(/exactly one/)
+    await expect(uploadCreativeMediaAny({}, config)).rejects.toThrow(/exactly one/)
+  })
+
+  it('uploadCreativeMediaAny keeps the single form returning { media, warnings }', async () => {
+    stubUploads()
+    const result = await uploadCreativeMediaAny({ filePath: '/x/a.png' }, config)
+    expect(result).toHaveProperty('media')
+  })
+
+  it('never runs more than 3 uploads at once', async () => {
+    mocked(readFile).mockResolvedValue(PNG_1X1)
+    mocked(readProvenanceSidecar).mockResolvedValue(null)
+    let active = 0
+    let peak = 0
+    mocked(apiPost).mockImplementation(async (url: string, body: Record<string, unknown>) => {
+      if (url.endsWith('/photos')) {
+        active++
+        peak = Math.max(peak, active)
+        await new Promise((r) => setTimeout(r, 5))
+        active--
+        return { id: 'i', uploadUrl: 'https://b.test/x' }
+      }
+      return { id: 'i' }
+    })
+    await uploadCreativeMediaBatch({ files: Array.from({ length: 9 }, (_, i) => ({ filePath: `/x/${i}.png` })) }, config)
+    expect(peak).toBeLessThanOrEqual(3)
+    expect(peak).toBeGreaterThan(1)
   })
 })
