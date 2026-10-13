@@ -614,6 +614,16 @@ describe('CAROUSEL drafts', () => {
     expect(bad).toMatchObject({ ok: false })
   })
 
+  it('sends kind CAROUSEL when slidePaths is given without a kind, so the draft and the commit are a carousel', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: {}, readiness: {} })
+    const r = await previewCreativeDraft({ caption: 'C', slidePaths: { '4x5': [s1] } }, config, { projectRoot: root })
+    expect(r.ok).toBe(true)
+    expect((mocked(apiPost).mock.calls[0]![1] as any).kind).toBe('CAROUSEL')
+    if (!r.ok) return
+    const draft = JSON.parse(fs.readFileSync(path.join(r.draftDir, 'draft.json'), 'utf8'))
+    expect(draft.request.kind).toBe('CAROUSEL')
+  })
+
   it('refuses slidePaths on another kind', async () => {
     const r = await previewCreativeDraft({ kind: 'STILL', slidePaths: { default: [s1] } }, config, { projectRoot: root })
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/CAROUSEL/) })

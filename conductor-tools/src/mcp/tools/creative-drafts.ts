@@ -269,6 +269,8 @@ function buildDraftRequest(params: PreviewCreativeDraftParams): { request: Recor
       })
     }
     request['slides'] = slides
+    // slidePaths implies CAROUSEL: without the kind the server would judge (and commit) a STILL.
+    if (request['kind'] === undefined) request['kind'] = 'CAROUSEL'
   }
 
   if (Array.isArray(request['sequence'])) {
