@@ -63,21 +63,27 @@ export function CarouselSlidesSection({
     const [id] = nextIds.splice(from, 1)
     nextIds.splice(to, 0, id)
     // The alt text travels with its slide.
-    const alt = ids.map((_, i) => slideAltText[i] ?? '')
+    const alt = paddedAlt()
     const [a] = alt.splice(from, 1)
     alt.splice(to, 0, a)
     commit(nextIds, alt)
     setIndex(to)
   }
 
+  // slideAltText is shared by every placement, so it can be longer than this placement's list: keep the
+  // entries past the end (another placement's slides) instead of truncating them away.
+  function paddedAlt(): string[] {
+    return Array.from({ length: Math.max(ids.length, slideAltText.length) }, (_, k) => slideAltText[k] ?? '')
+  }
+
   function remove(i: number) {
-    const alt = ids.map((_, k) => slideAltText[k] ?? '')
+    const alt = paddedAlt()
     alt.splice(i, 1)
     commit(ids.filter((_, k) => k !== i), alt)
   }
 
   function setAlt(i: number, value: string) {
-    const alt = Array.from({ length: Math.max(ids.length, slideAltText.length) }, (_, k) => slideAltText[k] ?? '')
+    const alt = paddedAlt()
     alt[i] = value
     onChange({ slides, slideAltText: alt })
   }

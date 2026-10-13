@@ -109,6 +109,15 @@ describe('CarouselSlidesSection', () => {
     expect(spy.mock.lastCall![0].slideAltText).toEqual(['y', 'z'])
   })
 
+  it('keeps alt text past this placement\'s last slide when reordering or removing (it belongs to a longer placement)', async () => {
+    const spy = vi.fn()
+    render(<Harness initial={{ '4x5': ['a', 'b'], '9x16': ['a', 'b', 'c'] }} alt={['x', 'y', 'z']} onChangeSpy={spy} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Move slide 1 down' }))
+    expect(spy.mock.lastCall![0].slideAltText).toEqual(['y', 'x', 'z'])
+    await userEvent.click(screen.getByRole('button', { name: 'Remove slide 2' }))
+    expect(spy.mock.lastCall![0].slideAltText).toEqual(['y', 'z'])
+  })
+
   it('warns, without blocking, when an image does not match the placement aspect', () => {
     render(<Harness initial={{ '4x5': ['a', 'wide'] }} />)
     expect(screen.queryByTestId('slide-aspect-warning-0')).not.toBeInTheDocument()
