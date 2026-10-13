@@ -515,6 +515,56 @@ class FacebookPublishActionTest {
     }
 
     @Test
+    void storySequence_cancelledWhileAStoryIsInFlight_recordsThatStory_andPublishesNoMore() {
+        // The invocation deadline cancels the thread with an interrupt, but nothing on Facebook's story path
+        // blocks interruptibly: without its own check the sequence would run on and race the retry that the
+        // timed-out (FAILED) target now allows.
+        mediaResolver.media = List.of(imageN(1), imageN(2), imageN(3));
+        AtomicInteger stories = new AtomicInteger();
+        onPost("/page-1/photos", call -> new MetaGraphClient.PublishResponse("photo", null));
+        onPost("/page-1/photo_stories", call -> {
+            Thread.currentThread().interrupt(); // the cancel lands while story 1's call is in flight
+            return new MetaGraphClient.PublishResponse("story-" + stories.incrementAndGet(), null);
+        });
+
+        try {
+            assertThatThrownBy(() -> connector.invoke("publish_facebook_post",
+                    Map.of("format", "story", "work_item_id", "wi-1", "target_id", "t-1"), CTX))
+                    .hasMessageContaining("Interrupted");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(stories.get()).isEqualTo(1);
+        assertThat(calls.stream().filter(c -> c.uri().getPath().endsWith("/page-1/photos")).count()).isEqualTo(1);
+        // The story that went live is recorded, so the retry starts at story 2.
+        assertThat(checkpoints.get("t-1")).contains("story-1");
+    }
+
+    @Test
+    void storySequence_filesChangedAfterAPartialFailure_keepsTheUnchangedLivePrefix() {
+        // Story 1 (s1) is live; the author then swapped the file at position 2. Re-posting s1 would put a
+        // duplicate up next to the live one, so only the changed tail is published.
+        mediaResolver.media = List.of(imageN(1), imageN(2), imageN(3));
+        checkpoints.put("t-1", "{\"kind\":\"story_sequence\",\"media\":[\"assets/proj/wi-1/s1.jpg\","
+                + "\"assets/proj/wi-1/old2.jpg\",\"assets/proj/wi-1/s3.jpg\"],"
+                + "\"stories\":[{\"id\":\"story-1\"},{\"id\":\"story-old2\"}]}");
+        AtomicInteger stories = new AtomicInteger(1);
+        onPost("/page-1/photos", call -> new MetaGraphClient.PublishResponse("photo", null));
+        onPost("/page-1/photo_stories", call ->
+                new MetaGraphClient.PublishResponse("story-" + stories.incrementAndGet(), null));
+
+        ActionResult result = connector.invoke("publish_facebook_post",
+                Map.of("format", "story", "work_item_id", "wi-1", "target_id", "t-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("story_ids", List.of("story-1", "story-2", "story-3"));
+        assertThat(calls.stream().filter(c -> c.uri().getPath().endsWith("/page-1/photos"))
+                .map(c -> c.param("url")).toList())
+                .satisfiesExactly(u -> assertThat(u).contains("s2.jpg"), u -> assertThat(u).contains("s3.jpg"));
+    }
+
+    @Test
     void storySequence_moreThanSevenItems_isAPermanentErrorNamingTheLimit() {
         mediaResolver.media = List.of(imageN(1), imageN(2), imageN(3), imageN(4), imageN(5), imageN(6),
                 imageN(7), imageN(8));

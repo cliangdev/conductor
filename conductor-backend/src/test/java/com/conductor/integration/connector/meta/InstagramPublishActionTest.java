@@ -447,6 +447,59 @@ class InstagramPublishActionTest {
     }
 
     @Test
+    void storySequence_lostPublishAnswer_takesTheIdFromTheLiveStories_notTheFeed() {
+        // Story 2's media_publish gets no answer, but its container is PUBLISHED. /media never lists stories
+        // (it would answer with the newest feed post), so the id comes from /stories: the newest one that is
+        // not story 1, which shares its timestamp.
+        mediaResolver.media = List.of(imageN(1), imageN(2));
+        quotaAvailable(0);
+        AtomicInteger containers = new AtomicInteger();
+        AtomicInteger publishes = new AtomicInteger();
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("c-" + containers.incrementAndGet()));
+        onPost("/ig-1/media_publish", call -> {
+            if (publishes.incrementAndGet() == 2) {
+                throw READ_TIMEOUT;
+            }
+            return new MetaGraphClient.ContainerResponse("m-1");
+        });
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("PUBLISHED", null));
+        onGet("/ig-1/stories", call -> new MetaGraphClient.StoryListResponse(List.of(
+                new MetaGraphClient.StoryListEntry("m-older", "2026-10-12T09:00:00+0000"),
+                new MetaGraphClient.StoryListEntry("m-1", "2026-10-12T10:00:05+0000"),
+                new MetaGraphClient.StoryListEntry("m-2", "2026-10-12T10:00:05+0000"))));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("m", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "work_item_id", "wi-1", "target_id", "t-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("story_ids", List.of("m-1", "m-2"));
+        assertThat(publishes.get()).isEqualTo(2);
+        assertThat(calls.stream().noneMatch(c -> c.method() == HttpMethod.GET
+                && c.uri().getPath().endsWith("/ig-1/media"))).isTrue();
+        assertThat(checkpoints.get("t-1")).contains("m-2");
+    }
+
+    @Test
+    void storySequence_lostPublishAnswer_withAnAmbiguousNewestStory_failsRatherThanGuess() {
+        mediaResolver.media = List.of(imageN(1));
+        quotaAvailable(0);
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("c-1"));
+        onPost("/ig-1/media_publish", call -> { throw READ_TIMEOUT; });
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("PUBLISHED", null));
+        onGet("/ig-1/stories", call -> new MetaGraphClient.StoryListResponse(List.of(
+                new MetaGraphClient.StoryListEntry("m-a", "2026-10-12T10:00:05+0000"),
+                new MetaGraphClient.StoryListEntry("m-b", "2026-10-12T10:00:05+0000"))));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "work_item_id", "wi-1", "target_id", "t-1"), CTX);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("Check the account before retrying");
+        assertThat(checkpoints).doesNotContainKey("t-1");
+    }
+
+    @Test
     void storySequence_moreThanSevenItems_isAPermanentErrorNamingTheLimit() {
         mediaResolver.media = List.of(imageN(1), imageN(2), imageN(3), imageN(4), imageN(5), imageN(6),
                 imageN(7), imageN(8));
