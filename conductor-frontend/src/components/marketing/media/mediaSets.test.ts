@@ -31,4 +31,11 @@ describe('mediaSets', () => {
     expect(buildCarouselPlan(slides('4x5', 11)).problems[0]).toMatch(/4:5 has 11 slides — the limit is 10/)
     expect(buildCarouselPlan(slides('9x16', 11)).problems).toEqual([])
   })
+
+  it('refuses blocked and unfinished uploads, as the server does', () => {
+    const blocked = buildCarouselPlan([photo('b', 'bad slide', 1080, 1350, { blocked: true })])
+    expect(blocked.problems.join(' ')).toMatch(/Blocked: bad slide/)
+    const pending = buildCarouselPlan([photo('p', 'half slide', 1080, 1350, { uploadStatus: 'PENDING' })])
+    expect(pending.problems.join(' ')).toMatch(/Still uploading: half slide/)
+  })
 })

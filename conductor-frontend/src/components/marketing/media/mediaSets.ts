@@ -77,9 +77,16 @@ export function buildCarouselPlan(items: CreativePhoto[]): CarouselPlan {
   const nonImages = items.filter((i) => (i.mediaKind ?? 'IMAGE') !== 'IMAGE')
   if (nonImages.length > 0) problems.push('Only images can go in a carousel — deselect the video and audio items.')
 
+  const label = (list: CreativePhoto[]) => sortNatural(list).map((i) => i.label || 'Untitled').join(', ')
+  const images = items.filter((i) => (i.mediaKind ?? 'IMAGE') === 'IMAGE')
+  const blocked = images.filter((i) => i.blocked)
+  if (blocked.length > 0) problems.push(`Blocked: ${label(blocked)}. Unblock or deselect them.`)
+  const pending = images.filter((i) => i.uploadStatus === 'PENDING')
+  if (pending.length > 0) problems.push(`Still uploading: ${label(pending)}.`)
+
   const buckets = new Map<string, CreativePhoto[]>()
   const offAspect: CreativePhoto[] = []
-  for (const item of items.filter((i) => (i.mediaKind ?? 'IMAGE') === 'IMAGE')) {
+  for (const item of images) {
     const key = nearestAspectPlacement(REGISTRY, item.width, item.height)
     if (!key || aspectMismatch(key, item.width, item.height)) {
       offAspect.push(item)
