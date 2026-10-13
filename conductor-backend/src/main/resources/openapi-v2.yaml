@@ -28,8 +28,6 @@ tags:
     description: Outcome Metric series on a Work Item
   - name: work-item-step-runs
     description: Step-run records on a Work Item
-  - name: area-assets
-    description: Area-scoped asset library across every Workflow in an Area
   - name: publish-targets
     description: Publishable social accounts a project can select on a Post
   - name: publish-metrics
@@ -1444,6 +1442,66 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/assets/from-media:
+    post:
+      tags:
+        - work-item-assets
+      summary: Add Media library items to a Work Item
+      description: >-
+        Links existing Media library items to the Work Item, in the given order, as file Assets that
+        reuse each item's stored object (nothing is copied). Refuses media that is blocked, still
+        uploading, AUDIO, or from another project, and a Work Item past its review gate (assets
+        locked) — the same lock as an upload.
+      operationId: addWorkItemAssetsFromMedia
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddAssetsFromMediaRequest"
+      responses:
+        "201":
+          description: The new file Assets, in request order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetResponse"
+        "400":
+          description: >-
+            A media id is blocked, still uploading, AUDIO, unknown in this project, or repeated; or the
+            Work Item is past its review gate (assets locked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found (also returned to a non-member of the project)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects/{projectId}/work-items/{workItemId}/assets/{assetId}/confirm:
     post:
       tags:
@@ -1682,112 +1740,6 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Work Item not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /projects/{projectId}/areas/{area}/assets:
-    get:
-      tags:
-        - area-assets
-      summary: The Area's asset library — every uploaded file Asset produced under it
-      description: >-
-        Lists UPLOADED, `kind=file` Assets across every Work Item whose bound Workflow belongs to the
-        given Area, newest first. The query keys on the Area, never on a Workflow slug or noun, so a
-        Workflow added to the Area later contributes its media here with no server change (COND-23
-        T7.1). PENDING uploads and `kind=link` Assets are never listed. Every row carries a
-        short-lived signed `previewUrl` minted per response — never persist or cache one.
-      operationId: listAreaAssets
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: area
-          in: path
-          required: true
-          description: Area slug, matched case-insensitively against the Workflow's `area` (e.g. `MARKETING`).
-          schema:
-            type: string
-        - name: mediaType
-          in: query
-          required: false
-          description: >-
-            Narrow to one media family, derived from the stored `contentType` prefix (`image/`,
-            `video/`). Omit for both.
-          schema:
-            type: string
-            enum:
-              - image
-              - video
-        - name: workflow
-          in: query
-          required: false
-          description: >-
-            Narrow to one owning Workflow slug (e.g. `MARKETING`). A slug outside the Area matches
-            nothing rather than escaping the Area scope.
-          schema:
-            type: string
-        - name: status
-          in: query
-          required: false
-          description: Narrow to Assets whose owning Work Item is in this Workflow-defined status.
-          schema:
-            type: string
-        - name: uploadedAfter
-          in: query
-          required: false
-          description: Only Assets uploaded at or after this instant.
-          schema:
-            type: string
-            format: date-time
-        - name: uploadedBefore
-          in: query
-          required: false
-          description: Only Assets uploaded at or before this instant.
-          schema:
-            type: string
-            format: date-time
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 0
-        - name: size
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 50
-      responses:
-        "200":
-          description: The Area's uploaded file Assets, newest first
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AreaAssetResponse"
-        "400":
-          description: Unrecognized mediaType, or a negative page/size
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Project not found or caller is not a member
           content:
             application/json:
               schema:
@@ -3171,6 +3123,49 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/photos/{photoId}/usage:
+    get:
+      tags:
+        - creatives
+      summary: Where a Media item is used
+      description: >-
+        The Creatives that reference the item (main photo, sequence beat, clip or carousel slide) and
+        the Work Items (Posts) that use it — directly, or through a rendered frame of one of those
+        Creatives.
+      operationId: getCreativePhotoUsage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: photoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The item's usage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaUsageResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Media not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects/{projectId}/marketing/photos/{photoId}/poster:
     post:
       tags:
@@ -5297,6 +5292,18 @@ components:
           description: >-
             Playback length in seconds for a video Asset, or null when unknown. The browser is the
             only source — no container parser ships with the JDK.
+        mediaId:
+          type: string
+          nullable: true
+          description: >-
+            The Media library item (`/marketing/photos/{id}`) this file Asset links to. A Post's file
+            is a link to Media, never a copy: the Asset reuses the Media item's stored object. Null for
+            kind=link Assets, for a Creative's rendered frame (see creativeFrameId), and for file rows
+            from before the Media library existed.
+        creativeFrameId:
+          type: string
+          nullable: true
+          description: The Creative render frame this file Asset links to, when it came from "Use in Post".
         previewUrl:
           type: string
           nullable: true
@@ -5310,60 +5317,6 @@ components:
         updatedAt:
           type: string
           format: date-time
-
-    AreaAssetResponse:
-      type: object
-      description: One uploaded file Asset in an Area's library, with the Work Item that produced it.
-      required:
-        - assetId
-        - previewUrl
-        - uploadedAt
-        - workItem
-      properties:
-        assetId:
-          type: string
-        previewUrl:
-          type: string
-          description: >-
-            Short-lived (15 minute) signed read URL for the stored object, minted per response and
-            never persisted — don't cache it.
-        contentType:
-          type: string
-          nullable: true
-        sizeBytes:
-          type: integer
-          format: int64
-          nullable: true
-        uploadedAt:
-          type: string
-          format: date-time
-          description: When the upload was initiated (the Asset row's creation instant).
-        workItem:
-          $ref: "#/components/schemas/AreaAssetWorkItemRef"
-
-    AreaAssetWorkItemRef:
-      type: object
-      description: The Work Item that owns an Area-library Asset, enough to label and link the row.
-      required:
-        - id
-        - displayId
-        - title
-        - status
-        - workflow
-      properties:
-        id:
-          type: string
-        displayId:
-          type: string
-          description: Human-facing key, `{projectKey}-{sequenceNumber}` (e.g. MK-12).
-        title:
-          type: string
-        status:
-          type: string
-          description: The Work Item's current Workflow-defined status.
-        workflow:
-          type: string
-          description: Slug of the Workflow the Work Item is bound to.
 
     CreateAssetUploadRequest:
       type: object
@@ -6998,6 +6951,16 @@ components:
           type: string
           nullable: true
           description: The signed PUT URL to upload bytes to — present only on the create response.
+        postCount:
+          type: integer
+          nullable: true
+          description: >-
+            How many Work Items (Posts) use this item, directly or through a Creative's rendered frame.
+            Set on list and get; null on create.
+        creativeCount:
+          type: integer
+          nullable: true
+          description: How many Creatives reference this item. Set on list and get; null on create.
         warnings:
           type: array
           items:
@@ -7009,6 +6972,73 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    AddAssetsFromMediaRequest:
+      type: object
+      required:
+        - mediaIds
+      properties:
+        mediaIds:
+          type: array
+          minItems: 1
+          maxItems: 35
+          items:
+            type: string
+          description: Media library ids, in the order they should appear on the Work Item.
+
+    MediaUsageResponse:
+      type: object
+      required:
+        - creatives
+        - posts
+      properties:
+        creatives:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaUsageCreative"
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaUsagePost"
+
+    MediaUsageCreative:
+      type: object
+      required:
+        - id
+        - displayId
+        - name
+        - state
+      properties:
+        id:
+          type: string
+        displayId:
+          type: string
+        name:
+          type: string
+        state:
+          type: string
+
+    MediaUsagePost:
+      type: object
+      required:
+        - workItemId
+        - displayId
+        - title
+        - status
+        - workflow
+      properties:
+        workItemId:
+          type: string
+        displayId:
+          type: string
+          description: Human-facing key, `{projectKey}-{sequenceNumber}` (e.g. MK-12).
+        title:
+          type: string
+        status:
+          type: string
+        workflow:
+          type: string
+          description: Slug of the Workflow the Work Item is bound to.
 
     CreateCreativePhotoRequest:
       type: object

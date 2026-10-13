@@ -226,6 +226,10 @@ export interface CreativePhoto {
   warnings: string[]
   createdBy?: string | null
   createdAt: string
+  /** Distinct Posts using this media (directly or via a Creative's render). Null/absent on create. */
+  postCount?: number | null
+  /** Creatives referencing this media. Null/absent on create. */
+  creativeCount?: number | null
 }
 
 /** Alias used at video/audio call sites — same wire shape as {@link CreativePhoto}, the table's own
@@ -637,6 +641,46 @@ export function getCreativePhoto(
   token: string,
 ): Promise<CreativePhoto> {
   return apiGet<CreativePhoto>(`${photosBase(projectId)}/${photoId}`, token)
+}
+
+export interface MediaUsageCreative {
+  id: string
+  displayId: string
+  name: string
+  state: string
+}
+
+export interface MediaUsagePost {
+  workItemId: string
+  displayId: string
+  title: string
+  status: string
+  /** Slug of the Workflow the Post is bound to. */
+  workflow: string
+}
+
+export interface MediaUsage {
+  creatives: MediaUsageCreative[]
+  posts: MediaUsagePost[]
+}
+
+/** Where one media item is used: the Creatives referencing it and the Posts carrying it. */
+export function getMediaUsage(projectId: string, token: string, photoId: string): Promise<MediaUsage> {
+  return apiGet<MediaUsage>(`${photosBase(projectId)}/${photoId}/usage`, token)
+}
+
+/** Links library media onto a Work Item (Post) in the given order — nothing is copied. */
+export function addMediaToWorkItem(
+  projectId: string,
+  token: string,
+  workItemId: string,
+  mediaIds: string[],
+): Promise<{ id: string }[]> {
+  return apiPost<{ id: string }[]>(
+    `/api/v2/projects/${projectId}/work-items/${workItemId}/assets/from-media`,
+    { mediaIds },
+    token,
+  )
 }
 
 export function createCreativePhoto(

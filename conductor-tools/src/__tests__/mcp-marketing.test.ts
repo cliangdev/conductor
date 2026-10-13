@@ -68,6 +68,34 @@ function storedAsset(overrides: Record<string, unknown> = {}) {
   }
 }
 
+describe('upload_asset with mediaIds links library media', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('calls from-media and never the upload ticket', async () => {
+    mocked(apiPost).mockResolvedValueOnce([
+      { id: 'a9', mediaId: 'm1', label: 'Hero', contentType: 'image/png', gcsPath: 'x' },
+    ])
+    const result = await uploadAsset({ issueId: 'w1', mediaIds: ['m1'] }, config)
+    expect(apiPost).toHaveBeenCalledTimes(1)
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/work-items/w1/assets/from-media',
+      { mediaIds: ['m1'] },
+      config
+    )
+    expect(putBytes).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      issueId: 'w1',
+      assets: [{ id: 'a9', mediaId: 'm1', label: 'Hero', contentType: 'image/png' }],
+    })
+  })
+
+  it('rejects filePath with mediaIds, and none of the three', async () => {
+    await expect(uploadAsset({ issueId: 'w1', filePath: '/tmp/a.png', mediaIds: ['m1'] }, config)).rejects.toThrow(/exactly one/)
+    await expect(uploadAsset({ issueId: 'w1' }, config)).rejects.toThrow(/exactly one/)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+})
+
 describe('upload_asset attaches a local file in one call', () => {
   beforeEach(() => {
     vi.clearAllMocks()

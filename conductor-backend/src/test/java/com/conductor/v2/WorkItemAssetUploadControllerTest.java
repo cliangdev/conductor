@@ -175,6 +175,57 @@ class WorkItemAssetUploadControllerTest extends AbstractE2ETest {
         assertThat(asset.getDurationSeconds()).isNull();
     }
 
+    // One media library: a Post upload shows up in Media with a post count, and can be re-used on another
+    // Post through from-media (no bytes copied).
+    @Test
+    void anUploadLandsInMediaAndFromMediaReusesItOnAnotherPostWithTheSameObject() {
+        String assetId = mintAsset("hero.png", PNG, 4L);
+        putContent(workItemId, assetId, "PNG!".getBytes(StandardCharsets.UTF_8));
+        rest.exchange(confirmUrl(assetId), HttpMethod.POST,
+                new HttpEntity<>(Map.of("sizeBytes", 4L), authHeaders), String.class);
+        Map<String, Object> original = findAsset(assetId);
+        String mediaId = (String) original.get("mediaId");
+        assertThat(mediaId).isNotBlank();
+        assertThat(original.get("creativeFrameId")).isNull();
+
+        String photosUrl = url("/api/v2/projects/" + projectId + "/marketing/photos");
+        var photo = rest.exchange(photosUrl + "/" + mediaId, HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
+        assertThat(photo.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(photo.getBody().get("uploadStatus")).isEqualTo("UPLOADED");
+        assertThat(((Number) photo.getBody().get("postCount")).intValue()).isEqualTo(1);
+        assertThat(((Number) photo.getBody().get("creativeCount")).intValue()).isZero();
+
+        String otherPost = createPost("Second post");
+        String otherAssets = url("/api/v2/projects/" + projectId + "/work-items/" + otherPost + "/assets");
+        var added = rest.exchange(otherAssets + "/from-media", HttpMethod.POST,
+                new HttpEntity<>(Map.of("mediaIds", List.of(mediaId)), authHeaders), List.class);
+        assertThat(added.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> linked = (Map<String, Object>) added.getBody().get(0);
+        assertThat(linked.get("mediaId")).isEqualTo(mediaId);
+        assertThat(linked.get("uploadStatus")).isEqualTo("UPLOADED");
+        assertThat(assetRepository.findById((String) linked.get("id")).orElseThrow().getGcsPath())
+                .isEqualTo(assetRepository.findById(assetId).orElseThrow().getGcsPath());
+
+        var usage = rest.exchange(photosUrl + "/" + mediaId + "/usage", HttpMethod.GET,
+                new HttpEntity<>(authHeaders), Map.class);
+        assertThat(usage.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat((List<?>) usage.getBody().get("posts")).hasSize(2);
+
+        var delete = rest.exchange(photosUrl + "/" + mediaId, HttpMethod.DELETE,
+                new HttpEntity<>(authHeaders), String.class);
+        assertThat(delete.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        var unknown = rest.exchange(otherAssets + "/from-media", HttpMethod.POST,
+                new HttpEntity<>(Map.of("mediaIds", List.of("no-such-media")), authHeaders), String.class);
+        assertThat(unknown.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        HttpHeaders outsider = login("e2e-asset-upload-outsider2@example.com");
+        var denied = rest.exchange(otherAssets + "/from-media", HttpMethod.POST,
+                new HttpEntity<>(Map.of("mediaIds", List.of(mediaId)), outsider), String.class);
+        assertThat(denied.getStatusCode()).isIn(HttpStatus.NOT_FOUND, HttpStatus.FORBIDDEN);
+    }
+
     // --- helpers -------------------------------------------------------------------------------------
 
     private HttpHeaders login(String email) {

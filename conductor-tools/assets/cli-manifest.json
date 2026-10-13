@@ -664,7 +664,7 @@
     },
     {
       "name": "upload_asset",
-      "description": "Attach a media file to a Work Item from a local path or a public URL in one call; MP4/MOV are measured here.",
+      "description": "Add media to a Work Item: upload a local path or URL (also lands in Media) or link library media by mediaIds; MP4/MOV are measured here.",
       "category": "marketing",
       "requiredParams": [
         "issueId"

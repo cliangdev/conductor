@@ -234,7 +234,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input(), slideEntries, slideAltText)));
+                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
@@ -346,7 +346,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(), sequenceKind,
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input(), slideEntries, slideAltText));
+                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -422,7 +422,7 @@ public class CreativeService {
                 root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides()),
                 root.getKind(), clipMediaEntries, motionRes.input(), slideEntries,
-                toStringList(root.getSlideAltText())));
+                toStringList(root.getSlideAltText())).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -1059,7 +1059,8 @@ public class CreativeService {
                 entries.add(new CreativeValidator.SlideEntry(list.getKey(), i, ref, facts != null,
                         facts != null && CreativePhoto.MEDIA_KIND_IMAGE.equals(facts.getMediaKind()),
                         facts != null && facts.isUploaded(), facts != null && facts.isBlocked(),
-                        facts != null ? facts.getWidth() : null, facts != null ? facts.getHeight() : null));
+                        facts != null ? facts.getWidth() : null, facts != null ? facts.getHeight() : null,
+                        facts != null && facts.isGif()));
             }
             resolved.put(list.getKey(), entries);
         }

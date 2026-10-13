@@ -9,7 +9,7 @@
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Film, ImageIcon, Plus, X } from 'lucide-react'
+import { Film, FolderOpen, ImageIcon, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -26,6 +26,8 @@ import { ScheduleEditor, type ScheduleEditorValue } from '@/components/workitems
 import { DestinationsPanel } from '@/components/marketing/destinations/DestinationsPanel'
 import { useDraftDestinations } from '@/components/marketing/destinations/useDraftDestinations'
 import type { WorkflowView } from '@/types/workItem'
+import { PickMediaDialog } from '@/components/marketing/media/PickMediaDialog'
+import type { CreativePhoto } from '@/components/marketing/creatives/types'
 import { createPost, PENDING_ASSET_PREFIX } from './createPost'
 
 export interface ComposePostPageProps {
@@ -59,6 +61,10 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
   // reel's cover, media of its own). Each file gets a stand-in id when it is added, parallel to `files`;
   // createPost swaps it for the real asset id once the file is uploaded.
   const [fileIds, setFileIds] = useState<string[]>([])
+  // Library media picked with "From media": linked to the Post after it is created, after the files.
+  const [pickedMedia, setPickedMedia] = useState<CreativePhoto[]>([])
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false)
+  const mediaPendingId = (id: string) => `${PENDING_ASSET_PREFIX}media-${id}`
   const nextFileId = useRef(0)
   const [schedule, setSchedule] = useState<ScheduleEditorValue>({ onApproval: false, local: '', tz: browserTimeZone() })
   const [saving, setSaving] = useState(false)
@@ -79,7 +85,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
   // Object URLs for the thumbnails; revoked when the file leaves the list.
   const previews = useMemo(() => files.map((f) => ({ file: f, url: URL.createObjectURL(f) })), [files])
 
-  const pendingAssets: MediaAsset[] = useMemo(() => previews.map(({ file, url }, index) => ({
+  const filePendingAssets: MediaAsset[] = useMemo(() => previews.map(({ file, url }, index) => ({
     id: fileIds[index] ?? `${PENDING_ASSET_PREFIX}unassigned-${index}`,
     issueId: '',
     type: isVideoContentType(file.type) ? 'video' : 'image',
@@ -93,6 +99,24 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
     uploadStatus: null,
     previewUrl: url,
   })), [previews, fileIds])
+
+  const mediaPendingAssets: MediaAsset[] = useMemo(() => pickedMedia.map((m) => ({
+    id: mediaPendingId(m.id),
+    issueId: '',
+    type: m.mediaKind === 'VIDEO' ? 'video' : 'image',
+    label: m.label ?? '',
+    kind: 'file',
+    ref: '',
+    done: false,
+    createdAt: '',
+    updatedAt: '',
+    contentType: m.contentType,
+    uploadStatus: null,
+    previewUrl: (m.mediaKind === 'VIDEO' ? m.posterUrl : m.url) ?? undefined,
+  })), [pickedMedia])
+
+  // Uploaded files first, then picked media — the order createPost links them in.
+  const pendingAssets = useMemo(() => [...filePendingAssets, ...mediaPendingAssets], [filePendingAssets, mediaPendingAssets])
 
   function removeFile(index: number) {
     URL.revokeObjectURL(previews[index]?.url ?? '')
@@ -116,6 +140,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
         caption,
         files,
         fileIds,
+        media: pickedMedia.map((m) => ({ pendingId: mediaPendingId(m.id), mediaId: m.id })),
         options: destinations.options,
         draft: destinations.draft,
         schedule: { onApproval: schedule.onApproval, local: schedule.local, timeZone: schedule.tz },
@@ -221,6 +246,25 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                       </button>
                     </div>
                   ))}
+                  {pickedMedia.map((m, index) => (
+                    <div key={m.id} data-testid={`compose-picked-${m.id}`} className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-md bg-surface-3">
+                      {m.mediaKind === 'VIDEO' ? (
+                        <video src={m.url ?? undefined} poster={m.posterUrl ?? undefined} className="h-full w-full object-cover" aria-label={m.label || `Video ${index + 1}`} />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={m.url ?? undefined} alt={m.label || `Media ${index + 1}`} className="h-full w-full object-cover" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setPickedMedia((prev) => prev.filter((p) => p.id !== m.id))}
+                        aria-label={`Remove ${m.label || `media ${index + 1}`}`}
+                        disabled={saving}
+                        className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-foreground/70 text-background opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
+                      >
+                        <X className="h-3 w-3" aria-hidden />
+                      </button>
+                    </div>
+                  ))}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -230,6 +274,24 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                     <Plus className="h-4 w-4" aria-hidden />
                     {files.length === 0 ? 'Add' : 'Add another'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setMediaPickerOpen(true)}
+                    disabled={saving}
+                    className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+                  >
+                    <FolderOpen className="h-4 w-4" aria-hidden />
+                    From media
+                  </button>
+                  <PickMediaDialog
+                    open={mediaPickerOpen}
+                    onOpenChange={setMediaPickerOpen}
+                    projectId={projectId}
+                    token={token}
+                    onPicked={(items) =>
+                      setPickedMedia((prev) => [...prev, ...items.filter((i) => !prev.some((p) => p.id === i.id))])
+                    }
+                  />
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Images and video. Every destination gets all of them unless you customize it below.

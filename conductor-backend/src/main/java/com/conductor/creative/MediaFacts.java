@@ -22,6 +22,7 @@ public final class MediaFacts {
     private final String localKey;
     private final String gcsPath;
     private final String mediaKind;
+    private final String contentType;
     private final boolean uploaded;
     private final boolean blocked;
     private final boolean checked;
@@ -34,13 +35,14 @@ public final class MediaFacts {
     private final Integer height;
     private final JsonNode focal;
 
-    private MediaFacts(String ref, String localKey, String gcsPath, String mediaKind, boolean uploaded,
+    private MediaFacts(String ref, String localKey, String gcsPath, String mediaKind, String contentType, boolean uploaded,
                        boolean blocked, boolean checked, boolean aiGenerated, String source, String licence,
                        BigDecimal durationSeconds, Boolean hasAudio, Integer width, Integer height, JsonNode focal) {
         this.ref = ref;
         this.localKey = localKey;
         this.gcsPath = gcsPath;
         this.mediaKind = mediaKind;
+        this.contentType = contentType;
         this.uploaded = uploaded;
         this.blocked = blocked;
         this.checked = checked;
@@ -56,7 +58,7 @@ public final class MediaFacts {
 
     /** A library media item. */
     public static MediaFacts of(CreativePhoto photo) {
-        return new MediaFacts(photo.getId(), null, photo.getGcsPath(), photo.getMediaKind(), photo.isUploaded(),
+        return new MediaFacts(photo.getId(), null, photo.getGcsPath(), photo.getMediaKind(), photo.getContentType(), photo.isUploaded(),
                 photo.isBlocked(), photo.isChecked(), photo.isAiGenerated(), photo.getSource(), photo.getLicence(),
                 photo.getDurationSeconds(), photo.getHasAudio(), photo.getWidth(), photo.getHeight(), photo.getFocal());
     }
@@ -74,7 +76,7 @@ public final class MediaFacts {
     /** As above, carrying provenance the caller declared for the file (still unchecked; never persisted). */
     public static MediaFacts local(String key, String mediaKind, BigDecimal durationSeconds, Boolean hasAudio,
                                    Integer width, Integer height, String source, String licence, Boolean aiGenerated) {
-        return new MediaFacts(LOCAL_PREFIX + key, key, null, mediaKind, true, false, false,
+        return new MediaFacts(LOCAL_PREFIX + key, key, null, mediaKind, null, true, false, false,
                 Boolean.TRUE.equals(aiGenerated), source, licence, durationSeconds, hasAudio, width, height, null);
     }
 
@@ -88,6 +90,11 @@ public final class MediaFacts {
     public String getGcsPath() { return gcsPath; }
 
     public String getMediaKind() { return mediaKind; }
+
+    public String getContentType() { return contentType; }
+
+    /** A GIF: allowed into the library by a Post upload, but not something a render can use. */
+    public boolean isGif() { return "image/gif".equals(contentType); }
 
     public boolean isUploaded() { return uploaded; }
 

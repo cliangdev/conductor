@@ -1,7 +1,7 @@
 'use client'
 
 // "What's working" — /app/projects/{id}/marketing/insights. A static sibling of the Area's Workflow
-// list routes and the asset library, same reasoning as marketing/assets: insights read across every
+// list routes and the media library, same reasoning as marketing/media: insights read across every
 // Marketing Workflow, so the route belongs to the Area, not to any one Workflow.
 
 import { Suspense } from 'react'

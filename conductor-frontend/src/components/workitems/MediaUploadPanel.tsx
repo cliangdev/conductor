@@ -255,7 +255,7 @@ export function MediaUploadPanel({
    * Not a choice any more, and deliberately so. It used to be a four-way picker labelled "Channel",
    * which read as "which platform is this for" and decided nothing: every publish action selects media
    * by content type, and the whole bundle goes out to every selected account regardless. Nothing filters
-   * on it either — the asset library filters by media type, workflow and status. So the control asked a
+   * on it either — the Media library filters by media type, workflow and status. So the control asked a
    * question whose answer changed nothing visible, and made correct behaviour look broken (a PNG filed
    * as a Facebook post is still refused by Instagram's JPEG rule at the approval gate).
    *

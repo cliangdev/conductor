@@ -1,7 +1,7 @@
 'use client'
 
 // The Creative library (COND-24 T2) — /app/projects/{id}/marketing/creatives. A static sibling of
-// the Area's Workflow list routes, same reasoning as marketing/assets and marketing/insights: a
+// the Area's Workflow list routes, same reasoning as marketing/media and marketing/insights: a
 // Creative is a library object under the Marketing Area, not a Work Item, so it is not scoped to any
 // one Workflow (see the PRD's Glossary).
 

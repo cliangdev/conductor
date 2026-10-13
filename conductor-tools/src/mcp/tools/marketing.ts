@@ -209,6 +209,7 @@ export async function uploadAsset(
     issueId: string
     filePath?: string
     url?: string
+    mediaIds?: string[]
     type?: string
     label?: string
     width?: number
@@ -217,8 +218,27 @@ export async function uploadAsset(
   },
   config: Config
 ): Promise<Record<string, unknown>> {
-  if (!params.filePath && !params.url) {
-    throw new Error('Pass filePath (a file on this machine) or url (a public http(s) URL).')
+  const sources = [params.filePath, params.url, params.mediaIds?.length ? params.mediaIds : undefined]
+    .filter(Boolean).length
+  if (sources !== 1) {
+    throw new Error(
+      'Pass exactly one of filePath (a file on this machine), url (a public http(s) URL) or mediaIds ' +
+        '(library media ids from list_creative_media).'
+    )
+  }
+  if (params.mediaIds?.length) {
+    // Links, not copies: the Work Item's file points at the library's bytes.
+    const created = await apiPost<Array<Record<string, unknown>>>(
+      `${workItemBase(config, params.issueId)}/assets/from-media`,
+      { mediaIds: params.mediaIds },
+      config
+    )
+    return {
+      issueId: params.issueId,
+      assets: created.map((a) => ({
+        id: a['id'], mediaId: a['mediaId'], label: a['label'], contentType: a['contentType'],
+      })),
+    }
   }
   let filePath = params.filePath as string
   let cleanup: (() => Promise<void>) | undefined

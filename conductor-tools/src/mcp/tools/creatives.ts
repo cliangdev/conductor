@@ -402,7 +402,7 @@ function stripExtension(filename: string): string {
 const MEDIA_RESULT_FIELDS = [
   'id', 'label', 'mediaKind', 'contentType', 'width', 'height', 'durationSeconds', 'hasAudio',
   'posterUrl', 'url', 'sizeBytes', 'source', 'licence', 'aiGenerated', 'uploadStatus', 'checked', 'blocked',
-  'blockedReason',
+  'blockedReason', 'postCount', 'creativeCount',
 ] as const
 
 function trimMedia(media: Record<string, unknown>): Record<string, unknown> {

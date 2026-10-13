@@ -992,13 +992,14 @@ export const TOOLS = [
   },
   {
     name: 'upload_asset',
-    description: 'Attach a media file to a Work Item in one call (mint, upload, confirm) from a local path or a public URL. Video is measured here (MP4/MOV) unless width, height and durationSeconds are passed. Returns the stored Asset; a warning names any measurement still missing. Use record_asset for a link.',
+    description: 'Add media to a Work Item in one call: upload a local path or public URL (mint, upload, confirm; the file also lands in the Media library), or pass mediaIds from list_creative_media to reuse library media without uploading (linked, not copied). Exactly one of filePath, url, mediaIds. Video is measured here (MP4/MOV) unless width, height and durationSeconds are passed. Returns the stored Asset; a warning names any measurement still missing. Use record_asset for a link.',
     inputSchema: {
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Work Item ID' },
-        filePath: { type: 'string', description: 'Absolute path to a file on this machine (use this or url)' },
-        url: { type: 'string', description: 'Public http(s) URL to fetch and upload (use this or filePath)' },
+        filePath: { type: 'string', description: 'Absolute path to a file on this machine (use this, url or mediaIds)' },
+        url: { type: 'string', description: 'Public http(s) URL to fetch and upload (use this, filePath or mediaIds)' },
+        mediaIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 35, description: 'Media library ids (from list_creative_media) to add to the Work Item instead of uploading (use this, filePath or url)' },
         type: { type: 'string', description: 'Asset type from the Workflow\'s asset_types (optional — defaults to the first one)' },
         label: { type: 'string', description: 'Human label (optional — defaults to the filename)' },
         width: { type: 'number', description: 'Pixel width (optional; measured for MP4/MOV when omitted)' },
@@ -1010,7 +1011,7 @@ export const TOOLS = [
   },
   {
     name: 'list_assets',
-    description: 'Every Asset on a Work Item — uploaded media with id, label, contentType, dimensions and uploadStatus, and recorded links. The ids set_publish_targets.assetIds takes.',
+    description: 'Every Asset on a Work Item — uploaded media with id, mediaId (the Media library row a file links to), label, contentType, dimensions and uploadStatus, and recorded links. The ids set_publish_targets.assetIds takes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1251,7 +1252,7 @@ export const TOOLS = [
   },
   {
     name: 'list_creative_media',
-    description: "The project's media library (photos, videos, audio) — id, label, kind, dimensions/duration, checked/blocked review state (with reason), provenance and a URL to look at it. Call before upload_creative_media to reuse existing, already-checked media instead of uploading a duplicate.",
+    description: "The project's media library (photos, videos, audio) — id, label, kind, dimensions/duration, checked/blocked review state (with reason), provenance, how many posts and creatives use it (postCount, creativeCount) and a URL to look at it. Call before upload_creative_media to reuse existing, already-checked media instead of uploading a duplicate; add it to a Post with upload_asset({mediaIds}).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -2285,6 +2286,7 @@ export async function runMcpServer(): Promise<void> {
                 issueId: params['issueId'] as string,
                 filePath: params['filePath'] as string | undefined,
                 url: params['url'] as string | undefined,
+                mediaIds: params['mediaIds'] as string[] | undefined,
                 type: params['type'] as string | undefined,
                 label: params['label'] as string | undefined,
                 width: params['width'] as number | undefined,

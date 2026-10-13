@@ -338,6 +338,9 @@ export interface MediaPickerProps {
   /** Locks the picker to one kind and hides the tab bar — a picker opened for a Creative's photo only
    *  shows Photos; opened for a Clip's video only shows Videos. Omit to show all three tabs. */
   kind?: MediaKind
+  /** Limits the tab bar to these kinds (e.g. ['IMAGE', 'VIDEO'] for a Post, which can't carry audio).
+   *  Ignored when `kind` is set. Omit to show every kind. */
+  kinds?: MediaKind[]
 }
 
 export function MediaPicker({
@@ -351,6 +354,7 @@ export function MediaPicker({
   onSelectMany,
   onMediaChanged,
   kind,
+  kinds,
 }: MediaPickerProps) {
   const [selection, setSelection] = useState<CreativePhoto[]>([])
   useEffect(() => {
@@ -363,7 +367,8 @@ export function MediaPicker({
     ? (item: CreativePhoto) => setSelection((prev) => (prev.some((p) => p.id === item.id) ? prev : [...prev, item]))
     : (item: CreativePhoto) => onSelect?.(item)
 
-  const [activeKind, setActiveKind] = useState<MediaKind>(kind ?? 'IMAGE')
+  const tabKinds = (Object.keys(KIND_META) as MediaKind[]).filter((k) => !kinds || kinds.includes(k))
+  const [activeKind, setActiveKind] = useState<MediaKind>(kind ?? tabKinds[0] ?? 'IMAGE')
   const effectiveKind = kind ?? activeKind
   const meta = KIND_META[effectiveKind]
   const items = media.filter((m) => (m.mediaKind ?? 'IMAGE') === effectiveKind)
@@ -376,7 +381,7 @@ export function MediaPicker({
             ariaLabel="Media type"
             value={activeKind}
             onValueChange={(v) => setActiveKind(v as MediaKind)}
-            items={(Object.keys(KIND_META) as MediaKind[]).map((k) => ({ value: k, label: KIND_META[k].tabLabel }))}
+            items={tabKinds.map((k) => ({ value: k, label: KIND_META[k].tabLabel }))}
           />
         )}
         <MediaKindPanel

@@ -1,5 +1,7 @@
 package com.conductor.service;
 
+import com.conductor.creative.CreativePhoto;
+import com.conductor.creative.CreativePhotoService;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
@@ -29,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -56,6 +59,7 @@ class AssetUploadServiceTest {
     @Mock private WorkflowDefinitionVersionRepository versionRepository;
     @Mock private StorageService storageService;
     @Mock private SignalBus signalBus;
+    @Mock private CreativePhotoService photoService;
 
     private AssetService service;
 
@@ -65,8 +69,15 @@ class AssetUploadServiceTest {
                 .thenReturn(Optional.of(snapshot("/schema/examples/marketing.workflow.json")));
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         service = new AssetService(assetRepository, workItemRepository, projectSecurityService, resolver,
-                signalBus, storageService, BACKEND_URL);
+                signalBus, storageService, photoService, BACKEND_URL);
         lenient().when(assetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(photoService.createForPostUpload(any(), any(), any(), any(), anyLong(), any(), any(), any(), any()))
+                .thenAnswer(inv -> {
+                    CreativePhoto media = new CreativePhoto();
+                    media.setId("media-1");
+                    media.setGcsPath(inv.getArgument(1));
+                    return media;
+                });
         lenient().when(projectSecurityService.isProjectMember(PROJECT_ID, USER_ID)).thenReturn(true);
     }
 
@@ -194,6 +205,158 @@ class AssetUploadServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("exceeds");
         verify(assetRepository, never()).save(any());
+    }
+
+    // --- One media library: a Post's image/video upload also lands in Media on the same object ------
+
+    @Test
+    void anImageUploadAlsoCreatesAPendingMediaItemOnTheSameObjectAndLinksIt() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+
+        AssetService.FileAssetUploadTicket ticket = service.createFileAsset(PROJECT_ID, ITEM_ID,
+                new AssetService.FileAssetInput("instagram_post", null, "spring card.png", "image/png", 2048L),
+                caller());
+
+        Asset asset = ticket.asset();
+        assertThat(asset.getMediaId()).isEqualTo("media-1");
+        ArgumentCaptor<String> path = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> label = ArgumentCaptor.forClass(String.class);
+        verify(photoService).createForPostUpload(eq(PROJECT_ID), path.capture(), label.capture(), eq("image/png"),
+                eq(2048L), any(), any(), any(), eq(USER_ID));
+        assertThat(path.getValue()).isEqualTo(asset.getGcsPath());
+        assertThat(label.getValue()).isEqualTo(asset.getLabel().replaceFirst("\\.png$", ""));
+    }
+
+    @Test
+    void theMediaLabelIsTheAssetLabelOrTheFilenameWithoutItsExtension() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+
+        service.createFileAsset(PROJECT_ID, ITEM_ID,
+                new AssetService.FileAssetInput("instagram_post", "Hero", "a.png", "image/png", 10L), caller());
+        verify(photoService).createForPostUpload(any(), any(), eq("Hero"), any(), anyLong(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aVideoUploadCreatesMediaWithItsDeclaredShape() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+
+        service.createFileAsset(PROJECT_ID, ITEM_ID, new AssetService.FileAssetInput("youtube_video", "Teaser",
+                "teaser.mp4", "video/mp4", 5000L, 1080, 1920, new java.math.BigDecimal("12.5")), caller());
+
+        verify(photoService).createForPostUpload(eq(PROJECT_ID), any(), eq("Teaser"), eq("video/mp4"), eq(5000L),
+                eq(1080), eq(1920), eq(new java.math.BigDecimal("12.5")), eq(USER_ID));
+    }
+
+    @Test
+    void confirmMarksTheLinkedMediaUploadedWithTheConfirmedSizeAndDimensions() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+        Asset pending = pendingAsset("video/mp4");
+        pending.setMediaId("media-1");
+        pending.setWidth(1080);
+        pending.setHeight(1920);
+        when(assetRepository.findByIdAndWorkItemId("asset-1", ITEM_ID)).thenReturn(Optional.of(pending));
+
+        service.confirmUpload(PROJECT_ID, ITEM_ID, "asset-1", 4096L, caller());
+
+        verify(photoService).confirmForPostUpload("media-1", 4096L, 1080, 1920);
+    }
+
+    @Test
+    void confirmingAnAssetWithNoMediaLeavesTheLibraryAlone() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+        when(assetRepository.findByIdAndWorkItemId("asset-1", ITEM_ID))
+                .thenReturn(Optional.of(pendingAsset("video/mp4")));
+
+        service.confirmUpload(PROJECT_ID, ITEM_ID, "asset-1", 4096L, caller());
+
+        verify(photoService, never()).confirmForPostUpload(any(), any(), any(), any());
+    }
+
+    @Test
+    void deletingAFileAssetAsksTheLibraryToDropItsStillPendingMedia() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+        Asset asset = pendingAsset("video/mp4");
+        asset.setMediaId("media-1");
+        when(assetRepository.findByIdAndWorkItemId("asset-1", ITEM_ID)).thenReturn(Optional.of(asset));
+
+        service.deleteAsset(PROJECT_ID, ITEM_ID, "asset-1", caller());
+
+        verify(assetRepository).delete(asset);
+        verify(photoService).deletePendingPostUpload("media-1", "asset-1");
+    }
+
+    // --- add from media ----------------------------------------------------------------------------
+
+    private CreativePhoto media(String id, String label) {
+        CreativePhoto media = new CreativePhoto();
+        media.setId(id);
+        media.setLabel(label);
+        media.setGcsPath("projects/" + PROJECT_ID + "/marketing/photos/" + id + ".jpg");
+        media.setContentType("image/jpeg");
+        media.setSizeBytes(1234L);
+        media.setWidth(1080);
+        media.setHeight(1350);
+        return media;
+    }
+
+    @Test
+    void addFromMediaLinksEachItemInRequestOrderReusingItsObject() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+        when(photoService.requireLinkable(PROJECT_ID, java.util.List.of("m2", "m1")))
+                .thenReturn(java.util.List.of(media("m2", "Second"), media("m1", "First")));
+
+        java.util.List<Asset> created = service.addFromMedia(PROJECT_ID, ITEM_ID, java.util.List.of("m2", "m1"), caller());
+
+        assertThat(created).extracting(Asset::getMediaId).containsExactly("m2", "m1");
+        assertThat(created).extracting(Asset::getLabel).containsExactly("Second", "First");
+        assertThat(created.get(0).getGcsPath()).isEqualTo("projects/" + PROJECT_ID + "/marketing/photos/m2.jpg");
+        assertThat(created.get(0).getUploadStatus()).isEqualTo(AssetService.UPLOAD_STATUS_UPLOADED);
+        assertThat(created.get(0).getWidth()).isEqualTo(1080);
+        assertThat(created.get(0).getType()).isNotBlank();
+        // PUBLISH_ORDER sorts by createdAt, so the order asked for must survive it.
+        assertThat(created.get(0).getCreatedAt()).isBefore(created.get(1).getCreatedAt());
+        assertThat(created.stream().sorted(AssetService.PUBLISH_ORDER).map(Asset::getMediaId)).containsExactly("m2", "m1");
+        verifyNoInteractions(storageService);
+    }
+
+    @Test
+    void addFromMediaRefusesARepeatedIdAndAnEmptyList() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+
+        assertThatThrownBy(() -> service.addFromMedia(PROJECT_ID, ITEM_ID, java.util.List.of("m1", "m1"), caller()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("twice");
+        assertThatThrownBy(() -> service.addFromMedia(PROJECT_ID, ITEM_ID, java.util.List.of(), caller()))
+                .isInstanceOf(BusinessException.class);
+        verify(assetRepository, never()).save(any());
+    }
+
+    @Test
+    void addFromMediaSurfacesTheLibrarysRefusalOfUnlinkableMedia() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("DRAFT")));
+        when(photoService.requireLinkable(PROJECT_ID, java.util.List.of("m1")))
+                .thenThrow(new BusinessException("Media \"Bad\" is blocked and can't be added to a post"));
+
+        assertThatThrownBy(() -> service.addFromMedia(PROJECT_ID, ITEM_ID, java.util.List.of("m1"), caller()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("blocked");
+        verify(assetRepository, never()).save(any());
+    }
+
+    @Test
+    void addFromMediaOnAnApprovedPostIsLockedLikeAnUpload() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("APPROVED")));
+
+        assertThatThrownBy(() -> service.addFromMedia(PROJECT_ID, ITEM_ID, java.util.List.of("m1"), caller()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("sent back for changes");
+        verify(assetRepository, never()).save(any());
+    }
+
+    @Test
+    void addFromMediaByANonMemberIsNotFound() {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, USER_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.addFromMedia(PROJECT_ID, ITEM_ID, java.util.List.of("m1"), caller()))
+                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
     }
 
     // --- [auto] A disallowed content type is rejected with a 4xx before any signed URL is issued ---

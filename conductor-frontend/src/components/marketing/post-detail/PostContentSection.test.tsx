@@ -17,6 +17,11 @@ vi.mock('@/components/ui/toast', async (importOriginal) => ({
   toastError: vi.fn(),
 }))
 
+vi.mock('@/contexts/PermissionsContext', () => ({
+  useCan: () => true,
+  usePermissions: () => ({ role: 'ADMIN', loading: false, can: () => true, refresh: vi.fn() }),
+}))
+
 import { apiGet, apiPost } from '@/lib/api'
 import { PostContentSection } from './PostContentSection'
 import type { WorkflowView } from '@/types/workItem'
@@ -135,5 +140,76 @@ describe('PostContentSection — From a creative', () => {
     await userEvent.click(screen.getByRole('button', { name: /from a creative/i }))
     expect(await screen.findByText('12a')).toBeInTheDocument()
     expect(screen.queryByText('13a')).not.toBeInTheDocument()
+  })
+})
+
+describe('PostContentSection — From media', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function library() {
+    const base = {
+      projectId: 'proj-1',
+      contentType: 'image/png',
+      sizeBytes: 10,
+      mediaKind: 'IMAGE',
+      aiGenerated: false,
+      checked: true,
+      blocked: false,
+      focal: {},
+      uploadStatus: 'UPLOADED',
+      warnings: [],
+      createdAt: '2026-01-01T00:00:00Z',
+    }
+    return [
+      { ...base, id: 'm-1', label: 'first pic', url: 'https://storage.example/1.png' },
+      { ...base, id: 'm-2', label: 'second pic', url: 'https://storage.example/2.png' },
+      { ...base, id: 'm-3', label: 'a track', mediaKind: 'AUDIO', contentType: 'audio/mpeg', durationSeconds: 5, url: 'https://storage.example/3.mp3' },
+    ]
+  }
+
+  it('hides "From media" for a viewer who cannot edit', () => {
+    setup({ canEdit: false })
+    expect(screen.queryByRole('button', { name: /from media/i })).not.toBeInTheDocument()
+  })
+
+  it('links the picked media in click order, then refreshes the strip', async () => {
+    ;(apiGet as Mock).mockResolvedValue(library())
+    ;(apiPost as Mock).mockResolvedValue([{ id: 'a1' }, { id: 'a2' }])
+    const { onAssetsChanged } = setup()
+
+    await userEvent.click(screen.getByRole('button', { name: /from media/i }))
+    // Posts can't carry audio: no Audio tab.
+    expect(await screen.findByRole('tab', { name: 'Photos' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Audio' })).not.toBeInTheDocument()
+    const grid = await screen.findByTestId('photo-picker-grid')
+    await waitFor(() => expect(grid.querySelectorAll('button[aria-pressed]')).toHaveLength(2))
+    const tiles = grid.querySelectorAll('button[aria-pressed]')
+    await userEvent.click(tiles[1]!)
+    await userEvent.click(tiles[0]!)
+    await userEvent.click(screen.getByRole('button', { name: 'Add 2' }))
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(
+        '/api/v2/projects/proj-1/work-items/wi-1/assets/from-media',
+        { mediaIds: ['m-2', 'm-1'] },
+        'tok',
+      ),
+    )
+    await waitFor(() => expect(onAssetsChanged).toHaveBeenCalled())
+  })
+
+  it('says why when the server refuses the link', async () => {
+    ;(apiGet as Mock).mockResolvedValue(library())
+    ;(apiPost as Mock).mockRejectedValue(new Error('nope'))
+    const { onAssetsChanged } = setup()
+    await userEvent.click(screen.getByRole('button', { name: /from media/i }))
+    const grid = await screen.findByTestId('photo-picker-grid')
+    await waitFor(() => expect(grid.querySelectorAll('button[aria-pressed]')).toHaveLength(2))
+    await userEvent.click(grid.querySelectorAll('button[aria-pressed]')[0]!)
+    await userEvent.click(screen.getByRole('button', { name: 'Add 1' }))
+    expect(await screen.findByText('Could not add this media')).toBeInTheDocument()
+    expect(onAssetsChanged).not.toHaveBeenCalled()
   })
 })

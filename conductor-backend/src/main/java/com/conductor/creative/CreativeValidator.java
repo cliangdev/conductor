@@ -74,7 +74,13 @@ public class CreativeValidator {
      * {@code width}/{@code height} are null when unknown (the aspect check is then skipped).
      */
     public record SlideEntry(String placementKey, int index, String mediaId, boolean resolvable, boolean isImage,
-                             boolean uploaded, boolean blocked, Integer width, Integer height) {
+                             boolean uploaded, boolean blocked, Integer width, Integer height, boolean gif) {
+
+        /** A slide that is not known to be a GIF. */
+        public SlideEntry(String placementKey, int index, String mediaId, boolean resolvable, boolean isImage,
+                          boolean uploaded, boolean blocked, Integer width, Integer height) {
+            this(placementKey, index, mediaId, resolvable, isImage, uploaded, blocked, width, height, false);
+        }
     }
 
     /** The placement keys a CAROUSEL's {@code slides} map may name (besides {@code "default"}). */
@@ -234,7 +240,30 @@ public class CreativeValidator {
             List<ClipMediaEntry> clipMedia,
             MotionInput motion,
             Map<String, List<SlideEntry>> slides,
-            List<String> slideAltText) {
+            List<String> slideAltText,
+            boolean photoGif) {
+
+        /** Without the GIF flag: the main photo is not known to be a GIF. */
+        public Input(String layout, String theme, List<String> placements, String headline, String body,
+                     String caption, String state, String photoId, boolean photoIdResolvable, boolean photoPresent,
+                     boolean photoUploaded, boolean photoBlocked, String sequenceKind, List<SequenceBeat> sequence,
+                     String carouselRatio, Set<String> unknownSequencePhotoIds,
+                     Map<String, Integer> layoutOverrideBand, Map<String, Integer> layoutOverridePadBottom,
+                     String kind, List<ClipMediaEntry> clipMedia, MotionInput motion,
+                     Map<String, List<SlideEntry>> slides, List<String> slideAltText) {
+            this(layout, theme, placements, headline, body, caption, state, photoId, photoIdResolvable,
+                    photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence, carouselRatio,
+                    unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom, kind, clipMedia, motion,
+                    slides, slideAltText, false);
+        }
+
+        /** The same input with the main photo flagged as a GIF (or not). */
+        public Input withPhotoGif(boolean gif) {
+            return new Input(layout, theme, placements, headline, body, caption, state, photoId, photoIdResolvable,
+                    photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence, carouselRatio,
+                    unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom, kind, clipMedia, motion,
+                    slides, slideAltText, gif);
+        }
 
         /** The pre-CAROUSEL shape: no slides, no slide alt text. */
         public Input(String layout, String theme, List<String> placements, String headline, String body,
@@ -246,7 +275,7 @@ public class CreativeValidator {
             this(layout, theme, placements, headline, body, caption, state, photoId, photoIdResolvable,
                     photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence, carouselRatio,
                     unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom, kind, clipMedia, motion,
-                    Map.of(), List.of());
+                    Map.of(), List.of(), false);
         }
 
         /**
@@ -279,7 +308,9 @@ public class CreativeValidator {
             private MotionInput motion;
             private Map<String, List<SlideEntry>> slides = Map.of();
             private List<String> slideAltText = List.of();
+            private boolean photoGif;
 
+            public InputBuilder photoGif(boolean v) { this.photoGif = v; return this; }
             public InputBuilder slides(Map<String, List<SlideEntry>> v) { this.slides = v; return this; }
             public InputBuilder slideAltText(List<String> v) { this.slideAltText = v; return this; }
             public InputBuilder layout(String v) { this.layout = v; return this; }
@@ -308,7 +339,7 @@ public class CreativeValidator {
                 return new Input(layout, theme, placements, headline, body, caption, state, photoId,
                         photoIdResolvable, photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence,
                         carouselRatio, unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom,
-                        kind, clipMedia, motion, slides, slideAltText);
+                        kind, clipMedia, motion, slides, slideAltText, photoGif);
             }
         }
     }
@@ -360,6 +391,9 @@ public class CreativeValidator {
         if (input.photoId() != null && !input.photoIdResolvable()) {
             violations.add(new Violation("photoId", "photoNotFound",
                     "No photo with id " + input.photoId() + " in this project"));
+        }
+        if (input.photoGif() && Creative.KIND_STILL.equals(input.kind())) {
+            violations.add(new Violation("photoId", "mediaFormat", "the photo must be JPEG, PNG or WebP"));
         }
         if (input.unknownSequencePhotoIds() != null) {
             for (String id : input.unknownSequencePhotoIds()) {
@@ -720,6 +754,9 @@ public class CreativeValidator {
                 if (!entry.isImage()) {
                     violations.add(new Violation("slides", "mediaNotImage", ref + " must be an IMAGE"));
                     continue;
+                }
+                if (entry.gif()) {
+                    violations.add(new Violation("slides", "mediaFormat", ref + " must be JPEG, PNG or WebP"));
                 }
                 if (!entry.uploaded()) {
                     violations.add(new Violation("slides", "mediaUploaded", ref + " has not finished uploading"));

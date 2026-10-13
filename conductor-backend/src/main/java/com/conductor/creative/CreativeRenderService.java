@@ -156,7 +156,8 @@ public class CreativeRenderService {
                 extractOverrideInts(creative.getLayoutOverrides(), "padBottom"),
                 creative.getKind(), List.of(),
                 motionRes != null ? CreativeValidator.MotionInput.resolve(motionRes.motion(), motionRes.audio(),
-                        motionRes.backgroundClip(), motionRes.audioTrack()) : null));
+                        motionRes.backgroundClip(), motionRes.audioTrack()) : null)
+                .withPhotoGif(mainPhoto != null && mainPhoto.isGif()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -387,7 +388,8 @@ public class CreativeRenderService {
                 entries.add(new CreativeValidator.SlideEntry(list.getKey(), i, id, media != null,
                         media != null && CreativePhoto.MEDIA_KIND_IMAGE.equals(media.getMediaKind()),
                         media != null && media.isUploaded(), media != null && media.isBlocked(),
-                        media != null ? media.getWidth() : null, media != null ? media.getHeight() : null));
+                        media != null ? media.getWidth() : null, media != null ? media.getHeight() : null,
+                        media != null && "image/gif".equals(media.getContentType())));
             }
             resolved.put(list.getKey(), entries);
         }

@@ -3,6 +3,7 @@ package com.conductor.v2.controller;
 import com.conductor.entity.Asset;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.WorkItemAssetsApi;
+import com.conductor.generated.v2.model.AddAssetsFromMediaRequest;
 import com.conductor.generated.v2.model.AssetResponse;
 import com.conductor.generated.v2.model.ConfirmAssetUploadRequest;
 import com.conductor.generated.v2.model.CreateAssetRequest;
@@ -98,6 +99,15 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
     }
 
     @Override
+    public ResponseEntity<List<AssetResponse>> addWorkItemAssetsFromMedia(String projectId, String workItemId,
+                                                                          AddAssetsFromMediaRequest request) {
+        User caller = currentUser();
+        List<AssetResponse> body = assetService.addFromMedia(projectId, workItemId, request.getMediaIds(), caller)
+                .stream().map(asset -> toV2(projectId, workItemId, asset, caller)).toList();
+        return ResponseEntity.status(201).body(body);
+    }
+
+    @Override
     public ResponseEntity<Void> confirmWorkItemAssetUpload(String projectId, String workItemId, String assetId,
                                                            ConfirmAssetUploadRequest request) {
         Long observedSizeBytes = request != null ? request.getSizeBytes() : null;
@@ -143,7 +153,9 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
                 // for an image, client-measured for a video, and null for a link Asset, which has none.
                 .width(asset.getWidth())
                 .height(asset.getHeight())
-                .durationSeconds(asset.getDurationSeconds());
+                .durationSeconds(asset.getDurationSeconds())
+                .mediaId(asset.getMediaId())
+                .creativeFrameId(asset.getCreativeFrameId());
         if (AssetService.KIND_FILE.equals(asset.getKind())
                 && AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())) {
             response.previewUrl(assetService.resolvePreviewUrl(projectId, workItemId, asset.getId(), caller));

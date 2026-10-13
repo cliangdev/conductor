@@ -70,6 +70,8 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
   const [unchecked, setUnchecked] = useState(false)
   const [showBlocked, setShowBlocked] = useState(false)
   const [aiOnly, setAiOnly] = useState(false)
+  const [onPosts, setOnPosts] = useState(false)
+  const [unused, setUnused] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   // The id (not index) of the last plain-clicked tile: indexes shift when a filter or search changes.
   const anchor = useRef<string | null>(null)
@@ -112,9 +114,11 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
         (!q || (i.label ?? '').toLowerCase().includes(q)) &&
         (!unchecked || !i.checked) &&
         (!aiOnly || i.aiGenerated) &&
+        (!onPosts || (i.postCount ?? 0) > 0) &&
+        (!unused || ((i.postCount ?? 0) === 0 && (i.creativeCount ?? 0) === 0)) &&
         (showBlocked || !i.blocked),
     )
-  }, [items, kind, query, unchecked, aiOnly, showBlocked])
+  }, [items, kind, query, unchecked, aiOnly, onPosts, unused, showBlocked])
 
   // Bulk actions and Make carousel act on what's selected *and shown*: a selection hidden by a search,
   // filter or tab is kept (clearing the filter brings it back) but never acted on unseen.
@@ -188,7 +192,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
     setReloadKey((k) => k + 1)
   }
 
-  const filtering = query.trim() !== '' || unchecked || aiOnly || kind !== 'ALL'
+  const filtering = query.trim() !== '' || unchecked || aiOnly || onPosts || unused || kind !== 'ALL'
 
   return (
     <div className="space-y-4 pb-20">
@@ -209,6 +213,12 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
         </FilterChip>
         <FilterChip pressed={aiOnly} onClick={() => setAiOnly((v) => !v)}>
           AI-generated
+        </FilterChip>
+        <FilterChip pressed={onPosts} onClick={() => setOnPosts((v) => !v)}>
+          On posts
+        </FilterChip>
+        <FilterChip pressed={unused} onClick={() => setUnused((v) => !v)}>
+          Unused
         </FilterChip>
         {canManage && (
           <div className="ml-auto">
@@ -304,6 +314,11 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                   </span>
                   {item.blocked && <span className="text-status-failed">Blocked</span>}
                   {item.aiGenerated && <span className="text-muted-foreground">AI</span>}
+                  {(item.postCount ?? 0) > 0 && (
+                    <span className="text-muted-foreground">
+                      {item.postCount} {item.postCount === 1 ? 'post' : 'posts'}
+                    </span>
+                  )}
                   {!item.checked && <span className="text-muted-foreground">Unchecked</span>}
                 </div>
               </li>

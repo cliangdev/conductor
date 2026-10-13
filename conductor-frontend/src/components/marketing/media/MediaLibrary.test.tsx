@@ -21,12 +21,21 @@ vi.mock('@/contexts/PermissionsContext', () => ({
 }))
 
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
+vi.mock('@/lib/workflows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/workflows')>()),
+  useSidebarWorkNav: () => ({
+    entries: [{ slug: 'MARKETING', label: 'Posts', noun: 'Post', area: 'MARKETING', createdAt: '' }],
+    loading: false,
+  }),
+}))
+
 import { MediaLibrary } from './MediaLibrary'
 import { photo, slides } from './testFixtures'
 import type { CreativePhoto } from '@/components/marketing/creatives/types'
 
 function load(rows: CreativePhoto[]) {
   ;(apiGet as Mock).mockImplementation(async (path: string) => {
+    if (path.endsWith('/usage')) return usage
     const prefix = new URL(`http://x${path}`).searchParams.get('labelPrefix')
     return prefix ? rows.filter((r) => r.label?.startsWith(prefix)) : rows
   })
@@ -39,12 +48,14 @@ const tileIds = () =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  usage = { creatives: [], posts: [] }
   ;(apiPatch as Mock).mockImplementation(async (path: string, body: object) => {
     const id = path.split('/').pop()
     return { ...(all.find((p) => p.id === id) as CreativePhoto), ...body }
   })
 })
 let all: CreativePhoto[] = []
+let usage: unknown = { creatives: [], posts: [] }
 function setup(rows: CreativePhoto[]) {
   all = rows
   load(rows)
@@ -257,5 +268,69 @@ describe('Make carousel', () => {
     await user.click(screen.getByRole('button', { name: 'Make carousel' }))
     expect(await screen.findByText(/4:5 has 11 slides — the limit is 10/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create carousel' })).toBeDisabled()
+  })
+})
+
+describe('MediaLibrary usage', () => {
+  const rows = () => [
+    photo('posted', 'on a post', 1080, 1350, { postCount: 2, creativeCount: 0 }),
+    photo('made', 'in a creative', 1080, 1350, { postCount: 0, creativeCount: 1 }),
+    photo('free', 'unused one', 1080, 1350, { postCount: 0, creativeCount: 0 }),
+    photo('legacy', 'no counts'),
+  ]
+
+  it('shows "N posts" on a tile that is on posts, and nothing otherwise', async () => {
+    setup([photo('one', 'single', 1080, 1350, { postCount: 1 }), ...rows()])
+    await screen.findByTestId('media-grid')
+    expect(within(screen.getByTestId('media-tile-posted')).getByText('2 posts')).toBeInTheDocument()
+    expect(within(screen.getByTestId('media-tile-one')).getByText('1 post')).toBeInTheDocument()
+    expect(within(screen.getByTestId('media-tile-free')).queryByText(/post/)).not.toBeInTheDocument()
+  })
+
+  it('"On posts" keeps only media with posts', async () => {
+    const user = userEvent.setup()
+    setup(rows())
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'On posts' }))
+    expect(tileIds()).toEqual(['posted'])
+  })
+
+  it('"Unused" keeps only media with no posts and no creatives', async () => {
+    const user = userEvent.setup()
+    setup(rows())
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Unused' }))
+    expect(tileIds().sort()).toEqual(['free', 'legacy'])
+  })
+
+  it('lists where media is used, linking Creatives and Posts', async () => {
+    const user = userEvent.setup()
+    usage = {
+      creatives: [{ id: 'cr-9', displayId: '12a', name: 'Paste a link', state: 'READY' }],
+      posts: [{ workItemId: 'wi-1', displayId: 'MK-4', title: 'Save recipes', status: 'DRAFT', workflow: 'MARKETING' }],
+    }
+    setup(rows())
+    await user.click(await screen.findByRole('button', { name: 'Open on a post' }))
+    expect(await screen.findByRole('heading', { name: 'Used in' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /12a Paste a link/ })).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/marketing/creatives/cr-9',
+    )
+    expect(screen.getByRole('link', { name: /MK-4 Save recipes/ })).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/marketing/posts/MK-4',
+    )
+  })
+
+  it('shows the server message naming the Posts when a delete is refused', async () => {
+    const user = userEvent.setup()
+    const detail = 'In use on MK-4 "Save recipes" — remove it from those posts first.'
+    ;(apiDelete as Mock).mockRejectedValue({ status: 409, detail })
+    setup(rows())
+    await user.click(await screen.findByRole('button', { name: 'Open on a post' }))
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('alertdialog').catch(() => screen.getByRole('dialog', { name: /Delete this media/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(await screen.findByText(detail)).toBeInTheDocument()
   })
 })

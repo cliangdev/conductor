@@ -6,6 +6,8 @@ import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.creative.CreativePhoto;
+import com.conductor.creative.CreativePhotoRepository;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
@@ -139,6 +141,11 @@ public class MediaTargetValidator {
      * a story sequence).
      */
     public static final String MULTI_IMAGE_UNSUPPORTED = "MULTI_IMAGE_UNSUPPORTED";
+    /**
+     * A file on this destination links Media that has since been blocked in the library. Blocking used media is
+     * allowed (that is the point of blocking); this is what stops it publishing.
+     */
+    public static final String MEDIA_BLOCKED = "MEDIA_BLOCKED";
     /** A target's chosen format is not one its platform offers at all — defensive; selection already refuses it. */
     public static final String FORMAT_UNSUPPORTED = "FORMAT_UNSUPPORTED";
 
@@ -189,19 +196,22 @@ public class MediaTargetValidator {
     private final ConnectionRepository connectionRepository;
     private final ObjectMapper objectMapper;
     private final PublishTargetMediaResolver mediaResolver;
+    private final CreativePhotoRepository photoRepository;
 
     public MediaTargetValidator(PublishPlatformRegistry platformRegistry,
                                 AssetRepository assetRepository,
                                 PostPublishTargetRepository postPublishTargetRepository,
                                 ConnectionRepository connectionRepository,
                                 ObjectMapper objectMapper,
-                                PublishTargetMediaResolver mediaResolver) {
+                                PublishTargetMediaResolver mediaResolver,
+                                CreativePhotoRepository photoRepository) {
         this.platformRegistry = platformRegistry;
         this.assetRepository = assetRepository;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
         this.objectMapper = objectMapper;
         this.mediaResolver = mediaResolver;
+        this.photoRepository = photoRepository;
     }
 
     /** Advisory findings from a validation that did not block. Safe to ignore. */
@@ -270,6 +280,7 @@ public class MediaTargetValidator {
         Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
                 mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
 
+        Set<String> blockedMediaIds = blockedMediaIds(mediaByTarget);
         List<PublishFinding> findings = new ArrayList<>();
         Boolean postHasCarouselImages = null;
         for (PostPublishTarget target : targets) {
@@ -295,6 +306,13 @@ public class MediaTargetValidator {
                             target.getId()));
                 }
             }
+            for (Asset asset : media) {
+                if (asset.getMediaId() != null && blockedMediaIds.contains(asset.getMediaId())) {
+                    String name = asset.getLabel() != null && !asset.getLabel().isBlank() ? asset.getLabel() : "A file";
+                    findings.add(PublishFinding.blocker(MEDIA_BLOCKED,
+                            name + " is blocked in Media \u2014 remove it from this post.", target.getId()));
+                }
+            }
             if (media.isEmpty()) {
                 // PostScheduleValidator owns "this target has no media", and says which kind of nothing
                 // it is; checking file rules against an empty list here would add nothing but noise.
@@ -317,6 +335,26 @@ public class MediaTargetValidator {
             }
         }
         return findings;
+    }
+
+    /** Ids of the library Media linked from these targets' files that are blocked right now, in one query. */
+    private Set<String> blockedMediaIds(Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget) {
+        Set<String> linked = new java.util.HashSet<>();
+        mediaByTarget.values().forEach(m -> m.assets().forEach(a -> {
+            if (a.getMediaId() != null) {
+                linked.add(a.getMediaId());
+            }
+        }));
+        if (linked.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> blocked = new java.util.HashSet<>();
+        for (CreativePhoto photo : photoRepository.findAllByIdIn(linked)) {
+            if (photo.isBlocked()) {
+                blocked.add(photo.getId());
+            }
+        }
+        return blocked;
     }
 
     /** An Instagram or Facebook story, which publishes several items as that many stories in order. */

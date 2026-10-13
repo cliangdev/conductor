@@ -267,6 +267,11 @@ unscheduling stands a flagged target back down to `PENDING`.
 
 ## Per-target caption and media
 
+A Post's media files are links to the Media library (see [creatives.md](creatives.md#media-library-page)):
+an uploaded file also becomes a Media row, and `POST /work-items/{id}/assets/from-media` (MCP
+`upload_asset({mediaIds})`, the UI's "From media") adds library files without uploading. Media blocked
+in the library raises the `MEDIA_BLOCKED` blocker on any target using it.
+
 A Post has one caption and one set of uploaded media, and by default every destination publishes all of
 it. That default is a real behaviour, not just an initial value: an **inheriting** destination keeps
 following the Post as files are added and removed.
