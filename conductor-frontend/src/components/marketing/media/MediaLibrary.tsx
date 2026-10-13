@@ -67,12 +67,12 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [kind, setKind] = useState<KindTab>('ALL')
   const [query, setQuery] = useState('')
-  const [debounced, setDebounced] = useState('')
   const [unchecked, setUnchecked] = useState(false)
   const [showBlocked, setShowBlocked] = useState(false)
   const [aiOnly, setAiOnly] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
-  const anchor = useRef<number | null>(null)
+  // The id (not index) of the last plain-clicked tile: indexes shift when a filter or search changes.
+  const anchor = useRef<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [carouselOpen, setCarouselOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -82,19 +82,14 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
   const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(query.trim()), 300)
-    return () => clearTimeout(t)
-  }, [query])
-
-  useEffect(() => {
     if (!projectId || !accessToken) return
     let cancelled = false
     ;(async () => {
       try {
-        // The server filters by label *prefix*; a mid-label search ("slide 03") finds nothing there, so
-        // fall back to the whole library and let the substring filter below narrow it.
-        let rows = await listCreativePhotos(projectId, accessToken, showBlocked, undefined, debounced || undefined)
-        if (debounced && rows.length === 0) rows = await listCreativePhotos(projectId, accessToken, showBlocked)
+        // The whole library, searched client-side by substring. The server's labelPrefix filter can't
+        // serve a substring search: "slide 03" must match "01-import 4x5 slide 03" even when some other
+        // label starts with "slide 03", and the list endpoint isn't paged, so the prefix saves nothing.
+        const rows = await listCreativePhotos(projectId, accessToken, showBlocked)
         if (cancelled) return
         setItems(rows)
         setError(null)
@@ -107,7 +102,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
     return () => {
       cancelled = true
     }
-  }, [projectId, accessToken, debounced, showBlocked, reloadKey])
+  }, [projectId, accessToken, showBlocked, reloadKey])
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -121,7 +116,10 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
     )
   }, [items, kind, query, unchecked, aiOnly, showBlocked])
 
-  const selectedItems = useMemo(() => (items ?? []).filter((i) => selected.includes(i.id)), [items, selected])
+  // Bulk actions and Make carousel act on what's selected *and shown*: a selection hidden by a search,
+  // filter or tab is kept (clearing the filter brings it back) but never acted on unseen.
+  const selectedItems = useMemo(() => visible.filter((i) => selected.includes(i.id)), [visible, selected])
+  const hiddenSelected = selected.length - selectedItems.length
   const detail = (items ?? []).find((i) => i.id === detailId) ?? null
   const nonImageSelected = selectedItems.some((i) => (i.mediaKind ?? 'IMAGE') !== 'IMAGE')
 
@@ -130,13 +128,14 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
   }, [])
 
   function select(item: CreativePhoto, index: number, range: boolean) {
-    if (range && anchor.current != null) {
-      const [a, b] = [Math.min(anchor.current, index), Math.max(anchor.current, index)]
+    const from = anchor.current == null ? -1 : visible.findIndex((i) => i.id === anchor.current)
+    if (range && from >= 0) {
+      const [a, b] = [Math.min(from, index), Math.max(from, index)]
       const ids = visible.slice(a, b + 1).map((i) => i.id)
       setSelected((prev) => [...prev, ...ids.filter((id) => !prev.includes(id))])
     } else {
       setSelected((prev) => (prev.includes(item.id) ? prev.filter((id) => id !== item.id) : [...prev, item.id]))
-      anchor.current = index
+      anchor.current = item.id
     }
   }
 
@@ -319,14 +318,26 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
           aria-label="Selection actions"
           className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-lg border border-border bg-popover px-4 py-2.5 shadow-lg"
         >
-          <span className="text-sm font-medium text-foreground">{selected.length} selected</span>
-          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void markChecked()}>
+          <span className="text-sm font-medium text-foreground">{selectedItems.length} selected</span>
+          {hiddenSelected > 0 && <span className="text-xs text-muted-foreground">{hiddenSelected} hidden by filters</span>}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy || selectedItems.length === 0}
+            onClick={() => void markChecked()}
+          >
             Mark checked
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={selectSet}>
             Select set
           </Button>
-          <Button type="button" size="sm" disabled={nonImageSelected} onClick={() => setCarouselOpen(true)}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={nonImageSelected || selectedItems.length === 0}
+            onClick={() => setCarouselOpen(true)}
+          >
             Make carousel
           </Button>
           {nonImageSelected && <span className="text-xs text-muted-foreground">Carousels take images only — deselect video and audio.</span>}

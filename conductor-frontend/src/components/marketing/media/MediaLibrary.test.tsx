@@ -69,17 +69,15 @@ describe('MediaLibrary grid', () => {
     expect(screen.getByText('Nothing matches')).toBeInTheDocument()
   })
 
-  it('searches by substring, falling back from the server prefix search', async () => {
+  it('searches by substring, including labels that also start with the query', async () => {
     const user = userEvent.setup()
-    setup([...slides('4x5', 4)])
+    // "slide 03 cover" starts with the query, so a server prefix search returns it alone; the
+    // mid-label match "01-import 4x5 slide 03" must still show.
+    setup([...slides('4x5', 4), photo('cover', 'slide 03 cover')])
     await screen.findByTestId('media-grid')
     await user.type(screen.getByLabelText('Search by label'), 'slide 03')
-    await waitFor(() => expect(tileIds()).toEqual(['4x5-3']))
-    await waitFor(() => {
-      const urls = (apiGet as Mock).mock.calls.map((c) => c[0] as string)
-      expect(urls.some((u) => u.includes('labelPrefix=slide+03'))).toBe(true)
-    })
-    expect(tileIds()).toEqual(['4x5-3'])
+    await new Promise((r) => setTimeout(r, 400))
+    await waitFor(() => expect(tileIds()).toEqual(['4x5-3', 'cover']))
   })
 
   it('filters Unchecked and AI-generated', async () => {
@@ -147,6 +145,37 @@ describe('selection and bulk actions', () => {
     await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(3))
     expect((apiPatch as Mock).mock.calls.map((c) => c[0].split('/').pop())).toEqual(['4x5-2', '4x5-3', '4x5-4'])
     expect((apiPatch as Mock).mock.calls[0][1]).toEqual({ checked: true })
+  })
+
+  it('shift-range uses the current view after a filter change', async () => {
+    const user = userEvent.setup()
+    const rows = slides('4x5', 6).map((r, i) => (i < 2 ? { ...r, checked: true } : r))
+    setup(rows)
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByLabelText('Select 01-import 4x5 slide 03'))
+    await user.click(screen.getByRole('button', { name: 'Unchecked' }))
+    await user.keyboard('{Shift>}')
+    await user.click(screen.getByLabelText('Select 01-import 4x5 slide 06'))
+    await user.keyboard('{/Shift}')
+    expect(screen.getByText('4 selected')).toBeInTheDocument()
+    expect(screen.getByLabelText('Select 01-import 4x5 slide 04')).toBeChecked()
+  })
+
+  it('acts only on the selected items the filters show, and says how many are hidden', async () => {
+    const user = userEvent.setup()
+    setup(slides('4x5', 3))
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByLabelText('Select 01-import 4x5 slide 01'))
+    await user.keyboard('{Shift>}')
+    await user.click(screen.getByLabelText('Select 01-import 4x5 slide 03'))
+    await user.keyboard('{/Shift}')
+    await user.type(screen.getByLabelText('Search by label'), 'slide 01')
+    await waitFor(() => expect(tileIds()).toEqual(['4x5-1']))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('2 hidden by filters')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Mark checked' }))
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect((apiPatch as Mock).mock.calls[0][0]).toContain('/4x5-1')
   })
 
   it('Select set picks both aspects of a set', async () => {
