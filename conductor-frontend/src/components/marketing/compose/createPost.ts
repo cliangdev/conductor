@@ -3,7 +3,7 @@
 // fails is reported rather than fatal — from then on the Post exists, and its own page says what is
 // still missing.
 
-import { apiErrorMessage, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api'
+import { apiDelete, apiErrorMessage, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api'
 import {
   isVideoContentType,
   measureVideoMetadata,
@@ -123,6 +123,7 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
   const problems: string[] = []
   const uploaded: Record<string, string> = {}
   for (const [index, file] of input.files.entries()) {
+    let orphanId: string | null = null
     try {
       onStep?.(`Uploading ${index + 1} of ${input.files.length}…`)
       const measured = isVideoContentType(file.type) ? await measureVideoMetadata(file) : null
@@ -140,11 +141,21 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
         },
         token
       )
+      orphanId = ticket.assetId
       await putToSignedUrl(ticket.uploadUrl, file, () => {})
       await apiPost<void>(`${base}/assets/${ticket.assetId}/confirm`, { sizeBytes: file.size }, token)
+      orphanId = null
       const pendingId = input.fileIds?.[index]
       if (pendingId) uploaded[pendingId] = ticket.assetId
     } catch (err) {
+      if (orphanId) {
+        // Don't leave a PENDING Asset (and its PENDING Media row) behind a failed PUT or confirm.
+        try {
+          await apiDelete(`${base}/assets/${orphanId}`, token)
+        } catch {
+          /* best effort */
+        }
+      }
       problems.push(`${file.name}: ${apiErrorMessage(err, 'upload failed')}`)
     }
   }

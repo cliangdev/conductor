@@ -16,6 +16,7 @@ import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.ActiveConnectionResolver;
+import com.conductor.service.MediaTargetValidator;
 import com.conductor.service.PublishInputBuilder;
 import com.conductor.service.PublishOutcomeService;
 import com.conductor.service.publish.PublishPlatform;
@@ -158,6 +159,7 @@ public class PostPublishScheduler {
     private final ActionInvocationService actionInvocationService;
     private final PublishOutcomeService publishOutcomeService;
     private final PublishInputBuilder publishInputBuilder;
+    private final MediaTargetValidator mediaTargetValidator;
     private final boolean enabled;
     private final SignalBus signalBus;
 
@@ -182,6 +184,7 @@ public class PostPublishScheduler {
                                 ActionInvocationService actionInvocationService,
                                 PublishOutcomeService publishOutcomeService,
                                 PublishInputBuilder publishInputBuilder,
+                                MediaTargetValidator mediaTargetValidator,
                                 @Value("${conductor.post-publish.enabled:true}") boolean enabled,
                                 SignalBus signalBus) {
         this.platformRegistry = platformRegistry;
@@ -191,6 +194,7 @@ public class PostPublishScheduler {
         this.actionInvocationService = actionInvocationService;
         this.publishOutcomeService = publishOutcomeService;
         this.publishInputBuilder = publishInputBuilder;
+        this.mediaTargetValidator = mediaTargetValidator;
         this.enabled = enabled;
         this.signalBus = signalBus;
     }
@@ -345,6 +349,16 @@ public class PostPublishScheduler {
         log.info("Dispatching publish for target {} (post {}, platform {}) via action {} on connection {}",
                 dispatch.targetId(), dispatch.postId(), dispatch.platform(), dispatch.actionId(),
                 dispatch.connection().getId());
+
+        // Media can be blocked after the Post was approved and scheduled; the gate never re-runs, so the
+        // last check is here, before the platform is called. The target fails like any other.
+        Optional<String> blocked = targetRepository.findById(dispatch.targetId())
+                .flatMap(mediaTargetValidator::blockedMediaFailure);
+        if (blocked.isPresent()) {
+            log.warn("Target {} not published: {}", dispatch.targetId(), blocked.get());
+            publishOutcomeService.recordFailure(dispatch.targetId(), blocked.get(), false);
+            return;
+        }
 
         ActionResult result = actionInvocationService.invoke(dispatch.connection(), dispatch.actionId(),
                 dispatch.input(), dispatch.idempotencyKey(), List.of());

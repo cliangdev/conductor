@@ -360,6 +360,12 @@ public class AssetService {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         Asset asset = findAssetInWorkItem(workItemId, assetId);
         requireFileAsset(asset);
+        if (UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())) {
+            // Idempotent: a retried confirm (or a confirm of an Asset that links already-uploaded Media, as
+            // from-media creates) changes nothing — in particular it must not overwrite a shared Media
+            // item's size or dimensions, nor fire asset-added a second time.
+            return asset;
+        }
         guardFileAssetMutable(projectId, workItem);
 
         AssetUploadPolicy.requireAllowedContentType(asset.getContentType());

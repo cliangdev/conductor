@@ -216,7 +216,8 @@ the grouping with an editable name (prefilled from the common label prefix). Con
 `CAROUSEL` Creative and opens it; the server's 422 violations, if any, appear in the dialog.
 
 Blocking media a Post already uses is allowed, but publishing is then held: the Post's gate raises
-`MEDIA_BLOCKED` until the file is removed from it.
+`MEDIA_BLOCKED` until the file is removed from it. This holds for an already-scheduled Post too: at publish time the target
+fails with "<label> is blocked in Media — remove it from this post, then retry." and the platform is never called.
 
 ## Video (COND-24 PR1)
 

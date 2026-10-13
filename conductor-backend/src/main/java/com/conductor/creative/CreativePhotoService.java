@@ -4,6 +4,7 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
+import com.conductor.service.AssetUploadPolicy;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
@@ -345,8 +346,12 @@ public class CreativePhotoService {
             if (!p.isUploaded()) {
                 throw new BusinessException("Media " + name + " is still uploading");
             }
-            if (p.isAudio()) {
-                throw new BusinessException("Media " + name + " is audio, which a post can't carry");
+            // The same allowlist a direct post upload is held to: Media also accepts types (audio, webm)
+            // a post can't carry.
+            String type = AssetUploadPolicy.normalizeContentType(p.getContentType());
+            if (type == null || !AssetUploadPolicy.ALLOWED_CONTENT_TYPES.contains(type)) {
+                throw new BusinessException("Media " + name + " is " + (type == null ? "an unknown type" : type)
+                        + ", which a post can't carry");
             }
             out.add(p);
         }

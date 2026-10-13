@@ -280,7 +280,9 @@ public class MediaTargetValidator {
         Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
                 mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
 
-        Set<String> blockedMediaIds = blockedMediaIds(mediaByTarget);
+        List<Asset> allMedia = new ArrayList<>();
+        mediaByTarget.values().forEach(m -> allMedia.addAll(m.assets()));
+        Set<String> blockedAssetIds = blockedAssetIds(allMedia);
         List<PublishFinding> findings = new ArrayList<>();
         Boolean postHasCarouselImages = null;
         for (PostPublishTarget target : targets) {
@@ -307,10 +309,10 @@ public class MediaTargetValidator {
                 }
             }
             for (Asset asset : media) {
-                if (asset.getMediaId() != null && blockedMediaIds.contains(asset.getMediaId())) {
-                    String name = asset.getLabel() != null && !asset.getLabel().isBlank() ? asset.getLabel() : "A file";
+                if (blockedAssetIds.contains(asset.getId())) {
                     findings.add(PublishFinding.blocker(MEDIA_BLOCKED,
-                            name + " is blocked in Media \u2014 remove it from this post.", target.getId()));
+                            blockedName(asset) + " is blocked in Media \u2014 remove it from this post.",
+                            target.getId()));
                 }
             }
             if (media.isEmpty()) {
@@ -337,24 +339,66 @@ public class MediaTargetValidator {
         return findings;
     }
 
-    /** Ids of the library Media linked from these targets' files that are blocked right now, in one query. */
-    private Set<String> blockedMediaIds(Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget) {
+    /**
+     * Ids of those Assets whose file is blocked in Media right now, in one query. An Asset counts when it
+     * links a blocked Media item ({@code mediaId}) <em>or</em> shares a blocked item's storage path —
+     * frame-linked Assets (a Creative's render) carry no {@code mediaId} but reuse the media's path.
+     * The one rule behind both the approval gate and the fire-time check.
+     */
+    public Set<String> blockedAssetIds(java.util.Collection<Asset> assets) {
         Set<String> linked = new java.util.HashSet<>();
-        mediaByTarget.values().forEach(m -> m.assets().forEach(a -> {
+        Set<String> paths = new java.util.HashSet<>();
+        for (Asset a : assets) {
             if (a.getMediaId() != null) {
                 linked.add(a.getMediaId());
             }
-        }));
-        if (linked.isEmpty()) {
-            return Set.of();
-        }
-        Set<String> blocked = new java.util.HashSet<>();
-        for (CreativePhoto photo : photoRepository.findAllByIdIn(linked)) {
-            if (photo.isBlocked()) {
-                blocked.add(photo.getId());
+            if (a.getGcsPath() != null && !a.getGcsPath().isBlank()) {
+                paths.add(a.getGcsPath());
             }
         }
-        return blocked;
+        if (linked.isEmpty() && paths.isEmpty()) {
+            return Set.of();
+        }
+        List<CreativePhoto> blocked = photoRepository.findBlockedByIdsOrPaths(
+                linked.isEmpty() ? Set.of("") : linked, paths.isEmpty() ? Set.of("") : paths);
+        if (blocked.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> blockedIds = new java.util.HashSet<>();
+        Set<String> blockedPaths = new java.util.HashSet<>();
+        blocked.forEach(p -> {
+            blockedIds.add(p.getId());
+            if (p.getGcsPath() != null) {
+                blockedPaths.add(p.getGcsPath());
+            }
+        });
+        Set<String> out = new java.util.HashSet<>();
+        for (Asset a : assets) {
+            if ((a.getMediaId() != null && blockedIds.contains(a.getMediaId()))
+                    || (a.getGcsPath() != null && blockedPaths.contains(a.getGcsPath()))) {
+                out.add(a.getId());
+            }
+        }
+        return out;
+    }
+
+    private static String blockedName(Asset asset) {
+        return asset.getLabel() != null && !asset.getLabel().isBlank() ? asset.getLabel() : "A file";
+    }
+
+    /**
+     * Fire-time counterpart of the gate's {@code MEDIA_BLOCKED} blocker: media can be blocked after a Post
+     * was approved and scheduled, and the gate never runs again. Returns the failure text for the first of
+     * this target's effective files that is blocked now, or empty when it may go out.
+     */
+    public Optional<String> blockedMediaFailure(PostPublishTarget target) {
+        List<Asset> media = mediaResolver.effectiveMedia(target).assets();
+        if (media.isEmpty()) {
+            return Optional.empty();
+        }
+        Set<String> blocked = blockedAssetIds(media);
+        return media.stream().filter(a -> blocked.contains(a.getId())).findFirst()
+                .map(a -> blockedName(a) + " is blocked in Media \u2014 remove it from this post, then retry.");
     }
 
     /** An Instagram or Facebook story, which publishes several items as that many stories in order. */

@@ -905,7 +905,7 @@ class MediaTargetValidatorTest {
         blocked.setBlocked(true);
         CreativePhoto fine = new CreativePhoto();
         fine.setId("media-2");
-        when(photoRepository.findAllByIdIn(any())).thenReturn(List.of(blocked, fine));
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
 
         List<PublishFinding> blockers = validator.inspect(post).stream()
                 .filter(f -> MediaTargetValidator.MEDIA_BLOCKED.equals(f.code())).toList();
@@ -926,10 +926,49 @@ class MediaTargetValidatorTest {
         CreativePhoto blocked = new CreativePhoto();
         blocked.setId("media-1");
         blocked.setBlocked(true);
-        when(photoRepository.findAllByIdIn(any())).thenReturn(List.of(blocked));
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
 
         assertThat(validator.inspect(post)).anyMatch(f -> MediaTargetValidator.MEDIA_BLOCKED.equals(f.code())
                 && f.message().startsWith("A file is blocked in Media"));
+    }
+
+    @Test
+    void aFrameLinkedFileSharingABlockedMediaPathIsABlocker() {
+        givenTargets(target("instagram", "conn-meta", "@acme"));
+        Asset frame = image("Render", "image/jpeg", 1080, 1350);
+        frame.setCreativeFrameId("frame-1");
+        frame.setGcsPath("media/p/a.jpg");
+        Asset other = image("Other", "image/jpeg", 1080, 1350);
+        other.setGcsPath("media/p/b.jpg");
+        givenAssets(frame, other);
+        CreativePhoto blocked = new CreativePhoto();
+        blocked.setId("media-1");
+        blocked.setGcsPath("media/p/a.jpg");
+        blocked.setBlocked(true);
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
+
+        List<PublishFinding> blockers = validator.inspect(post).stream()
+                .filter(f -> MediaTargetValidator.MEDIA_BLOCKED.equals(f.code())).toList();
+
+        assertThat(blockers).hasSize(1);
+        assertThat(blockers.get(0).message()).startsWith("Render is blocked in Media");
+    }
+
+    @Test
+    void theFireTimeCheckNamesTheBlockedFileAndAsksForARetryAfterRemovingIt() {
+        PostPublishTarget t = target("instagram", "conn-meta", "@acme");
+        t.setWorkItem(post);
+        givenTargets(t);
+        Asset linked = image("Spring card", "image/jpeg", 1080, 1350);
+        linked.setMediaId("media-1");
+        givenAssets(linked);
+        CreativePhoto blocked = new CreativePhoto();
+        blocked.setId("media-1");
+        blocked.setBlocked(true);
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
+
+        assertThat(validator.blockedMediaFailure(t)).contains(
+                "Spring card is blocked in Media \u2014 remove it from this post, then retry.");
     }
 
     @Test

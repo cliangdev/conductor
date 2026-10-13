@@ -166,6 +166,37 @@ class MediaLibraryRefsIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void addFromMediaRefusesATypeThePostUploadPolicyRefuses() {
+        CreateCreativePhotoRequest webmRequest = new CreateCreativePhotoRequest();
+        webmRequest.setLabel("Loop");
+        webmRequest.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.VIDEO_WEBM);
+        webmRequest.setSizeBytes(100L);
+        webmRequest.setWidth(1080);
+        webmRequest.setHeight(1920);
+        webmRequest.setDurationSeconds(new BigDecimal("5"));
+        CreativePhoto webm = photoService.createPhoto(project.getId(), webmRequest, admin).photo();
+        photoService.confirmPhoto(project.getId(), webm.getId(), null, admin);
+
+        assertThatThrownBy(() -> assetService.addFromMedia(project.getId(), post.getId(), List.of(webm.getId()), admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Media \"Loop\" is video/webm, which a post can't carry");
+        assertThat(assetRepository.findAllByWorkItemId(post.getId())).isEmpty();
+    }
+
+    @Test
+    void confirmingAnAlreadyConfirmedAssetIsANoOpThatLeavesSharedMediaAlone() {
+        CreativePhoto media = uploadedMedia("Shared");
+        Asset linked = assetService.addFromMedia(project.getId(), post.getId(), List.of(media.getId()), admin).get(0);
+
+        assetService.confirmUpload(project.getId(), post.getId(), linked.getId(), 7L, admin);
+
+        CreativePhoto after = photoRepository.findById(media.getId()).orElseThrow();
+        assertThat(after.getSizeBytes()).isEqualTo(media.getSizeBytes());
+        assertThat(after.getWidth()).isEqualTo(media.getWidth());
+        assertThat(assetRepository.findById(linked.getId()).orElseThrow().getSizeBytes()).isEqualTo(media.getSizeBytes());
+    }
+
+    @Test
     void addFromMediaRefusesBlockedPendingAudioOtherProjectUnknownAndRepeatedMedia() {
         CreativePhoto blocked = uploadedMedia("Blocked");
         PatchCreativePhotoRequest block = new PatchCreativePhotoRequest();

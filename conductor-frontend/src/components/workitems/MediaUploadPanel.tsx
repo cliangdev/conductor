@@ -280,6 +280,8 @@ export function MediaUploadPanel({
       setError(null)
       setUploading(true)
       setProgress(0)
+      // Set once the ticket is minted and cleared once confirm lands: what a failure in between must clean up.
+      let orphanId: string | null = null
       try {
         // Images are measured server-side from the bytes at confirm, so only video pays for this.
         const measured = isVideoContentType(file.type) ? await measureVideoMetadata(file) : null
@@ -297,6 +299,7 @@ export function MediaUploadPanel({
           },
           token,
         )
+        orphanId = ticket.assetId
         await putToSignedUrl(ticket.uploadUrl, file, setProgress)
         // Answers 204 — apiPost resolves on an empty body rather than trying to parse one.
         await apiPost<void>(
@@ -304,8 +307,18 @@ export function MediaUploadPanel({
           { sizeBytes: file.size },
           token,
         )
+        orphanId = null
         await onUploaded()
       } catch (err) {
+        if (orphanId) {
+          // A failed PUT or confirm leaves a PENDING Asset (and its PENDING Media row) behind; remove it,
+          // as the MCP upload tool does. Best effort — the original error is what the person needs to see.
+          try {
+            await apiDelete(`/api/v2/projects/${projectId}/work-items/${workItemId}/assets/${orphanId}`, token)
+          } catch {
+            /* ignore */
+          }
+        }
         setError(apiErrorMessage(err, err instanceof Error ? err.message : 'Upload failed'))
       } finally {
         setUploading(false)

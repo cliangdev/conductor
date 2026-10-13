@@ -371,6 +371,29 @@ describe('create_post', () => {
       expect(sentIds()).toEqual(['up1', 'link-m1', 'link-m2', 'up2'])
     })
 
+    it('splits a run at a repeated id and at 35 ids, keeping order', async () => {
+      serveMedia()
+      const ids = Array.from({ length: 36 }, (_, i) => `n${i}`)
+      await createPost(
+        {
+          text: 'Long',
+          media: [{ mediaId: 'a' }, { mediaId: 'b' }, { mediaId: 'a' }, ...ids.map((mediaId) => ({ mediaId }))],
+          targets: [{ platform: 'instagram', account: '@acme' }],
+          submit: false,
+        },
+        config
+      )
+      const batches = mocked(apiPost).mock.calls
+        .filter((c) => (c[0] as string).endsWith('/assets/from-media'))
+        .map((c) => (c[1] as { mediaIds: string[] }).mediaIds)
+      expect(batches[0]).toEqual(['a', 'b'])
+      expect(batches[1]).toHaveLength(35)
+      expect(batches[1]![0]).toBe('a')
+      expect(batches[2]).toEqual(['n34', 'n35'])
+      expect(batches.every((b) => b.length <= 35 && new Set(b).size === b.length)).toBe(true)
+      expect(batches.flat()).toEqual(['a', 'b', 'a', ...ids])
+    })
+
     it('creates a Post from library ids alone, never touching the upload ticket', async () => {
       serveMedia()
       await createPost(

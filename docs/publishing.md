@@ -270,7 +270,11 @@ unscheduling stands a flagged target back down to `PENDING`.
 A Post's media files are links to the Media library (see [creatives.md](creatives.md#media-library-page)):
 an uploaded file also becomes a Media row, and `POST /work-items/{id}/assets/from-media` (MCP
 `upload_asset({mediaIds})`, the UI's "From media") adds library files without uploading. Media blocked
-in the library raises the `MEDIA_BLOCKED` blocker on any target using it.
+in the library raises the `MEDIA_BLOCKED` blocker on any target using it (a file counts when it links the
+blocked item or shares its storage path, as a Creative's render frame does). Blocking is also checked at
+publish time: a Post already approved and scheduled whose media is blocked afterwards does not go out;
+that target fails without calling the platform, with "<label> is blocked in Media — remove it from this
+post, then retry.", and shows like any other failed target (retry once the file is removed).
 
 A Post has one caption and one set of uploaded media, and by default every destination publishes all of
 it. That default is a real behaviour, not just an initial value: an **inheriting** destination keeps
