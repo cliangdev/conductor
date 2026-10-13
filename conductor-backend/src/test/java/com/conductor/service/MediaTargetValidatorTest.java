@@ -823,19 +823,66 @@ class MediaTargetValidatorTest {
 
     // --- [auto] Post formats: story (COND-post-formats) -------------------------------------------
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"instagram", "facebook"})
+    void allowsAStorySequenceOfOneAndOfFiveItems(String platform) {
+        PostPublishTarget story = target(platform, "conn-meta", "Acme", "STORY");
+        givenTargets(story);
+        Asset[] five = new Asset[5];
+        for (int i = 0; i < five.length; i++) {
+            five[i] = image("s" + i + ".jpg", "image/jpeg", 1080, 1920);
+        }
+        givenAssets(five);
+        givenSelection(story, five);
+        assertThatCode(this::approve).doesNotThrowAnyException();
+
+        givenSelection(story, five[0]);
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"instagram", "facebook"})
+    void blocksAStorySequenceOfEightItems(String platform) {
+        PostPublishTarget story = target(platform, "conn-meta", "Acme", "STORY");
+        givenTargets(story);
+        Asset[] eight = new Asset[8];
+        for (int i = 0; i < eight.length; i++) {
+            eight[i] = image("s" + i + ".jpg", "image/jpeg", 1080, 1920);
+        }
+        givenAssets(eight);
+        givenSelection(story, eight);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("1 to 7");
+    }
+
     @Test
-    void blocksAStoryTargetWithTwoItems() {
+    void checksEachStoryItemOnItsOwn_sothirdItemThatIsNotJpegBlocks() {
         PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
         givenTargets(story);
         Asset a = image("a.jpg", "image/jpeg", 1080, 1920);
         Asset b = image("b.jpg", "image/jpeg", 1080, 1920);
-        givenAssets(a, b);
-        givenSelection(story, a, b);
+        Asset c = image("c.png", "image/png", 1080, 1920);
+        givenAssets(a, b, c);
+        givenSelection(story, a, b, c);
 
         assertThatThrownBy(this::approve)
                 .isInstanceOf(UnprocessableEntityException.class)
-                .hasMessageContaining("Instagram")
-                .hasMessageContaining("exactly one item");
+                .hasMessageContaining("c.png")
+                .hasMessageContaining("Instagram story image");
+    }
+
+    @Test
+    void allowsAStorySequenceMixingValidImagesAndVideos() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acme", "STORY");
+        givenTargets(story);
+        Asset a = image("a.jpg", "image/jpeg", 1080, 1920);
+        Asset b = video("b.mp4", 10L * 1024 * 1024, 1080, 1920, "15");
+        givenAssets(a, b);
+        givenSelection(story, a, b);
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
     }
 
     // --- Carousel (multi-image) posts on destinations that cannot take them ---------------------------
@@ -863,15 +910,33 @@ class MediaTargetValidatorTest {
     }
 
     @Test
-    void aStoryAndYouTubeInheritingSeveralImagesAreBothBlocked() {
+    void youTubeInheritingSeveralImagesIsBlockedButAStoryTakesThemAsASequence() {
         PostPublishTarget story = target("facebook", "conn-meta", "Acme Page", "STORY");
         PostPublishTarget youtube = target("youtube", "conn-yt", "Acme Channel");
         givenTargets(story, youtube);
-        givenAssets(image("a.jpg", "image/jpeg", 1080, 1350), image("b.jpg", "image/jpeg", 1080, 1350));
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1920), image("b.jpg", "image/jpeg", 1080, 1920));
 
-        assertThat(multiImageFindings()).extracting(PublishFinding::message).containsExactlyInAnyOrder(
-                "Facebook Story (Acme Page) can't take a multi-image post — switch it to Feed or remove it.",
+        // A Facebook/Instagram story publishes several items as that many stories, so only YouTube refuses.
+        assertThat(multiImageFindings()).extracting(PublishFinding::message).containsExactly(
                 "YouTube (Acme Channel) can't take a multi-image post — remove it.");
+    }
+
+    @Test
+    void aStoryLeftExplicitlyEmptyByACarouselAttachIsBlocked() {
+        PostPublishTarget story = target("instagram", "conn-meta", "@acct", "STORY");
+        givenTargets(story);
+        Asset a = image("a.jpg", "image/jpeg", 1080, 1350);
+        Asset b = image("b.jpg", "image/jpeg", 1080, 1350);
+        a.setCreativeFrameId("frame-a");
+        b.setCreativeFrameId("frame-b");
+        givenAssets(a, b);
+        givenSelection(story);
+
+        assertThat(multiImageFindings()).singleElement().satisfies(f -> {
+            assertThat(f.targetId()).isEqualTo(story.getId());
+            assertThat(f.message()).isEqualTo(
+                    "Instagram Story (@acct) can't take a multi-image post — switch it to Feed or remove it.");
+        });
     }
 
     @Test

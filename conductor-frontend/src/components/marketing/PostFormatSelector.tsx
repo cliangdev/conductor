@@ -3,7 +3,7 @@
 // COND-post-formats: which shape a destination publishes in.
 //
 // `feed` is a platform's ordinary post and the default; `reel` is short vertical video on Facebook
-// or Instagram; `story` is a single image or clip on Facebook or Instagram that disappears after 24
+// or Instagram; `story` is an image or clip (or up to 7 of them, each posted as its own story, in order) on Facebook or Instagram that disappears after 24
 // hours, takes no caption, and is fired by Conductor at its time because neither platform can
 // schedule one natively. A platform's own `formats` (from `GET .../publish-targets`) says which of
 // the three it offers — hidden entirely when that list is just `["feed"]`, since there is nothing to
@@ -31,7 +31,7 @@ const REEL_DURATION_HINT: Partial<Record<PublishPlatform, string>> = {
 }
 
 const STORY_HINT =
-  "One image or clip, and no caption — it disappears after 24 hours, and Conductor fires it at the scheduled time."
+  "An image or clip, or up to 7 posted back to back as separate stories, and no caption — each story disappears after 24 hours, and Conductor fires them at the scheduled time."
 
 /** The helper line under the segmented control for whichever format is currently chosen. */
 export function formatHelperText(platform: PublishPlatform, format: PostFormat): string | null {

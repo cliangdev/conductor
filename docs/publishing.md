@@ -214,8 +214,8 @@ outcome and format, the gate's blockers, review and consent state) → `submit_r
 REVIEWER's or ADMIN's user key; approval schedules the Post). `submit_post`, `list_posts`, `list_assets`,
 `set_publish_targets`, `upload_asset`, `retry_failed_publish_targets` and `complete_manual_publish`
 cover the rest. `format` defaults to `feed` and is omitted from a response when it is feed, to keep
-the common case's output small. Giving a story target more media than it can take resolves to the
-first file rather than refusing outright, with a warning saying so; a captionOverride on a story
+the common case's output small. Giving a story target several media and no `assetIds` resolves to the
+first file rather than guess a story sequence was meant, with a warning saying so (pass `assetIds`, up to 7 in order, to post a sequence); a captionOverride on a story
 target gets its own warning, since the platform drops it. Nothing is decided client-side that the
 server also decides: the asset type comes from the Workflow, the fire time from the preflight's
 `earliestFireTime`, the readiness from the preflight. The one thing no tool does is record TikTok
@@ -305,14 +305,47 @@ row in `list_publish_targets`) is refused at selection, before anything is uploa
   **29 days** ahead (its Reels endpoint's own ceiling, tighter than the feed's); Instagram reels
   have no such cap. A reel that isn't close to vertical still publishes — `REEL_ASPECT` warns rather
   than blocks, the same way a mixed-aspect carousel does.
-- **Story** is exactly one image or clip. It **takes no caption** — the platform drops it even if
-  one is sent (`STORY_CAPTION_IGNORED`, a warning) — and it expires 24 hours after it goes out.
-  Neither platform can schedule a story the way they schedule a feed post or a reel, so a story's
-  lane is `APP_MANAGED` even on an otherwise `NATIVE` (Facebook) connection, and Conductor holds it
-  and fires it itself at the fire time — with the same **1-minute** lead an app-managed destination
-  always needs, not Facebook's native 10 minutes. Giving it more than one asset selects only the
-  first at approval-check time (`STORY_SINGLE_ITEM`); a caller building the selection itself should
-  send exactly one rather than rely on that.
+- **Story** is one image or clip, or on Instagram and Facebook a **story sequence** of up to 7. It **takes
+  no caption** — the platform drops it even if one is sent (`STORY_CAPTION_IGNORED`, a warning) — and
+  each story expires 24 hours after it goes out. Neither platform can schedule a story the way they
+  schedule a feed post or a reel, so a story's lane is `APP_MANAGED` even on an otherwise `NATIVE`
+  (Facebook) connection, and Conductor holds it and fires it itself at the fire time — with the same
+  **1-minute** lead an app-managed destination always needs, not Facebook's native 10 minutes.
+  Giving it no items or more than 7 is a blocker (`STORY_ITEM_COUNT`; `STORY_SINGLE_ITEM` remains the
+  rule for any platform without sequences). Every item is checked on its own against that platform's
+  story limits, so a sequence may mix images and clips when each is valid.
+
+### Story sequences
+
+Neither platform has a multi-item story: a sequence is N stories posted back to back, in the
+destination's order, each through that platform's ordinary one-story path (Instagram: a `STORIES`
+container, polled if it is a video, then `media_publish`; Facebook: `photo_stories` / `video_stories`).
+A Creative's story sequence reaches this through the `story` placement, whose frames attach to a
+`STORY` target in beat order (see [`creatives.md`](creatives.md#attach--use-in-post)).
+
+A story is live the moment it publishes and can't be recalled in bulk, so a retry must not post the ones
+that already went out. After **each** story the ids published so far are written to the target row's
+`resume_checkpoint` (no new column), together with the ordered media paths. The checkpoint is on the
+target, not the action invocation, because `retry_failed_publish_targets` mints a fresh idempotency key
+and with it a fresh invocation. A retry reads it back and resumes at the first story without an id.
+If the files changed in between, the stories whose file is still at the same position, counting from the
+first, are kept (they are live, and posting them again would duplicate them) and the rest are published;
+a change at the first position keeps nothing. A cancelled attempt (the invocation's deadline) stops
+before its next story rather than racing the retry. An Instagram story whose `media_publish` answer was
+lost but whose container is `PUBLISHED` takes its id from the account's live stories (`/stories`), not
+from `/media`, which never lists stories.
+
+- **Partial failure.** The target is `FAILED` with `Published 3 of 5 stories to Instagram (@acme);
+  retrying resumes at story 4.` followed by the platform's reason, and its `platform_post_id` and
+  permalink point at the first story that went live. A transient error (5xx, timeout) is retried in
+  place and resumes the same way.
+- **Success.** `platform_post_id` is the first story's id (so metrics and the permalink read the first
+  story); the complete id list stays in the checkpoint, and the action output carries `story_ids` and
+  `story_count`.
+- **Approval.** The selection is part of the bundle: changing a target's items reverts approval
+  (`PublishBundleGuard`) like any other media edit, so a sequence is always published as approved.
+- **Instagram's 100-per-24-hours cap** counts each story. It is read once, before the first; a sequence
+  that outruns it stops with the progress message and resumes after the window clears.
 
 ### Carousels from a Creative
 
@@ -328,7 +361,10 @@ ordered multi-image selection, one explicit list per destination, picked by form
 
 A destination that cannot take a multi-image post gets an explicit empty selection and the preflight
 raises the blocker `MULTI_IMAGE_UNSUPPORTED` ("Instagram Reel (@acct) can't take a multi-image post --
-switch it to Feed or remove it."). A one-slide carousel is a finished still and publishes as a
+switch it to Feed or remove it."). A story is left empty even though Instagram and Facebook stories take
+several items: a carousel's feed-shaped slides are not a story sequence. A story destination that is
+handed several items directly (a story sequence) publishes them as that many stories instead, see
+[Story sequences](#story-sequences). A one-slide carousel is a finished still and publishes as a
 single image. Order is content: slides attach in the order of their list.
 
 Meanwhile the two long-standing Facebook feed numbers move: **75 days** is the actual scheduling
@@ -345,10 +381,10 @@ target's rules don't apply to a reel or story target on the same account.
 |---|---|---|---|
 | **Instagram feed** | 1 item, or a carousel of 2–10 (images and video may mix). Feed images must be JPEG, aspect 4:5 to 1.91:1 | caption ≤ 2200 characters | — |
 | **Instagram reel** | 1 vertical video (`REEL_SINGLE_VIDEO`; off-vertical warns, `REEL_ASPECT`) | caption ≤ 2200 characters | 3 seconds – 15 minutes |
-| **Instagram story** | exactly 1 image or clip (`STORY_SINGLE_ITEM`; off-vertical warns, `STORY_ASPECT`) | none — dropped if sent (`STORY_CAPTION_IGNORED`) | expires 24h after publish; fired by Conductor, 1-minute lead |
+| **Instagram story** | 1–7 images or clips, each its own story, in order (`STORY_ITEM_COUNT`; each checked alone; off-vertical warns, `STORY_ASPECT`) | none — dropped if sent (`STORY_CAPTION_IGNORED`) | expires 24h after publish; fired by Conductor, 1-minute lead |
 | **Facebook feed** | 1 video, **or** any number of photos; never both. Video ≤ 1.5 GB | message effectively uncapped | schedulable up to 75 days ahead |
 | **Facebook reel** | 1 vertical video (`REEL_SINGLE_VIDEO`; off-vertical warns, `REEL_ASPECT`). Every Page video publishes as a Reel (`FACEBOOK_VIDEO_IS_REEL`) | message effectively uncapped | 3–90 seconds; schedulable up to 29 days ahead |
-| **Facebook story** | exactly 1 image or clip (`STORY_SINGLE_ITEM`; off-vertical warns, `STORY_ASPECT`) | none — dropped if sent (`STORY_CAPTION_IGNORED`) | expires 24h after publish; fired by Conductor, 1-minute lead |
+| **Facebook story** | 1–7 images or clips, each its own story, in order (`STORY_ITEM_COUNT`; each checked alone; off-vertical warns, `STORY_ASPECT`) | none — dropped if sent (`STORY_CAPTION_IGNORED`) | expires 24h after publish; fired by Conductor, 1-minute lead |
 | **TikTok video** | 1 video (≤ 4 GB, within the creator's own duration cap) | caption ≤ 2200 | — |
 | **TikTok photo** | 1–35 images, **JPEG or WEBP only** — PNG is refused here and nowhere else | title ≤ 90 (cut, with a warning), description ≤ 4000 | — |
 | **YouTube video** | exactly 1 video, no images | title ≤ 100 characters; description ≤ 5000 **bytes** of UTF-8 | — |

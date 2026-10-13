@@ -283,7 +283,7 @@ describe('create_post', () => {
 
     const sent = mocked(apiPut).mock.calls[0]![1] as { targets: Array<Record<string, unknown>> }
     expect(sent.targets[0]!['assetIds']).toEqual(['a1'])
-    expect((result['warnings'] as string[]).join(' ')).toContain('story takes one item')
+    expect((result['warnings'] as string[]).join(' ')).toContain('story defaults to one item')
   })
 
   it('warns that a story drops a captionOverride rather than silently sending it', async () => {

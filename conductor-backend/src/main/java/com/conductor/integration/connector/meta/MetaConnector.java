@@ -11,6 +11,7 @@ import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.AssetService;
 import com.conductor.service.StorageService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -84,8 +85,20 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     // constructor and the context fails at deploy only, since @Profile("!local") beans never
     // instantiate in tests (see DiscordActionConnector).
     @Autowired
-    public MetaConnector(AssetRepository assetRepository, StorageService storageService) {
-        this(new MetaGraphClient(), new AssetPublishMediaResolver(assetRepository, storageService));
+    public MetaConnector(AssetRepository assetRepository, StorageService storageService,
+                         PostPublishTargetRepository targetRepository) {
+        this(new MetaGraphClient(), new AssetPublishMediaResolver(assetRepository, storageService),
+                new StorySequencePublisher.Store() {
+                    @Override
+                    public Optional<String> read(String targetId) {
+                        return targetRepository.findResumeCheckpointById(targetId);
+                    }
+
+                    @Override
+                    public void save(String targetId, String json) {
+                        targetRepository.updateResumeCheckpoint(targetId, json);
+                    }
+                });
     }
 
     MetaConnector(MetaGraphClient graphClient) {
@@ -93,9 +106,15 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     }
 
     MetaConnector(MetaGraphClient graphClient, PublishMediaResolver mediaResolver) {
+        this(graphClient, mediaResolver, StorySequencePublisher.Store.none());
+    }
+
+    MetaConnector(MetaGraphClient graphClient, PublishMediaResolver mediaResolver,
+                  StorySequencePublisher.Store storyProgress) {
         this.graphClient = graphClient;
-        this.facebookPublisher = new FacebookPublishAction(graphClient, mediaResolver);
-        this.instagramPublisher = new InstagramPublishAction(graphClient, mediaResolver);
+        StorySequencePublisher stories = new StorySequencePublisher(storyProgress);
+        this.facebookPublisher = new FacebookPublishAction(graphClient, mediaResolver, stories);
+        this.instagramPublisher = new InstagramPublishAction(graphClient, mediaResolver, stories);
     }
 
     /** The Instagram publisher, so a test can shrink its container poll interval. */

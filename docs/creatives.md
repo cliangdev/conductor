@@ -172,7 +172,7 @@ sets each inheriting destination's media by placement:
 | `9x16` | TikTok (its only format), and an Instagram target in `REEL` format |
 | `4x5` | an Instagram target in `FEED` format |
 | `1x1` | a Facebook target in `FEED` format |
-| `story` | any target in `STORY` format |
+| `story` | any target in `STORY` format — a story sequence's beats attach in order, and the target publishes them as that many stories (see [`publishing.md`](publishing.md#story-sequences)) |
 
 This mapping is one small, independently tested class, `CreativePlacementTargetMapper` — pure and
 stateless, so a new placement or platform is a switch arm, not a service rewrite. A target the mapping has

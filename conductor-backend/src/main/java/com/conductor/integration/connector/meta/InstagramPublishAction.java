@@ -36,8 +36,10 @@ import java.util.stream.Collectors;
  * reschedules.
  *
  * <h2>Format</h2>
- * The target's {@code format} arrives lower-case. A {@code story} takes exactly one image or video, a
- * {@code STORIES} container, and no caption — Instagram ignores one, so it is never sent. A {@code reel},
+ * The target's {@code format} arrives lower-case. A {@code story} takes an image or video per story, a
+ * {@code STORIES} container, and no caption — Instagram ignores one, so it is never sent. A story
+ * <em>sequence</em> (2 to {@value #MAX_STORY_ITEMS} items) is that many stories posted back to back and
+ * checkpointed per story, see {@link StorySequencePublisher}. A {@code reel},
  * and a {@code feed} post whose single item is a video (already {@code REELS} — every feed video is a
  * Reel on Instagram), may carry {@code cover_url} (resolved from {@code cover_asset_id}, one of the
  * Post's own image Assets), {@code share_to_feed}, up to three {@code collaborators} and
@@ -121,6 +123,9 @@ class InstagramPublishAction {
     /** Instagram publishes a carousel of 2 to 10 items; the approval gate refuses more long before here. */
     static final int MAX_CAROUSEL_ITEMS = 10;
 
+    /** A story sequence is at most this many stories — the same ceiling a Creative's story sequence has. */
+    static final int MAX_STORY_ITEMS = 7;
+
     /** Instagram allows at most three tagged collaborators on a Reel or feed post. */
     static final int MAX_COLLABORATORS = 3;
 
@@ -143,10 +148,17 @@ class InstagramPublishAction {
 
     private final MetaGraphClient graphClient;
     private final PublishMediaResolver mediaResolver;
+    private final StorySequencePublisher storySequences;
 
     InstagramPublishAction(MetaGraphClient graphClient, PublishMediaResolver mediaResolver) {
+        this(graphClient, mediaResolver, new StorySequencePublisher(StorySequencePublisher.Store.none()));
+    }
+
+    InstagramPublishAction(MetaGraphClient graphClient, PublishMediaResolver mediaResolver,
+                           StorySequencePublisher storySequences) {
         this.graphClient = graphClient;
         this.mediaResolver = mediaResolver;
+        this.storySequences = storySequences;
     }
 
     ActionResult publish(Map<String, Object> input, ConnectionContext ctx) {
@@ -185,9 +197,9 @@ class InstagramPublishAction {
         boolean storyRequested = FORMAT_STORY.equalsIgnoreCase(format);
         boolean reelRequested = FORMAT_REEL.equalsIgnoreCase(format);
 
-        if (storyRequested && media.size() != 1) {
-            return ActionResult.error("An Instagram Story needs exactly one image or video; this destination "
-                    + "selected " + media.size() + " items");
+        if (storyRequested && media.size() > MAX_STORY_ITEMS) {
+            return ActionResult.error("An Instagram story sequence holds at most " + MAX_STORY_ITEMS
+                    + " stories; this destination selected " + media.size() + " items");
         }
         if (reelRequested && (media.size() != 1 || !media.get(0).isVideo())) {
             return ActionResult.error("An Instagram Reel needs exactly one video; this destination selected "
@@ -206,19 +218,13 @@ class InstagramPublishAction {
                         + "after the rolling 24-hour window clears.");
             }
 
+            if (storyRequested) {
+                return publishStories(input, media, igUserId, token, ctx);
+            }
+
             Map<String, Object> output = new LinkedHashMap<>();
             String containerId;
-            if (storyRequested) {
-                PublishMedia only = media.get(0);
-                containerId = graphClient.createMediaContainer(igUserId, token, storyContainerParams(only));
-                if (only.isVideo()) {
-                    ActionResult stuck = awaitContainer(containerId, token);
-                    if (stuck != null) {
-                        return stuck;
-                    }
-                }
-                output.put("is_story", true);
-            } else if (media.size() == 1) {
+            if (media.size() == 1) {
                 PublishMedia only = media.get(0);
                 String mediaType = mediaType(MetaActions.string(input, "media_type"), only);
                 Map<String, String> extras = Map.of();
@@ -280,7 +286,8 @@ class InstagramPublishAction {
                 // No answer (a timeout, a 5xx) is not "it didn't publish": Instagram may well have put the
                 // post live. A blind retry builds a fresh container and publishes it again — a duplicate
                 // post. So ask the container what happened before letting anything retry.
-                PublishOutcome outcome = settleLostPublish(igUserId, token, containerId, e);
+                PublishOutcome outcome = settleLostPublish(igUserId, token, containerId, e,
+                        () -> graphClient.latestMediaId(igUserId, token));
                 if (outcome.error() != null) {
                     return outcome.error();
                 }
@@ -304,17 +311,73 @@ class InstagramPublishAction {
         }
     }
 
+    /**
+     * A story, or a story sequence: each item is its own {@code STORIES} container, polled if it is a video,
+     * then {@code media_publish}ed, one after another in the destination's order. Progress is checkpointed
+     * after every story by {@link StorySequencePublisher}, so a retry resumes at the first story that did not
+     * go out. A lost {@code media_publish} answer is settled per story exactly as for a feed post.
+     *
+     * <p>The publishing-limit read at the top of {@link #publish} is not multiplied by the item count: a
+     * sequence that outruns the quota partway stops with the "published N of M" message and the quota error,
+     * and resumes after the window clears rather than being refused outright.
+     */
+    private ActionResult publishStories(Map<String, Object> input, List<PublishMedia> media, String igUserId,
+                                        String token, ConnectionContext ctx) throws InterruptedException {
+        String username = MetaActions.stringConfig(ctx, MetaConnector.CONFIG_IG_USERNAME);
+        String account = username == null ? null : (username.startsWith("@") ? username : "@" + username);
+        StorySequencePublisher.Outcome outcome = storySequences.publish(MetaActions.string(input, "target_id"),
+                media, "Instagram", account, "Instagram rejected the post", (index, item, publishedIds) -> {
+                    String containerId = graphClient.createMediaContainer(igUserId, token,
+                            storyContainerParams(item));
+                    if (item.isVideo()) {
+                        ActionResult stuck = awaitContainer(containerId, token);
+                        if (stuck != null) {
+                            return StorySequencePublisher.Item.failed(stuck);
+                        }
+                    }
+                    String mediaId;
+                    try {
+                        mediaId = graphClient.publishMediaContainer(igUserId, token, containerId);
+                    } catch (HttpClientErrorException e) {
+                        throw e;
+                    } catch (RuntimeException e) {
+                        // A story is not on the account's /media edge, so the id is looked up among its live
+                        // stories, never the newest feed post.
+                        PublishOutcome settled = settleLostPublish(igUserId, token, containerId, e,
+                                () -> graphClient.latestStoryId(igUserId, token, publishedIds));
+                        if (settled.error() != null) {
+                            return StorySequencePublisher.Item.failed(settled.error());
+                        }
+                        mediaId = settled.mediaId();
+                    }
+                    return StorySequencePublisher.Item.published(mediaId, permalinkFor(mediaId, token));
+                });
+        if (outcome.error() != null) {
+            return outcome.error();
+        }
+        List<StorySequencePublisher.Story> stories = outcome.stories();
+        Map<String, Object> output = StorySequencePublisher.output(stories);
+        StorySequencePublisher.Story first = stories.get(0);
+        output.put("media_id", first.id());
+        if (first.permalink() != null) {
+            output.put("permalink", first.permalink());
+        }
+        return ActionResult.ok(output);
+    }
+
     private record PublishOutcome(String mediaId, ActionResult error) {}
 
     /**
      * Decides what a {@code media_publish} with no answer actually did. The container says: {@code PUBLISHED}
-     * means the post is live, and its id is the account's newest media; still {@code FINISHED} means it never
-     * went out, so the original failure is rethrown and the retry is safe. Anything else — including not
+     * means the post is live, and its id is the account's newest media ({@code newestMediaId}: the newest feed
+     * media, or for a story the newest live story); still {@code FINISHED} means it never went out, so the
+     * original failure is rethrown and the retry is safe. Anything else — including not
      * being able to ask — is reported as a permanent failure, because retrying an unknown outcome is exactly
      * how one post becomes three.
      */
     private PublishOutcome settleLostPublish(String igUserId, String token, String containerId,
-                                             RuntimeException cause) {
+                                             RuntimeException cause,
+                                             java.util.function.Supplier<String> newestMediaId) {
         MetaGraphClient.ContainerStatus status;
         try {
             status = graphClient.readContainerStatus(containerId, token);
@@ -326,7 +389,7 @@ class InstagramPublishAction {
         if ("PUBLISHED".equalsIgnoreCase(status.statusCode())) {
             String mediaId = null;
             try {
-                mediaId = graphClient.latestMediaId(igUserId, token);
+                mediaId = newestMediaId.get();
             } catch (RuntimeException lookupError) {
                 log.warn("Instagram container {} is PUBLISHED but the new media id could not be read: {}",
                         containerId, lookupError.getMessage());

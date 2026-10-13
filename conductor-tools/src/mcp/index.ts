@@ -975,7 +975,7 @@ export const TOOLS = [
               assetIds: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'Ordered subset of the Post\'s uploaded media for this destination (ids from upload_asset or list_assets). Omit or [] to inherit the whole set. Order is content: Instagram crops a carousel to its first item. A story takes exactly one.',
+                description: 'Ordered subset of the Post\'s uploaded media for this destination (ids from upload_asset or list_assets). Omit or [] to inherit the whole set. Order is content: Instagram crops a carousel to its first item. A story takes one, or up to 7 for a story sequence (each posted as its own story, in order).',
               },
               publishOptions: {
                 type: 'object',

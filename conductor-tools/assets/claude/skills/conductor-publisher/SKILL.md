@@ -67,18 +67,22 @@ offers all three:
   when nobody says otherwise.
 - **reel** — one vertical video. One instance of this is Facebook or Instagram; a reel is never a
   carousel or a set of photos.
-- **story** — exactly one image or clip, gone after 24 hours, with no caption at all (the platform
+- **story** — one image or clip (or a story sequence of up to 7, each posted as its own story,
+  in order), each gone after 24 hours, with no caption at all (the platform
   drops it even if you send one) — do not treat a story caption as lost work, it was never going
   to show. `create_post` and `set_publish_targets` fire a story at its scheduled time themselves,
   since neither Facebook nor Instagram can schedule one, so its lead time is short (about a
-  minute) rather than the platform's own scheduling window. Give a story exactly one `assetIds`
-  entry when several media are attached — omitted, `create_post` resolves it to the first of the
-  attached media and says so in `warnings`, which is a fallback worth naming rather than relying on.
+  minute) rather than the platform's own scheduling window. For one story give exactly one
+  `assetIds` entry when several media are attached — omitted, `create_post` resolves it to the first
+  of the attached media and says so in `warnings`, which is a fallback worth naming rather than
+  relying on. For a sequence, give the 2 to 7 `assetIds` in the order they should post. If a
+  sequence fails partway, the failure says how many stories went out ("Published 3 of 5 …");
+  `retry_failed_publish_targets` resumes after those and never reposts them.
 
 A multi-image post (a CAROUSEL Creative's slides) only goes to **feed** formats: Instagram feed
 (up to 10), Facebook feed (up to 10) and TikTok photo posts (up to 35). A reel, a story or YouTube
-destination can't take one, and the preflight blocks with `MULTI_IMAGE_UNSUPPORTED` naming the
-destination: switch it to Feed or remove it, then retry. A one-slide carousel is a single image and
+destination can't take one (a carousel's slides are not a story sequence), and the preflight blocks
+with `MULTI_IMAGE_UNSUPPORTED` naming the destination: switch it to Feed or remove it, then retry. A one-slide carousel is a single image and
 fits anywhere an image does.
 
 ### Scheduling with no time given

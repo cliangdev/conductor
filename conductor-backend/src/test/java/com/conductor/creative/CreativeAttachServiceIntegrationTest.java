@@ -54,6 +54,7 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     @Autowired private BrandKitService brandKitService;
     @Autowired private PublishTargetService publishTargetService;
     @Autowired private MediaTargetValidator mediaTargetValidator;
+    @Autowired private com.conductor.service.publish.PublishPreflightService publishPreflightService;
     @Autowired private PostPublishTargetRepository targetRepository;
     @Autowired private PostPublishTargetAssetRepository targetAssetRepository;
     @Autowired private AssetRepository assetRepository;
@@ -438,6 +439,41 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         for (PostPublishTarget target : unsupported) {
             assertThat(targetRepository.findById(target.getId()).orElseThrow().isCustomMedia()).isTrue();
         }
+    }
+
+    // ── a story sequence publishes as N stories: the STORY target takes all beats, in order ─────
+
+    @Test
+    void aThreeBeatStorySequenceAttachesInOrderToAnInstagramStoryTargetAndRaisesNoStoryBlocker() {
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId, null, null, null, "story")),
+                admin);
+        CreativeRender render = newRender();
+        // Written out of order; the sequence index decides.
+        newFrame(render, "story", 2, "instagram", 1080, 1920);
+        newFrame(render, "story", 0, "instagram", 1080, 1920);
+        newFrame(render, "story", 1, "instagram", 1080, 1920);
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(result.targetsUpdated()).hasSize(1);
+        PostPublishTarget story = targetRepository.findAllByWorkItemId(post.getId()).stream()
+                .filter(t -> "STORY".equals(t.getFormat())).findFirst().orElseThrow();
+        List<String> inIndexOrder = result.assets().stream()
+                .sorted(java.util.Comparator.comparing(CreativeAttachService.AttachedAsset::sequenceIndex))
+                .map(CreativeAttachService.AttachedAsset::assetId).toList();
+        assertThat(inIndexOrder).hasSize(3);
+        assertThat(storedAssetIds(story.getId())).containsExactlyElementsOf(inIndexOrder);
+
+        // The publish gate: no story-count blocker (it used to refuse anything but one item), and nothing
+        // blocks the target's media.
+        assertThat(mediaTargetValidator.inspect(post))
+                .filteredOn(f -> story.getId().equals(f.targetId()))
+                .noneMatch(PublishFinding::blocks);
+        assertThat(publishPreflightService.preflight(project.getId(), post.getId(), admin).blockers())
+                .extracting(PublishFinding::code)
+                .doesNotContain(MediaTargetValidator.STORY_SINGLE_ITEM, MediaTargetValidator.STORY_ITEM_COUNT);
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────

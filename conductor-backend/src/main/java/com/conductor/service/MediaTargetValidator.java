@@ -113,8 +113,16 @@ public class MediaTargetValidator {
     public static final String COPY_TOO_LONG = "COPY_TOO_LONG";
     /** An advisory the platform will act on without refusing (a Short, a cropped carousel, a cut title). */
     public static final String MEDIA_ADVISORY = "MEDIA_ADVISORY";
-    /** A story destination was given anything other than exactly one media item. */
+    /** A story destination on a platform with no story sequences was given anything other than exactly one media item. */
     public static final String STORY_SINGLE_ITEM = "STORY_SINGLE_ITEM";
+    /**
+     * An Instagram or Facebook story destination was given no items or more than {@link #MAX_STORY_ITEMS}. Its
+     * own code rather than a reworded {@link #STORY_SINGLE_ITEM}: the rule is no longer "exactly one", and a
+     * client keying on the old code must not read a sequence limit as the single-story rule.
+     */
+    public static final String STORY_ITEM_COUNT = "STORY_ITEM_COUNT";
+    /** A story sequence's ceiling — the same 7 a Creative's story sequence is validated to. */
+    public static final int MAX_STORY_ITEMS = 7;
     /** A story's media is far from the 9:16 shape the surface is read in — advisory, not a refusal. */
     public static final String STORY_ASPECT = "STORY_ASPECT";
     /** A caption (Post or override) was set on a story, which the platform drops on arrival. */
@@ -125,7 +133,11 @@ public class MediaTargetValidator {
     public static final String REEL_ASPECT = "REEL_ASPECT";
     /** A Facebook feed post whose one item is a video, which Facebook now publishes as a Reel. */
     public static final String FACEBOOK_VIDEO_IS_REEL = "FACEBOOK_VIDEO_IS_REEL";
-    /** A reel, story or YouTube destination was given a multi-image post (a carousel), which it cannot publish. */
+    /**
+     * A reel or YouTube destination was given a multi-image post (a carousel), which it cannot publish; or a
+     * story destination was left without media because a carousel was attached (a carousel's slides are not
+     * a story sequence).
+     */
     public static final String MULTI_IMAGE_UNSUPPORTED = "MULTI_IMAGE_UNSUPPORTED";
     /** A target's chosen format is not one its platform offers at all — defensive; selection already refuses it. */
     public static final String FORMAT_UNSUPPORTED = "FORMAT_UNSUPPORTED";
@@ -265,7 +277,10 @@ public class MediaTargetValidator {
                     mediaByTarget.getOrDefault(target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
             List<Asset> media = effective.assets();
             if (takesNoImageSet(target)) {
-                boolean multiImage = media.stream().filter(MediaTargetValidator::isImage).count() > 1;
+                // An Instagram/Facebook story takes several items as a story sequence (inspectStory counts
+                // them), so only the explicitly-empty case below applies to it.
+                boolean multiImage = !takesStorySequence(target)
+                        && media.stream().filter(MediaTargetValidator::isImage).count() > 1;
                 if (!multiImage && media.isEmpty() && effective.custom()) {
                     // Explicitly media-less: what attaching a carousel leaves on a destination that cannot
                     // take one. Only worth a message when the Post does carry a multi-image set.
@@ -302,6 +317,13 @@ public class MediaTargetValidator {
             }
         }
         return findings;
+    }
+
+    /** An Instagram or Facebook story, which publishes several items as that many stories in order. */
+    private static boolean takesStorySequence(PostPublishTarget target) {
+        String platform = normalizedPlatform(target);
+        return PostFormat.parse(target.getFormat()) == PostFormat.STORY
+                && ("instagram".equals(platform) || "facebook".equals(platform));
     }
 
     /** A destination whose post is one video or one item (reel, story) or video-only (YouTube). */
@@ -349,25 +371,34 @@ public class MediaTargetValidator {
     }
 
     /**
-     * A story: exactly one item, checked against that platform's own story limits, with the caption
-     * flagged rather than checked — the platform drops it, so a length rule would be checking text that
-     * never arrives.
+     * A story, or on Instagram and Facebook a story sequence: one to {@link #MAX_STORY_ITEMS} items published
+     * back to back as that many stories, in order. Each item is checked on its own against that platform's
+     * story limits, so a mixed image-and-video sequence is fine when every item is; any other platform keeps
+     * exactly one. The caption is flagged rather than checked — the platform drops it, so a length rule would
+     * be checking text that never arrives.
      */
     private void inspectStory(PostPublishTarget target, List<Asset> media, WorkItem post,
                               List<PublishFinding> findings) {
         String where = describe(target);
-        if (media.size() != 1) {
+        String platform = normalizedPlatform(target);
+        boolean sequences = "instagram".equals(platform) || "facebook".equals(platform);
+        if (sequences && (media.isEmpty() || media.size() > MAX_STORY_ITEMS)) {
+            findings.add(PublishFinding.blocker(STORY_ITEM_COUNT,
+                    where + " has " + media.size() + " files — a story sequence is 1 to " + MAX_STORY_ITEMS
+                    + " items, each published as its own story", target.getId()));
+        } else if (!sequences && media.size() != 1) {
             findings.add(PublishFinding.blocker(STORY_SINGLE_ITEM,
                     where + " has " + media.size() + " files — a story is exactly one item", target.getId()));
         } else {
-            Asset asset = media.get(0);
-            switch (normalizedPlatform(target)) {
-                case "instagram" -> inspectInstagramStoryAsset(target, asset, findings);
-                case "facebook" -> inspectFacebookStoryAsset(target, asset, findings);
-                default -> { }
+            for (Asset asset : media) {
+                switch (platform) {
+                    case "instagram" -> inspectInstagramStoryAsset(target, asset, findings);
+                    case "facebook" -> inspectFacebookStoryAsset(target, asset, findings);
+                    default -> { }
+                }
+                warnIfAspectOutsideRange(target, asset, STORY_MIN_ASPECT, STORY_MAX_ASPECT, STORY_ASPECT,
+                        "a story", findings);
             }
-            warnIfAspectOutsideRange(target, asset, STORY_MIN_ASPECT, STORY_MAX_ASPECT, STORY_ASPECT, "a story",
-                    findings);
         }
         String caption = mediaResolver.effectiveCaption(target, post);
         if (caption != null && !caption.isBlank()) {

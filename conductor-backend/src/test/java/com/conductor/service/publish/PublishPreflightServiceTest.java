@@ -276,14 +276,20 @@ class PublishPreflightServiceTest {
 
         when(realTargetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(story, tiktokFeed));
 
-        Asset image1 = uploadedImage("story-1.jpg");
-        Asset image2 = uploadedImage("story-2.jpg");
+        // Eight story items: one past a story sequence's seven.
+        List<Asset> storyImages = new java.util.ArrayList<>();
+        List<PostPublishTargetAsset> selection = new java.util.ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            Asset image = uploadedImage("story-" + i + ".jpg");
+            storyImages.add(image);
+            selection.add(new PostPublishTargetAsset("t-story", image.getId(), i));
+        }
         Asset clip = uploadedVideo("dance.mp4", "20");
-        when(assetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(image1, image2, clip));
-        when(targetAssetRepository.findAllByTargetIdIn(any())).thenReturn(List.of(
-                new PostPublishTargetAsset("t-story", image1.getId(), 0),
-                new PostPublishTargetAsset("t-story", image2.getId(), 1),
-                new PostPublishTargetAsset("t-tiktok", clip.getId(), 0)));
+        List<Asset> all = new java.util.ArrayList<>(storyImages);
+        all.add(clip);
+        when(assetRepository.findAllByWorkItemId("post-1")).thenReturn(all);
+        selection.add(new PostPublishTargetAsset("t-tiktok", clip.getId(), 0));
+        when(targetAssetRepository.findAllByTargetIdIn(any())).thenReturn(selection);
 
         Connection tiktokConnection = new Connection();
         tiktokConnection.setId("conn-tiktok");
@@ -296,9 +302,7 @@ class PublishPreflightServiceTest {
         assertThat(preflight.blockers())
                 .filteredOn(f -> "t-story".equals(f.targetId()))
                 .extracting(PublishFinding::code)
-                // A two-image story is both "not exactly one item" and a multi-image post a story cannot take.
-                .containsExactlyInAnyOrder(MediaTargetValidator.STORY_SINGLE_ITEM,
-                        MediaTargetValidator.MULTI_IMAGE_UNSUPPORTED);
+                .containsExactly(MediaTargetValidator.STORY_ITEM_COUNT);
         assertThat(preflight.blockers()).noneMatch(f -> "t-tiktok".equals(f.targetId()));
         assertThat(preflight.warnings())
                 .filteredOn(f -> "t-tiktok".equals(f.targetId()))

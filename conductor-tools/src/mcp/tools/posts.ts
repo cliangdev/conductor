@@ -361,12 +361,13 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
       return ref
     })
 
-    // A story is exactly one image or clip. When the caller gave several files and no explicit
-    // assetIds for this destination, resolve it to the first rather than blocking on it — and say so.
+    // A story is one image or clip; a story sequence is up to 7 of them, each posted as its own story in
+    // order. When the caller gave several files and no explicit assetIds for this destination, resolve it
+    // to the first rather than guess that a feed-shaped file set was meant as a sequence — and say so.
     if (input.format === 'story' && assetIds.length === 0 && assets.length > 1) {
       assetIds = [String(assets[0]!['id'])]
       warnings.push(
-        `${account.platform}: story takes one item — used the first of ${assets.length} media. Pass assetIds to choose a different one.`
+        `${account.platform}: story defaults to one item — used the first of ${assets.length} media. Pass assetIds (up to 7, in order) to post a story sequence, or to choose a different item.`
       )
     }
     if (input.format === 'story' && input.captionOverride) {
