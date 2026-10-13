@@ -108,12 +108,25 @@ public class CreativePhotoService {
 
     @Transactional(readOnly = true)
     public List<PhotoView> listPhotos(String projectId, boolean includeBlocked, Set<String> mediaKinds, User caller) {
+        return listPhotos(projectId, includeBlocked, mediaKinds, null, caller);
+    }
+
+    /** {@code labelPrefix}: case-insensitive prefix match on the label; null or empty matches everything. */
+    @Transactional(readOnly = true)
+    public List<PhotoView> listPhotos(String projectId, boolean includeBlocked, Set<String> mediaKinds,
+                                      String labelPrefix, User caller) {
         requireMember(projectId, caller);
         List<CreativePhoto> photos = includeBlocked
                 ? photoRepository.findAllByProjectIdOrderByCreatedAtDesc(projectId)
                 : photoRepository.findAllByProjectIdAndBlockedFalseOrderByCreatedAtDesc(projectId);
         if (mediaKinds != null && !mediaKinds.isEmpty()) {
             photos = photos.stream().filter(p -> mediaKinds.contains(p.getMediaKind())).toList();
+        }
+        if (labelPrefix != null && !labelPrefix.isEmpty()) {
+            String prefix = labelPrefix.toLowerCase(Locale.ROOT);
+            photos = photos.stream()
+                    .filter(p -> p.getLabel() != null && p.getLabel().toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .toList();
         }
         return photos.stream().map(this::toView).toList();
     }
@@ -261,6 +274,18 @@ public class CreativePhotoService {
             photo.setChecked(request.getChecked());
         }
         if (request.getBlocked() != null) {
+            if (request.getBlocked()) {
+                Set<String> readyUsers = new TreeSet<>();
+                for (Creative c : creativesReferencing(projectId, photoId)) {
+                    if (Creative.STATE_READY.equals(c.getState())) {
+                        readyUsers.add(c.displayId());
+                    }
+                }
+                if (!readyUsers.isEmpty()) {
+                    throw new ConflictException("Creative " + String.join(", ", readyUsers)
+                            + " is READY and uses this media — move it back to draft or swap the media there first");
+                }
+            }
             photo.setBlocked(request.getBlocked());
         }
         if (request.getBlockedReason() != null) {
@@ -324,15 +349,8 @@ public class CreativePhotoService {
         CreativePhoto photo = findPhoto(projectId, photoId);
 
         Set<String> usedByDisplayIds = new TreeSet<>();
-        for (Creative c : creativeRepository.findAllByPhotoId(photoId)) {
-            if (projectId.equals(c.getProjectId())) {
-                usedByDisplayIds.add(c.displayId());
-            }
-        }
-        for (Creative c : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId)) {
-            if (sequenceReferencesPhoto(c.getSequence(), photoId) || clipMediaReferencesPhoto(c.getClipMedia(), photoId)) {
-                usedByDisplayIds.add(c.displayId());
-            }
+        for (Creative c : creativesReferencing(projectId, photoId)) {
+            usedByDisplayIds.add(c.displayId());
         }
         if (!usedByDisplayIds.isEmpty()) {
             throw new ConflictException("Creative " + String.join(", ", usedByDisplayIds)
@@ -346,6 +364,41 @@ public class CreativePhotoService {
         }
         photoRepository.delete(photo);
         AfterCommitStorageCleanup.deleteAfterCommit(storageService, gcsPaths, log);
+    }
+
+    /** Every Creative in the project that uses this media: main photo, sequence beat, {@code clipMedia}
+     *  or CAROUSEL {@code slides}. */
+    private List<Creative> creativesReferencing(String projectId, String photoId) {
+        Map<String, Creative> used = new LinkedHashMap<>();
+        for (Creative c : creativeRepository.findAllByPhotoId(photoId)) {
+            if (projectId.equals(c.getProjectId())) {
+                used.put(c.getId(), c);
+            }
+        }
+        for (Creative c : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId)) {
+            if (sequenceReferencesPhoto(c.getSequence(), photoId) || clipMediaReferencesPhoto(c.getClipMedia(), photoId)
+                    || slidesReferencePhoto(c.getSlides(), photoId)) {
+                used.put(c.getId(), c);
+            }
+        }
+        return new ArrayList<>(used.values());
+    }
+
+    /** Whether a CAROUSEL's {@code slides} map ({@code {"default": [id...], "<placement>": [id...]}}) names this media. */
+    private boolean slidesReferencePhoto(JsonNode slides, String photoId) {
+        if (slides == null || !slides.isObject()) {
+            return false;
+        }
+        for (JsonNode list : slides) {
+            if (list.isArray()) {
+                for (JsonNode id : list) {
+                    if (id.isTextual() && photoId.equals(id.asText())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /** Whether any beat of a Creative's {@code sequence} JSON array names this photo. */

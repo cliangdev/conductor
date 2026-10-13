@@ -98,4 +98,35 @@ public final class CreativePlacementTargetMapper {
             default -> false;
         };
     }
+
+    /**
+     * Where a CAROUSEL's image set goes: the one placement (of those that actually have slides) whose list
+     * this {@code target} publishes, or null when the target cannot take a multi-image post at all.
+     * Instagram's feed prefers {@code 4x5} then {@code 1x1}; Facebook's feed {@code 1x1} then {@code 4x5};
+     * TikTok {@code 9x16} then {@code 4x5}. An Instagram or Facebook reel, any story and YouTube get null:
+     * a reel is one video, a story one item, YouTube has no image posts.
+     */
+    public static String carouselPlacementFor(PostPublishTarget target, Set<String> placementsWithSlides) {
+        if (target == null || target.getPlatform() == null || placementsWithSlides == null) {
+            return null;
+        }
+        String platform = target.getPlatform().trim().toLowerCase(Locale.ROOT);
+        PostFormat format = PostFormat.parse(target.getFormat());
+        String[] preference;
+        if (INSTAGRAM.equals(platform) && format == PostFormat.FEED) {
+            preference = new String[] {PLACEMENT_4X5, PLACEMENT_1X1};
+        } else if (FACEBOOK.equals(platform) && format == PostFormat.FEED) {
+            preference = new String[] {PLACEMENT_1X1, PLACEMENT_4X5};
+        } else if (TIKTOK.equals(platform)) {
+            preference = new String[] {PLACEMENT_9X16, PLACEMENT_4X5};
+        } else {
+            return null;
+        }
+        for (String placement : preference) {
+            if (placementsWithSlides.contains(placement)) {
+                return placement;
+            }
+        }
+        return null;
+    }
 }

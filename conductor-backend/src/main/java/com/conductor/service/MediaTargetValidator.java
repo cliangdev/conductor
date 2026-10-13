@@ -125,6 +125,8 @@ public class MediaTargetValidator {
     public static final String REEL_ASPECT = "REEL_ASPECT";
     /** A Facebook feed post whose one item is a video, which Facebook now publishes as a Reel. */
     public static final String FACEBOOK_VIDEO_IS_REEL = "FACEBOOK_VIDEO_IS_REEL";
+    /** A reel, story or YouTube destination was given a multi-image post (a carousel), which it cannot publish. */
+    public static final String MULTI_IMAGE_UNSUPPORTED = "MULTI_IMAGE_UNSUPPORTED";
     /** A target's chosen format is not one its platform offers at all — defensive; selection already refuses it. */
     public static final String FORMAT_UNSUPPORTED = "FORMAT_UNSUPPORTED";
 
@@ -257,9 +259,27 @@ public class MediaTargetValidator {
                 mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
 
         List<PublishFinding> findings = new ArrayList<>();
+        Boolean postHasCarouselImages = null;
         for (PostPublishTarget target : targets) {
-            List<Asset> media = mediaByTarget
-                    .getOrDefault(target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE).assets();
+            PublishTargetMediaResolver.EffectiveMedia effective =
+                    mediaByTarget.getOrDefault(target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
+            List<Asset> media = effective.assets();
+            if (takesNoImageSet(target)) {
+                boolean multiImage = media.stream().filter(MediaTargetValidator::isImage).count() > 1;
+                if (!multiImage && media.isEmpty() && effective.custom()) {
+                    // Explicitly media-less: what attaching a carousel leaves on a destination that cannot
+                    // take one. Only worth a message when the Post does carry a multi-image set.
+                    if (postHasCarouselImages == null) {
+                        postHasCarouselImages = assetRepository.findAllByWorkItemId(workItem.getId()).stream()
+                                .filter(a -> a.getCreativeFrameId() != null && isImage(a)).count() > 1;
+                    }
+                    multiImage = postHasCarouselImages;
+                }
+                if (multiImage) {
+                    findings.add(PublishFinding.blocker(MULTI_IMAGE_UNSUPPORTED, multiImageMessage(target),
+                            target.getId()));
+                }
+            }
             if (media.isEmpty()) {
                 // PostScheduleValidator owns "this target has no media", and says which kind of nothing
                 // it is; checking file rules against an empty list here would add nothing but noise.
@@ -282,6 +302,26 @@ public class MediaTargetValidator {
             }
         }
         return findings;
+    }
+
+    /** A destination whose post is one video or one item (reel, story) or video-only (YouTube). */
+    private static boolean takesNoImageSet(PostPublishTarget target) {
+        PostFormat format = PostFormat.parse(target.getFormat());
+        return format == PostFormat.REEL || format == PostFormat.STORY || "youtube".equals(normalizedPlatform(target));
+    }
+
+    private String multiImageMessage(PostPublishTarget target) {
+        PostFormat format = PostFormat.parse(target.getFormat());
+        String name = platformRegistry.labelOf(target.getPlatform());
+        String account = target.getPlatformAccountLabel();
+        String formatWord = switch (format) {
+            case REEL -> " Reel";
+            case STORY -> " Story";
+            default -> "";
+        };
+        String where = name + formatWord + (account == null || account.isBlank() ? "" : " (" + account + ")");
+        return where + " can't take a multi-image post — "
+                + (format == PostFormat.FEED ? "remove it." : "switch it to Feed or remove it.");
     }
 
     /** The rules unchanged since before formats existed: per-file format, composition, copy. */

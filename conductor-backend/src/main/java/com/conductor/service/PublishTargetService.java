@@ -189,9 +189,19 @@ public class PublishTargetService {
      *                       or empty means it inherits the Post's whole set, in Post order. Order matters —
      *                       Instagram crops a carousel to its first item and TikTok covers a photo post
      *                       with it
+     * @param noMedia        true to make this destination <em>explicitly</em> media-less: custom media with no
+     *                       rows, so it never inherits the Post's set. Meaningful only with empty
+     *                       {@code assetIds}; used when a carousel is attached and this destination cannot
+     *                       publish images (a reel, a story, YouTube)
      */
     public record TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions,
-                                  String captionOverride, List<String> assetIds, String format) {
+                                  String captionOverride, List<String> assetIds, String format, boolean noMedia) {
+
+        /** Every selection that does not ask for explicit emptiness. */
+        public TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions,
+                               String captionOverride, List<String> assetIds, String format) {
+            this(platform, connectionId, publishOptions, captionOverride, assetIds, format, false);
+        }
 
         /** A selection that chooses only a destination, leaving every publish option unset. */
         public TargetSelection(String platform, String connectionId) {
@@ -530,10 +540,10 @@ public class PublishTargetService {
      * own assets, de-duplicated and order-preserved. Empty {@code assetIds} means inherit.
      */
     private record DesiredTarget(TargetOption option, String optionsJson, String captionOverride,
-                                 List<String> assetIds, PostFormat format) {
+                                 List<String> assetIds, PostFormat format, boolean noMedia) {
 
         boolean customMedia() {
-            return !assetIds.isEmpty();
+            return !assetIds.isEmpty() || noMedia;
         }
     }
 
@@ -569,7 +579,8 @@ public class PublishTargetService {
             desired.put(key, new DesiredTarget(option, canonicalOptions(selection.publishOptions()),
                     blankToNull(selection.captionOverride()),
                     resolveAssetIds(workItem.getId(), selection.assetIds()),
-                    resolveFormat(option, selection.format())));
+                    resolveFormat(option, selection.format()),
+                    selection.noMedia()));
         }
 
         List<PostPublishTarget> existing = targetRepository.findAllByWorkItemId(workItem.getId());

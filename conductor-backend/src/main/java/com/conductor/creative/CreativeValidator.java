@@ -69,6 +69,23 @@ public class CreativeValidator {
     }
 
     /**
+     * One slide of a CAROUSEL creative's {@code slides} map, resolved by {@link CreativeService} against the
+     * media library (or, for a draft, the {@code localMedia} declarations) before the validator sees it.
+     * {@code width}/{@code height} are null when unknown (the aspect check is then skipped).
+     */
+    public record SlideEntry(String placementKey, int index, String mediaId, boolean resolvable, boolean isImage,
+                             boolean uploaded, boolean blocked, Integer width, Integer height) {
+    }
+
+    /** The placement keys a CAROUSEL's {@code slides} map may name (besides {@code "default"}). */
+    public static final List<String> CAROUSEL_PLACEMENTS = List.of("4x5", "9x16", "1x1");
+    /** Instagram / Facebook / the default list: 10 images; TikTok photo posts (9x16): 35. */
+    public static final int CAROUSEL_MAX_SLIDES = 10;
+    public static final int CAROUSEL_MAX_SLIDES_9X16 = 35;
+    /** Relative aspect-ratio tolerance: {@code |w/h - target| / target}. */
+    public static final double CAROUSEL_ASPECT_TOLERANCE = 0.02;
+
+    /**
      * A MOTION creative's {@code motion}/{@code audio} (COND-24 PR2), with every media reference already
      * resolved by the caller ({@link CreativeService}/{@link CreativeRenderService}, both of which have
      * database access) — the validator itself never touches the database. Numeric fields are already
@@ -215,7 +232,22 @@ public class CreativeValidator {
             Map<String, Integer> layoutOverridePadBottom,
             String kind,
             List<ClipMediaEntry> clipMedia,
-            MotionInput motion) {
+            MotionInput motion,
+            Map<String, List<SlideEntry>> slides,
+            List<String> slideAltText) {
+
+        /** The pre-CAROUSEL shape: no slides, no slide alt text. */
+        public Input(String layout, String theme, List<String> placements, String headline, String body,
+                     String caption, String state, String photoId, boolean photoIdResolvable, boolean photoPresent,
+                     boolean photoUploaded, boolean photoBlocked, String sequenceKind, List<SequenceBeat> sequence,
+                     String carouselRatio, Set<String> unknownSequencePhotoIds,
+                     Map<String, Integer> layoutOverrideBand, Map<String, Integer> layoutOverridePadBottom,
+                     String kind, List<ClipMediaEntry> clipMedia, MotionInput motion) {
+            this(layout, theme, placements, headline, body, caption, state, photoId, photoIdResolvable,
+                    photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence, carouselRatio,
+                    unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom, kind, clipMedia, motion,
+                    Map.of(), List.of());
+        }
 
         /**
          * A test-friendly builder for {@link Input} — every field defaults to "structurally valid and
@@ -245,7 +277,11 @@ public class CreativeValidator {
             private String kind = Creative.KIND_STILL;
             private List<ClipMediaEntry> clipMedia = List.of();
             private MotionInput motion;
+            private Map<String, List<SlideEntry>> slides = Map.of();
+            private List<String> slideAltText = List.of();
 
+            public InputBuilder slides(Map<String, List<SlideEntry>> v) { this.slides = v; return this; }
+            public InputBuilder slideAltText(List<String> v) { this.slideAltText = v; return this; }
             public InputBuilder layout(String v) { this.layout = v; return this; }
             public InputBuilder theme(String v) { this.theme = v; return this; }
             public InputBuilder placements(List<String> v) { this.placements = v; return this; }
@@ -272,13 +308,25 @@ public class CreativeValidator {
                 return new Input(layout, theme, placements, headline, body, caption, state, photoId,
                         photoIdResolvable, photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence,
                         carouselRatio, unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom,
-                        kind, clipMedia, motion);
+                        kind, clipMedia, motion, slides, slideAltText);
             }
         }
     }
 
     public List<Violation> validate(BrandKit kit, Input input) {
         List<Violation> violations = new ArrayList<>();
+
+        if (Creative.KIND_CAROUSEL.equals(input.kind())) {
+            // Finished images used as-is: no layout, theme, headline, accent or sequence rules — only the
+            // placements, the caption's copy rules, and the slides themselves.
+            validatePlacements(input, violations);
+            applyCopyRules(kit, "caption", input.caption(), violations);
+            validateCarousel(input, violations);
+            if (Creative.STATE_READY.equals(input.state())) {
+                validateReadyState(input, violations);
+            }
+            return violations;
+        }
 
         validateLayoutAndTheme(input, violations);
         validatePlacements(input, violations);
@@ -307,6 +355,7 @@ public class CreativeValidator {
         validateSequenceBounds(input, violations);
         validateClipMedia(input, violations);
         validateMotion(input, violations);
+        validateCarousel(input, violations);
 
         if (input.photoId() != null && !input.photoIdResolvable()) {
             violations.add(new Violation("photoId", "photoNotFound",
@@ -523,6 +572,19 @@ public class CreativeValidator {
     }
 
     private void validateReadyState(Input input, List<Violation> violations) {
+        if (Creative.KIND_CAROUSEL.equals(input.kind())) {
+            if (input.caption() == null || input.caption().isBlank()) {
+                violations.add(new Violation("caption", "captionRequired",
+                        "caption is required before this Creative can go up for review"));
+            }
+            boolean hasSlides = input.slides() != null
+                    && input.slides().values().stream().anyMatch(l -> l != null && !l.isEmpty());
+            if (!hasSlides) {
+                violations.add(new Violation("slides", "slidesRequired",
+                        "at least one slide is required before this Creative can go up for review"));
+            }
+            return;
+        }
         if (Creative.KIND_CLIP.equals(input.kind())) {
             if (input.caption() == null || input.caption().isBlank()) {
                 violations.add(new Violation("caption", "captionRequired",
@@ -596,6 +658,125 @@ public class CreativeValidator {
                 violations.add(new Violation("clipMedia", "mediaBlocked",
                         "clipMedia[\"" + key + "\"] is blocked and cannot be used"));
             }
+        }
+    }
+
+    /**
+     * CAROUSEL structural rules, enforced on every write regardless of state: the {@code slides} map only
+     * exists on a CAROUSEL (and a CAROUSEL carries none of the other kinds' media fields); every key is
+     * {@code "default"} or 4x5 / 9x16 / 1x1; every list holds 1..10 slides (1..35 for 9x16); every slide
+     * resolves to an uploaded, unblocked IMAGE whose aspect ratio is within 2% of its placement's; every
+     * targeted placement has a list of its own or falls back to a {@code default} list whose images match
+     * that placement's aspect; and {@code slideAltText} has no more entries than the longest list.
+     */
+    private void validateCarousel(Input input, List<Violation> violations) {
+        Map<String, List<SlideEntry>> slides = input.slides() != null ? input.slides() : Map.of();
+        if (!Creative.KIND_CAROUSEL.equals(input.kind())) {
+            if (!slides.isEmpty()) {
+                violations.add(new Violation("slides", "kindFields",
+                        "slides only applies to a CAROUSEL creative, not " + input.kind()));
+            }
+            return;
+        }
+        if (input.clipMedia() != null && !input.clipMedia().isEmpty()) {
+            violations.add(new Violation("clipMedia", "kindFields", "clipMedia does not apply to a CAROUSEL creative"));
+        }
+        if (input.sequence() != null && !input.sequence().isEmpty() || input.sequenceKind() != null) {
+            violations.add(new Violation("sequence", "kindFields", "sequence does not apply to a CAROUSEL creative"));
+        }
+        if (input.motion() != null) {
+            violations.add(new Violation("motion", "kindFields", "motion does not apply to a CAROUSEL creative"));
+        }
+        if (input.photoId() != null) {
+            violations.add(new Violation("photoId", "kindFields", "photoId does not apply to a CAROUSEL creative"));
+        }
+
+        int longest = 0;
+        for (Map.Entry<String, List<SlideEntry>> list : slides.entrySet()) {
+            String key = list.getKey();
+            List<SlideEntry> entries = list.getValue() != null ? list.getValue() : List.of();
+            longest = Math.max(longest, entries.size());
+            if (!"default".equals(key) && !CAROUSEL_PLACEMENTS.contains(key)) {
+                violations.add(new Violation("slides", "placement",
+                        "unknown placement \"" + key + "\" in slides, must be \"default\" or one of: "
+                                + String.join(", ", CAROUSEL_PLACEMENTS)));
+                continue;
+            }
+            int max = "9x16".equals(key) ? CAROUSEL_MAX_SLIDES_9X16 : CAROUSEL_MAX_SLIDES;
+            if (entries.isEmpty()) {
+                violations.add(new Violation("slides", "slideCount",
+                        "slides[\"" + key + "\"] must have at least 1 slide"));
+            } else if (entries.size() > max) {
+                violations.add(new Violation("slides", "slideCount",
+                        "slides[\"" + key + "\"] has " + entries.size() + " slides, more than the " + max + " allowed"));
+            }
+            for (SlideEntry entry : entries) {
+                String ref = "slides[\"" + key + "\"][" + entry.index() + "]";
+                if (!entry.resolvable()) {
+                    violations.add(new Violation("slides", "mediaNotFound",
+                            "No media with id " + entry.mediaId() + " in this project"));
+                    continue;
+                }
+                if (!entry.isImage()) {
+                    violations.add(new Violation("slides", "mediaNotImage", ref + " must be an IMAGE"));
+                    continue;
+                }
+                if (!entry.uploaded()) {
+                    violations.add(new Violation("slides", "mediaUploaded", ref + " has not finished uploading"));
+                }
+                if (entry.blocked()) {
+                    violations.add(new Violation("slides", "mediaBlocked", ref + " is blocked and cannot be used"));
+                }
+                if (!"default".equals(key)) {
+                    checkSlideAspect(ref, entry, key, key, violations);
+                }
+            }
+        }
+
+        // Every targeted placement needs slides of its own, or a default list that fits its aspect.
+        List<SlideEntry> fallback = slides.get("default");
+        if (input.placements() != null) {
+            for (String placement : input.placements()) {
+                if (slides.containsKey(placement)) {
+                    continue;
+                }
+                if (fallback == null) {
+                    violations.add(new Violation("slides", "placementSlides",
+                            "placement \"" + placement + "\" has no slides: add slides[\"" + placement
+                                    + "\"] or a slides[\"default\"] list"));
+                    continue;
+                }
+                for (SlideEntry entry : fallback) {
+                    if (entry.resolvable() && entry.isImage()) {
+                        checkSlideAspect("slides[\"default\"][" + entry.index() + "]", entry, placement,
+                                "placement \"" + placement + "\" falls back to it and", violations);
+                    }
+                }
+            }
+        }
+
+        if (input.slideAltText() != null && input.slideAltText().size() > longest) {
+            violations.add(new Violation("slideAltText", "slideAltText",
+                    "slideAltText has " + input.slideAltText().size() + " entries but the longest slide list has only "
+                            + longest));
+        }
+    }
+
+    private void checkSlideAspect(String ref, SlideEntry entry, String placementKey, String subject,
+                                  List<Violation> violations) {
+        CreativeRegistry.PlacementInfo placement = registry.placements().get(placementKey);
+        if (placement == null || entry.width() == null || entry.height() == null
+                || entry.width() <= 0 || entry.height() <= 0) {
+            return;
+        }
+        double target = (double) placement.width() / placement.height();
+        double actual = (double) entry.width() / entry.height();
+        if (Math.abs(actual - target) / target > CAROUSEL_ASPECT_TOLERANCE) {
+            String needs = placement.width() + "x" + placement.height();
+            String lead = subject.equals(placementKey) ? placementKey + " needs about " + needs
+                    : subject + " needs about " + needs;
+            violations.add(new Violation("slides", "slideAspect",
+                    ref + " is " + entry.width() + "x" + entry.height() + " but " + lead));
         }
     }
 

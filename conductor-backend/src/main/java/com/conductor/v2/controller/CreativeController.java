@@ -107,9 +107,9 @@ public class CreativeController implements CreativesApi {
 
     @Override
     public ResponseEntity<List<CreativePhotoResponse>> listCreativePhotos(String projectId, Boolean includeBlocked,
-                                                                          List<MediaKind> mediaKind) {
+                                                                          List<MediaKind> mediaKind, String labelPrefix) {
         List<CreativePhotoResponse> body = photoService.listPhotos(projectId, Boolean.TRUE.equals(includeBlocked),
-                        CreativePhotoService.mediaKindValues(mediaKind), currentUser())
+                        CreativePhotoService.mediaKindValues(mediaKind), labelPrefix, currentUser())
                 .stream().map(this::toResponse).toList();
         return ResponseEntity.ok(body);
     }
@@ -446,13 +446,17 @@ public class CreativeController implements CreativesApi {
                 .carouselRatio(c.getCarouselRatio())
                 .layoutOverrides(toLayoutOverrides(c.getLayoutOverrides()))
                 .clipMedia(c.getClipMedia() != null ? toStringMap(c.getClipMedia()) : null)
+                .slides(c.getSlides() != null ? objectMapper.convertValue(c.getSlides(),
+                        new TypeReference<LinkedHashMap<String, List<String>>>() { }) : null)
+                .slideAltText(c.getSlideAltText() != null ? toStringList(c.getSlideAltText()) : null)
                 .motion(toMotion(c.getMotion()))
                 .audio(toAudio(c.getAudio()))
                 .createdBy(c.getCreatedBy())
                 .activeExperimentId(view.activeExperimentId());
         if (view.latestRenderSummary() != null) {
             response.latestRenderId(view.latestRenderSummary().render().getId())
-                    .latestRenderThumbnailUrl(renderService.thumbnailUrl(view.latestRenderSummary()));
+                    .latestRenderThumbnailUrl(renderService.thumbnailUrl(view.latestRenderSummary(),
+                            toStringList(c.getPlacements())));
         }
         if (view.latestRenderFull() != null) {
             response.latestRender(renderService.toResponse(view.latestRenderFull()));

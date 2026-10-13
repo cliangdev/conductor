@@ -296,7 +296,9 @@ class PublishPreflightServiceTest {
         assertThat(preflight.blockers())
                 .filteredOn(f -> "t-story".equals(f.targetId()))
                 .extracting(PublishFinding::code)
-                .containsExactly(MediaTargetValidator.STORY_SINGLE_ITEM);
+                // A two-image story is both "not exactly one item" and a multi-image post a story cannot take.
+                .containsExactlyInAnyOrder(MediaTargetValidator.STORY_SINGLE_ITEM,
+                        MediaTargetValidator.MULTI_IMAGE_UNSUPPORTED);
         assertThat(preflight.blockers()).noneMatch(f -> "t-tiktok".equals(f.targetId()));
         assertThat(preflight.warnings())
                 .filteredOn(f -> "t-tiktok".equals(f.targetId()))

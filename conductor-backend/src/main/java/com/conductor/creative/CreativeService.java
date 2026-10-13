@@ -207,7 +207,12 @@ public class CreativeService {
         String sequenceKind = enumValue(request.getSequenceKind(), null);
         String lockup = enumValue(request.getLockup(), Creative.LOCKUP_PLAIN);
         String kind = enumValue(request.getKind(), Creative.KIND_STILL);
+        Map<String, List<String>> slides = request.getSlides() != null ? request.getSlides() : Map.of();
+        List<String> slideAltText = request.getSlideAltText() != null ? request.getSlideAltText() : List.of();
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : List.of();
+        if (Creative.KIND_CAROUSEL.equals(kind) && placements.isEmpty()) {
+            placements = deriveCarouselPlacements(media, slides);
+        }
         List<SequenceBeat> sequence = request.getSequence() != null ? request.getSequence() : List.of();
         CreativeLayoutOverrides layoutOverrides = request.getLayoutOverrides();
         Map<String, String> clipMedia = request.getClipMedia();
@@ -216,6 +221,7 @@ public class CreativeService {
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, clipMedia);
         MotionResolution motionRes = resolveMotion(media, kind, request.getMotion(), request.getAudio());
+        Map<String, List<CreativeValidator.SlideEntry>> slideEntries = resolveSlides(media, slides);
 
         // A draft is a render, so it is validated the way requestRender validates one: READY-level
         // checks forced whatever state was asked for. Otherwise a preview could pass (a still with no
@@ -228,7 +234,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input())));
+                motionRes.input(), slideEntries, slideAltText)));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
@@ -262,6 +268,8 @@ public class CreativeService {
         creative.setClipMedia(clipMedia != null && !clipMedia.isEmpty() ? objectMapper.valueToTree(clipMedia) : null);
         creative.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
         creative.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
+        creative.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
+        creative.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
         return new PreparedCreate(kit, creative, motionRes);
     }
 
@@ -289,6 +297,9 @@ public class CreativeService {
         String sequenceKind = request.getSequenceKind() != null ? request.getSequenceKind().getValue() : current.getSequenceKind();
         String lockup = request.getLockup() != null ? request.getLockup().getValue() : current.getLockup();
         String kind = request.getKind() != null ? request.getKind().getValue() : current.getKind();
+        Map<String, List<String>> slides = request.getSlides() != null ? request.getSlides() : toSlidesMap(current.getSlides());
+        List<String> slideAltText = request.getSlideAltText() != null
+                ? request.getSlideAltText() : toStringList(current.getSlideAltText());
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : toStringList(current.getPlacements());
         List<SequenceBeat> sequence = request.getSequence() != null ? request.getSequence() : toSequenceBeats(current.getSequence());
         CreativeLayoutOverrides layoutOverridesRequest = request.getLayoutOverrides();
@@ -300,10 +311,18 @@ public class CreativeService {
         CreativeAudio audioRequest = request.getAudio() != null ? request.getAudio() : toAudio(current.getAudio());
 
         MediaResolver media = new MediaResolver(projectId, null);
+        if (Creative.KIND_CAROUSEL.equals(kind) && request.getPlacements() == null
+                && (request.getSlides() != null || placements.isEmpty())) {
+            List<String> derived = deriveCarouselPlacements(media, slides);
+            if (!derived.isEmpty()) {
+                placements = derived;
+            }
+        }
         PhotoResolution mainPhoto = resolvePhoto(media, "photoId", photoId, CreativePhoto.MEDIA_KIND_IMAGE);
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, clipMedia);
         MotionResolution motionRes = resolveMotion(media, kind, motionRequest, audioRequest);
+        Map<String, List<CreativeValidator.SlideEntry>> slideEntries = resolveSlides(media, slides);
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 layout, theme, placements, headline, body, caption, state, photoId, mainPhoto.resolvable(),
@@ -311,7 +330,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(), sequenceKind,
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input()));
+                motionRes.input(), slideEntries, slideAltText));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -352,6 +371,8 @@ public class CreativeService {
         current.setClipMedia(clipMedia.isEmpty() ? null : objectMapper.valueToTree(clipMedia));
         current.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
         current.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
+        current.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
+        current.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
 
         current = creativeRepository.save(current);
         return toView(projectId, current, loadPhotos(List.of(current)));
@@ -375,6 +396,7 @@ public class CreativeService {
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, toClipMediaMap(root.getClipMedia()));
         MotionResolution motionRes = resolveMotion(media, root.getKind(), toMotion(root.getMotion()), toAudio(root.getAudio()));
+        Map<String, List<CreativeValidator.SlideEntry>> slideEntries = resolveSlides(media, toSlidesMap(root.getSlides()));
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 root.getLayout(), root.getTheme(), placements, headline, root.getBody(), root.getCaption(),
@@ -383,7 +405,8 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides()),
-                root.getKind(), clipMediaEntries, motionRes.input()));
+                root.getKind(), clipMediaEntries, motionRes.input(), slideEntries,
+                toStringList(root.getSlideAltText())));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -409,6 +432,8 @@ public class CreativeService {
         variant.setCarouselRatio(root.getCarouselRatio());
         variant.setKind(root.getKind());
         variant.setClipMedia(root.getClipMedia());
+        variant.setSlides(root.getSlides());
+        variant.setSlideAltText(root.getSlideAltText());
         variant.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
         variant.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
         variant.setTypeOverrides(objectMapper.createObjectNode());
@@ -437,6 +462,13 @@ public class CreativeService {
         boolean isMotion = Creative.KIND_MOTION.equals(creative.getKind());
 
         List<ReadinessItem> items = new ArrayList<>();
+        if (Creative.KIND_CAROUSEL.equals(creative.getKind())) {
+            addCarouselReadinessItems(media, creative, items);
+            boolean notDraft = !Creative.STATE_DRAFT.equals(creative.getState());
+            items.add(new ReadinessItem("state", notDraft, true,
+                    notDraft ? "not a draft" : "Creative is still a draft"));
+            return new Readiness(items.stream().noneMatch(i -> i.blocking() && !i.ok()), items);
+        }
         items.add(new ReadinessItem("caption", notBlank(creative.getCaption()), true,
                 notBlank(creative.getCaption()) ? "caption is set" : "caption is missing: the post needs primary text"));
         // Alt text describes a still photo for the upload; for a CLIP or MOTION (video), it is advisory
@@ -460,6 +492,61 @@ public class CreativeService {
 
         boolean ready = items.stream().noneMatch(i -> i.blocking() && !i.ok());
         return new Readiness(ready, items);
+    }
+
+    /**
+     * Readiness for CAROUSEL: {@code slides}, {@code caption}, {@code altText} (the Creative's own, or one
+     * per slide), then the same photo verdicts a STILL gets — but over <b>every</b> slide in every
+     * placement, since each is published as-is.
+     */
+    private void addCarouselReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {
+        Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+        List<String> altTexts = toStringList(creative.getSlideAltText());
+        boolean hasSlides = slides.values().stream().anyMatch(l -> !l.isEmpty());
+        items.add(new ReadinessItem("slides", hasSlides, true,
+                hasSlides ? "slides are chosen" : "no slides chosen: add at least one image"));
+        items.add(new ReadinessItem("caption", notBlank(creative.getCaption()), true,
+                notBlank(creative.getCaption()) ? "caption is set" : "caption is missing: the post needs primary text"));
+
+        boolean everySlideDescribed = hasSlides && slides.values().stream().allMatch(list -> {
+            if (list.size() > altTexts.size()) {
+                return false;
+            }
+            for (int i = 0; i < list.size(); i++) {
+                if (!notBlank(altTexts.get(i))) {
+                    return false;
+                }
+            }
+            return true;
+        });
+        boolean altOk = notBlank(creative.getAltText()) || everySlideDescribed;
+        items.add(new ReadinessItem("altText", altOk, true,
+                altOk ? "alt text is set" : "alt text is missing: describe the slides (altText, or slideAltText for each)"));
+
+        if (!hasSlides) {
+            return;
+        }
+        Map<String, MediaFacts> facts = new LinkedHashMap<>();
+        for (List<String> list : slides.values()) {
+            for (String ref : list) {
+                if (!facts.containsKey(ref)) {
+                    facts.put(ref, media.find("slides", ref, CreativePhoto.MEDIA_KIND_IMAGE));
+                }
+            }
+        }
+        long unchecked = facts.values().stream().filter(f -> f == null || !f.isChecked()).count();
+        items.add(new ReadinessItem("photoChecked", unchecked == 0, true,
+                unchecked == 0 ? "every slide has been checked"
+                        : unchecked + " of " + facts.size() + " slide images have not been checked for burned-in text"));
+        long unprovenanced = facts.values().stream()
+                .filter(f -> f == null || !notBlank(f.getSource()) || !notBlank(f.getLicence())).count();
+        items.add(new ReadinessItem("mediaProvenance", unprovenanced == 0, true,
+                unprovenanced == 0 ? "every slide has source and licence"
+                        : unprovenanced + " of " + facts.size() + " slide images are missing source and/or licence"));
+        boolean aiGenerated = facts.values().stream().anyMatch(f -> f != null && f.isAiGenerated());
+        items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
+                aiGenerated ? "a slide is AI-generated: turn on the platform's AI-generated label when publishing"
+                        : "not AI-generated"));
     }
 
     private void addPhotoReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {
@@ -668,8 +755,12 @@ public class CreativeService {
                         prepared.motion().clip(), prepared.motion().track())
                 : null;
 
+        // A CAROUSEL is not rendered (its images are used as-is): the spec is a minimal one that names the
+        // Creative's own placements, and clients ignore it.
+        List<String> specPlacements = Creative.KIND_CAROUSEL.equals(creative.getKind())
+                ? toStringList(creative.getPlacements()) : specBuilder.resolvePlacements(kit, creative);
         CreativeRenderSpec spec = specBuilder.build(DRAFT_RENDER_ID, !Boolean.FALSE.equals(request.getPreviewOnly()),
-                creative, kit, mainPhoto, beatPhotos, specBuilder.resolvePlacements(kit, creative), motionMedia);
+                creative, kit, mainPhoto, beatPhotos, specPlacements, motionMedia);
         return new DraftSpec(spec, computeReadiness(creative, media));
     }
 
@@ -700,6 +791,8 @@ public class CreativeService {
                     .lockup(CreativeLockup.fromValue(base.getLockup()))
                     .kind(CreativeKind.fromValue(base.getKind()))
                     .clipMedia(base.getClipMedia() != null ? new HashMap<>(toClipMediaMap(base.getClipMedia())) : null)
+                    .slides(base.getSlides() != null ? toSlidesMap(base.getSlides()) : null)
+                    .slideAltText(base.getSlideAltText() != null ? new ArrayList<>(toStringList(base.getSlideAltText())) : null)
                     .motion(toMotion(base.getMotion()))
                     .audio(toAudio(base.getAudio()))
                     .layoutOverrides(base.getLayoutOverrides() != null
@@ -723,6 +816,8 @@ public class CreativeService {
         if (draft.getLockup() != null) merged.setLockup(draft.getLockup());
         if (draft.getKind() != null) merged.setKind(draft.getKind());
         if (draft.getClipMedia() != null) merged.setClipMedia(draft.getClipMedia());
+        if (draft.getSlides() != null) merged.setSlides(draft.getSlides());
+        if (draft.getSlideAltText() != null) merged.setSlideAltText(draft.getSlideAltText());
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
         if (draft.getAudio() != null) merged.setAudio(draft.getAudio());
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
@@ -929,6 +1024,66 @@ public class CreativeService {
                     clip != null && clip.isBlocked()));
         }
         return entries;
+    }
+
+    /**
+     * Resolves a CAROUSEL's {@code slides} map against the library (or, in a draft, {@code localMedia}) for
+     * {@link CreativeValidator#validate}. Every list keeps its order; an empty list stays in the map so the
+     * validator can report {@code slideCount}.
+     */
+    private Map<String, List<CreativeValidator.SlideEntry>> resolveSlides(MediaResolver media, Map<String, List<String>> slides) {
+        Map<String, List<CreativeValidator.SlideEntry>> resolved = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> list : slides.entrySet()) {
+            List<CreativeValidator.SlideEntry> entries = new ArrayList<>();
+            List<String> refs = list.getValue() != null ? list.getValue() : List.of();
+            for (int i = 0; i < refs.size(); i++) {
+                String ref = refs.get(i);
+                MediaFacts facts = media.find("slides[\"" + list.getKey() + "\"][" + i + "]", ref,
+                        CreativePhoto.MEDIA_KIND_IMAGE);
+                entries.add(new CreativeValidator.SlideEntry(list.getKey(), i, ref, facts != null,
+                        facts != null && CreativePhoto.MEDIA_KIND_IMAGE.equals(facts.getMediaKind()),
+                        facts != null && facts.isUploaded(), facts != null && facts.isBlocked(),
+                        facts != null ? facts.getWidth() : null, facts != null ? facts.getHeight() : null));
+            }
+            resolved.put(list.getKey(), entries);
+        }
+        return resolved;
+    }
+
+    /**
+     * The placements a CAROUSEL with no explicit {@code placements} targets: its non-{@code default} slide
+     * keys, else — when there is only a {@code default} list — the carousel placement nearest the first
+     * image's aspect ratio (4x5 when its size is unknown).
+     */
+    private List<String> deriveCarouselPlacements(MediaResolver media, Map<String, List<String>> slides) {
+        List<String> keys = slides.keySet().stream()
+                .filter(CreativeValidator.CAROUSEL_PLACEMENTS::contains).toList();
+        if (!keys.isEmpty()) {
+            return new ArrayList<>(keys);
+        }
+        List<String> defaults = slides.get("default");
+        if (defaults == null || defaults.isEmpty()) {
+            return new ArrayList<>();
+        }
+        MediaFacts first = media.find("slides[\"default\"][0]", defaults.get(0), CreativePhoto.MEDIA_KIND_IMAGE);
+        if (first == null) {
+            return new ArrayList<>();
+        }
+        if (first.getWidth() == null || first.getHeight() == null || first.getHeight() <= 0) {
+            return new ArrayList<>(List.of("4x5"));
+        }
+        String nearest = registry.nearestPlacement((double) first.getWidth() / first.getHeight(),
+                CreativeValidator.CAROUSEL_PLACEMENTS);
+        return new ArrayList<>(List.of(nearest != null ? nearest : "4x5"));
+    }
+
+    /** {@code creative.slides} JSON -&gt; a typed map (insertion-ordered), or an empty map when unset. */
+    private Map<String, List<String>> toSlidesMap(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(node, new TypeReference<LinkedHashMap<String, List<String>>>() {
+        });
     }
 
     /** {@code creative.clip_media} JSON -&gt; a typed map, or an empty map when unset. */

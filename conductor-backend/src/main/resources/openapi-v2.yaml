@@ -2883,6 +2883,12 @@ paths:
             items:
               $ref: "#/components/schemas/MediaKind"
           description: Filter to one or more kinds, e.g. `?mediaKind=VIDEO&mediaKind=AUDIO`. Unset returns every kind.
+        - name: labelPrefix
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Case-insensitive prefix match on the photo's label.
       responses:
         "200":
           description: The project's photos, newest first
@@ -3445,7 +3451,8 @@ paths:
         reference is not looked up in the library, and the spec carries the literal `local:<key>` as its
         URL (with a null focal) for the local job to resolve. `baseCreativeId` starts from a saved Creative's
         fields and overlays every field present on the request, to preview an edit. CLIP creatives have no
-        render and are refused with 422. `spec.renderId` is the literal `draft`. Requires ADMIN or CREATOR.
+        render and are refused with 422. A CAROUSEL is accepted for validation and readiness only (the
+        `spec` is minimal; clients ignore it). `spec.renderId` is the literal `draft`. Requires ADMIN or CREATOR.
       operationId: buildCreativeDraftSpec
       security:
         - bearerAuth: []
@@ -3497,7 +3504,7 @@ paths:
           description: >-
             The draft fails a rule `createCreative` enforces (same shape), a `local:<key>` reference that
             is not declared in `localMedia` or is the wrong kind for its field, a malformed local key, or
-            a CLIP kind.
+            a CLIP kind (a CAROUSEL is accepted).
           content:
             application/json:
               schema:
@@ -7011,6 +7018,7 @@ components:
       properties:
         label:
           type: string
+          maxLength: 200
           nullable: true
         mediaKind:
           allOf:
@@ -7054,9 +7062,11 @@ components:
           description: Advisory codec hint (e.g. h264); never validated.
         source:
           type: string
+          maxLength: 200
           nullable: true
         licence:
           type: string
+          maxLength: 200
           nullable: true
         aiGenerated:
           type: boolean
@@ -7098,10 +7108,13 @@ components:
       properties:
         label:
           type: string
+          maxLength: 200
         source:
           type: string
+          maxLength: 200
         licence:
           type: string
+          maxLength: 200
         aiGenerated:
           type: boolean
         checked:
@@ -7142,8 +7155,11 @@ components:
         - STILL
         - MOTION
         - CLIP
+        - CAROUSEL
       description: >-
-        STILL (default) is today's brand-layout Creative. CLIP is a finished video used as-is, one file
+        CAROUSEL is a set of finished images used as-is, ordered per placement (`slides`); a 1-slide
+        CAROUSEL is a finished still. No brand layout; the backend assembles CAROUSEL renders by copying
+        the chosen images. STILL (default) is today's brand-layout Creative. CLIP is a finished video used as-is, one file
         for all placements or one per placement (COND-24 PR1) — no brand layout, no local rendering; the
         backend assembles CLIP renders by copying the chosen media. MOTION (PR2) is a branded animated
         video; the API accepts it today, but rendering it currently refuses with 422.
@@ -7366,6 +7382,24 @@ components:
           description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
           additionalProperties:
             type: string
+        slides:
+          type: object
+          nullable: true
+          description: >-
+            For a CAROUSEL creative: `{"default": [mediaId...], "4x5": [...], "9x16": [...], "1x1": [...]}`,
+            ordered IMAGE media ids. A targeted placement without its own list uses `default`. In a
+            draft-spec request an id may be `local:<key>`.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        slideAltText:
+          type: array
+          nullable: true
+          description: >-
+            For a CAROUSEL creative: index-aligned alt text; entry N describes slide N in every placement.
+          items:
+            type: string
         motion:
           allOf:
             - $ref: "#/components/schemas/CreativeMotion"
@@ -7465,6 +7499,24 @@ components:
           nullable: true
           description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
           additionalProperties:
+            type: string
+        slides:
+          type: object
+          nullable: true
+          description: >-
+            For a CAROUSEL creative: `{"default": [mediaId...], "4x5": [...], "9x16": [...], "1x1": [...]}`,
+            ordered IMAGE media ids. A targeted placement without its own list uses `default`. In a
+            draft-spec request an id may be `local:<key>`.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        slideAltText:
+          type: array
+          nullable: true
+          description: >-
+            For a CAROUSEL creative: index-aligned alt text; entry N describes slide N in every placement.
+          items:
             type: string
         motion:
           allOf:
@@ -7569,6 +7621,24 @@ components:
           nullable: true
           description: '{"default": mediaId, "<placementKey>": mediaId, ...} for a CLIP creative.'
           additionalProperties:
+            type: string
+        slides:
+          type: object
+          nullable: true
+          description: >-
+            For a CAROUSEL creative: `{"default": [mediaId...], "4x5": [...], "9x16": [...], "1x1": [...]}`,
+            ordered IMAGE media ids. A targeted placement without its own list uses `default`. In a
+            draft-spec request an id may be `local:<key>`.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        slideAltText:
+          type: array
+          nullable: true
+          description: >-
+            For a CAROUSEL creative: index-aligned alt text; entry N describes slide N in every placement.
+          items:
             type: string
         motion:
           allOf:

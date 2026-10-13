@@ -335,6 +335,111 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(storedAssetIds(instagramTarget.getId())).containsExactlyElementsOf(assetIdsInIndexOrder);
     }
 
+    // ── CAROUSEL attach: ordered explicit selections, never inherit ──────────────────────────────
+
+    private PostPublishTarget targetOf(String platform) {
+        return targetRepository.findAllByWorkItemId(post.getId()).stream()
+                .filter(t -> platform.equals(t.getPlatform())).findFirst().orElseThrow();
+    }
+
+    private List<String> carouselAssetIds(CreativeAttachService.AttachResult result, String placementKey) {
+        return result.assets().stream().filter(a -> placementKey.equals(a.placementKey()))
+                .sorted(java.util.Comparator.comparing(CreativeAttachService.AttachedAsset::sequenceIndex))
+                .map(CreativeAttachService.AttachedAsset::assetId).toList();
+    }
+
+    @Test
+    void aCarouselGivesEachFeedTargetItsOwnPlacementsSlidesInSlideOrder() {
+        creative.setKind(Creative.KIND_CAROUSEL);
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        // Written out of order within each placement: the selection must follow sequenceIndex.
+        for (int i : new int[] {2, 0, 1}) {
+            newFrame(render, "4x5", i, "instagram", 1080, 1350);
+            newFrame(render, "1x1", i, "facebook", 1080, 1080);
+            newFrame(render, "9x16", i, "tiktok", 1080, 1920);
+        }
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(result.targetsSkipped()).isEmpty();
+        assertThat(result.targetsUpdated()).extracting(CreativeAttachService.TargetUpdate::platform)
+                .containsExactlyInAnyOrder("instagram", "facebook", "tiktok");
+        assertThat(storedAssetIds(targetOf("instagram").getId())).containsExactlyElementsOf(carouselAssetIds(result, "4x5"));
+        assertThat(storedAssetIds(targetOf("facebook").getId())).containsExactlyElementsOf(carouselAssetIds(result, "1x1"));
+        assertThat(storedAssetIds(targetOf("tiktok").getId())).containsExactlyElementsOf(carouselAssetIds(result, "9x16"));
+        assertThat(storedAssetIds(targetOf("instagram").getId())).hasSize(3);
+    }
+
+    @Test
+    void aFourByFiveOnlyCarouselFallsBackToFourByFiveForFacebookAndTikTok() {
+        creative.setKind(Creative.KIND_CAROUSEL);
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        for (int i = 0; i < 3; i++) {
+            newFrame(render, "4x5", i, "instagram", 1080, 1350);
+        }
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        List<String> ordered = carouselAssetIds(result, "4x5");
+        for (String platform : List.of("instagram", "facebook", "tiktok")) {
+            assertThat(storedAssetIds(targetOf(platform).getId())).containsExactlyElementsOf(ordered);
+        }
+    }
+
+    @Test
+    void aCarouselLeavesAReelStoryAndYouTubeExplicitlyEmptyAndPreflightBlocksThem() {
+        Connection youtube = connection("youtube", "{\"channelId\":\"UC123\",\"channelTitle\":\"Acme Channel\"}");
+        String youtubeConnectionId = connectionRepository.saveAndFlush(youtube).getId();
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId, null, null, null, "reel"),
+                new PublishTargetService.TargetSelection("facebook", metaConnectionId, null, null, null, "story"),
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId),
+                new PublishTargetService.TargetSelection("youtube", youtubeConnectionId)), admin);
+        creative.setKind(Creative.KIND_CAROUSEL);
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        for (int i = 0; i < 3; i++) {
+            newFrame(render, "4x5", i, "instagram", 1080, 1350);
+        }
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(post.getId());
+        assertThat(targets).hasSize(4);
+        List<PostPublishTarget> unsupported = targets.stream()
+                .filter(t -> "reel".equalsIgnoreCase(t.getFormat()) || "story".equalsIgnoreCase(t.getFormat())
+                        || "youtube".equals(t.getPlatform())).toList();
+        assertThat(unsupported).hasSize(3);
+        for (PostPublishTarget target : unsupported) {
+            // custom_media with no rows: never inherits the Post's three slides.
+            assertThat(target.isCustomMedia()).isTrue();
+            assertThat(storedAssetIds(target.getId())).isEmpty();
+        }
+        assertThat(result.targetsSkipped()).extracting(CreativeAttachService.TargetSkip::targetId)
+                .containsExactlyInAnyOrderElementsOf(unsupported.stream().map(PostPublishTarget::getId).toList());
+        assertThat(result.targetsUpdated()).extracting(CreativeAttachService.TargetUpdate::platform)
+                .containsExactly("tiktok");
+        assertThat(storedAssetIds(targetOf("tiktok").getId())).hasSize(3);
+
+        List<PublishFinding> multiImage = mediaTargetValidator.inspect(post).stream()
+                .filter(f -> MediaTargetValidator.MULTI_IMAGE_UNSUPPORTED.equals(f.code())).toList();
+        assertThat(multiImage).extracting(PublishFinding::targetId)
+                .containsExactlyInAnyOrderElementsOf(unsupported.stream().map(PostPublishTarget::getId).toList());
+        assertThat(multiImage).allSatisfy(f -> assertThat(f.blocks()).isTrue());
+        assertThat(multiImage).extracting(PublishFinding::message).anyMatch(m -> m.startsWith("Instagram Reel ("));
+
+        // Re-attaching leaves them explicitly empty (and does not flip them to inherit).
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+        for (PostPublishTarget target : unsupported) {
+            assertThat(targetRepository.findById(target.getId()).orElseThrow().isCustomMedia()).isTrue();
+        }
+    }
+
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
 
     private String assetIdFor(CreativeAttachService.AttachResult result, String placementKey) {

@@ -288,6 +288,137 @@ class CreativeValidatorTest {
         return baseInput().kind(Creative.KIND_CLIP).clipMedia(List.of(entry)).build();
     }
 
+    // ── CAROUSEL (finished images used as-is) ────────────────────────────────────
+
+    private static CreativeValidator.SlideEntry slide(String key, int index, int w, int h) {
+        return new CreativeValidator.SlideEntry(key, index, "img-" + key + "-" + index, true, true, true, false, w, h);
+    }
+
+    private static List<CreativeValidator.SlideEntry> slides(String key, int count, int w, int h) {
+        List<CreativeValidator.SlideEntry> list = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            list.add(slide(key, i, w, h));
+        }
+        return list;
+    }
+
+    private CreativeValidator.Input.InputBuilder carousel(Map<String, List<CreativeValidator.SlideEntry>> slides,
+                                                          String... placements) {
+        return baseInput().kind(Creative.KIND_CAROUSEL).slides(slides).placements(List.of(placements));
+    }
+
+    @Test
+    void carouselOfCorrectlyShapedImagesPassesWithoutLayoutThemeOrHeadline() {
+        CreativeValidator.Input input = carousel(Map.of("4x5", slides("4x5", 3, 1080, 1350)), "4x5")
+                .caption("Seven ways to save recipes.").build();
+        assertThat(validator.validate(kit, input)).isEmpty();
+    }
+
+    @Test
+    void carouselSlideThatIsNotFoundNotAnImageNotUploadedOrBlockedIsReported() {
+        var missing = new CreativeValidator.SlideEntry("4x5", 0, "gone", false, false, false, false, null, null);
+        var notImage = new CreativeValidator.SlideEntry("4x5", 1, "vid", true, false, true, false, 1080, 1350);
+        var notUploaded = new CreativeValidator.SlideEntry("4x5", 2, "pending", true, true, false, false, 1080, 1350);
+        var blocked = new CreativeValidator.SlideEntry("4x5", 3, "bad", true, true, true, true, 1080, 1350);
+        CreativeValidator.Input input = carousel(Map.of("4x5", List.of(missing, notImage, notUploaded, blocked)), "4x5").build();
+
+        assertThat(violationRuleIds(input)).contains("mediaNotFound", "mediaNotImage", "mediaUploaded", "mediaBlocked");
+        assertThat(violationMessages(input)).contains("slides[\"4x5\"][1] must be an IMAGE");
+    }
+
+    @Test
+    void carouselSlideAspectOutsideTwoPercentFailsAndInsideTolerancePasses() {
+        // 4x5 is 0.8; 1080x1080 is 1.0 -> far outside.
+        CreativeValidator.Input wrong = carousel(Map.of("4x5", List.of(slide("4x5", 0, 1080, 1350), slide("4x5", 1, 1080, 1080))), "4x5").build();
+        assertThat(violationRuleIds(wrong)).containsExactly("slideAspect");
+        assertThat(violationMessages(wrong).get(0)).contains("slides[\"4x5\"][1]").contains("1080x1080").contains("1080x1350");
+
+        // 1080x1360 is 0.7941 -> 0.74% off; 1080x1400 is 0.771 -> 3.6% off.
+        assertThat(validator.validate(kit, carousel(Map.of("4x5", List.of(slide("4x5", 0, 1080, 1360))), "4x5").build())).isEmpty();
+        assertThat(violationRuleIds(carousel(Map.of("4x5", List.of(slide("4x5", 0, 1080, 1400))), "4x5").build()))
+                .contains("slideAspect");
+    }
+
+    @Test
+    void carouselSlideCountLimitsAreOneToTenAndOneToThirtyFiveForNineBySixteen() {
+        assertThat(violationRuleIds(carousel(Map.of("4x5", List.<CreativeValidator.SlideEntry>of()), "4x5").build()))
+                .contains("slideCount");
+        assertThat(violationRuleIds(carousel(Map.of("4x5", slides("4x5", 10, 1080, 1350)), "4x5").build())).isEmpty();
+        assertThat(violationRuleIds(carousel(Map.of("4x5", slides("4x5", 11, 1080, 1350)), "4x5").build()))
+                .containsExactly("slideCount");
+        assertThat(violationRuleIds(carousel(Map.of("9x16", slides("9x16", 35, 1080, 1920)), "9x16").build())).isEmpty();
+        assertThat(violationRuleIds(carousel(Map.of("9x16", slides("9x16", 36, 1080, 1920)), "9x16").build()))
+                .containsExactly("slideCount");
+        assertThat(violationRuleIds(carousel(Map.of("default", slides("default", 11, 1080, 1350)), "4x5").build()))
+                .contains("slideCount");
+    }
+
+    @Test
+    void carouselKeyThatIsNotACarouselPlacementIsRejected() {
+        CreativeValidator.Input input = carousel(Map.of("story", slides("story", 2, 1080, 1920))).build();
+        assertThat(violationRuleIds(input)).containsExactly("placement");
+    }
+
+    @Test
+    void carouselTargetedPlacementWithNoListAndNoDefaultIsReported() {
+        CreativeValidator.Input input = carousel(Map.of("4x5", slides("4x5", 2, 1080, 1350)), "4x5", "9x16").build();
+        assertThat(violationRuleIds(input)).containsExactly("placementSlides");
+    }
+
+    @Test
+    void carouselDefaultListMustMatchTheAspectOfEveryPlacementFallingBackToIt() {
+        Map<String, List<CreativeValidator.SlideEntry>> fourByFive = Map.of("default", slides("default", 2, 1080, 1350));
+        assertThat(validator.validate(kit, carousel(fourByFive, "4x5").build())).isEmpty();
+
+        // The same default list cannot also serve 9x16 or 1x1.
+        assertThat(violationRuleIds(carousel(fourByFive, "4x5", "9x16").build())).containsOnly("slideAspect");
+        assertThat(violationMessages(carousel(fourByFive, "9x16").build()).get(0)).contains("\"9x16\" falls back to it");
+
+        // A placement with its own list is exempt from the default's shape.
+        Map<String, List<CreativeValidator.SlideEntry>> both = Map.of(
+                "default", slides("default", 2, 1080, 1350), "9x16", slides("9x16", 2, 1080, 1920));
+        assertThat(validator.validate(kit, carousel(both, "4x5", "9x16").build())).isEmpty();
+    }
+
+    @Test
+    void carouselRejectsOtherKindsFieldsAndSlidesOnOtherKinds() {
+        CreativeValidator.Input withPhoto = carousel(Map.of("4x5", slides("4x5", 1, 1080, 1350)), "4x5")
+                .photoId("photo-1").sequence(List.of(new CreativeValidator.SequenceBeat("h", null, null)))
+                .clipMedia(List.of(new CreativeValidator.ClipMediaEntry("default", "v", true, true, true, false)))
+                .motion(new CreativeValidator.MotionInput.Builder().build()).build();
+        assertThat(violationRuleIds(withPhoto)).containsOnly("kindFields");
+        assertThat(validator.validate(kit, withPhoto)).hasSize(4);
+
+        CreativeValidator.Input onStill = baseInput().slides(Map.of("4x5", slides("4x5", 1, 1080, 1350))).build();
+        assertThat(violationRuleIds(onStill)).containsExactly("kindFields");
+    }
+
+    @Test
+    void carouselSlideAltTextCannotOutnumberTheSlides() {
+        Map<String, List<CreativeValidator.SlideEntry>> two = Map.of("4x5", slides("4x5", 2, 1080, 1350));
+        assertThat(validator.validate(kit, carousel(two, "4x5").slideAltText(List.of("one", "two")).build())).isEmpty();
+        assertThat(violationRuleIds(carousel(two, "4x5").slideAltText(List.of("a", "b", "c")).build()))
+                .containsExactly("slideAltText");
+    }
+
+    @Test
+    void carouselCopyRulesStillApplyToTheCaption() {
+        setCopyRules("""
+                {"id":"noExclaim","pattern":"!","message":"No exclamation marks.","fields":["headline","body","caption"]}
+                """);
+        CreativeValidator.Input input = carousel(Map.of("4x5", slides("4x5", 1, 1080, 1350)), "4x5").caption("Wow!").build();
+        assertThat(violationMessages(input)).contains("No exclamation marks.");
+    }
+
+    @Test
+    void carouselGoingReadyNeedsACaptionAndAtLeastOneSlide() {
+        Map<String, List<CreativeValidator.SlideEntry>> one = Map.of("4x5", slides("4x5", 1, 1080, 1350));
+        assertThat(violationRuleIds(carousel(one, "4x5").state(Creative.STATE_READY).build())).containsExactly("captionRequired");
+        assertThat(violationRuleIds(baseInput().kind(Creative.KIND_CAROUSEL).state(Creative.STATE_READY).caption("c").build()))
+                .containsExactly("slidesRequired");
+        assertThat(validator.validate(kit, carousel(one, "4x5").state(Creative.STATE_READY).caption("c").build())).isEmpty();
+    }
+
     // ── MOTION (COND-24 PR2) ──────────────────────────────────────────────────
 
     private CreativeValidator.Input motionInput(CreativeValidator.MotionInput motion) {

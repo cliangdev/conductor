@@ -27,6 +27,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import javax.imageio.ImageIO;
+import com.conductor.service.publish.PublishFinding;
+
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -834,6 +836,69 @@ class MediaTargetValidatorTest {
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("Instagram")
                 .hasMessageContaining("exactly one item");
+    }
+
+    // --- Carousel (multi-image) posts on destinations that cannot take them ---------------------------
+
+    private List<PublishFinding> multiImageFindings() {
+        return validator.inspect(post).stream()
+                .filter(f -> MediaTargetValidator.MULTI_IMAGE_UNSUPPORTED.equals(f.code())).toList();
+    }
+
+    @Test
+    void aReelHoldingSeveralImagesIsBlockedAsMultiImageUnsupported() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acct", "REEL");
+        givenTargets(reel);
+        Asset a = image("a.jpg", "image/jpeg", 1080, 1920);
+        Asset b = image("b.jpg", "image/jpeg", 1080, 1920);
+        givenAssets(a, b);
+        givenSelection(reel, a, b);
+
+        assertThat(multiImageFindings()).singleElement().satisfies(f -> {
+            assertThat(f.blocks()).isTrue();
+            assertThat(f.targetId()).isEqualTo(reel.getId());
+            assertThat(f.message()).isEqualTo(
+                    "Instagram Reel (@acct) can't take a multi-image post — switch it to Feed or remove it.");
+        });
+    }
+
+    @Test
+    void aStoryAndYouTubeInheritingSeveralImagesAreBothBlocked() {
+        PostPublishTarget story = target("facebook", "conn-meta", "Acme Page", "STORY");
+        PostPublishTarget youtube = target("youtube", "conn-yt", "Acme Channel");
+        givenTargets(story, youtube);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1350), image("b.jpg", "image/jpeg", 1080, 1350));
+
+        assertThat(multiImageFindings()).extracting(PublishFinding::message).containsExactlyInAnyOrder(
+                "Facebook Story (Acme Page) can't take a multi-image post — switch it to Feed or remove it.",
+                "YouTube (Acme Channel) can't take a multi-image post — remove it.");
+    }
+
+    @Test
+    void aReelLeftExplicitlyEmptyByACarouselAttachIsBlockedOnlyWhenThePostCarriesCarouselImages() {
+        PostPublishTarget reel = target("instagram", "conn-meta", "@acct", "REEL");
+        givenTargets(reel);
+        Asset a = image("a.jpg", "image/jpeg", 1080, 1350);
+        Asset b = image("b.jpg", "image/jpeg", 1080, 1350);
+        givenAssets(a, b);
+        givenSelection(reel);
+
+        assertThat(multiImageFindings()).isEmpty();
+
+        a.setCreativeFrameId("frame-1");
+        b.setCreativeFrameId("frame-2");
+        assertThat(multiImageFindings()).singleElement()
+                .satisfies(f -> assertThat(f.message()).contains("Instagram Reel (@acct) can't take a multi-image post"));
+    }
+
+    @Test
+    void feedDestinationsNeverGetTheMultiImageBlocker() {
+        PostPublishTarget instagram = target("instagram", "conn-meta", "@acct");
+        PostPublishTarget tiktok = target("tiktok", "conn-tt", "@acct");
+        givenTargets(instagram, tiktok);
+        givenAssets(image("a.jpg", "image/jpeg", 1080, 1350), image("b.jpg", "image/jpeg", 1080, 1350));
+
+        assertThat(multiImageFindings()).isEmpty();
     }
 
     @Test
