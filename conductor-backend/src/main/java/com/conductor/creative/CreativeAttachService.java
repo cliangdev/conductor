@@ -179,16 +179,36 @@ public class CreativeAttachService {
         List<TargetSkip> skipped = new ArrayList<>();
         List<PublishTargetService.TargetSelection> selections = new ArrayList<>();
 
+        boolean carousel = Creative.KIND_CAROUSEL.equals(creative.getKind());
         for (PostPublishTarget target : targetRepository.findAllByWorkItemId(workItemId)) {
-            if (target.isCustomMedia()) {
+            List<String> ownAssetIds = target.isCustomMedia() ? currentCustomAssetIds(target) : List.of();
+            // Explicitly media-less (custom, no rows — left by an earlier carousel attach or a deselect)
+            // has made no choice of its own to protect, so it is eligible like an inheriting one.
+            boolean explicitlyEmpty = target.isCustomMedia() && ownAssetIds.isEmpty();
+            if (target.isCustomMedia() && !explicitlyEmpty) {
                 skipped.add(new TargetSkip(target.getId(), target.getPlatform(),
                         "This destination already has its own chosen media"));
-                selections.add(selectionFor(target, currentCustomAssetIds(target)));
+                selections.add(selectionFor(target, ownAssetIds));
                 continue;
             }
-            List<String> matched = matchedAssetIds(target, assetIdsByPlacement, videoPlacementKeys);
+            List<String> matched;
+            if (carousel) {
+                String placement = CreativePlacementTargetMapper.carouselPlacementFor(target, assetIdsByPlacement.keySet());
+                matched = placement != null ? assetIdsByPlacement.get(placement) : List.of();
+                if (matched.isEmpty()) {
+                    // Never inherit: an inheriting target publishes the Post's WHOLE asset set, i.e. every
+                    // slide of every placement. An explicit empty selection keeps the carousel off it, and
+                    // the preflight (MULTI_IMAGE_UNSUPPORTED) says why.
+                    skipped.add(new TargetSkip(target.getId(), target.getPlatform(),
+                            "A multi-image carousel can't be published to this destination"));
+                    selections.add(selectionFor(target, List.of(), true));
+                    continue;
+                }
+            } else {
+                matched = matchedAssetIds(target, assetIdsByPlacement, videoPlacementKeys);
+            }
             if (matched.isEmpty()) {
-                selections.add(selectionFor(target, List.of()));
+                selections.add(selectionFor(target, List.of(), explicitlyEmpty));
                 continue;
             }
             updates.add(new TargetUpdate(target.getId(), target.getPlatform(), matched));
@@ -253,9 +273,14 @@ public class CreativeAttachService {
      * not actually change.
      */
     private PublishTargetService.TargetSelection selectionFor(PostPublishTarget target, List<String> assetIds) {
+        return selectionFor(target, assetIds, target.isCustomMedia() && assetIds.isEmpty());
+    }
+
+    private PublishTargetService.TargetSelection selectionFor(PostPublishTarget target, List<String> assetIds,
+                                                              boolean noMedia) {
         return new PublishTargetService.TargetSelection(target.getPlatform(), target.getConnectionId(),
                 parsePublishOptions(target.getPublishOptions()), target.getCaptionOverride(), assetIds,
-                PostFormat.parse(target.getFormat()).wire());
+                PostFormat.parse(target.getFormat()).wire(), noMedia);
     }
 
     private Map<String, Object> parsePublishOptions(String json) {

@@ -292,6 +292,68 @@ class CreativePhotoServiceIntegrationTest extends AbstractNoneWebIntegrationTest
                 .hasMessageContaining(creative.creative().displayId());
     }
 
+    // ── CAROUSEL slides: delete / block guards, label prefix ───────────────────────────────────────
+
+    private CreativeService.CreativeView newCarousel(String photoId, boolean ready) {
+        CreateCreativeRequest request = new CreateCreativeRequest();
+        request.setKind(com.conductor.generated.v2.model.CreativeKind.CAROUSEL);
+        request.setCaption("Seven ways.");
+        request.setAltText("Cards.");
+        request.setSlides(Map.of("4x5", List.of(photoId)));
+        if (ready) {
+            request.setState(com.conductor.generated.v2.model.CreativeState.READY);
+        }
+        return creativeService.createCreative(project.getId(), request, admin);
+    }
+
+    @Test
+    void deletingMediaUsedAsACarouselSlideIsRefused() {
+        CreativePhotoService.PhotoView slide = newUploadedPhoto();
+        CreativeService.CreativeView carousel = newCarousel(slide.photo().getId(), false);
+
+        assertThatThrownBy(() -> photoService.deletePhoto(project.getId(), slide.photo().getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(carousel.creative().displayId());
+    }
+
+    @Test
+    void blockingMediaUsedByAReadyCreativeIsRefusedNamingIt() {
+        CreativePhotoService.PhotoView slide = newUploadedPhoto();
+        CreativeService.CreativeView carousel = newCarousel(slide.photo().getId(), true);
+
+        PatchCreativePhotoRequest block = new PatchCreativePhotoRequest();
+        block.setBlocked(true);
+        assertThatThrownBy(() -> photoService.patchPhoto(project.getId(), slide.photo().getId(), block, admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(carousel.creative().displayId())
+                .hasMessageContaining("READY");
+        assertThat(photoService.getPhoto(project.getId(), slide.photo().getId(), admin).photo().isBlocked()).isFalse();
+    }
+
+    @Test
+    void blockingMediaUsedOnlyByADraftCreativeIsAllowed() {
+        CreativePhotoService.PhotoView slide = newUploadedPhoto();
+        newCarousel(slide.photo().getId(), false);
+
+        PatchCreativePhotoRequest block = new PatchCreativePhotoRequest();
+        block.setBlocked(true);
+        assertThat(photoService.patchPhoto(project.getId(), slide.photo().getId(), block, admin).photo().isBlocked()).isTrue();
+    }
+
+    @Test
+    void listPhotosFiltersByCaseInsensitiveLabelPrefix() {
+        for (String label : List.of("01-import 4x5 01", "01-import 4x5 02", "02-other 4x5 01")) {
+            PatchCreativePhotoRequest named = new PatchCreativePhotoRequest();
+            named.setLabel(label);
+            photoService.patchPhoto(project.getId(), newUploadedPhoto().photo().getId(), named, admin);
+        }
+
+        assertThat(photoService.listPhotos(project.getId(), false, Set.of(), "01-IMPORT", admin))
+                .extracting(v -> v.photo().getLabel()).containsExactlyInAnyOrder("01-import 4x5 01", "01-import 4x5 02");
+        assertThat(photoService.listPhotos(project.getId(), false, Set.of(), "", admin)).hasSize(3);
+        assertThat(photoService.listPhotos(project.getId(), false, Set.of(), "zzz", admin)).isEmpty();
+    }
+
     private CreativePhotoService.PhotoView newUploadedVideo() {
         CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
         request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.VIDEO_MP4);

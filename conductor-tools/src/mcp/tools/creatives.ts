@@ -1,4 +1,4 @@
-import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Config } from '../config.js'
@@ -7,7 +7,7 @@ import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
 import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
-import { renderCreative as runLocalRender } from '../../lib/creative-render.js'
+import { renderCreative as runLocalRender, renderViaApi } from '../../lib/creative-render.js'
 
 /**
  * Conductor Creatives: a Brand Kit (tokens, copy rules, approved lines) governs one or more
@@ -284,9 +284,15 @@ export interface CreativeFields {
   name?: string
   state?: string
   /** STILL (default): brand-rendered photo/headline artwork. CLIP: a finished video used as-is, via
-   * clipMedia — no brand layout, no photo/headline required. MOTION: the same brand layout animated
+   * clipMedia — no brand layout, no photo/headline required. CAROUSEL: finished images used as-is,
+   * via slides. MOTION: the same brand layout animated
    * into a short video — set `motion` (and optionally `audio`) too. */
   kind?: string
+  /** CAROUSEL only: finished images used as-is, ordered per placement — media ids keyed by
+   * `default`, `4x5`, `9x16` or `1x1`. A placement without its own list uses `default`. */
+  slides?: Record<string, string[]>
+  /** CAROUSEL only: alt text per slide, index-aligned (entry N describes slide N in every placement). */
+  slideAltText?: string[]
   layout?: string
   theme?: string
   photoId?: string
@@ -410,6 +416,8 @@ function trimMedia(media: Record<string, unknown>): Record<string, unknown> {
 export interface ListCreativeMediaParams {
   kind?: string
   includeBlocked?: boolean
+  /** Case-insensitive label prefix, applied server-side. */
+  labelPrefix?: string
 }
 
 /**
@@ -424,6 +432,7 @@ export async function listCreativeMedia(
   const query = new URLSearchParams()
   if (params.kind) query.set('mediaKind', params.kind)
   if (params.includeBlocked) query.set('includeBlocked', 'true')
+  if (params.labelPrefix) query.set('labelPrefix', params.labelPrefix)
   const qs = query.toString()
   const items = await apiGet<Array<Record<string, unknown>>>(
     `${V2_PROJECT(config)}/marketing/photos${qs ? `?${qs}` : ''}`,
@@ -582,6 +591,182 @@ export async function uploadCreativeMedia(params: UploadCreativeMediaParams, con
 /** Deprecated alias for {@link uploadCreativeMedia}, kept so existing callers naming the old tool
  * still work — same implementation, same behavior, including for photos. */
 export const uploadCreativePhoto = uploadCreativeMedia
+
+// --- Batch upload ------------------------------------------------------------
+
+export const MAX_BATCH_FILES = 100
+const BATCH_CONCURRENCY = 3
+const SERVER_TEXT_LIMIT = 200
+const DEFAULT_FOLDER_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.m4v', '.webm']
+
+export interface BatchFileSpec {
+  filePath?: string
+  url?: string
+  label?: string
+  source?: string
+  licence?: string
+  aiGenerated?: boolean
+}
+
+export interface UploadCreativeMediaBatchParams {
+  files?: BatchFileSpec[]
+  folder?: string
+  /** Folder mode: filename pattern (`*`, `?`, `{a,b}`) — default every image/video file. */
+  glob?: string
+  /** Folder mode: label per file; `{stem}` is the filename without its extension (default `{stem}`). */
+  labelTemplate?: string
+  /** Shared provenance, applied to every file unless the file sets its own or has a sidecar. */
+  source?: string
+  licence?: string
+  aiGenerated?: boolean
+}
+
+export interface BatchUploadEntry {
+  file: string
+  label: string
+  id?: string
+  error?: string
+  warnings?: string[]
+}
+
+export interface UploadCreativeMediaBatchResult {
+  total: number
+  uploaded: number
+  failed: number
+  results: BatchUploadEntry[]
+  warnings: string[]
+}
+
+/** Turns a simple filename pattern (`*`, `?`, `{a,b}`) into a case-insensitive RegExp. */
+export function globToRegExp(glob: string): RegExp {
+  let out = ''
+  let braces = 0
+  for (const ch of glob) {
+    if (ch === '*') out += '.*'
+    else if (ch === '?') out += '.'
+    else if (ch === '{') { out += '(?:'; braces++ }
+    else if (ch === '}' && braces > 0) { out += ')'; braces-- }
+    else if (ch === ',' && braces > 0) out += '|'
+    else out += ch.replace(/[.+^$()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`^${out}${')'.repeat(braces)}$`, 'i')
+}
+
+function sourceLabel(spec: BatchFileSpec): string {
+  if (spec.filePath) return spec.filePath
+  return spec.url ?? ''
+}
+
+function defaultLabel(spec: BatchFileSpec): string {
+  if (spec.filePath) return stripExtension(basename(spec.filePath))
+  try {
+    return stripExtension(basename(new URL(spec.url as string).pathname)) || 'media'
+  } catch {
+    return 'media'
+  }
+}
+
+/** Lists a folder's matching files, sorted by name (numeric-aware, so 2 sorts before 10). */
+async function listFolderFiles(folder: string, glob?: string): Promise<string[]> {
+  const entries = await readdir(folder, { withFileTypes: true })
+  const pattern = glob ? globToRegExp(glob) : undefined
+  return entries
+    .filter((e) => e.isFile() && !e.name.startsWith('.'))
+    .map((e) => e.name)
+    .filter((name) => (pattern ? pattern.test(name) : DEFAULT_FOLDER_EXTENSIONS.includes(extname(name).toLowerCase())))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map((name) => join(folder, name))
+}
+
+/**
+ * Uploads many files into the media library — a list (`files`) or every matching file of a `folder`,
+ * in name order, three at a time. One bad file never stops the rest: each gets its own result entry
+ * (`id` or `error`). Precedence for provenance matches the single upload: a file's own
+ * source/licence/aiGenerated, else its `.provenance.json` sidecar, else the shared values.
+ */
+export async function uploadCreativeMediaBatch(
+  params: UploadCreativeMediaBatchParams,
+  config: Config
+): Promise<UploadCreativeMediaBatchResult> {
+  let specs: BatchFileSpec[]
+  if (params.folder) {
+    const paths = await listFolderFiles(params.folder, params.glob)
+    const template = params.labelTemplate ?? '{stem}'
+    specs = paths.map((filePath) => ({ filePath, label: template.split('{stem}').join(stripExtension(basename(filePath))) }))
+  } else {
+    specs = params.files ?? []
+  }
+  if (specs.length === 0) {
+    throw new Error(params.folder ? `No matching files in ${params.folder}.` : 'files is empty — pass at least one file.')
+  }
+  if (specs.length > MAX_BATCH_FILES) {
+    throw new Error(
+      `${specs.length} files is over the ${MAX_BATCH_FILES}-file limit for one call — ${params.folder ? 'narrow it with glob, or ' : ''}upload in several batches.`
+    )
+  }
+
+  const results: BatchUploadEntry[] = new Array(specs.length)
+  const warnings: string[] = []
+  const tooLong = (field: string, value: string | undefined, who: string): void => {
+    if (value && value.length > SERVER_TEXT_LIMIT) {
+      warnings.push(`${who}: ${field} is ${value.length} characters — the server accepts at most ${SERVER_TEXT_LIMIT} and will reject this upload.`)
+    }
+  }
+
+  const uploadOne = async (spec: BatchFileSpec): Promise<BatchUploadEntry> => {
+    const file = sourceLabel(spec)
+    const label = spec.label ?? defaultLabel(spec)
+    try {
+      if (!!spec.filePath === !!spec.url) throw new Error('Each file needs exactly one of filePath or url.')
+      let provenance: Pick<BatchFileSpec, 'source' | 'licence' | 'aiGenerated'>
+      if (spec.source !== undefined || spec.licence !== undefined || spec.aiGenerated !== undefined) {
+        provenance = {
+          source: spec.source ?? params.source,
+          licence: spec.licence ?? params.licence,
+          aiGenerated: spec.aiGenerated ?? params.aiGenerated,
+        }
+      } else {
+        const sidecar = spec.filePath ? await readProvenanceSidecar(spec.filePath) : null
+        provenance = sidecar ?? { source: params.source, licence: params.licence, aiGenerated: params.aiGenerated }
+      }
+      tooLong('label', label, file)
+      tooLong('source', provenance.source, file)
+      tooLong('licence', provenance.licence, file)
+      const { media, warnings: fileWarnings } = await uploadCreativeMedia(
+        { filePath: spec.filePath, url: spec.url, label, ...provenance },
+        config
+      )
+      return { file, label, id: media['id'] as string | undefined, ...(fileWarnings.length ? { warnings: fileWarnings } : {}) }
+    } catch (err) {
+      return { file, label, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < specs.length) {
+      const i = next++
+      results[i] = await uploadOne(specs[i]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(BATCH_CONCURRENCY, specs.length) }, worker))
+
+  const failed = results.filter((r) => r.error).length
+  return { total: results.length, uploaded: results.length - failed, failed, results, warnings }
+}
+
+/** The `upload_creative_media` entry point: the single form, or the batch form (`files` / `folder`). */
+export async function uploadCreativeMediaAny(
+  params: UploadCreativeMediaParams & UploadCreativeMediaBatchParams,
+  config: Config
+): Promise<UploadCreativeMediaResult | UploadCreativeMediaBatchResult> {
+  const forms = [params.filePath, params.url, params.files, params.folder].filter((v) => v !== undefined && v !== '').length
+  if (forms !== 1) {
+    throw new Error('Pass exactly one of filePath, url, files or folder.')
+  }
+  if (params.files || params.folder) return uploadCreativeMediaBatch(params, config)
+  return uploadCreativeMedia(params, config)
+}
 
 const BRAND_IMAGE_SLOTS = ['mark', 'wordmark_dark', 'wordmark_light', 'badge'] as const
 
@@ -998,12 +1183,23 @@ export async function attachCreativeToPost(
   if (!renderId) {
     const renders = await apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config)
     const latest = renders.find((r) => r.state === 'SUCCEEDED' && !r.previewOnly)
-    if (!latest) {
-      throw new Error(
-        'No SUCCEEDED render exists for this Creative yet — call render_creative (previewOnly: false) first, or pass an explicit renderId.'
-      )
+    if (latest) {
+      renderId = latest.id
+    } else {
+      // CLIP and CAROUSEL render server-side in one synchronous call, so there is no reason to make
+      // the caller do it as a separate step.
+      const creative = await apiGet<{ kind?: string }>(`${creativesBase(config)}/${params.creativeId}`, config)
+      if (creative?.kind !== 'CLIP' && creative?.kind !== 'CAROUSEL') {
+        throw new Error(
+          'No SUCCEEDED render exists for this Creative yet — call render_creative (previewOnly: false) first, or pass an explicit renderId.'
+        )
+      }
+      const rendered = await renderViaApi({ creativeId: params.creativeId, previewOnly: false, renderer: 'mcp' }, config)
+      if (!rendered.ok || !rendered.renderId) {
+        throw new Error(`Rendering this ${creative.kind} Creative before attaching failed: ${rendered.error ?? 'unknown error'}`)
+      }
+      renderId = rendered.renderId
     }
-    renderId = latest.id
   }
   return apiPost(`${creativesBase(config)}/${params.creativeId}/attach`, { renderId, workItemId: postId }, config)
 }

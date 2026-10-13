@@ -48,6 +48,7 @@ import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { BrandSetupNotice } from '@/components/marketing/brand/BrandSetupNotice'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
+import { CarouselSlidesSection } from '@/components/marketing/creatives/CarouselSlidesSection'
 import { CLIP_PLACEMENT_KEYS, nearestAspectPlacement } from '@/components/marketing/creatives/clipPlacement'
 import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
 import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
@@ -128,6 +129,9 @@ interface FormState {
   altText: string
   /** CLIP only — see the `Creative.clipMedia` doc comment in types.ts. */
   clipMedia: Record<string, string>
+  /** CAROUSEL only — see `Creative.slides` / `slideAltText` in types.ts. */
+  slides: Record<string, string[]>
+  slideAltText: string[]
   motion: MotionFormState
   audio: AudioFormState
   placements: string[]
@@ -199,6 +203,8 @@ function toForm(creative: Creative): FormState {
     caption: creative.caption ?? '',
     altText: creative.altText ?? '',
     clipMedia: { ...(creative.clipMedia ?? {}) },
+    slides: Object.fromEntries(Object.entries(creative.slides ?? {}).map(([k, v]) => [k, [...v]])),
+    slideAltText: [...(creative.slideAltText ?? [])],
     motion: toMotionForm(creative.motion),
     audio: toAudioForm(creative.audio),
     placements: [...creative.placements],
@@ -659,6 +665,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   // CLIP mode: which clipMedia slot ('default' or a placement key) the shared video MediaPicker is
   // targeting; null means it's closed.
   const [clipMediaPickerKey, setClipMediaPickerKey] = useState<string | null>(null)
+  // CAROUSEL mode: which placement the multi-select image picker is appending to; null means closed.
+  const [carouselPickerKey, setCarouselPickerKey] = useState<string | null>(null)
   // MOTION mode: the background clip picker (locked to VIDEO) and the audio track picker (locked to
   // AUDIO) — two separate MediaPicker instances, each open/closed on its own.
   const [motionClipPickerOpen, setMotionClipPickerOpen] = useState(false)
@@ -787,7 +795,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           focal: beatPhoto?.focal ?? photo?.focal,
         }
       }),
-      kind: form.kind,
+      kind: form.kind === 'CAROUSEL' ? 'STILL' : form.kind,
       motion: isMotion
         ? {
             preset: form.motion.preset,
@@ -880,6 +888,12 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     try {
       const band = toIntMap(form.layoutOverrideBand)
       const padBottom = toIntMap(form.layoutOverridePadBottom)
+      const isCarousel = form.kind === 'CAROUSEL'
+      const carouselPlacements = Object.keys(form.slides).filter((k) => k !== 'default' && form.slides[k].length > 0)
+      const maxSlides = Math.max(0, ...Object.values(form.slides).map((v) => v.length))
+      // Alt text can't outnumber the slides; trailing blanks are dropped.
+      const carouselAlt = form.slideAltText.slice(0, maxSlides)
+      while (carouselAlt.length && !carouselAlt[carouselAlt.length - 1].trim()) carouselAlt.pop()
       const updated = await patchCreative(
         projectId,
         creativeId,
@@ -891,13 +905,23 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           kind: form.kind,
           layout: form.layout,
           theme: form.theme,
-          photoId: form.photoId,
+          photoId: isCarousel ? null : form.photoId,
           focalOverride: Object.keys(form.focalOverride).length ? form.focalOverride : null,
           headline: form.headline,
           body: form.body,
           caption: form.caption,
           altText: form.altText,
-          clipMedia: Object.keys(form.clipMedia).length ? form.clipMedia : null,
+          clipMedia: isCarousel ? null : Object.keys(form.clipMedia).length ? form.clipMedia : null,
+          ...(isCarousel
+            ? {
+                slides: form.slides,
+                slideAltText: carouselAlt,
+                // Derived from the slide keys; omitted when only `default` has slides (the server picks).
+                ...(carouselPlacements.length ? { placements: carouselPlacements } : {}),
+              }
+            : creative.kind === 'CAROUSEL'
+              ? { slides: null, slideAltText: null }
+              : {}),
           motion:
             form.kind === 'MOTION'
               ? {
@@ -921,9 +945,9 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                   fadeOutSec: form.audio.fadeOutSec,
                 }
               : null,
-          placements: form.placements,
-          sequenceKind: form.sequenceKind,
-          sequence: form.sequence,
+          ...(isCarousel ? {} : { placements: form.placements }),
+          sequenceKind: isCarousel ? null : form.sequenceKind,
+          sequence: isCarousel ? [] : form.sequence,
           typeOverrides: form.typeOverrides,
           lockup: form.lockup,
           layoutOverrides:
@@ -998,6 +1022,13 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   }
 
   const layoutOptions = Object.keys(registry.layouts)
+  const carouselViolations = [
+    ...new Set(
+      (saveError?.violations ?? [])
+        .filter((v) => v.field.startsWith('slides') || v.field.startsWith('slideAltText'))
+        .map((v) => v.message),
+    ),
+  ]
   const themeOptions = registry.layouts[form.layout]?.themes ?? ['dark', 'light']
   // MOTION has no sequence/story/carousel — a single animated frame, not a set of beats.
   const hasSequence = form.kind === 'STILL' && form.sequenceKind != null && form.sequence.length > 0
@@ -1085,6 +1116,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                 <option value="STILL">Still</option>
                 <option value="MOTION">Motion</option>
                 <option value="CLIP">Clip</option>
+                <option value="CAROUSEL">Finished images</option>
               </Select>
             </div>
 
@@ -1107,7 +1139,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               ))}
             </div>
 
-            {form.kind !== 'CLIP' && (
+            {form.kind !== 'CLIP' && form.kind !== 'CAROUSEL' && (
               <>
                 <div>
                   <Label>Photo</Label>
@@ -1199,7 +1231,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               <Input id="creative-alt-text" value={form.altText} onChange={(e) => update('altText', e.target.value)} />
             </div>
 
-            {form.kind !== 'CLIP' && (
+            {form.kind !== 'CLIP' && form.kind !== 'CAROUSEL' && (
               <div>
                 <Label>Extra placements</Label>
                 <div className="flex flex-wrap gap-x-3 gap-y-1.5">
@@ -1232,7 +1264,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               </Select>
             </div>
 
-            {form.kind !== 'CLIP' && (
+            {form.kind !== 'CLIP' && form.kind !== 'CAROUSEL' && (
               <div className="border-t border-border pt-3">
                 <button
                   type="button"
@@ -1620,7 +1652,17 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
         </fieldset>
 
         <div className="space-y-4">
-          {form.kind === 'CLIP' ? (
+          {form.kind === 'CAROUSEL' ? (
+            <CarouselSlidesSection
+              slides={form.slides}
+              slideAltText={form.slideAltText}
+              mediaById={photoById}
+              canManage={canManage}
+              onAddImages={setCarouselPickerKey}
+              onChange={(next) => setForm((prev) => (prev ? { ...prev, ...next } : prev))}
+              violations={carouselViolations}
+            />
+          ) : form.kind === 'CLIP' ? (
             <ClipMediaSection
               form={form}
               update={update}
@@ -1753,6 +1795,26 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           }
           setPhotoPickerOpen(false)
           setBeatPhotoPickerIndex(null)
+        }}
+      />
+
+      <MediaPicker
+        projectId={projectId}
+        token={token}
+        open={carouselPickerKey !== null}
+        onOpenChange={(open) => {
+          if (!open) setCarouselPickerKey(null)
+        }}
+        kind="IMAGE"
+        multiple
+        media={photos}
+        onMediaChanged={() => listCreativePhotos(projectId, token, true).then(setPhotos)}
+        onSelectMany={(items) => {
+          if (carouselPickerKey) {
+            const existing = form.slides[carouselPickerKey] ?? []
+            update('slides', { ...form.slides, [carouselPickerKey]: [...existing, ...items.map((m) => m.id)] })
+          }
+          setCarouselPickerKey(null)
         }}
       />
 

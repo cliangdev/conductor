@@ -291,6 +291,21 @@ describe('RendersPanel', () => {
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2))
   })
 
+  it('shows "Prepare for posting" for CAROUSEL creatives and labels image frames by slide', async () => {
+    ;(apiGet as Mock).mockResolvedValue([
+      render_('r-1', {
+        frames: [
+          { id: 'f1', placementKey: '4x5', platform: null, sequenceIndex: 1, url: 'https://storage.example/s2.jpg', width: 1080, height: 1350, sizeBytes: 10, warnings: [], contentType: 'image/jpeg' },
+        ],
+      }),
+    ])
+    setup({ creativeKind: 'CAROUSEL' })
+
+    expect(await screen.findByRole('button', { name: /prepare for posting/i })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /slide 2/ })).toBeInTheDocument()
+    expect(document.querySelector('video')).toBeNull()
+  })
+
   it('hides "Prepare for posting" without creative.manage', async () => {
     mockCan.mockReturnValue(false)
     ;(apiGet as Mock).mockResolvedValue([])

@@ -177,7 +177,8 @@ sets each inheriting destination's media by placement:
 This mapping is one small, independently tested class, `CreativePlacementTargetMapper` — pure and
 stateless, so a new placement or platform is a switch arm, not a service rewrite. A target the mapping has
 no opinion about (a Facebook or Instagram Reel, since reels are video and a Creative's frames are always
-still images) is left alone.
+still images) is left alone. A `CAROUSEL` is mapped separately, with an explicit ordered selection per
+destination — see [Finished images](#finished-images-carousel).
 
 Only targets with `custom_media = false` are touched; a target that already chose its own media is
 reported in `targetsSkipped` and never overwritten. Attach reconstructs the Post's *whole* target
@@ -198,7 +199,7 @@ video, 50 MB audio); a video longer than 180 seconds warns ("longer than most pl
 refuses — there is no length cap here, platform caps are enforced at publish time by
 `MediaTargetValidator`.
 
-A Creative's `kind` — `STILL` (default, everything above), `MOTION` or `CLIP` — picks what it is. `STILL`
+A Creative's `kind` — `STILL` (default, everything above), `MOTION`, `CLIP` or `CAROUSEL` (below) — picks what it is. `STILL`
 is unchanged. `MOTION` (a branded animated video) is accepted by the write API today, but a render for one
 currently refuses with 422 ("Motion creatives render in the next release") — PR2 fills this in. `CLIP` is a
 finished video used as-is, with no brand layout at all: `clipMedia` is a map of `{"default": mediaId,
@@ -231,6 +232,50 @@ run against it exactly as they would a directly-uploaded video.
 
 The `16x9` placement (1920×1080, YouTube and landscape video) was added to the registry for this — it is
 not in any Brand Kit's default enabled set, since it means nothing to a STILL Creative's brand layout.
+
+## Finished images (CAROUSEL) {#finished-images-carousel}
+
+`kind: CAROUSEL` posts finished images as-is: slides designed elsewhere (Figma, your own renderer,
+device-framed screenshots) with no brand layout applied. A one-slide CAROUSEL is a finished still.
+
+- `slides`: `{"default": [mediaId...], "4x5": [...], "9x16": [...], "1x1": [...]}`, ids in slide order.
+  Allowed keys are `default`, `4x5`, `9x16` and `1x1`; a targeted placement without its own list uses
+  `default`. If `placements` is omitted the server derives it from the non-`default` keys (only
+  `default`: the placement nearest the first image's aspect).
+- `slideAltText`: strings index-aligned with the slides; entry N describes slide N in every placement.
+- Every id must be an `IMAGE` that finished uploading and is not blocked. `clipMedia`, `sequence`,
+  `motion` and `photoId` are refused on a CAROUSEL, and `slides` on any other kind.
+
+Validation (422 `violations[]`, each with `field`, `ruleId`, `message`): `placement`, `mediaNotFound`,
+`mediaNotImage`, `mediaUploaded`, `mediaBlocked`, `slideCount` (1-10 for `4x5`/`1x1`/`default`, 1-35
+for `9x16`), `slideAspect` (within 2% of 1080x1350, 1080x1920 or 1080x1080), `placementSlides` (a
+targeted placement has no slides), `kindFields`, `slideAltText` (more entries than slides). Going
+`READY` additionally needs `captionRequired` and `slidesRequired`.
+
+Readiness items: `slides`, `caption`, `altText` (the Creative's alt text, or alt text on every slide),
+`photoChecked` (every slide), all blocking; `mediaProvenance`; `aiDisclosure` (never blocking, shown
+when any slide is AI-generated); `state`.
+
+**Renders are assembled by the backend**, like CLIP: `POST .../renders` settles `SUCCEEDED` in the
+same call with one image frame per slide per placement, carrying `placementKey` and a 0-based
+`sequenceIndex`. `previewOnly` is refused with 422. `latestRenderThumbnailUrl` is slide 1 of `4x5`
+when present, else of the first placement. Because nothing renders locally, `render_creative` and
+`commit_creative_draft` request the server render, and `attach_creative_to_post` does so itself when
+a CAROUSEL has no render yet.
+
+Attach picks one ordered list per destination (the full table, limits and the
+`MULTI_IMAGE_UNSUPPORTED` blocker are in [`publishing.md`](publishing.md#carousels-from-a-creative)):
+Instagram feed `4x5` else `1x1`; Facebook feed `1x1` else `4x5`; TikTok `9x16` else `4x5`. Reels,
+Stories and YouTube cannot take one.
+
+Draft flow: `preview_creative_draft({kind: "CAROUSEL", slidePaths: {"4x5": [paths...]}})` reads each
+local image's size and `.provenance.json` sidecar, asks `draft-spec` for violations and readiness,
+and returns one contact sheet per placement (slides in order); nothing is rendered or saved.
+`commit_creative_draft` uploads the slides in order (labelled from the file stem), writes their ids
+into `slides`, and requests the server render. To turn an existing media set into a Creative, upload
+it in one call (`upload_creative_media` with `folder` or `files`, up to 100, three at a time, one
+result per file) and find it again with `list_creative_media({labelPrefix})`. `label`, `source` and
+`licence` are capped at 200 characters (a longer value is a 400).
 
 ## Motion (COND-24 PR2)
 

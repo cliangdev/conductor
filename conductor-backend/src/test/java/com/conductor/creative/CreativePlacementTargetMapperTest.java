@@ -144,6 +144,42 @@ class CreativePlacementTargetMapperTest {
         assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("youtube", "FEED"), null)).isTrue();
     }
 
+    // ── carousel (finished images, ordered per placement) ──────────────────────────
+
+    @Test
+    void carouselInstagramFeedPrefersFourByFiveThenSquare() {
+        PostPublishTarget ig = target("instagram", "FEED");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(ig, Set.of("4x5", "1x1", "9x16"))).isEqualTo("4x5");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(ig, Set.of("1x1", "9x16"))).isEqualTo("1x1");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(ig, Set.of("9x16"))).isNull();
+    }
+
+    @Test
+    void carouselFacebookFeedPrefersSquareThenFourByFive() {
+        PostPublishTarget fb = target("facebook", "FEED");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(fb, Set.of("4x5", "1x1"))).isEqualTo("1x1");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(fb, Set.of("4x5"))).isEqualTo("4x5");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(fb, Set.of("9x16"))).isNull();
+    }
+
+    @Test
+    void carouselTikTokPrefersNineBySixteenThenFourByFive() {
+        PostPublishTarget tt = target("tiktok", "FEED");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(tt, Set.of("4x5", "9x16"))).isEqualTo("9x16");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(tt, Set.of("4x5"))).isEqualTo("4x5");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(tt, Set.of("1x1"))).isNull();
+    }
+
+    @Test
+    void carouselReelsStoriesAndYouTubeTakeNone() {
+        Set<String> all = Set.of("4x5", "1x1", "9x16");
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(target("instagram", "REEL"), all)).isNull();
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(target("facebook", "REEL"), all)).isNull();
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(target("instagram", "STORY"), all)).isNull();
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(target("facebook", "STORY"), all)).isNull();
+        assertThat(CreativePlacementTargetMapper.carouselPlacementFor(target("youtube", "FEED"), all)).isNull();
+    }
+
     private static PostPublishTarget target(String platform, String format) {
         PostPublishTarget target = new PostPublishTarget();
         target.setPlatform(platform);

@@ -126,6 +126,31 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void aValueTooLongForItsColumnYields400NamingTheDatabaseHint() throws Exception {
+        controller.toThrow = new org.springframework.dao.DataIntegrityViolationException("could not execute statement",
+                new java.sql.SQLException("ERROR: value too long for type character varying(200)", "22001"));
+
+        mockMvc.perform(get("/boom"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.startsWith("A value is longer than its field allows")))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("character varying(200)")));
+
+        assertThat(logAppender.list).noneMatch(e -> e.getLevel() == Level.ERROR);
+    }
+
+    @Test
+    void otherDataIntegrityViolationsStillYield500() throws Exception {
+        controller.toThrow = new org.springframework.dao.DataIntegrityViolationException("duplicate key",
+                new java.sql.SQLException("ERROR: duplicate key value violates unique constraint", "23505"));
+
+        mockMvc.perform(get("/boom"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.detail").value("An unexpected error occurred. Please try again."));
+    }
+
+    @Test
     void unexpectedRuntimeExceptionStillYields500() throws Exception {
         controller.toThrow = new IllegalStateException("kaboom");
 

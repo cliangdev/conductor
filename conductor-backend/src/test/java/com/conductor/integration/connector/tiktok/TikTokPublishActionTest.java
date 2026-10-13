@@ -833,6 +833,24 @@ class TikTokPublishActionTest {
     }
 
     @Test
+    void photoPost_sevenOrderedImagesInitialiseOneOrderedPhotoPost() {
+        String[] ids = {"s1", "s2", "s3", "s4", "s5", "s6", "s7"};
+        givenPhotos(ids);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        ActionResult result = action.publish(photoInput(ids), context());
+
+        assertThat(result.success()).isTrue();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> urls = ArgumentCaptor.forClass(List.class);
+        verify(client, times(1)).initPhotoPost(eq(ACCESS_TOKEN), any(), urls.capture(), anyInt());
+        assertThat(urls.getValue()).containsExactly("https://signed/s1", "https://signed/s2", "https://signed/s3",
+                "https://signed/s4", "https://signed/s5", "https://signed/s6", "https://signed/s7");
+    }
+
+    @Test
     void photoPost_carriesTheTitleAndDescriptionSeparately_truncatingAnOverLongTitle() {
         givenPhotos("photo-a");
         when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);

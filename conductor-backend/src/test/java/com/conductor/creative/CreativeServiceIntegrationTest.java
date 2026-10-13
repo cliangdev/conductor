@@ -675,6 +675,190 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         return frameRepository.save(frame);
     }
 
+    // ── CAROUSEL (finished images used as-is) ────────────────────────────────────
+
+    private CreativePhoto newImage(int width, int height, boolean checked) {
+        CreativePhoto p = newPhoto();
+        p.setWidth(width);
+        p.setHeight(height);
+        p.setChecked(checked);
+        return photoRepository.save(p);
+    }
+
+    private List<String> imageIds(int count, int width, int height, boolean checked) {
+        List<String> ids = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            ids.add(newImage(width, height, checked).getId());
+        }
+        return ids;
+    }
+
+    private CreateCreativeRequest carouselRequest(Map<String, List<String>> slides) {
+        CreateCreativeRequest request = new CreateCreativeRequest();
+        request.setKind(CreativeKind.CAROUSEL);
+        request.setCaption("Seven ways to save recipes.");
+        request.setAltText("Recipe cards.");
+        request.setSlides(slides);
+        return request;
+    }
+
+    @Test
+    void creatingACarouselDerivesPlacementsFromTheSlideKeysAndGoesReady() {
+        Map<String, List<String>> slides = new java.util.LinkedHashMap<>();
+        slides.put("4x5", imageIds(3, 1080, 1350, true));
+        slides.put("9x16", imageIds(3, 1080, 1920, true));
+        CreateCreativeRequest request = carouselRequest(slides);
+        request.setState(com.conductor.generated.v2.model.CreativeState.READY);
+
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        Creative creative = created.creative();
+        assertThat(creative.getKind()).isEqualTo(Creative.KIND_CAROUSEL);
+        assertThat(creative.getState()).isEqualTo(Creative.STATE_READY);
+        assertThat(creative.getPlacements()).extracting(JsonNode::asText).containsExactly("4x5", "9x16");
+        assertThat(creative.getSlides().get("4x5")).hasSize(3);
+        assertThat(creative.getPhotoId()).isNull();
+        assertThat(creativeService.readiness(project.getId(), creative.getId(), admin).ready()).isTrue();
+    }
+
+    @Test
+    void aCarouselWithOnlyADefaultListTargetsThePlacementNearestTheFirstImage() {
+        CreativeService.CreativeView square = creativeService.createCreative(project.getId(),
+                carouselRequest(Map.of("default", imageIds(2, 1080, 1080, true))), admin);
+        assertThat(square.creative().getPlacements()).extracting(JsonNode::asText).containsExactly("1x1");
+
+        CreativeService.CreativeView portrait = creativeService.createCreative(project.getId(),
+                carouselRequest(Map.of("default", imageIds(2, 1080, 1350, true))), admin);
+        assertThat(portrait.creative().getPlacements()).extracting(JsonNode::asText).containsExactly("4x5");
+    }
+
+    @Test
+    void aCarouselWithAWrongShapedSlideIsRefusedWithSlideAspect() {
+        CreateCreativeRequest request = carouselRequest(Map.of("4x5", imageIds(1, 1080, 1080, true)));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), request, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).containsExactly("slideAspect"));
+    }
+
+    @Test
+    void carouselReadinessChecksEverySlideAcrossAllPlacementsAndAcceptsPerSlideAltText() {
+        Map<String, List<String>> slides = new java.util.LinkedHashMap<>();
+        slides.put("4x5", imageIds(2, 1080, 1350, true));
+        CreativePhoto unchecked = newImage(1080, 1920, false);
+        unchecked.setAiGenerated(true);
+        photoRepository.save(unchecked);
+        slides.put("9x16", List.of(unchecked.getId()));
+        CreateCreativeRequest request = carouselRequest(slides);
+        request.setAltText(null);
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        CreativeService.Readiness readiness = creativeService.readiness(project.getId(), created.creative().getId(), admin);
+        assertThat(readiness.items()).extracting(CreativeService.ReadinessItem::key)
+                .containsExactly("slides", "caption", "altText", "photoChecked", "mediaProvenance", "aiDisclosure", "state");
+        assertThat(item(readiness, "photoChecked").ok()).isFalse();
+        assertThat(item(readiness, "altText").ok()).isFalse();
+        assertThat(item(readiness, "aiDisclosure").ok()).isFalse();
+        assertThat(item(readiness, "aiDisclosure").blocking()).isFalse();
+        assertThat(item(readiness, "slides").ok()).isTrue();
+
+        PatchCreativeRequest patch = new PatchCreativeRequest(created.creative().getVersion());
+        patch.setSlideAltText(List.of("One", "Two"));
+        CreativeService.CreativeView patched = creativeService.patchCreative(project.getId(), created.creative().getId(), patch, admin);
+        assertThat(item(creativeService.readiness(project.getId(), patched.creative().getId(), admin), "altText").ok()).isTrue();
+    }
+
+    private CreativeService.ReadinessItem item(CreativeService.Readiness readiness, String key) {
+        return readiness.items().stream().filter(i -> i.key().equals(key)).findFirst().orElseThrow();
+    }
+
+    @Test
+    void patchingCarouselSlidesRederivesPlacementsAndAVariantCopiesThem() {
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                carouselRequest(Map.of("4x5", imageIds(2, 1080, 1350, true))), admin);
+
+        PatchCreativeRequest patch = new PatchCreativeRequest(created.creative().getVersion());
+        Map<String, List<String>> next = new java.util.LinkedHashMap<>();
+        next.put("1x1", imageIds(2, 1080, 1080, true));
+        patch.setSlides(next);
+        CreativeService.CreativeView patched = creativeService.patchCreative(project.getId(), created.creative().getId(), patch, admin);
+        assertThat(patched.creative().getPlacements()).extracting(JsonNode::asText).containsExactly("1x1");
+
+        CreativeService.CreativeView variant = creativeService.createVariant(project.getId(), created.creative().getId(),
+                new CreateCreativeVariantRequest(), admin);
+        assertThat(variant.creative().getKind()).isEqualTo(Creative.KIND_CAROUSEL);
+        assertThat(variant.creative().getSlides()).isEqualTo(patched.creative().getSlides());
+    }
+
+    @Test
+    void slidesOnAStillAreRefusedAsKindFields() {
+        CreateCreativeRequest request = concept("Plan the week in *one sentence*.", "A calm plan.");
+        request.setSlides(Map.of("4x5", imageIds(1, 1080, 1350, true)));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), request, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).contains("kindFields"));
+    }
+
+    @Test
+    void switchingAStillWithAPhotoToCarouselAndBackDropsTheFieldsTheOtherKindCannotCarry() {
+        CreateCreativeRequest still = concept("Plan the week in *one sentence*.", "A calm plan.");
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), still, admin);
+        assertThat(created.creative().getPhotoId()).isNotNull();
+
+        // What the editor sends: photoId null (= keep, in a PATCH), and no placements before any slide is chosen.
+        PatchCreativeRequest toCarousel = new PatchCreativeRequest(created.creative().getVersion());
+        toCarousel.setKind(CreativeKind.CAROUSEL);
+        toCarousel.setSlides(Map.of());
+        toCarousel.setSequence(List.of());
+        CreativeService.CreativeView carousel = creativeService.patchCreative(project.getId(),
+                created.creative().getId(), toCarousel, admin);
+        assertThat(carousel.creative().getKind()).isEqualTo(Creative.KIND_CAROUSEL);
+        assertThat(carousel.creative().getPhotoId()).isNull();
+        assertThat(carousel.creative().getPlacements()).isEmpty();
+
+        PatchCreativeRequest addSlides = new PatchCreativeRequest(carousel.creative().getVersion());
+        addSlides.setSlides(Map.of("4x5", imageIds(2, 1080, 1350, true)));
+        addSlides.setSlideAltText(List.of("One", "Two"));
+        CreativeService.CreativeView withSlides = creativeService.patchCreative(project.getId(),
+                created.creative().getId(), addSlides, admin);
+        assertThat(withSlides.creative().getPlacements()).extracting(JsonNode::asText).containsExactly("4x5");
+
+        // And back: the slides are only carried over from the row, so the switch drops them.
+        PatchCreativeRequest toStill = new PatchCreativeRequest(withSlides.creative().getVersion());
+        toStill.setKind(CreativeKind.STILL);
+        toStill.setPhotoId(photo.getId());
+        CreativeService.CreativeView back = creativeService.patchCreative(project.getId(),
+                created.creative().getId(), toStill, admin);
+        assertThat(back.creative().getKind()).isEqualTo(Creative.KIND_STILL);
+        assertThat(back.creative().getSlides()).isNull();
+        assertThat(back.creative().getSlideAltText()).isNull();
+    }
+
+    @Test
+    void aCarouselDraftSpecJudgesLocalSlidesByTheirDeclaredSizeAndProvenance() {
+        LocalMediaInfo good = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1350).source("own").licence("Own work");
+        LocalMediaInfo wrong = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1080);
+
+        CreativeService.DraftSpec draft = creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().kind(CreativeKind.CAROUSEL).caption("Seven ways.").altText("Cards.")
+                        .slides(Map.of("4x5", List.of("local:one", "local:two")))
+                        .localMedia(Map.of("one", good, "two", good)), admin);
+        assertThat(draft.spec().getRenderId()).isEqualTo("draft");
+        assertThat(draft.spec().getPlacements()).containsExactly("4x5");
+        assertThat(item(draft.readiness(), "mediaProvenance").ok()).isTrue();
+        // A local file has not been vetted by anyone, so it is unchecked until uploaded and confirmed.
+        assertThat(item(draft.readiness(), "photoChecked").ok()).isFalse();
+
+        assertThatThrownBy(() -> creativeService.buildDraftSpec(project.getId(),
+                new CreativeDraftSpecRequest().kind(CreativeKind.CAROUSEL).caption("Seven ways.")
+                        .slides(Map.of("4x5", List.of("local:one", "local:bad")))
+                        .localMedia(Map.of("one", good, "bad", wrong)), admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).containsExactly("slideAspect"));
+    }
+
     // ── draft spec (preview-first): builds a spec, persists nothing ────────────────────────────────
 
     @Test

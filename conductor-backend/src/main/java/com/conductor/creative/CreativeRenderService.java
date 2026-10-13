@@ -124,6 +124,9 @@ public class CreativeRenderService {
         if (Creative.KIND_CLIP.equals(creative.getKind())) {
             return requestClipRender(projectId, creative, request, caller);
         }
+        if (Creative.KIND_CAROUSEL.equals(creative.getKind())) {
+            return requestCarouselRender(projectId, creative, request, caller);
+        }
         return requestStillRender(projectId, creative, request, caller);
     }
 
@@ -292,6 +295,113 @@ public class CreativeRenderService {
         return new CreateRenderResult(render, null, frames);
     }
 
+    /**
+     * CAROUSEL renders are assembled here, like CLIP's: the slides are finished images used as-is, so the
+     * backend copies each slide object into the render's own path and records one IMAGE frame per slide per
+     * targeted placement ({@code placementKey} + 0-based {@code sequenceIndex}). The render is created, and
+     * settles, SUCCEEDED in this one call — no layout, overlay or safe-zone check runs.
+     */
+    private CreateRenderResult requestCarouselRender(String projectId, Creative creative,
+                                                     CreateCreativeRenderRequest request, User caller) {
+        if (request != null && Boolean.TRUE.equals(request.getPreviewOnly())) {
+            throw new UnprocessableEntityException(
+                    "CAROUSEL renders are assembled directly from the chosen images; there is no preview-only sheet");
+        }
+        BrandKit kit = requireKit(projectId, creative.getBrandKitId());
+        List<String> placements = toStringList(creative.getPlacements());
+        Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+        List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
+                creative.getLayout(), creative.getTheme(), placements, creative.getHeadline(), creative.getBody(),
+                creative.getCaption(),
+                // Force the READY-only checks (caption + at least one slide), as the CLIP path does.
+                Creative.STATE_READY, null, true, true, true, false, null, List.of(), null, Set.of(), Map.of(),
+                Map.of(), Creative.KIND_CAROUSEL, List.of(), null, resolveSlideEntries(projectId, slides),
+                toStringList(creative.getSlideAltText())));
+        if (!violations.isEmpty()) {
+            throw new CreativeValidationException(violations);
+        }
+
+        CreativeRender render = new CreativeRender();
+        render.setProjectId(projectId);
+        render.setCreativeId(creative.getId());
+        render.setCreativeVersion(creative.getVersion());
+        render.setState(CreativeRender.STATE_SUCCEEDED);
+        render.setPreviewOnly(false);
+        render.setRenderer(request != null ? request.getRenderer() : null);
+        render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
+        render.setRequestedBy(caller.getId());
+        render.setRequestedAt(OffsetDateTime.now());
+        render.setFinishedAt(OffsetDateTime.now());
+        render = renderRepository.save(render);
+
+        List<CreativeRenderFrame> frames = new ArrayList<>();
+        for (String placementKey : placements) {
+            List<String> mediaIds = slides.containsKey(placementKey) ? slides.get(placementKey) : slides.get("default");
+            if (mediaIds == null) {
+                continue;
+            }
+            for (int i = 0; i < mediaIds.size(); i++) {
+                String mediaId = mediaIds.get(i);
+                CreativePhoto media = photoRepository.findByIdAndProjectId(mediaId, projectId)
+                        .orElseThrow(() -> new BusinessException("No media with id " + mediaId + " in this project"));
+                String destPath = "projects/" + projectId + "/creatives/" + creative.getId() + "/renders/"
+                        + render.getId() + "/" + placementKey + "-" + String.format("%02d", i + 1) + "."
+                        + imageExtensionFor(media.getContentType());
+                storageService.copy(media.getGcsPath(), destPath);
+
+                CreativeRenderFrame frame = new CreativeRenderFrame();
+                frame.setRenderId(render.getId());
+                frame.setCreativeId(creative.getId());
+                frame.setPlacementKey(placementKey);
+                frame.setSequenceIndex(i);
+                frame.setPlatform(registry.hasPlacement(placementKey) ? registry.placements().get(placementKey).platform() : null);
+                frame.setGcsPath(destPath);
+                frame.setContentType(media.getContentType());
+                frame.setWidth(media.getWidth() != null ? media.getWidth() : 0);
+                frame.setHeight(media.getHeight() != null ? media.getHeight() : 0);
+                frame.setSizeBytes(media.getSizeBytes());
+                frame.setWarnings(objectMapper.createArrayNode());
+                frameRepository.save(frame);
+                frames.add(frame);
+            }
+        }
+        return new CreateRenderResult(render, null, frames);
+    }
+
+    private static String imageExtensionFor(String contentType) {
+        return switch (contentType == null ? "" : contentType) {
+            case "image/png" -> "png";
+            case "image/webp" -> "webp";
+            default -> "jpg";
+        };
+    }
+
+    private Map<String, List<CreativeValidator.SlideEntry>> resolveSlideEntries(String projectId,
+                                                                                Map<String, List<String>> slides) {
+        Map<String, List<CreativeValidator.SlideEntry>> resolved = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> list : slides.entrySet()) {
+            List<CreativeValidator.SlideEntry> entries = new ArrayList<>();
+            for (int i = 0; i < list.getValue().size(); i++) {
+                String id = list.getValue().get(i);
+                CreativePhoto media = photoRepository.findByIdAndProjectId(id, projectId).orElse(null);
+                entries.add(new CreativeValidator.SlideEntry(list.getKey(), i, id, media != null,
+                        media != null && CreativePhoto.MEDIA_KIND_IMAGE.equals(media.getMediaKind()),
+                        media != null && media.isUploaded(), media != null && media.isBlocked(),
+                        media != null ? media.getWidth() : null, media != null ? media.getHeight() : null));
+            }
+            resolved.put(list.getKey(), entries);
+        }
+        return resolved;
+    }
+
+    private Map<String, List<String>> toSlidesMap(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(node, new TypeReference<LinkedHashMap<String, List<String>>>() {
+        });
+    }
+
     private String clipFramePath(String projectId, String creativeId, String renderId, String placementKey, String contentType) {
         return "projects/" + projectId + "/creatives/" + creativeId + "/renders/" + renderId + "/" + placementKey
                 + "." + videoExtensionFor(contentType);
@@ -339,20 +449,8 @@ public class CreativeRenderService {
 
     /** The registry placement (excluding {@code story}) whose aspect ratio is nearest {@code videoAspect}. */
     String nearestPlacementFor(double videoAspect) {
-        String best = null;
-        double bestDiff = Double.MAX_VALUE;
-        for (Map.Entry<String, CreativeRegistry.PlacementInfo> entry : registry.placements().entrySet()) {
-            if ("story".equals(entry.getKey()) || entry.getValue().height() <= 0) {
-                continue;
-            }
-            double placementAspect = (double) entry.getValue().width() / entry.getValue().height();
-            double diff = Math.abs(placementAspect - videoAspect);
-            if (diff < bestDiff) {
-                bestDiff = diff;
-                best = entry.getKey();
-            }
-        }
-        return best;
+        return registry.nearestPlacement(videoAspect,
+                registry.placements().keySet().stream().filter(k -> !"story".equals(k)).toList());
     }
 
     /** Mirrors {@code CreativeService#resolveClipMedia} — this service also needs it to run the CLIP
@@ -595,13 +693,25 @@ public class CreativeRenderService {
 
     /** The image {@code latestRenderThumbnailUrl} shows: the 4x5 frame, else the first; a video frame's poster. */
     public String thumbnailUrl(RenderView view) {
+        return thumbnailUrl(view, List.of());
+    }
+
+    /**
+     * As above, but a frame set that has no 4x5 frame falls back to the first of {@code placementOrder}
+     * (the Creative's own placements) that has one — a CAROUSEL's "slide 1 of the primary placement".
+     * Frames arrive ordered by sequence index, so that placement's first frame is its slide 1.
+     */
+    public String thumbnailUrl(RenderView view, List<String> placementOrder) {
         if (view == null || view.frames().isEmpty()) {
             return null;
         }
         CreativeRenderFrame frame = view.frames().stream()
                 .filter(f -> "4x5".equals(f.getPlacementKey()))
                 .findFirst()
-                .orElseGet(() -> view.frames().get(0));
+                .orElseGet(() -> placementOrder.stream()
+                        .flatMap(key -> view.frames().stream().filter(f -> key.equals(f.getPlacementKey())).limit(1))
+                        .findFirst()
+                        .orElseGet(() -> view.frames().get(0)));
         // A thumbnail is an <img>: a video frame shows its poster (null when it has none, so the caller falls back).
         boolean video = frame.getContentType() != null && frame.getContentType().startsWith("video/");
         String path = video ? frame.getPosterGcsPath() : frame.getGcsPath();

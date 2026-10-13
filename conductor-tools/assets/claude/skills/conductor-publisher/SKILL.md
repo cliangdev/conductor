@@ -75,6 +75,12 @@ offers all three:
   entry when several media are attached — omitted, `create_post` resolves it to the first of the
   attached media and says so in `warnings`, which is a fallback worth naming rather than relying on.
 
+A multi-image post (a CAROUSEL Creative's slides) only goes to **feed** formats: Instagram feed
+(up to 10), Facebook feed (up to 10) and TikTok photo posts (up to 35). A reel, a story or YouTube
+destination can't take one, and the preflight blocks with `MULTI_IMAGE_UNSUPPORTED` naming the
+destination: switch it to Feed or remove it, then retry. A one-slide carousel is a single image and
+fits anywhere an image does.
+
 ### Scheduling with no time given
 
 When nobody names a time, `create_post` schedules for the next five-minute mark at or after the

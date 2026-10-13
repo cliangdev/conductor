@@ -246,4 +246,51 @@ describe('MediaPicker', () => {
     expect(await screen.findByText(/Videos must be under 1 GB/)).toBeInTheDocument()
     expect(apiPost).not.toHaveBeenCalled()
   })
+
+  describe('multi-select', () => {
+    const photos = ['a', 'b', 'c'].map((id) =>
+      media({ id, label: `photo-${id}`, mediaKind: 'IMAGE', url: `https://storage.example/${id}.jpg` }),
+    )
+
+    it('numbers tiles in click order and hands them to onSelectMany on "Add N"', async () => {
+      const onSelectMany = vi.fn()
+      const onSelect = vi.fn()
+      render(
+        <MediaPicker projectId="proj-1" token="tok" open onOpenChange={() => {}} media={photos} kind="IMAGE" multiple onSelect={onSelect} onSelectMany={onSelectMany} onMediaChanged={vi.fn()} />,
+      )
+      const tiles = screen.getByTestId('photo-picker-grid').querySelectorAll('button[aria-pressed]')
+      expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+
+      await userEvent.click(tiles[2])
+      await userEvent.click(tiles[0])
+      expect(screen.getByTestId('selection-badge-c')).toHaveTextContent('1')
+      expect(screen.getByTestId('selection-badge-a')).toHaveTextContent('2')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Add 2' }))
+      expect(onSelectMany).toHaveBeenCalledWith([photos[2], photos[0]])
+      expect(onSelect).not.toHaveBeenCalled()
+    })
+
+    it('deselects on a second click, renumbering the rest', async () => {
+      render(
+        <MediaPicker projectId="proj-1" token="tok" open onOpenChange={() => {}} media={photos} kind="IMAGE" multiple onSelectMany={vi.fn()} onMediaChanged={vi.fn()} />,
+      )
+      const tiles = screen.getByTestId('photo-picker-grid').querySelectorAll('button[aria-pressed]')
+      await userEvent.click(tiles[0])
+      await userEvent.click(tiles[1])
+      await userEvent.click(tiles[0])
+      expect(screen.queryByTestId('selection-badge-a')).not.toBeInTheDocument()
+      expect(screen.getByTestId('selection-badge-b')).toHaveTextContent('1')
+    })
+
+    it('single-select still picks immediately with no confirm button', async () => {
+      const onSelect = vi.fn()
+      render(
+        <MediaPicker projectId="proj-1" token="tok" open onOpenChange={() => {}} media={photos} kind="IMAGE" onSelect={onSelect} onMediaChanged={vi.fn()} />,
+      )
+      await userEvent.click(screen.getByTestId('photo-picker-grid').querySelector('button')!)
+      expect(onSelect).toHaveBeenCalledWith(photos[0])
+      expect(screen.queryByRole('button', { name: /^Add/ })).not.toBeInTheDocument()
+    })
+  })
 })

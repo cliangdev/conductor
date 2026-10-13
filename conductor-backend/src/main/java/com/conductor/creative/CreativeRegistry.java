@@ -113,6 +113,27 @@ public class CreativeRegistry {
         return key != null && placements.containsKey(key);
     }
 
+    /**
+     * The key among {@code candidates} (that is a registry placement) whose aspect ratio is nearest
+     * {@code aspect}; null when none qualifies. Ties keep the earlier candidate.
+     */
+    public String nearestPlacement(double aspect, java.util.Collection<String> candidates) {
+        String best = null;
+        double bestDiff = Double.MAX_VALUE;
+        for (String key : candidates) {
+            PlacementInfo info = placements.get(key);
+            if (info == null || info.height() <= 0) {
+                continue;
+            }
+            double diff = Math.abs((double) info.width() / info.height() - aspect);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                best = key;
+            }
+        }
+        return best;
+    }
+
     /** The first layout key, in registry order — the default a new Creative starts with. */
     public String defaultLayout() {
         return layouts.keySet().iterator().next();

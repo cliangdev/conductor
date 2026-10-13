@@ -412,6 +412,137 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 .isInstanceOf(CreativeValidationException.class);
     }
 
+    // ── CAROUSEL renders (finished images copied, one frame per slide per placement) ───────────────
+
+    private CreativePhoto newImageMedia(int width, int height) {
+        String id = UUID.randomUUID().toString();
+        CreativePhoto p = new CreativePhoto();
+        p.setId(id);
+        p.setProjectId(project.getId());
+        String gcsPath = "projects/" + project.getId() + "/marketing/photos/" + id + ".jpg";
+        p.setGcsPath(gcsPath);
+        storageService.upload(gcsPath, ("slide-bytes-" + id).getBytes(), "image/jpeg");
+        p.setContentType("image/jpeg");
+        p.setSizeBytes(500_000L);
+        p.setWidth(width);
+        p.setHeight(height);
+        p.setSource("own");
+        p.setLicence("Own work");
+        p.setChecked(true);
+        p.setFocal(objectMapper.createObjectNode());
+        p.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        p.setCreatedBy(admin.getId());
+        return photoRepository.save(p);
+    }
+
+    private Creative newCarouselCreative(Map<String, List<String>> slides, List<String> placements) {
+        Creative c = new Creative();
+        c.setProjectId(project.getId());
+        c.setBrandKitId(defaultKit.getId());
+        c.setVariantLetter("a");
+        c.setState(Creative.STATE_DRAFT);
+        c.setLayout("stacked");
+        c.setTheme(Creative.THEME_DARK);
+        c.setKind(Creative.KIND_CAROUSEL);
+        c.setCaption("Seven ways.");
+        c.setSlides(objectMapper.valueToTree(slides));
+        c.setPlacements(objectMapper.valueToTree(placements));
+        c.setSequence(objectMapper.valueToTree(List.of()));
+        c.setTypeOverrides(objectMapper.createObjectNode());
+        c.setCreatedBy(admin.getId());
+        c.setNumber(nextClipNumber++);
+        return creativeRepository.save(c);
+    }
+
+    @Test
+    void carouselRenderSucceedsAtOnceWithOneOrderedImageFramePerSlidePerPlacement() {
+        List<CreativePhoto> portrait = List.of(newImageMedia(1080, 1350), newImageMedia(1080, 1350), newImageMedia(1080, 1350));
+        List<CreativePhoto> tall = List.of(newImageMedia(1080, 1920), newImageMedia(1080, 1920));
+        Map<String, List<String>> slides = new java.util.LinkedHashMap<>();
+        slides.put("9x16", tall.stream().map(CreativePhoto::getId).toList());
+        slides.put("4x5", portrait.stream().map(CreativePhoto::getId).toList());
+        Creative carousel = newCarouselCreative(slides, List.of("9x16", "4x5"));
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_SUCCEEDED);
+        assertThat(result.spec()).isNull();
+        assertThat(result.frames()).hasSize(5);
+        List<CreativeRenderFrame> stored = frameRepository.findAllByRenderIdOrdered(result.render().getId());
+        assertThat(stored).extracting(f -> f.getPlacementKey() + "#" + f.getSequenceIndex())
+                .containsExactlyInAnyOrder("4x5#0", "4x5#1", "4x5#2", "9x16#0", "9x16#1");
+        // Within one placement the frames are in slide order, and each is an independent copy of its slide.
+        List<CreativeRenderFrame> fourByFive = stored.stream().filter(f -> f.getPlacementKey().equals("4x5")).toList();
+        for (int i = 0; i < 3; i++) {
+            assertThat(fourByFive.get(i).getSequenceIndex()).isEqualTo(i);
+            assertThat(fourByFive.get(i).getContentType()).isEqualTo("image/jpeg");
+            assertThat(fourByFive.get(i).getWidth()).isEqualTo(1080);
+            assertThat(fourByFive.get(i).getHeight()).isEqualTo(1350);
+            assertThat(fourByFive.get(i).getGcsPath()).isNotEqualTo(portrait.get(i).getGcsPath());
+            assertThat(storageService.download(fourByFive.get(i).getGcsPath()))
+                    .isEqualTo(storageService.download(portrait.get(i).getGcsPath()));
+        }
+
+        // Thumbnail: slide 1 of 4x5 when present.
+        CreativeRenderService.RenderView view = new CreativeRenderService.RenderView(result.render(), stored);
+        assertThat(renderService.thumbnailUrl(view, List.of("9x16", "4x5"))).contains(fourByFive.get(0).getGcsPath());
+    }
+
+    @Test
+    void carouselThumbnailFallsBackToSlideOneOfTheFirstPlacementWhenThereIsNoFourByFive() {
+        CreativePhoto a = newImageMedia(1080, 1920);
+        CreativePhoto b = newImageMedia(1080, 1080);
+        Map<String, List<String>> slides = new java.util.LinkedHashMap<>();
+        slides.put("9x16", List.of(a.getId()));
+        slides.put("1x1", List.of(b.getId()));
+        Creative carousel = newCarouselCreative(slides, List.of("9x16", "1x1"));
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+        CreativeRenderFrame nineBySixteen = result.frames().stream()
+                .filter(f -> f.getPlacementKey().equals("9x16")).findFirst().orElseThrow();
+        List<CreativeRenderFrame> stored = frameRepository.findAllByRenderIdOrdered(result.render().getId());
+
+        assertThat(renderService.thumbnailUrl(new CreativeRenderService.RenderView(result.render(), stored),
+                List.of("9x16", "1x1"))).contains(nineBySixteen.getGcsPath());
+    }
+
+    @Test
+    void aCarouselDefaultListServesEveryTargetedPlacementWithoutItsOwnList() {
+        CreativePhoto a = newImageMedia(1080, 1350);
+        Creative carousel = newCarouselCreative(Map.of("default", List.of(a.getId())), List.of("4x5"));
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.frames()).singleElement().satisfies(f -> {
+            assertThat(f.getPlacementKey()).isEqualTo("4x5");
+            assertThat(f.getSequenceIndex()).isZero();
+        });
+    }
+
+    @Test
+    void previewOnlyIsRefusedForACarouselRender() {
+        Creative carousel = newCarouselCreative(Map.of("4x5", List.of(newImageMedia(1080, 1350).getId())), List.of("4x5"));
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), carousel.getId(),
+                new CreateCreativeRenderRequest().previewOnly(true), admin))
+                .isInstanceOf(UnprocessableEntityException.class);
+    }
+
+    @Test
+    void renderingACarouselWithNoCaptionOrNoSlidesIsRefused() {
+        Creative noCaption = newCarouselCreative(Map.of("4x5", List.of(newImageMedia(1080, 1350).getId())), List.of("4x5"));
+        noCaption.setCaption(null);
+        creativeRepository.save(noCaption);
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), noCaption.getId(),
+                new CreateCreativeRenderRequest(), admin)).isInstanceOf(CreativeValidationException.class);
+
+        Creative noSlides = newCarouselCreative(Map.of(), List.of());
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), noSlides.getId(),
+                new CreateCreativeRenderRequest(), admin)).isInstanceOf(CreativeValidationException.class);
+    }
+
     // ── MOTION renders (COND-24 PR2) ────────────────────────────────────────────────────────────
 
     @Test

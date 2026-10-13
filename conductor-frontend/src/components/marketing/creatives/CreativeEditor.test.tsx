@@ -552,5 +552,76 @@ describe('CreativeEditor', () => {
         ),
       )
     })
+
+  describe('Finished images (CAROUSEL)', () => {
+    const imgs = [1, 2, 3].map((n) =>
+      photo({ id: `img-${n}`, label: `slide-${n}`, width: 1080, height: 1350, mediaKind: 'IMAGE' } as never),
+    )
+
+    it('lists "Finished images" as a kind, and switching to it hides the Still-only sections', async () => {
+      mockGetsFor(creative({ caption: 'Cap' }))
+      render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+      await screen.findByLabelText('Headline')
+
+      await userEvent.selectOptions(screen.getByLabelText('Kind'), 'CAROUSEL')
+
+      for (const label of ['Headline', 'Body', 'Layout', 'Theme']) {
+        expect(screen.queryByLabelText(label)).not.toBeInTheDocument()
+      }
+      expect(screen.queryByText('Photo')).not.toBeInTheDocument()
+      expect(screen.queryByText('Extra placements')).not.toBeInTheDocument()
+      expect(screen.queryByText('Advanced')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('placement-board-4x5')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Caption')).toHaveValue('Cap')
+      expect(screen.getByLabelText('Alt text')).toBeInTheDocument()
+      expect(screen.getByTestId('carousel-slides-section')).toBeInTheDocument()
+    })
+
+    it('saves kind, slides, slideAltText, caption and altText', async () => {
+      const loaded = creative({ kind: 'CAROUSEL', slides: { '4x5': ['img-1', 'img-2'] }, slideAltText: ['one'] })
+      mockGetsFor(loaded, [KIT], imgs)
+      ;(apiPatch as Mock).mockResolvedValue(loaded)
+      render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+      await screen.findByTestId('carousel-slides-section')
+
+      await userEvent.type(screen.getByLabelText('Alt text for slide 2'), 'two')
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+      await waitFor(() =>
+        expect(apiPatch).toHaveBeenCalledWith(
+          expect.stringContaining('/creatives/cr-1'),
+          expect.objectContaining({
+            kind: 'CAROUSEL',
+            slides: { '4x5': ['img-1', 'img-2'] },
+            slideAltText: ['one', 'two'],
+            caption: 'Caption',
+            altText: 'Alt text',
+            placements: ['4x5'],
+            photoId: null,
+          }),
+          'tok',
+        ),
+      )
+    })
+
+    it('appends images picked in the multi-select picker, in selection order', async () => {
+      const loaded = creative({ kind: 'CAROUSEL', slides: { '4x5': ['img-1'] } })
+      mockGetsFor(loaded, [KIT], imgs)
+      render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+      await screen.findByTestId('carousel-slides-section')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Add images' }))
+      const grid = await screen.findByTestId('photo-picker-grid')
+      const tiles = grid.querySelectorAll('button[aria-pressed]')
+      await userEvent.click(tiles[2])
+      await userEvent.click(tiles[1])
+      await userEvent.click(screen.getByRole('button', { name: 'Add 2' }))
+
+      const rows = await screen.findAllByTestId(/slide-row-/)
+      expect(rows).toHaveLength(3)
+      expect(within(rows[1]).getByText('slide-3')).toBeInTheDocument()
+      expect(within(rows[2]).getByText('slide-2')).toBeInTheDocument()
+    })
+  })
   })
 })

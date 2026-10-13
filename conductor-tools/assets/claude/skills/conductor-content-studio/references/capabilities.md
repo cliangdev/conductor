@@ -21,6 +21,11 @@ needs changing until it fits.
   - This is the right tool for a motion-text post: **it does not need filming.**
 - **CLIP**: a finished video posted as-is. There is no brand layout and nothing to draft. It only
   applies when the person already has the video.
+- **CAROUSEL**: finished images posted as-is (1 to 10 slides for 4:5 and 1:1, up to 35 for 9:16
+  TikTok photo posts; one slide is a finished still). No brand layout is applied, so it only applies
+  when the slides already exist as image files or library media. Slides are ordered per placement
+  (`slides`, with `default` as the fallback) and each must match its placement's aspect. Reels,
+  Stories and YouTube cannot take it.
 
 ## Hard requirements (a draft is refused without them)
 

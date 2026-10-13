@@ -79,6 +79,21 @@ describe('renderCreative kind branching', () => {
     })
   })
 
+  it('short-circuits a CAROUSEL creative to the server render like CLIP', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ kind: 'CAROUSEL' })
+    mocked(apiPost).mockResolvedValueOnce({ id: 'r2', state: 'SUCCEEDED', frames: [{ placementKey: '4x5', sequenceIndex: 0 }] })
+
+    const result = await renderCreative({ creativeId: 'c1', renderer: 'mcp' }, config)
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives/c1/renders',
+      { previewOnly: false, renderer: 'mcp', workflowRunId: undefined },
+      config
+    )
+    expect(findBrowserFactoryMock).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ ok: true, renderId: 'r2', frames: [{ placementKey: '4x5', sequenceIndex: 0 }] })
+  })
+
   it('refuses previewOnly for a CLIP creative by relaying the backend 422 unchanged', async () => {
     mocked(apiGet).mockResolvedValueOnce({ kind: 'CLIP' })
     mocked(apiPost).mockRejectedValueOnce(new ApiError(422, 'Preview renders are not supported for CLIP creatives'))

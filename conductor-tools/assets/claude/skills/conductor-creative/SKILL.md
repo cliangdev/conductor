@@ -1,6 +1,6 @@
 ---
 name: conductor-creative
-description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine as a draft, checked by eye and approved before anything is saved to Conductor. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
+description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine as a draft, checked by eye and approved before anything is saved to Conductor. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; posting finished images as-is (a carousel or single still designed elsewhere, or an existing media set); a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
 user-invocable: true
 allowed-tools: mcp__conductor__*, AskUserQuestion, Read, Glob, Grep, WebFetch
 ---
@@ -239,6 +239,39 @@ itself and check it with the person before uploading.
 Mind each destination's own duration limit (per docs/publishing.md) — a clip that's fine on one
 platform may get rejected or trimmed on another; check before attaching to a Post that fans out
 broadly.
+
+## Finished images (carousel or single still)
+
+When the slides are already designed (Figma exports, your own renderer, device-framed screenshots)
+there is nothing for the brand layout to do, so use a CAROUSEL Creative: finished images posted
+as-is. A one-slide CAROUSEL is a finished still. For text on a photo that Conductor should lay out,
+use the STILL flow above instead (its "carousel" `sequence` is brand-rendered cards, a different
+thing).
+
+1. Get the images into the media library. A set in a folder goes up in one call:
+   `upload_creative_media({folder, glob?, labelTemplate: "01-import {stem}"})` (or `files: [...]`),
+   up to 100, in name order, with the shared `source`/`licence`/`aiGenerated`. Every file gets its own
+   result, so retry only the ones with an `error`. Find an already uploaded set with
+   `list_creative_media({labelPrefix: "01-import"})` rather than uploading again. `label`, `source`
+   and `licence` can't exceed 200 characters.
+2. Local files: `preview_creative_draft({kind: "CAROUSEL", caption, slidePaths: {"4x5": [path, ...]}})`
+   returns a contact sheet per placement (slides in order), readiness and any violations; look at it
+   with the person, then `commit_creative_draft` (it uploads in order and requests the render).
+   Media already in the library: `create_creative({kind: "CAROUSEL", slides: {"4x5": [mediaId, ...]}, slideAltText, caption})`
+   and then `render_creative` (instant, server-side).
+3. Placements. `slides` is a list per placement key (`4x5`, `9x16`, `1x1`); `default` is the
+   fallback for a placement with no list of its own. Each image must match its placement's aspect
+   within 2% (4x5 = 1080x1350, 9x16 = 1080x1920, 1x1 = 1080x1080); a mismatch comes back as a
+   `slideAspect` violation, so fix the image rather than the list. Limits: 10 slides for 4x5 and
+   1x1, 35 for 9x16 (TikTok photo posts); aim for 5 to 7.
+4. Alt text: `slideAltText` has one entry per slide, in order (or a single Creative `altText`); readiness
+   blocks without it. Slides are never rewritten, so check them for burned-in text, logos and claims
+   and approve with `photoChecked: true`.
+5. `get_creative` for `readiness` (slides, caption, altText, photoChecked block going READY), then
+   `attach_creative_to_post` (it renders first if needed). The mapping: Instagram feed gets `4x5`
+   (else `1x1`), Facebook feed `1x1` (else `4x5`), TikTok `9x16` (else `4x5`). Reels, Stories and
+   YouTube can't take a multi-image post; the preflight blocks with `MULTI_IMAGE_UNSUPPORTED`, so
+   switch that destination to Feed or remove it.
 
 ## Short videos from a photo or clip
 

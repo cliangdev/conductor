@@ -361,13 +361,40 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    /** Postgres SQLState for {@code value too long for type character varying(n)}. */
+    private static final String SQLSTATE_STRING_DATA_TRUNCATION = "22001";
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpectedException(Exception e) {
+        String tooLong = stringTruncationMessage(e);
+        if (tooLong != null) {
+            // A value longer than its column is a client error, not a server fault. The OpenAPI maxLength
+            // normally catches it first; this is the backstop for a column no schema bounds yet.
+            log.warn("Value too long for its column: {}", tooLong);
+            ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+            problem.setType(URI.create("about:blank"));
+            problem.setDetail("A value is longer than its field allows (" + tooLong + ")");
+            return problem;
+        }
         log.error("Unexpected error", e);
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
         problem.setType(URI.create("about:blank"));
         problem.setDetail("An unexpected error occurred. Please try again.");
         return problem;
+    }
+
+    /** The database's own message when {@code e}'s cause chain holds a SQLState 22001, else null. */
+    private static String stringTruncationMessage(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.sql.SQLException sql && SQLSTATE_STRING_DATA_TRUNCATION.equals(sql.getSQLState())) {
+                String message = sql.getMessage() != null ? sql.getMessage().lines().findFirst().orElse("") : "";
+                return message.replaceFirst("^ERROR:\\s*", "");
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return null;
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

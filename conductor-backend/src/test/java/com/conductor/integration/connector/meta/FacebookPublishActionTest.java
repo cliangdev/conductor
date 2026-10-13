@@ -754,6 +754,33 @@ class FacebookPublishActionTest {
     }
 
     @Test
+    void sevenPhotos_attachToOneFeedPostInOrder() {
+        Instant fireTime = Instant.now().plus(3, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+        List<PublishMedia> slides = new java.util.ArrayList<>();
+        for (int i = 1; i <= 7; i++) {
+            slides.add(image("https://signed.example/slide-" + i + ".jpg"));
+        }
+        mediaResolver.media = slides;
+        AtomicInteger photoId = new AtomicInteger();
+        onPost("/page-1/photos", call -> new MetaGraphClient.PublishResponse("photo-" + photoId.incrementAndGet(), null));
+        onPost("/page-1/feed", new MetaGraphClient.PublishResponse("888", "page-1_888"));
+        onGet("is_published", new MetaGraphClient.PostResponse("page-1_888", false,
+                "https://www.facebook.com/page-1/posts/888", fireTime.getEpochSecond()));
+
+        ActionResult result = connector.invoke("publish_facebook_post", handoffInput(fireTime), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(calls.stream().filter(c -> c.method() == HttpMethod.POST && c.uri().getPath().endsWith("/page-1/photos")))
+                .hasSize(7);
+        Call feed = call(HttpMethod.POST, "/page-1/feed");
+        for (int i = 0; i < 7; i++) {
+            assertThat(feed.param("attached_media[" + i + "]")).isEqualTo("{\"media_fbid\":\"photo-" + (i + 1) + "\"}");
+        }
+        assertThat(feed.param("attached_media[7]")).isNull();
+        assertThat(calls.stream().filter(c -> c.uri().getPath().endsWith("/page-1/feed"))).hasSize(1);
+    }
+
+    @Test
     void aSinglePhotoStillGoesStraightToThePhotosEdge() {
         mediaResolver.media = List.of(image("https://signed.example/hero.jpg"));
         onPost("/page-1/photos", new MetaGraphClient.PublishResponse("777", "page-1_777"));

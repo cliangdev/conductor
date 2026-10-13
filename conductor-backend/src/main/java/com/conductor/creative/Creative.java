@@ -40,6 +40,7 @@ public class Creative {
     public static final String KIND_STILL = "STILL";
     public static final String KIND_MOTION = "MOTION";
     public static final String KIND_CLIP = "CLIP";
+    public static final String KIND_CAROUSEL = "CAROUSEL";
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -117,7 +118,7 @@ public class Creative {
     @Column(name = "lockup", length = 16, nullable = false)
     private String lockup;
 
-    /** STILL | MOTION | CLIP (COND-24). See {@code V144__creative_video.sql}. */
+    /** STILL | MOTION | CLIP | CAROUSEL. See {@code V144__creative_video.sql}. */
     @Column(name = "kind", length = 8, nullable = false)
     private String kind;
 
@@ -135,6 +136,16 @@ public class Creative {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "audio", columnDefinition = "jsonb")
     private JsonNode audio;
+
+    /** {@code {"default": [mediaId...], "<placementKey>": [mediaId...]}} for a CAROUSEL creative. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "slides", columnDefinition = "jsonb")
+    private JsonNode slides;
+
+    /** Index-aligned alt text for CAROUSEL slides (entry N applies to slide N in every placement). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "slide_alt_text", columnDefinition = "jsonb")
+    private JsonNode slideAltText;
 
     @Version
     @Column(name = "version", nullable = false)
@@ -264,6 +275,12 @@ public class Creative {
 
     public JsonNode getAudio() { return audio; }
     public void setAudio(JsonNode audio) { this.audio = audio; }
+
+    public JsonNode getSlides() { return slides; }
+    public void setSlides(JsonNode slides) { this.slides = slides; }
+
+    public JsonNode getSlideAltText() { return slideAltText; }
+    public void setSlideAltText(JsonNode slideAltText) { this.slideAltText = slideAltText; }
 
     public int getVersion() { return version; }
     public void setVersion(int version) { this.version = version; }

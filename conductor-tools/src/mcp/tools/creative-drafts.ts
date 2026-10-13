@@ -1,13 +1,15 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { Config } from '../config.js'
-import { apiPatch, apiPost, ApiError } from '../api.js'
+import { composePosterSheet } from '../../lib/poster-sheet.js'
+import { apiGet, apiPatch, apiPost, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia } from '../../lib/media-probe.js'
 import { readProvenanceSidecar, type SidecarProvenance } from '../../lib/provenance-sidecar.js'
-import { renderCreative as runLocalRender, renderDraft, type DraftCheck, type DraftManifest } from '../../lib/creative-render.js'
+import { renderCreative as runLocalRender, renderViaApi, renderDraft, type DraftCheck, type DraftManifest } from '../../lib/creative-render.js'
 import {
   createCreative,
   getCreative,
@@ -49,6 +51,9 @@ export interface PreviewCreativeDraftParams extends CreativeFields {
   clipPath?: string
   /** An audio file on this machine; becomes the MOTION audio track (`local:audio`). */
   audioPath?: string
+  /** CAROUSEL only: the slides as local image files (or existing media ids), ordered per placement,
+   * e.g. {"4x5": ["/art/01.png", "/art/02.png"]}; each path becomes a `local:<key>` entry of `slides`. */
+  slidePaths?: Record<string, string[]>
   /** Preview edits on top of this saved Creative: only the fields given here change. */
   baseCreativeId?: string
   /** Where to write the draft (default `<projectRoot>/.conductor/drafts/<YYYYMMDD-HHMMSS>-<slug>/`). */
@@ -109,6 +114,8 @@ export interface PreviewCreativeDraftSuccess {
   previewOnly: boolean
   image?: { data: Buffer; mimeType: string }
   files: Array<{ placementKey: string; index?: number; file: string; width?: number; height?: number }>
+  /** CAROUSEL only: one contact sheet image per placement (per ten slides). */
+  sheets?: Array<{ placementKey: string; file: string; slides: number }>
   readiness?: unknown
   warnings: Array<{ placementKey?: string; index?: number; message: string }>
   /**
@@ -209,7 +216,7 @@ type Beat = Record<string, unknown>
 /** Splits the tool params into the create-creative body (with `local:<key>` references) and the key ->
  * file map, refusing a combination that names the same slot twice. */
 function buildDraftRequest(params: PreviewCreativeDraftParams): { request: Record<string, unknown>; localFiles: Record<string, string> } {
-  const { photoPath, clipPath, audioPath, baseCreativeId: _b, draftDir: _d, full: _f, ...fields } = params as PreviewCreativeDraftParams & {
+  const { photoPath, clipPath, audioPath, slidePaths, baseCreativeId: _b, draftDir: _d, full: _f, ...fields } = params as PreviewCreativeDraftParams & {
     variantOf?: unknown
   }
   const request: Record<string, unknown> = { ...fields }
@@ -236,6 +243,34 @@ function buildDraftRequest(params: PreviewCreativeDraftParams): { request: Recor
     if (audio['trackId']) throw new Error('Pass audioPath or audio.trackId, not both.')
     request['audio'] = { source: 'track', ...audio, trackId: 'local:audio' }
     localFiles['audio'] = abs(audioPath)
+  }
+
+  if (slidePaths) {
+    const slides: Record<string, string[]> = { ...((request['slides'] as Record<string, string[]> | undefined) ?? {}) }
+    const keyByPath = new Map<string, string>()
+    let n = 0
+    for (const [placement, entries] of Object.entries(slidePaths)) {
+      if (slides[placement]) throw new Error(`Pass slidePaths or slides for "${placement}", not both.`)
+      if (!Array.isArray(entries)) throw new Error(`slidePaths.${placement} must be an array of image paths.`)
+      slides[placement] = entries.map((entry) => {
+        const path = abs(entry)
+        // An existing file is a slide to upload; anything else must look like a media id.
+        if (!existsSync(path)) {
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry)) return entry
+          throw new Error(`slidePaths.${placement}: "${entry}" is neither a file on this machine nor a media id.`)
+        }
+        let key = keyByPath.get(path)
+        if (!key) {
+          key = `slide-${++n}`
+          keyByPath.set(path, key)
+          localFiles[key] = path
+        }
+        return `local:${key}`
+      })
+    }
+    request['slides'] = slides
+    // slidePaths implies CAROUSEL: without the kind the server would judge (and commit) a STILL.
+    if (request['kind'] === undefined) request['kind'] = 'CAROUSEL'
   }
 
   if (Array.isArray(request['sequence'])) {
@@ -283,6 +318,75 @@ function replaceLocalRefs(value: unknown, idFor: (key: string) => string): unkno
   return value
 }
 
+
+/**
+ * CAROUSEL preview: the slides are finished images, so there is nothing to render. This composes one
+ * contact sheet per placement (slides left to right, in order; ten per sheet) so the person can check
+ * the order and the look, and hands back the backend's readiness.
+ */
+async function carouselPreview(input: {
+  request: Record<string, unknown>
+  localFiles: Record<string, string>
+  localMedia: Record<string, LocalMediaMeta>
+  localProvenance: Record<string, SidecarProvenance>
+  draftDir: string
+  readiness: unknown
+  log: (...args: unknown[]) => void
+}): Promise<PreviewCreativeDraftSuccess> {
+  const { request, localFiles, draftDir, localProvenance } = input
+  const slides = (request['slides'] ?? {}) as Record<string, string[]>
+  const SHEET_SLIDES = 10
+  const sheets: Array<{ placementKey: string; file: string; slides: number }> = []
+  const notes: string[] = []
+  let image: PreviewCreativeDraftSuccess['image']
+
+  for (const [placement, refs] of Object.entries(slides)) {
+    const paths: string[] = []
+    for (const ref of refs) {
+      const m = LOCAL_REF.exec(ref)
+      if (m && localFiles[m[1]!]) paths.push(localFiles[m[1]!]!)
+      else notes.push(`${placement}: ${ref} is an existing media id, so it is not on the sheet.`)
+    }
+    for (let from = 0; from < paths.length; from += SHEET_SLIDES) {
+      const chunk = paths.slice(from, from + SHEET_SLIDES)
+      const name = `sheet-${placement}${paths.length > SHEET_SLIDES ? `-${from / SHEET_SLIDES + 1}` : ''}.jpg`
+      try {
+        const bytes = await composePosterSheet(chunk)
+        await writeFile(join(draftDir, name), bytes)
+        sheets.push({ placementKey: placement, file: join(draftDir, name), slides: chunk.length })
+        if (!image && bytes.byteLength <= MAX_INLINE_IMAGE_BYTES) image = { data: bytes, mimeType: 'image/jpeg' }
+      } catch (err) {
+        notes.push(`${placement}: could not compose a contact sheet (${err instanceof Error ? err.message : String(err)}) — open the slide files directly.`)
+      }
+    }
+  }
+  if (sheets.length && !image) notes.push('The contact sheet is larger than this tool can inline (~1 MB) — open the sheet files directly.')
+
+  return {
+    ok: true,
+    committed: false,
+    draftDir,
+    previewOnly: true,
+    ...(image ? { image } : {}),
+    files: sheets.map((sh) => ({ placementKey: sh.placementKey, file: sh.file })),
+    sheets,
+    readiness: input.readiness,
+    warnings: [],
+    checks: [],
+    passed: true,
+    provenance: {
+      recorded: Object.keys(localProvenance),
+      needed: Object.keys(localFiles).filter((k) => !localProvenance[k]),
+    },
+    ...(notes.length ? { note: notes.join(' ') } : {}),
+    nextStep:
+      'Nothing has been saved to Conductor, and the slides are used exactly as they are (no brand layout is applied). ' +
+      'Show the contact sheet(s) to the person and check the order, the crop and any burned-in text. ' +
+      'Resolve any blocking readiness item (caption, alt text, photoChecked) you can fix now. ' +
+      'Only after they approve, call commit_creative_draft({draftDir, photoChecked: true}); to change something, call preview_creative_draft again.',
+  }
+}
+
 // --- preview_creative_draft ---------------------------------------------------------
 
 function summariseChecks(checks: DraftCheck[]): string {
@@ -307,6 +411,20 @@ export async function previewCreativeDraft(
       error:
         'A CLIP Creative is a finished video used as-is — there is no artwork to render and preview. ' +
         'Look at the video itself, then upload_creative_media and create_creative with kind CLIP.',
+    }
+  }
+
+  if (params.slidePaths && params.kind && params.kind !== 'CAROUSEL') {
+    return { ok: false, rendered: false, error: `slidePaths is for kind CAROUSEL, not ${params.kind}.` }
+  }
+  let isCarousel = params.kind === 'CAROUSEL' || (!!params.slidePaths && !params.kind)
+  if (!isCarousel && !params.kind && params.baseCreativeId) {
+    // Editing a saved Creative without naming its kind: a CAROUSEL base takes the carousel path.
+    try {
+      const base = await apiGet<{ kind?: string }>(`${creativesBase(config)}/${params.baseCreativeId}`, config)
+      isCarousel = base?.kind === 'CAROUSEL'
+    } catch {
+      /* unknown kind: treat as a rendered Creative */
     }
   }
 
@@ -361,7 +479,8 @@ export async function previewCreativeDraft(
     }
     throw err
   }
-  const spec = response.spec
+  // A CAROUSEL has no layout to render, so its spec is a stub the client ignores.
+  const spec = response.spec ?? (isCarousel ? {} : undefined)
   if (!spec) throw new Error('The draft-spec response carried no spec.')
 
   const draftDir = params.draftDir
@@ -387,6 +506,10 @@ export async function previewCreativeDraft(
     specSha256: createHash('sha256').update(JSON.stringify(spec)).digest('hex'),
   }
   await writeFile(join(draftDir, 'draft.json'), JSON.stringify(draft, null, 2))
+
+  if (isCarousel) {
+    return carouselPreview({ request, localFiles, localMedia, localProvenance, draftDir, readiness: response.readiness, log })
+  }
 
   const rendered = await renderDraft({ spec, localFiles, outDir: draftDir }, log)
   if (!rendered.ok || !rendered.manifest) {
@@ -571,7 +694,11 @@ export async function commitCreativeDraft(
     JSON.stringify({ ...draft, uploaded, committed: true, committedAt: new Date().toISOString(), creativeId }, null, 2)
   )
 
-  const rendered = await runLocalRender({ creativeId, previewOnly: false, renderer: 'mcp' }, config, log)
+  // A CAROUSEL is finished images: the server assembles its frames in one call, nothing renders locally.
+  const isCarousel = draft.request['kind'] === 'CAROUSEL' || created['kind'] === 'CAROUSEL'
+  const rendered = isCarousel
+    ? await renderViaApi({ creativeId, previewOnly: false, renderer: 'mcp' }, config)
+    : await runLocalRender({ creativeId, previewOnly: false, renderer: 'mcp' }, config, log)
   const verified = await getCreative({ creativeId }, config).catch(() => undefined)
 
   const renderError = rendered.ok ? undefined : rendered.error ?? 'The render failed.'

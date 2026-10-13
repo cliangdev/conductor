@@ -75,7 +75,8 @@ import {
   getCreative,
   createCreative,
   updateCreative,
-  uploadCreativeMedia,
+  uploadCreativeMediaAny,
+  type BatchFileSpec,
   uploadCreativePhoto,
   renderCreativeTool,
   previewCreative,
@@ -129,13 +130,23 @@ const CREATIVE_FIELD_PROPERTIES = {
   state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'], description: 'Defaults to DRAFT (optional)' },
   kind: {
     type: 'string',
-    enum: ['STILL', 'MOTION', 'CLIP'],
-    description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. MOTION is the same brand layout animated into a short video — set motion (and optionally audio) too.',
+    enum: ['STILL', 'MOTION', 'CLIP', 'CAROUSEL'],
+    description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. CAROUSEL is finished images used as-is via slides (one slide is a finished still). MOTION is the same brand layout animated into a short video — set motion (and optionally audio) too.',
   },
   clipMedia: {
     type: 'object',
     additionalProperties: { type: 'string' },
     description: 'CLIP only: media ids per placement from upload_creative_media, e.g. {"default": mediaId, "9x16": mediaId}. "default" covers any placement without its own entry.',
+  },
+  slides: {
+    type: 'object',
+    additionalProperties: { type: 'array', items: { type: 'string' } },
+    description: 'CAROUSEL only: media ids in slide order per placement (keys default, 4x5, 9x16, 1x1). A placement without its own list uses "default". Max 10 slides for 4x5/1x1, 35 for 9x16; each image must match its placement aspect.',
+  },
+  slideAltText: {
+    type: 'array',
+    items: { type: 'string' },
+    description: 'CAROUSEL only: alt text per slide, index-aligned (entry N describes slide N in every placement).',
   },
   motion: {
     type: 'object',
@@ -1246,6 +1257,7 @@ export const TOOLS = [
       properties: {
         kind: { type: 'string', enum: ['IMAGE', 'VIDEO', 'AUDIO'], description: 'Filter to one kind (optional — omit for every kind)' },
         includeBlocked: { type: 'boolean', description: 'Include media a human has marked blocked (optional, default false)' },
+        labelPrefix: { type: 'string', description: 'Only media whose label starts with this, case-insensitive (optional) — finds an uploaded set without paging the whole library' },
       },
     },
   },
@@ -1273,7 +1285,7 @@ export const TOOLS = [
   },
   {
     name: 'create_creative',
-    description: "Create a Creative (photo, headline, layout, theme, body, caption, alt text, optional story/carousel sequence), or, with variantOf, cut a lettered variant of an existing one instead (inherits everything but headline/name — every other field here is ignored). Set kind to CLIP to use a finished video as-is via clipMedia instead — no photo, headline or layout needed. Refused with the failing rule's message on a bad layout/theme/placement, the kit's accent-phrase rule, a copy rule, or (when state is READY) a readiness rule. Call get_creative after to verify.",
+    description: "Create a Creative (photo, headline, layout, theme, body, caption, alt text, optional story/carousel sequence), or, with variantOf, cut a lettered variant of an existing one instead (inherits everything but headline/name — every other field here is ignored). Set kind to CLIP to use a finished video as-is via clipMedia, or CAROUSEL to use finished images as-is via slides (per-placement lists, default as the fallback; one slide is a finished still) — no photo, headline or layout needed. Refused with the failing rule's message on a bad layout/theme/placement, the kit's accent-phrase rule, a copy rule, or (when state is READY) a readiness rule. Call get_creative after to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1293,8 +1305,10 @@ export const TOOLS = [
         brandKitId: { type: 'string' },
         name: { type: 'string' },
         state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'] },
-        kind: { type: 'string', enum: ['STILL', 'MOTION', 'CLIP'] },
+        kind: { type: 'string', enum: ['STILL', 'MOTION', 'CLIP', 'CAROUSEL'] },
         clipMedia: { type: 'object', additionalProperties: { type: 'string' } },
+        slides: CREATIVE_FIELD_PROPERTIES.slides,
+        slideAltText: CREATIVE_FIELD_PROPERTIES.slideAltText,
         motion: {
           type: 'object',
           properties: {
@@ -1359,16 +1373,35 @@ export const TOOLS = [
   },
   {
     name: 'upload_creative_media',
-    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL) or a clipMedia entry (CLIP). A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; source/licence/aiGenerated apply only when there is none.",
+    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL), a clipMedia entry (CLIP) or a slides entry (CAROUSEL). Pass files (up to 100) or a folder to upload many at once, in name order: every file gets its own result, and one failure does not stop the rest. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; source/licence/aiGenerated apply only when there is none. Pass exactly one of filePath, url, files or folder.",
     inputSchema: {
       type: 'object',
       properties: {
-        filePath: { type: 'string', description: 'A file on this machine (use this or url)' },
-        url: { type: 'string', description: 'A public http(s) URL (use this or filePath)' },
-        label: { type: 'string', description: 'Human label (optional — defaults to the filename, without its extension)' },
-        source: { type: 'string', description: 'Provenance note, e.g. a URL or "Generated with <model> on <date>" (optional)' },
-        licence: { type: 'string', description: 'e.g. "Own work", "Unsplash Licence", "Generated, house use" (optional)' },
-        aiGenerated: { type: 'boolean', description: 'Whether the file is AI-generated (optional, informational only)' },
+        filePath: { type: 'string', description: 'A file on this machine (use this, url, files or folder)' },
+        url: { type: 'string', description: 'A public http(s) URL (use this, filePath, files or folder)' },
+        label: { type: 'string', description: 'Human label, max 200 chars (optional — defaults to the filename, without its extension)' },
+        source: { type: 'string', description: 'Provenance note, max 200 chars, e.g. a URL or "Generated with <model> on <date>" (optional; with files/folder it applies to every file without its own)' },
+        licence: { type: 'string', description: 'Max 200 chars, e.g. "Own work", "Unsplash Licence", "Generated, house use" (optional; shared across a batch like source)' },
+        aiGenerated: { type: 'boolean', description: 'Whether the file is AI-generated (optional, informational only; shared across a batch like source)' },
+        files: {
+          type: 'array',
+          maxItems: 100,
+          description: 'Batch: files to upload, each with filePath or url and optionally its own label, source, licence, aiGenerated',
+          items: {
+            type: 'object',
+            properties: {
+              filePath: { type: 'string' },
+              url: { type: 'string' },
+              label: { type: 'string' },
+              source: { type: 'string' },
+              licence: { type: 'string' },
+              aiGenerated: { type: 'boolean' },
+            },
+          },
+        },
+        folder: { type: 'string', description: 'Batch: a folder on this machine; uploads its image/video files sorted by name (max 100)' },
+        glob: { type: 'string', description: 'With folder: only filenames matching this pattern, e.g. "slide-*.png" (optional)' },
+        labelTemplate: { type: 'string', description: 'With folder: label for each file; {stem} is the filename without its extension (optional, default "{stem}")' },
       },
     },
   },
@@ -1389,7 +1422,7 @@ export const TOOLS = [
   },
   {
     name: 'render_creative',
-    description: 'Render a Creative locally (Playwright on this machine) to upload-ready frames — one JPEG per placement for STILL, or one MP4 with a poster per placement for MOTION (ffmpeg-encoded on this machine) — or a small contact sheet with previewOnly. Runs synchronously: a STILL placement takes seconds; a MOTION placement takes roughly 20s per 8s of video, so a multi-placement MOTION render can take a couple of minutes. Returns the render id, state, frame URLs (MOTION frames also carry durationSeconds/hasAudio/posterUrl) and any warnings. Call preview_creative to actually look at the result.',
+    description: 'Render a Creative to upload-ready frames — one JPEG per placement for STILL (Playwright on this machine), or one MP4 with a poster per placement for MOTION (ffmpeg-encoded on this machine) — or a small contact sheet with previewOnly. Runs synchronously: a STILL placement takes seconds; a MOTION placement takes roughly 20s per 8s of video, so a multi-placement MOTION render can take a couple of minutes. CLIP and CAROUSEL render on the server in one call (previewOnly is refused). Returns the render id, state, frame URLs (MOTION frames also carry durationSeconds/hasAudio/posterUrl) and any warnings. Call preview_creative to actually look at the result.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1428,7 +1461,7 @@ export const TOOLS = [
   },
   {
     name: 'preview_creative_draft',
-    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. Violations come back as a structured error and nothing is rendered.",
+    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo: nothing is rendered; it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1450,6 +1483,11 @@ export const TOOLS = [
         photoPath: { type: 'string', description: 'A photo on this machine (optional; use instead of photoId)' },
         clipPath: { type: 'string', description: 'MOTION only: a video clip on this machine used as the background (optional; use instead of motion.background.clipMediaId)' },
         audioPath: { type: 'string', description: 'MOTION only: an audio file on this machine used as the music track (optional; use instead of audio.trackId)' },
+        slidePaths: {
+          type: 'object',
+          additionalProperties: { type: 'array', items: { type: 'string' } },
+          description: 'CAROUSEL only: slide image files on this machine in order per placement (keys default, 4x5, 9x16, 1x1); an entry may also be an existing media id. Use instead of slides.',
+        },
         baseCreativeId: { type: 'string', description: 'Preview edits on top of this saved Creative: only the fields given here change (optional). commit_creative_draft then updates it.' },
         draftDir: { type: 'string', description: 'Folder to write the draft into (optional — defaults to <project>/.conductor/drafts/<timestamp>-<slug>/)' },
         full: { type: 'boolean', description: 'Render every placement at full size instead of one contact sheet (optional, default false; slower, and the image shown is the first placement)' },
@@ -1458,7 +1496,7 @@ export const TOOLS = [
   },
   {
     name: 'commit_creative_draft',
-    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames. Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
+    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames (a CAROUSEL's are assembled on the server). Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1473,7 +1511,7 @@ export const TOOLS = [
   },
   {
     name: 'attach_creative_to_post',
-    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. Uses the latest SUCCEEDED, non-preview render unless renderId is given. Call get_post_status (postId) to verify.",
+    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take it. Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). Call get_post_status (postId) to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -2306,7 +2344,7 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'upload_creative_media':
         case 'upload_creative_photo': {
-          const upload = name === 'upload_creative_media' ? uploadCreativeMedia : uploadCreativePhoto
+          const upload = name === 'upload_creative_media' ? uploadCreativeMediaAny : uploadCreativePhoto
           return successResponse(
             await upload(
               {
@@ -2316,6 +2354,14 @@ export async function runMcpServer(): Promise<void> {
                 source: params['source'] as string | undefined,
                 licence: params['licence'] as string | undefined,
                 aiGenerated: params['aiGenerated'] as boolean | undefined,
+                ...(name === 'upload_creative_media'
+                  ? {
+                      files: params['files'] as BatchFileSpec[] | undefined,
+                      folder: params['folder'] as string | undefined,
+                      glob: params['glob'] as string | undefined,
+                      labelTemplate: params['labelTemplate'] as string | undefined,
+                    }
+                  : {}),
               },
               config
             )

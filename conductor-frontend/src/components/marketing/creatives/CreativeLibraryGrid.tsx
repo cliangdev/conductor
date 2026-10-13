@@ -24,6 +24,7 @@ import { Can } from '@/components/auth/Can'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { formatDuration } from '@/lib/format'
+import { carouselSlideCount, primaryCarouselPlacement } from '@/components/marketing/creatives/carouselSlides'
 import { BrandSetupNotice } from '@/components/marketing/brand/BrandSetupNotice'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import {
@@ -172,6 +173,33 @@ function ClipThumb({ creative, mediaById }: { creative: Creative; mediaById: Map
   )
 }
 
+/** CAROUSEL tiles never mount a board: the latest render's thumbnail, else slide 1 of the primary
+ *  placement (resolved from IMAGE media), plus an "N slides" badge in the duration-badge style. */
+function CarouselThumb({ creative, mediaById }: { creative: Creative; mediaById: Map<string, CreativePhoto> }) {
+  const key = primaryCarouselPlacement(creative.slides)
+  const firstId = key ? creative.slides?.[key]?.[0] : undefined
+  const url = creative.latestRenderThumbnailUrl ?? (firstId ? mediaById.get(firstId)?.url : undefined) ?? undefined
+  const count = carouselSlideCount(creative.slides)
+
+  return (
+    <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <span className="flex h-full items-center justify-center text-muted-foreground">
+          <ImagesIcon className="h-6 w-6" aria-hidden />
+        </span>
+      )}
+      {count > 0 && (
+        <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-foreground/70 px-1.5 py-0.5 text-[11px] text-background">
+          {count === 1 ? '1 slide' : `${count} slides`}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function GridSkeleton() {
   return (
     <div data-testid="creative-grid-skeleton" className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4" aria-hidden>
@@ -221,11 +249,22 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       .catch(() => setMedia([]))
   }, [projectId, accessToken])
 
+  // CAROUSEL tiles without a render fall back to slide 1 — load IMAGE media only when one needs it.
+  const [imageMedia, setImageMedia] = useState<CreativePhoto[]>([])
+  const needsImages = (creatives ?? []).some((c) => c.kind === 'CAROUSEL' && !c.latestRenderThumbnailUrl)
+  useEffect(() => {
+    if (!projectId || !accessToken || !needsImages) return
+    listCreativePhotos(projectId, accessToken, true, 'IMAGE')
+      .then(setImageMedia)
+      .catch(() => setImageMedia([]))
+  }, [projectId, accessToken, needsImages])
+
   const mediaById = useMemo(() => {
     const map = new Map<string, CreativePhoto>()
     for (const m of media) map.set(m.id, m)
+    for (const m of imageMedia) map.set(m.id, m)
     return map
-  }, [media])
+  }, [media, imageMedia])
 
   useEffect(() => {
     if (!projectId || !accessToken) return
@@ -402,7 +441,9 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                 href={`/app/projects/${projectId}/marketing/creatives/${root.id}`}
                 className="group block overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-strong"
               >
-                {root.kind === 'CLIP' ? (
+                {root.kind === 'CAROUSEL' ? (
+                  <CarouselThumb creative={root} mediaById={mediaById} />
+                ) : root.kind === 'CLIP' ? (
                   <ClipThumb creative={root} mediaById={mediaById} />
                 ) : (
                   <CreativeThumb creative={root} brand={brand} mediaById={mediaById} />
@@ -437,7 +478,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                     {showKitName && kit && <span className="ml-auto shrink-0 truncate">{kit.name}</span>}
                   </div>
                   <p className="truncate text-sm text-foreground" title={root.name || root.displayId}>
-                    {root.name || (root.kind === 'CLIP' ? 'Clip' : root.layout)}
+                    {root.name || (root.kind === 'CAROUSEL' ? (carouselSlideCount(root.slides) === 1 ? 'Image' : 'Carousel') : root.kind === 'CLIP' ? 'Clip' : root.layout)}
                   </p>
                   <StatusBadge status={root.state} hue={STATE_HUE[root.state]} label={STATE_LABEL[root.state]} className="self-start" />
                 </div>

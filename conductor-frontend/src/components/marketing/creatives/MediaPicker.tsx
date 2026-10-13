@@ -11,7 +11,7 @@
 // <canvas> and upload it through the poster mint/confirm endpoints, best-effort (a video with no
 // poster still uploads and still works — it just shows a plain icon instead of a thumbnail).
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CheckIcon,
   FileAudioIcon,
@@ -319,9 +319,13 @@ interface MediaKindPanelProps {
   items: CreativePhoto[]
   onSelect: (item: CreativePhoto) => void
   onMediaChanged: () => void | Promise<void>
+  /** Multi-select mode: ids in click order; a tile click toggles instead of picking. */
+  selectedIds?: string[]
+  /** Multi mode: where a finished upload goes (adds to the selection, never toggles it off). */
+  onUploaded?: (item: CreativePhoto) => void
 }
 
-function MediaKindPanel({ kind, projectId, token, items, onSelect, onMediaChanged }: MediaKindPanelProps) {
+function MediaKindPanel({ kind, projectId, token, items, onSelect, onUploaded, onMediaChanged, selectedIds }: MediaKindPanelProps) {
   const meta = KIND_META[kind]
   const canManage = useCan('creative.manage')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -404,7 +408,7 @@ function MediaKindPanel({ kind, projectId, token, items, onSelect, onMediaChange
 
       setWarnings(confirmed.warnings ?? [])
       await onMediaChanged()
-      onSelect(confirmed)
+      ;(onUploaded ?? onSelect)(confirmed)
       setLabel('')
       setSource('')
       setLicence('')
@@ -514,9 +518,21 @@ function MediaKindPanel({ kind, projectId, token, items, onSelect, onMediaChange
               type="button"
               onClick={() => onSelect(item)}
               disabled={item.blocked}
-              className="relative block aspect-square w-full bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-pressed={selectedIds ? selectedIds.includes(item.id) : undefined}
+              className={cn(
+                'relative block aspect-square w-full bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50',
+                selectedIds?.includes(item.id) && 'ring-2 ring-inset ring-accent',
+              )}
             >
               <MediaTile item={item} />
+              {selectedIds?.includes(item.id) && (
+                <span
+                  data-testid={`selection-badge-${item.id}`}
+                  className="absolute left-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[11px] font-semibold text-accent-foreground"
+                >
+                  {selectedIds.indexOf(item.id) + 1}
+                </span>
+              )}
             </button>
             {/* The label is how a library of many similar photos is told apart (and what Claude calls it). */}
             <p className="truncate border-t border-border bg-surface px-1.5 py-0.5 text-[11px] text-muted-foreground" title={item.label ?? undefined}>
@@ -587,7 +603,11 @@ export interface MediaPickerProps {
   /** The project's whole media library (every kind) — filtered locally per active tab, so switching
    *  tabs never costs a network round trip. */
   media: CreativePhoto[]
-  onSelect: (item: CreativePhoto) => void
+  onSelect?: (item: CreativePhoto) => void
+  /** Multi-select mode: tiles toggle, numbered in click order, and a confirm button ("Add N") hands
+   *  the ordered items to `onSelectMany`. An upload inside the picker joins the selection. */
+  multiple?: boolean
+  onSelectMany?: (items: CreativePhoto[]) => void
   /** Called after an upload or a checked/blocked/delete change so the parent's media list refreshes. */
   onMediaChanged: () => void | Promise<void>
   /** Locks the picker to one kind and hides the tab bar — a picker opened for a Creative's photo only
@@ -595,7 +615,29 @@ export interface MediaPickerProps {
   kind?: MediaKind
 }
 
-export function MediaPicker({ projectId, token, open, onOpenChange, media, onSelect, onMediaChanged, kind }: MediaPickerProps) {
+export function MediaPicker({
+  projectId,
+  token,
+  open,
+  onOpenChange,
+  media,
+  onSelect,
+  multiple,
+  onSelectMany,
+  onMediaChanged,
+  kind,
+}: MediaPickerProps) {
+  const [selection, setSelection] = useState<CreativePhoto[]>([])
+  useEffect(() => {
+    if (!open) setSelection([])
+  }, [open])
+  const toggle = (item: CreativePhoto) =>
+    setSelection((prev) => (prev.some((p) => p.id === item.id) ? prev.filter((p) => p.id !== item.id) : [...prev, item]))
+  // An upload hands back its item through the same callback — in multi mode that always adds.
+  const handleSelect = multiple
+    ? (item: CreativePhoto) => setSelection((prev) => (prev.some((p) => p.id === item.id) ? prev : [...prev, item]))
+    : (item: CreativePhoto) => onSelect?.(item)
+
   const [activeKind, setActiveKind] = useState<MediaKind>(kind ?? 'IMAGE')
   const effectiveKind = kind ?? activeKind
   const meta = KIND_META[effectiveKind]
@@ -618,9 +660,26 @@ export function MediaPicker({ projectId, token, open, onOpenChange, media, onSel
           projectId={projectId}
           token={token}
           items={items}
-          onSelect={onSelect}
+          onSelect={multiple ? toggle : handleSelect}
+          onUploaded={multiple ? handleSelect : undefined}
+          selectedIds={multiple ? selection.map((p) => p.id) : undefined}
           onMediaChanged={onMediaChanged}
         />
+        {multiple && (
+          <div className="flex justify-end border-t border-border pt-3">
+            <Button
+              type="button"
+              size="sm"
+              disabled={selection.length === 0}
+              onClick={() => {
+                onSelectMany?.(selection)
+                setSelection([])
+              }}
+            >
+              {selection.length > 0 ? `Add ${selection.length}` : 'Add'}
+            </Button>
+          </div>
+        )}
       </div>
     </Modal>
   )

@@ -577,6 +577,39 @@ class InstagramPublishActionTest {
     }
 
     @Test
+    void carousel_sevenOrderedImagesPublishAsOneCarouselInSlideOrder() {
+        // What a 7-slide CAROUSEL Creative attaches to an Instagram feed target.
+        mediaResolver.media = new ArrayList<>();
+        for (int i = 1; i <= 7; i++) {
+            mediaResolver.media.add(new PublishMedia("https://signed.example/slide-" + i + ".jpg",
+                    "assets/slide-" + i + ".jpg", "image/jpeg", 1L));
+        }
+        quotaAvailable(4);
+        List<String> imageUrls = new ArrayList<>();
+        onPost("/ig-1/media", call -> {
+            if (call.param("children") != null) {
+                return new MetaGraphClient.ContainerResponse("carousel-parent");
+            }
+            imageUrls.add(call.param("image_url"));
+            return new MetaGraphClient.ContainerResponse("child-" + imageUrls.size());
+        });
+        onGet("status_code", call -> new MetaGraphClient.ContainerStatusResponse("FINISHED", null));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("media-9"));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("media-9", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("caption", "Seven ways", "work_item_id", "wi-1", "target_id", "target-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(imageUrls).hasSize(7);
+        Call parent = calls.stream()
+                .filter(c -> c.method() == HttpMethod.POST && c.param("children") != null).findFirst().orElseThrow();
+        assertThat(parent.param("media_type")).isEqualTo("CAROUSEL");
+        assertThat(parent.param("children")).isEqualTo("child-1,child-2,child-3,child-4,child-5,child-6,child-7");
+        assertThat(calls.stream().filter(c -> c.uri().getPath().endsWith("/media_publish"))).hasSize(1);
+    }
+
+    @Test
     void carousel_publishesItsItemsInTheOrderTheDestinationChose() {
         mediaResolver.media = List.of(
                 new PublishMedia("https://signed.example/b.jpg", "assets/b.jpg", "image/jpeg", 1L),
