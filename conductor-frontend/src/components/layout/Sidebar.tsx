@@ -6,6 +6,7 @@ import {
   CheckIcon,
   ChevronsUpDownIcon,
   FileTextIcon,
+  FilmIcon,
   FolderIcon,
   ImagesIcon,
   LayoutTemplateIcon,
@@ -70,6 +71,12 @@ const AREA_EXTRA_NAV: Record<
       label: 'Creatives',
       icon: LayoutTemplateIcon,
       path: (projectId) => `/app/projects/${projectId}/marketing/creatives`,
+    },
+    {
+      key: 'marketing-media',
+      label: 'Media',
+      icon: FilmIcon,
+      path: (projectId) => `/app/projects/${projectId}/marketing/media`,
     },
     {
       key: 'marketing-assets',

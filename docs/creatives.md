@@ -187,6 +187,29 @@ own edit in the UI goes through — so the approval gate reverts and the bundle 
 human had picked that media by hand. Sequence frames (a carousel's beats) attach in the order they
 rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is content.
 
+## Media library page {#media-library-page}
+
+Marketing → Media (`/marketing/media`) is the media library as a page of its own, not only the picker
+inside the Creative editor. It lists images, video and audio as tiles in natural label order ("slide 2"
+before "slide 10"), with All / Images / Video / Audio tabs, a label search (a case-insensitive substring filter over the
+whole library, so "slide 03" finds "01-import 4x5 slide 03"; the server's `labelPrefix` can't serve
+it), and Unchecked / Blocked / AI-generated filters. Upload takes several files at once through the
+same mint → signed PUT → confirm flow as the picker (`mediaUpload.ts`). Opening a tile shows a detail
+panel: preview, facts, label / source / licence (200 characters), the AI-generated and Checked
+switches, Block with a reason / Unblock, and Delete. The server's errors (409 when a Creative uses the
+media, or a READY Creative for a block; 400 for an over-long field) are shown as returned.
+
+Select tiles with the hover/focus checkbox (shift-click for a range, keyboard accessible). The bulk bar
+acts only on selected tiles the current search, tab and filters show; a selection they hide is kept
+and counted as "hidden by filters". It
+offers **Mark checked**, **Select set** (everything sharing the label before " slide", e.g. both the
+`4x5` and `9x16` slides of `01-import`) and **Make carousel**. Make carousel takes images only. It
+groups them by nearest placement (4x5 / 9x16 / 1x1, each within 2%), orders each group by natural label,
+refuses more than 10 slides per placement (35 for 9x16), an image off every placement, or a blocked or
+still-uploading image, and previews
+the grouping with an editable name (prefilled from the common label prefix). Confirming creates a
+`CAROUSEL` Creative and opens it; the server's 422 violations, if any, appear in the dialog.
+
 ## Video (COND-24 PR1)
 
 The media library (`creative_photo` — the table/entity name stays, the API calls it "media") now takes
