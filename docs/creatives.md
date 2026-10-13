@@ -190,14 +190,19 @@ rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is c
 ## Media library page {#media-library-page}
 
 Marketing → Media (`/marketing/media`) is the media library as a page of its own, not only the picker
-inside the Creative editor. It lists images, video and audio as tiles in natural label order ("slide 2"
+inside the Creative editor. It is the only file library in the workspace: a Post's media is a link to a
+Media row (the same stored bytes, nothing copied), whether it was uploaded to the Post, added with
+"From media" / `upload_asset({mediaIds})`, or attached from a Creative with "Use in Post" (which links
+the render frames). The former Asset Library page is gone; `/marketing/assets` redirects here. Each tile
+and the detail panel show where the file is used (Posts and Creatives), with "On posts" and "Unused"
+filters. It lists images, video and audio as tiles in natural label order ("slide 2"
 before "slide 10"), with All / Images / Video / Audio tabs, a label search (a case-insensitive substring filter over the
 whole library, so "slide 03" finds "01-import 4x5 slide 03"; the server's `labelPrefix` can't serve
 it), and Unchecked / Blocked / AI-generated filters. Upload takes several files at once through the
 same mint → signed PUT → confirm flow as the picker (`mediaUpload.ts`). Opening a tile shows a detail
 panel: preview, facts, label / source / licence (200 characters), the AI-generated and Checked
 switches, Block with a reason / Unblock, and Delete. The server's errors (409 when a Creative uses the
-media, or a READY Creative for a block; 400 for an over-long field) are shown as returned.
+media or a Post does, naming the posts so they can be cleaned up first, or a READY Creative for a block; 400 for an over-long field) are shown as returned.
 
 Select tiles with the hover/focus checkbox (shift-click for a range, keyboard accessible). The bulk bar
 acts only on selected tiles the current search, tab and filters show; a selection they hide is kept
@@ -209,6 +214,10 @@ refuses more than 10 slides per placement (35 for 9x16), an image off every plac
 still-uploading image, and previews
 the grouping with an editable name (prefilled from the common label prefix). Confirming creates a
 `CAROUSEL` Creative and opens it; the server's 422 violations, if any, appear in the dialog.
+
+Blocking media a Post already uses is allowed, but publishing is then held: the Post's gate raises
+`MEDIA_BLOCKED` until the file is removed from it. This holds for an already-scheduled Post too: at publish time the target
+fails with "<label> is blocked in Media — remove it from this post, then retry." and the platform is never called.
 
 ## Video (COND-24 PR1)
 

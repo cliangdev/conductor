@@ -3,7 +3,7 @@
 // fails is reported rather than fatal — from then on the Post exists, and its own page says what is
 // still missing.
 
-import { apiErrorMessage, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api'
+import { apiDelete, apiErrorMessage, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api'
 import {
   isVideoContentType,
   measureVideoMetadata,
@@ -12,7 +12,7 @@ import {
 import { buildSelectionPayload, type DestinationDraft } from '@/components/marketing/destinations/selectionState'
 import type { PublishTargetOption, PublishTargetSelectionPayload } from '@/components/marketing/destinations/types'
 import { nextSlot, wallClockToInstant } from '@/lib/schedule'
-import { attachCreativeRender } from '@/components/marketing/creatives/types'
+import { addMediaToWorkItem, attachCreativeRender } from '@/components/marketing/creatives/types'
 
 /** Prefix of the stand-in ids the New Post form gives files that are not uploaded yet. */
 export const PENDING_ASSET_PREFIX = 'pending-'
@@ -73,6 +73,12 @@ export interface CreatePostInput {
   files: File[]
   /** The form's stand-in id for each file, by index, as destinations referred to it. */
   fileIds?: string[]
+  /**
+   * Library media picked with "From media", in the order shown. Linked right after the uploads (so they
+   * sit after the uploaded files) and before the destinations are saved, so a destination that chose one
+   * by its stand-in `pendingId` can be pointed at the real link.
+   */
+  media?: { pendingId: string; mediaId: string }[]
   options: PublishTargetOption[]
   draft: DestinationDraft
   schedule: { onApproval: boolean; local: string; timeZone: string }
@@ -117,6 +123,7 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
   const problems: string[] = []
   const uploaded: Record<string, string> = {}
   for (const [index, file] of input.files.entries()) {
+    let orphanId: string | null = null
     try {
       onStep?.(`Uploading ${index + 1} of ${input.files.length}…`)
       const measured = isVideoContentType(file.type) ? await measureVideoMetadata(file) : null
@@ -134,12 +141,41 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
         },
         token
       )
+      orphanId = ticket.assetId
       await putToSignedUrl(ticket.uploadUrl, file, () => {})
       await apiPost<void>(`${base}/assets/${ticket.assetId}/confirm`, { sizeBytes: file.size }, token)
+      orphanId = null
       const pendingId = input.fileIds?.[index]
       if (pendingId) uploaded[pendingId] = ticket.assetId
     } catch (err) {
+      if (orphanId) {
+        // Don't leave a PENDING Asset (and its PENDING Media row) behind a failed PUT or confirm.
+        try {
+          await apiDelete(`${base}/assets/${orphanId}`, token)
+        } catch {
+          /* best effort */
+        }
+      }
       problems.push(`${file.name}: ${apiErrorMessage(err, 'upload failed')}`)
+    }
+  }
+
+  if (input.media?.length) {
+    try {
+      onStep?.('Adding media…')
+      const links = await addMediaToWorkItem(
+        projectId,
+        token,
+        created.id,
+        input.media.map((m) => m.mediaId),
+      )
+      // 201 returns the links in request order.
+      input.media.forEach((m, i) => {
+        const link = links[i]
+        if (link?.id) uploaded[m.pendingId] = link.id
+      })
+    } catch (err) {
+      problems.push(apiErrorMessage(err, 'Could not add the media'))
     }
   }
 

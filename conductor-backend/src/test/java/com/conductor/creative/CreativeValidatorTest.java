@@ -327,6 +327,26 @@ class CreativeValidatorTest {
     }
 
     @Test
+    void aGifCarouselSlideIsRefusedAsMediaFormat() {
+        var gif = new CreativeValidator.SlideEntry("4x5", 0, "loop", true, true, true, false, 1080, 1350, true);
+        CreativeValidator.Input input = carousel(Map.of("4x5", List.of(gif)), "4x5").build();
+
+        assertThat(violationRuleIds(input)).contains("mediaFormat");
+        assertThat(violationMessages(input)).contains("slides[\"4x5\"][0] must be JPEG, PNG or WebP");
+    }
+
+    @Test
+    void aGifStillPhotoIsRefusedAsMediaFormatButAJpegIsNot() {
+        CreativeValidator.Input gif = baseInput().photoId("p1").photoPresent(true).photoUploaded(true)
+                .photoGif(true).build();
+        assertThat(violationRuleIds(gif)).contains("mediaFormat");
+        assertThat(violationMessages(gif)).contains("the photo must be JPEG, PNG or WebP");
+
+        CreativeValidator.Input jpeg = baseInput().photoId("p1").photoPresent(true).photoUploaded(true).build();
+        assertThat(violationRuleIds(jpeg)).doesNotContain("mediaFormat");
+    }
+
+    @Test
     void carouselSlideAspectOutsideTwoPercentFailsAndInsideTolerancePasses() {
         // 4x5 is 0.8; 1080x1080 is 1.0 -> far outside.
         CreativeValidator.Input wrong = carousel(Map.of("4x5", List.of(slide("4x5", 0, 1080, 1350), slide("4x5", 1, 1080, 1080))), "4x5").build();

@@ -50,6 +50,9 @@ import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.FailCreativeRenderRequest;
 import com.conductor.generated.v2.model.MediaKind;
+import com.conductor.generated.v2.model.MediaUsageCreative;
+import com.conductor.generated.v2.model.MediaUsagePost;
+import com.conductor.generated.v2.model.MediaUsageResponse;
 import com.conductor.generated.v2.model.MintCreativePhotoPosterResponse;
 import com.conductor.generated.v2.model.PatchCreativePhotoRequest;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
@@ -123,6 +126,17 @@ public class CreativeController implements CreativesApi {
     @Override
     public ResponseEntity<CreativePhotoResponse> getCreativePhoto(String projectId, String photoId) {
         return ResponseEntity.ok(toResponse(photoService.getPhoto(projectId, photoId, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<MediaUsageResponse> getCreativePhotoUsage(String projectId, String photoId) {
+        CreativePhotoService.MediaUsage usage = photoService.getUsage(projectId, photoId, currentUser());
+        return ResponseEntity.ok(new MediaUsageResponse(
+                usage.creatives().stream()
+                        .map(c -> new MediaUsageCreative(c.id(), c.displayId(), c.name(), c.state())).toList(),
+                usage.posts().stream()
+                        .map(p -> new MediaUsagePost(p.workItemId(), p.displayId(), p.title(), p.status(), p.workflow()))
+                        .toList()));
     }
 
     @Override
@@ -421,6 +435,8 @@ public class CreativeController implements CreativesApi {
                 .blockedReason(photo.getBlockedReason())
                 .url(view.url())
                 .uploadUrl(view.uploadUrl())
+                .postCount(view.postCount())
+                .creativeCount(view.creativeCount())
                 .createdBy(photo.getCreatedBy());
         return response;
     }

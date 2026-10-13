@@ -250,7 +250,8 @@ class PublishPreflightServiceTest {
         PublishTargetMediaResolver mediaResolver =
                 new PublishTargetMediaResolver(assetRepository, targetAssetRepository);
         MediaTargetValidator realMedia = new MediaTargetValidator(registry, assetRepository, realTargetRepository,
-                connectionRepository, new ObjectMapper(), mediaResolver);
+                connectionRepository, new ObjectMapper(), mediaResolver,
+                mock(com.conductor.creative.CreativePhotoRepository.class));
         PublishOptionsValidator realOptions = new PublishOptionsValidator(registry, realTargetRepository,
                 connectionRepository, realConsentService, new ObjectMapper(), mediaResolver, assetRepository);
         PublishGateEvaluator realEvaluator = new PublishGateEvaluator(new PublishingWorkflow(registry, resolver),

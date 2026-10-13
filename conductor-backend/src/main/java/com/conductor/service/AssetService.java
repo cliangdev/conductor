@@ -4,6 +4,8 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.creative.CreativePhoto;
+import com.conductor.creative.CreativePhotoService;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.view.AssetInput;
@@ -23,7 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -92,6 +98,7 @@ public class AssetService {
     private final WorkflowDefinitionResolver resolver;
     private final SignalBus signalBus;
     private final StorageService storageService;
+    private final CreativePhotoService photoService;
     private final String backendBaseUrl;
 
     public AssetService(AssetRepository assetRepository,
@@ -100,6 +107,7 @@ public class AssetService {
                         WorkflowDefinitionResolver resolver,
                         SignalBus signalBus,
                         StorageService storageService,
+                        CreativePhotoService photoService,
                         @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
@@ -107,6 +115,7 @@ public class AssetService {
         this.resolver = resolver;
         this.signalBus = signalBus;
         this.storageService = storageService;
+        this.photoService = photoService;
         this.backendBaseUrl = backendBaseUrl;
     }
 
@@ -143,7 +152,14 @@ public class AssetService {
      */
     public record StoredObjectInput(String type, String label, String gcsPath, String contentType, long sizeBytes,
                                     Integer width, Integer height, String creativeFrameId,
-                                    java.math.BigDecimal durationSeconds) {
+                                    java.math.BigDecimal durationSeconds, String mediaId) {
+
+        /** A stored object that is not a link to a Media library item. */
+        public StoredObjectInput(String type, String label, String gcsPath, String contentType, long sizeBytes,
+                                 Integer width, Integer height, String creativeFrameId,
+                                 java.math.BigDecimal durationSeconds) {
+            this(type, label, gcsPath, contentType, sizeBytes, width, height, creativeFrameId, durationSeconds, null);
+        }
 
         /** A stored object with no known duration — every caller but a video Creative frame. */
         public StoredObjectInput(String type, String label, String gcsPath, String contentType, long sizeBytes,
@@ -184,10 +200,61 @@ public class AssetService {
         asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
         asset.setDone(true);
         asset.setCreativeFrameId(input.creativeFrameId());
+        asset.setMediaId(input.mediaId());
         assetRepository.save(asset);
 
         publishAssetAdded(projectId, workItem, asset);
         return asset;
+    }
+
+    /** The most Media items one add-from-media request may link — the OpenAPI {@code maxItems}. */
+    public static final int MAX_FROM_MEDIA = 35;
+
+    /**
+     * Links Media library items to a Work Item as file Assets, in the order given. Each Asset reuses the
+     * item's stored object (nothing is copied) and carries its shape. Refuses a blocked, still-uploading,
+     * AUDIO, other-project or repeated id, and a Work Item past its review gate, exactly as an upload would.
+     */
+    @Transactional
+    public List<Asset> addFromMedia(String projectId, String workItemId, List<String> mediaIds, User caller) {
+        verifyMembership(projectId, caller.getId());
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        if (mediaIds == null || mediaIds.isEmpty() || mediaIds.size() > MAX_FROM_MEDIA) {
+            throw new BusinessException("Add between 1 and " + MAX_FROM_MEDIA + " media items at a time");
+        }
+        if (new HashSet<>(mediaIds).size() != mediaIds.size()) {
+            throw new BusinessException("The same media item can't be added twice in one request");
+        }
+        guardFileAssetMutable(projectId, workItem);
+        List<CreativePhoto> media = photoService.requireLinkable(projectId, mediaIds);
+        String type = defaultAssetType(projectId, workItem);
+
+        // Microsecond steps keep upload order (PUBLISH_ORDER sorts by createdAt) equal to request order.
+        OffsetDateTime base = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        List<Asset> created = new ArrayList<>();
+        for (int i = 0; i < media.size(); i++) {
+            CreativePhoto m = media.get(i);
+            Asset asset = new Asset();
+            asset.setWorkItem(workItem);
+            asset.setType(type);
+            asset.setLabel(m.getLabel());
+            asset.setKind(KIND_FILE);
+            asset.setRef(m.getGcsPath());
+            asset.setGcsPath(m.getGcsPath());
+            asset.setContentType(m.getContentType());
+            asset.setSizeBytes(m.getSizeBytes());
+            asset.setWidth(positiveOrNull(m.getWidth()));
+            asset.setHeight(positiveOrNull(m.getHeight()));
+            asset.setDurationSeconds(positiveOrNull(m.getDurationSeconds()));
+            asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
+            asset.setDone(true);
+            asset.setMediaId(m.getId());
+            asset.setCreatedAt(base.plusNanos(1000L * i));
+            assetRepository.save(asset);
+            created.add(asset);
+            publishAssetAdded(projectId, workItem, asset);
+        }
+        return created;
     }
 
     @Transactional(readOnly = true)
@@ -258,6 +325,13 @@ public class AssetService {
         asset.setDurationSeconds(positiveOrNull(input.durationSeconds()));
         asset.setUploadStatus(UPLOAD_STATUS_PENDING);
         asset.setDone(false);
+        // An image or video also lands in the Media library on the same object, so it can be reused on other posts.
+        if (contentType.startsWith("image/") || contentType.startsWith("video/")) {
+            String label = input.label() != null ? input.label() : stripExtension(filename);
+            CreativePhoto media = photoService.createForPostUpload(projectId, gcsPath, label, contentType, sizeBytes,
+                    asset.getWidth(), asset.getHeight(), asset.getDurationSeconds(), caller.getId());
+            asset.setMediaId(media.getId());
+        }
         assetRepository.save(asset);
 
         String signedUploadUrl = storageService.generateSignedUploadUrl(gcsPath, contentType, UPLOAD_URL_EXPIRY_MINUTES);
@@ -286,6 +360,12 @@ public class AssetService {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         Asset asset = findAssetInWorkItem(workItemId, assetId);
         requireFileAsset(asset);
+        if (UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())) {
+            // Idempotent: a retried confirm (or a confirm of an Asset that links already-uploaded Media, as
+            // from-media creates) changes nothing — in particular it must not overwrite a shared Media
+            // item's size or dimensions, nor fire asset-added a second time.
+            return asset;
+        }
         guardFileAssetMutable(projectId, workItem);
 
         AssetUploadPolicy.requireAllowedContentType(asset.getContentType());
@@ -296,9 +376,17 @@ public class AssetService {
         asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
         asset.setDone(true);
         assetRepository.save(asset);
+        if (asset.getMediaId() != null) {
+            photoService.confirmForPostUpload(asset.getMediaId(), asset.getSizeBytes(), asset.getWidth(), asset.getHeight());
+        }
 
         publishAssetAdded(projectId, workItem, asset);
         return asset;
+    }
+
+    private static String stripExtension(String filename) {
+        int dot = filename.lastIndexOf('.');
+        return dot > 0 ? filename.substring(0, dot) : filename;
     }
 
     /**
@@ -382,6 +470,11 @@ public class AssetService {
             guardFileAssetMutable(projectId, workItem);
         }
         assetRepository.delete(asset);
+        if (asset.getMediaId() != null) {
+            // The Media row stays library content once uploaded; only a never-confirmed upload goes with its Asset.
+            assetRepository.flush();
+            photoService.deletePendingPostUpload(asset.getMediaId(), asset.getId());
+        }
     }
 
     /**

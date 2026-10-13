@@ -15,7 +15,6 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.AssetService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.PublishTargetService;
-import com.conductor.service.StorageService;
 import com.conductor.service.publish.PostFormat;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -55,7 +54,6 @@ public class CreativeAttachService {
     private final CreativeRenderFrameRepository frameRepository;
     private final AssetService assetService;
     private final AssetRepository assetRepository;
-    private final StorageService storageService;
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final PostPublishTargetRepository targetRepository;
@@ -70,7 +68,6 @@ public class CreativeAttachService {
                                  CreativeRenderFrameRepository frameRepository,
                                  AssetService assetService,
                                  AssetRepository assetRepository,
-                                 StorageService storageService,
                                  WorkItemRepository workItemRepository,
                                  ProjectSecurityService projectSecurityService,
                                  PostPublishTargetRepository targetRepository,
@@ -84,7 +81,6 @@ public class CreativeAttachService {
         this.frameRepository = frameRepository;
         this.assetService = assetService;
         this.assetRepository = assetRepository;
-        this.storageService = storageService;
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.targetRepository = targetRepository;
@@ -95,7 +91,6 @@ public class CreativeAttachService {
         this.objectMapper = objectMapper;
     }
 
-    static final String GCS_PREFIX = "marketing-assets";
 
     public record AttachedAsset(String assetId, String frameId, String placementKey, Integer sequenceIndex) {
     }
@@ -160,11 +155,9 @@ public class CreativeAttachService {
                 assetIdsByPlacement.computeIfAbsent(frame.getPlacementKey(), k -> new ArrayList<>()).add(reused.getId());
                 continue;
             }
-            String assetId = java.util.UUID.randomUUID().toString();
-            String destPath = GCS_PREFIX + "/" + projectId + "/" + workItemId + "/" + assetId + "-"
-                    + frame.getPlacementKey() + (frame.getSequenceIndex() != null ? "-" + frame.getSequenceIndex() : "")
-                    + "." + extensionFor(frame.getContentType());
-            storageService.copy(frame.getGcsPath(), destPath);
+            // The Asset links the frame's own stored object: nothing is copied. A succeeded render's frames are
+            // deleted only with the Creative, which refuses while a frame is on a Post.
+            String destPath = frame.getGcsPath();
 
             Asset asset = assetService.createFromStoredObject(projectId, workItemId, new AssetService.StoredObjectInput(
                     assetType, "Creative " + creative.displayId() + " " + frame.getPlacementKey(), destPath,
@@ -218,19 +211,6 @@ public class CreativeAttachService {
         publishTargetService.replaceSelection(projectId, workItemId, selections, caller);
 
         return new AttachResult(attachedAssets, updates, skipped);
-    }
-
-    /** Storage copy preserves bytes and content type but not a filename — an image frame is JPEG or PNG
-     * (see {@code docs/creatives.md}); a CLIP frame carries whatever video content type its source media
-     * did. The copied asset's own path must carry a matching extension. */
-    private String extensionFor(String contentType) {
-        return switch (contentType == null ? "" : contentType) {
-            case "image/png" -> "png";
-            case "video/quicktime" -> "mov";
-            case "video/webm" -> "webm";
-            case "video/mp4" -> "mp4";
-            default -> "jpg";
-        };
     }
 
     private boolean isVideo(CreativeRenderFrame frame) {

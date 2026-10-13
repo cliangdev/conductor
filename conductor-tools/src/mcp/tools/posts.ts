@@ -30,6 +30,8 @@ export interface MediaInput {
   path?: string
   /** A public URL — fetched here, on the machine the server runs on, then uploaded like a local file. */
   url?: string
+  /** A Media library file (from list_creative_media) — linked, not uploaded. */
+  mediaId?: string
   label?: string
   width?: number
   height?: number
@@ -304,6 +306,9 @@ function nextStep(status: string | undefined, preflight: Preflight, submitted: b
   return `Ready for "${preflight.nextTransition.label ?? preflight.nextTransition.to}"; a status move will take it.`
 }
 
+/** The most library ids one from-media request may carry. */
+const MAX_FROM_MEDIA_IDS = 35
+
 /**
  * The one call. Creates the Post, uploads its media (from paths or URLs, measuring video here), chooses
  * its destinations by account name, schedules it at the server's earliest acceptable time when none is
@@ -314,6 +319,13 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
   if (!params.text || !params.text.trim()) throw new Error('text is required — the caption that goes out.')
   if (!Array.isArray(params.targets) || params.targets.length === 0) {
     throw new Error('targets is required — at least one {platform, account?}. Call list_publish_targets to see accounts.')
+  }
+
+  // Exactly one source per media item, checked before anything is created.
+  for (const [index, m] of (params.media ?? []).entries()) {
+    if ([m.path, m.url, m.mediaId].filter(Boolean).length !== 1) {
+      throw new Error(`media[${index}] needs exactly one of path, url or mediaId.`)
+    }
   }
 
   const accounts = await listAccounts(config)
@@ -333,7 +345,25 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
 
   // Media, in the order given, so index-style assetIds line up.
   const assets: Array<Record<string, unknown>> = []
-  for (const [index, media] of (params.media ?? []).entries()) {
+  const items = params.media ?? []
+  for (let index = 0; index < items.length; index++) {
+    const media = items[index]!
+    if (media.mediaId) {
+      // A run of consecutive library ids links in one call at its position (from-media keeps request order).
+      // from-media takes at most 35 ids and refuses a repeat within one request, so a longer run, or one
+      // that names an id already in the batch, continues in a fresh call — order is preserved either way.
+      const ids = [media.mediaId]
+      while (
+        items[index + 1]?.mediaId &&
+        ids.length < MAX_FROM_MEDIA_IDS &&
+        !ids.includes(items[index + 1]!.mediaId as string)
+      ) {
+        ids.push(items[++index]!.mediaId as string)
+      }
+      const linked = await uploadAsset({ issueId: postId, mediaIds: ids }, config)
+      assets.push(...((linked['assets'] as Array<Record<string, unknown>>) ?? []))
+      continue
+    }
     const stored = await uploadAsset(
       {
         issueId: postId,

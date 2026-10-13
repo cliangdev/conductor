@@ -5,11 +5,15 @@
 // cards; a lock or a "sends it back for review" note is one quiet line, not a banner.
 
 import { useState } from 'react'
-import { ImagesIcon } from 'lucide-react'
+import { FolderOpenIcon, ImagesIcon } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
 import { AttachCreativeDialog } from '@/components/marketing/creatives/AttachCreativeDialog'
+import { PickMediaDialog } from '@/components/marketing/media/PickMediaDialog'
+import { addMediaToWorkItem, type CreativePhoto } from '@/components/marketing/creatives/types'
+import { Alert } from '@/components/ui/alert'
+import { apiErrorMessage } from '@/lib/api'
 import type { WorkflowView } from '@/types/workItem'
 
 export interface PostContentSectionProps {
@@ -38,6 +42,18 @@ export function PostContentSection({
   onAssetsChanged,
 }: PostContentSectionProps) {
   const [attachOpen, setAttachOpen] = useState(false)
+  const [mediaOpen, setMediaOpen] = useState(false)
+  const [mediaError, setMediaError] = useState<string | null>(null)
+
+  async function addFromMedia(items: CreativePhoto[]) {
+    setMediaError(null)
+    try {
+      await addMediaToWorkItem(projectId, token, workItemId, items.map((i) => i.id))
+      await onAssetsChanged()
+    } catch (err) {
+      setMediaError(apiErrorMessage(err, 'Could not add this media'))
+    }
+  }
 
   return (
     <Card data-testid="post-content">
@@ -67,18 +83,42 @@ export function PostContentSection({
             onUploaded={onAssetsChanged}
             extraTile={
               canEdit ? (
-                <button
-                  type="button"
-                  onClick={() => setAttachOpen(true)}
-                  className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted"
-                >
-                  <ImagesIcon className="h-4 w-4" aria-hidden />
-                  From a creative
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setMediaOpen(true)}
+                    className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    <FolderOpenIcon className="h-4 w-4" aria-hidden />
+                    From media
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAttachOpen(true)}
+                    className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    <ImagesIcon className="h-4 w-4" aria-hidden />
+                    From a creative
+                  </button>
+                </>
               ) : undefined
             }
           />
+          {mediaError && (
+            <Alert variant="destructive" className="mt-2">
+              {mediaError}
+            </Alert>
+          )}
         </div>
+      )}
+      {canEdit && (
+        <PickMediaDialog
+          open={mediaOpen}
+          onOpenChange={setMediaOpen}
+          projectId={projectId}
+          token={token}
+          onPicked={(items) => void addFromMedia(items)}
+        />
       )}
       {canEdit && (
         <AttachCreativeDialog

@@ -72,6 +72,7 @@ public class CreativeService {
     private final CreativeSpecBuilder specBuilder;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
+    private final StorageObjectReferences storageReferences;
     private final ObjectMapper objectMapper;
     private final CreativeRenderService renderService;
     private final CreativeExperimentRepository experimentRepository;
@@ -89,6 +90,7 @@ public class CreativeService {
                            CreativeSpecBuilder specBuilder,
                            ProjectSecurityService projectSecurityService,
                            StorageService storageService,
+                           StorageObjectReferences storageReferences,
                            ObjectMapper objectMapper,
                            CreativeRenderService renderService,
                            CreativeExperimentRepository experimentRepository,
@@ -105,6 +107,7 @@ public class CreativeService {
         this.specBuilder = specBuilder;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
+        this.storageReferences = storageReferences;
         this.objectMapper = objectMapper;
         this.renderService = renderService;
         this.experimentRepository = experimentRepository;
@@ -234,7 +237,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input(), slideEntries, slideAltText)));
+                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
@@ -346,7 +349,7 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(), sequenceKind,
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input(), slideEntries, slideAltText));
+                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -422,7 +425,7 @@ public class CreativeService {
                 root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides()),
                 root.getKind(), clipMediaEntries, motionRes.input(), slideEntries,
-                toStringList(root.getSlideAltText())));
+                toStringList(root.getSlideAltText())).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -702,7 +705,13 @@ public class CreativeService {
             experimentRepository.saveAll(asWinnerElsewhere);
         }
 
-        List<String> gcsPaths = frames.stream().map(CreativeRenderFrame::getGcsPath).toList();
+        List<String> gcsPaths = new ArrayList<>();
+        for (CreativeRenderFrame f : frames) {
+            gcsPaths.add(f.getGcsPath());
+            if (f.getPosterGcsPath() != null) {
+                gcsPaths.add(f.getPosterGcsPath());
+            }
+        }
         if (!frames.isEmpty()) {
             frameRepository.deleteAllByCreativeId(creative.getId());
         }
@@ -712,7 +721,8 @@ public class CreativeService {
 
         creativeRepository.delete(creative);
 
-        AfterCommitStorageCleanup.deleteAfterCommit(storageService, gcsPaths, log);
+        // Frames of CLIP/CAROUSEL renders link Media objects: only unreferenced objects are removed.
+        storageReferences.deleteUnreferencedAfterCommit(gcsPaths, log);
     }
 
     // ── Draft spec (preview-first) ────────────────────────────────────────
@@ -1059,7 +1069,8 @@ public class CreativeService {
                 entries.add(new CreativeValidator.SlideEntry(list.getKey(), i, ref, facts != null,
                         facts != null && CreativePhoto.MEDIA_KIND_IMAGE.equals(facts.getMediaKind()),
                         facts != null && facts.isUploaded(), facts != null && facts.isBlocked(),
-                        facts != null ? facts.getWidth() : null, facts != null ? facts.getHeight() : null));
+                        facts != null ? facts.getWidth() : null, facts != null ? facts.getHeight() : null,
+                        facts != null && facts.isGif()));
             }
             resolved.put(list.getKey(), entries);
         }

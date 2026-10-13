@@ -293,4 +293,17 @@ describe('MediaPicker', () => {
       expect(screen.queryByRole('button', { name: /^Add/ })).not.toBeInTheDocument()
     })
   })
+
+  it('limits the tab bar to `kinds`, leaving audio out', async () => {
+    const items = [
+      media({ id: 'v-1', mediaKind: 'VIDEO', label: 'a clip' }),
+      media({ id: 'a-1', mediaKind: 'AUDIO', label: 'a track', durationSeconds: 30 }),
+    ]
+    render(
+      <MediaPicker projectId="proj-1" token="tok" open onOpenChange={() => {}} media={items} kinds={['IMAGE', 'VIDEO']} onSelect={vi.fn()} onMediaChanged={vi.fn()} />,
+    )
+    expect(screen.getByRole('tab', { name: 'Photos' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Videos' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Audio' })).not.toBeInTheDocument()
+  })
 })

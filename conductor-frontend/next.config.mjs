@@ -43,6 +43,8 @@ const nextConfig = {
       // default landing tab) and Definition (settings' real content — the YAML/diagram editor —
       // absorbed here; enable/disable/delete moved to the page header's overflow menu).
       { source: `${base}/workflows/:workflowId/overview`, destination: `${base}/workflows/:workflowId/runs`, permanent: true },
+      // The Asset Library page was folded into Media (a Post's files are links into Media).
+      { source: `${base}/marketing/assets`, destination: `${base}/marketing/media`, permanent: true },
       { source: `${base}/workflows/:workflowId/settings`, destination: `${base}/workflows/:workflowId/definition`, permanent: true },
     ]
   },

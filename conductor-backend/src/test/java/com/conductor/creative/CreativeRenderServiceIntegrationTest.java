@@ -41,6 +41,7 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     @Autowired private CreativeRepository creativeRepository;
     @Autowired private CreativePhotoRepository photoRepository;
     @Autowired private BrandKitService brandKitService;
+    @Autowired private CreativeService creativeService;
     @Autowired private StorageService storageService;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
@@ -185,6 +186,64 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(failed.frames()).isEmpty();
         assertThat(frameRepository.findAllByRenderId(renderId)).isEmpty();
         assertThatThrownBy(() -> storageService.download(gcsPath)).isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void failingARenderWhoseFramesLinkMediaLeavesTheMediaObject() {
+        CreativePhoto media = newImageMedia(1080, 1350);
+        String renderId = renderService.requestRender(project.getId(), creative.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+        CreativeRenderFrame linked = linkedFrame(creative, renderId, media);
+
+        renderService.failRender(project.getId(), creative.getId(), renderId,
+                new com.conductor.generated.v2.model.FailCreativeRenderRequest("boom"), admin);
+
+        assertThat(frameRepository.findById(linked.getId())).isEmpty();
+        assertThat(storageService.download(media.getGcsPath())).isNotEmpty();
+    }
+
+    @Test
+    void deletingACreativeWhoseCarouselFramesLinkMediaLeavesTheMediaObjects() {
+        CreativePhoto a = newImageMedia(1080, 1350);
+        CreativePhoto b = newImageMedia(1080, 1350);
+        Creative carousel = newCarouselCreative(Map.of("default", List.of(a.getId(), b.getId())), List.of("4x5"));
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+        assertThat(result.frames()).extracting(CreativeRenderFrame::getGcsPath)
+                .containsExactly(a.getGcsPath(), b.getGcsPath());
+
+        creativeService.deleteCreative(project.getId(), carousel.getId(), admin);
+
+        assertThat(frameRepository.findAllByCreativeId(carousel.getId())).isEmpty();
+        assertThat(storageService.download(a.getGcsPath())).isNotEmpty();
+        assertThat(storageService.download(b.getGcsPath())).isNotEmpty();
+    }
+
+    @Test
+    void deletingACreativeStillDeletesFrameObjectsNothingElseReferences() {
+        String renderId = renderService.requestRender(project.getId(), creative.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+        renderService.putFrame(project.getId(), creative.getId(), renderId, "4x5", null, 1080, 1350, jpeg(), "image/jpeg", admin);
+        renderService.completeRender(project.getId(), creative.getId(), renderId, null, admin);
+        String own = frameRepository.findAllByRenderId(renderId).get(0).getGcsPath();
+
+        creativeService.deleteCreative(project.getId(), creative.getId(), admin);
+
+        assertThatThrownBy(() -> storageService.download(own)).isInstanceOf(EntityNotFoundException.class);
+    }
+
+    private CreativeRenderFrame linkedFrame(Creative owner, String renderId, CreativePhoto media) {
+        CreativeRenderFrame frame = new CreativeRenderFrame();
+        frame.setRenderId(renderId);
+        frame.setCreativeId(owner.getId());
+        frame.setPlacementKey("4x5");
+        frame.setGcsPath(media.getGcsPath());
+        frame.setContentType(media.getContentType());
+        frame.setWidth(1080);
+        frame.setHeight(1350);
+        frame.setSizeBytes(media.getSizeBytes());
+        frame.setWarnings(objectMapper.createArrayNode());
+        return frameRepository.save(frame);
     }
 
     // ── PUT after SUCCEEDED → 409 ────────────────────────────────────────────────────────────────
@@ -351,7 +410,7 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
-    void clipRenderCopiesTheMediaObjectAndCarriesDurationHasAudioAndPoster() {
+    void clipRenderLinksTheMediaObjectAndPosterWithoutCopyingAndCarriesDurationHasAudio() {
         CreativePhoto video = newVideoMedia(1080, 1920);
         video.setDurationSeconds(new BigDecimal("12.500"));
         video.setHasAudio(true);
@@ -367,10 +426,12 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(frame.getContentType()).isEqualTo("video/mp4");
         assertThat(frame.getDurationSeconds()).isEqualByComparingTo("12.500");
         assertThat(frame.getHasAudio()).isTrue();
-        assertThat(frame.getPosterGcsPath()).isNotNull().isNotEqualTo(video.getPosterGcsPath());
-        assertThat(frame.getGcsPath()).isNotEqualTo(video.getGcsPath());
-        // A real, independent copy — not a shared reference to the source object.
-        assertThat(storageService.download(frame.getGcsPath())).isEqualTo(storageService.download(video.getGcsPath()));
+        // Nothing is copied: the frame names the media's own object and poster.
+        assertThat(frame.getPosterGcsPath()).isEqualTo(video.getPosterGcsPath());
+        assertThat(frame.getGcsPath()).isEqualTo(video.getGcsPath());
+        assertThat(frame.getSizeBytes()).isEqualTo(video.getSizeBytes());
+        assertThat(frame.getWidth()).isEqualTo(1080);
+        assertThat(frame.getHeight()).isEqualTo(1920);
 
         CreativeRenderResponse response = renderService.toResponse(new CreativeRenderService.RenderView(
                 result.render(), result.frames()));
@@ -472,17 +533,19 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         List<CreativeRenderFrame> stored = frameRepository.findAllByRenderIdOrdered(result.render().getId());
         assertThat(stored).extracting(f -> f.getPlacementKey() + "#" + f.getSequenceIndex())
                 .containsExactlyInAnyOrder("4x5#0", "4x5#1", "4x5#2", "9x16#0", "9x16#1");
-        // Within one placement the frames are in slide order, and each is an independent copy of its slide.
+        // Within one placement the frames are in slide order, and each links its slide's own object (no copy).
         List<CreativeRenderFrame> fourByFive = stored.stream().filter(f -> f.getPlacementKey().equals("4x5")).toList();
         for (int i = 0; i < 3; i++) {
             assertThat(fourByFive.get(i).getSequenceIndex()).isEqualTo(i);
             assertThat(fourByFive.get(i).getContentType()).isEqualTo("image/jpeg");
             assertThat(fourByFive.get(i).getWidth()).isEqualTo(1080);
             assertThat(fourByFive.get(i).getHeight()).isEqualTo(1350);
-            assertThat(fourByFive.get(i).getGcsPath()).isNotEqualTo(portrait.get(i).getGcsPath());
-            assertThat(storageService.download(fourByFive.get(i).getGcsPath()))
-                    .isEqualTo(storageService.download(portrait.get(i).getGcsPath()));
+            assertThat(fourByFive.get(i).getGcsPath()).isEqualTo(portrait.get(i).getGcsPath());
+            assertThat(fourByFive.get(i).getSizeBytes()).isEqualTo(portrait.get(i).getSizeBytes());
         }
+        // Both placements of a slide share the one object: no new object was written for the render.
+        assertThat(stored).extracting(CreativeRenderFrame::getGcsPath).doesNotContain(
+                "projects/" + project.getId() + "/creatives/" + carousel.getId() + "/renders/" + result.render().getId() + "/4x5-01.jpg");
 
         // Thumbnail: slide 1 of 4x5 when present.
         CreativeRenderService.RenderView view = new CreativeRenderService.RenderView(result.render(), stored);

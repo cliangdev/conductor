@@ -1,6 +1,9 @@
 package com.conductor.service;
 
 import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.creative.CreativePhoto;
+import com.conductor.creative.CreativePhotoRepository;
+import com.conductor.creative.CreativePhotoService;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
@@ -65,6 +68,7 @@ class MediaTargetValidatorTest {
     private PostPublishTargetRepository postPublishTargetRepository;
     private PostPublishTargetAssetRepository targetAssetRepository;
     private ConnectionRepository connectionRepository;
+    private CreativePhotoRepository photoRepository;
     private MediaTargetValidator validator;
 
     private Statechart marketing;
@@ -79,11 +83,12 @@ class MediaTargetValidatorTest {
         postPublishTargetRepository = Mockito.mock(PostPublishTargetRepository.class);
         connectionRepository = Mockito.mock(ConnectionRepository.class);
         targetAssetRepository = Mockito.mock(PostPublishTargetAssetRepository.class);
+        photoRepository = Mockito.mock(CreativePhotoRepository.class);
         // A real resolver over the same mocked repositories: every existing test stubs the Work Item's
         // assets, and with no per-target selection stored those are exactly what each target inherits.
         validator = new MediaTargetValidator(new PublishPlatformRegistry(), assetRepository, postPublishTargetRepository,
                 connectionRepository, new ObjectMapper(),
-                new PublishTargetMediaResolver(assetRepository, targetAssetRepository));
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository), photoRepository);
         marketing = statechart("/schema/examples/marketing.workflow.json");
         engineering = statechart("/schema/examples/engineering.workflow.json");
         selectionsByTarget.clear();
@@ -885,6 +890,96 @@ class MediaTargetValidatorTest {
         assertThatCode(this::approve).doesNotThrowAnyException();
     }
 
+    // --- Media blocked in the library after it was linked to the Post ---------------------------------
+
+    @Test
+    void aFileLinkedToBlockedMediaIsABlockerNamingTheFile() {
+        givenTargets(target("instagram", "conn-meta", "@acme"));
+        Asset linked = image("Spring card", "image/jpeg", 1080, 1350);
+        linked.setMediaId("media-1");
+        Asset other = image("Other", "image/jpeg", 1080, 1350);
+        other.setMediaId("media-2");
+        givenAssets(linked, other);
+        CreativePhoto blocked = new CreativePhoto();
+        blocked.setId("media-1");
+        blocked.setBlocked(true);
+        CreativePhoto fine = new CreativePhoto();
+        fine.setId("media-2");
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
+
+        List<PublishFinding> blockers = validator.inspect(post).stream()
+                .filter(f -> MediaTargetValidator.MEDIA_BLOCKED.equals(f.code())).toList();
+
+        assertThat(blockers).hasSize(1);
+        assertThat(blockers.get(0).blocks()).isTrue();
+        assertThat(blockers.get(0).message())
+                .isEqualTo("Spring card is blocked in Media \u2014 remove it from this post.");
+    }
+
+    @Test
+    void anUnlabelledBlockedFileIsNamedAFile() {
+        givenTargets(target("instagram", "conn-meta", "@acme"));
+        Asset linked = image("", "image/jpeg", 1080, 1350);
+        linked.setLabel(null);
+        linked.setMediaId("media-1");
+        givenAssets(linked);
+        CreativePhoto blocked = new CreativePhoto();
+        blocked.setId("media-1");
+        blocked.setBlocked(true);
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
+
+        assertThat(validator.inspect(post)).anyMatch(f -> MediaTargetValidator.MEDIA_BLOCKED.equals(f.code())
+                && f.message().startsWith("A file is blocked in Media"));
+    }
+
+    @Test
+    void aFrameLinkedFileSharingABlockedMediaPathIsABlocker() {
+        givenTargets(target("instagram", "conn-meta", "@acme"));
+        Asset frame = image("Render", "image/jpeg", 1080, 1350);
+        frame.setCreativeFrameId("frame-1");
+        frame.setGcsPath("media/p/a.jpg");
+        Asset other = image("Other", "image/jpeg", 1080, 1350);
+        other.setGcsPath("media/p/b.jpg");
+        givenAssets(frame, other);
+        CreativePhoto blocked = new CreativePhoto();
+        blocked.setId("media-1");
+        blocked.setGcsPath("media/p/a.jpg");
+        blocked.setBlocked(true);
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
+
+        List<PublishFinding> blockers = validator.inspect(post).stream()
+                .filter(f -> MediaTargetValidator.MEDIA_BLOCKED.equals(f.code())).toList();
+
+        assertThat(blockers).hasSize(1);
+        assertThat(blockers.get(0).message()).startsWith("Render is blocked in Media");
+    }
+
+    @Test
+    void theFireTimeCheckNamesTheBlockedFileAndAsksForARetryAfterRemovingIt() {
+        PostPublishTarget t = target("instagram", "conn-meta", "@acme");
+        t.setWorkItem(post);
+        givenTargets(t);
+        Asset linked = image("Spring card", "image/jpeg", 1080, 1350);
+        linked.setMediaId("media-1");
+        givenAssets(linked);
+        CreativePhoto blocked = new CreativePhoto();
+        blocked.setId("media-1");
+        blocked.setBlocked(true);
+        when(photoRepository.findBlockedByIdsOrPaths(any(), any())).thenReturn(List.of(blocked));
+
+        assertThat(validator.blockedMediaFailure(t)).contains(
+                "Spring card is blocked in Media \u2014 remove it from this post, then retry.");
+    }
+
+    @Test
+    void filesNotLinkedToMediaNeverTouchTheMediaLookup() {
+        givenTargets(target("instagram", "conn-meta", "@acme"));
+        givenAssets(image("card.jpg", "image/jpeg", 1080, 1350));
+
+        assertThat(validator.inspect(post)).noneMatch(f -> MediaTargetValidator.MEDIA_BLOCKED.equals(f.code()));
+        verifyNoInteractions(photoRepository);
+    }
+
     // --- Carousel (multi-image) posts on destinations that cannot take them ---------------------------
 
     private List<PublishFinding> multiImageFindings() {
@@ -1271,11 +1366,18 @@ class MediaTargetValidatorTest {
                     .thenReturn(Optional.of(snapshot));
             Mockito.lenient().when(security.isProjectMember(PROJECT_ID, USER_ID)).thenReturn(true);
             Mockito.lenient().when(assets.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            CreativePhotoService photoService = Mockito.mock(CreativePhotoService.class);
+            Mockito.lenient().when(photoService.createForPostUpload(any(), any(), any(), any(), Mockito.anyLong(),
+                    any(), any(), any(), any())).thenAnswer(inv -> {
+                        CreativePhoto media = new CreativePhoto();
+                        media.setId("media-x");
+                        return media;
+                    });
             Mockito.lenient().when(workItems.findById(ITEM_ID)).thenReturn(Optional.of(draftPost()));
 
             service = new AssetService(assets, workItems, security,
                     new WorkflowDefinitionResolver(versions), Mockito.mock(SignalBus.class),
-                    storageService, "http://localhost:8080");
+                    storageService, photoService, "http://localhost:8080");
         }
 
         @Test

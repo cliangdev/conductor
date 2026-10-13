@@ -37,6 +37,7 @@ let mintBodies: Record<string, unknown>[] = []
 let confirmBodies: Record<string, unknown>[] = []
 let mintRejection: { status: number; detail: string } | null = null
 let confirmRejection: { status: number; detail: string } | null = null
+let deleteFails = false
 
 // ── Fake XHR (the signed PUT) ───────────────────────────────────────────────
 
@@ -133,6 +134,10 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     confirmBodies.push(JSON.parse(init!.body as string))
     return noContentResponse()
   }
+  if (init?.method === 'DELETE') {
+    if (deleteFails) return jsonResponse(500, { detail: 'boom' })
+    return noContentResponse()
+  }
   throw new Error(`unexpected fetch: ${url}`)
 })
 
@@ -175,6 +180,7 @@ beforeEach(() => {
   confirmBodies = []
   mintRejection = null
   confirmRejection = null
+  deleteFails = false
   FakeXhr.instances = []
   FakeXhr.auto = true
   FakeXhr.completeStatus = 200
@@ -231,6 +237,7 @@ function imageFile() {
 }
 
 const uploadsUrl = `${API}/api/v2/projects/proj-1/work-items/wi-1/assets/uploads`
+const assetUrl = `${API}/api/v2/projects/proj-1/work-items/wi-1/assets/asset-1`
 const confirmUrl = `${API}/api/v2/projects/proj-1/work-items/wi-1/assets/asset-1/confirm`
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -427,6 +434,28 @@ describe('MediaUploadPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('storage rejected the file (403)')
     expect(confirmBodies).toHaveLength(0)
     expect(onUploaded).not.toHaveBeenCalled()
+    // The ticket minted a PENDING Asset; a failed PUT removes it again.
+    await waitFor(() => expect(calls).toContain(`DELETE ${assetUrl}`))
+  })
+
+  it('removes the PENDING asset when confirm fails, and still shows the original error if that delete fails', async () => {
+    confirmRejection = { status: 409, detail: 'Asset upload was already confirmed' }
+    deleteFails = true
+    renderPanel()
+
+    selectFile(videoFile())
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Asset upload was already confirmed')
+    expect(calls).toContain(`DELETE ${assetUrl}`)
+  })
+
+  it('does not delete anything when the upload succeeds', async () => {
+    renderPanel()
+
+    selectFile(videoFile())
+
+    await waitFor(() => expect(onUploaded).toHaveBeenCalled())
+    expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false)
   })
 
   // The confirm endpoint answers 204 — the shared apiPost must resolve on it, not reject.

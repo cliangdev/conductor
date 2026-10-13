@@ -311,7 +311,7 @@ ranks your best-performing variants across the whole project.
 
 A **Clip** creative uses a finished video as-is — no brand layout, no headline/body rendered onto
 it. Upload video from any source (a phone recording, stock footage, something an AI generator
-produced) into the same media library the photo picker uses; tick **This video is AI-generated**
+produced) into the same media library the photo picker uses (Marketing → Media, which also lists the files on your Posts); tick **This video is AI-generated**
 when it is, same as a photo. Conductor reads the file's own width, height, duration, and (best
 effort) whether it has an audio track, and grabs a poster frame automatically — nothing to fill in
 by hand. **Motion** is a branded animated video: your Still creative's layout, theme, photo,

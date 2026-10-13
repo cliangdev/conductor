@@ -90,6 +90,13 @@ public class Asset {
     @Column(name = "creative_frame_id", length = 36)
     private String creativeFrameId;
 
+    /**
+     * The Media library item (creative_photo) this file Asset links to; {@link #gcsPath} is that item's
+     * object, shared rather than copied. Null for link Assets and for a Creative render frame.
+     */
+    @Column(name = "media_id", length = 36)
+    private String mediaId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -101,7 +108,11 @@ public class Asset {
         if (id == null) {
             id = UUID.randomUUID().toString();
         }
-        createdAt = OffsetDateTime.now();
+        // A caller that mints several Assets in one request (add-from-media) pre-sets createdAt so their
+        // upload order is the order it asked for rather than a clock tie broken by random id.
+        if (createdAt == null) {
+            createdAt = OffsetDateTime.now();
+        }
         updatedAt = OffsetDateTime.now();
     }
 
@@ -154,6 +165,9 @@ public class Asset {
 
     public String getCreativeFrameId() { return creativeFrameId; }
     public void setCreativeFrameId(String creativeFrameId) { this.creativeFrameId = creativeFrameId; }
+
+    public String getMediaId() { return mediaId; }
+    public void setMediaId(String mediaId) { this.mediaId = mediaId; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

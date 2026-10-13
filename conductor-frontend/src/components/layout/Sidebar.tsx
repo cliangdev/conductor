@@ -8,7 +8,6 @@ import {
   FileTextIcon,
   FilmIcon,
   FolderIcon,
-  ImagesIcon,
   LayoutTemplateIcon,
   LogOutIcon,
   PanelLeftCloseIcon,
@@ -51,7 +50,7 @@ import type { Project } from '@/types'
 
 // ─── Area-scoped static nav ───────────────────────────────────────────────────
 //
-// Some areas own a surface that is not a Workflow — the Marketing asset library spans every
+// Some areas own a surface that is not a Workflow — a Marketing surface can span every
 // Workflow in the area, so it is a sibling of Posts inside the Marketing group, not a tab within it
 // (COND-23 T7.2). Keyed by area slug, appended after that area's Workflow entries, so a second
 // Marketing Workflow keeps rendering in the same group with no layout change.
@@ -77,12 +76,6 @@ const AREA_EXTRA_NAV: Record<
       label: 'Media',
       icon: FilmIcon,
       path: (projectId) => `/app/projects/${projectId}/marketing/media`,
-    },
-    {
-      key: 'marketing-assets',
-      label: 'Asset Library',
-      icon: ImagesIcon,
-      path: (projectId) => `/app/projects/${projectId}/marketing/assets`,
     },
   ],
 }

@@ -44,6 +44,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import com.conductor.service.MediaTargetValidator;
 import com.conductor.service.PublishInputBuilder;
 import com.conductor.service.PublishTargetMediaResolver;
 import com.conductor.repository.AssetRepository;
@@ -68,6 +69,7 @@ class PostPublishSchedulerTest {
     private Query claimQuery;
 
     private PostPublishScheduler scheduler;
+    private MediaTargetValidator mediaTargetValidator;
 
     private Project project;
     private Connection connection;
@@ -101,6 +103,8 @@ class PostPublishSchedulerTest {
         when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
                 .thenReturn(ActionResult.ok(Map.of()));
 
+        mediaTargetValidator = mock(MediaTargetValidator.class);
+        when(mediaTargetValidator.blockedMediaFailure(any())).thenReturn(Optional.empty());
         scheduler = newScheduler(true);
     }
 
@@ -110,7 +114,7 @@ class PostPublishSchedulerTest {
                 registry, new PublishingWorkflow(registry, mock(WorkflowDefinitionResolver.class)),
                 targetRepository, connectionResolver, actionInvocationService, publishOutcomeService,
                 new PublishInputBuilder(registry, new PublishTargetMediaResolver(assetRepository, targetAssetRepository)),
-                enabled, signalBus);
+                mediaTargetValidator, enabled, signalBus);
         s.entityManager = entityManager;
         s.self = s;
         return s;
@@ -443,6 +447,20 @@ class PostPublishSchedulerTest {
         // the platform's own words, which is what retry and the roll-up need to find.
         verify(claimQuery).executeUpdate();
         verify(publishOutcomeService).recordOutcome("target-1", rejection);
+    }
+
+    @Test
+    void aTargetWhoseMediaWasBlockedAfterSchedulingFailsWithoutCallingThePlatform() {
+        PostPublishTarget target = dueTarget();
+        given(target);
+        String message = "Spring card is blocked in Media \u2014 remove it from this post, then retry.";
+        when(mediaTargetValidator.blockedMediaFailure(target)).thenReturn(Optional.of(message));
+
+        scheduler.poll();
+
+        verifyNoInteractions(actionInvocationService);
+        verify(publishOutcomeService).recordFailure("target-1", message, false);
+        verify(publishOutcomeService, never()).recordOutcome(anyString(), any());
     }
 
     @Test

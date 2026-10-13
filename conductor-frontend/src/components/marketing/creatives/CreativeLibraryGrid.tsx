@@ -1,7 +1,7 @@
 'use client'
 
-// COND-24 T2: the Creative library — /marketing/creatives. Pattern: AssetLibraryGrid.tsx (filters +
-// a responsive tile grid), but each tile's thumbnail is a live browser render of the 4:5 placement
+// COND-24 T2: the Creative library — /marketing/creatives. Pattern: the Media library's filters +
+// a responsive tile grid, but each tile's thumbnail is a live browser render of the 4:5 placement
 // (@cliangdev/creative-render's mountBoard) rather than a stored image — there is no rendered PNG
 // until T3's render job exists. Mounting a live board is comparatively expensive, so each tile only
 // mounts once it scrolls into view (IntersectionObserver) and unmounts on unmount.

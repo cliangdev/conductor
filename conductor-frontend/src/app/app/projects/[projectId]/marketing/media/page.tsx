@@ -1,7 +1,7 @@
 'use client'
 
 // The Media library — /app/projects/{id}/marketing/media. The creative media library (images, video,
-// audio) as a page of its own, a static sibling of marketing/creatives: browse, tidy, and turn a
+// audio) as a page of its own, with where each file is used, a static sibling of marketing/creatives: browse, tidy, and turn a
 // selection of finished images into a CAROUSEL Creative.
 
 import { useParams } from 'next/navigation'
@@ -19,7 +19,7 @@ export default function MarketingMediaPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Marketing' }, { label: 'Media' }]}
         title="Media"
-        description="Images, video and audio for your Creatives. Select finished slides to make a carousel."
+        description="Every image, video and audio file in this workspace — uploads, generated images and finished slides — and where each is used."
       />
       <MediaLibrary projectId={projectId} />
     </PageContainer>

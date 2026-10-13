@@ -6,6 +6,8 @@ import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.creative.CreativePhoto;
+import com.conductor.creative.CreativePhotoRepository;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
@@ -139,6 +141,11 @@ public class MediaTargetValidator {
      * a story sequence).
      */
     public static final String MULTI_IMAGE_UNSUPPORTED = "MULTI_IMAGE_UNSUPPORTED";
+    /**
+     * A file on this destination links Media that has since been blocked in the library. Blocking used media is
+     * allowed (that is the point of blocking); this is what stops it publishing.
+     */
+    public static final String MEDIA_BLOCKED = "MEDIA_BLOCKED";
     /** A target's chosen format is not one its platform offers at all — defensive; selection already refuses it. */
     public static final String FORMAT_UNSUPPORTED = "FORMAT_UNSUPPORTED";
 
@@ -189,19 +196,22 @@ public class MediaTargetValidator {
     private final ConnectionRepository connectionRepository;
     private final ObjectMapper objectMapper;
     private final PublishTargetMediaResolver mediaResolver;
+    private final CreativePhotoRepository photoRepository;
 
     public MediaTargetValidator(PublishPlatformRegistry platformRegistry,
                                 AssetRepository assetRepository,
                                 PostPublishTargetRepository postPublishTargetRepository,
                                 ConnectionRepository connectionRepository,
                                 ObjectMapper objectMapper,
-                                PublishTargetMediaResolver mediaResolver) {
+                                PublishTargetMediaResolver mediaResolver,
+                                CreativePhotoRepository photoRepository) {
         this.platformRegistry = platformRegistry;
         this.assetRepository = assetRepository;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
         this.objectMapper = objectMapper;
         this.mediaResolver = mediaResolver;
+        this.photoRepository = photoRepository;
     }
 
     /** Advisory findings from a validation that did not block. Safe to ignore. */
@@ -270,6 +280,9 @@ public class MediaTargetValidator {
         Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
                 mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
 
+        List<Asset> allMedia = new ArrayList<>();
+        mediaByTarget.values().forEach(m -> allMedia.addAll(m.assets()));
+        Set<String> blockedAssetIds = blockedAssetIds(allMedia);
         List<PublishFinding> findings = new ArrayList<>();
         Boolean postHasCarouselImages = null;
         for (PostPublishTarget target : targets) {
@@ -295,6 +308,13 @@ public class MediaTargetValidator {
                             target.getId()));
                 }
             }
+            for (Asset asset : media) {
+                if (blockedAssetIds.contains(asset.getId())) {
+                    findings.add(PublishFinding.blocker(MEDIA_BLOCKED,
+                            blockedName(asset) + " is blocked in Media \u2014 remove it from this post.",
+                            target.getId()));
+                }
+            }
             if (media.isEmpty()) {
                 // PostScheduleValidator owns "this target has no media", and says which kind of nothing
                 // it is; checking file rules against an empty list here would add nothing but noise.
@@ -317,6 +337,68 @@ public class MediaTargetValidator {
             }
         }
         return findings;
+    }
+
+    /**
+     * Ids of those Assets whose file is blocked in Media right now, in one query. An Asset counts when it
+     * links a blocked Media item ({@code mediaId}) <em>or</em> shares a blocked item's storage path —
+     * frame-linked Assets (a Creative's render) carry no {@code mediaId} but reuse the media's path.
+     * The one rule behind both the approval gate and the fire-time check.
+     */
+    public Set<String> blockedAssetIds(java.util.Collection<Asset> assets) {
+        Set<String> linked = new java.util.HashSet<>();
+        Set<String> paths = new java.util.HashSet<>();
+        for (Asset a : assets) {
+            if (a.getMediaId() != null) {
+                linked.add(a.getMediaId());
+            }
+            if (a.getGcsPath() != null && !a.getGcsPath().isBlank()) {
+                paths.add(a.getGcsPath());
+            }
+        }
+        if (linked.isEmpty() && paths.isEmpty()) {
+            return Set.of();
+        }
+        List<CreativePhoto> blocked = photoRepository.findBlockedByIdsOrPaths(
+                linked.isEmpty() ? Set.of("") : linked, paths.isEmpty() ? Set.of("") : paths);
+        if (blocked.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> blockedIds = new java.util.HashSet<>();
+        Set<String> blockedPaths = new java.util.HashSet<>();
+        blocked.forEach(p -> {
+            blockedIds.add(p.getId());
+            if (p.getGcsPath() != null) {
+                blockedPaths.add(p.getGcsPath());
+            }
+        });
+        Set<String> out = new java.util.HashSet<>();
+        for (Asset a : assets) {
+            if ((a.getMediaId() != null && blockedIds.contains(a.getMediaId()))
+                    || (a.getGcsPath() != null && blockedPaths.contains(a.getGcsPath()))) {
+                out.add(a.getId());
+            }
+        }
+        return out;
+    }
+
+    private static String blockedName(Asset asset) {
+        return asset.getLabel() != null && !asset.getLabel().isBlank() ? asset.getLabel() : "A file";
+    }
+
+    /**
+     * Fire-time counterpart of the gate's {@code MEDIA_BLOCKED} blocker: media can be blocked after a Post
+     * was approved and scheduled, and the gate never runs again. Returns the failure text for the first of
+     * this target's effective files that is blocked now, or empty when it may go out.
+     */
+    public Optional<String> blockedMediaFailure(PostPublishTarget target) {
+        List<Asset> media = mediaResolver.effectiveMedia(target).assets();
+        if (media.isEmpty()) {
+            return Optional.empty();
+        }
+        Set<String> blocked = blockedAssetIds(media);
+        return media.stream().filter(a -> blocked.contains(a.getId())).findFirst()
+                .map(a -> blockedName(a) + " is blocked in Media \u2014 remove it from this post, then retry.");
     }
 
     /** An Instagram or Facebook story, which publishes several items as that many stories in order. */

@@ -1,6 +1,8 @@
 package com.conductor.creative;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
@@ -17,4 +19,9 @@ public interface CreativePhotoRepository extends JpaRepository<CreativePhoto, St
     List<CreativePhoto> findAllByProjectIdAndBlockedFalseOrderByCreatedAtDesc(String projectId);
 
     List<CreativePhoto> findAllByIdIn(Collection<String> ids);
+
+    /** Blocked Media whose id is in {@code ids} or whose storage path is in {@code paths} (both non-empty). */
+    @Query("select p from CreativePhoto p where p.blocked = true and (p.id in :ids or p.gcsPath in :paths)")
+    List<CreativePhoto> findBlockedByIdsOrPaths(@Param("ids") Collection<String> ids,
+                                                @Param("paths") Collection<String> paths);
 }

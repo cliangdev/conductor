@@ -48,6 +48,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @Autowired private CreativeAttachService attachService;
+    @Autowired private CreativePhotoService photoService;
+    @Autowired private CreativePhotoRepository photoRepository;
     @Autowired private CreativeRenderRepository renderRepository;
     @Autowired private CreativeRenderFrameRepository frameRepository;
     @Autowired private CreativeRepository creativeRepository;
@@ -136,10 +138,14 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(tiktokAsset.getKind()).isEqualTo(AssetService.KIND_FILE);
         assertThat(tiktokAsset.getUploadStatus()).isEqualTo(AssetService.UPLOAD_STATUS_UPLOADED);
         assertThat(tiktokAsset.getCreativeFrameId()).isNotNull();
-        // Frames are JPEG (see CreativeRenderService) — the copy must preserve both the content type and
-        // a matching file extension, not carry over the old hardcoded ".png".
+        // Frames are JPEG (see CreativeRenderService). Nothing is copied: the Asset links the frame's own
+        // stored object, so its path IS the frame's path (not a new marketing-assets/... copy).
         assertThat(tiktokAsset.getContentType()).isEqualTo("image/jpeg");
-        assertThat(tiktokAsset.getGcsPath()).endsWith(".jpg");
+        CreativeRenderFrame tiktokFrame = frameRepository.findById(tiktokAsset.getCreativeFrameId()).orElseThrow();
+        assertThat(tiktokAsset.getGcsPath()).isEqualTo(tiktokFrame.getGcsPath());
+        assertThat(tiktokAsset.getRef()).isEqualTo(tiktokFrame.getGcsPath());
+        assertThat(tiktokAsset.getGcsPath()).doesNotStartWith("marketing-assets/");
+        assertThat(tiktokAsset.getMediaId()).isNull();
 
         PostPublishTarget tiktokTarget = targetRepository.findAllByWorkItemId(post.getId()).stream()
                 .filter(t -> "tiktok".equals(t.getPlatform())).findFirst().orElseThrow();
@@ -156,6 +162,38 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
 
         // The Post's own media is filled purely as a side effect of the assets now existing on it.
         assertThat(assetRepository.findAllByWorkItemId(post.getId())).hasSize(3);
+    }
+
+    @Test
+    void aPostLinkingAFramePopulatesMediaUsageForTheMediaItsCreativeUses() {
+        CreativePhoto photo = new CreativePhoto();
+        photo.setId(UUID.randomUUID().toString());
+        photo.setProjectId(project.getId());
+        photo.setLabel("Source photo");
+        photo.setGcsPath("projects/" + project.getId() + "/marketing/photos/" + photo.getId() + ".jpg");
+        photo.setContentType("image/jpeg");
+        photo.setSizeBytes(100L);
+        photo.setMediaKind(CreativePhoto.MEDIA_KIND_IMAGE);
+        photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        photo.setAiGenerated(false);
+        photo.setFocal(objectMapper.createObjectNode());
+        photoRepository.save(photo);
+        creative.setPhotoId(photo.getId());
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        newFrame(render, "4x5", null, "instagram", 1080, 1350);
+
+        // Before the attach: used by one Creative, on no Post.
+        assertThat(photoService.getPhoto(project.getId(), photo.getId(), admin).postCount()).isZero();
+
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+
+        CreativePhotoService.MediaUsage usage = photoService.getUsage(project.getId(), photo.getId(), admin);
+        assertThat(usage.creatives()).extracting(CreativePhotoService.UsageCreative::id).containsExactly(creative.getId());
+        assertThat(usage.posts()).extracting(CreativePhotoService.UsagePost::workItemId).containsExactly(post.getId());
+        CreativePhotoService.PhotoView view = photoService.getPhoto(project.getId(), photo.getId(), admin);
+        assertThat(view.postCount()).isEqualTo(1);
+        assertThat(view.creativeCount()).isEqualTo(1);
     }
 
     @Test

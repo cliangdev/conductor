@@ -10,6 +10,11 @@ vi.mock('@/components/workitems/MediaUploadPanel', async (importOriginal) => ({
   // jsdom never loads video metadata.
   measureVideoMetadata: vi.fn(async () => ({ width: 1080, height: 1920, durationSeconds: 10 })),
 }))
+vi.mock('@/contexts/PermissionsContext', () => ({
+  useCan: () => true,
+  usePermissions: () => ({ role: 'ADMIN', loading: false, can: () => true, refresh: vi.fn() }),
+}))
+
 import type { WorkflowView } from '@/types/workItem'
 import { ComposePostPage } from './ComposePostPage'
 
@@ -41,6 +46,23 @@ const MARKETING: WorkflowView = {
   transitions: [],
   assetTypes: ['facebook_post', 'instagram_post'],
 }
+
+const PHOTOS = ['m-1', 'm-2'].map((id) => ({
+  id,
+  projectId: PROJECT,
+  label: `pic ${id}`,
+  contentType: 'image/png',
+  sizeBytes: 10,
+  mediaKind: 'IMAGE',
+  aiGenerated: false,
+  checked: true,
+  blocked: false,
+  focal: {},
+  uploadStatus: 'UPLOADED',
+  url: `https://storage.test/${id}.png`,
+  warnings: [],
+  createdAt: '2026-01-01T00:00:00Z',
+}))
 
 const ACCOUNTS = [
   {
@@ -87,6 +109,10 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   }
   if (method === 'PUT' && url.startsWith('http://storage.test/')) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
   if (method === 'POST' && /\/assets\/asset-\d+\/confirm$/.test(url)) return { ok: true, status: 204, headers: { get: () => null }, json: async () => ({}) }
+  if (method === 'GET' && url.includes('/marketing/photos')) return json(200, PHOTOS)
+  if (method === 'POST' && url.endsWith('/assets/from-media')) {
+    return json(201, (body as { mediaIds: string[] }).mediaIds.map((id) => ({ id: `link-${id}` })))
+  }
   if (method === 'PATCH') return json(200, {})
   if (method === 'POST' && url.endsWith('/attach')) return json(200, { assets: [], targetsUpdated: [], targetsSkipped: [] })
   throw new Error(`unexpected ${method} ${url}`)
@@ -288,6 +314,39 @@ describe('ComposePostPage', () => {
     const targetsIndex = calls.findIndex((c) => c.method === 'PUT')
     const attachIndex = calls.findIndex((c) => c.method === 'POST' && c.url.endsWith('/attach'))
     expect(attachIndex).toBeGreaterThan(targetsIndex)
+    expect(toastErrorSpy).not.toHaveBeenCalled()
+  })
+
+  it('shows picked library media in the strip and links them, after the uploads, once the Post exists', async () => {
+    renderPage()
+    await userEvent.type(screen.getByLabelText('Caption'), 'With library media')
+    await userEvent.upload(
+      document.getElementById('compose-media') as HTMLInputElement,
+      new File([new Uint8Array([1])], 'own.jpg', { type: 'image/jpeg' }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: /from media/i }))
+    const grid = await screen.findByTestId('photo-picker-grid')
+    await waitFor(() => expect(grid.querySelectorAll('button[aria-pressed]')).toHaveLength(2))
+    const tiles = grid.querySelectorAll('button[aria-pressed]')
+    await userEvent.click(tiles[1]!)
+    await userEvent.click(tiles[0]!)
+    await userEvent.click(screen.getByRole('button', { name: 'Add 2' }))
+
+    const strip = screen.getByTestId('compose-media-strip')
+    expect(within(strip).getByTestId('compose-picked-m-1')).toBeInTheDocument()
+    expect(within(strip).getByTestId('compose-picked-m-2')).toBeInTheDocument()
+
+    await userEvent.click(await account('@acme'))
+    await pickUtc()
+    await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+
+    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/app/projects/project-1/marketing/posts/MK-9'))
+    const link = calls.find((c) => c.method === 'POST' && c.url.endsWith('/assets/from-media'))
+    expect(link?.url).toContain('/work-items/wi-9/')
+    expect(link?.body).toEqual({ mediaIds: ['m-2', 'm-1'] })
+    const confirmIndex = calls.findIndex((c) => c.method === 'POST' && /\/confirm$/.test(c.url))
+    const linkIndex = calls.indexOf(link!)
+    expect(linkIndex).toBeGreaterThan(confirmIndex)
     expect(toastErrorSpy).not.toHaveBeenCalled()
   })
 

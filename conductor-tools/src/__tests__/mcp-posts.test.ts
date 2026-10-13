@@ -21,6 +21,7 @@ vi.mock('../lib/mp4-probe.js', () => ({
   probeVideo: vi.fn(async () => ({ width: 1080, height: 1920, durationSeconds: 12.5 })),
 }))
 
+import { mkdtemp } from 'node:fs/promises'
 import { apiGet, apiPost, apiPatch, apiPut } from '../mcp/api.js'
 import { createPost, getPostStatus, submitPost, listPosts, submitReview, nextSlot, getPostAnalytics, listTopPosts } from '../mcp/tools/posts.js'
 
@@ -317,6 +318,113 @@ describe('create_post', () => {
     )
 
     expect((result['warnings'] as string[]).join(' ')).toContain('a story has no caption')
+  })
+
+  describe('media items by library id', () => {
+    function serveMedia() {
+      serve({
+        '/api/v2/projects/proj-1/publish-targets': ACCOUNTS,
+        '/api/v1/projects/proj-1/workflows': WORKFLOWS,
+        '/api/v2/projects/proj-1/work-items/w1/publish-preflight': readyPreflight(),
+        '/api/v2/projects/proj-1/work-items/w1/publish-targets': [
+          { id: 't-ig', platform: 'instagram', label: '@acme', lane: 'APP_MANAGED', state: 'PENDING' },
+        ],
+        '/api/v2/projects/proj-1/work-items/w1/assets': [],
+        '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-12', status: 'DRAFT' },
+      })
+      let uploads = 0
+      mocked(apiPost).mockImplementation(async (path: string, body: unknown) => {
+        if (path.endsWith('/work-items')) return { id: 'w1', displayId: 'MK-12', status: 'DRAFT' }
+        if (path.endsWith('/assets/uploads')) return { assetId: `up${++uploads}`, uploadUrl: 'https://bucket/a' }
+        if (path.endsWith('/confirm')) return undefined
+        if (path.endsWith('/assets/from-media')) {
+          return (body as { mediaIds: string[] }).mediaIds.map((m) => ({ id: `link-${m}`, mediaId: m, label: m }))
+        }
+        throw new Error(`unexpected POST ${path}`)
+      })
+      mocked(apiPut).mockResolvedValue([])
+      mocked(apiPatch).mockResolvedValue({})
+    }
+    const sentIds = () =>
+      ((mocked(apiPut).mock.calls[0]![1] as { targets: Array<Record<string, unknown>> }).targets[0]!['assetIds'])
+
+    it('keeps the caller order across uploads and a run of library ids', async () => {
+      serveMedia()
+      mocked(mkdtemp).mockResolvedValue('/tmp/dl')
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } })))
+      try {
+        await createPost(
+          {
+            text: 'Mixed',
+            media: [{ path: '/tmp/a.png' }, { mediaId: 'm1' }, { mediaId: 'm2' }, { url: 'https://x.test/d.png' }],
+            targets: [{ platform: 'instagram', account: '@acme', assetIds: [0, 1, 2, 3] }],
+            submit: false,
+          },
+          config
+        )
+      } finally {
+        vi.unstubAllGlobals()
+      }
+      const fromMedia = mocked(apiPost).mock.calls.filter((c) => (c[0] as string).endsWith('/assets/from-media'))
+      expect(fromMedia).toHaveLength(1)
+      expect(fromMedia[0]![1]).toEqual({ mediaIds: ['m1', 'm2'] })
+      expect(sentIds()).toEqual(['up1', 'link-m1', 'link-m2', 'up2'])
+    })
+
+    it('splits a run at a repeated id and at 35 ids, keeping order', async () => {
+      serveMedia()
+      const ids = Array.from({ length: 36 }, (_, i) => `n${i}`)
+      await createPost(
+        {
+          text: 'Long',
+          media: [{ mediaId: 'a' }, { mediaId: 'b' }, { mediaId: 'a' }, ...ids.map((mediaId) => ({ mediaId }))],
+          targets: [{ platform: 'instagram', account: '@acme' }],
+          submit: false,
+        },
+        config
+      )
+      const batches = mocked(apiPost).mock.calls
+        .filter((c) => (c[0] as string).endsWith('/assets/from-media'))
+        .map((c) => (c[1] as { mediaIds: string[] }).mediaIds)
+      expect(batches[0]).toEqual(['a', 'b'])
+      expect(batches[1]).toHaveLength(35)
+      expect(batches[1]![0]).toBe('a')
+      expect(batches[2]).toEqual(['n34', 'n35'])
+      expect(batches.every((b) => b.length <= 35 && new Set(b).size === b.length)).toBe(true)
+      expect(batches.flat()).toEqual(['a', 'b', 'a', ...ids])
+    })
+
+    it('creates a Post from library ids alone, never touching the upload ticket', async () => {
+      serveMedia()
+      await createPost(
+        { text: 'Library only', media: [{ mediaId: 'm1' }], targets: [{ platform: 'instagram', account: '@acme' }], submit: false },
+        config
+      )
+      expect(mocked(apiPost).mock.calls.some((c) => (c[0] as string).endsWith('/assets/uploads'))).toBe(false)
+      expect(mocked(apiPost).mock.calls.some((c) => (c[0] as string).endsWith('/assets/from-media'))).toBe(true)
+    })
+
+    it('rejects an item with both path and mediaId, or neither, before creating anything', async () => {
+      serveMedia()
+      const targets = [{ platform: 'instagram', account: '@acme' }]
+      await expect(createPost({ text: 'x', media: [{ path: '/tmp/a.png', mediaId: 'm1' }], targets }, config)).rejects.toThrow(/media\[0\].*exactly one/)
+      await expect(createPost({ text: 'x', media: [{ mediaId: 'm1' }, {}], targets }, config)).rejects.toThrow(/media\[1\].*exactly one/)
+      expect(mocked(apiPost)).not.toHaveBeenCalled()
+    })
+
+    it('maps a destination assetIds selection of mediaId items to the linked asset ids', async () => {
+      serveMedia()
+      await createPost(
+        {
+          text: 'Pick',
+          media: [{ mediaId: 'm1' }, { mediaId: 'm2' }, { mediaId: 'm3' }],
+          targets: [{ platform: 'instagram', account: '@acme', assetIds: [2, 0] }],
+          submit: false,
+        },
+        config
+      )
+      expect(sentIds()).toEqual(['link-m3', 'link-m1'])
+    })
   })
 
   it('needs `workflow` when more than one Workflow publishes', async () => {

@@ -537,6 +537,12 @@ describe('list_creative_media', () => {
     )
   })
 
+  it('keeps postCount and creativeCount', async () => {
+    mocked(apiGet).mockResolvedValue([{ id: 'm1', label: 'a', postCount: 2, creativeCount: 1, secret: 'x' }])
+    const rows = await listCreativeMedia({}, config)
+    expect(rows).toEqual([{ id: 'm1', label: 'a', postCount: 2, creativeCount: 1 }])
+  })
+
   it('omits the query string when no filters are given', async () => {
     mocked(apiGet).mockResolvedValue([])
     await listCreativeMedia({}, config)

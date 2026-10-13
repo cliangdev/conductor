@@ -255,7 +255,7 @@ export function MediaUploadPanel({
    * Not a choice any more, and deliberately so. It used to be a four-way picker labelled "Channel",
    * which read as "which platform is this for" and decided nothing: every publish action selects media
    * by content type, and the whole bundle goes out to every selected account regardless. Nothing filters
-   * on it either — the asset library filters by media type, workflow and status. So the control asked a
+   * on it either — the Media library filters by media type, workflow and status. So the control asked a
    * question whose answer changed nothing visible, and made correct behaviour look broken (a PNG filed
    * as a Facebook post is still refused by Instagram's JPEG rule at the approval gate).
    *
@@ -280,6 +280,8 @@ export function MediaUploadPanel({
       setError(null)
       setUploading(true)
       setProgress(0)
+      // Set once the ticket is minted and cleared once confirm lands: what a failure in between must clean up.
+      let orphanId: string | null = null
       try {
         // Images are measured server-side from the bytes at confirm, so only video pays for this.
         const measured = isVideoContentType(file.type) ? await measureVideoMetadata(file) : null
@@ -297,6 +299,7 @@ export function MediaUploadPanel({
           },
           token,
         )
+        orphanId = ticket.assetId
         await putToSignedUrl(ticket.uploadUrl, file, setProgress)
         // Answers 204 — apiPost resolves on an empty body rather than trying to parse one.
         await apiPost<void>(
@@ -304,8 +307,18 @@ export function MediaUploadPanel({
           { sizeBytes: file.size },
           token,
         )
+        orphanId = null
         await onUploaded()
       } catch (err) {
+        if (orphanId) {
+          // A failed PUT or confirm leaves a PENDING Asset (and its PENDING Media row) behind; remove it,
+          // as the MCP upload tool does. Best effort — the original error is what the person needs to see.
+          try {
+            await apiDelete(`/api/v2/projects/${projectId}/work-items/${workItemId}/assets/${orphanId}`, token)
+          } catch {
+            /* ignore */
+          }
+        }
         setError(apiErrorMessage(err, err instanceof Error ? err.message : 'Upload failed'))
       } finally {
         setUploading(false)

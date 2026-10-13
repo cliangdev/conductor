@@ -4,7 +4,8 @@
 // label/source/licence (200 chars, as the server), AI-generated and Checked switches, Block/Unblock
 // with a reason and Delete with confirm. Server errors (409 in use, 400 too long) are shown verbatim.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
@@ -14,8 +15,11 @@ import { Sheet } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { apiErrorMessage } from '@/lib/api'
 import { formatDuration } from '@/lib/format'
+import { useSidebarWorkNav, workItemDetailPath } from '@/lib/workflows'
 import {
   deleteCreativePhoto,
+  getMediaUsage,
+  type MediaUsage,
   patchCreativePhoto,
   type CreativePhoto,
   type PatchCreativePhotoRequest,
@@ -69,6 +73,69 @@ function Preview({ item }: { item: CreativePhoto }) {
     return <img src={item.url} alt={item.label || 'Media preview'} className="max-h-80 w-full rounded-md bg-surface-3 object-contain" />
   }
   return <div className="flex h-40 items-center justify-center rounded-md bg-surface-3 text-sm text-muted-foreground">No preview</div>
+}
+
+/** "Used in": the Creatives referencing this media and the Posts carrying it. A usage failure only
+ *  hides the section — it never blocks the rest of the panel. */
+function UsedIn({ projectId, token, mediaId }: { projectId: string; token: string; mediaId: string }) {
+  const [usage, setUsage] = useState<MediaUsage | null>(null)
+  const { entries } = useSidebarWorkNav(projectId, token)
+
+  useEffect(() => {
+    let cancelled = false
+    getMediaUsage(projectId, token, mediaId)
+      .then((u) => {
+        if (!cancelled) setUsage(u)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, token, mediaId])
+
+  if (!usage || (usage.creatives.length === 0 && usage.posts.length === 0)) return null
+
+  const postHref = (p: MediaUsage['posts'][number]) => {
+    const nav = entries.find((e) => e.slug === p.workflow)
+    // Without the workflow's area/noun yet, the legacy issue route redirects to the right place.
+    return nav
+      ? workItemDetailPath(projectId, nav.area, nav.noun, p.displayId)
+      : `/app/projects/${projectId}/issues/${p.displayId}`
+  }
+
+  return (
+    <section aria-label="Used in" className="space-y-2 border-t border-border pt-3">
+      <h3 className="text-sm font-medium text-foreground">Used in</h3>
+      {usage.creatives.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Creatives</p>
+          <ul className="space-y-1 text-sm">
+            {usage.creatives.map((c) => (
+              <li key={c.id}>
+                <Link href={`/app/projects/${projectId}/marketing/creatives/${c.id}`} className="text-accent hover:underline">
+                  {c.displayId} {c.name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {usage.posts.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Posts</p>
+          <ul className="space-y-1 text-sm">
+            {usage.posts.map((p) => (
+              <li key={p.workItemId}>
+                <Link href={postHref(p)} className="text-accent hover:underline">
+                  {p.displayId} {p.title}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  )
 }
 
 interface DetailProps {
@@ -134,6 +201,7 @@ function MediaDetail({ projectId, token, item, canManage, onChanged, onDeleted }
       )}
       <Preview item={item} />
       <p className="text-xs text-muted-foreground">{facts.join(' · ')}</p>
+      <UsedIn projectId={projectId} token={token} mediaId={item.id} />
 
       <div className="space-y-3">
         <TextField id="media-detail-label" label="Label" value={label} onChange={setLabel} disabled={!canManage} />

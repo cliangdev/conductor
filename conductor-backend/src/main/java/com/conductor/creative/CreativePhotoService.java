@@ -1,12 +1,16 @@
 package com.conductor.creative;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.User;
+import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
+import com.conductor.service.AssetUploadPolicy;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.v2.model.CreateCreativePhotoRequest;
 import com.conductor.generated.v2.model.MediaKind;
 import com.conductor.generated.v2.model.PatchCreativePhotoRequest;
+import com.conductor.repository.AssetRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.StorageService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -20,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -73,23 +79,32 @@ public class CreativePhotoService {
     private final CreativePhotoRepository photoRepository;
     private final CreativeRepository creativeRepository;
     private final CreativeRegistry registry;
+    private final AssetRepository assetRepository;
+    private final CreativeRenderFrameRepository frameRepository;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
+    private final StorageObjectReferences storageReferences;
     private final ObjectMapper objectMapper;
     private final String backendBaseUrl;
 
     public CreativePhotoService(CreativePhotoRepository photoRepository,
                                 CreativeRepository creativeRepository,
                                 CreativeRegistry registry,
+                                AssetRepository assetRepository,
+                                CreativeRenderFrameRepository frameRepository,
                                 ProjectSecurityService projectSecurityService,
                                 StorageService storageService,
+                                StorageObjectReferences storageReferences,
                                 ObjectMapper objectMapper,
                                 @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.photoRepository = photoRepository;
         this.creativeRepository = creativeRepository;
         this.registry = registry;
+        this.assetRepository = assetRepository;
+        this.frameRepository = frameRepository;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
+        this.storageReferences = storageReferences;
         this.objectMapper = objectMapper;
         this.backendBaseUrl = backendBaseUrl;
     }
@@ -99,7 +114,31 @@ public class CreativePhotoService {
      * PUT ({@code uploadUrl}, present only on the create response), the signed GET of its poster
      * ({@code posterUrl}, null until a VIDEO has one) and any advisory warnings.
      */
-    public record PhotoView(CreativePhoto photo, String url, String uploadUrl, String posterUrl, List<String> warnings) {
+    public record PhotoView(CreativePhoto photo, String url, String uploadUrl, String posterUrl, List<String> warnings,
+                            Integer postCount, Integer creativeCount) {
+
+        /** A view with no usage counts (the create response). */
+        public PhotoView(CreativePhoto photo, String url, String uploadUrl, String posterUrl, List<String> warnings) {
+            this(photo, url, uploadUrl, posterUrl, warnings, null, null);
+        }
+
+        PhotoView withCounts(UsageCounts counts) {
+            return new PhotoView(photo, url, uploadUrl, posterUrl, warnings, counts.postCount(), counts.creativeCount());
+        }
+    }
+
+    /** How many Work Items and Creatives use one Media item. */
+    public record UsageCounts(int postCount, int creativeCount) {
+        static final UsageCounts NONE = new UsageCounts(0, 0);
+    }
+
+    public record UsageCreative(String id, String displayId, String name, String state) {
+    }
+
+    public record UsagePost(String workItemId, String displayId, String title, String status, String workflow) {
+    }
+
+    public record MediaUsage(List<UsageCreative> creatives, List<UsagePost> posts) {
     }
 
     /** The one-time signed PUT a poster's bytes go to, and the path it will live at. */
@@ -128,13 +167,195 @@ public class CreativePhotoService {
                     .filter(p -> p.getLabel() != null && p.getLabel().toLowerCase(Locale.ROOT).startsWith(prefix))
                     .toList();
         }
-        return photos.stream().map(this::toView).toList();
+        Map<String, UsageCounts> counts = usageCounts(projectId);
+        return photos.stream().map(p -> toView(p).withCounts(counts.getOrDefault(p.getId(), UsageCounts.NONE))).toList();
     }
 
     @Transactional(readOnly = true)
     public PhotoView getPhoto(String projectId, String photoId, User caller) {
         requireMember(projectId, caller);
-        return toView(findPhoto(projectId, photoId));
+        CreativePhoto photo = findPhoto(projectId, photoId);
+        return toView(photo).withCounts(usageCounts(projectId).getOrDefault(photoId, UsageCounts.NONE));
+    }
+
+    // ── Usage ────────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Post and Creative counts for every Media item in the project that has any use, in a fixed number of
+     * queries (project Creatives, direct links, frame links, the frames' Creatives) plus an in-memory scan.
+     * A Post counts once per item however many of its Assets point at it, directly or through a frame.
+     */
+    private Map<String, UsageCounts> usageCounts(String projectId) {
+        List<Creative> creatives = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
+        Map<String, Set<String>> mediaByCreative = new HashMap<>();
+        Map<String, Integer> creativeCounts = new HashMap<>();
+        for (Creative c : creatives) {
+            Set<String> ids = referencedPhotoIds(c);
+            mediaByCreative.put(c.getId(), ids);
+            ids.forEach(id -> creativeCounts.merge(id, 1, Integer::sum));
+        }
+
+        Map<String, Set<String>> postsByMedia = new HashMap<>();
+        for (Object[] row : assetRepository.findMediaLinksByProjectId(projectId)) {
+            postsByMedia.computeIfAbsent((String) row[0], k -> new HashSet<>()).add((String) row[1]);
+        }
+        List<Object[]> frameLinks = assetRepository.findFrameLinksByProjectId(projectId);
+        if (!frameLinks.isEmpty()) {
+            Map<String, String> creativeByFrame = new HashMap<>();
+            Map<String, String> pathByFrame = new HashMap<>();
+            frameRepository.findAllById(frameLinks.stream().map(r -> (String) r[0]).collect(java.util.stream.Collectors.toSet()))
+                    .forEach(f -> {
+                        creativeByFrame.put(f.getId(), f.getCreativeId());
+                        pathByFrame.put(f.getId(), f.getGcsPath());
+                    });
+            // A frame also counts for the Media item whose object it reuses, even if its Creative dropped it.
+            Map<String, List<String>> mediaIdsByPath = new HashMap<>();
+            for (CreativePhoto p : photoRepository.findAllByProjectIdOrderByCreatedAtDesc(projectId)) {
+                mediaIdsByPath.computeIfAbsent(p.getGcsPath(), k -> new ArrayList<>()).add(p.getId());
+            }
+            for (Object[] row : frameLinks) {
+                for (String mediaId : mediaIdsByPath.getOrDefault(pathByFrame.get((String) row[0]), List.of())) {
+                    postsByMedia.computeIfAbsent(mediaId, k -> new HashSet<>()).add((String) row[1]);
+                }
+                String creativeId = creativeByFrame.get((String) row[0]);
+                if (creativeId == null) {
+                    continue;
+                }
+                for (String mediaId : mediaByCreative.getOrDefault(creativeId, Set.of())) {
+                    postsByMedia.computeIfAbsent(mediaId, k -> new HashSet<>()).add((String) row[1]);
+                }
+            }
+        }
+
+        Map<String, UsageCounts> out = new HashMap<>();
+        Set<String> all = new HashSet<>(creativeCounts.keySet());
+        all.addAll(postsByMedia.keySet());
+        for (String id : all) {
+            out.put(id, new UsageCounts(postsByMedia.getOrDefault(id, Set.of()).size(), creativeCounts.getOrDefault(id, 0)));
+        }
+        return out;
+    }
+
+    /** Where one Media item is used: the Creatives that reference it and the Posts that link it, directly or by frame. */
+    @Transactional(readOnly = true)
+    public MediaUsage getUsage(String projectId, String photoId, User caller) {
+        requireMember(projectId, caller);
+        findPhoto(projectId, photoId);
+        List<Creative> creatives = creativesReferencing(projectId, photoId);
+        Set<String> frameIds = new HashSet<>();
+        for (Creative c : creatives) {
+            frameRepository.findAllByCreativeId(c.getId()).forEach(f -> frameIds.add(f.getId()));
+        }
+        // Frames that reuse this media's object count even when their Creative no longer references it.
+        frameRepository.findAllByGcsPath(findPhoto(projectId, photoId).getGcsPath()).forEach(f -> frameIds.add(f.getId()));
+        Map<String, WorkItem> posts = new java.util.LinkedHashMap<>();
+        for (Asset a : assetRepository.findUsageAssets(photoId, frameIds)) {
+            posts.putIfAbsent(a.getWorkItem().getId(), a.getWorkItem());
+        }
+        return new MediaUsage(
+                creatives.stream().map(c -> new UsageCreative(c.getId(), c.displayId(), c.getName(), c.getState())).toList(),
+                posts.values().stream().map(CreativePhotoService::toUsagePost).toList());
+    }
+
+    private static UsagePost toUsagePost(WorkItem w) {
+        return new UsagePost(w.getId(), displayIdOf(w), w.getTitle(), w.getCurrentStatus(),
+                w.getWorkflow() != null ? w.getWorkflow() : "ENGINEERING");
+    }
+
+    private static String displayIdOf(WorkItem w) {
+        return w.getSequenceNumber() != null && w.getProject() != null
+                ? w.getProject().getKey() + "-" + w.getSequenceNumber() : w.getId();
+    }
+
+    // ── Post uploads (the Media row behind a Work Item's file) ─────────────────────────────────
+
+    /**
+     * A PENDING Media item for a file uploaded straight onto a Work Item. It reuses the Work Item upload's
+     * object path, skips the Media allowlist (the Work Item's {@code AssetUploadPolicy} already governed the
+     * type, so e.g. a GIF is fine) and keeps width/height optional. The caller links it from the Asset.
+     */
+    @Transactional
+    public CreativePhoto createForPostUpload(String projectId, String gcsPath, String label, String contentType,
+                                             long sizeBytes, Integer width, Integer height,
+                                             BigDecimal durationSeconds, String createdBy) {
+        CreativePhoto photo = new CreativePhoto();
+        photo.setId(UUID.randomUUID().toString());
+        photo.setProjectId(projectId);
+        photo.setLabel(label != null && label.length() > 200 ? label.substring(0, 200) : label);
+        photo.setGcsPath(gcsPath);
+        photo.setContentType(normalize(contentType));
+        photo.setSizeBytes(sizeBytes);
+        photo.setMediaKind(contentType != null && normalize(contentType).startsWith("video/")
+                ? CreativePhoto.MEDIA_KIND_VIDEO : CreativePhoto.MEDIA_KIND_IMAGE);
+        photo.setWidth(width);
+        photo.setHeight(height);
+        photo.setDurationSeconds(durationSeconds);
+        photo.setAiGenerated(false);
+        photo.setFocal(objectMapper.createObjectNode());
+        photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_PENDING);
+        photo.setCreatedBy(createdBy);
+        return photoRepository.save(photo);
+    }
+
+    /** Marks a Post upload's Media item UPLOADED, with the size and (when known) dimensions the confirm measured. */
+    @Transactional
+    public void confirmForPostUpload(String mediaId, Long sizeBytes, Integer width, Integer height) {
+        photoRepository.findById(mediaId).ifPresent(photo -> {
+            if (sizeBytes != null && sizeBytes > 0) {
+                photo.setSizeBytes(sizeBytes);
+            }
+            if (width != null && height != null) {
+                photo.setWidth(width);
+                photo.setHeight(height);
+            }
+            photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+            photoRepository.save(photo);
+        });
+    }
+
+    /**
+     * Deletes a still-PENDING Media item once the Asset that created it is gone and no other Asset links it
+     * (a failed Post upload). An UPLOADED item is library content and is never touched.
+     */
+    @Transactional
+    public void deletePendingPostUpload(String mediaId, String removedAssetId) {
+        photoRepository.findById(mediaId)
+                .filter(p -> CreativePhoto.UPLOAD_STATUS_PENDING.equals(p.getUploadStatus()))
+                .filter(p -> !assetRepository.existsByMediaIdAndIdNot(mediaId, removedAssetId))
+                .ifPresent(photoRepository::delete);
+    }
+
+    /**
+     * The Media items a Work Item may link, in the order asked: each must exist in this project, be
+     * UPLOADED, not blocked and not AUDIO. Anything else is a 400 naming the item.
+     */
+    @Transactional(readOnly = true)
+    public List<CreativePhoto> requireLinkable(String projectId, List<String> mediaIds) {
+        Map<String, CreativePhoto> byId = new HashMap<>();
+        photoRepository.findAllByIdIn(mediaIds).forEach(p -> byId.put(p.getId(), p));
+        List<CreativePhoto> out = new ArrayList<>();
+        for (String id : mediaIds) {
+            CreativePhoto p = byId.get(id);
+            if (p == null || !projectId.equals(p.getProjectId())) {
+                throw new BusinessException("Media " + id + " was not found in this workspace");
+            }
+            String name = p.getLabel() != null && !p.getLabel().isBlank() ? "\"" + p.getLabel() + "\"" : id;
+            if (p.isBlocked()) {
+                throw new BusinessException("Media " + name + " is blocked and can't be added to a post");
+            }
+            if (!p.isUploaded()) {
+                throw new BusinessException("Media " + name + " is still uploading");
+            }
+            // The same allowlist a direct post upload is held to: Media also accepts types (audio, webm)
+            // a post can't carry.
+            String type = AssetUploadPolicy.normalizeContentType(p.getContentType());
+            if (type == null || !AssetUploadPolicy.ALLOWED_CONTENT_TYPES.contains(type)) {
+                throw new BusinessException("Media " + name + " is " + (type == null ? "an unknown type" : type)
+                        + ", which a post can't carry");
+            }
+            out.add(p);
+        }
+        return out;
     }
 
     @Transactional
@@ -357,13 +578,34 @@ public class CreativePhotoService {
                     + " uses this photo — remove it there first");
         }
 
-        List<String> gcsPaths = new ArrayList<>();
-        gcsPaths.add(photo.getGcsPath());
-        if (photo.getPosterGcsPath() != null) {
-            gcsPaths.add(photo.getPosterGcsPath());
+        Map<String, String> usedOnPosts = new java.util.LinkedHashMap<>();
+        for (Asset a : assetRepository.findAllByMediaIdFetchWorkItem(photoId)) {
+            usedOnPosts.putIfAbsent(a.getWorkItem().getId(),
+                    displayIdOf(a.getWorkItem()) + " \"" + a.getWorkItem().getTitle() + "\"");
         }
+        // A stale render of a Creative that no longer references this media can still be on a Post: its
+        // frame reuses this media's object, so the frame link counts as a use.
+        for (Asset a : assetRepository.findAllByFrameObjectPathsFetchWorkItem(mediaPaths(photo))) {
+            usedOnPosts.putIfAbsent(a.getWorkItem().getId(),
+                    displayIdOf(a.getWorkItem()) + " \"" + a.getWorkItem().getTitle() + "\"");
+        }
+        if (!usedOnPosts.isEmpty()) {
+            throw new ConflictException("In use on " + String.join(", ", usedOnPosts.values())
+                    + " \u2014 remove it from those posts first.");
+        }
+
         photoRepository.delete(photo);
-        AfterCommitStorageCleanup.deleteAfterCommit(storageService, gcsPaths, log);
+        // Frames (and Post uploads) can share these objects: only unreferenced ones are removed.
+        storageReferences.deleteUnreferencedAfterCommit(mediaPaths(photo), log);
+    }
+
+    private static List<String> mediaPaths(CreativePhoto photo) {
+        List<String> paths = new ArrayList<>();
+        paths.add(photo.getGcsPath());
+        if (photo.getPosterGcsPath() != null) {
+            paths.add(photo.getPosterGcsPath());
+        }
+        return paths;
     }
 
     /** Every Creative in the project that uses this media: main photo, sequence beat, {@code clipMedia}
@@ -382,6 +624,41 @@ public class CreativePhotoService {
             }
         }
         return new ArrayList<>(used.values());
+    }
+
+    /** Every Media id a Creative uses: main photo, sequence beats, clip media and carousel slides. */
+    private Set<String> referencedPhotoIds(Creative c) {
+        Set<String> ids = new HashSet<>();
+        if (c.getPhotoId() != null) {
+            ids.add(c.getPhotoId());
+        }
+        if (c.getSequence() != null && c.getSequence().isArray()) {
+            for (JsonNode beat : c.getSequence()) {
+                JsonNode id = beat.get("photoId");
+                if (id != null && id.isTextual()) {
+                    ids.add(id.asText());
+                }
+            }
+        }
+        if (c.getClipMedia() != null && c.getClipMedia().isObject()) {
+            c.getClipMedia().fields().forEachRemaining(e -> {
+                if (e.getValue() != null && e.getValue().isTextual()) {
+                    ids.add(e.getValue().asText());
+                }
+            });
+        }
+        if (c.getSlides() != null && c.getSlides().isObject()) {
+            for (JsonNode list : c.getSlides()) {
+                if (list.isArray()) {
+                    for (JsonNode id : list) {
+                        if (id.isTextual()) {
+                            ids.add(id.asText());
+                        }
+                    }
+                }
+            }
+        }
+        return ids;
     }
 
     /** Whether a CAROUSEL's {@code slides} map ({@code {"default": [id...], "<placement>": [id...]}}) names this media. */

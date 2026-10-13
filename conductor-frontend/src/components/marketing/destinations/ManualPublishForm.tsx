@@ -12,7 +12,7 @@ import type { SelectedPublishTarget } from './types'
  * Records what a human already did: the link to the post they published by hand, and when.
  *
  * The link is required and the reason is not pedantry — there is no platform to ask, so it is the only
- * record this destination ever went out, and the thing the calendar, the Asset library and any later
+ * record this destination ever went out, and the thing the calendar, the Media library and any later
  * reader all read. The time defaults to now but is editable, because the common case for filling this
  * in is a few hours after the fact and a wrong timestamp on a published post is quietly misleading.
  */
