@@ -287,6 +287,7 @@ describe('Sidebar', () => {
       '/app/projects/proj-1/marketing/campaigns',
       '/app/projects/proj-1/marketing/insights',
       '/app/projects/proj-1/marketing/creatives',
+      '/app/projects/proj-1/marketing/media',
       '/app/projects/proj-1/marketing/assets',
     ])
   })
