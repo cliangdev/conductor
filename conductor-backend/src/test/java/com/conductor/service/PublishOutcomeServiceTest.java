@@ -364,6 +364,25 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(stored.getErrorDetail()).isEqualTo("(#4) Application request limit reached");
     }
 
+    @Test
+    void aStorySequenceThatFailedPartwayPointsTheFailedRowAtItsFirstPublishedStory() {
+        PostPublishTarget target = publishing("instagram");
+        targetRepository.updateResumeCheckpoint(target.getId(), "{\"kind\":\"story_sequence\","
+                + "\"media\":[\"a\",\"b\",\"c\"],\"stories\":[{\"id\":\"m-1\","
+                + "\"permalink\":\"https://www.instagram.com/stories/acme/1/\"}]}");
+
+        service.recordFailure(target.getId(), "Published 1 of 3 stories to Instagram (@acme); retrying "
+                + "resumes at story 2. Instagram rejected the post");
+
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(stored.getPlatformPostId()).isEqualTo("m-1");
+        assertThat(stored.getPermalink()).isEqualTo("https://www.instagram.com/stories/acme/1/");
+        assertThat(stored.getErrorMessage()).startsWith("Published 1 of 3 stories to Instagram (@acme)");
+        // The checkpoint survives: the retry reads it to skip story 1.
+        assertThat(stored.getResumeCheckpoint()).contains("m-1");
+    }
+
     // --- [auto] A permanent auth failure surfaces on the connection --------------------------------
 
     @Test

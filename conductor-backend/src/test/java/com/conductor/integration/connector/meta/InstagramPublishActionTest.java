@@ -45,11 +45,25 @@ class InstagramPublishActionTest {
     private final List<Route> routes = new ArrayList<>();
     private final StubMediaResolver mediaResolver = new StubMediaResolver();
 
+    /** The target row's resume_checkpoint, by target id — what the story sequence persists between attempts. */
+    private final Map<String, String> checkpoints = new java.util.HashMap<>();
+
     private MetaConnector connector;
 
     @BeforeEach
     void setUp() {
-        connector = new MetaConnector(new MetaGraphClient(restTemplate), mediaResolver);
+        connector = new MetaConnector(new MetaGraphClient(restTemplate), mediaResolver,
+                new StorySequencePublisher.Store() {
+                    @Override
+                    public java.util.Optional<String> read(String targetId) {
+                        return java.util.Optional.ofNullable(checkpoints.get(targetId));
+                    }
+
+                    @Override
+                    public void save(String targetId, String json) {
+                        checkpoints.put(targetId, json);
+                    }
+                });
         // No real waiting between container status polls.
         connector.instagramPublisher().pollIntervalMillis = 0L;
         lenient().when(restTemplate.exchange(any(URI.class), any(HttpMethod.class), any(HttpEntity.class),
@@ -338,14 +352,110 @@ class InstagramPublishActionTest {
     }
 
     @Test
-    void storyFormat_withTwoAssets_isAPermanentErrorNamingTheRule() {
-        mediaResolver.media = List.of(image(), image());
+    void storySequence_publishesEachItemAsItsOwnStory_inOrder() {
+        mediaResolver.media = List.of(imageN(1), imageN(2), imageN(3));
+        quotaAvailable(4);
+        AtomicInteger containers = new AtomicInteger();
+        AtomicInteger published = new AtomicInteger();
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("c-" + containers.incrementAndGet()));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("m-" + published.incrementAndGet()));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("m", "https://www.instagram.com/stories/acme/1/"));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "work_item_id", "wi-1", "target_id", "t-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        // The first story is the target's platform_post_id; the rest ride along.
+        assertThat(result.output()).containsEntry("media_id", "m-1")
+                .containsEntry("story_ids", List.of("m-1", "m-2", "m-3"))
+                .containsEntry("story_count", 3);
+        List<String> created = calls.stream()
+                .filter(c -> c.method() == HttpMethod.POST && c.uri().getPath().endsWith("/ig-1/media"))
+                .map(c -> c.param("image_url")).toList();
+        assertThat(created).hasSize(3);
+        assertThat(created.get(0)).contains("s1.jpg");
+        assertThat(created.get(1)).contains("s2.jpg");
+        assertThat(created.get(2)).contains("s3.jpg");
+        assertThat(calls.stream().filter(c -> c.method() == HttpMethod.POST
+                && c.uri().getPath().endsWith("/ig-1/media")).allMatch(c -> "STORIES".equals(c.param("media_type"))))
+                .isTrue();
+        assertThat(checkpoints.get("t-1")).contains("m-1").contains("m-2").contains("m-3");
+    }
+
+    @Test
+    void storySequence_failureOnItemTwo_recordsItemOne_andResumesWithoutRepublishingIt() {
+        mediaResolver.media = List.of(imageN(1), imageN(2), imageN(3));
+        quotaAvailable(0);
+        AtomicInteger containers = new AtomicInteger();
+        AtomicInteger published = new AtomicInteger();
+        boolean[] rejectSecond = {true};
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("c-" + containers.incrementAndGet()));
+        onPost("/ig-1/media_publish", call -> {
+            int n = published.incrementAndGet();
+            if (n == 2 && rejectSecond[0]) {
+                published.decrementAndGet();
+                throw HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request", new HttpHeaders(),
+                        "{\"error\":{\"message\":\"Media upload has failed\"}}".getBytes(), null);
+            }
+            return new MetaGraphClient.ContainerResponse("m-" + n);
+        });
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("m", null));
+        Map<String, Object> input = Map.of("format", "story", "work_item_id", "wi-1", "target_id", "t-1");
+
+        ActionResult first = connector.invoke("publish_instagram_media", input, CTX);
+
+        assertThat(first.success()).isFalse();
+        assertThat(first.message()).startsWith(
+                "Published 1 of 3 stories to Instagram (@acme); retrying resumes at story 2.");
+        assertThat(checkpoints.get("t-1")).contains("m-1").doesNotContain("m-2");
+        long createsBefore = calls.stream().filter(c -> c.method() == HttpMethod.POST
+                && c.uri().getPath().endsWith("/ig-1/media")).count();
+        assertThat(createsBefore).isEqualTo(2);
+
+        // The retry: a fresh invocation, the same target row.
+        rejectSecond[0] = false;
+        calls.clear();
+        ActionResult retry = connector.invoke("publish_instagram_media", input, CTX);
+
+        assertThat(retry.success()).isTrue();
+        assertThat(retry.output()).containsEntry("media_id", "m-1")
+                .containsEntry("story_ids", List.of("m-1", "m-2", "m-3"));
+        List<String> recreated = calls.stream()
+                .filter(c -> c.method() == HttpMethod.POST && c.uri().getPath().endsWith("/ig-1/media"))
+                .map(c -> c.param("image_url")).toList();
+        assertThat(recreated).hasSize(2);
+        assertThat(recreated.get(0)).contains("s2.jpg");
+        assertThat(recreated.get(1)).contains("s3.jpg");
+    }
+
+    @Test
+    void storySequence_aCheckpointForDifferentMedia_isDiscardedNotResumedInto() {
+        mediaResolver.media = List.of(imageN(1), imageN(2));
+        quotaAvailable(0);
+        checkpoints.put("t-1", "{\"kind\":\"story_sequence\",\"media\":[\"assets/proj/wi-1/old.jpg\","
+                + "\"assets/proj/wi-1/s2.jpg\"],\"stories\":[{\"id\":\"m-old\"}]}");
+        AtomicInteger containers = new AtomicInteger();
+        onPost("/ig-1/media", call -> new MetaGraphClient.ContainerResponse("c-" + containers.incrementAndGet()));
+        onPost("/ig-1/media_publish", call -> new MetaGraphClient.ContainerResponse("m-new-" + containers.get()));
+        onGet("permalink", call -> new MetaGraphClient.InstagramMediaResponse("m", null));
+
+        ActionResult result = connector.invoke("publish_instagram_media",
+                Map.of("format", "story", "work_item_id", "wi-1", "target_id", "t-1"), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(containers.get()).isEqualTo(2);
+    }
+
+    @Test
+    void storySequence_moreThanSevenItems_isAPermanentErrorNamingTheLimit() {
+        mediaResolver.media = List.of(imageN(1), imageN(2), imageN(3), imageN(4), imageN(5), imageN(6),
+                imageN(7), imageN(8));
 
         ActionResult result = connector.invoke("publish_instagram_media",
                 Map.of("format", "story", "work_item_id", "wi-1"), CTX);
 
         assertThat(result.success()).isFalse();
-        assertThat(result.message()).contains("Story").contains("exactly one");
+        assertThat(result.message()).contains("story sequence").contains("at most 7");
         assertThat(calls).isEmpty();
     }
 
@@ -678,6 +788,11 @@ class InstagramPublishActionTest {
     private static PublishMedia video() {
         return new PublishMedia("https://signed.example/clip.mp4", "assets/proj/wi-1/clip.mp4",
                 "video/mp4", 4096L);
+    }
+
+    private static PublishMedia imageN(int n) {
+        return new PublishMedia("https://signed.example/s" + n + ".jpg", "assets/proj/wi-1/s" + n + ".jpg",
+                "image/jpeg", 2048L);
     }
 
     private static PublishMedia image() {

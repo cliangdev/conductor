@@ -3,12 +3,14 @@ package com.conductor.repository;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface PostPublishTargetRepository extends JpaRepository<PostPublishTarget, String> {
@@ -17,6 +19,20 @@ public interface PostPublishTargetRepository extends JpaRepository<PostPublishTa
     List<PostPublishTarget> findAllByConnectionId(String connectionId);
 
     List<PostPublishTarget> findAllByWorkItemId(String workItemId);
+
+    /** The row's resume checkpoint alone, so a connector can read its progress without loading the entity. */
+    @Query("SELECT t.resumeCheckpoint FROM PostPublishTarget t WHERE t.id = :id")
+    Optional<String> findResumeCheckpointById(@Param("id") String id);
+
+    /**
+     * Writes the resume checkpoint with a targeted UPDATE rather than {@code save}: a connector records
+     * progress from inside a publish while the scheduler's own transaction still holds a copy of the row, and
+     * saving that stale copy back (or this one over it) would clobber state it never read.
+     */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE PostPublishTarget t SET t.resumeCheckpoint = :checkpoint WHERE t.id = :id")
+    int updateResumeCheckpoint(@Param("id") String id, @Param("checkpoint") String checkpoint);
 
     List<PostPublishTarget> findAllByWorkItemIdAndState(String workItemId, PostPublishTargetState state);
 

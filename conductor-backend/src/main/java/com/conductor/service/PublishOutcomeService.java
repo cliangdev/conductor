@@ -859,6 +859,33 @@ public class PublishOutcomeService {
         return true;
     }
 
+    /**
+     * A story sequence that failed partway has already put its first stories live. Its checkpoint (see
+     * {@code StorySequencePublisher}) holds their ids, so the failed row points at the first one — the
+     * outcome shows where the sequence starts instead of looking as if nothing went out. A later successful
+     * retry overwrites it with the same id.
+     */
+    private void keepFirstPublishedStory(PostPublishTarget target) {
+        String checkpoint = target.getResumeCheckpoint();
+        if (checkpoint == null || checkpoint.isBlank()) {
+            return;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode first =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(checkpoint).path("stories").path(0);
+            if (!first.path("id").asText("").isBlank()) {
+                target.setPlatformPostId(first.path("id").asText());
+                String permalink = first.path("permalink").asText("");
+                if (!permalink.isBlank()) {
+                    target.setPermalink(permalink);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Target {} has a resume checkpoint that is not a story sequence's: {}", target.getId(),
+                    e.getMessage());
+        }
+    }
+
     private boolean applyFailure(PostPublishTarget target, String errorMessage, boolean permanentAuthFailure) {
         if (target.getState() == PostPublishTargetState.REVOKED) {
             log.debug("Target {} was revoked; a late failure does not overwrite it", target.getId());
@@ -870,6 +897,7 @@ public class PublishOutcomeService {
         }
 
         target.setState(PostPublishTargetState.FAILED);
+        keepFirstPublishedStory(target);
         target.setErrorMessage(PlatformErrorText.humanize(errorMessage));
         target.setErrorDetail(PlatformErrorText.detail(errorMessage));
         target.setAttempts(target.getAttempts() + 1);

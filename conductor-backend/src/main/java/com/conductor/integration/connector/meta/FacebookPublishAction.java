@@ -29,7 +29,7 @@ import java.util.Map;
  *
  * <h2>Format</h2>
  * The target's {@link com.conductor.service.publish.PostFormat} arrives lower-case under {@code format}.
- * A {@code story} publishes immediately through the Page's Story edges and carries no caption — Meta
+ * A {@code story} (one to seven items, each its own story) publishes immediately through the Page's Story edges and carries no caption — Meta
  * ignores one, so it is never sent and a supplied caption only gets a log line. A {@code reel}, and a
  * {@code feed} post whose selected media is a single video, both go out through the Page Reels API
  * ({@code /video_reels}): Meta's Reels guide says this is now the <b>only</b> way to publish a Page
@@ -63,12 +63,22 @@ class FacebookPublishAction {
     private static final String FORMAT_REEL = "reel";
     private static final String FORMAT_STORY = "story";
 
+    /** A story sequence is at most this many stories — the same ceiling a Creative's story sequence has. */
+    static final int MAX_STORY_ITEMS = 7;
+
     private final MetaGraphClient graphClient;
     private final PublishMediaResolver mediaResolver;
+    private final StorySequencePublisher storySequences;
 
     FacebookPublishAction(MetaGraphClient graphClient, PublishMediaResolver mediaResolver) {
+        this(graphClient, mediaResolver, new StorySequencePublisher(StorySequencePublisher.Store.none()));
+    }
+
+    FacebookPublishAction(MetaGraphClient graphClient, PublishMediaResolver mediaResolver,
+                          StorySequencePublisher storySequences) {
         this.graphClient = graphClient;
         this.mediaResolver = mediaResolver;
+        this.storySequences = storySequences;
     }
 
     ActionResult publish(Map<String, Object> input, ConnectionContext ctx) {
@@ -111,7 +121,8 @@ class FacebookPublishAction {
         }
 
         if (FORMAT_STORY.equalsIgnoreCase(format)) {
-            return publishStory(pageId, token, media, message, scheduledPublishTime);
+            return publishStory(pageId, token, media, message, scheduledPublishTime,
+                    MetaActions.string(input, "target_id"), MetaActions.stringConfig(ctx, MetaConnector.CONFIG_PAGE_NAME));
         }
 
         boolean singleVideoFeed = media.size() == 1 && media.get(0).isVideo();
@@ -277,15 +288,18 @@ class FacebookPublishAction {
     }
 
     /**
-     * A Story: exactly one photo or video, published immediately (Meta cannot schedule a Story), and
-     * with no caption — Instagram's Facebook counterpart ignores one, so it is dropped rather than sent
-     * and merely logged when the destination carried one.
+     * A Story, or a story sequence: one photo or video per story, published immediately (Meta cannot
+     * schedule a Story) and in the destination's order, with no caption — Meta ignores one, so it is dropped
+     * rather than sent and merely logged when the destination carried one. Each item is its own
+     * {@code photo_stories} / {@code video_stories} publish, checkpointed after it succeeds by
+     * {@link StorySequencePublisher} so a retry resumes at the first story that did not go out.
      */
     private ActionResult publishStory(String pageId, String token, List<PublishMedia> media, String message,
-                                      Long scheduledPublishTime) {
-        if (media.size() != 1) {
-            return ActionResult.error("A Facebook Story needs exactly one photo or video; this destination "
-                    + "selected " + media.size() + " item(s)");
+                                      Long scheduledPublishTime, String targetId, String pageName) {
+        if (media.isEmpty() || media.size() > MAX_STORY_ITEMS) {
+            return ActionResult.error("A Facebook story sequence is 1 to " + MAX_STORY_ITEMS
+                    + " photos or videos, each published as its own story; this destination selected "
+                    + media.size() + " item(s)");
         }
         if (scheduledPublishTime != null) {
             log.debug("Facebook Stories cannot be scheduled; publishing immediately instead");
@@ -294,22 +308,29 @@ class FacebookPublishAction {
             log.info("Facebook Stories carry no caption; the message on this post was not sent");
         }
 
-        PublishMedia only = media.get(0);
+        StorySequencePublisher.Outcome outcome;
         try {
-            MetaGraphClient.PublishedPost published;
-            if (only.isVideo()) {
-                published = graphClient.publishVideoStory(pageId, token, only.url());
-            } else {
-                String photoId = graphClient.uploadUnpublishedPhoto(pageId, token, only.url());
-                published = graphClient.publishPhotoStory(pageId, token, photoId);
-            }
-            Map<String, Object> output = new LinkedHashMap<>();
-            output.put("post_id", published.postId());
-            output.put("is_story", true);
-            return ActionResult.ok(output);
-        } catch (HttpClientErrorException e) {
-            return MetaActions.permanentOrRethrow(e, "Facebook rejected the story");
+            outcome = storySequences.publish(targetId, media, "Facebook", pageName,
+                    "Facebook rejected the story", (index, item) -> {
+                        MetaGraphClient.PublishedPost published;
+                        if (item.isVideo()) {
+                            published = graphClient.publishVideoStory(pageId, token, item.url());
+                        } else {
+                            String photoId = graphClient.uploadUnpublishedPhoto(pageId, token, item.url());
+                            published = graphClient.publishPhotoStory(pageId, token, photoId);
+                        }
+                        return StorySequencePublisher.Item.published(published.postId(), null);
+                    });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while publishing Facebook stories", e);
         }
+        if (outcome.error() != null) {
+            return outcome.error();
+        }
+        Map<String, Object> output = StorySequencePublisher.output(outcome.stories());
+        output.put("post_id", outcome.stories().get(0).id());
+        return ActionResult.ok(output);
     }
 
     /**

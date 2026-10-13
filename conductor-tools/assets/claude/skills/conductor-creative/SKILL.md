@@ -209,7 +209,8 @@ the Creative and overrides only its own `headline`, and optionally `body`, `phot
 photo, uploaded on commit) or `photoId`, or `cta`. Structure a story hook, mechanism,
 payoff — the first beat has to earn the next tap on its own, since that's where the drop-off is
 worst. A logo lockup and CTA claim land on the last beat only by default; `cta: true` on an earlier
-beat overrides that. A carousel renders every card at one shared aspect ratio (`carouselRatio`),
+beat overrides that. A story sequence publishes: attach it to an Instagram or Facebook Story
+destination and each beat goes out as its own story, in order. A carousel renders every card at one shared aspect ratio (`carouselRatio`),
 since the destination platforms require that.
 
 ## Video you already have
