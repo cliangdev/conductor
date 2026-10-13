@@ -82,6 +82,7 @@ public class CreativePhotoService {
     private final CreativeRenderFrameRepository frameRepository;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
+    private final StorageObjectReferences storageReferences;
     private final ObjectMapper objectMapper;
     private final String backendBaseUrl;
 
@@ -92,6 +93,7 @@ public class CreativePhotoService {
                                 CreativeRenderFrameRepository frameRepository,
                                 ProjectSecurityService projectSecurityService,
                                 StorageService storageService,
+                                StorageObjectReferences storageReferences,
                                 ObjectMapper objectMapper,
                                 @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.photoRepository = photoRepository;
@@ -101,6 +103,7 @@ public class CreativePhotoService {
         this.frameRepository = frameRepository;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
+        this.storageReferences = storageReferences;
         this.objectMapper = objectMapper;
         this.backendBaseUrl = backendBaseUrl;
     }
@@ -198,9 +201,21 @@ public class CreativePhotoService {
         List<Object[]> frameLinks = assetRepository.findFrameLinksByProjectId(projectId);
         if (!frameLinks.isEmpty()) {
             Map<String, String> creativeByFrame = new HashMap<>();
+            Map<String, String> pathByFrame = new HashMap<>();
             frameRepository.findAllById(frameLinks.stream().map(r -> (String) r[0]).collect(java.util.stream.Collectors.toSet()))
-                    .forEach(f -> creativeByFrame.put(f.getId(), f.getCreativeId()));
+                    .forEach(f -> {
+                        creativeByFrame.put(f.getId(), f.getCreativeId());
+                        pathByFrame.put(f.getId(), f.getGcsPath());
+                    });
+            // A frame also counts for the Media item whose object it reuses, even if its Creative dropped it.
+            Map<String, List<String>> mediaIdsByPath = new HashMap<>();
+            for (CreativePhoto p : photoRepository.findAllByProjectIdOrderByCreatedAtDesc(projectId)) {
+                mediaIdsByPath.computeIfAbsent(p.getGcsPath(), k -> new ArrayList<>()).add(p.getId());
+            }
             for (Object[] row : frameLinks) {
+                for (String mediaId : mediaIdsByPath.getOrDefault(pathByFrame.get((String) row[0]), List.of())) {
+                    postsByMedia.computeIfAbsent(mediaId, k -> new HashSet<>()).add((String) row[1]);
+                }
                 String creativeId = creativeByFrame.get((String) row[0]);
                 if (creativeId == null) {
                     continue;
@@ -230,6 +245,8 @@ public class CreativePhotoService {
         for (Creative c : creatives) {
             frameRepository.findAllByCreativeId(c.getId()).forEach(f -> frameIds.add(f.getId()));
         }
+        // Frames that reuse this media's object count even when their Creative no longer references it.
+        frameRepository.findAllByGcsPath(findPhoto(projectId, photoId).getGcsPath()).forEach(f -> frameIds.add(f.getId()));
         Map<String, WorkItem> posts = new java.util.LinkedHashMap<>();
         for (Asset a : assetRepository.findUsageAssets(photoId, frameIds)) {
             posts.putIfAbsent(a.getWorkItem().getId(), a.getWorkItem());
@@ -561,18 +578,29 @@ public class CreativePhotoService {
             usedOnPosts.putIfAbsent(a.getWorkItem().getId(),
                     displayIdOf(a.getWorkItem()) + " \"" + a.getWorkItem().getTitle() + "\"");
         }
+        // A stale render of a Creative that no longer references this media can still be on a Post: its
+        // frame reuses this media's object, so the frame link counts as a use.
+        for (Asset a : assetRepository.findAllByFrameObjectPathsFetchWorkItem(mediaPaths(photo))) {
+            usedOnPosts.putIfAbsent(a.getWorkItem().getId(),
+                    displayIdOf(a.getWorkItem()) + " \"" + a.getWorkItem().getTitle() + "\"");
+        }
         if (!usedOnPosts.isEmpty()) {
             throw new ConflictException("In use on " + String.join(", ", usedOnPosts.values())
                     + " \u2014 remove it from those posts first.");
         }
 
-        List<String> gcsPaths = new ArrayList<>();
-        gcsPaths.add(photo.getGcsPath());
-        if (photo.getPosterGcsPath() != null) {
-            gcsPaths.add(photo.getPosterGcsPath());
-        }
         photoRepository.delete(photo);
-        AfterCommitStorageCleanup.deleteAfterCommit(storageService, gcsPaths, log);
+        // Frames (and Post uploads) can share these objects: only unreferenced ones are removed.
+        storageReferences.deleteUnreferencedAfterCommit(mediaPaths(photo), log);
+    }
+
+    private static List<String> mediaPaths(CreativePhoto photo) {
+        List<String> paths = new ArrayList<>();
+        paths.add(photo.getGcsPath());
+        if (photo.getPosterGcsPath() != null) {
+            paths.add(photo.getPosterGcsPath());
+        }
+        return paths;
     }
 
     /** Every Creative in the project that uses this media: main photo, sequence beat, {@code clipMedia}

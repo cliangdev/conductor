@@ -24,6 +24,9 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
      *  Post can be attached from an older render whose frames are still the ones actually published. */
     List<CreativeRenderFrame> findAllByCreativeId(String creativeId);
 
+    /** Every frame whose stored object is this path (frames reuse the Media item's object). */
+    List<CreativeRenderFrame> findAllByGcsPath(String gcsPath);
+
     @Modifying
     void deleteAllByRenderId(String renderId);
 

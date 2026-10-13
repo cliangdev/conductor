@@ -78,6 +78,7 @@ public class CreativeRenderService {
     private final CreativeSpecBuilder specBuilder;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
+    private final StorageObjectReferences storageReferences;
     private final ObjectMapper objectMapper;
 
     public CreativeRenderService(CreativeRenderRepository renderRepository,
@@ -90,6 +91,7 @@ public class CreativeRenderService {
                                  CreativeSpecBuilder specBuilder,
                                  ProjectSecurityService projectSecurityService,
                                  StorageService storageService,
+                                 StorageObjectReferences storageReferences,
                                  ObjectMapper objectMapper) {
         this.renderRepository = renderRepository;
         this.frameRepository = frameRepository;
@@ -101,6 +103,7 @@ public class CreativeRenderService {
         this.specBuilder = specBuilder;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
+        this.storageReferences = storageReferences;
         this.objectMapper = objectMapper;
     }
 
@@ -222,7 +225,7 @@ public class CreativeRenderService {
     /**
      * CLIP renders are assembled here, not on the user's machine (COND-24 PR1, contract "Renders for
      * CLIP"): a real video would take real ffmpeg work no local Playwright job does, so the backend just
-     * copies the chosen media object(s) straight into the render's own path and records one frame per
+     * links the chosen media object(s) (nothing is copied) and records one frame per
      * placement the clip set covers. The render is created — and settles — SUCCEEDED in this one call;
      * there is no RUNNING interval and no frame PUT.
      */
@@ -267,13 +270,9 @@ public class CreativeRenderService {
             CreativePhoto media = photoRepository.findByIdAndProjectId(entry.getValue(), projectId)
                     .orElseThrow(() -> new BusinessException("No media with id " + entry.getValue() + " in this project"));
 
-            String destPath = clipFramePath(projectId, creative.getId(), render.getId(), placementKey, media.getContentType());
-            storageService.copy(media.getGcsPath(), destPath);
-            String posterDestPath = null;
-            if (media.getPosterGcsPath() != null) {
-                posterDestPath = clipFramePosterPath(projectId, creative.getId(), render.getId(), placementKey);
-                storageService.copy(media.getPosterGcsPath(), posterDestPath);
-            }
+            // The frame links the media's own object (and poster): nothing is copied.
+            String destPath = media.getGcsPath();
+            String posterDestPath = media.getPosterGcsPath();
 
             CreativeRenderFrame frame = new CreativeRenderFrame();
             frame.setRenderId(render.getId());
@@ -298,7 +297,7 @@ public class CreativeRenderService {
 
     /**
      * CAROUSEL renders are assembled here, like CLIP's: the slides are finished images used as-is, so the
-     * backend copies each slide object into the render's own path and records one IMAGE frame per slide per
+     * backend links each slide's own object (nothing is copied) and records one IMAGE frame per slide per
      * targeted placement ({@code placementKey} + 0-based {@code sequenceIndex}). The render is created, and
      * settles, SUCCEEDED in this one call — no layout, overlay or safe-zone check runs.
      */
@@ -345,10 +344,8 @@ public class CreativeRenderService {
                 String mediaId = mediaIds.get(i);
                 CreativePhoto media = photoRepository.findByIdAndProjectId(mediaId, projectId)
                         .orElseThrow(() -> new BusinessException("No media with id " + mediaId + " in this project"));
-                String destPath = "projects/" + projectId + "/creatives/" + creative.getId() + "/renders/"
-                        + render.getId() + "/" + placementKey + "-" + String.format("%02d", i + 1) + "."
-                        + imageExtensionFor(media.getContentType());
-                storageService.copy(media.getGcsPath(), destPath);
+                // The frame links the slide's own object: nothing is copied.
+                String destPath = media.getGcsPath();
 
                 CreativeRenderFrame frame = new CreativeRenderFrame();
                 frame.setRenderId(render.getId());
@@ -367,14 +364,6 @@ public class CreativeRenderService {
             }
         }
         return new CreateRenderResult(render, null, frames);
-    }
-
-    private static String imageExtensionFor(String contentType) {
-        return switch (contentType == null ? "" : contentType) {
-            case "image/png" -> "png";
-            case "image/webp" -> "webp";
-            default -> "jpg";
-        };
     }
 
     private Map<String, List<CreativeValidator.SlideEntry>> resolveSlideEntries(String projectId,
@@ -404,24 +393,7 @@ public class CreativeRenderService {
         });
     }
 
-    private String clipFramePath(String projectId, String creativeId, String renderId, String placementKey, String contentType) {
-        return "projects/" + projectId + "/creatives/" + creativeId + "/renders/" + renderId + "/" + placementKey
-                + "." + videoExtensionFor(contentType);
-    }
-
-    private String clipFramePosterPath(String projectId, String creativeId, String renderId, String placementKey) {
-        return "projects/" + projectId + "/creatives/" + creativeId + "/renders/" + renderId + "/" + placementKey + "-poster.jpg";
-    }
-
-    private static String videoExtensionFor(String contentType) {
-        return switch (contentType == null ? "" : contentType) {
-            case "video/quicktime" -> "mov";
-            case "video/webm" -> "webm";
-            default -> "mp4";
-        };
-    }
-
-    /**
+                /**
      * One frame per placement a CLIP creative's {@code clipMedia} covers: an explicit key (other than
      * {@code "default"}) names its own placement directly; {@code "default"}'s media resolves to the
      * registry placement whose aspect ratio is closest to its own (excluding {@code story}, whose aspect
@@ -613,15 +585,16 @@ public class CreativeRenderService {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
         }
         // AC-P0-3.2: a failed render leaves no frame behind for attach to find.
+        List<String> framePaths = new ArrayList<>();
         for (CreativeRenderFrame frame : frameRepository.findAllByRenderId(renderId)) {
-            try {
-                storageService.delete(frame.getGcsPath());
-            } catch (RuntimeException e) {
-                log.warn("Could not delete frame object {} for failed render {}: {}",
-                        frame.getGcsPath(), renderId, e.toString());
+            framePaths.add(frame.getGcsPath());
+            if (frame.getPosterGcsPath() != null) {
+                framePaths.add(frame.getPosterGcsPath());
             }
         }
         frameRepository.deleteAllByRenderId(renderId);
+        // Frames may link Media objects: only objects nothing else references are removed, after commit.
+        storageReferences.deleteUnreferencedAfterCommit(framePaths, log);
 
         render.setState(CreativeRender.STATE_FAILED);
         render.setError(request.getMessage());

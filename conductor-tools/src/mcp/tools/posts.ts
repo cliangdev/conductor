@@ -30,6 +30,8 @@ export interface MediaInput {
   path?: string
   /** A public URL — fetched here, on the machine the server runs on, then uploaded like a local file. */
   url?: string
+  /** A Media library file (from list_creative_media) — linked, not uploaded. */
+  mediaId?: string
   label?: string
   width?: number
   height?: number
@@ -316,6 +318,13 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
     throw new Error('targets is required — at least one {platform, account?}. Call list_publish_targets to see accounts.')
   }
 
+  // Exactly one source per media item, checked before anything is created.
+  for (const [index, m] of (params.media ?? []).entries()) {
+    if ([m.path, m.url, m.mediaId].filter(Boolean).length !== 1) {
+      throw new Error(`media[${index}] needs exactly one of path, url or mediaId.`)
+    }
+  }
+
   const accounts = await listAccounts(config)
   const workflow = await pickPublishingWorkflow(config, accounts, params.workflow)
   // Resolve every destination before creating anything, so a typo in an account name costs no Post.
@@ -333,7 +342,17 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
 
   // Media, in the order given, so index-style assetIds line up.
   const assets: Array<Record<string, unknown>> = []
-  for (const [index, media] of (params.media ?? []).entries()) {
+  const items = params.media ?? []
+  for (let index = 0; index < items.length; index++) {
+    const media = items[index]!
+    if (media.mediaId) {
+      // A run of consecutive library ids links in one call at its position (from-media keeps request order).
+      const ids = [media.mediaId]
+      while (items[index + 1]?.mediaId) ids.push(items[++index]!.mediaId as string)
+      const linked = await uploadAsset({ issueId: postId, mediaIds: ids }, config)
+      assets.push(...((linked['assets'] as Array<Record<string, unknown>>) ?? []))
+      continue
+    }
     const stored = await uploadAsset(
       {
         issueId: postId,

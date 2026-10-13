@@ -72,7 +72,7 @@ public class CreativeRenderFrame {
     @Column(name = "has_audio")
     private Boolean hasAudio;
 
-    /** A copy of the source media's poster JPEG under this render's own path; null for an image frame or a video with no poster. */
+    /** The source media's poster JPEG (the same stored object, for a linked CLIP frame); null for an image frame or a video with no poster. */
     @Column(name = "poster_gcs_path")
     private String posterGcsPath;
 

@@ -1061,13 +1061,14 @@ export const TOOLS = [
             properties: {
               path: { type: 'string', description: 'A file on this machine' },
               url: { type: 'string', description: 'A public http(s) URL' },
+              mediaId: { type: 'string', description: 'A Media library file id; see list_creative_media' },
               label: { type: 'string' },
               width: { type: 'number' },
               height: { type: 'number' },
               durationSeconds: { type: 'number' },
             },
           },
-          description: 'Files to attach, in order. Every destination inherits all of them unless it names assetIds.',
+          description: 'Files to attach, in order; each item has exactly one of path, url, mediaId (mediaId reuses a Media library file; see list_creative_media). Every destination inherits all of them unless it names assetIds.',
         },
         targets: {
           type: 'array',

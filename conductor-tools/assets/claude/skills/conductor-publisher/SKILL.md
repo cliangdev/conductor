@@ -34,7 +34,7 @@ back here with the rendered frames to attach and schedule.
 Also note any media the person handed you: local paths or public URLs, in the order they should
 appear. Media that must be measured (video) is measured by the tool; you do not need dimensions.
 Uploads also land in the Media library. For a file already there (find it with `list_creative_media`),
-add it to the Post with `upload_asset({issueId, mediaIds})` instead of uploading it again; it is linked, not copied.
+pass `{mediaId}` as a `create_post` media item (or `upload_asset({issueId, mediaIds})` on an existing Post) instead of uploading it again; it is linked, not copied.
 
 ### A publish pack, if one exists
 

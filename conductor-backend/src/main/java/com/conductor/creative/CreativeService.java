@@ -72,6 +72,7 @@ public class CreativeService {
     private final CreativeSpecBuilder specBuilder;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
+    private final StorageObjectReferences storageReferences;
     private final ObjectMapper objectMapper;
     private final CreativeRenderService renderService;
     private final CreativeExperimentRepository experimentRepository;
@@ -89,6 +90,7 @@ public class CreativeService {
                            CreativeSpecBuilder specBuilder,
                            ProjectSecurityService projectSecurityService,
                            StorageService storageService,
+                           StorageObjectReferences storageReferences,
                            ObjectMapper objectMapper,
                            CreativeRenderService renderService,
                            CreativeExperimentRepository experimentRepository,
@@ -105,6 +107,7 @@ public class CreativeService {
         this.specBuilder = specBuilder;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
+        this.storageReferences = storageReferences;
         this.objectMapper = objectMapper;
         this.renderService = renderService;
         this.experimentRepository = experimentRepository;
@@ -702,7 +705,13 @@ public class CreativeService {
             experimentRepository.saveAll(asWinnerElsewhere);
         }
 
-        List<String> gcsPaths = frames.stream().map(CreativeRenderFrame::getGcsPath).toList();
+        List<String> gcsPaths = new ArrayList<>();
+        for (CreativeRenderFrame f : frames) {
+            gcsPaths.add(f.getGcsPath());
+            if (f.getPosterGcsPath() != null) {
+                gcsPaths.add(f.getPosterGcsPath());
+            }
+        }
         if (!frames.isEmpty()) {
             frameRepository.deleteAllByCreativeId(creative.getId());
         }
@@ -712,7 +721,8 @@ public class CreativeService {
 
         creativeRepository.delete(creative);
 
-        AfterCommitStorageCleanup.deleteAfterCommit(storageService, gcsPaths, log);
+        // Frames of CLIP/CAROUSEL renders link Media objects: only unreferenced objects are removed.
+        storageReferences.deleteUnreferencedAfterCommit(gcsPaths, log);
     }
 
     // ── Draft spec (preview-first) ────────────────────────────────────────

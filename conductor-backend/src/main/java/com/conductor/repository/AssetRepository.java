@@ -63,6 +63,11 @@ public interface AssetRepository extends JpaRepository<Asset, String> {
     @Query("SELECT a FROM Asset a JOIN FETCH a.workItem w JOIN FETCH w.project WHERE a.mediaId = :mediaId")
     List<Asset> findAllByMediaIdFetchWorkItem(@Param("mediaId") String mediaId);
 
+    /** Assets linking a Creative render frame whose stored object is one of {@code gcsPaths} (a frame that reuses a Media item's object). */
+    @Query("SELECT a FROM Asset a JOIN FETCH a.workItem w JOIN FETCH w.project "
+            + "WHERE a.creativeFrameId IN (SELECT f.id FROM CreativeRenderFrame f WHERE f.gcsPath IN :gcsPaths)")
+    List<Asset> findAllByFrameObjectPathsFetchWorkItem(@Param("gcsPaths") Collection<String> gcsPaths);
+
     long countByMediaId(String mediaId);
 
     boolean existsByMediaIdAndIdNot(String mediaId, String id);

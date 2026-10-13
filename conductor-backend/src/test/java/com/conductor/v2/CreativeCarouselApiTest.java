@@ -121,7 +121,7 @@ class CreativeCarouselApiTest extends AbstractE2ETest {
         assertThat(frames.get(7)).containsEntry("width", 1080).containsEntry("height", 1920);
 
         var afterRender = rest.exchange(creativesUrl + "/" + creativeId, HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
-        assertThat((String) afterRender.getBody().get("latestRenderThumbnailUrl")).contains("/4x5-01.jpg");
+        assertThat((String) afterRender.getBody().get("latestRenderThumbnailUrl")).contains("/marketing/photos/"); // slide 1 of 4x5 is the slide media's own object, not a render copy
     }
 
     @Test

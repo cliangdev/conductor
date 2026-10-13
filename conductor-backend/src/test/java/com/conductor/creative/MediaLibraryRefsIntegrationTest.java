@@ -62,6 +62,9 @@ class MediaLibraryRefsIntegrationTest extends AbstractNoneWebIntegrationTest {
     @Autowired private ProjectMemberRepository projectMemberRepository;
     @Autowired private StorageService storageService;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private CreativeRepository creativeRepository;
+    @Autowired private BrandKitService brandKitService;
+    @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     @Autowired private TransactionTemplate transactionTemplate;
 
     private User admin;
@@ -230,6 +233,96 @@ class MediaLibraryRefsIntegrationTest extends AbstractNoneWebIntegrationTest {
         assetService.deleteAsset(project.getId(), post.getId(), link.getId(), admin);
         photoService.deletePhoto(project.getId(), media.getId(), admin);
         assertThat(photoRepository.findById(media.getId())).isEmpty();
+    }
+
+    @Test
+    void deletingMediaRefusesWhenAPostUsesAStaleRenderFrameOnItsObjectAndCountsThatPost() {
+        CreativePhoto media = uploadedMedia("Hero");
+        CreativeRenderFrame frame = frameOnObjectOf(media);
+        linkFrameToPost(frame);
+        String displayId = project.getKey() + "-" + post.getSequenceNumber();
+
+        assertThatThrownBy(() -> photoService.deletePhoto(project.getId(), media.getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("In use on " + displayId)
+                .hasMessageContaining("\"Spring launch\"");
+        assertThat(photoRepository.findById(media.getId())).isPresent();
+        assertThat(photoService.getUsage(project.getId(), media.getId(), admin).posts())
+                .extracting(CreativePhotoService.UsagePost::displayId).containsExactly(displayId);
+        assertThat(photoService.getPhoto(project.getId(), media.getId(), admin).postCount()).isEqualTo(1);
+    }
+
+    @Test
+    void deletingMediaWhoseObjectAStaleFrameStillNamesKeepsTheObject() {
+        CreativePhoto media = uploadedMedia("Hero");
+        storageService.upload(media.getGcsPath(), new byte[]{1, 2, 3}, "image/jpeg");
+        CreativeRenderFrame frame = frameOnObjectOf(media);
+
+        photoService.deletePhoto(project.getId(), media.getId(), admin);
+
+        assertThat(photoRepository.findById(media.getId())).isEmpty();
+        assertThat(frameRepository.findById(frame.getId())).isPresent();
+        assertThat(storageService.download(media.getGcsPath())).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void deletingUnreferencedMediaStillDeletesItsObject() {
+        CreativePhoto media = uploadedMedia("Hero");
+        storageService.upload(media.getGcsPath(), new byte[]{1, 2, 3}, "image/jpeg");
+
+        photoService.deletePhoto(project.getId(), media.getId(), admin);
+
+        assertThatThrownBy(() -> storageService.download(media.getGcsPath())).isInstanceOf(EntityNotFoundException.class);
+    }
+
+    private CreativeRenderFrame frameOnObjectOf(CreativePhoto media) {
+        Creative c = new Creative();
+        c.setProjectId(project.getId());
+        c.setBrandKitId(brandKitService.resolveDefault(project.getId()).getId());
+        c.setVariantLetter("a");
+        c.setState(Creative.STATE_DRAFT);
+        c.setLayout("stacked");
+        c.setTheme(Creative.THEME_DARK);
+        c.setKind(Creative.KIND_CAROUSEL);
+        c.setPlacements(objectMapper.valueToTree(List.of("4x5")));
+        c.setSequence(objectMapper.valueToTree(List.of()));
+        c.setTypeOverrides(objectMapper.createObjectNode());
+        c.setCreatedBy(admin.getId());
+        c.setNumber(900 + (int) (System.nanoTime() % 1000));
+        c = creativeRepository.save(c);
+        CreativeRender render = new CreativeRender();
+        render.setProjectId(project.getId());
+        render.setCreativeId(c.getId());
+        render.setCreativeVersion(c.getVersion());
+        render.setState(CreativeRender.STATE_SUCCEEDED);
+        render.setPreviewOnly(false);
+        render.setRequestedBy(admin.getId());
+        render = renderRepository.save(render);
+        CreativeRenderFrame frame = new CreativeRenderFrame();
+        frame.setRenderId(render.getId());
+        frame.setCreativeId(c.getId());
+        frame.setPlacementKey("4x5");
+        frame.setGcsPath(media.getGcsPath());
+        frame.setContentType("image/jpeg");
+        frame.setWidth(1080);
+        frame.setHeight(1350);
+        frame.setSizeBytes(10L);
+        frame.setWarnings(objectMapper.createArrayNode());
+        return frameRepository.save(frame);
+    }
+
+    private void linkFrameToPost(CreativeRenderFrame frame) {
+        Asset asset = new Asset();
+        asset.setWorkItem(post);
+        asset.setType(assetType);
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setRef(frame.getGcsPath());
+        asset.setGcsPath(frame.getGcsPath());
+        asset.setContentType("image/jpeg");
+        asset.setSizeBytes(10L);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setCreativeFrameId(frame.getId());
+        assetRepository.save(asset);
     }
 
     // ── usage and counts ─────────────────────────────────────────────────────────────────────────

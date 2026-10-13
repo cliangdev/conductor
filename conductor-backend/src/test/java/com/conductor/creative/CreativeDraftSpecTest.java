@@ -84,7 +84,7 @@ class CreativeDraftSpecTest {
         CreativeRegistry registry = new CreativeRegistry(objectMapper);
         service = new CreativeService(creativeRepository, photoRepository, brandKitRepository, brandKitService,
                 projectRepository, registry, new CreativeValidator(registry),
-                new CreativeSpecBuilder(registry, storage, objectMapper), security, storage, objectMapper,
+                new CreativeSpecBuilder(registry, storage, objectMapper), security, storage, mock(StorageObjectReferences.class), objectMapper,
                 renderService, experimentRepository, frameRepository, renderRepository, assetRepository);
 
         caller = new User();
