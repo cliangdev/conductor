@@ -125,16 +125,19 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 6. Every renderable idea needs a photo (or, for MOTION, a clip); see `references/capabilities.md`. If
    `media.json` has no unblocked image and no clip, ask once with `AskUserQuestion` before ideating:
    **Give a photo or two** (local paths; record them in `context/media.json` as `local` entries the
-   art director may use via `photoPath`), **Generate with Codex** (record `"generate": true` in
+   art director may use via `photoPath`), **Generate a photo** (record `"generate": true` in
    `context/media.json`; ideas can then be `RENDER` with no library photo, each giving an
-   `imagePrompt`, and photos are made with `generate_creative_image` from the person's local Codex CLI)
+   `imagePrompt`, and photos are made with `generate_creative_image`)
    or **Plan for filming** (ideas will be `FILM`). Never let the team design a type-only still; the
    preview refuses it.
    When the library does have usable images, or the request itself asks for generated imagery, set
    `"generate": true` without asking: ideas use a library photo when one fits and give an
-   `imagePrompt` only when none does. If `generate_creative_image` later fails (Codex missing, logged
-   out, or a plan without image generation), treat that finalist as unrenderable in S3b; at S6, say
-   why and ask for a photo instead of offering Approve & upload.
+   `imagePrompt` only when none does. If `generate_creative_image` later fails (no key, an API
+   error, or Codex missing or logged out), treat that finalist as unrenderable in S3b; at S6, say
+   why and ask for a photo instead of offering Approve & upload. With no API key the tool returns
+   `CODEX_CONFIRMATION_REQUIRED`: ask the person once per run (set a key, use Codex this time, or
+   skip and use a library photo); a yes covers the rest of the run, so pass `useCodex: true` on
+   later calls without asking again. Never pass it before that yes.
 
 ### S1 — Strategist -> `brief.md`
 
