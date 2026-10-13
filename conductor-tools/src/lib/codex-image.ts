@@ -12,23 +12,16 @@ import { spawn } from 'node:child_process'
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
-import { readImageDimensions } from './image-dimensions.js'
-import { binaryAvailable, resolveFfmpegPath } from './media-probe.js'
+import { type Captured, type GeneratedImage, type GenerateImagesParams, type GenerateImagesResult, type ImageAspect, ASPECT_SIZES, jpegPreview, runCapture, sceneRules, validImage } from './image-common.js'
+import { binaryAvailable } from './media-probe.js'
 import { writeProvenanceSidecar } from './provenance-sidecar.js'
 
-export type ImageAspect = 'portrait' | 'square' | 'landscape'
-
-export const ASPECT_SIZES: Record<ImageAspect, string> = {
-  portrait: '1024x1536',
-  square: '1024x1024',
-  landscape: '1536x1024',
-}
+export { ASPECT_SIZES, type ImageAspect, type GenerateImagesParams, type GeneratedImage, type GenerateImagesResult }
 
 export const NO_CODEX_HINT =
   'Codex CLI not found — install it (npm i -g @openai/codex) and run `codex login`, or set CONDUCTOR_CODEX_PATH.'
 export const NOT_LOGGED_IN_HINT = 'Codex CLI is not logged in — run `codex login` (see `conductor doctor`).'
 
-const MAX_INLINE_IMAGE_BYTES = 1_000_000
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 
 const OUTPUT_SCHEMA = {
@@ -39,31 +32,6 @@ const OUTPUT_SCHEMA = {
   },
   required: ['files', 'revisedPrompt'],
   additionalProperties: false,
-}
-
-export interface GenerateImagesParams {
-  prompt: string
-  aspect?: ImageAspect
-  count?: number
-  referenceImagePaths?: string[]
-  outDir: string
-  onProgress?: (message: string) => void
-  timeoutMs?: number
-}
-
-export interface GeneratedImage {
-  path: string
-  width: number
-  height: number
-}
-
-export interface GenerateImagesResult {
-  files: GeneratedImage[]
-  provenance: { source: string; licence: string; aiGenerated: true }
-  revisedPrompt: string
-  outDir: string
-  /** JPEG (or small PNG) of the first image for inline display; absent when none fits ~1 MB. */
-  preview?: { data: Buffer; mimeType: string }
 }
 
 let cachedCodexPath: string | undefined
@@ -82,22 +50,6 @@ export async function resolveCodexPath(): Promise<string> {
 /** Test-only: the resolved path is cached, so tests that vary availability reset it. */
 export function resetCodexPathCache(): void {
   cachedCodexPath = undefined
-}
-
-interface Captured {
-  code: number | null
-  output: string
-}
-
-function runCapture(command: string, args: string[]): Promise<Captured> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let output = ''
-    child.stdout?.on('data', (d) => (output += d))
-    child.stderr?.on('data', (d) => (output += d))
-    child.on('error', reject)
-    child.on('exit', (code) => resolvePromise({ code, output }))
-  })
 }
 
 async function assertLoggedIn(codex: string): Promise<void> {
@@ -140,14 +92,8 @@ export async function checkCodexCli(): Promise<CodexStatus> {
 
 export function buildPrompt(scene: string, aspect: ImageAspect, count: number, hasReferences: boolean): string {
   return [
-    scene.trim(),
-    '',
-    'Rules:',
+    sceneRules(scene, aspect, hasReferences),
     `- Use the image_gen tool to create exactly ${count} image${count === 1 ? '' : 's'} at size ${ASPECT_SIZES[aspect]}, high quality.`,
-    '- Photographic unless the scene above asks for another style.',
-    '- NO text, letters, numbers, logos, watermarks, UI, or phone/computer screens anywhere in the image.',
-    '- Leave clean negative space for a headline.',
-    ...(hasReferences ? ['- Use the attached images as references.'] : []),
     `- Then copy each generated file into the current directory as ${Array.from({ length: Math.min(count, 2) }, (_, i) => `image-${i + 1}.png`).join(', ')}${count > 2 ? '…' : ''}.`,
     '- Reply with JSON: {"files": [absolute paths of the copies], "revisedPrompt": "the prompt the image tool actually used"}.',
   ].join('\n')
@@ -253,43 +199,7 @@ function runCodexExec(codex: string, args: string[], prompt: string, timeoutMs: 
   })
 }
 
-async function validImage(path: string): Promise<GeneratedImage | null> {
-  try {
-    const info = readImageDimensions(await readFile(path))
-    return info ? { path, width: info.width, height: info.height } : null
-  } catch {
-    return null
-  }
-}
-
-async function jpegPreview(png: string, outDir: string): Promise<{ data: Buffer; mimeType: string } | undefined> {
-  try {
-    const ffmpeg = await resolveFfmpegPath()
-    const out = join(outDir, '.preview.jpg')
-    for (const q of ['4', '10']) {
-      const res = await runCapture(ffmpeg, [
-        '-y', '-v', 'error', '-i', png,
-        '-vf', "scale='if(gt(iw,ih),min(1024,iw),-2)':'if(gt(iw,ih),-2,min(1024,ih))'",
-        '-q:v', q, out,
-      ])
-      if (res.code !== 0) break
-      const data = await readFile(out)
-      if (data.length <= MAX_INLINE_IMAGE_BYTES) return { data, mimeType: 'image/jpeg' }
-    }
-  } catch {
-    /* fall through to the PNG */
-  }
-  try {
-    const data = await readFile(png)
-    const info = readImageDimensions(data)
-    if (info && data.length < MAX_INLINE_IMAGE_BYTES) return { data, mimeType: info.contentType }
-  } catch {
-    /* no preview */
-  }
-  return undefined
-}
-
-export async function generateImages(params: GenerateImagesParams): Promise<GenerateImagesResult> {
+export async function generateImagesWithCodex(params: GenerateImagesParams): Promise<GenerateImagesResult> {
   const { outDir, onProgress } = params
   const aspect = params.aspect ?? 'portrait'
   const count = params.count ?? 1

@@ -64,7 +64,7 @@ afterEach(() => {
 const outDirOf = (args: string[]) => args[args.indexOf('-C') + 1]!
 const lastOf = (args: string[]) => args[args.indexOf('-o') + 1]!
 
-describe('generateImages', () => {
+describe('generateImagesWithCodex', () => {
   it('uses files reported by the agent and writes sidecars', async () => {
     handlers.exec = (c, args) => {
       const img = path.join(outDirOf(args), 'image-1.png')
@@ -74,7 +74,7 @@ describe('generateImages', () => {
     }
     const out = path.join(tmp, 'out')
     const progress: string[] = []
-    const res = await lib.generateImages({ prompt: 'a kitchen', outDir: out, onProgress: (m) => progress.push(m) })
+    const res = await lib.generateImagesWithCodex({ prompt: 'a kitchen', outDir: out, onProgress: (m) => progress.push(m) })
     expect(res.files).toEqual([{ path: path.join(out, 'image-1.png'), width: 1, height: 1 }])
     expect(res.revisedPrompt).toBe('a revised prompt')
     expect(res.preview?.mimeType).toBe('image/png')
@@ -102,7 +102,7 @@ describe('generateImages', () => {
       }
       return child
     })
-    await lib.generateImages({ prompt: 'a kitchen', aspect: 'landscape', referenceImagePaths: ['/ref/a.png'], outDir: path.join(tmp, 'o') })
+    await lib.generateImagesWithCodex({ prompt: 'a kitchen', aspect: 'landscape', referenceImagePaths: ['/ref/a.png'], outDir: path.join(tmp, 'o') })
     expect(seen).toEqual(expect.arrayContaining(['exec', '--ephemeral', '--skip-git-repo-check', '-s', 'workspace-write', '--json', '-i', '/ref/a.png']))
     expect(seen[seen.length - 1]).toBe('-')
     await new Promise((r) => setImmediate(r))
@@ -120,7 +120,7 @@ describe('generateImages', () => {
       done(c, 0)
     }
     const out = path.join(tmp, 'out')
-    const res = await lib.generateImages({ prompt: 'p', outDir: out })
+    const res = await lib.generateImagesWithCodex({ prompt: 'p', outDir: out })
     expect(res.files).toHaveLength(1)
     expect(res.files[0]!.path).toBe(path.join(out, 'image-1.png'))
     expect(fs.existsSync(path.join(out, 'image-1.png.provenance.json'))).toBe(true)
@@ -134,7 +134,7 @@ describe('generateImages', () => {
       c.stdout.emit('data', JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'I could not' } }) + '\n')
       done(c, 0)
     }
-    await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/no usable image.*I could not/)
+    await expect(lib.generateImagesWithCodex({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/no usable image.*I could not/)
   })
 
   it('ignores reported files outside outDir', async () => {
@@ -144,7 +144,7 @@ describe('generateImages', () => {
       fs.writeFileSync(lastOf(args), JSON.stringify({ files: [elsewhere], revisedPrompt: 'r' }))
       done(c, 0)
     }
-    await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/no usable image/)
+    await expect(lib.generateImagesWithCodex({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/no usable image/)
   })
 
   it('reports Codex not installed', async () => {
@@ -153,12 +153,12 @@ describe('generateImages', () => {
       setImmediate(() => child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })))
       return child
     })
-    await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/Codex CLI not found/)
+    await expect(lib.generateImagesWithCodex({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/Codex CLI not found/)
   })
 
   it('fails fast when not logged in, without running exec', async () => {
     handlers.login = (c) => done(c, 1, 'Not logged in\n')
-    await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/not logged in — run `codex login`/)
+    await expect(lib.generateImagesWithCodex({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow(/not logged in — run `codex login`/)
     expect(spawnMock.mock.calls.some((c) => (c[1] as string[])[0] === 'exec')).toBe(false)
   })
 
@@ -167,13 +167,13 @@ describe('generateImages', () => {
       c.stdout.emit('data', JSON.stringify({ type: 'error', message: 'quota exceeded' }) + '\n')
       done(c, 1)
     }
-    await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow('Codex failed: quota exceeded')
+    await expect(lib.generateImagesWithCodex({ prompt: 'p', outDir: path.join(tmp, 'o') })).rejects.toThrow('Codex failed: quota exceeded')
   })
 
   it('times out, killing the child', async () => {
     let child: FakeChild | undefined
     handlers.exec = (c) => void (child = c)
-    await expect(lib.generateImages({ prompt: 'p', outDir: path.join(tmp, 'o'), timeoutMs: 20 })).rejects.toThrow(/timed out after/)
+    await expect(lib.generateImagesWithCodex({ prompt: 'p', outDir: path.join(tmp, 'o'), timeoutMs: 20 })).rejects.toThrow(/timed out after/)
     expect(child?.kill).toHaveBeenCalled()
   })
 })

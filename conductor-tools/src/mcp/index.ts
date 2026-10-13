@@ -105,6 +105,7 @@ const CREATIVE_TOOLS = [
   'attach_creative_to_post',
   'create_experiment',
 ] as const
+import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import {
   listProjectDocs,
@@ -1449,7 +1450,7 @@ export const TOOLS = [
   },
   {
     name: 'generate_creative_image',
-    description: "Generate a photo on this machine with the person's Codex CLI (needs `codex login`; takes about a minute and uses their Codex quota). The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
+    description: "Generate a photo on this machine. Uses the OpenAI Images API when a key is configured (about $0.05 an image, billed to that key). With no key it returns CODEX_CONFIRMATION_REQUIRED instead — ask the person, and pass useCodex: true only if they agree to spend their Codex quota (about a minute per image). The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1457,6 +1458,7 @@ export const TOOLS = [
         aspect: { type: 'string', enum: ['portrait', 'square', 'landscape'], description: 'portrait (default) suits 9:16 and 4:5; square 1:1; landscape 3:2' },
         count: { type: 'number', description: 'How many images, 1-3 (default 1)' },
         referenceImagePaths: { type: 'array', items: { type: 'string' }, description: 'Local images to stay faithful to, such as a real product shot (optional)' },
+        useCodex: { type: 'boolean', description: 'Set true only after the person has agreed to use their Codex/ChatGPT quota (see CODEX_CONFIRMATION_REQUIRED).' },
       },
       required: ['prompt'],
     },
@@ -2422,8 +2424,22 @@ export async function runMcpServer(): Promise<void> {
                   params: { progressToken, progress: step, message },
                 }).catch(() => {})
               }
-          const { image, ...meta } = await generateCreativeImage(params as unknown as GenerateCreativeImageParams, { log: onProgress })
-          return image ? imageResponse(image, meta) : successResponse(meta)
+          try {
+            const { image, ...meta } = await generateCreativeImage(params as unknown as GenerateCreativeImageParams, { log: onProgress })
+            return image ? imageResponse(image, meta) : successResponse(meta)
+          } catch (err) {
+            if (!(err instanceof CodexConfirmationRequired)) throw err
+            return errorResponse({
+              code: 'CODEX_CONFIRMATION_REQUIRED',
+              error: "No OpenAI API key is configured. Codex can make this image on the person's ChatGPT plan, but each image uses roughly 2% of the weekly Codex allowance (about $0.10, measured) and that allowance is shared with coding.",
+              options: [
+                { choice: 'set-api-key', how: 'conductor config set-openai-api-key <key> (or OPENAI_API_KEY), then call again', cost: 'about $0.05 an image' },
+                { choice: 'use-codex', how: 'call again with useCodex: true', cost: 'Codex weekly allowance' },
+                { choice: 'skip', how: 'use a library photo instead' },
+              ],
+              nextStep: 'Ask the person which they want. Only if they choose Codex, call again with useCodex: true.',
+            })
+          }
         }
         case 'preview_creative_draft': {
           const progressToken = request.params._meta?.progressToken
