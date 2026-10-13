@@ -137,14 +137,36 @@ or older than 14 days. A CLIP Creative has nothing to render, so it has no draft
 variant is previewed with `baseCreativeId` but saved with `create_creative` and `variantOf`, never
 committed.
 
-## Generated photos (Codex)
+## Generated photos
 
 When the media library has no fitting photo, `generate_creative_image({prompt, aspect?, count?,
-referenceImagePaths?})` makes one on the person's machine by running their local Codex CLI
-(`codex exec`, built-in image_gen). It needs Codex installed and `codex login` done on a ChatGPT plan that
-includes image generation (Plus or higher; on Free, `codex exec` has no image tool) — `conductor
-doctor` reports the install and login — takes about 30-90 s and uses the person's Codex/ChatGPT quota. `aspect` is
-`portrait` (default, 1024x1536), `square` (1024x1024) or `landscape` (1536x1024); `count` is 1-3.
+quality?, referenceImagePaths?, useCodex?})` makes one on the person's machine. `aspect` is `portrait` (default,
+1024x1536), `square` (1024x1024) or `landscape` (1536x1024); `count` is 1-3. The result's `generator`
+names the route (`openai-api` or `codex`) and model; `model` and `quality` report what was used.
+
+- **Default route: OpenAI Images API.** Needs a key: `conductor config set-openai-api-key <key>` (kept
+  in `~/.conductor/config.json`, so it works for Claude Desktop, which doesn't inherit shell env), or
+  env `CONDUCTOR_OPENAI_API_KEY` / `OPENAI_API_KEY` (that precedence, then config). Model
+  `gpt-image-2.5-sunburst` (override with `CONDUCTOR_IMAGE_MODEL`). About $0.05 an image billed to that key, 20-45 s. Reference images go to
+  the edits endpoint.
+- **Codex only with the person's yes.** With no key the tool generates nothing and returns an error
+  with `code: 'CODEX_CONFIRMATION_REQUIRED'`, `options` (set an API key / use Codex / skip) and a
+  `nextStep`. Ask the person: set a key, use Codex this time, or skip and use a library photo. Codex
+  runs the local `codex exec` (built-in image_gen) on their ChatGPT Plus (or higher) weekly allowance,
+  shared with coding; about 40-50 images exhausts a week, roughly $0.10 an image. Only on an explicit
+  yes call again with `useCodex: true` (honoured even when a key exists); never pass it unasked.
+- **Quality.** One setting for both routes: the `quality` input (`low|medium|high`), else env
+  `CONDUCTOR_IMAGE_QUALITY` (ignored if not one of those), else `high`. Use `medium`/`low` only for
+  throwaway drafts.
+- **Codex cost.** The Codex model only orchestrates the image_gen call, so it runs on the cheapest
+  settings, `codex exec -m gpt-6-luna -c model_reasoning_effort="low"`; the image itself is asked for at
+  the resolved quality. Env overrides: `CONDUCTOR_CODEX_IMAGE_MODEL`, `CONDUCTOR_CODEX_IMAGE_REASONING`.
+  If Codex rejects the model for the account, the run retries once on the person's default model
+  (reported as `model: 'default'`).
+- **No silent fallback.** An API error (bad key, quota) is reported, not retried on Codex.
+- **Doctor.** `conductor doctor` has an "Image generation" check naming the active route: the OpenAI
+  API with model, quality and key source (verified against the model endpoint), or Codex with its
+  install and login state and a hint that a key costs about half.
 
 - **Prompt.** The caller writes the scene; the tool adds fixed rules: photographic unless asked
   otherwise, no text, letters, logos, watermarks, UI or phone screens, and clean negative space for
@@ -152,8 +174,8 @@ doctor` reports the install and login — takes about 30-90 s and uses the perso
 - **Output.** `<projectRoot>/.conductor/generated/<timestamp>-<slug>/image-N.png` (git-ignored,
   pruned after 14 days). The result returns the first image inline plus `files: [{path, width,
   height}]`, `provenance` and `revisedPrompt`. Look at every image before using it.
-- **Provenance.** Each file gets a sidecar `<file>.provenance.json` (source "Generated with Codex
-  image_gen on <date>", licence "Generated, house use", `aiGenerated: true`).
+- **Provenance.** Each file gets a sidecar `<file>.provenance.json` (source "Generated with OpenAI <model> (API) on <date>" or "Generated with Codex
+  image_gen on <date>", licence "Generated, house use", `aiGenerated: true`, plus the `model` and `quality` used).
   `preview_creative_draft` records it and `commit_creative_draft` / `upload_creative_media` use it
   automatically for that file, so a draft mixing a generated photo with the person's own music keeps
   each file's own provenance. The preview reports which local files still need provenance.

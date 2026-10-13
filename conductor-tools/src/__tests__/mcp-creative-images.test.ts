@@ -3,9 +3,9 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-vi.mock('../lib/codex-image.js', () => ({ generateImages: vi.fn() }))
+vi.mock('../lib/image-generation.js', () => ({ generateImages: vi.fn() }))
 
-import { generateImages } from '../lib/codex-image.js'
+import { generateImages } from '../lib/image-generation.js'
 import { generateCreativeImage, pruneGenerated } from '../mcp/tools/creative-images.js'
 
 const gen = vi.mocked(generateImages)
@@ -19,6 +19,9 @@ beforeEach(() => {
     provenance: { source: 'Generated with Codex image_gen on 2026-10-12', licence: 'Generated, house use', aiGenerated: true },
     revisedPrompt: 'rp',
     outDir: '/x',
+    generator: { route: 'openai-api', model: 'gpt-image-2.5-sunburst' },
+    quality: 'high',
+    model: 'gpt-image-2.5-sunburst',
     preview: { data: Buffer.from('jpg'), mimeType: 'image/jpeg' },
   })
 })
@@ -31,7 +34,24 @@ describe('generateCreativeImage', () => {
     await expect(generateCreativeImage({ prompt: 'a', count: 0 }, { outDir: tmp })).rejects.toThrow(/count must be/)
     await expect(generateCreativeImage({ prompt: 'a', count: 4 }, { outDir: tmp })).rejects.toThrow(/count must be/)
     await expect(generateCreativeImage({ prompt: 'a', referenceImagePaths: [path.join(tmp, 'nope.png')] }, { outDir: tmp })).rejects.toThrow(/Reference image not found/)
+    await expect(generateCreativeImage({ prompt: 'a', useCodex: 'yes' as unknown as boolean }, { outDir: tmp })).rejects.toThrow(/useCodex must be/)
+    await expect(generateCreativeImage({ prompt: 'a', quality: 'ultra' }, { outDir: tmp })).rejects.toThrow('quality must be one of low, medium, high.')
     expect(gen).not.toHaveBeenCalled()
+  })
+
+  it('passes quality through and returns the model and quality used', async () => {
+    const res = await generateCreativeImage({ prompt: 'a', quality: 'low' }, { outDir: tmp })
+    expect(gen).toHaveBeenCalledWith(expect.objectContaining({ quality: 'low' }))
+    expect(res).toMatchObject({ quality: 'high', model: 'gpt-image-2.5-sunburst' })
+    await generateCreativeImage({ prompt: 'a' }, { outDir: path.join(tmp, 'n') })
+    expect(gen.mock.calls[1]![0]).not.toHaveProperty('quality')
+  })
+
+  it('passes useCodex through only when true', async () => {
+    await generateCreativeImage({ prompt: 'a' }, { outDir: path.join(tmp, 'a') })
+    expect(gen.mock.calls[0]![0]).not.toHaveProperty('useCodex')
+    await generateCreativeImage({ prompt: 'a', useCodex: true }, { outDir: path.join(tmp, 'b') })
+    expect(gen.mock.calls[1]![0]).toMatchObject({ useCodex: true })
   })
 
   it('returns files, provenance, next step and the preview', async () => {
@@ -42,6 +62,7 @@ describe('generateCreativeImage', () => {
     expect(res.files[0]).toEqual({ path: '/x/image-1.png', width: 1024, height: 1536 })
     expect(res.provenance.aiGenerated).toBe(true)
     expect(res.revisedPrompt).toBe('rp')
+    expect(res.generator).toEqual({ route: 'openai-api', model: 'gpt-image-2.5-sunburst' })
     expect(res.nextStep).toContain('photoPath')
     expect(res.image?.mimeType).toBe('image/jpeg')
   })

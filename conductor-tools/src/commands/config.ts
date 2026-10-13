@@ -59,6 +59,7 @@ Examples:
           email: cfg.email,
           apiKey: redactApiKey(cfg.apiKey),
           claudeCodeOauthToken: redactToken(cfg.claudeCodeOauthToken),
+          openaiApiKey: redactToken(cfg.openaiApiKey),
         }
         process.stdout.write(JSON.stringify(output, null, 2) + '\n')
         process.exit(0)
@@ -71,6 +72,7 @@ Examples:
       console.log(`email:       ${cfg.email}`)
       console.log(`apiKey:      ${redactApiKey(cfg.apiKey)}`)
       console.log(`claudeCodeOauthToken: ${redactToken(cfg.claudeCodeOauthToken)}`)
+      console.log(`openaiApiKey: ${redactToken(cfg.openaiApiKey)}`)
     })
 
   config
@@ -154,5 +156,38 @@ Examples:
       delete cfg.claudeCodeOauthToken
       writeConfig(cfg)
       console.log('Claude Code OAuth token removed.')
+    })
+
+  config
+    .command('set-openai-api-key <key>')
+    .description('Store an OpenAI API key for generate_creative_image (about $0.05 an image, billed to that key)')
+    .addHelpText('after', `
+Examples:
+  conductor config set-openai-api-key sk-...`)
+    .action((key: string) => {
+      const cfg = readConfig()
+      if (!cfg) {
+        console.error('No config found — run conductor login first')
+        process.exit(1)
+        return
+      }
+      cfg.openaiApiKey = key
+      writeConfig(cfg)
+      console.log(`OpenAI API key saved: ${redactToken(key)}`)
+    })
+
+  config
+    .command('unset-openai-api-key')
+    .description('Remove the stored OpenAI API key')
+    .action(() => {
+      const cfg = readConfig()
+      if (!cfg) {
+        console.error('No config found — run conductor login first')
+        process.exit(1)
+        return
+      }
+      delete cfg.openaiApiKey
+      writeConfig(cfg)
+      console.log('OpenAI API key removed.')
     })
 }

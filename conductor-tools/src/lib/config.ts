@@ -21,6 +21,9 @@ export interface Config {
    * under the owner's Pro/Max subscription instead of a metered API key. Never
    * transits the server; lives only in this local config file. */
   claudeCodeOauthToken?: string
+  /** OpenAI API key for `generate_creative_image`. Used from this local file when no
+   * OPENAI_API_KEY env var is set (Claude Desktop's MCP servers don't inherit the shell env). */
+  openaiApiKey?: string
 }
 
 export const CONFIG_PATH = path.join(os.homedir(), '.conductor', 'config.json')

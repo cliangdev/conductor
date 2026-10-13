@@ -6,6 +6,7 @@ import chalk from 'chalk'
 import { readConfig, CONFIG_PATH } from '../lib/config.js'
 import { getAssetSrcDir, getPluginInstallStatus } from '../lib/plugin-assets.js'
 import { checkCodexCli, type CodexStatus } from '../lib/codex-image.js'
+import { resolveImageSettings, resolveOpenAiKey } from '../lib/image-generation.js'
 import { printNextSteps } from '../lib/next-steps.js'
 
 export async function checkApiHealth(apiUrl: string): Promise<boolean> {
@@ -25,7 +26,8 @@ export function checkConfigFile(): boolean {
   return fs.existsSync(CONFIG_PATH)
 }
 
-const CODEX_CHECK_NAME = 'Codex CLI (image generation)'
+const CODEX_CHECK_NAME = 'Image generation: Codex (asks before each run)'
+const API_KEY_HINT = 'set an OpenAI API key with `conductor config set-openai-api-key` — about half the cost'
 
 export function describeCodexStatus(status: CodexStatus): { status: 'pass' | 'warn'; message: string } {
   if (status.state === 'ready') return { status: 'pass', message: `${CODEX_CHECK_NAME}: ${status.version}, logged in` }
@@ -33,6 +35,28 @@ export function describeCodexStatus(status: CodexStatus): { status: 'pass' | 'wa
     return { status: 'warn', message: `${CODEX_CHECK_NAME}: ${status.version} installed but not logged in — run \`codex login\`` }
   }
   return { status: 'warn', message: `${CODEX_CHECK_NAME}: not found — npm i -g @openai/codex, then \`codex login\` (optional; only needed to generate photos)` }
+}
+
+export async function checkImageGeneration(): Promise<{ status: 'pass' | 'warn'; message: string }> {
+  const found = resolveOpenAiKey()
+  if (!found) {
+    const codex = describeCodexStatus(await checkCodexCli())
+    return { status: codex.status, message: `${codex.message}; ${API_KEY_HINT}` }
+  }
+  const { model, quality } = resolveImageSettings()
+  const label = `Image generation: OpenAI API (${model}, ${quality}), key from ${found.source}`
+  try {
+    const res = await fetch(`https://api.openai.com/v1/models/${encodeURIComponent(model)}`, {
+      headers: { Authorization: `Bearer ${found.key}` },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (res.ok) return { status: 'pass', message: label }
+    if (res.status === 401) return { status: 'warn', message: `${label} — key rejected by OpenAI` }
+    if (res.status === 404) return { status: 'warn', message: `${label} — model not available to this key` }
+    return { status: 'warn', message: `${label} — OpenAI answered ${res.status}` }
+  } catch {
+    return { status: 'warn', message: `${label} — OpenAI unreachable` }
+  }
 }
 
 export function registerDoctor(program: Command): void {
@@ -93,8 +117,8 @@ Examples:
           checks.push({ name: 'plugin-version', status: 'warn', message: 'Claude plugin outdated — re-run conductor init to update' })
         }
 
-        const codex = describeCodexStatus(await checkCodexCli())
-        checks.push({ name: 'codex', status: codex.status, message: codex.message })
+        const images = await checkImageGeneration()
+        checks.push({ name: 'image-generation', status: images.status, message: images.message })
 
         const allPass = checks.every(c => c.status !== 'fail')
         process.stdout.write(JSON.stringify({ checks }, null, 2) + '\n')
@@ -145,11 +169,11 @@ Examples:
         warnings++
       }
 
-      const codex = describeCodexStatus(await checkCodexCli())
-      if (codex.status === 'pass') {
-        console.log(`${chalk.green('✓')} ${codex.message}`)
+      const images = await checkImageGeneration()
+      if (images.status === 'pass') {
+        console.log(`${chalk.green('✓')} ${images.message}`)
       } else {
-        console.log(`${chalk.yellow('⚠')} ${codex.message}`)
+        console.log(`${chalk.yellow('⚠')} ${images.message}`)
         warnings++
       }
 

@@ -483,3 +483,55 @@ describe('config show includes claudeCodeOauthToken status', () => {
     consoleSpy.mockRestore()
   })
 })
+
+describe('config openai api key commands', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('stores the key and prints a redacted confirmation', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig })
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'set-openai-api-key', 'sk-proj-abcdef123456'])
+
+    expect(mockWriteConfig).toHaveBeenCalledWith(expect.objectContaining({ openaiApiKey: 'sk-proj-abcdef123456' }))
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).not.toContain('sk-proj-abcdef123456')
+    expect(allOutput).toContain('sk-p...3456')
+    consoleSpy.mockRestore()
+  })
+
+  it('removes the key', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig, openaiApiKey: 'sk-proj-abcdef123456' })
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'unset-openai-api-key'])
+
+    const written = mockWriteConfig.mock.calls[0]![0] as Record<string, unknown>
+    expect(written['openaiApiKey']).toBeUndefined()
+    consoleSpy.mockRestore()
+  })
+
+  it('config show redacts the key', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig, openaiApiKey: 'sk-proj-abcdef123456' })
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'show'])
+
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).toContain('openaiApiKey: sk-p...3456')
+    expect(allOutput).not.toContain('sk-proj-abcdef123456')
+    consoleSpy.mockRestore()
+  })
+})

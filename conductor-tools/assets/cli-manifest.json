@@ -834,7 +834,7 @@
     },
     {
       "name": "generate_creative_image",
-      "description": "Generate a photo locally with the Codex CLI (needs codex login): no text in the image, returns it with local paths and a provenance sidecar. Pass a path as photoPath to preview_creative_draft.",
+      "description": "Generate a photo with the OpenAI Images API (needs an API key; Codex only after the person confirms): no text in the image, returns it with local paths and a provenance sidecar. Pass a path as photoPath to preview_creative_draft.",
       "category": "marketing",
       "requiredParams": [
         "prompt"
