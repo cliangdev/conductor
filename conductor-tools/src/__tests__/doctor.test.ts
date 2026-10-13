@@ -205,7 +205,7 @@ describe('doctor command', () => {
       expect(rejected.check?.message).toContain('key rejected')
       const missing = await withKey(vi.fn().mockResolvedValue({ ok: false, status: 404 }))
       expect(missing.check?.message).toContain('model not available')
-      const down = await withKey(vi.fn((url: string) => (url.includes('openai.com') ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: true, status: 200 }))))
+      const down = await withKey(vi.fn((url: string) => (new URL(url).hostname === 'api.openai.com' ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: true, status: 200 }))))
       expect(down.check?.message).toContain('unreachable')
       expect(down.exitCode).toBe(0)
     })
