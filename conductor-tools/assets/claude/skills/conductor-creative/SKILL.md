@@ -91,7 +91,7 @@ when a key is set (`conductor config set-openai-api-key`; about $0.05 an image, 
 reports the route). With no key it generates nothing and returns `CODEX_CONFIRMATION_REQUIRED`: ask the
 person whether to set a key, use Codex this time (their ChatGPT Plus weekly allowance, shared with coding;
 about 40-50 images uses a week), or skip and use a library photo. Only on an explicit yes call again with
-`useCodex: true`; never pass it unasked. An API error is reported, not retried on Codex. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
+`useCodex: true`; never pass it unasked. An API error is reported, not retried on Codex. Quality defaults to `high` (both routes); pass `quality: "medium"` or `"low"` only for throwaway drafts, and Codex runs on its cheapest model. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
 `sequence[].photoPath`). When the real product must appear, list a real shot in
 `referenceImagePaths` — never describe an invented product. Each file gets a provenance sidecar
 (`aiGenerated: true`) that the preview and commit use automatically, so don't ask about it, and the

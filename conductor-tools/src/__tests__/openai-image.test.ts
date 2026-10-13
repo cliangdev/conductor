@@ -47,6 +47,15 @@ describe('generateImagesWithOpenAi', () => {
     expect(sidecar).toMatchObject({ source: res.provenance.source, aiGenerated: true, prompt: 'a kitchen', revisedPrompt: 'rp' })
   })
 
+  it('sends params.quality over the config default and reports model and quality', async () => {
+    fetchMock.mockResolvedValue(ok([{ b64_json: PNG_B64 }]))
+    const res = await generateImagesWithOpenAi({ prompt: 'p', quality: 'low', outDir: path.join(tmp, 'q') }, cfg)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string).quality).toBe('low')
+    expect(res).toMatchObject({ quality: 'low', model: 'gpt-image-2.5-sunburst' })
+    const sidecar = JSON.parse(fs.readFileSync(`${res.files[0]!.path}.provenance.json`, 'utf8'))
+    expect(sidecar).toMatchObject({ model: 'gpt-image-2.5-sunburst', quality: 'low' })
+  })
+
   it('sends references to the edits endpoint as multipart image[]', async () => {
     fetchMock.mockResolvedValue(ok([{ b64_json: PNG_B64 }]))
     const ref = path.join(tmp, 'ref.jpg')

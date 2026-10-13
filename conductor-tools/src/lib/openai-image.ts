@@ -6,7 +6,7 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, extname, join, resolve } from 'node:path'
-import { ASPECT_SIZES, jpegPreview, sceneRules, validImage, type GeneratedImage, type GenerateImagesParams, type GenerateImagesResult } from './image-common.js'
+import { ASPECT_SIZES, jpegPreview, sceneRules, validImage, type GeneratedImage, type ImageQuality, type GenerateImagesParams, type GenerateImagesResult } from './image-common.js'
 import { writeProvenanceSidecar } from './provenance-sidecar.js'
 
 const API_BASE = 'https://api.openai.com/v1'
@@ -62,6 +62,7 @@ export async function generateImagesWithOpenAi(params: GenerateImagesParams, cfg
   const timeoutMs = params.timeoutMs ?? 300_000
   const prompt = sceneRules(params.prompt, aspect, refs.length > 0)
   const size = ASPECT_SIZES[aspect]
+  const quality = params.quality ?? cfg.quality
 
   await mkdir(outDir, { recursive: true })
   const outRoot = resolve(outDir)
@@ -73,7 +74,7 @@ export async function generateImagesWithOpenAi(params: GenerateImagesParams, cfg
     init = {
       method: 'POST',
       headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: cfg.model, prompt, size, quality: cfg.quality, n: count }),
+      body: JSON.stringify({ model: cfg.model, prompt, size, quality, n: count }),
     }
   } else {
     url = `${API_BASE}/images/edits`
@@ -81,7 +82,7 @@ export async function generateImagesWithOpenAi(params: GenerateImagesParams, cfg
     form.append('model', cfg.model)
     form.append('prompt', prompt)
     form.append('size', size)
-    form.append('quality', cfg.quality)
+    form.append('quality', quality)
     form.append('n', String(count))
     for (const ref of refs) {
       const type = MIME[extname(ref).toLowerCase()] ?? 'image/png'
@@ -90,7 +91,7 @@ export async function generateImagesWithOpenAi(params: GenerateImagesParams, cfg
     init = { method: 'POST', headers: { Authorization: `Bearer ${cfg.apiKey}` }, body: form }
   }
 
-  onProgress?.(`Calling OpenAI ${cfg.model} (${cfg.quality})`)
+  onProgress?.(`Calling OpenAI ${cfg.model} (${quality})`)
   let res: Response
   try {
     res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
@@ -119,9 +120,9 @@ export async function generateImagesWithOpenAi(params: GenerateImagesParams, cfg
   const date = new Date().toISOString().slice(0, 10)
   const provenance = { source: `Generated with OpenAI ${cfg.model} (API) on ${date}`, licence: 'Generated, house use', aiGenerated: true as const }
   for (const img of found) {
-    await writeProvenanceSidecar(img.path, { ...provenance, prompt: params.prompt, revisedPrompt })
+    await writeProvenanceSidecar(img.path, { ...provenance, prompt: params.prompt, revisedPrompt, model: cfg.model, quality })
   }
 
   const preview = await jpegPreview(found[0]!.path, outRoot)
-  return { files: found, provenance, revisedPrompt, outDir: outRoot, ...(preview ? { preview } : {}) }
+  return { files: found, provenance, revisedPrompt, outDir: outRoot, quality: quality as ImageQuality, model: cfg.model, ...(preview ? { preview } : {}) }
 }

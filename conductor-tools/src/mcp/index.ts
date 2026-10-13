@@ -1450,13 +1450,14 @@ export const TOOLS = [
   },
   {
     name: 'generate_creative_image',
-    description: "Generate a photo on this machine. Uses the OpenAI Images API when a key is configured (about $0.05 an image, billed to that key). With no key it returns CODEX_CONFIRMATION_REQUIRED instead — ask the person, and pass useCodex: true only if they agree to spend their Codex quota (about a minute per image). The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
+    description: "Generate a photo on this machine. Uses the OpenAI Images API when a key is configured (about $0.05 an image, billed to that key). With no key it returns CODEX_CONFIRMATION_REQUIRED instead — ask the person, and pass useCodex: true only if they agree to spend their Codex quota (about a minute per image). Quality is `high` unless you pass low/medium for a throwaway draft. The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
     inputSchema: {
       type: 'object',
       properties: {
         prompt: { type: 'string', description: 'The scene to photograph: subject, setting, light, mood' },
         aspect: { type: 'string', enum: ['portrait', 'square', 'landscape'], description: 'portrait (default) suits 9:16 and 4:5; square 1:1; landscape 3:2' },
         count: { type: 'number', description: 'How many images, 1-3 (default 1)' },
+        quality: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Image quality, default high; low/medium only for throwaway drafts' },
         referenceImagePaths: { type: 'array', items: { type: 'string' }, description: 'Local images to stay faithful to, such as a real product shot (optional)' },
         useCodex: { type: 'boolean', description: 'Set true only after the person has agreed to use their Codex/ChatGPT quota (see CODEX_CONFIRMATION_REQUIRED).' },
       },

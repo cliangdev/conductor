@@ -4,12 +4,12 @@
  */
 import { readConfig } from './config.js'
 import { generateImagesWithCodex } from './codex-image.js'
-import type { GenerateImagesParams, GenerateImagesResult } from './image-common.js'
+import { IMAGE_QUALITIES, type GenerateImagesParams, type GenerateImagesResult, type ImageQuality } from './image-common.js'
 import { generateImagesWithOpenAi } from './openai-image.js'
 
 export const DEFAULT_IMAGE_MODEL = 'gpt-image-2.5-sunburst'
-export const DEFAULT_IMAGE_QUALITY = 'high'
-export const CODEX_MODEL_LABEL = 'gpt-image-2 (Codex image_gen)'
+export const DEFAULT_IMAGE_QUALITY: ImageQuality = 'high'
+export const CODEX_MODEL_LABEL = 'gpt-image-2'
 
 export type OpenAiKeySource = 'CONDUCTOR_OPENAI_API_KEY' | 'OPENAI_API_KEY' | 'config'
 
@@ -30,10 +30,22 @@ export function resolveOpenAiKey(): { key: string; source: OpenAiKeySource } | n
   return key ? { key, source: 'config' } : null
 }
 
-export function resolveImageSettings(): { model: string; quality: string } {
+const isQuality = (v: string | undefined): v is ImageQuality => !!v && (IMAGE_QUALITIES as readonly string[]).includes(v)
+
+/** Explicit value, else `CONDUCTOR_IMAGE_QUALITY` (ignored unless valid), else `high`. An invalid explicit value throws. */
+export function resolveQuality(explicit?: string): ImageQuality {
+  if (explicit !== undefined) {
+    if (!isQuality(explicit)) throw new Error(`quality must be one of ${IMAGE_QUALITIES.join(', ')}.`)
+    return explicit
+  }
+  const env = process.env['CONDUCTOR_IMAGE_QUALITY']?.trim().toLowerCase()
+  return isQuality(env) ? env : DEFAULT_IMAGE_QUALITY
+}
+
+export function resolveImageSettings(explicitQuality?: string): { model: string; quality: ImageQuality } {
   return {
     model: process.env['CONDUCTOR_IMAGE_MODEL']?.trim() || DEFAULT_IMAGE_MODEL,
-    quality: process.env['CONDUCTOR_IMAGE_QUALITY']?.trim() || DEFAULT_IMAGE_QUALITY,
+    quality: resolveQuality(explicitQuality),
   }
 }
 
@@ -42,14 +54,16 @@ export interface GenerateImagesRouteResult extends GenerateImagesResult {
 }
 
 export async function generateImages(params: GenerateImagesParams & { useCodex?: boolean }): Promise<GenerateImagesRouteResult> {
-  const { useCodex, ...rest } = params
+  const { useCodex, ...input } = params
+  const { model, quality } = resolveImageSettings(input.quality)
+  const rest = { ...input, quality }
   if (useCodex === true) {
     const result = await generateImagesWithCodex(rest)
-    return { ...result, generator: { route: 'codex', model: CODEX_MODEL_LABEL } }
+    const agent = result.model === 'default' ? 'Codex default' : `Codex ${result.model}`
+    return { ...result, generator: { route: 'codex', model: `${CODEX_MODEL_LABEL} via ${agent}` } }
   }
   const found = resolveOpenAiKey()
   if (!found) throw new CodexConfirmationRequired()
-  const { model, quality } = resolveImageSettings()
   const result = await generateImagesWithOpenAi(rest, { apiKey: found.key, model, quality, keySource: found.source })
   return { ...result, generator: { route: 'openai-api', model } }
 }

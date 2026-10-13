@@ -10,7 +10,7 @@ vi.mock('../lib/openai-image.js', () => ({ generateImagesWithOpenAi: mockOpenAi 
 
 const ENV = ['CONDUCTOR_OPENAI_API_KEY', 'OPENAI_API_KEY', 'CONDUCTOR_IMAGE_MODEL', 'CONDUCTOR_IMAGE_QUALITY']
 const saved: Record<string, string | undefined> = {}
-const result = { files: [], provenance: { source: 's', licence: 'l', aiGenerated: true }, revisedPrompt: '', outDir: '/x' }
+const result = { files: [], provenance: { source: 's', licence: 'l', aiGenerated: true }, revisedPrompt: '', outDir: '/x', quality: 'high', model: 'm' }
 
 beforeEach(() => {
   for (const k of ENV) {
@@ -57,6 +57,19 @@ describe('resolveImageSettings', () => {
   })
 })
 
+describe('resolveQuality', () => {
+  it('explicit beats env, an invalid env is ignored, an invalid explicit throws', async () => {
+    const { resolveQuality } = await import('../lib/image-generation.js')
+    expect(resolveQuality()).toBe('high')
+    process.env['CONDUCTOR_IMAGE_QUALITY'] = 'medium'
+    expect(resolveQuality()).toBe('medium')
+    expect(resolveQuality('low')).toBe('low')
+    process.env['CONDUCTOR_IMAGE_QUALITY'] = 'bogus'
+    expect(resolveQuality()).toBe('high')
+    expect(() => resolveQuality('ultra')).toThrow('quality must be one of low, medium, high.')
+  })
+})
+
 describe('generateImages', () => {
   it('throws CodexConfirmationRequired without a key or useCodex, and never calls Codex', async () => {
     const { generateImages, CodexConfirmationRequired } = await import('../lib/image-generation.js')
@@ -83,6 +96,24 @@ describe('generateImages', () => {
     expect(mockCodex).toHaveBeenCalledTimes(1)
     expect(mockCodex.mock.calls[0]![0]).not.toHaveProperty('useCodex')
     expect(mockOpenAi).not.toHaveBeenCalled()
-    expect(res.generator).toEqual({ route: 'codex', model: 'gpt-image-2 (Codex image_gen)' })
+    expect(res.generator).toEqual({ route: 'codex', model: 'gpt-image-2 via Codex m' })
+  })
+
+  it('passes the resolved quality to both routes', async () => {
+    const { generateImages } = await import('../lib/image-generation.js')
+    process.env['CONDUCTOR_IMAGE_QUALITY'] = 'medium'
+    await generateImages({ prompt: 'p', outDir: '/x', useCodex: true })
+    expect(mockCodex.mock.calls[0]![0]).toMatchObject({ quality: 'medium' })
+    process.env['OPENAI_API_KEY'] = 'sk-1'
+    await generateImages({ prompt: 'p', outDir: '/x', quality: 'low' })
+    expect(mockOpenAi.mock.calls[0]![0]).toMatchObject({ quality: 'low' })
+    expect(mockOpenAi.mock.calls[0]![1]).toMatchObject({ quality: 'low' })
+  })
+
+  it("labels a Codex run that fell back to the default agent model", async () => {
+    const { generateImages } = await import('../lib/image-generation.js')
+    mockCodex.mockResolvedValue({ ...result, model: 'default' })
+    const res = await generateImages({ prompt: 'p', outDir: '/x', useCodex: true })
+    expect(res.generator.model).toBe('gpt-image-2 via Codex default')
   })
 })

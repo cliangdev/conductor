@@ -6,6 +6,9 @@ import { resolveFfmpegPath } from './media-probe.js'
 
 export type ImageAspect = 'portrait' | 'square' | 'landscape'
 
+export type ImageQuality = 'low' | 'medium' | 'high'
+export const IMAGE_QUALITIES: readonly ImageQuality[] = ['low', 'medium', 'high']
+
 export const ASPECT_SIZES: Record<ImageAspect, string> = {
   portrait: '1024x1536',
   square: '1024x1024',
@@ -16,6 +19,7 @@ export interface GenerateImagesParams {
   prompt: string
   aspect?: ImageAspect
   count?: number
+  quality?: ImageQuality
   referenceImagePaths?: string[]
   outDir: string
   onProgress?: (message: string) => void
@@ -33,6 +37,10 @@ export interface GenerateImagesResult {
   provenance: { source: string; licence: string; aiGenerated: true }
   revisedPrompt: string
   outDir: string
+  /** Image quality used. */
+  quality: ImageQuality
+  /** Model that did the work: the image model (OpenAI) or the Codex agent model ('default' after the no-model retry). */
+  model: string
   /** JPEG (or small PNG) of the first image for inline display; absent when none fits ~1 MB. */
   preview?: { data: Buffer; mimeType: string }
 }
