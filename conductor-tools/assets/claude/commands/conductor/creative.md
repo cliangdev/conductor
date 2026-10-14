@@ -74,11 +74,13 @@ Nothing is saved to Conductor until the person approves what they have seen:
 2. Read `passed` and `checks` in the result first. The preview runs the full render's per-placement
    checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts,
    images), so a design that would fail the real render shows up here. If `passed` is false, fix the
-   design (shorter copy, `layoutOverrides`, `typeOverrides`, a different layout) and preview again
+   design (shorter copy, `layoutOverrides`, `typeOverrides`, a better layout per the skill's
+   `references/layout-guide.md`) and preview again
    **before** showing it or asking anything — never offer Approve & upload while a blocking check
    fails, and tell the person what you changed. (Bigger or smaller text on one placement is
    `typeOverrides`, e.g. `{"9x16": [96]}`, not a layout switch.)
-3. Once `passed` is true, look at the image against the skill's checklist, then show it and ask with
+3. Once `passed` is true, score the image with the skill's `references/design-critique.md` (fix anything
+   below 3, at most twice), then show it with the compact score line and ask with
    `AskUserQuestion`: Approve & upload / Request changes / Stop. On changes, preview again; on
    Stop, leave it — the draft stays local under `.conductor/drafts/`.
 4. On approval, `commit_creative_draft` with the `draftDir`. It uploads the files, saves the

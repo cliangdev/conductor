@@ -44,6 +44,8 @@ needs changing until it fits.
 
 - **Layouts:** `stacked`, `bleed` and `split` are dark only; `card` is dark or light. The photo and
   text arrangement is fixed per layout.
+  - Pick the layout with `references/layout-guide.md`: `bleed` by default when 9:16 is enabled, `card`
+    when the photo must stay readable. `stacked` and `split` are for 4:5 only.
   - **`stacked` drops the body at 4:5.** That includes every card of a 4:5 carousel, and it happens
     silently. If a body line carries meaning (a claim, the product name, the accent phrase), use
     `card`, `split` or `bleed`, or move the line into the headline.
@@ -63,7 +65,7 @@ When `media.json` has `generate: true`, one generated photo per card or beat (or
 background) is renderable. It comes from `generate_creative_image` (OpenAI Images API, or Codex with the person's yes):
 photographic, no text, logos or screens in the picture, and no depiction of the product unless a real
 reference image is supplied. It is `aiGenerated: true`. Run `references/realism-check.md` on every one. Collages, charts and text-in-image stay out.
-Ask for a mid-tone scene: under `bleed`, a dark or night scene can render almost black. For a dark scene, use `card` or `stacked`.
+Ask for a mid-tone scene: under `bleed`, a dark or night scene can render almost black. For a dark scene, use `card`.
 
 ## What it cannot do (so the idea needs filming or a rethink)
 
