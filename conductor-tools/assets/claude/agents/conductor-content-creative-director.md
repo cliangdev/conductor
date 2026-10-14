@@ -36,8 +36,12 @@ Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, the finalist images un
 Output: `decision.md`.
 
 1. For each rendered finalist, look at its image and judge it as the rubric says (phone-size
-   readability, hook legibility in 1 s, safe zones, brand look) and score the six craft criteria in
-   `references/design-critique.md` (1 to 5 each, absolute, one compact line per finalist). Note
+   readability, hook legibility in 1 s, safe zones, brand look) and score the craft criteria in
+   `references/design-critique.md` (1 to 5 each, absolute, one compact line per finalist): the six
+   STILL criteria for a still, ad or motion piece, the five slideshow criteria (slide 1 stops the
+   scroll, each slide earns the next swipe, people would save or send it, the app shows up as the
+   payoff not the opener, native look) for a slideshow. Never score a slideshow on the STILL set, which
+   rewards product and logo prominence an organic post should not have. Note
    anything the text round could not see. A generated photo that reads as AI-made (waxy surfaces, duplicated or merged objects,
    warped hands, mushy background; see `references/realism-check.md`) counts against that finalist:
    say so explicitly.

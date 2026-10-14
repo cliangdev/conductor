@@ -7,7 +7,13 @@ and fonts. This critique covers craft, and it runs before the person sees a draf
 Look at the preview image at phone size. Vision models miss small typography details, so don't
 claim to have judged kerning or hairline spacing; judge what is visible at a glance.
 
-## Score each criterion 1 to 5
+## Which criteria apply
+
+Stills, ads and brand-layout creatives use the six criteria below. An organic slideshow (a
+`compose_slideshow` CAROUSEL) uses the five slideshow criteria further down instead, because it is
+meant to look native, not like an ad.
+
+## Score each criterion 1 to 5 (stills and ads)
 
 Score each one on its own, against the description, not against another draft.
 
@@ -31,3 +37,16 @@ Score each one on its own, against the description, not against another draft.
 
 One compact line next to the preview, for example:
 `Craft: thumb-stop 4, headline 4, space 3, photo+copy 4, product 3, not-banner 4. Weakest: product is implied, not shown.`
+
+## Slideshow criteria (organic slideshows)
+
+Look at the contact sheet: slide 1 at full size, then the slides in order. Score each 1 to 5.
+
+1. **Slide 1 stops the scroll**: a human tension or a result people want, in a line a stranger gets in a second. A feature, the app name or a price scores 1 or 2.
+2. **Each slide earns the next swipe**: every slide has one job and a reason to go on; no filler slide, no slide that repeats the last.
+3. **People would save or send it**: the middle slides hold something to keep or to send to a named person.
+4. **The app is the payoff, not the opener**: it appears on slide N-1 on a real screenshot with one plain mention, never on slide 1 and never as a logo, badge or offer.
+5. **Native look**: text boxes and photos feel like a person's post. Banner-ad signs (a logo lockup, a badge, a tagline stack, a call-to-action button) score 1 or 2.
+
+Act on the scores as below. Show them in one line, for example:
+`Slideshow: scroll-stop 4, next-swipe 3, save/send 4, app-as-payoff 4, native 5. Weakest: slide 3 repeats slide 2.`

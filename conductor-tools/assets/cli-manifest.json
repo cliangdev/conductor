@@ -841,6 +841,11 @@
       ]
     },
     {
+      "name": "compose_slideshow",
+      "description": "Compose native-looking organic slideshow slides (TikTok/Reels style) from a spec on this machine, with layout checks. Pass the PNG paths to preview_creative_draft as a CAROUSEL.",
+      "category": "marketing"
+    },
+    {
       "name": "preview_creative_draft",
       "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image. Never writes to Conductor; commit only after the person approves.",
       "category": "marketing"

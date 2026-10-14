@@ -205,8 +205,8 @@ runner-up's hook, cut it as a lettered variant of the Creative (see section 4).
 
 **The publish pack.** Each run also leaves `publish-pack.md` (for you) and `publish-pack.json` (for
 the publisher) in its folder. Per platform it holds the final caption with the search keyword in the
-first line, 3 to 5 hashtags, a suggested first comment (you post that by hand; Conductor cannot post
-comments), the cover frame, alt text for every image or card, where the on-screen text sits, the
+first line and a call to action that names the app, 3 to 5 hashtags, a pinned comment (you post that by hand; Conductor cannot post
+comments), a reminder to repost to Stories with a link sticker, the cover frame, alt text for every image or card, where the on-screen text sits, the
 sound and its licence, a posting window from your insights (or "no data yet"), and 2 to 3 alternate
 hooks, each tagged with a hook type, ready to cut as lettered variants for a hook test. When you make
 the Post from the Creative with `/conductor:creative` or the publisher skill, it finds the pack and
@@ -262,6 +262,27 @@ then decides from the text alone), for about 7 calls.
 the ideas and scores, the finalist sheets, `decision.md`, `script.md`, `direction.md`,
 `creative-spec.json`, `publish-pack.md` and `publish-pack.json`, plus `run.json`, which records progress. If a run is interrupted, running the
 command again offers to resume it.
+
+## Make an organic slideshow
+
+For a TikTok photo post or an Instagram carousel that promotes your app without looking like an ad,
+ask Claude Code for a slideshow, for example "make a slideshow about X" (or let `/conductor:content`
+choose the idea; it defaults to a slideshow for organic posts). Claude writes a slide-by-slide plan
+and builds the slides on your machine with `compose_slideshow`.
+
+- **Shape.** 5 to 7 slides. Slide 1 is a human tension (never a feature, the app name or a price), the
+  middle slides hold what people save or send, the second-to-last shows your app on a real
+  screenshot with one plain mention, and the last asks them to save or follow.
+- **What you provide.** Photos (or let Claude generate them) and a real screenshot of the app. There is
+  no logo, badge or offer on the slides, and no invented numbers: any figure must be real.
+- **Approve it.** Claude shows a contact sheet first; nothing is uploaded until you approve. The result
+  is a CAROUSEL Creative you attach to a Post as usual.
+- **Getting the download.** TikTok and Instagram captions cannot hold a clickable link, so the caption
+  names the app ("search <App> in the App Store"); you also pin a comment, keep the link in your bio,
+  and repost to Instagram Stories with a link sticker. The publish pack lists these. Turn on the
+  platform's branded-content ("your brand") setting, and the AI label if a photo was generated.
+
+Ads are different: use "Static ad" in `/conductor:creative` for a brand-layout ad.
 
 ## 3. Put it on a Post
 

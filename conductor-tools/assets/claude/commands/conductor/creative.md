@@ -6,8 +6,8 @@ allowed-tools: mcp__conductor__*, AskUserQuestion, Skill, WebFetch, Read, Glob, 
 
 # /conductor:creative
 
-Guided entry point for making a Post's artwork — a static ad, a short video, or posting a video
-already on hand. Keeps the interaction short: a couple of questions, then it hands off to the
+Guided entry point for making a Post's artwork — a static ad, a short video, an organic slideshow,
+or posting a video already on hand. Keeps the interaction short: a couple of questions, then it hands off to the
 `conductor-creative` skill (`Skill(skill: "conductor-creative")`) for the actual writing, rendering
 and judgment calls. This command doesn't replace that skill's guidance — read it once invoked and
 follow it.
@@ -31,7 +31,7 @@ continue with Step 2.
     "question": "What would you like to create?",
     "header": "Creative Type",
     "options": [
-      {"label": "Static ad", "description": "A photo + headline, rendered at every enabled placement"},
+      {"label": "Static ad", "description": "A photo + headline ad with the brand layout, at every enabled placement (not for organic posts)"},
       {"label": "Short video from a photo", "description": "Animated text over a still photo or a moving background"},
       {"label": "Video from a clip I have", "description": "Animate the brand layout using an existing video as background"},
       {"label": "Post an existing video as-is", "description": "No brand layout — the finished clip goes up directly"},
@@ -51,6 +51,10 @@ Keep this light — one or two follow-up questions, not a form:
   already on hand before asking for a new photo; no photo fits and none is offered? Offer to generate one with
   `generate_creative_image` (needs an OpenAI API key, or the person's yes to use Codex). A new photo is a local file path (a URL: download it
   to a local file first) — it is only uploaded after the person approves the preview.
+- **Organic post or slideshow** (the person says so under "Other", or describes a TikTok or Instagram
+  photo post that is not an ad): skip the brand layouts. Hand off to the `conductor-creative` skill's
+  slideshow path (`references/slideshow-formats.md`): `compose_slideshow`, then a CAROUSEL preview,
+  approval and commit. Ask for the topic, the photos and a real app screenshot, if there is one.
 - **Video from a clip I have / Post an existing video as-is**: call
   `list_creative_media({kind: "VIDEO"})` first; if nothing fits, ask for a local path (a URL:
   download it first). A clip used as a MOTION background is previewed from the local file too.
@@ -94,8 +98,8 @@ Nothing is saved to Conductor until the person approves what they have seen:
 
 When the Creative came from a content-team run, or the person points to a publish pack, its
 `publish-pack.json` carries per-destination captions and publish options (disclosure, AI label,
-cover frame, alt text) and a first comment. Look for `.conductor/content-runs/*/publish-pack.json`
+cover frame, alt text) and a pinned comment. Look for `.conductor/content-runs/*/publish-pack.json`
 whose `creativeId` matches the Creative. When you go on to create or edit the Post with the
 `conductor-publisher` skill, pre-fill each target's `captionOverride` and options from it, show them
-in the confirmation table and let the person change them. Mention the first comment as a manual
-step, since Conductor cannot post comments. The Post still goes through the normal review.
+in the confirmation table and let the person change them. Mention the pinned comment (and, for a post that promotes an app, the Stories repost with a link sticker) as manual
+steps, since Conductor cannot post comments. The Post still goes through the normal review.

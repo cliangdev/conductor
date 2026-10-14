@@ -1,6 +1,6 @@
 ---
 name: conductor-creative
-description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine as a draft, checked by eye and approved before anything is saved to Conductor. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; posting finished images as-is (a carousel or single still designed elsewhere, or an existing media set); a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
+description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine as a draft, checked by eye and approved before anything is saved to Conductor. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; an organic post as a native slideshow (compose_slideshow, then a CAROUSEL); posting finished images as-is (a carousel or single still designed elsewhere, or an existing media set); a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
 user-invocable: true
 allowed-tools: mcp__conductor__*, AskUserQuestion, Read, Glob, Grep, WebFetch
 ---
@@ -24,6 +24,16 @@ separate render service to wait on. A preview typically finishes in well under a
 Creative, no upload — then the person looks at it, and only on their approval does
 `commit_creative_draft` upload the media, save the Creative and do the full render. Never commit a
 draft the person has not seen and approved.
+
+## Which path
+
+- **An organic post or slideshow** (TikTok or Instagram photo post, no paid placement): build native
+  slides with `compose_slideshow`, then post them as a CAROUSEL Creative. Read
+  `references/slideshow-formats.md` first; it covers the spec, archetypes, text rules and the flow.
+  No logo, badge or offer goes on the slides, and the brand layouts below do not apply.
+- **An ad** (a paid placement, or art that must carry the brand lockup and CTA): use the brand
+  layouts (STILL) as described below.
+- **A video**, a **clip** or **finished images**: see their sections below.
 
 ## How to make a Creative
 
@@ -272,6 +282,9 @@ platform may get rejected or trimmed on another; check before attaching to a Pos
 broadly.
 
 ## Finished images (carousel or single still)
+
+Slides made by `compose_slideshow` take this same CAROUSEL route: pass its `slidePaths` to
+`preview_creative_draft` (see `references/slideshow-formats.md`).
 
 When the slides are already designed (Figma exports, your own renderer, device-framed screenshots)
 there is nothing for the brand layout to do, so use a CAROUSEL Creative: finished images posted

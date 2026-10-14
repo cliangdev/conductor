@@ -336,6 +336,31 @@ it in one call (`upload_creative_media` with `folder` or `files`, up to 100, thr
 result per file) and find it again with `list_creative_media({labelPrefix})`. `label`, `source` and
 `licence` are capped at 200 characters (a longer value is a 400).
 
+## Organic slideshows {#organic-slideshows}
+
+Organic posts (TikTok photo posts, Instagram carousels) are native-looking slideshows, not brand-layout
+ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is `compose_slideshow`.
+
+- **Input:** a spec, `{id, slides: [...]}`, passed inline (`spec`) or as a JSON file (`specPath`). Slide
+  types: `photo`, `screen` (a real app screenshot in a phone frame, optional `callouts`), `notes`,
+  `messages`, `grid`, `stack` (with labelled before/after), `tier`, `week`, `receipt` and `placard`; up
+  to 35 slides. Text is native box or stroke text placed by `y` (percent of the 9:16 frame). The field
+  reference is `conductor-tools/src/lib/slideshow/spec.ts`.
+- **Output:** PNG slides at 1080x1920 (`9x16`) and 1080x1350 (`4x5`), written under
+  `.conductor/slideshows/`, plus layout `checks` (spill, safe zones, text size) and `passed`. Nothing is
+  sent to Conductor.
+- **Then a CAROUSEL.** The returned `slidePaths` go to `preview_creative_draft({kind: "CAROUSEL",
+  slidePaths, caption, slideAltText})`, and after approval `commit_creative_draft`. The result is an
+  ordinary [CAROUSEL Creative](#finished-images-carousel); the backend never sees the spec, only the
+  finished images.
+- **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
+  `conductor-tools/assets/fonts/` with `OFL.txt`.
+- **Local rendering:** like Creatives, slides render on the user's machine with the system Chrome; no
+  backend job.
+- **Not the ad path.** Slides carry no logo, badge or offer; branded ads still use the brand layouts
+  (STILL). The skills' guidance (post anatomy, archetypes, text and honesty rules) is
+  `references/slideshow-formats.md` in `conductor-creative` and `conductor-content-studio`.
+
 ## Motion (COND-24 PR2)
 
 `MOTION` is a branded animated video: the same copy and look as a STILL Creative (layout, theme, headline

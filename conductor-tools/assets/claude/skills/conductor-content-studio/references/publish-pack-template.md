@@ -28,9 +28,14 @@ Run: <runId>   Creative: <display id, or "not yet committed">   Tags: hook <type
 
 ## <Platform> (<feed | reel | story>, as the destination's formats allow)
 - **Caption:** <final text; the search keyword is in the first line, within the first ~125
-  characters; within the platform's limit>
+  characters; the call to action names the app so it is searchable ("search <App> in the App
+  Store"), because captions hold no clickable link; within the platform's limit>
 - **Hashtags:** <3 to 5>
-- **First comment (post manually):** <text, or "none">. Conductor cannot post comments.
+- **Pinned comment (post manually):** <text, such as where to get the app, or "none">. Conductor cannot post comments.
+- **Link in bio / Stories:** <"link in bio is set" and, for a post that promotes an app or offer,
+  "repost to Instagram Stories with a link sticker">. Manual steps.
+- **Branded-content setting:** <the platform's branded-content or "your brand" toggle for a brand's
+  own promotional post, and the AI label when a generated photo is used>
 - **Cover frame:** <video: timestamp in seconds and what is on it; carousel: card 1; still: n/a>
 - **Alt text:** <one line per image or card, in order>
 - **On-screen text placement:** <where each line sits, inside the safe zone>
@@ -94,7 +99,7 @@ Rules:
   `list_publish_targets`. `captionOverride` is ignored on a story.
 - `captionOverride` is the **complete text that gets posted**: the caption, then a blank line, then that
   platform's hashtags. The publisher posts it as-is, so hashtags listed only in `publish-pack.md` never
-  reach the platform. The first comment is the one thing that stays out: it is posted by hand.
+  reach the platform. The pinned comment is the one thing that stays out: it is posted by hand.
 - `options` holds real option keys only, in the camelCase the destination reports under
   `optionKeys`. Never add a key that is not in this table, and never `privacyLevel` (the person
   picks it from the account's allowed levels at publish time):

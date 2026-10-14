@@ -27,6 +27,12 @@ needs changing until it fits.
   (`slides`, with `default` as the fallback) and each must match its placement's aspect. Reels,
   Stories and YouTube cannot take it.
 
+- **Slideshow** (organic posts): native-looking slides made locally by `compose_slideshow` (photo with
+  text, app screenshot with callouts, Notes page, chat, photo grid, stacked before/after, tier list,
+  week planner, receipt, placard), then posted as a CAROUSEL (see `references/slideshow-formats.md`).
+  This is the default for an organic `RENDER` post. It needs real photos and, for the payoff slide,
+  a real app screenshot; it takes no Brand Kit layout. Ads keep using STILL.
+
 ## Hard requirements (a draft is refused without them)
 
 - **A photo.** Every STILL needs one, and so does a carousel or story, whose beats inherit the main
@@ -71,7 +77,7 @@ Ask for a mid-tone scene: under `bleed`, a dark or night scene can render almost
 
 - Footage of people, places, cooking or the product in use. Screen recordings of an app.
 - Voiceover or spoken dialogue: MOTION has music or clip sound, not speech.
-- Grids, charts, collages of several photos on one card, illustrations, or text inside an image.
-  Each card is one photo plus text.
+- Charts, illustrations, or text inside a generated image. In a STILL each card is one photo plus
+  text; grids, stacks and collages exist only as slideshow slides (above).
 - Anything that relies on a product claim the brief can't confirm. That's a copy problem, not a
   rendering one: soften the claim or drop the idea.

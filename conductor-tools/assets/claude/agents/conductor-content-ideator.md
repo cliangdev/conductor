@@ -38,11 +38,17 @@ ideas from your angle, not a safe average.
    social-proof).
 5. Tag each idea `RENDER` or `FILM` honestly, using `references/capabilities.md` and `media.json`.
    It is `RENDER` only if every card or frame fits what Conductor can render with media that exists:
-   one photo plus text per card, or motion text over a photo or clip. That covers motion text, which
-   needs no filming. There are no type-only stills, grids, collages, voiceover or screen recordings.
+   one photo plus text per card, a native slideshow (photos, app screenshots, Notes pages, chats, tier
+   lists and similar slides), or motion text over a photo or clip. That covers motion text, which
+   needs no filming. There are no type-only stills, voiceover or screen recordings.
    Footage, a person on camera or spoken lines make it `FILM`. For `RENDER`, fill the draft-spec
    block, use only media ids that exist, and respect the copy rules and accent-phrase requirement.
-6. Do not name your angle inside an idea. Do not rank your ideas.
+6. For an organic post, a `RENDER` idea is usually a slideshow. Name its archetype (saved-but-never-used
+   guilt, doubt or conflict, stop doing X, numbered list, tier list, Notes-app plan, POV, before/after;
+   see `references/slideshow-formats.md` when given) and the slide count (5 to 7), and put the slide 1
+   hook in the on-screen hook. Slide 1 is a human tension, never a feature, the app name or a price.
+   Put these in the Concept line; the draft spec may then be "slideshow, <archetype>, <n> slides".
+7. Do not name your angle inside an idea. Do not rank your ideas.
 
 ## Finish
 
