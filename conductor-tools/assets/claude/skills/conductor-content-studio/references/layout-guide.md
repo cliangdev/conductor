@@ -17,9 +17,9 @@ These notes come from rendering the same photo and headline in every layout with
 
 - **`bleed`**: full-frame photo with a large headline. It is the only layout that fills 9:16 with a
   big headline. Dark theme only (`theme: "light"` is refused). Its scrim darkens most of the photo on
-  9:16 and 4:5, so choose a photo with a bright, high-contrast subject, and keep the subject visible
-  with `focalOverride` (e.g. `{"9x16": "30% 60%"}`). On 4:5 the headline sits at the top; on 1:1 it is
-  small at the bottom.
+  9:16 and 4:5, so choose a photo with a bright, high-contrast subject. On 4:5 the headline sits at
+  the top, so a face in the top third of the photo lands under it; on 1:1 the headline is small at the
+  bottom.
 - **`card`**: the photo as a framed card with a large headline beneath. On 9:16 the bottom third is
   an empty dark panel. Use it when the photo must stay readable, such as a product screen that
   bleed's scrim would hide.
@@ -41,6 +41,12 @@ fit, so read `checks` again after pinning.
 
 ## Photo and layout together
 
-If the subject's face sits in the top third, keep `bleed` and move the subject with `focalOverride`,
-or switch to `card`. Don't switch to a layout whose 9:16 result is a dead panel just to avoid the
-collision.
+`focalOverride` (e.g. `{"4x5": "50% 80%"}`) only moves the subject when the crop leaves spare room:
+a photo much taller than the placement's frame, or `card`'s wide strip on 1:1. A photo already close
+to the placement's shape (a 4:5-ish photo on 4:5) has nothing to shift, and the override does nothing.
+Check the next preview rather than assuming it worked.
+
+If the subject's face would sit under the headline: try `focalOverride` where there is room, else pick
+a photo with the subject lower in the frame, else use `card` (and pin `card`'s 1:1 crop with
+`focalOverride` so the face isn't cut off). If two fix rounds still leave a weak frame, the photo is
+usually the problem: say so and offer a different one.

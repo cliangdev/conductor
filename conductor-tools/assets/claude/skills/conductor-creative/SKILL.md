@@ -123,8 +123,8 @@ of this skill's silent failure modes (the full list is below). A human or a prio
 photo `blocked`; if you notice one that should be, say so rather than using it anyway.
 
 Match the crop to the subject. A layout that lays copy over the photo (`bleed`) can put a face in
-collision with the headline: keep `bleed` and move the subject with `focalOverride`, or use `card`,
-which keeps the photo and copy on separate panels. Pick the layout with `references/layout-guide.md`
+collision with the headline: move the subject with `focalOverride` when the crop has room, pick a
+photo with the subject lower, or use `card`, which keeps the photo and copy on separate panels. Pick the layout with `references/layout-guide.md`
 (default `bleed` when 9:16 is enabled; never `stacked` or `split` there, and never rely on the
 registry default).
 
