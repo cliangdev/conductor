@@ -171,6 +171,11 @@ names the route (`openai-api` or `codex`) and model; `model` and `quality` repor
 - **Prompt.** The caller writes the scene; the tool adds fixed rules: photographic unless asked
   otherwise, no text, letters, logos, watermarks, UI or phone screens, and clean negative space for
   the headline. Pass `referenceImagePaths` when a real product must appear; never invent one.
+- **Realism.** For photographic scenes the prompt also asks for an unretouched look (natural light,
+  true colour, sensor grain), bans the AI look (waxy or glossy surfaces, over-sharpening, duplicated or
+  floating objects) and asks for small real-world imperfections. The creative skills then run a realism
+  check (`references/realism-check.md`) on every generated photo, regenerate up to twice on a fail, and
+  report a verdict at approval. It is a quality bar, not concealment: the AI label still applies.
 - **Output.** `<projectRoot>/.conductor/generated/<timestamp>-<slug>/image-N.png` (git-ignored,
   pruned after 14 days). The result returns the first image inline plus `files: [{path, width,
   height}]`, `provenance` and `revisedPrompt`. Look at every image before using it.

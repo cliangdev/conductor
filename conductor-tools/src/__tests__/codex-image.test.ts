@@ -110,6 +110,9 @@ describe('generateImagesWithCodex', () => {
     expect(stdin).toContain('a kitchen')
     expect(stdin).toContain('1536x1024')
     expect(stdin).toMatch(/NO text/)
+    expect(stdin).toContain('unretouched photo')
+    expect(stdin).toContain('avoid the AI look')
+    expect(stdin).toContain('real-world imperfections')
     expect(stdin).toContain('high quality')
   })
 

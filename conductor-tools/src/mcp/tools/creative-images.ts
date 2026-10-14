@@ -125,7 +125,7 @@ export async function generateCreativeImage(
     model: result.model,
     generator: result.generator,
     nextStep:
-      'Look at the image for pseudo-text, warped hands or a fake product; if it is good, pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft. Its .provenance.json sidecar carries the AI-generated label.',
+      'Run the realism check before using it: look at the image for AI tells (waxy or plastic surfaces, over-sharpening or HDR glow, warped hands, faces or teeth, duplicated, merged or floating objects, inconsistent light or shadows, mushy background detail, pseudo-text, a fake product or screen). If any shows, regenerate once or twice with a prompt that names the fix; if it still looks generated, say so and offer a library photo instead. If it passes, pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft. Its .provenance.json sidecar carries the AI-generated label either way.',
     ...(result.preview ? { image: result.preview } : {}),
   }
 }

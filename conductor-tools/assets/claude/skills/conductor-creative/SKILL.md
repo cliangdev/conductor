@@ -98,8 +98,14 @@ about 40-50 images uses a week), or skip and use a library photo. Only on an exp
 AI label applies. A 1024x1536 image cropped to 9:16 may draw the "soft, upscaled photo" warning:
 mention it, don't fight it.
 
+**Every generated photo gets the realism check** in `references/realism-check.md` before it is used:
+it must not look AI-made (waxy surfaces, duplicated objects, warped hands, mushy detail). On a fail,
+regenerate with a prompt that names the fix, at most twice; if the third still fails, say what looks
+generated and offer a library photo, a reference photo or filming. The check is about quality, not
+concealment: the AI label still applies.
+
 **Open the photo and look at it before using it** — a generated one most of all (pseudo-text, warped
-hands or faces, a fake product or app screen). A picture can break every copy rule with text,
+hands or faces, a fake product or app screen; the realism check covers the rest). A picture can break every copy rule with text,
 a logo or a claim burned into its pixels, and no automated check can see that — this is the first
 of this skill's silent failure modes (the full list is below). A human or a prior pass marks a bad
 photo `blocked`; if you notice one that should be, say so rather than using it anyway.
@@ -176,7 +182,7 @@ also confirms the photo carries no burned-in text, logo or claim. Only on **Appr
 `commit_creative_draft({draftDir, photoChecked: true})` with the `draftDir` the approved preview
 returned, plus provenance (`source`, `licence`, `aiGenerated`) only for local files the preview
 lists in `provenance.needed`. Pass `photoChecked` only after that approval, never on your own
-judgement.
+judgement. Show the one-line realism verdict for each generated photo with the preview.
 
 ### 8. Check readiness before calling it done
 
