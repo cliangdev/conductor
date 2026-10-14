@@ -107,6 +107,7 @@ const CREATIVE_TOOLS = [
 ] as const
 import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
+import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1465,6 +1466,19 @@ export const TOOLS = [
     },
   },
   {
+    name: 'compose_slideshow',
+    description: 'Compose native-looking organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Slide types: photo (bg + texts), screen (phone screenshot, callouts), notes, grid, stack (labelled panels), tier, week, receipt, placard, messages. Returns the paths, the checks, passed and the first slide as an image. If passed is false, fix the spec and call again before showing anything. Next: preview_creative_draft({kind: "CAROUSEL", slidePaths}). Nothing is sent to Conductor.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        spec: { type: 'object', description: 'The slideshow: { id, grain?, slides: [{ type?, bg?, texts?: [{t, y?, fs?, style?}], ...type fields }] } (use this or specPath). y is % of the 9:16 frame; max 35 slides; image paths are local files.' },
+        specPath: { type: 'string', description: 'A spec .json file; relative image paths resolve against its folder (use this or spec)' },
+        ratios: { type: 'array', items: { type: 'string', enum: ['9x16', '4x5'] }, description: 'Default both' },
+        draftDir: { type: 'string', description: 'Output folder (optional; defaults to <project>/.conductor/slideshows/<timestamp>-<id>/)' },
+      },
+    },
+  },
+  {
     name: 'preview_creative_draft',
     description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo: nothing is rendered; it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
@@ -2441,6 +2455,12 @@ export async function runMcpServer(): Promise<void> {
               nextStep: 'Ask the person which they want. Only if they choose Codex, call again with useCodex: true.',
             })
           }
+        }
+        case 'compose_slideshow': {
+          const result = await composeSlideshowTool(params as unknown as ComposeSlideshowParams)
+          if (!result.ok) return errorResponse(result)
+          const { image, ...meta } = result
+          return image ? imageResponse(image, meta) : successResponse(meta)
         }
         case 'preview_creative_draft': {
           const progressToken = request.params._meta?.progressToken
