@@ -178,7 +178,8 @@ before each score, and names the top 3. Store the finalists in `run.json`.
 For each `RENDER` finalist, call `preview_creative_draft` with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
 `full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
-`imagePrompt`, call `generate_creative_image({prompt})` first, eye-check the result, and use its
+`imagePrompt`, call `generate_creative_image({prompt})` first, run the realism check
+(`references/realism-check.md`, regenerating on a fail), and use its
 path as `photoPath` (generate only for finalists, not the whole pool).
 
 - If the validator refuses the copy (accent phrase or a copy rule), fix the copy once yourself and
@@ -231,7 +232,8 @@ light; a refusal from the validator names the valid ones). The spec's keys must 
 idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. When
 `media.json` has `generate: true`, the art director may also write `image-prompts.json`
 (`{"photo": "...", "beats": {"2": "..."}}`) next to the spec. Before S6, call
-`generate_creative_image` for each prompt, eye-check each image, and set `photoPath` (or
+`generate_creative_image` for each prompt, run the realism check (`references/realism-check.md`,
+regenerating on a fail) on each image, and set `photoPath` (or
 `sequence[i].photoPath`) in `creative-spec.json`. A `FILM` winner skips S5 and goes to the shoot
 script, below.
 
@@ -277,7 +279,7 @@ does not apply is answered "not applicable".
    sheets exist, so show runners-up by title and tag only), and a short decision
    summary (the winner and why, the runners-up, what was cut and why), and a short pack summary: the
    disclosure setting (which toggle, or none), the AI-label setting, the sound and its licence, and
-   the alternate hooks with their types.
+   the alternate hooks with their types. For each generated photo, add its one-line realism verdict.
 4. Ask with `AskUserQuestion`, header "Draft", with exactly these four options. `AskUserQuestion`
    allows at most four, so never add one per runner-up, and **Stop** must always be among them:
    - **Approve & upload**: the question says approving also confirms the photo carries no burned-in

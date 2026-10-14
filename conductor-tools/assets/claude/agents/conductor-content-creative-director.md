@@ -37,7 +37,9 @@ Output: `decision.md`.
 
 1. For each rendered finalist, look at its image and judge it as the rubric says (phone-size
    readability, hook legibility in 1 s, safe zones, brand look). Note anything the text round could
-   not see.
+   not see. A generated photo that reads as AI-made (waxy surfaces, duplicated or merged objects,
+   warped hands, mushy background; see `references/realism-check.md`) counts against that finalist:
+   say so explicitly.
 2. Compare each pair of finalists twice, once in each order, reasoning first. A split is a tie.
    Tally the points.
 3. Write the devil's-advocate case against the leader (at least five sentences) and say whether it

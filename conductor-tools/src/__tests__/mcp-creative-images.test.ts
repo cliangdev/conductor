@@ -64,6 +64,7 @@ describe('generateCreativeImage', () => {
     expect(res.revisedPrompt).toBe('rp')
     expect(res.generator).toEqual({ route: 'openai-api', model: 'gpt-image-2.5-sunburst' })
     expect(res.nextStep).toContain('photoPath')
+    expect(res.nextStep).toContain('realism check')
     expect(res.image?.mimeType).toBe('image/jpeg')
   })
 

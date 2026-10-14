@@ -58,6 +58,7 @@ Look at the actual image file, not the text description. Check:
 - Hook legibility in 1 second: is the first thing seen the hook, in high contrast?
 - Safe zones: text out of the platform UI (see `platform-specs.md`), nothing sitting on a face.
 - Brand look: tokens, font, logo lockup, accent phrase on the words that carry the meaning.
+- Realism: a generated photo that looks AI-made (waxy, duplicated objects, warped hands) counts against the finalist.
 - Whether the picture and the words do different jobs (photo shows, words claim) rather than
   repeating each other.
 

@@ -37,6 +37,9 @@ describe('generateImagesWithOpenAi', () => {
     expect(body).toMatchObject({ model: 'gpt-image-2.5-sunburst', size: '1536x1024', quality: 'high', n: 1 })
     expect(body.prompt).toContain('a kitchen')
     expect(body.prompt).toMatch(/NO text/)
+    expect(body.prompt).toContain('unretouched photo')
+    expect(body.prompt).toContain('avoid the AI look')
+    expect(body.prompt).toContain('real-world imperfections')
     expect(progress[0]).toBe('Calling OpenAI gpt-image-2.5-sunburst (high)')
 
     expect(res.files).toEqual([{ path: path.join(out, 'image-1.png'), width: 1, height: 1 }])

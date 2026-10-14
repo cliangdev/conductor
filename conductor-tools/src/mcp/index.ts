@@ -1450,7 +1450,7 @@ export const TOOLS = [
   },
   {
     name: 'generate_creative_image',
-    description: "Generate a photo on this machine. Uses the OpenAI Images API when a key is configured (about $0.05 an image, billed to that key). With no key it returns CODEX_CONFIRMATION_REQUIRED instead — ask the person, and pass useCodex: true only if they agree to spend their Codex quota (about a minute per image). Quality is `high` unless you pass low/medium for a throwaway draft. The image never contains text, logos or screens. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
+    description: "Generate a photo on this machine. Uses the OpenAI Images API when a key is configured (about $0.05 an image, billed to that key). With no key it returns CODEX_CONFIRMATION_REQUIRED instead — ask the person, and pass useCodex: true only if they agree to spend their Codex quota (about a minute per image). Quality is `high` unless you pass low/medium for a throwaway draft. The image never contains text, logos or screens. Check the result for an AI look before using it. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
     inputSchema: {
       type: 'object',
       properties: {
