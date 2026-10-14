@@ -39,10 +39,20 @@ export type ComposeSlideshowToolResult =
       slidePaths: Partial<Record<SlideRatio, string[]>>
       checks: SlideshowCheck[]
       passed: boolean
+      provenance: { recorded: number; needed: number[]; aiGenerated: boolean }
       nextStep: string
       image?: { data: Buffer; mimeType: string }
     }
   | { ok: false; error: string; errors?: string[] }
+
+function provenanceNote(p: { needed: number[]; aiGenerated: boolean }): string {
+  let note = ''
+  if (p.needed.length > 0) {
+    note += ` Slides ${p.needed.join(', ')} have no provenance (an input image has no .provenance.json): commit_creative_draft will need source and licence for them.`
+  }
+  if (p.aiGenerated) note += ' An input image is AI-generated: make sure the AI label is on (aiGenerated: true at commit if a slide has no sidecar).'
+  return note
+}
 
 export async function composeSlideshowTool(
   params: ComposeSlideshowParams,
@@ -90,8 +100,10 @@ export async function composeSlideshowTool(
       slidePaths: result.slidePaths,
       checks: result.checks,
       passed: result.passed,
+      provenance: result.provenance,
       nextStep: result.passed
-        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap.'
+        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap.' +
+          provenanceNote(result.provenance)
         : 'Fix the spec for every check with severity "error" and call compose_slideshow again BEFORE showing anything to the person.',
       ...(image ? { image } : {}),
     }

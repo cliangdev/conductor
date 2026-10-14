@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateSync } from 'node:zlib'
+import { writeProvenanceSidecar } from '../lib/provenance-sidecar.js'
 import { composeSlideshow, type SlideshowSpec } from '../lib/slideshow/index.js'
 
 function crc32(buf: Buffer): number {
@@ -109,4 +110,51 @@ describe.skipIf(!hasBrowser)('composeSlideshow (real browser)', () => {
     await expect(composeSlideshow({ id: 'w', slides: [{ bg: 'https://example.com/a.png' }] }, join(tmp, 'out4'), { specDir: tmp })).rejects.toThrow(/local files only/)
     expect(existsSync(join(tmp, 'out4', 'w-9x16-01.png'))).toBe(false)
   }, 60000)
+
+  describe('provenance sidecars', () => {
+    const read = (png: string) => JSON.parse(readFileSync(`${png}.provenance.json`, 'utf8'))
+
+    it('writes an own-work sidecar for a text-only slide, on every ratio', async () => {
+      const res = await composeSlideshow({ id: 'txt', slides: [{ type: 'messages', bubbles: [{ from: 'me', t: 'hi' }] }] }, join(tmp, 'p1'), { specDir: tmp })
+      expect(res.provenance).toEqual({ recorded: 2, needed: [], aiGenerated: false })
+      for (const png of [...res.slidePaths['9x16']!, ...res.slidePaths['4x5']!]) {
+        expect(read(png)).toEqual({ source: "Text slide composed with Conductor's slideshow composer", licence: 'Own work', aiGenerated: false })
+      }
+    }, 60000)
+
+    it('propagates aiGenerated, licences and sources from the input sidecars', async () => {
+      const ai = join(tmp, 'ai.png')
+      const own = join(tmp, 'own.png')
+      writeFileSync(ai, solidPng(60, 100, [10, 20, 30]))
+      writeFileSync(own, solidPng(60, 100, [30, 20, 10]))
+      await writeProvenanceSidecar(ai, { source: 'gen A', licence: 'Generated, house use', aiGenerated: true })
+      await writeProvenanceSidecar(own, { source: 'x'.repeat(300), licence: 'Own work', aiGenerated: false })
+      const res = await composeSlideshow(
+        { id: 'ai', slides: [{ type: 'stack', photos: [{ src: 'ai.png' }, { src: 'own.png' }] }, { bg: 'own.png', texts: [{ t: 'hi', y: 30 }] }] },
+        join(tmp, 'p2'),
+        { specDir: tmp, ratios: ['4x5'] }
+      )
+      const first = read(res.slidePaths['4x5']![0]!)
+      expect(first.aiGenerated).toBe(true)
+      expect(first.licence).toBe('Generated, house use; Own work')
+      expect(first.source.startsWith("Composed with Conductor's slideshow composer from: gen A; ")).toBe(true)
+      expect(first.source).toHaveLength(200)
+      expect(first.source.endsWith('…')).toBe(true)
+      expect(read(res.slidePaths['4x5']![1]!).aiGenerated).toBe(false)
+      expect(res.provenance).toEqual({ recorded: 2, needed: [], aiGenerated: true })
+    }, 60000)
+
+    it('writes no sidecar and warns when an input image has none', async () => {
+      const ai = join(tmp, 'ai.png')
+      const res = await composeSlideshow({ id: 'miss', slides: [{ type: 'stack', photos: [{ src: 'ai.png' }, { src: 'photo.png' }] }] }, join(tmp, 'p3'), { specDir: tmp, ratios: ['9x16'] })
+      expect(existsSync(`${res.slidePaths['9x16']![0]}.provenance.json`)).toBe(false)
+      expect(res.provenance).toEqual({ recorded: 0, needed: [1], aiGenerated: true })
+      const w = res.checks.find((c) => c.rule === 'provenance')!
+      expect(w.severity).toBe('warning')
+      expect(w.message).toContain(join(tmp, 'photo.png'))
+      expect(w.message).not.toContain(ai + ',')
+      expect(w.message).toMatch(/AI-generated.*aiGenerated: true/)
+      expect(res.passed).toBe(true)
+    }, 60000)
+  })
 })

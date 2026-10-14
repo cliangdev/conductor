@@ -16,6 +16,7 @@ const result = (passed: boolean) => ({
   slidePaths: { '9x16': ['/o/a-9x16-01.png'], '4x5': ['/o/a-4x5-01.png'] },
   checks: passed ? [] : [{ slide: 1, ratio: '9x16' as const, rule: 'safeZone' as const, severity: 'error' as const, message: 'bad' }],
   passed,
+  provenance: { recorded: 1, needed: passed ? [] : [2], aiGenerated: !passed },
   specPath: '/o/spec.json',
   outDir: '/o',
 })
@@ -42,6 +43,16 @@ describe('composeSlideshowTool', () => {
     compose.mockResolvedValue(result(false))
     const res = await composeSlideshowTool({ spec: { id: 'a', slides: [{}] } }, { projectRoot: tmp })
     expect(res).toMatchObject({ ok: true, passed: false, nextStep: expect.stringMatching(/Fix the spec.*BEFORE showing/) })
+  })
+
+  it('passes the provenance summary through and extends nextStep', async () => {
+    compose.mockResolvedValue(result(false))
+    const res = (await composeSlideshowTool({ spec: { id: 'a', slides: [{}] } }, { projectRoot: tmp })) as { provenance: unknown }
+    expect(res.provenance).toEqual({ recorded: 1, needed: [2], aiGenerated: true })
+    compose.mockResolvedValue({ ...result(true), provenance: { recorded: 1, needed: [2], aiGenerated: true } })
+    const ok = (await composeSlideshowTool({ spec: { id: 'a', slides: [{}] } }, { projectRoot: tmp })) as { nextStep: string }
+    expect(ok.nextStep).toMatch(/Slides 2 have no provenance/)
+    expect(ok.nextStep).toMatch(/AI-generated/)
   })
 
   it('points a passing run at preview_creative_draft CAROUSEL and returns the first slide', async () => {
