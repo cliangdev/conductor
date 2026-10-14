@@ -36,6 +36,8 @@ making anything:
   font (if any), the CTA claim, and any lines that must run verbatim. Keep it to one AskUserQuestion
   batch, not a long interview.
 - Once confirmed, call `update_brand_kit` with whatever was gathered. If a logo file or URL is
-  available, `upload_brand_image` for the `mark` slot at least. Verify with `get_brand_kit` —
+  available, `upload_brand_image` for the `mark` slot at least. Warn before setting a badge image or
+  a `ctaClaim`: both render on every still, which makes each one read as a banner ad. Suggest putting
+  a trial offer or similar in the caption instead. Verify with `get_brand_kit` —
   `configured` should now read `true`.
 - **Skip for now**: proceed; the skill below will render against the default kit as given.

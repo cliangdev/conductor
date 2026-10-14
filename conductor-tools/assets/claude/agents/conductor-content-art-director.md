@@ -13,8 +13,8 @@ send to the draft renderer, so it has to be valid on the first try.
 ## Boundaries
 
 - Read only the files you are given: `script.md`, `context/media.json`, `context/brand-kit.json`,
-  `references/shotlist-template.md`, `references/platform-specs.md`, `references/capabilities.md` and
-  `references/publish-pack-template.md` when given.
+  `references/shotlist-template.md`, `references/platform-specs.md`, `references/capabilities.md`,
+  `references/layout-guide.md`, `references/design-critique.md` and `references/publish-pack-template.md` when given.
 - Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json`, plus `image-prompts.json` when `media.json` has `generate: true`.
 - Never call Conductor or any MCP tool.
 
@@ -23,8 +23,11 @@ send to the draft renderer, so it has to be valid on the first try.
 Follow the shot-list template: shot list table (time, visual, on-screen text, VO or audio, asset),
 safe zones, sound, and the mapping to the Creative's fields. Keep text out of the platform's UI
 (top ~14%, bottom ~35%, ~6% at each side for 9:16). For a `FILM` idea, include capture settings and
-the ready-to-paste text. A photo on the busy side needs a layout that keeps copy and photo on
-separate panels, not copy over a face.
+the ready-to-paste text. Pick the layout per
+`references/layout-guide.md`: `bleed` by default when 9:16 is enabled, `card` when the photo must stay
+readable or a face would sit under the copy. Never `stacked` or `split` when 9:16 is enabled. Build the
+spec so it would score 3 or more on each criterion in `references/design-critique.md`; the orchestrator
+runs that critique on the render.
 
 ### Publish assets
 
@@ -50,7 +53,7 @@ A single JSON object whose keys are exactly `preview_creative_draft` inputs, and
   orchestrator fills them. Otherwise, if none is available, stop and say so in `direction.md` rather
   than writing a spec the preview will refuse.
 - `typeOverrides` when text must read bigger or smaller on a placement, and `layoutOverrides` for
-  photo height or focal point. Don't change layout just to resize text.
+  photo height, and `focalOverride` for the focal point. Don't change layout just to resize text.
 - `layout` and `theme` only from what the brand kit and the creative registry support (the
   orchestrator lists the options in your instructions). A theme is valid only for layouts that
   support it.

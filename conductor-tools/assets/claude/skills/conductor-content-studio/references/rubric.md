@@ -58,6 +58,9 @@ Look at the actual image file, not the text description. Check:
 - Hook legibility in 1 second: is the first thing seen the hook, in high contrast?
 - Safe zones: text out of the platform UI (see `platform-specs.md`), nothing sitting on a face.
 - Brand look: tokens, font, logo lockup, accent phrase on the words that carry the meaning.
+- Craft: score the six criteria in `design-critique.md` (thumb-stop, headline size and position, empty
+  space, photo and copy together, product shown, not a banner ad). A finalist with a criterion below 3
+  that the layout could have fixed (`stacked` or `split` on 9:16, a dead panel) counts against it.
 - Realism: a generated photo that looks AI-made (waxy, duplicated objects, warped hands) counts against the finalist.
 - Whether the picture and the words do different jobs (photo shows, words claim) rather than
   repeating each other.

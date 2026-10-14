@@ -195,7 +195,7 @@ path as `photoPath` (generate only for finalists, not the whole pool).
 
 Same agent, mode `visual-round`. Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, the
 finalist image paths (`drafts/finalist-<id>/sheet.jpg`; the director views them with Read), the
-rubric and `references/compliance-checklist.md`. It compares finalists pairwise in both orders, runs
+rubric, `references/design-critique.md` and `references/compliance-checklist.md`. It compares finalists pairwise in both orders, runs
 the devil's-advocate pass against the leader (including the veto questions: an unsubstantiated
 claim, trademark or parody risk, a representation or sensitivity problem, disclosure needed), and
 writes `decision.md`: the winner, why it won, the runners-up, one line per cut idea and the veto
@@ -227,7 +227,9 @@ beats belong in a story or carousel sequence, or in the caption. When merging in
 licence per platform.
 Tell it the supported options: the kit's enabled placements, and the layouts and themes
 the creative registry supports (at the time of writing `stacked`, `bleed`, `split` dark only, `card` dark or
-light; a refusal from the validator names the valid ones). The spec's keys must be exactly
+light; a refusal from the validator names the valid ones). Also give it `references/layout-guide.md`
+and `references/design-critique.md`: it picks the layout per the guide, and never `stacked` or `split`
+when 9:16 is enabled. The spec's keys must be exactly
 `preview_creative_draft` inputs. Give it `references/capabilities.md` too. The spec's `name` is the
 idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. When
 `media.json` has `generate: true`, the art director may also write `image-prompts.json`
@@ -268,7 +270,8 @@ does not apply is answered "not applicable".
    returned `draftDir` as `drafts.final`. Local files (`photoPath`, `clipPath`, `audioPath`) go in
    as given in the spec.
 2. Eye-check the image. Load the `conductor-creative` skill with `Skill(skill: "conductor-creative")` and
-   apply its review guidance (step 7 and the silent-failures list): does the headline read at a
+   apply its review guidance (step 7 and the silent-failures list), scoring the draft with
+   `references/design-critique.md` (any criterion below 3 is fixed before anyone sees it): does the headline read at a
    glance, does the accent phrase fall on the words that carry the meaning, is copy on a face, are
    the safe zones clear. Also read the result's `checks`/`passed`: while any blocking check fails,
    fix it (`layoutOverrides` for photo height, `typeOverrides` for text size, a shorter body) and

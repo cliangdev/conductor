@@ -36,8 +36,9 @@ Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, the finalist images un
 Output: `decision.md`.
 
 1. For each rendered finalist, look at its image and judge it as the rubric says (phone-size
-   readability, hook legibility in 1 s, safe zones, brand look). Note anything the text round could
-   not see. A generated photo that reads as AI-made (waxy surfaces, duplicated or merged objects,
+   readability, hook legibility in 1 s, safe zones, brand look) and score the six craft criteria in
+   `references/design-critique.md` (1 to 5 each, absolute, one compact line per finalist). Note
+   anything the text round could not see. A generated photo that reads as AI-made (waxy surfaces, duplicated or merged objects,
    warped hands, mushy background; see `references/realism-check.md`) counts against that finalist:
    say so explicitly.
 2. Compare each pair of finalists twice, once in each order, reasoning first. A split is a tie.

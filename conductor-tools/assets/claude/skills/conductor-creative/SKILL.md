@@ -50,10 +50,15 @@ a person through exactly this when invoked with no brand set up yet, if you'd ra
 Lead with whatever the brand's own message hierarchy puts first — the job the product does end to
 end, not a secondary feature. A supporting capability is proof, not the headline.
 
+Then start from a concept: one visual idea, plus the format that carries it. Not "a headline on a
+photo". Decide what the viewer should see happening (the product doing its job, or a concrete scene
+of the problem or the result) before you write a line of copy.
+
 ### 3. Write the headline
 
 Prefer an approved line from the Knowledge page verbatim. Otherwise write one that names something
-real and specific, not a generic claim.
+real and specific, not a generic claim. Write 6 to 10 candidates across hook types, score them and
+keep the best two or three: `references/hooks.md`.
 
 If the Brand Kit's `accentPhraseRequired` is true, mark exactly one phrase per headline with
 asterisks: `Every saved link, *finally usable*.` Never zero, never two — `preview_creative_draft`,
@@ -98,6 +103,13 @@ about 40-50 images uses a week), or skip and use a library photo. Only on an exp
 AI label applies. A 1024x1536 image cropped to 9:16 may draw the "soft, upscaled photo" warning:
 mention it, don't fight it.
 
+**The photo shows the product doing its job**, or a concrete scene of the problem or the result: a real
+screen or shot (pass it in `referenceImagePaths`, or use a library photo of the product in use). Stock
+poses (a person smiling at a phone on a couch, a mug, a generic laptop) and empty decorative scenes (a
+sunlit counter with nothing happening) are out. A generated still cannot show an invented product
+screen; real product shots come in as references. Ask for `count: 2` or `3` when you want options
+(each image costs about $0.05 on the API route; on the Codex route each uses weekly quota, so ask first).
+
 **Every generated photo gets the realism check** in `references/realism-check.md` before it is used:
 it must not look AI-made (waxy surfaces, duplicated objects, warped hands, mushy detail). On a fail,
 regenerate with a prompt that names the fix, at most twice; if the third still fails, say what looks
@@ -110,11 +122,16 @@ a logo or a claim burned into its pixels, and no automated check can see that �
 of this skill's silent failure modes (the full list is below). A human or a prior pass marks a bad
 photo `blocked`; if you notice one that should be, say so rather than using it anyway.
 
-Match the crop to the subject: a layout that lays copy over the photo (e.g. `bleed`) puts a face in
-the top third in collision with the headline — prefer a layout that keeps the photo and copy on
-separate panels (e.g. `stacked`) for those.
+Match the crop to the subject. A layout that lays copy over the photo (`bleed`) can put a face in
+collision with the headline: keep `bleed` and move the subject with `focalOverride`, or use `card`,
+which keeps the photo and copy on separate panels. Pick the layout with `references/layout-guide.md`
+(default `bleed` when 9:16 is enabled; never `stacked` or `split` there, and never rely on the
+registry default).
 
 ### 6. Preview the draft
+
+Preview two or three genuinely different drafts: a different hook, layout or photo, not three crops of
+one idea. Show them together and let the person pick. Run the critique in step 7 on each first.
 
 `preview_creative_draft` with the Brand Kit (if not the default), layout, theme, photo (`photoPath`
 for a local file, `photoId` for one already in the library), headline, body, caption and alt text.
@@ -169,9 +186,13 @@ the headline or layout of a saved Creative clears pinned sizes unless you send t
 (`passed: true`) catch text spilling out of a safe zone, a font that failed to load, a photo that
 never decoded, or contrast below the accessible minimum — not whether the headline reads at a
 glance, whether the accent phrase falls on the words that carry the meaning, or whether the copy is
-sitting on the subject's face. Judge those yourself from the image `preview_creative_draft` hands
-back. If the copy collides with the photo, switch layout (see step 5) and preview again rather than
-shrinking text until it technically fits.
+sitting on the subject's face.
+
+Score the draft with `references/design-critique.md` before the person sees it: six criteria, 1 to 5,
+at phone size. Any score below 3 means fix and re-render, at most twice; then show the best draft with
+one honest line on what is still weak. Show the scores in one compact line with the preview. If the
+copy collides with the photo, change the layout or `focalOverride` (step 5) rather than shrinking text
+until it technically fits.
 
 Only once `passed` is true, show the image to the person and ask with `AskUserQuestion` —
 **Approve & upload**, **Request changes**, **Stop**. If `passed` is false you are not at this step
