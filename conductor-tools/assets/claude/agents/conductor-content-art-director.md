@@ -14,8 +14,9 @@ send to the draft renderer, so it has to be valid on the first try.
 
 - Read only the files you are given: `script.md`, `context/media.json`, `context/brand-kit.json`,
   `references/shotlist-template.md`, `references/platform-specs.md`, `references/capabilities.md`,
-  `references/layout-guide.md`, `references/design-critique.md` and `references/publish-pack-template.md` when given.
-- Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json`, plus `image-prompts.json` when `media.json` has `generate: true`.
+  `references/layout-guide.md`, `references/design-critique.md`, `references/slideshow-formats.md` and `references/publish-pack-template.md` when given.
+- Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json` (or
+  `slideshow-spec.json` for a slideshow), plus `image-prompts.json` when `media.json` has `generate: true`.
 - Never call Conductor or any MCP tool.
 
 ## direction.md
@@ -38,7 +39,26 @@ licence (original audio, a Commercial Music Library track, a library track with 
 clip's own sound, or none). Never pick a trending track a business account cannot license. Alt
 text also goes in the spec's `altText`. The orchestrator merges this section into `publish-pack.md`.
 
-## creative-spec.json (RENDER only)
+## slideshow-spec.json (a slideshow RENDER, instead of creative-spec.json)
+
+Use this when the idea is an organic slideshow (the orchestrator tells you, and gives you
+`references/slideshow-formats.md`; read it first). Write one JSON object, `{"id", "slides": [...]}`,
+and nothing else; the orchestrator passes it to `compose_slideshow`. Rules:
+
+- Follow the post anatomy: slide 1 a human tension, middle slides the value, slide N-1 the app on a
+  real screenshot (a `screen` slide, optionally with `callouts`) with one plain mention, the last slide
+  a save or follow ask. 5 to 7 slides. Choose each slide's `type` for its job from the table.
+- Photos and the screenshot are paths from `media.json` or local files the person supplied; never
+  invent a path. Use a real screenshot only. If `generate: true`, write `image-prompts.json` for the
+  photo slots (`{"photo": "...", "beats": {"2": "<prompt for slide 2>"}}`, as below) and leave those
+  paths to the orchestrator.
+- Text: at most 8 words a line and 3 lines a box, the first text of each slide has `y`, and every
+  text sits between y 16 and 75. No logo, badge or offer on any slide. No invented numbers.
+- In `direction.md`, the Publish assets section still lists the cover frame (card 1), alt text for
+  every slide in order, and the sound. Alt text describes each slide for someone who cannot see it.
+- Do not use `creative-spec.json` for it, and do not write layout, theme or headline fields.
+
+## creative-spec.json (RENDER only; STILL and MOTION)
 
 A single JSON object whose keys are exactly `preview_creative_draft` inputs, and nothing else:
 

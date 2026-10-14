@@ -1,6 +1,6 @@
 ---
 name: conductor-content-studio
-description: Runs a small team of subagents (strategist, three ideators, creative director, scriptwriter, art director) that brainstorm competing short-form social post ideas, pick one with a bias-resistant judging method, write the script and visual direction, run pre-publish checks (disclosure, AI label, music, claims, third-party material, accessibility), and render a local draft with a publish pack the publisher later pre-fills from. The person approves at the preview; only then is the Creative uploaded to Conductor. Ideas are either RENDER (a still, carousel, story sequence or motion text that Conductor can render) or FILM (needs real filming, so the output is a shoot-ready script). A run ends at a committed Creative or a shoot script and never creates a Post. Use when asked to come up with, choose and make a short-form post (TikTok, Reels, Shorts, Facebook) from a goal rather than from a given headline, or via /conductor:content. For a headline or photo already chosen, use conductor-creative instead.
+description: Runs a small team of subagents (strategist, three ideators, creative director, scriptwriter, art director) that brainstorm competing short-form social post ideas, pick one with a bias-resistant judging method, write the script and visual direction, run pre-publish checks (disclosure, AI label, music, claims, third-party material, accessibility), and render a local draft with a publish pack the publisher later pre-fills from. The person approves at the preview; only then is the Creative uploaded to Conductor. Ideas are either RENDER (a native slideshow for organic posts, or a still, carousel, story sequence or motion text that Conductor can render) or FILM (needs real filming, so the output is a shoot-ready script). A run ends at a committed Creative or a shoot script and never creates a Post. Use when asked to come up with, choose and make a short-form post (TikTok, Reels, Shorts, Facebook) from a goal rather than from a given headline, or via /conductor:content. For a headline or photo already chosen, use conductor-creative instead.
 user-invocable: true
 allowed-tools: mcp__conductor__*, Agent, AskUserQuestion, Skill, Read, Write, Glob, Grep, WebFetch
 ---
@@ -30,6 +30,10 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
 - **One gate.** The person is asked only at the final draft preview. Do not stop to ask which idea.
   The one exception is S5b's disclosure question, asked only when disclosure cannot be inferred.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script).
+- **Organic posts default to a slideshow.** A `RENDER` idea for an organic post (not an ad) is a
+  native-looking slideshow built by `compose_slideshow` and posted as a CAROUSEL; see
+  `references/slideshow-formats.md`. STILL and MOTION stay for ideas that really are one still, an
+  ad, or a motion piece. A slideshow never carries a logo, badge or offer.
 
 Cost: a run is about 8 subagent calls (strategist 1, ideators 3, director 2, scriptwriter 1, art
 director 1), and only the strategist and the director use the top model tier. `--quick` runs two
@@ -44,6 +48,7 @@ folder; give subagents absolute paths.
 
 ```
 request.md  run.json  brief.md  script.md  direction.md  creative-spec.json  decision.md
+slideshow-spec.json  (S5, instead of creative-spec.json, when the winner is a slideshow)
 image-prompts.json   (S5, only when generation is enabled)
 context/   brand-kit.json  knowledge.md  performance.md  learning.md  media.json
 ideas/     angle-1.md  angle-2.md  angle-3.md  pool.md  winner.md
@@ -122,7 +127,8 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    not, using views, engagement rate, average view percentage, 72 h views and any 3-second or
    completion figure the insights expose, and any experiment result. Name what you could not
    measure. With no earlier run or no data, write exactly "No data yet".
-6. Every renderable idea needs a photo (or, for MOTION, a clip); see `references/capabilities.md`. If
+6. Every renderable idea needs a photo (or, for MOTION, a clip; for a slideshow's payoff slide, a real
+   app screenshot, so ask for one if the media has none); see `references/capabilities.md`. If
    `media.json` has no unblocked image and no clip, ask once with `AskUserQuestion` before ideating:
    **Give a photo or two** (local paths; record them in `context/media.json` as `local` entries the
    art director may use via `photoPath`), **Generate a photo** (record `"generate": true` in
@@ -175,7 +181,10 @@ before each score, and names the top 3. Store the finalists in `run.json`.
 
 ### S3b — Finalist drafts (you; skipped in `--quick`)
 
-For each `RENDER` finalist, call `preview_creative_draft` with that idea's draft spec (map the
+A slideshow finalist has no cheap draft: judge it from its idea text (archetype and slide-by-slide
+text) unless its slides can be composed from photos already on hand. In that case write its spec to
+`<run>/drafts/finalist-<id>/slideshow-spec.json`, call `compose_slideshow` with `draftDir` set to
+that folder and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
 `full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
 `imagePrompt`, call `generate_creative_image({prompt})` first, run the realism check
@@ -212,13 +221,22 @@ which idea to take; show the decision at the gate.
 First copy the winning idea's block from `ideas/pool.md` to `ideas/winner.md`. Then
 `Agent(subagent_type: "conductor-content-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md` and
 `references/publish-pack-template.md`. Besides the script it writes the Publish copy section: a
-caption per platform, hashtags, a first comment and 2 to 3 alternate hooks with a hookType each.
+caption per platform whose call to action names the app so it can be searched, hashtags, a pinned
+comment and 2 to 3 alternate hooks with a hookType each.
 For a `MOTION` winner tell it that the render shows one headline and one optional body, animated
 by preset, then an end card that holds the final frame: no timed multi-beat on-screen text. Extra
 beats belong in a story or carousel sequence, or in the caption. When merging into `publish-pack.json`, append each platform's hashtags to its `captionOverride`
 (caption, blank line, hashtags): that field is posted verbatim.
 
-### S5 — Art director (`RENDER` only) -> `direction.md` + `creative-spec.json`
+### S5 — Art director (`RENDER` only) -> `direction.md` + `creative-spec.json` or `slideshow-spec.json`
+
+For a slideshow winner the art director writes `slideshow-spec.json` instead of `creative-spec.json`
+(and no `image-prompts.json` unless it needs a photo made). Give it `references/slideshow-formats.md`,
+`context/media.json`, `script.md`, `references/platform-specs.md`, `references/design-critique.md` and
+`references/publish-pack-template.md`. Photos and the app screenshot are paths from `media.json`
+(download a library image to a local file first) or the person's local files; generated photos go
+through `generate_creative_image` and the realism check first, as below. The rest of this stage is
+the STILL/MOTION path.
 
 `Agent(subagent_type: "conductor-content-art-director")` with `script.md`, `context/media.json`,
 `context/brand-kit.json`, `references/shotlist-template.md`, `references/platform-specs.md` and
@@ -236,7 +254,7 @@ idea's title only: never include the internal `I<n>` ID, which means nothing out
 (`{"photo": "...", "beats": {"2": "..."}}`) next to the spec. Before S6, call
 `generate_creative_image` for each prompt, run the realism check (`references/realism-check.md`,
 regenerating on a fail) on each image, and set `photoPath` (or
-`sequence[i].photoPath`) in `creative-spec.json`. A `FILM` winner skips S5 and goes to the shoot
+`sequence[i].photoPath`) in `creative-spec.json` (for a slideshow, the slide's `bg` or `photos[].src` in `slideshow-spec.json`; `beats` keys are slide numbers). A `FILM` winner skips S5 and goes to the shoot
 script, below.
 
 ### S5b — Publish pack and pre-publish checks (you; RENDER after S5, FILM after the shoot script)
@@ -245,7 +263,7 @@ Before the gate, so the person sees the settings with the draft. Skip nothing he
 does not apply is answered "not applicable".
 
 1. Run `references/compliance-checklist.md` against `brief.md`, `script.md`, `direction.md` (or the
-   shoot script), `creative-spec.json` and the provenance in `context/media.json` (`aiGenerated`,
+   shoot script), `creative-spec.json` (or `slideshow-spec.json`) and the provenance in `context/media.json` (`aiGenerated`,
    `licence`).
 2. Merge the scriptwriter's Publish copy and the art director's Publish assets, add the compliance
    results, and write `publish-pack.md` and `publish-pack.json` in the shapes of
@@ -269,11 +287,18 @@ does not apply is answered "not applicable".
    `draftDir` (the default location is cleaned up automatically after the commit). Record the
    returned `draftDir` as `drafts.final`. Local files (`photoPath`, `clipPath`, `audioPath`) go in
    as given in the spec.
+   **Slideshow winner:** `compose_slideshow({specPath})` on `slideshow-spec.json`; while `passed` is
+   false, fix the spec and compose again. Then `preview_creative_draft({kind: "CAROUSEL", slidePaths,
+   caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
+   the caption from `publish-pack.json` and the alt text from `direction.md`. Record the preview's
+   `draftDir` as `drafts.final`.
 2. Eye-check the image. Load the `conductor-creative` skill with `Skill(skill: "conductor-creative")` and
    apply its review guidance (step 7 and the silent-failures list), scoring the draft with
-   `references/design-critique.md` (any criterion below 3 is fixed before anyone sees it): does the headline read at a
+   `references/design-critique.md` (the slideshow criteria for a slideshow, the STILL criteria
+   otherwise; any criterion below 3 is fixed before anyone sees it). For a STILL: does the headline read at a
    glance, does the accent phrase fall on the words that carry the meaning, is copy on a face, are
-   the safe zones clear. Also read the result's `checks`/`passed`: while any blocking check fails,
+   the safe zones clear. For a slideshow: does slide 1 stop the scroll, is the text inside y 16 to 75,
+   is the screenshot real, and is there no logo, badge or offer. Also read the result's `checks`/`passed`: while any blocking check fails,
    fix it (`layoutOverrides` for photo height, `typeOverrides` for text size, a shorter body) and
    re-preview **before** showing anything, and never offer Approve & upload while one still fails.
    Revise at most twice beyond that; if it is still wrong, show it honestly and say what is off.
@@ -281,12 +306,13 @@ does not apply is answered "not applicable".
    `drafts/finalist-<id>/sheet.jpg`; say when a runner-up could not be rendered; with `--quick` no
    sheets exist, so show runners-up by title and tag only), and a short decision
    summary (the winner and why, the runners-up, what was cut and why), and a short pack summary: the
-   disclosure setting (which toggle, or none), the AI-label setting, the sound and its licence, and
-   the alternate hooks with their types. For each generated photo, add its one-line realism verdict.
+   disclosure setting (which toggle, or none), the AI-label setting, the sound and its licence, the
+   pinned comment and the Stories link-sticker repost, and the alternate hooks with their types. For each generated photo, add its one-line realism verdict.
 4. Ask with `AskUserQuestion`, header "Draft", with exactly these four options. `AskUserQuestion`
    allows at most four, so never add one per runner-up, and **Stop** must always be among them:
    - **Approve & upload**: the question says approving also confirms the photo carries no burned-in
-     text, logo or claim. Ask for provenance (`source`, `licence`, and whether it is AI-generated)
+     text, logo or claim (for a slideshow: every number and claim on the slides is real and the
+     screenshot is genuine). Ask for provenance (`source`, `licence`, and whether it is AI-generated)
      only for local files the preview lists in `provenance.needed` (a file from
      `generate_creative_image` already carries it), then
      `commit_creative_draft({draftDir, photoChecked: true, source, licence, aiGenerated})` (provenance
@@ -312,7 +338,7 @@ does not apply is answered "not applicable".
    and `references/shotlist-template.md`, output `shoot/shoot-script.md`: script, shot list, capture
    settings (9:16, 30 fps, sound on), B-roll, safe zones, and the on-screen text and captions ready to
    paste. It also writes the Publish assets section there. It writes no `creative-spec.json` here.
-2. Run S5b. The shoot script gets the publish pack too (captions, hashtags, first comment,
+2. Run S5b. The shoot script gets the publish pack too (captions, hashtags, pinned comment,
    disclosure, music and its licence) so it can be applied when the clip is posted later; append a
    short "Publish pack" section to `shoot/shoot-script.md`, and leave `creativeId` null in
    `publish-pack.json`.
@@ -327,9 +353,9 @@ Keep it short:
 
 - the decision summary: winner, one line on why, the runners-up;
 - the Creative display id (and the readiness gaps, if any) or the shoot doc path;
-- `publish-pack.md` (captions, hashtags, first comment, disclosure and AI-label settings, sound,
+- `publish-pack.md` (captions, hashtags, pinned comment, disclosure and AI-label settings, sound,
   alternate hooks); say the publisher will pre-fill the Post from `publish-pack.json`, and that the
-  first comment is a manual step;
+  pinned comment, the link in bio and the Stories repost with a link sticker are manual steps;
 - next steps:
   - make the Post with `/conductor:creative` or the `conductor-publisher` skill (the Creative is
     not on a Post yet, because a run never creates one);
@@ -350,4 +376,5 @@ Keep it short:
 ## Related
 
 - `conductor-creative`: the single-Creative skill whose checklist S6 uses.
+- `references/slideshow-formats.md`: the slideshow spec, archetypes and text rules.
 - `conductor-publisher`: takes the committed Creative onto a Post, pre-filled from `publish-pack.json`.

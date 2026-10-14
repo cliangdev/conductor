@@ -39,7 +39,7 @@ pass `{mediaId}` as a `create_post` media item (or `upload_asset({issueId, media
 ### A publish pack, if one exists
 
 Some earlier steps hand over a publish pack with the content: per-destination copy and options, plus
-a first comment and notes. The content team (`conductor-content-studio`) writes one as
+a pinned comment and notes. The content team (`conductor-content-studio`) writes one as
 `.conductor/content-runs/<run>/publish-pack.json` (and a readable `publish-pack.md`); any other
 producer can leave the same shape. When the content is a Creative, look for
 `.conductor/content-runs/*/publish-pack.json` whose `creativeId` matches it, or use the one the
@@ -54,7 +54,7 @@ person points to. If you find one:
   guess.
 - Show the pre-filled copy and options in the confirmation table (see Step 4) and let the person
   change any of them before anything is submitted. Their edit wins over the pack.
-- Mention the pack's first comment as a **manual step**: Conductor cannot post comments, so give the
+- Mention the pack's pinned comment (and Stories repost, if listed) as a **manual step**: Conductor cannot post comments, so give the
   text to the person to paste once the post is live.
 - Pack or no pack, the normal review applies. The pack settles copy and options; it approves nothing.
 

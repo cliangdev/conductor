@@ -13,7 +13,7 @@ Heading: `## Idea <n>: <title>` where the title is 8 words or fewer.
 - **Hook, spoken:** <max 12 words, or "none (text only)">
 - **Hook, on screen:** <max 12 words>
 - **Hook type:** <question | bold-claim | pattern-interrupt | relatable-pain | how-to | number | curiosity-gap | story | social-proof>
-- **Format:** <still | carousel | story sequence | motion text over photo | motion text over clip | talking head | demo | skit | other>
+- **Format:** <slideshow | still | carousel | story sequence | motion text over photo | motion text over clip | talking head | demo | skit | other>
 - **Platform:** <primary platform, then any others>
 - **Tag:** RENDER | FILM
 - **Why this audience cares:** <max 30 words, tied to the brief's tension>
@@ -21,7 +21,7 @@ Heading: `## Idea <n>: <title>` where the title is 8 words or fewer.
 
 Draft spec (RENDER only):
 
-- kind: STILL | MOTION
+- kind: STILL | MOTION | slideshow (organic post: name the archetype and slide count, 5 to 7, instead of the fields below)
 - layout: <a layout the brand kit and registry support>
 - theme: dark | light
 - headline: <with exactly one *accent phrase* if the kit requires it>
@@ -33,7 +33,7 @@ Draft spec (RENDER only):
 - motion: <MOTION only: preset, durationSec, background>
 ```
 
-The idea's format maps to the publish pack's `tags.format` as: still -> `still`; carousel ->
+The idea's format maps to the publish pack's `tags.format` as: slideshow -> `carousel`; still -> `still`; carousel ->
 `carousel`; story sequence -> `story`; motion text over photo or clip -> `motion`; talking head,
 demo, skit or other -> `film`.
 

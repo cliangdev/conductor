@@ -11,7 +11,9 @@ One command from "I need a post for X" to a committed Creative (or, for an idea 
 a shoot-ready script). The team chooses the idea itself; the only point where it stops for you is the
 final draft preview. This command gathers the request and hands off to the `conductor-content-studio`
 skill (`Skill(skill: "conductor-content-studio")`), which runs the stages. Don't re-derive what that
-skill covers.
+skill covers. For an organic post the team's renderable ideas are native slideshows (built with
+`compose_slideshow`, posted as a CAROUSEL Creative); stills and motion pieces stay for ideas that
+are one image, an ad, or a motion piece.
 
 ## Trigger
 
