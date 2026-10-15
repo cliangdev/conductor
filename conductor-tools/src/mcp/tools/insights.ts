@@ -211,6 +211,7 @@ interface OverviewMetric {
   previous?: number | null
   changePct?: number | null
   goodDirection?: string
+  asOf?: string | null
   historyStartsOn?: string | null
   noise: boolean
   target?: { value: number; direction: string } | null
@@ -292,6 +293,7 @@ function trimMetric(m: OverviewMetric, withSeries: boolean): Record<string, unkn
     unit: m.unit,
     value: round4(m.value),
     previous: round4(m.previous),
+    asOf: m.asOf,
     historyStartsOn: m.previous === null || m.previous === undefined ? m.historyStartsOn : null,
     changePct: round4(m.changePct),
     goodDirection: m.goodDirection,

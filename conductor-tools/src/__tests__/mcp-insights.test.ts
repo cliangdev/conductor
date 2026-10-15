@@ -178,7 +178,7 @@ describe('get_marketing_insights', () => {
 
 describe('get_marketing_insights include channels', () => {
   const metric = (series: { day: string; value: number }[] = []) => ({
-    metric: 'visitors', label: 'Visitors', unit: 'COUNT', value: 120.123456, previous: 100, change: 20.1, changePct: 0.2012,
+    metric: 'visitors', label: 'Visitors', unit: 'COUNT', value: 120.123456, asOf: '2026-10-13', previous: 100, change: 20.1, changePct: 0.2012,
     noise: false, provisionalDays: 1, target: { value: 150, direction: 'UP' }, series,
   })
   const overview = () => ({
@@ -228,7 +228,7 @@ describe('get_marketing_insights include channels', () => {
     const web = m.channels[0]
     expect(web.dataCompleteThrough).toBe('2026-10-13')
     expect(web.metrics[0]).toEqual({
-      metric: 'visitors', label: 'Visitors', unit: 'COUNT', value: 120.1235, previous: 100, changePct: 0.2012, noise: false,
+      metric: 'visitors', label: 'Visitors', unit: 'COUNT', value: 120.1235, asOf: '2026-10-13', previous: 100, changePct: 0.2012, noise: false,
       target: { value: 150, direction: 'UP' },
     })
     expect(m.channels[1]).toEqual({ channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connect: 'Apple Search Ads' })
