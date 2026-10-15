@@ -184,12 +184,13 @@ describe('get_marketing_insights include channels', () => {
   const overview = () => ({
     window: { from: '2026-09-17', to: '2026-10-14', previousFrom: '2026-08-20', previousTo: '2026-09-16' },
     funnel: [
-      { key: 'visits', label: 'Visits', value: 120, previous: 100, change: 0.2, source: 'WEB', available: true },
+      { key: 'visits', label: 'Visits', value: 120, previous: 100, change: 20, source: 'WEB', path: 'WEB', available: true },
+      { key: 'signups', label: 'Signups', value: 30, previous: 40, source: 'PRODUCT', path: 'WEB', conversionFromKey: 'visits', available: true },
       { key: 'installs', label: 'Installs', source: 'STORE', available: false, unavailableReason: 'Not connected' },
     ],
     channels: [
       { channel: 'WEB', label: 'Web', status: 'LIVE', dataCompleteThrough: '2026-10-13', connections: [{ id: 'c1' }], metrics: [metric([{ day: '2026-10-13', value: 1 }])] },
-      { channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connections: [], connectHint: { connectorId: 'apple-search-ads' }, metrics: [metric()] },
+      { channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connections: [], connectHint: { connectorId: 'apple-search-ads', connectors: [{ connectorId: 'apple-search-ads', name: 'Apple Search Ads' }] }, metrics: [metric()] },
     ],
   })
   const days = Array.from({ length: 90 }, (_, i) => ({ day: `d${i}`, value: i, provisional: i === 89 }))
@@ -219,7 +220,10 @@ describe('get_marketing_insights include channels', () => {
     expect(mocked(apiGet).mock.calls[0]![0]).toBe('/api/v2/projects/proj-1/marketing/overview?window=7d')
     expect(result).not.toHaveProperty('totals')
     const m = result['marketing'] as Record<string, any>
-    expect(m.funnel).toEqual([{ key: 'visits', label: 'Visits', value: 120, previous: 100, changePct: 0.2 }])
+    expect(m.funnel).toEqual([
+      { key: 'visits', label: 'Visits', path: 'WEB', value: 120, previous: 100, changePct: 0.2 },
+      { key: 'signups', label: 'Signups', path: 'WEB', value: 30, previous: 40, changePct: -0.25, conversionFromKey: 'visits', conversionPct: 0.25 },
+    ])
     expect(m.unavailableStages).toEqual([{ key: 'installs', reason: 'Not connected' }])
     const web = m.channels[0]
     expect(web.dataCompleteThrough).toBe('2026-10-13')
@@ -227,7 +231,7 @@ describe('get_marketing_insights include channels', () => {
       metric: 'visitors', label: 'Visitors', unit: 'COUNT', value: 120.1235, previous: 100, changePct: 0.2012, noise: false,
       target: { value: 150, direction: 'UP' },
     })
-    expect(m.channels[1]).toEqual({ channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connectHint: 'apple-search-ads' })
+    expect(m.channels[1]).toEqual({ channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connect: 'Apple Search Ads' })
   })
 
   it('maps 30d to the 28d overview window', async () => {

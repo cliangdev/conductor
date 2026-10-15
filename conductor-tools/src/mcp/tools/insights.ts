@@ -211,6 +211,7 @@ interface OverviewMetric {
   previous?: number | null
   changePct?: number | null
   goodDirection?: string
+  historyStartsOn?: string | null
   noise: boolean
   target?: { value: number; direction: string } | null
   series?: OverviewSeriesPoint[]
@@ -221,7 +222,7 @@ interface OverviewChannel {
   label: string
   status: string
   dataCompleteThrough?: string | null
-  connectHint?: { connectorId: string } | null
+  connectHint?: { connectors?: { connectorId: string; name: string }[] } | null
   metrics: OverviewMetric[]
 }
 
@@ -231,6 +232,8 @@ interface OverviewFunnelStage {
   value?: number | null
   previous?: number | null
   changePct?: number | null
+  path?: string | null
+  conversionFromKey?: string | null
   source: string
   available: boolean
   unavailableReason?: string | null
@@ -289,6 +292,7 @@ function trimMetric(m: OverviewMetric, withSeries: boolean): Record<string, unkn
     unit: m.unit,
     value: round4(m.value),
     previous: round4(m.previous),
+    historyStartsOn: m.previous === null || m.previous === undefined ? m.historyStartsOn : null,
     changePct: round4(m.changePct),
     goodDirection: m.goodDirection,
     noise: m.noise,
@@ -304,7 +308,7 @@ function trimChannel(c: OverviewChannel, withSeries: boolean): Record<string, un
     label: c.label,
     status: c.status,
     dataCompleteThrough: c.dataCompleteThrough,
-    connectHint: c.status === 'NOT_CONNECTED' ? c.connectHint?.connectorId : null,
+    connect: c.status === 'NOT_CONNECTED' ? c.connectHint?.connectors?.map((x) => x.name).join(', ') || null : null,
     metrics: hasData ? c.metrics.map((m) => trimMetric(m, withSeries)) : null,
   })
 }
@@ -320,18 +324,25 @@ function trimDimension(d: OverviewDimension): Record<string, unknown> {
 }
 
 function trimFunnel(funnel: OverviewFunnelStage[]) {
+  const byKey = new Map(funnel.map((s) => [s.key, s]))
   return {
     funnel: funnel
       .filter((s) => s.available)
-      .map((s) =>
-        omitNulls({
+      .map((s) => {
+        const from = s.conversionFromKey ? byKey.get(s.conversionFromKey) : undefined
+        const conversionPct =
+          from && from.available && from.value && s.value !== null && s.value !== undefined ? s.value / from.value : null
+        return omitNulls({
           key: s.key,
           label: s.label,
+          path: s.path,
           value: round4(s.value),
           previous: round4(s.previous),
           changePct: round4(s.changePct ?? (s.previous && s.value != null ? (s.value - s.previous) / s.previous : null)),
+          conversionFromKey: s.conversionFromKey,
+          conversionPct: round4(conversionPct),
         })
-      ),
+      }),
     unavailableStages: funnel
       .filter((s) => !s.available)
       .map((s) => omitNulls({ key: s.key, reason: s.unavailableReason })),
