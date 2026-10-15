@@ -169,6 +169,26 @@ class ChannelMetricsFeedPullerTest {
     }
 
     @Test
+    void aSnapshotSourceWithoutBackfillStillReadsOneDayAndStoresTodaysLevel() {
+        when(source.channel()).thenReturn(MetricChannel.SOCIAL);
+        when(source.backfillDays()).thenReturn(0);
+        when(source.trailingDays()).thenReturn(1);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of(
+                ChannelMetricPoint.of("followers", "youtube", TODAY, 950)));
+
+        IngestBatch first = pull(null);
+        pull(first.nextCursor());
+
+        verify(source, org.mockito.Mockito.times(2)).pullDaily(any(), eq(TODAY.minusDays(1)), eq(TODAY));
+        assertThat(upserts).hasSize(2).allSatisfy(u -> {
+            assertThat(u.channel()).isEqualTo("SOCIAL");
+            assertThat(u.dimension()).isEqualTo("youtube");
+            assertThat(u.day()).isEqualTo(TODAY);
+            assertThat(u.value()).isEqualByComparingTo("950");
+        });
+    }
+
+    @Test
     void aBrokenCursorIsTreatedAsAFirstRun() {
         when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
 

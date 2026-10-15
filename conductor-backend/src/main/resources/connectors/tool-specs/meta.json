@@ -103,6 +103,14 @@
         "maxCallsPerPull": 10,
         "maxPostAgeDays": 90
       }
+    },
+    {
+      "id": "channel_metrics",
+      "label": "Account stats",
+      "description": "Facebook Page and Instagram followers, post counts and Instagram website clicks, kept for the channel overview",
+      "mode": "SNAPSHOT",
+      "sink": "CHANNEL_METRICS",
+      "defaultIntervalMinutes": 360
     }
   ]
 }

@@ -3,6 +3,10 @@ package com.conductor.integration.connector.meta;
 import com.conductor.entity.Asset;
 import com.conductor.integration.ActionConnector;
 import com.conductor.integration.ActionResult;
+import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsSource;
+import com.conductor.integration.ChannelMetricsSourceException;
+import com.conductor.integration.MetricChannel;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorCategory;
 import com.conductor.integration.ConnectorConfigField;
@@ -20,6 +24,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -62,7 +67,7 @@ import java.util.Optional;
  */
 @Component
 @Profile("!local")
-public class MetaConnector implements OAuth2Connector, ActionConnector {
+public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelMetricsSource {
 
     static final String CONFIG_PAGE_ID = "pageId";
     static final String CONFIG_PAGE_NAME = "pageName";
@@ -78,6 +83,7 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     private static final Duration INVOCATION_TIMEOUT = Duration.ofMinutes(12);
 
     private final MetaGraphClient graphClient;
+    private final MetaChannelMetrics channelMetrics;
     private final FacebookPublishAction facebookPublisher;
     private final InstagramPublishAction instagramPublisher;
 
@@ -112,6 +118,7 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     MetaConnector(MetaGraphClient graphClient, PublishMediaResolver mediaResolver,
                   StorySequencePublisher.Store storyProgress) {
         this.graphClient = graphClient;
+        this.channelMetrics = new MetaChannelMetrics(graphClient);
         StorySequencePublisher stories = new StorySequencePublisher(storyProgress);
         this.facebookPublisher = new FacebookPublishAction(graphClient, mediaResolver, stories);
         this.instagramPublisher = new InstagramPublishAction(graphClient, mediaResolver, stories);
@@ -640,6 +647,27 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     }
 
     /** Account identity for re-authorization: the Facebook Page id, which account selection writes. Absent until a Page is picked. */
+    // ---- ChannelMetricsSource: account-level social stats -------------------------------------------
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.SOCIAL; }
+
+    /** Levels are snapshots of today; only website clicks has history, and it is read up to 28 days back. */
+    @Override
+    public int backfillDays() { return MetaChannelMetrics.WEBSITE_CLICKS_BACKFILL_DAYS; }
+
+    @Override
+    public int trailingDays() { return 1; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        try {
+            return channelMetrics.pullDaily(ctx, from, to);
+        } catch (org.springframework.web.client.RestClientException e) {
+            throw ChannelMetricsSourceException.degraded("Meta account stats unavailable: " + e.getMessage());
+        }
+    }
+
     @Override
     public Optional<String> accountIdentity(Map<String, Object> config) {
         return config != null && config.get(CONFIG_PAGE_ID) instanceof String value && !value.isBlank()

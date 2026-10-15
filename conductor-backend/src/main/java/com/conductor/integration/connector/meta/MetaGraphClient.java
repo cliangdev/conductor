@@ -640,6 +640,55 @@ public class MetaGraphClient {
         return body == null || body.success() == null || body.success();
     }
 
+    // ---- Account-level stats (channel metrics) ----------------------------------------------------
+
+    /**
+     * Reads {@code fields} off one node (a Page or an Instagram Business account). Unlike
+     * {@link #readNodeOrNull} a refusal propagates: the channel-metrics feed must tell a missing
+     * permission (4xx, skip that platform) from a transient failure (rate limit or 5xx, degraded).
+     */
+    public JsonNode readAccountFields(String nodeId, String fields, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + nodeId)
+                .queryParam("fields", fields)
+                .encode().build().toUri());
+        ResponseEntity<String> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+        return parseJson(response.getBody());
+    }
+
+    /** The Page's published-post total ({@code summary.total_count}); null when Graph does not report one. */
+    public Long readPublishedPostCount(String pageId, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + pageId + "/published_posts")
+                .queryParam("summary", "total_count")
+                .queryParam("limit", "0")
+                .encode().build().toUri());
+        ResponseEntity<String> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+        JsonNode root = parseJson(response.getBody());
+        JsonNode count = root == null ? null : root.path("summary").path("total_count");
+        return count != null && count.isNumber() ? count.asLong() : null;
+    }
+
+    /**
+     * One day-period insight series of an Instagram Business account
+     * ({@code /{ig}/insights?metric=..&period=day&since=..&until=..}). Returns the {@code values} entries
+     * ({@code value}, {@code end_time}), or null when the metric answers without a daily series.
+     */
+    public JsonNode readDailyInsight(String igUserId, String metric, java.time.LocalDate since,
+                                     java.time.LocalDate until, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + igUserId + "/insights")
+                .queryParam("metric", metric)
+                .queryParam("period", "day")
+                .queryParam("since", since.toString())
+                .queryParam("until", until.toString())
+                .encode().build().toUri());
+        ResponseEntity<String> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+        JsonNode root = parseJson(response.getBody());
+        JsonNode data = root == null ? null : root.path("data");
+        return data != null && data.isArray() && data.size() > 0 ? data.get(0).path("values") : null;
+    }
+
     // ---- Instagram publishing ---------------------------------------------------------------------
 
     /**

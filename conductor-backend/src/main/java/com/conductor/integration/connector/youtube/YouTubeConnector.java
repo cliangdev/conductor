@@ -2,6 +2,10 @@ package com.conductor.integration.connector.youtube;
 
 import com.conductor.integration.ActionConnector;
 import com.conductor.integration.ActionResult;
+import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsSource;
+import com.conductor.integration.ChannelMetricsSourceException;
+import com.conductor.integration.MetricChannel;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorCategory;
 import com.conductor.integration.ConnectorConfigField;
@@ -26,6 +30,7 @@ import org.springframework.web.client.HttpClientErrorException;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -113,7 +118,7 @@ import java.util.Optional;
  */
 @Component
 @Profile("!local")
-public class YouTubeConnector implements OAuth2Connector, ActionConnector {
+public class YouTubeConnector implements OAuth2Connector, ActionConnector, ChannelMetricsSource {
 
     static final String CONFIG_CHANNEL_ID = "channelId";
     static final String CONFIG_CHANNEL_TITLE = "channelTitle";
@@ -449,5 +454,52 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     @Override
     public Optional<String> accountIdentityConfigKey() {
         return Optional.of(CONFIG_CHANNEL_ID);
+    }
+
+    // ---- ChannelMetricsSource: account-level social stats -------------------------------------------
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.SOCIAL; }
+
+    /** The Data API reports current totals only, so nothing is back-filled. */
+    @Override
+    public int backfillDays() { return 0; }
+
+    @Override
+    public int trailingDays() { return 1; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        String token = ctx == null ? null : ctx.accessToken();
+        if (token == null || token.isBlank()) {
+            throw ChannelMetricsSourceException.setupRequired("Reconnect YouTube to read channel stats");
+        }
+        Object channelId = ctx.configValue(CONFIG_CHANNEL_ID);
+        YouTubeDataClient.ChannelStatistics stats;
+        try {
+            stats = dataClient.getChannelStatistics(token, channelId == null ? null : channelId.toString());
+        } catch (HttpClientErrorException e) {
+            if (e.getStatusCode().value() == 429) {
+                throw ChannelMetricsSourceException.degraded("YouTube channel stats rate limited");
+            }
+            throw ChannelMetricsSourceException.setupRequired("YouTube refused the channel stats read ("
+                    + e.getStatusCode().value() + "). Reconnect YouTube and grant the requested permissions");
+        } catch (org.springframework.web.client.RestClientException e) {
+            throw ChannelMetricsSourceException.degraded("YouTube channel stats unavailable: " + e.getMessage());
+        }
+        if (stats == null) {
+            throw ChannelMetricsSourceException.setupRequired("The connected Google account has no YouTube channel");
+        }
+        List<ChannelMetricPoint> points = new java.util.ArrayList<>();
+        if (stats.subscribers() != null) {
+            points.add(ChannelMetricPoint.of("followers", "youtube", to, stats.subscribers()));
+        }
+        if (stats.videos() != null) {
+            points.add(ChannelMetricPoint.of("media_count", "youtube", to, stats.videos()));
+        }
+        if (stats.views() != null) {
+            points.add(ChannelMetricPoint.of("channel_views", "youtube", to, stats.views()));
+        }
+        return points;
     }
 }

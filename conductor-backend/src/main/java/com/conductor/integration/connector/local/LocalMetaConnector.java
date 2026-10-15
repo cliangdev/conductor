@@ -2,6 +2,9 @@ package com.conductor.integration.connector.local;
 
 import com.conductor.integration.ActionConnector;
 import com.conductor.integration.ActionResult;
+import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsSource;
+import com.conductor.integration.MetricChannel;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorCategory;
 import com.conductor.integration.ConnectorConfigField;
@@ -14,6 +17,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -64,7 +68,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 @Profile("local")
 @Primary
-public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
+public class LocalMetaConnector implements OAuth2Connector, ActionConnector, ChannelMetricsSource {
 
     static final String CONFIG_PAGE_ID = "pageId";
     static final String CONFIG_PAGE_NAME = "pageName";
@@ -423,5 +427,29 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
     public Optional<String> accountIdentity(Map<String, Object> config) {
         return config != null && config.get(CONFIG_PAGE_ID) instanceof String value && !value.isBlank()
                 ? Optional.of(value) : Optional.empty();
+    }
+
+    // -- ChannelMetricsSource: deterministic account stats for the local stack ----------------------
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.SOCIAL; }
+
+    @Override
+    public int trailingDays() { return 1; }
+
+    @Override
+    public int backfillDays() { return 28; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        List<ChannelMetricPoint> points = new java.util.ArrayList<>();
+        points.add(ChannelMetricPoint.of("followers", "facebook", to, LocalChannelSeries.value("meta-fb-followers", to, 1800)));
+        points.add(ChannelMetricPoint.of("media_count", "facebook", to, 64));
+        points.add(ChannelMetricPoint.of("followers", "instagram", to, LocalChannelSeries.value("meta-ig-followers", to, 2400)));
+        points.add(ChannelMetricPoint.of("media_count", "instagram", to, 112));
+        for (LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
+            points.add(ChannelMetricPoint.of("website_clicks", "instagram", day, LocalChannelSeries.value("meta-ig-clicks", day, 14)));
+        }
+        return points;
     }
 }
