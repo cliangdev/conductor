@@ -51,9 +51,9 @@ export function overviewResponse(overrides: Partial<MarketingOverviewResponse> =
   return {
     window: { from: '2026-08-18', to: '2026-09-14', dataCompleteThroughMin: '2026-09-14', previousFrom: '2026-07-21', previousTo: '2026-08-17' },
     funnel: [
-      { key: 'impressions', label: 'Impressions', value: 10000, previous: 8000, change: 2000, source: 'SEARCH', available: true },
-      { key: 'clicks', label: 'Clicks', value: 500, previous: 450, change: 50, source: 'SEARCH', available: true, conversionFromKey: 'impressions' },
-      { key: 'visitors', label: 'Visitors', value: 400, previous: 380, change: 20, source: 'WEB', available: true, conversionFromKey: 'clicks' },
+      { key: 'impressions', label: 'Impressions', value: 10000, previous: 8000, change: 2000, source: 'SEARCH', path: 'WEB', available: true },
+      { key: 'clicks', label: 'Clicks', value: 500, previous: 450, change: 50, source: 'SEARCH', path: 'WEB', available: true, conversionFromKey: 'impressions' },
+      { key: 'visitors', label: 'Visitors', value: 400, previous: 380, change: 20, source: 'WEB', path: 'WEB', available: true, conversionFromKey: 'clicks' },
       {
         key: 'product_stages',
         label: 'In-product stages',
@@ -61,6 +61,7 @@ export function overviewResponse(overrides: Partial<MarketingOverviewResponse> =
         previous: null,
         change: null,
         source: 'PRODUCT',
+        path: 'PRODUCT',
         available: false,
         unavailableReason: 'No product data source yet',
       },

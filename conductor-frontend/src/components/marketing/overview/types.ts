@@ -38,7 +38,7 @@ export interface OverviewFunnelStage {
   change?: number | null
   source: string
   /** WEB, STORE, ADS or PRODUCT: which path of the funnel the stage is on. */
-  path?: string | null
+  path: string
   /** The stage this one converts from; conversion is only shown when set. */
   conversionFromKey?: string | null
   available: boolean
@@ -88,7 +88,7 @@ export interface OverviewChannel {
   lastFetchedAt?: string | null
   dataCompleteThrough?: string | null
   connections: OverviewConnection[]
-  connectHint?: { connectors: { connectorId: string; name: string }[] } | null
+  connectHint?: { /** Deprecated. */ connectorId?: string; connectors: { connectorId: string; name: string }[] } | null
   metrics: OverviewMetric[]
 }
 
