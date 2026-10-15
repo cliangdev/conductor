@@ -110,6 +110,19 @@ describe('chartAxis', () => {
     expect(axis.ticks.every(Number.isInteger)).toBe(true)
   })
 
+  it('rounds the domain and step to 1, 2 or 5 x 10^n', () => {
+    const axis = chartAxis([135, 190, 247, 160], 'CURRENCY')
+    const step = axis.ticks[1] - axis.ticks[0]
+    const mantissa = step / 10 ** Math.floor(Math.log10(step))
+    expect([1, 2, 5]).toContain(Math.round(mantissa))
+    expect(axis.ticks.every((t) => Math.abs(t / step - Math.round(t / step)) < 1e-9)).toBe(true)
+    expect(axis.domain[0]).toBeLessThanOrEqual(135)
+    expect(axis.domain[1]).toBeGreaterThanOrEqual(247)
+    const labels = axis.ticks.map(axis.format)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(labels.every((l) => /^\$\d+$/.test(l))).toBe(true)
+  })
+
   it('includes the target in the range', () => {
     const axis = chartAxis([1, 2, 3], 'COUNT', 50)
     expect(axis.domain[1]).toBeGreaterThanOrEqual(50)

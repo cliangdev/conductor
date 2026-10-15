@@ -129,4 +129,14 @@ describe('ChannelCard', () => {
     expect(screen.getByText('History starts Sep 3')).toBeInTheDocument()
     expect(screen.queryByText(/No previous period/)).not.toBeInTheDocument()
   })
+
+  it('shows the snapshot day next to a level metric', () => {
+    renderCard(channel({ metrics: [metric({ metric: 'followers', label: 'Followers', asOf: '2026-10-15' })] }))
+    expect(screen.getByText('as of Oct 15')).toBeInTheDocument()
+  })
+
+  it('shows no snapshot day for a summed metric', () => {
+    renderCard()
+    expect(screen.queryByText(/as of/)).not.toBeInTheDocument()
+  })
 })

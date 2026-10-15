@@ -96,6 +96,20 @@ describe('ChannelDetailPanel', () => {
     expect(screen.getByText('No published posts in this window.')).toBeInTheDocument()
   })
 
+  it('shows the snapshot day on a level metric', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) =>
+      path.includes('/marketing/channels/')
+        ? Promise.resolve(
+            detailResponse({
+              channel: { ...detailResponse().channel, metrics: [metric({ metric: 'followers', label: 'Followers', asOf: '2026-10-15' })] },
+            }),
+          )
+        : Promise.resolve([]),
+    )
+    render(<ChannelDetailPanel projectId="proj-1" channel="social" />)
+    expect(await screen.findByText('as of Oct 15')).toBeInTheDocument()
+  })
+
   it('says when a metric history starts', async () => {
     ;(apiGet as Mock).mockImplementation((path: string) =>
       path.includes('/marketing/channels/')

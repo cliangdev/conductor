@@ -158,10 +158,15 @@ export function chartAxis(values: (number | null | undefined)[], unit: MetricUni
   const minSpan = Math.max(Math.abs(mean) * 0.2, Number.EPSILON)
   const mid = (min + max) / 2
   const span = Math.max(max - min, minSpan)
-  let lo = mid - span / 2 - span * 0.05
-  const hi = mid + span / 2 + span * 0.05
+  const rawLo = mid - span / 2 - span * 0.05
+  const rawHi = mid + span / 2 + span * 0.05
+  // Round the domain outward to a step of 1, 2 or 5 x 10^n so ticks read as round numbers.
+  const step = niceStep((rawHi - rawLo) / 4)
+  let lo = Math.floor(rawLo / step) * step
   if (min >= 0 && lo < 0) lo = 0
-  const ticks = Array.from({ length: 5 }, (_, i) => lo + ((hi - lo) * i) / 4)
+  const hi = Math.ceil(rawHi / step) * step
+  const count = Math.round((hi - lo) / step) + 1
+  const ticks = Array.from({ length: count }, (_, i) => Number((lo + step * i).toPrecision(12)))
   let decimals = unit === 'POSITION' ? 1 : 0
   for (; decimals < 6; decimals++) {
     const labels = ticks.map((t) => formatWithDecimals(t, unit, decimals))

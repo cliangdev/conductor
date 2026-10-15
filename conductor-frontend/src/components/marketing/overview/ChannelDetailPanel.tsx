@@ -25,7 +25,7 @@ import { ChannelStatusPill } from "./ChannelStatusPill";
 import { DimensionTable } from "./DimensionTable";
 import { MetricChart } from "./MetricChart";
 import { TargetDialog } from "./TargetDialog";
-import { dataThroughLabel, formatMetricValue, targetLine } from "./format";
+import { dataThroughLabel, formatMetricValue, shortDate, targetLine } from "./format";
 import { useTargetEditor } from "./useTargetEditor";
 import {
   DETAIL_WINDOWS,
@@ -301,7 +301,10 @@ export function ChannelDetailPanel({
                         </p>
                         <p className="text-2xl font-semibold tabular-nums text-foreground">
                           {formatMetricValue(m.value, m.unit)}
-                        </p>
+                        {m.asOf && (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">as of {shortDate(m.asOf)}</span>
+                        )}
+                      </p>
                         <ChangeLine metric={m} />
                       </div>
                       <p className="text-xs text-muted-foreground">

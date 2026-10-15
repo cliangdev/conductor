@@ -76,6 +76,8 @@ export interface OverviewMetric {
   changePct?: number | null
   /** Set when `previous` is null because the history is shorter than the comparison window. */
   historyStartsOn?: string | null
+  /** Snapshot day of a LEVEL metric (followers); null for metrics that sum a window. */
+  asOf?: string | null
   noise: boolean
   target?: MarketingTarget | null
   series: OverviewSeriesPoint[]

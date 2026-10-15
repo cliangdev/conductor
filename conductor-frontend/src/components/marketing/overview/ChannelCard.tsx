@@ -10,7 +10,7 @@ import { timeAgo } from '@/lib/format'
 import { ChangeLine } from './ChangeLine'
 import { ChannelStatusPill } from './ChannelStatusPill'
 import { Sparkline } from './Sparkline'
-import { formatMetricValue, targetLine } from './format'
+import { formatMetricValue, shortDate, targetLine } from './format'
 import type { ChannelKey, OverviewChannel, OverviewMetric } from './types'
 
 const HEADLINE_COUNT = 4
@@ -32,6 +32,9 @@ function MetricRow({
           <p className="truncate text-xs font-medium text-muted-foreground">{metric.label}</p>
           <p className="text-xl font-semibold tabular-nums text-foreground">
             {formatMetricValue(metric.value, metric.unit)}
+            {metric.asOf && (
+              <span className="ml-1.5 text-xs font-normal text-muted-foreground">as of {shortDate(metric.asOf)}</span>
+            )}
           </p>
         </div>
         <div className="w-24 shrink-0">
