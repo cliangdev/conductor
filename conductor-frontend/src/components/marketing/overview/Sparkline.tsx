@@ -1,6 +1,6 @@
 'use client'
 
-import { Line, LineChart, ResponsiveContainer } from 'recharts'
+import { Line, LineChart, ResponsiveContainer, YAxis } from 'recharts'
 import type { OverviewSeriesPoint } from './types'
 
 interface Datum {
@@ -31,8 +31,9 @@ export function Sparkline({ series, label }: { series: OverviewSeriesPoint[]; la
     <div role="img" aria-label={`${label} trend`} className="h-8 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+          <YAxis hide domain={['auto', 'auto']} />
           <Line
-            type="monotone"
+            type="linear"
             dataKey="solid"
             stroke="hsl(var(--primary))"
             strokeWidth={1.5}
@@ -40,7 +41,7 @@ export function Sparkline({ series, label }: { series: OverviewSeriesPoint[]; la
             isAnimationActive={false}
           />
           <Line
-            type="monotone"
+            type="linear"
             dataKey="provisional"
             stroke="hsl(var(--primary))"
             strokeOpacity={0.5}

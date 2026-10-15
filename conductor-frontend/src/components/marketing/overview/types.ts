@@ -22,7 +22,10 @@ export type TargetDirection = 'UP' | 'DOWN'
 
 export interface OverviewWindowRange {
   from: string
-  to: string
+  /** Null when nothing is connected. */
+  to: string | null
+  /** The earliest channel's data-complete day; differs from `to` when channels are at different days. */
+  dataCompleteThroughMin?: string | null
   previousFrom: string
   previousTo: string
 }
@@ -34,6 +37,10 @@ export interface OverviewFunnelStage {
   previous?: number | null
   change?: number | null
   source: string
+  /** WEB, STORE, ADS or PRODUCT: which path of the funnel the stage is on. */
+  path?: string | null
+  /** The stage this one converts from; conversion is only shown when set. */
+  conversionFromKey?: string | null
   available: boolean
   unavailableReason?: string | null
   dataCompleteThrough?: string | null
@@ -67,6 +74,8 @@ export interface OverviewMetric {
   previous?: number | null
   change?: number | null
   changePct?: number | null
+  /** Set when `previous` is null because the history is shorter than the comparison window. */
+  historyStartsOn?: string | null
   noise: boolean
   target?: MarketingTarget | null
   series: OverviewSeriesPoint[]
@@ -79,7 +88,7 @@ export interface OverviewChannel {
   lastFetchedAt?: string | null
   dataCompleteThrough?: string | null
   connections: OverviewConnection[]
-  connectHint?: { connectorId: string } | null
+  connectHint?: { connectors: { connectorId: string; name: string }[] } | null
   metrics: OverviewMetric[]
 }
 

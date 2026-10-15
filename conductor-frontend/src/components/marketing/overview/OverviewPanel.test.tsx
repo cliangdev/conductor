@@ -47,15 +47,37 @@ describe('OverviewPanel', () => {
     render(<OverviewPanel projectId="proj-1" />)
     expect(await screen.findByRole('region', { name: 'Funnel' })).toBeInTheDocument()
     const names = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(names.filter((n) => ['Web', 'Search', 'Social', 'App Store', 'Apple Ads'].includes(n ?? ''))).toEqual([
+    expect(names.filter((n) => ['Web', 'Search', 'Social', 'App Store', 'Ads'].includes(n ?? ''))).toEqual([
       'Web',
       'Search',
       'Social',
       'App Store',
-      'Apple Ads',
+      'Ads',
     ])
     expect((apiGet as Mock).mock.calls[0][0]).toContain('/marketing/overview?window=28d')
     expect(screen.getByText('Data through Sep 14')).toBeInTheDocument()
+  })
+
+  it('hides "Data through" when nothing is connected', async () => {
+    ;(apiGet as Mock).mockResolvedValue(
+      overviewResponse({
+        window: { from: '2026-08-18', to: null, dataCompleteThroughMin: null, previousFrom: '2026-07-21', previousTo: '2026-08-17' },
+        channels: [channel({ channel: 'WEB', label: 'Web', status: 'NOT_CONNECTED', metrics: [], lastFetchedAt: null })],
+      }),
+    )
+    render(<OverviewPanel projectId="proj-1" />)
+    await screen.findByText('Nothing is connected yet')
+    expect(screen.queryByText(/Data through/)).not.toBeInTheDocument()
+  })
+
+  it('shows a range when channels are complete through different days', async () => {
+    ;(apiGet as Mock).mockResolvedValue(
+      overviewResponse({
+        window: { from: '2026-09-14', to: '2026-10-12', dataCompleteThroughMin: '2026-10-11', previousFrom: '2026-08-17', previousTo: '2026-09-13' },
+      }),
+    )
+    render(<OverviewPanel projectId="proj-1" />)
+    expect(await screen.findByText('Data through Oct 11–12')).toBeInTheDocument()
   })
 
   it('switches to 7d and remembers the choice', async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import { clearAllSidebarCaches } from '@/lib/workflows'
-import { detailResponse } from './test-fixtures'
+import { detailResponse, metric } from './test-fixtures'
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1' }),
@@ -67,6 +67,50 @@ describe('ChannelDetailPanel', () => {
     const region = await screen.findByRole('region', { name: 'Top referrers' })
     expect(within(region).getByText(/No breakdown yet/)).toBeInTheDocument()
     expect(within(region).queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  it('has one title, with the status row beneath it', async () => {
+    render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
+    await screen.findByText('Live')
+    expect(screen.getAllByRole('heading', { name: 'Search' })).toHaveLength(1)
+  })
+
+  it('uses the API label for the title', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) =>
+      path.includes('/marketing/channels/')
+        ? Promise.resolve(detailResponse({ channel: { ...detailResponse().channel, channel: 'ADS', label: 'Ads' } }))
+        : Promise.resolve([]),
+    )
+    render(<ChannelDetailPanel projectId="proj-1" channel="ads" />)
+    expect(await screen.findByRole('heading', { name: 'Ads' })).toBeInTheDocument()
+  })
+
+  it('shows a Top posts empty state for Social with no posts', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) =>
+      path.includes('/marketing/channels/')
+        ? Promise.resolve(detailResponse({ channel: { ...detailResponse().channel, channel: 'SOCIAL', label: 'Social' }, topPosts: [] }))
+        : Promise.resolve([]),
+    )
+    render(<ChannelDetailPanel projectId="proj-1" channel="social" />)
+    expect(await screen.findByText('Top posts')).toBeInTheDocument()
+    expect(screen.getByText('No published posts in this window.')).toBeInTheDocument()
+  })
+
+  it('says when a metric history starts', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) =>
+      path.includes('/marketing/channels/')
+        ? Promise.resolve(
+            detailResponse({
+              channel: {
+                ...detailResponse().channel,
+                metrics: [metric({ metric: 'followers', label: 'Followers', previous: null, change: null, changePct: null, historyStartsOn: '2026-10-01' })],
+              },
+            }),
+          )
+        : Promise.resolve([]),
+    )
+    render(<ChannelDetailPanel projectId="proj-1" channel="social" />)
+    expect(await screen.findByText('History starts Oct 1')).toBeInTheDocument()
   })
 
   it('shows top posts for Social only', async () => {

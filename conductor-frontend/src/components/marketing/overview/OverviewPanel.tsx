@@ -18,7 +18,7 @@ import { usePersistedState } from '@/lib/persisted'
 import { ChannelCard } from './ChannelCard'
 import { FunnelStrip } from './FunnelStrip'
 import { TargetDialog } from './TargetDialog'
-import { shortDate } from './format'
+import { dataThroughLabel } from './format'
 import { useTargetEditor } from './useTargetEditor'
 import {
   CHANNEL_ORDER,
@@ -99,11 +99,9 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
     return [...data.channels].sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel))
   }, [data])
 
-  const dataThrough = useMemo(() => {
-    if (!data) return null
-    const dates = channels.map((c) => c.dataCompleteThrough).filter((d): d is string => !!d)
-    return shortDate(dates.length ? dates.sort().at(-1) : data.window.to)
-  }, [data, channels])
+  const dataThrough = data ? dataThroughLabel(data.window.dataCompleteThroughMin, data.window.to) : null
+
+  const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.channel, c.label])), [channels])
 
   const nothingConnected =
     channels.length > 0 && channels.every((c) => c.status === 'NOT_CONNECTED' || c.status === 'COMING_SOON')
@@ -147,7 +145,7 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
               }
             />
           ) : (
-            <FunnelStrip stages={data.funnel} />
+            <FunnelStrip stages={data.funnel} channelLabels={channelLabels} />
           )}
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

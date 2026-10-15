@@ -7,7 +7,6 @@
 import Link from 'next/link'
 import { buttonVariants } from '@/components/ui/button'
 import { timeAgo } from '@/lib/format'
-import { humanizeId } from '@/lib/workflows'
 import { ChangeLine } from './ChangeLine'
 import { ChannelStatusPill } from './ChannelStatusPill'
 import { Sparkline } from './Sparkline'
@@ -74,12 +73,12 @@ export function ChannelCard({
   const detailHref = `/app/projects/${projectId}/marketing/overview/${channel.channel.toLowerCase()}`
   const live = channel.status === 'LIVE' || channel.status === 'STALE'
   const metrics = channel.metrics.slice(0, HEADLINE_COUNT)
-  const connectorId = channel.connectHint?.connectorId
+  const connectors = channel.connectHint?.connectors ?? []
 
   return (
     <section
       aria-label={channel.label}
-      className="relative flex flex-col rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring"
+      className={`relative flex flex-col rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring${live ? '' : ' self-start'}`}
     >
       <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-foreground">
@@ -115,13 +114,18 @@ export function ChannelCard({
       {channel.status === 'NOT_CONNECTED' && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">Connect a data source to see this channel here.</p>
-          {connectorId && (
-            <Link
-              href={`/app/projects/${projectId}/integrations/${connectorId}`}
-              className={`${buttonVariants({ variant: 'outline', size: 'sm' })} relative z-10`}
-            >
-              Connect {humanizeId(connectorId.replace(/-/g, '_'))}
-            </Link>
+          {connectors.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {connectors.map((c) => (
+                <Link
+                  key={c.connectorId}
+                  href={`/app/projects/${projectId}/integrations/${c.connectorId}`}
+                  className={`${buttonVariants({ variant: 'outline', size: 'sm' })} relative z-10`}
+                >
+                  Connect {c.name}
+                </Link>
+              ))}
+            </div>
           )}
         </div>
       )}

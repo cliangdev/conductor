@@ -34,7 +34,7 @@ test('marketing overview: funnel, channel cards, drill-down, window and mobile l
   await expect(
     page.getByRole('region', { name: 'Funnel' }).or(page.getByText('Nothing is connected yet')),
   ).toBeVisible({ timeout: 15000 })
-  for (const name of ['Web', 'Search', 'Social', 'App Store', 'Apple Ads']) {
+  for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads']) {
     await expect(page.getByRole('region', { name, exact: true })).toBeVisible()
   }
 

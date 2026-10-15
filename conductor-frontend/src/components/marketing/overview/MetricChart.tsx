@@ -4,12 +4,13 @@
 // as a reference line.
 
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { formatMetricValue, shortDate } from './format'
+import { chartAxis, formatMetricValue, shortDate } from './format'
 import { splitSeries } from './Sparkline'
 import type { OverviewMetric } from './types'
 
 export function MetricChart({ metric }: { metric: OverviewMetric }) {
   const data = splitSeries(metric.series)
+  const axis = chartAxis(metric.series.map((p) => p.value), metric.unit, metric.target?.value)
   const points = metric.series.filter((p) => p.value !== null && p.value !== undefined).length
   const summary = `${metric.label} by day, ${points} days of data${metric.target ? `, target ${formatMetricValue(metric.target.value, metric.unit)}` : ''}`
   if (points === 0) {
@@ -30,12 +31,14 @@ export function MetricChart({ metric }: { metric: OverviewMetric }) {
             minTickGap={24}
           />
           <YAxis
-            width={48}
-            tickFormatter={(v: number) => formatMetricValue(v, metric.unit)}
+            width={56}
+            ticks={axis.ticks}
+            tickFormatter={axis.format}
             tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
             tickLine={false}
             axisLine={false}
-            domain={['auto', 'auto']}
+            domain={axis.domain}
+            allowDataOverflow
           />
           <Tooltip
             formatter={(v) => formatMetricValue(typeof v === 'number' ? v : null, metric.unit)}
@@ -57,7 +60,7 @@ export function MetricChart({ metric }: { metric: OverviewMetric }) {
             />
           )}
           <Line
-            type="monotone"
+            type="linear"
             dataKey="solid"
             name={metric.label}
             stroke="hsl(var(--primary))"
@@ -66,7 +69,7 @@ export function MetricChart({ metric }: { metric: OverviewMetric }) {
             isAnimationActive={false}
           />
           <Line
-            type="monotone"
+            type="linear"
             dataKey="provisional"
             name={`${metric.label} (still updating)`}
             stroke="hsl(var(--primary))"

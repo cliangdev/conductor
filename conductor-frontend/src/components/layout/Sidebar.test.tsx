@@ -283,9 +283,9 @@ describe('Sidebar', () => {
     const group = screen.getByText('Marketing').nextElementSibling as HTMLElement
     const hrefs = within(group).getAllByRole('link').map((l) => l.getAttribute('href'))
     expect(hrefs).toEqual([
+      '/app/projects/proj-1/marketing/overview',
       '/app/projects/proj-1/marketing/posts',
       '/app/projects/proj-1/marketing/campaigns',
-      '/app/projects/proj-1/marketing/overview',
       '/app/projects/proj-1/marketing/insights',
       '/app/projects/proj-1/marketing/creatives',
       '/app/projects/proj-1/marketing/media',

@@ -1,6 +1,6 @@
 import { ArrowDownIcon, ArrowUpIcon, MinusIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { TONE_CLASS, changeLabel, changeTone } from './format'
+import { TONE_CLASS, changeLabel, changeTone, shortDate } from './format'
 import type { OverviewMetric } from './types'
 
 /** Arrow + percent change versus the previous period, coloured by whether the move is good for this
@@ -8,7 +8,12 @@ import type { OverviewMetric } from './types'
 export function ChangeLine({ metric }: { metric: OverviewMetric }) {
   const label = changeLabel(metric.changePct)
   if (label === null) {
-    return <p className="text-xs text-muted-foreground">No previous period to compare</p>
+    const starts = shortDate(metric.historyStartsOn)
+    return (
+      <p className="text-xs text-muted-foreground">
+        {metric.previous == null && starts ? `History starts ${starts}` : 'No previous period to compare'}
+      </p>
+    )
   }
   const tone = changeTone(metric)
   const Icon = (metric.change ?? 0) > 0 ? ArrowUpIcon : (metric.change ?? 0) < 0 ? ArrowDownIcon : MinusIcon

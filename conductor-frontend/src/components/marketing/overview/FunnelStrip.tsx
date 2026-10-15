@@ -1,8 +1,6 @@
 import { InfoIcon } from 'lucide-react'
-import { StatCard } from '@/components/integrations/StatCard'
-import { cn } from '@/lib/utils'
 import { ChangeLine } from './ChangeLine'
-import { conversionRate, formatMetricValue, shortDate } from './format'
+import { conversionRate, formatMetricValue } from './format'
 import type { OverviewFunnelStage } from './types'
 
 const FRESHNESS_NOTE =
@@ -11,18 +9,58 @@ const FRESHNESS_NOTE =
 function stageChange(stage: OverviewFunnelStage) {
   const pct =
     stage.change !== null && stage.change !== undefined && stage.previous ? stage.change / Math.abs(stage.previous) : null
-  return { metric: stage.key, label: stage.label, unit: 'COUNT' as const, goodDirection: 'UP' as const, change: stage.change, changePct: pct, noise: false, series: [] }
+  return {
+    metric: stage.key,
+    label: stage.label,
+    unit: 'COUNT' as const,
+    goodDirection: 'UP' as const,
+    change: stage.change,
+    changePct: pct,
+    noise: false,
+    series: [],
+  }
 }
 
-/** The acquisition funnel, left to right (stacked on phones). A stage with no source yet is muted and
- *  says why; conversion is shown between two stages that both have data. */
-export function FunnelStrip({ stages }: { stages: OverviewFunnelStage[] }) {
+type Item =
+  | { kind: 'stage'; stage: OverviewFunnelStage; from: OverviewFunnelStage | null }
+  | { kind: 'unavailable'; stages: OverviewFunnelStage[] }
+
+/** Consecutive unavailable stages with the same source and reason read as one muted tile. */
+function toItems(stages: OverviewFunnelStage[]): Item[] {
+  const items: Item[] = []
+  for (const stage of stages) {
+    if (stage.available) {
+      const from = stage.conversionFromKey ? (stages.find((s) => s.key === stage.conversionFromKey) ?? null) : null
+      items.push({ kind: 'stage', stage, from })
+      continue
+    }
+    const last = items[items.length - 1]
+    if (
+      last?.kind === 'unavailable' &&
+      last.stages[0].source === stage.source &&
+      (last.stages[0].unavailableReason ?? '') === (stage.unavailableReason ?? '')
+    ) {
+      last.stages.push(stage)
+    } else {
+      items.push({ kind: 'unavailable', stages: [stage] })
+    }
+  }
+  return items
+}
+
+/** The acquisition funnel as one strip: columns on wide screens, compact rows (label, value, change) on
+ *  narrow ones. A stage with no source yet is muted and says why; conversion is only shown where the
+ *  API names the stage it converts from. */
+export function FunnelStrip({
+  stages,
+  channelLabels = {},
+}: {
+  stages: OverviewFunnelStage[]
+  /** Channel key to display label, used to name a collapsed group of unavailable stages. */
+  channelLabels?: Record<string, string>
+}) {
   if (stages.length === 0) return null
-  const items = stages.map((stage, i) => {
-    const from = stage.available ? [...stages.slice(0, i)].reverse().find((s) => s.available) ?? null : null
-    const conversion = from ? conversionRate(from.value, stage.value) : null
-    return { stage, conversion, from }
-  })
+  const items = toItems(stages)
 
   return (
     <section aria-label="Funnel" className="space-y-2">
@@ -38,34 +76,42 @@ export function FunnelStrip({ stages }: { stages: OverviewFunnelStage[] }) {
           <InfoIcon className="h-3.5 w-3.5" aria-hidden />
         </span>
       </div>
-      <ol className="grid gap-3 sm:grid-cols-2 lg:grid-flow-col lg:auto-cols-fr lg:grid-cols-none">
-        {items.map(({ stage, conversion, from }) => (
-          <li key={stage.key} className="min-w-0">
-            <StatCard
-              label={stage.label}
-              value={stage.available ? formatMetricValue(stage.value, 'COUNT') : '—'}
-              className={cn('h-full', !stage.available && 'bg-muted/40')}
+      <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card lg:grid lg:auto-cols-fr lg:grid-flow-col lg:divide-x lg:divide-y-0">
+        {items.map((item) => {
+          if (item.kind === 'unavailable') {
+            const first = item.stages[0]
+            const names = item.stages.map((s) => s.label.toLowerCase()).join(' → ')
+            const prefix = channelLabels[first.source]
+            const title = item.stages.length > 1 && prefix ? `${prefix}: ${names}` : item.stages.length > 1 ? names : first.label
+            return (
+              <li key={item.stages.map((s) => s.key).join('+')} className="min-w-0 bg-muted/40 px-4 py-2.5 lg:py-3">
+                <p className="text-xs font-medium text-muted-foreground">{title}</p>
+                <p className="text-xs text-muted-foreground">{first.unavailableReason ?? 'No data source yet'}</p>
+              </li>
+            )
+          }
+          const { stage, from } = item
+          const conversion = from ? conversionRate(from.value, stage.value) : null
+          return (
+            <li
+              key={stage.key}
+              className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-4 py-2.5 lg:block lg:py-3"
             >
-              {stage.available ? (
-                <div className="mt-2 space-y-1">
-                  <ChangeLine metric={stageChange(stage)} />
-                  {conversion !== null && from && (
-                    <p className="text-xs text-muted-foreground">
-                      {(conversion * 100).toFixed(1)}% of {from.label.toLowerCase()}
-                    </p>
-                  )}
-                  {stage.dataCompleteThrough && (
-                    <p className="text-xs text-muted-foreground">
-                      Data through {shortDate(stage.dataCompleteThrough)}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="mt-2 text-xs text-muted-foreground">{stage.unavailableReason ?? 'No data source yet'}</p>
+              <p className="text-xs font-medium text-muted-foreground">{stage.label}</p>
+              <div className="flex flex-col items-end lg:mt-1 lg:items-start">
+                <p className="text-base font-semibold tabular-nums text-foreground lg:text-2xl">
+                  {formatMetricValue(stage.value, 'COUNT')}
+                </p>
+                <ChangeLine metric={stageChange(stage)} />
+              </div>
+              {conversion !== null && from && (
+                <p className="basis-full text-xs text-muted-foreground lg:mt-1">
+                  {(conversion * 100).toFixed(1)}% of {from.label.toLowerCase()}
+                </p>
               )}
-            </StatCard>
-          </li>
-        ))}
+            </li>
+          )
+        })}
       </ol>
     </section>
   )

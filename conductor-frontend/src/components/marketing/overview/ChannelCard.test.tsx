@@ -22,7 +22,7 @@ describe('ChannelCard', () => {
   })
 
   it('offers a connect button for a not-connected channel', () => {
-    renderCard(channel({ channel: 'ADS', label: 'Apple Ads', status: 'NOT_CONNECTED', metrics: [], connectHint: { connectorId: 'apple-search-ads' } }))
+    renderCard(channel({ channel: 'ADS', label: 'Apple Ads', status: 'NOT_CONNECTED', metrics: [], connectHint: { connectors: [{ connectorId: 'apple-search-ads', name: 'Apple Search Ads' }] } }))
     expect(screen.getByText('Not connected')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Connect Apple Search Ads' })).toHaveAttribute(
       'href',
@@ -86,5 +86,47 @@ describe('ChannelCard', () => {
     renderCard(channel(), false)
     expect(screen.queryByRole('button', { name: /target/i })).not.toBeInTheDocument()
     expect(screen.getByText(/No target set/)).toBeInTheDocument()
+  })
+
+  it('offers one connect button per connector', () => {
+    renderCard(
+      channel({
+        channel: 'SOCIAL',
+        label: 'Social',
+        status: 'NOT_CONNECTED',
+        metrics: [],
+        connectHint: {
+          connectors: [
+            { connectorId: 'meta', name: 'Meta' },
+            { connectorId: 'tiktok', name: 'TikTok' },
+            { connectorId: 'youtube', name: 'YouTube' },
+          ],
+        },
+      }),
+    )
+    expect(screen.getByRole('link', { name: 'Connect Meta' })).toHaveAttribute('href', '/app/projects/proj-1/integrations/meta')
+    expect(screen.getByRole('link', { name: 'Connect TikTok' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Connect YouTube' })).toBeInTheDocument()
+  })
+
+  it('does not stretch a coming-soon card to the row height', () => {
+    renderCard(channel({ channel: 'STORE', label: 'App Store', status: 'COMING_SOON', metrics: [], connectHint: null }))
+    expect(screen.getByRole('region', { name: 'App Store' })).toHaveClass('self-start')
+  })
+
+  it('says "Target met" instead of a percentage once the target is reached', () => {
+    renderCard(channel({ metrics: [metric({ value: 1200, target: { value: 1000, direction: 'UP' } })] }))
+    expect(screen.getByText(/Target met/)).toBeInTheDocument()
+    expect(screen.queryByText(/% there/)).not.toBeInTheDocument()
+  })
+
+  it('says when history starts instead of "No previous period"', () => {
+    renderCard(
+      channel({
+        metrics: [metric({ previous: null, change: null, changePct: null, historyStartsOn: '2026-09-03' })],
+      }),
+    )
+    expect(screen.getByText('History starts Sep 3')).toBeInTheDocument()
+    expect(screen.queryByText(/No previous period/)).not.toBeInTheDocument()
   })
 })

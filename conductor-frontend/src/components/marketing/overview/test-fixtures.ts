@@ -41,7 +41,7 @@ export function channel(overrides: Partial<OverviewChannel> = {}): OverviewChann
     lastFetchedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
     dataCompleteThrough: '2026-09-14',
     connections: [{ id: 'c1', connectorId: 'gsc', name: 'Site search', status: 'LIVE' }],
-    connectHint: { connectorId: 'gsc' },
+    connectHint: { connectors: [{ connectorId: 'gsc', name: 'Search Console' }] },
     metrics: [metric()],
     ...overrides,
   }
@@ -49,11 +49,11 @@ export function channel(overrides: Partial<OverviewChannel> = {}): OverviewChann
 
 export function overviewResponse(overrides: Partial<MarketingOverviewResponse> = {}): MarketingOverviewResponse {
   return {
-    window: { from: '2026-08-18', to: '2026-09-14', previousFrom: '2026-07-21', previousTo: '2026-08-17' },
+    window: { from: '2026-08-18', to: '2026-09-14', dataCompleteThroughMin: '2026-09-14', previousFrom: '2026-07-21', previousTo: '2026-08-17' },
     funnel: [
       { key: 'impressions', label: 'Impressions', value: 10000, previous: 8000, change: 2000, source: 'SEARCH', available: true },
-      { key: 'clicks', label: 'Clicks', value: 500, previous: 450, change: 50, source: 'SEARCH', available: true },
-      { key: 'visitors', label: 'Visitors', value: 400, previous: 380, change: 20, source: 'WEB', available: true },
+      { key: 'clicks', label: 'Clicks', value: 500, previous: 450, change: 50, source: 'SEARCH', available: true, conversionFromKey: 'impressions' },
+      { key: 'visitors', label: 'Visitors', value: 400, previous: 380, change: 20, source: 'WEB', available: true, conversionFromKey: 'clicks' },
       {
         key: 'product_stages',
         label: 'In-product stages',
@@ -69,7 +69,7 @@ export function overviewResponse(overrides: Partial<MarketingOverviewResponse> =
       channel({
         channel: 'WEB',
         label: 'Web',
-        connectHint: { connectorId: 'posthog' },
+        connectHint: { connectors: [{ connectorId: 'posthog', name: 'Analytics' }] },
         metrics: [metric({ metric: 'visitors', label: 'Visitors', value: 400 })],
       }),
       channel({
@@ -92,17 +92,17 @@ export function overviewResponse(overrides: Partial<MarketingOverviewResponse> =
       channel({
         channel: 'SOCIAL',
         label: 'Social',
-        connectHint: { connectorId: 'meta' },
+        connectHint: { connectors: [{ connectorId: 'meta', name: 'Meta' }, { connectorId: 'tiktok', name: 'TikTok' }, { connectorId: 'youtube', name: 'YouTube' }] },
         metrics: [metric({ metric: 'followers', label: 'Followers', value: 3200 })],
       }),
       channel({ channel: 'STORE', label: 'App Store', status: 'COMING_SOON', connections: [], connectHint: null, metrics: [] }),
       channel({
         channel: 'ADS',
-        label: 'Apple Ads',
+        label: 'Ads',
         status: 'NOT_CONNECTED',
         lastFetchedAt: null,
         connections: [],
-        connectHint: { connectorId: 'apple-search-ads' },
+        connectHint: { connectors: [{ connectorId: 'apple-search-ads', name: 'Apple Search Ads' }] },
         metrics: [],
       }),
     ],
@@ -112,7 +112,7 @@ export function overviewResponse(overrides: Partial<MarketingOverviewResponse> =
 
 export function detailResponse(overrides: Partial<MarketingChannelDetailResponse> = {}): MarketingChannelDetailResponse {
   return {
-    window: { from: '2026-08-18', to: '2026-09-14', previousFrom: '2026-07-21', previousTo: '2026-08-17' },
+    window: { from: '2026-08-18', to: '2026-09-14', dataCompleteThroughMin: '2026-09-14', previousFrom: '2026-07-21', previousTo: '2026-08-17' },
     channel: channel({
       metrics: [
         metric(),
