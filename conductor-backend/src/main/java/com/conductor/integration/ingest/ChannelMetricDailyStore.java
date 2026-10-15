@@ -51,10 +51,20 @@ public class ChannelMetricDailyStore {
     public int replaceWindow(String projectId, String connectionId, String connectorId, String channel,
                              LocalDate from, LocalDate to, LocalDate provisionalFrom,
                              List<ChannelMetricPoint> points) {
+        return replaceWindow(projectId, connectionId, connectorId, channel, from, to, provisionalFrom, points, true);
+    }
+
+    /** @param pruneDroppedDimensions false keeps dimension rows this pull did not return (see the source's flag) */
+    @Transactional
+    public int replaceWindow(String projectId, String connectionId, String connectorId, String channel,
+                             LocalDate from, LocalDate to, LocalDate provisionalFrom,
+                             List<ChannelMetricPoint> points, boolean pruneDroppedDimensions) {
         List<ChannelMetricPoint> valid = points.stream()
                 .filter(p -> p.day() != null && p.value() != null && p.metric() != null)
                 .toList();
-        deleteDroppedDimensions(connectionId, from, to, valid);
+        if (pruneDroppedDimensions) {
+            deleteDroppedDimensions(connectionId, from, to, valid);
+        }
 
         int written = 0;
         for (int i = 0; i < valid.size(); i += CHUNK) {

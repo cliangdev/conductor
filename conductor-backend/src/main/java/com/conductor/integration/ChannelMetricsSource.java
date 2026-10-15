@@ -23,6 +23,13 @@ public interface ChannelMetricsSource {
     /** Daily points for {@code from..to} inclusive (platform-local days). Totals use an empty dimension key. */
     List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to);
 
+    /**
+     * Whether a dimension row stored for a (metric, day) this pull returned, but absent from it, is deleted
+     * (a restated top-N list). A source whose dimensions are a closed set that a partial pull may skip, such as
+     * the social platforms, returns false so one platform's refusal never erases another's stored value.
+     */
+    default boolean prunesMissingDimensions() { return true; }
+
     /** How many days back the first pull reaches, capped by what the platform allows. */
     int backfillDays();
 

@@ -659,6 +659,10 @@ public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelM
     @Override
     public int trailingDays() { return 1; }
 
+    /** Platforms are a closed set; a platform skipped this pull keeps the value stored earlier. */
+    @Override
+    public boolean prunesMissingDimensions() { return false; }
+
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
         try {

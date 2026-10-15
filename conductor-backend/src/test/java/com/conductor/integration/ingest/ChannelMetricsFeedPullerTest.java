@@ -30,6 +30,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -65,6 +66,7 @@ class ChannelMetricsFeedPullerTest {
         when(source.channel()).thenReturn(MetricChannel.SEARCH);
         when(source.backfillDays()).thenReturn(90);
         when(source.trailingDays()).thenReturn(4);
+        when(source.prunesMissingDimensions()).thenReturn(true);
         when(registry.getById("gsc")).thenReturn(Optional.of(connector));
 
         connection = new Connection();
@@ -85,7 +87,7 @@ class ChannelMetricsFeedPullerTest {
         spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null, null, null,
                 null, IngestSink.CHANNEL_METRICS, null);
 
-        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), anyBoolean()))
                 .thenAnswer(inv -> {
                     LocalDate provisionalFrom = inv.getArgument(6);
                     for (ChannelMetricPoint p : inv.<List<ChannelMetricPoint>>getArgument(7)) {
@@ -189,6 +191,16 @@ class ChannelMetricsFeedPullerTest {
     }
 
     @Test
+    void aClosedDimensionSetSourceAsksTheStoreNotToPruneMissingDimensions() {
+        when(source.prunesMissingDimensions()).thenReturn(false);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        pull(null);
+
+        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), eq(false));
+    }
+
+    @Test
     void aBrokenCursorIsTreatedAsAFirstRun() {
         when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
 
@@ -205,7 +217,7 @@ class ChannelMetricsFeedPullerTest {
 
         assertThat(batch.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         assertThat(batch.errorMessage()).isEqualTo("reconnect");
-        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -233,6 +245,6 @@ class ChannelMetricsFeedPullerTest {
         pull(null);
 
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any());
+                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true));
     }
 }

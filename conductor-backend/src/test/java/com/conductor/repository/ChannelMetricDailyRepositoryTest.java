@@ -115,6 +115,22 @@ class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aClosedDimensionSetKeepsAPlatformThatThisPullSkipped() {
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        replace(d, d, pt("followers", "facebook", d, 900), pt("followers", "instagram", d, 2400));
+
+        // Next pull could not read Facebook (missing permission): instagram only, no pruning.
+        store.replaceWindow(project.getId(), connectionId, "meta", "SOCIAL", d, d, d, List.of(pt("followers", "instagram", d, 2410)), false);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(repository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(connectionId))
+                .extracting(ChannelMetricDaily::getDimensionKey, r -> r.getValue().intValue())
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple("facebook", 900),
+                        org.assertj.core.groups.Tuple.tuple("instagram", 2410));
+    }
+
+    @Test
     void pullingTheSameDaysTwiceKeepsOneRowEach() {
         LocalDate day = LocalDate.of(2026, 10, 10);
         for (int run = 0; run < 2; run++) {

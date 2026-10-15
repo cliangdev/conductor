@@ -65,6 +65,7 @@ class MetaChannelMetricsTest {
         assertThat(connector.channel()).isEqualTo(MetricChannel.SOCIAL);
         assertThat(connector.backfillDays()).isEqualTo(28);
         assertThat(connector.trailingDays()).isEqualTo(1);
+        assertThat(connector.prunesMissingDimensions()).isFalse();
     }
 
     @Test

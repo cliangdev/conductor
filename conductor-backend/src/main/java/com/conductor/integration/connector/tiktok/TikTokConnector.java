@@ -343,6 +343,10 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
     @Override
     public int trailingDays() { return 1; }
 
+    /** Platforms are a closed set; a platform skipped this pull keeps the value stored earlier. */
+    @Override
+    public boolean prunesMissingDimensions() { return false; }
+
     /**
      * Follower and video totals for today. They need the {@code user.info.stats} scope, which
      * {@link #oauthScopes()} does not request (it is not in the app-review submission), so a real connection

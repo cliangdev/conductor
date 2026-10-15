@@ -48,6 +48,7 @@ class YouTubeChannelMetricsTest {
         assertThat(connector.channel()).isEqualTo(MetricChannel.SOCIAL);
         assertThat(connector.backfillDays()).isZero();
         assertThat(connector.trailingDays()).isEqualTo(1);
+        assertThat(connector.prunesMissingDimensions()).isFalse();
     }
 
     @Test

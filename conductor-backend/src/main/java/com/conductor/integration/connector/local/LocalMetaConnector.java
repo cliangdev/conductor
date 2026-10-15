@@ -437,6 +437,10 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector, Cha
     @Override
     public int trailingDays() { return 1; }
 
+    /** Platforms are a closed set; a platform skipped this pull keeps the value stored earlier. */
+    @Override
+    public boolean prunesMissingDimensions() { return false; }
+
     @Override
     public int backfillDays() { return 28; }
 
