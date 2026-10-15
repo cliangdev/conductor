@@ -9,6 +9,8 @@ The `remote-mcp` connector lets Conductor agents call the tools of any external 
 3. Add as many connections as you have servers; each is its own group in the agent tool picker.
 4. Agents → edit an agent → **Tools**: tick the specific tools the agent may use. Tools appear under a heading per connection.
 
+On the connector page, each connection shows its tool count, and the **Tools** tab lists each connection's tools (name and description) with a **Refresh** that re-runs initialize and tools/list, bypassing the cache (`GET .../connections/{id}/mcp-tools?refresh=true`).
+
 Tools only reach agents that list them in `toolIds`. Connecting a server exposes nothing on its own.
 
 ## How it works

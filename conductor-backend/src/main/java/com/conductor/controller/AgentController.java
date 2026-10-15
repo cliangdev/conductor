@@ -226,7 +226,8 @@ public class AgentController implements AgentsApi {
                         .name(t.name())
                         .description(t.description())
                         .source(t.source())
-                        .group(t.group()))
+                        .group(t.group())
+                        .displayName(t.displayName()))
                 .toList();
         return ResponseEntity.ok(tools);
     }

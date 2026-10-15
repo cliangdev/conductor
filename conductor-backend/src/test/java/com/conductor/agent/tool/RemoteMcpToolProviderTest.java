@@ -43,6 +43,7 @@ class RemoteMcpToolProviderTest {
     private ConnectionRepository repo;
     private ConnectionService connectionService;
     private RemoteMcpToolProvider provider;
+    private McpClient client;
     private Connection conn;
     private String url;
     private MutableClock clock;
@@ -81,7 +82,7 @@ class RemoteMcpToolProviderTest {
                 PROJECT, "remote-mcp", CONN, "the-key", null, null, Map.of("url", url), null));
 
         clock = new MutableClock();
-        McpClient client = new McpClient(new ObjectMapper(), new OutboundUrlGuard(true),
+        client = new McpClient(new ObjectMapper(), new OutboundUrlGuard(true),
                 Duration.ofSeconds(2), Duration.ofSeconds(2));
         provider = new RemoteMcpToolProvider(repo, connectionService, client, clock);
     }
@@ -213,6 +214,33 @@ class RemoteMcpToolProviderTest {
         ToolResult r = tool.invoke(Map.of(), new ToolInvocationContext("someone-else", "a", "run"));
 
         assertThat(r.ok()).isFalse();
+    }
+
+    @Test
+    void listForConnectionUsesCacheUnlessRefreshed() {
+        assertThat(provider.listForConnection(conn, false)).hasSize(2);
+        assertThat(provider.listForConnection(conn, false)).hasSize(2);
+        server.verify(1, postRequestedFor(urlEqualTo("/mcp")).withRequestBody(containing("tools/list")));
+
+        provider.listForConnection(conn, true);
+        server.verify(2, postRequestedFor(urlEqualTo("/mcp")).withRequestBody(containing("tools/list")));
+    }
+
+    @Test
+    void listForConnectionSurfacesFailureOnRefresh() {
+        provider.listForConnection(conn, false);
+        server.stubFor(post("/mcp").atPriority(1).willReturn(aResponse().withStatus(401)));
+        client.clearSessions();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.listForConnection(conn, true))
+                .hasMessage("The server rejected the key.");
+    }
+
+    @Test
+    void pickerShowsTheServersOwnToolName() {
+        AgentTool tool = provider.available(PROJECT).get(0);
+        assertThat(tool.displayName()).isEqualTo("get_users");
+        assertThat(tool.name()).isEqualTo("c0ffee_get_users");
     }
 
     @Test

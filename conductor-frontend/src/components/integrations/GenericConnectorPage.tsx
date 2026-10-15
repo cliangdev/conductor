@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { createConnection, deleteConnection, apiPost, apiErrorMessage } from '@/lib/api';
+import { createConnection, deleteConnection, apiPost, apiErrorMessage, listRemoteMcpTools } from '@/lib/api';
 import { buildConnectionPayload } from '@/lib/connectorConnectForm';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
@@ -55,6 +55,25 @@ export default function GenericConnectorPage({
     credentialOverride?.connectorId === connectorId
       ? credentialOverride.status
       : appCredentialOf(item);
+
+  // Remote MCP connections: say how many tools each one offers, so a person can tell what they
+  // connected without opening the Tools tab. A failing server just shows no count.
+  const [toolCounts, setToolCounts] = useState<Record<string, number>>({});
+  const connectionIds = (item?.connections ?? []).map((c) => c.id).join(',');
+  useEffect(() => {
+    if (connectorId !== 'remote-mcp' || !accessToken || !connectionIds) return;
+    let cancelled = false;
+    connectionIds.split(',').forEach((id) => {
+      listRemoteMcpTools(projectId, id, accessToken)
+        .then((r) => {
+          if (!cancelled && !r.error) setToolCounts((prev) => ({ ...prev, [id]: r.toolCount }));
+        })
+        .catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectorId, projectId, accessToken, connectionIds]);
 
   // The OAuth callback parks a connection here (`?selectAccount=<connectionId>`) when the grant
   // covers several publishable accounts and an admin still has to pick one. Read after mount rather
@@ -211,6 +230,11 @@ export default function GenericConnectorPage({
               connectorName={item.name}
               iconLabel={item.iconLabel}
               canMutate={canMutate}
+              detail={
+                toolCounts[conn.id] === undefined
+                  ? null
+                  : `${toolCounts[conn.id]} ${toolCounts[conn.id] === 1 ? 'tool' : 'tools'}`
+              }
               disconnecting={disconnecting === conn.id}
               onDisconnect={handleDisconnect}
               onChooseAccount={setPendingAccountConnectionId}

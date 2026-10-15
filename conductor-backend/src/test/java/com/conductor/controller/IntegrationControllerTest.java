@@ -93,6 +93,7 @@ class IntegrationControllerTest {
     @MockitoBean private com.conductor.service.ConnectorAppCredentialService appCredentialService;
     @MockitoBean private com.conductor.service.ConnectorAppCredentialVerificationService appCredentialVerificationService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    @MockitoBean private com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider;
 
     // Security filter chain collaborators
     @MockitoBean private JwtService jwtService;
@@ -880,5 +881,46 @@ class IntegrationControllerTest {
 
         mockMvc.perform(get("/api/v1/oauth/callback"))
                 .andExpect(status().isFound());
+    }
+
+    // ---- remote MCP tool listing ----
+
+    private Connection mcpConnection() {
+        Connection conn = new Connection();
+        conn.setId("mcp-1");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId("remote-mcp");
+        when(connectionService.getById("mcp-1", "remote-mcp")).thenReturn(Optional.of(conn));
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        return conn;
+    }
+
+    @Test
+    void listRemoteMcpTools_returnsNamesAndPassesRefresh() throws Exception {
+        Connection conn = mcpConnection();
+        when(remoteMcpToolProvider.listForConnection(conn, true)).thenReturn(List.of(
+                new com.conductor.integration.connector.mcp.McpClient.McpTool("ask", "Ask a question", java.util.Map.of())));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/remote-mcp/connections/mcp-1/mcp-tools")
+                        .param("refresh", "true")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.toolCount").value(1))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.tools[0].name").value("ask"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.error").doesNotExist());
+    }
+
+    @Test
+    void listRemoteMcpTools_failureIsAPlainErrorNotA500() throws Exception {
+        Connection conn = mcpConnection();
+        when(remoteMcpToolProvider.listForConnection(conn, false)).thenThrow(
+                new com.conductor.integration.connector.mcp.McpException(
+                        com.conductor.integration.connector.mcp.McpException.Kind.AUTH, "The server rejected the key."));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/remote-mcp/connections/mcp-1/mcp-tools")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.error").value("The server rejected the key."))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.toolCount").value(0));
     }
 }

@@ -620,6 +620,28 @@ export interface AvailableAgentTool {
   source: string
   /** Sub-group within a source, e.g. the remote MCP server connection a tool comes from. */
   group?: string | null
+  /** Name to show people when `name` is a model-facing alias (a remote MCP tool's own name). */
+  displayName?: string | null
+}
+
+export interface RemoteMcpToolsResponse {
+  toolCount: number
+  tools: { name: string; description?: string | null }[]
+  /** Plain-language reason the server could not be listed; null on success. */
+  error?: string | null
+}
+
+/** The live tool list of a remote MCP connection. `refresh` re-runs initialize + tools/list. */
+export function listRemoteMcpTools(
+  projectId: string,
+  connectionId: string,
+  token: string,
+  refresh = false,
+): Promise<RemoteMcpToolsResponse> {
+  return apiGet<RemoteMcpToolsResponse>(
+    `/api/v1/projects/${projectId}/integrations/remote-mcp/connections/${connectionId}/mcp-tools${refresh ? '?refresh=true' : ''}`,
+    token,
+  )
 }
 
 export interface AgentProviderInfo {

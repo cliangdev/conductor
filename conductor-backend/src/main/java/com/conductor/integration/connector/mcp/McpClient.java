@@ -265,8 +265,17 @@ public class McpClient {
             throw new McpException(McpException.Kind.AUTH, "The server rejected the key.");
         }
         if (status == 404 && sessionId != null) throw new SessionExpired();
+        if (status == 429) {
+            throw new McpException(McpException.Kind.SERVER,
+                    "The server is rate limiting requests (HTTP 429). Try again shortly.");
+        }
+        if (status >= 500) {
+            throw new McpException(McpException.Kind.SERVER,
+                    "The server had an internal error (HTTP " + status + "). Try again shortly.");
+        }
         if (status >= 400) {
-            throw new McpException(McpException.Kind.SERVER, "The server returned HTTP " + status + ".");
+            throw new McpException(McpException.Kind.NOT_MCP, "That URL didn't answer as an MCP server (HTTP "
+                    + status + "). Use the server's MCP endpoint, often ending in /mcp.");
         }
         String sid = resp.headers().firstValue("Mcp-Session-Id").orElse(null);
         return new Exchange(resp.headers().firstValue("Content-Type").orElse(""), text, sid, requestId);
@@ -330,7 +339,7 @@ public class McpClient {
         } catch (Exception e) {
             // fall through to not-MCP
         }
-        throw notMcp();
+        throw notMcp(ex.contentType);
     }
 
     static List<String> sseEvents(String body) {
@@ -351,7 +360,16 @@ public class McpClient {
     }
 
     private static McpException notMcp() {
-        return new McpException(McpException.Kind.NOT_MCP, "That URL did not respond like an MCP server.");
+        return notMcp("");
+    }
+
+    private static McpException notMcp(String contentType) {
+        if (contentType != null && contentType.toLowerCase().contains("html")) {
+            return new McpException(McpException.Kind.NOT_MCP, "That URL returned a web page, not an MCP response. "
+                    + "Use the server's MCP endpoint, often ending in /mcp.");
+        }
+        return new McpException(McpException.Kind.NOT_MCP, "That URL didn't answer as an MCP server. "
+                + "Use the server's MCP endpoint, often ending in /mcp.");
     }
 
     private static String fingerprint(String key) {

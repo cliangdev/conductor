@@ -264,7 +264,7 @@ describe('AgentForm tool picker grouping', () => {
     listAgentToolsBehavior = () =>
       Promise.resolve([
         { id: 'connector:posthog/x', name: 'posthog_x', source: 'connector' },
-        { id: 'mcp:c1/get_users', name: 'abc123_get_users', source: 'mcp', group: 'Admin server' },
+        { id: 'mcp:c1/get_users', name: 'abc123_get_users', displayName: 'get_users', source: 'mcp', group: 'Admin server' },
         { id: 'mcp:c2/get_orders', name: 'def456_get_orders', source: 'mcp', group: 'Billing server' },
       ])
     render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={vi.fn()} />)
@@ -272,6 +272,9 @@ describe('AgentForm tool picker grouping', () => {
     expect(await screen.findByText('mcp · Admin server')).toBeInTheDocument()
     expect(screen.getByText('mcp · Billing server')).toBeInTheDocument()
     expect(screen.getByText('connector')).toBeInTheDocument()
-    expect(screen.getByText('abc123_get_users')).toBeInTheDocument()
+    expect(screen.getByText('get_users')).toBeInTheDocument()
+    expect(screen.queryByText('abc123_get_users')).not.toBeInTheDocument()
+    expect(screen.queryByText('mcp:c1/get_users')).not.toBeInTheDocument()
+    expect(screen.getByText('connector:posthog/x')).toBeInTheDocument()
   })
 })

@@ -30,6 +30,14 @@ public interface AgentTool {
         return null;
     }
 
+    /**
+     * Optional name to show people in pickers when {@link #name()} is a model-facing alias (e.g. a
+     * prefixed remote MCP tool name). {@code null} means show {@link #name()}.
+     */
+    default String displayName() {
+        return null;
+    }
+
     /** JSON Schema object for the tool input. */
     Map<String, Object> inputSchema();
 

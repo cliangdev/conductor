@@ -65,9 +65,10 @@ public class AgentService {
     public record ProviderOption(String id, String defaultModel, boolean defaultModelIsLive) {}
 
     /** A tool an agent can be bound to, tagged with its canonical source. */
-    public record ToolOption(String id, String name, String description, String source, String group) {
+    public record ToolOption(String id, String name, String description, String source, String group,
+                          String displayName) {
         public ToolOption(String id, String name, String description, String source) {
-            this(id, name, description, source, null);
+            this(id, name, description, source, null, null);
         }
     }
 
@@ -83,7 +84,7 @@ public class AgentService {
     public List<ToolOption> listAvailableTools(String projectId) {
         return toolRegistry.availableToolsWithSource(projectId).stream()
                 .map(st -> new ToolOption(st.tool().id(), st.tool().name(), st.tool().description(), st.source(),
-                        st.tool().group()))
+                        st.tool().group(), st.tool().displayName()))
                 .toList();
     }
 

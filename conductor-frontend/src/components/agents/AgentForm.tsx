@@ -352,11 +352,14 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
                         onChange={() => toggleTool(tool.id)}
                       />
                       <span className="min-w-0">
-                        <span className="block text-sm font-medium text-foreground">{tool.name}</span>
+                        <span className="block text-sm font-medium text-foreground">{tool.displayName ?? tool.name}</span>
                         {tool.description && (
                           <span className="block text-xs text-muted-foreground">{tool.description}</span>
                         )}
-                        <span className="block text-xs text-muted-foreground/70 font-mono truncate">{tool.id}</span>
+                        {/* Grouped tools (one heading per connection) are identified by that heading. */}
+                        {!tool.group && (
+                          <span className="block text-xs text-muted-foreground/70 font-mono truncate">{tool.id}</span>
+                        )}
                       </span>
                     </label>
                   ))}

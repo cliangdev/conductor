@@ -30,6 +30,8 @@ interface ConnectionRowProps {
   /** The connector's short text badge, shown when it has no logo asset. */
   iconLabel: string;
   canMutate?: boolean;
+  /** Extra connector-specific status text shown after "Connected", e.g. "3 tools". */
+  detail?: string | null;
   disconnecting?: boolean;
   onDisconnect?: (connectionId: string) => void;
   /** Reopens the account picker for a grant whose selection never happened. */
@@ -43,6 +45,7 @@ export function ConnectionRow({
   connectorName,
   iconLabel,
   canMutate = false,
+  detail = null,
   disconnecting = false,
   onDisconnect,
   onChooseAccount,
@@ -85,6 +88,7 @@ export function ConnectionRow({
               <>
                 <CheckCircleIcon className="h-3.5 w-3.5 text-status-done" />
                 Connected
+                {detail && <span> · {detail}</span>}
               </>
             ) : (
               connection.status

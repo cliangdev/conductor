@@ -77,6 +77,7 @@ class WorkflowIntegrationToolsTest {
     @MockitoBean private com.conductor.service.ConnectorAppCredentialService appCredentialService;
     @MockitoBean private com.conductor.service.ConnectorAppCredentialVerificationService appCredentialVerificationService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    @MockitoBean private com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider;
     @MockitoBean private JwtService jwtService;
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;

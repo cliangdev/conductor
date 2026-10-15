@@ -27,6 +27,13 @@ function renderRow(conn: ConnectionWithHealth, props: Record<string, unknown> = 
 }
 
 describe('ConnectionRow', () => {
+  it('shows connector detail such as a tool count after Connected', () => {
+    renderRow(connection(), { detail: '3 tools' })
+    expect(screen.getByText(/Connected/)).toBeInTheDocument()
+    expect(screen.getByText(/3 tools/)).toBeInTheDocument()
+  })
+
+
   it('shows an error state for an UNHEALTHY connection', () => {
     renderRow(connection({ healthStatus: 'UNHEALTHY', healthMessage: 'Token has been expired or revoked.' }))
 

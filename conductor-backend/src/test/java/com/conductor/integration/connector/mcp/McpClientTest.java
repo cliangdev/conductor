@@ -149,7 +149,23 @@ class McpClientTest {
         server.stubFor(post("/mcp").willReturn(aResponse().withHeader("Content-Type", "text/html").withBody("<html/>")));
 
         assertThatThrownBy(() -> client.listTools(url, "k"))
-                .isInstanceOf(McpException.class).hasMessageContaining("did not respond like an MCP server");
+                .isInstanceOf(McpException.class).hasMessageContaining("web page, not an MCP response");
+    }
+
+    @Test
+    void wrongPathStatusesGetPlainMessages() {
+        server.stubFor(post("/mcp").willReturn(aResponse().withStatus(405)));
+        assertThatThrownBy(() -> client.listTools(url, "k")).isInstanceOf(McpException.class)
+                .hasMessage("That URL didn't answer as an MCP server (HTTP 405). Use the server's MCP endpoint, often ending in /mcp.");
+        server.resetAll();
+        server.stubFor(post("/mcp").willReturn(aResponse().withStatus(404)));
+        assertThatThrownBy(() -> client.listTools(url, "k")).hasMessageContaining("(HTTP 404)");
+        server.resetAll();
+        server.stubFor(post("/mcp").willReturn(aResponse().withStatus(503)));
+        assertThatThrownBy(() -> client.listTools(url, "k")).hasMessageContaining("internal error (HTTP 503)");
+        server.resetAll();
+        server.stubFor(post("/mcp").willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{\"a\":1}")));
+        assertThatThrownBy(() -> client.listTools(url, "k")).hasMessageContaining("didn't answer as an MCP server");
     }
 
     @Test

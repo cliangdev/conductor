@@ -110,9 +110,33 @@ public class RemoteMcpToolProvider implements AgentToolProvider {
                 .map(t -> new McpAgentTool(conn.getId(), groupLabel(conn, ctx), t));
     }
 
+    /**
+     * The live tool list of one connection, for the Integrations page. {@code refresh} bypasses the
+     * cache and re-runs initialize + tools/list; failures surface as {@link McpException} (plain message)
+     * instead of being swallowed as they are for agent listings.
+     */
+    public List<McpTool> listForConnection(Connection conn, boolean refresh) {
+        ConnectionContext ctx = connectionService.toContext(conn);
+        String url = ctx.configValue("url") == null ? "" : ctx.configValue("url").toString();
+        if (!refresh) {
+            CacheEntry hit = cache.get(conn.getId());
+            if (hit != null && !hit.tools().isEmpty() && clock.instant().isBefore(hit.expiresAt())
+                    && hit.fingerprint().equals(fingerprint(url, ctx))) {
+                return hit.tools();
+            }
+        }
+        List<McpTool> tools = client.listTools(url, ctx.accessToken());
+        cache.put(conn.getId(), new CacheEntry(fingerprint(url, ctx), tools, clock.instant().plus(CACHE_TTL)));
+        return tools;
+    }
+
+    private static String fingerprint(String url, ConnectionContext ctx) {
+        return url + "|" + (ctx.accessToken() == null ? 0 : ctx.accessToken().hashCode());
+    }
+
     private List<McpTool> toolsFor(Connection conn, ConnectionContext ctx) {
         String url = ctx.configValue("url") == null ? "" : ctx.configValue("url").toString();
-        String fingerprint = url + "|" + (ctx.accessToken() == null ? 0 : ctx.accessToken().hashCode());
+        String fingerprint = fingerprint(url, ctx);
         Instant now = clock.instant();
         CacheEntry hit = cache.get(conn.getId());
         if (hit != null && hit.fingerprint().equals(fingerprint) && now.isBefore(hit.expiresAt())) {
@@ -183,6 +207,11 @@ public class RemoteMcpToolProvider implements AgentToolProvider {
         public String description() {
             return tool.description() != null && !tool.description().isBlank()
                     ? tool.description() : "Remote MCP tool " + tool.name();
+        }
+
+        @Override
+        public String displayName() {
+            return tool.name();
         }
 
         @Override
