@@ -96,10 +96,10 @@ class MarketingOverviewControllerTest {
 
     private static ChannelView webChannel(TargetView target) {
         MetricView visitors = new MetricView("visitors", "Visitors", MetricCatalog.Unit.COUNT, 70.0, 35.0, 35.0, 1.0,
-                false, 2, target, List.of(new MarketingOverviewQueryService.Point(LocalDate.of(2026, 10, 14), 10.0)));
+                false, 2, target, List.of(new MarketingOverviewQueryService.Point(LocalDate.of(2026, 10, 14), 10.0, true)));
         return new ChannelView("WEB", "Web", "LIVE", null,
                 List.of(new MarketingOverviewQueryService.ConnectionView("c1", "posthog", "Site", "LIVE")), "posthog",
-                List.of(visitors));
+                List.of(visitors), LocalDate.of(2026, 10, 12));
     }
 
     // ---- reads ----
@@ -109,7 +109,7 @@ class MarketingOverviewControllerTest {
         memberWithRole(MemberRole.REVIEWER);
         when(queryService.overview(PROJECT_ID, "7d")).thenReturn(new Overview(window(),
                 List.of(new MarketingOverviewQueryService.FunnelStageView("web_visitors", "Web visitors", 70.0, 35.0,
-                        35.0, "WEB", true, null)),
+                        35.0, "WEB", true, null, LocalDate.of(2026, 10, 12))),
                 List.of(webChannel(new TargetView(500, "UP")))));
 
         mockMvc.perform(get(BASE + "/overview").param("window", "7d")
@@ -125,7 +125,10 @@ class MarketingOverviewControllerTest {
                 .andExpect(jsonPath("$.channels[0].metrics[0].unit").value("COUNT"))
                 .andExpect(jsonPath("$.channels[0].metrics[0].provisionalDays").value(2))
                 .andExpect(jsonPath("$.channels[0].metrics[0].target.value").value(500.0))
-                .andExpect(jsonPath("$.channels[0].metrics[0].series[0].day").value("2026-10-14"));
+                .andExpect(jsonPath("$.channels[0].dataCompleteThrough").value("2026-10-12"))
+                .andExpect(jsonPath("$.funnel[0].dataCompleteThrough").value("2026-10-12"))
+                .andExpect(jsonPath("$.channels[0].metrics[0].series[0].day").value("2026-10-14"))
+                .andExpect(jsonPath("$.channels[0].metrics[0].series[0].provisional").value(true));
     }
 
     @Test
@@ -175,6 +178,26 @@ class MarketingOverviewControllerTest {
 
         mockMvc.perform(get(BASE + "/channels/nope").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void socialChannelDetail_returnsTopPosts() throws Exception {
+        memberWithRole(MemberRole.REVIEWER);
+        var post = new com.conductor.marketing.insights.MarketingInsightsQueryService.Post("wi-1", "COND-9",
+                "Launch reel", "MARKETING", "caption", "t-1", "instagram", "REEL", "@brand", "https://example.com/p",
+                null, 1200L, 90L, 5L, 3L, 2L, 0.083, 0.61, null);
+        when(queryService.channel(PROJECT_ID, "social", "28d")).thenReturn(new ChannelDetail(window(),
+                new ChannelView("SOCIAL", "Social", "LIVE", null, List.of(), "meta", List.of(),
+                        LocalDate.of(2026, 10, 14)),
+                List.of(), List.of(post)));
+
+        mockMvc.perform(get(BASE + "/channels/social").header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.topPosts.length()").value(1))
+                .andExpect(jsonPath("$.topPosts[0].displayId").value("COND-9"))
+                .andExpect(jsonPath("$.topPosts[0].platform").value("instagram"))
+                .andExpect(jsonPath("$.topPosts[0].views").value(1200))
+                .andExpect(jsonPath("$.topPosts[0].engagementRate").value(0.083));
     }
 
     // ---- targets ----

@@ -168,7 +168,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         put(meta, "meta", "SOCIAL", "followers", "facebook", day(10), 100, false);
         put(meta, "meta", "SOCIAL", "followers", "instagram", day(10), 50, false);
         put(meta, "meta", "SOCIAL", "followers", "instagram", day(12), 60, false);
-        put(youtube, "youtube", "SOCIAL", "followers", "youtube", day(13), 30, false);
+        put(youtube, "youtube", "SOCIAL", "followers", "youtube", day(12), 30, false);
 
         MetricView followers = metric(channel(overview7(), "SOCIAL"), "followers");
 
@@ -228,14 +228,57 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
-    void provisionalDaysInTheWindowAreCounted() {
+    void theWindowEndsAtTheDataCompleteDayAndLaterProvisionalDaysAreShownButNotCounted() {
         String web = connectFresh("posthog");
         put(web, "posthog", "WEB", "visitors", "", day(12), 5, false);
-        put(web, "posthog", "WEB", "visitors", "", day(13), 5, true);
-        put(web, "posthog", "WEB", "visitors", "", day(14), 5, true);
-        put(web, "posthog", "WEB", "visitors", "", day(3), 5, true); // previous window: not counted
+        put(web, "posthog", "WEB", "visitors", "", day(13), 7, true);
+        put(web, "posthog", "WEB", "visitors", "", day(14), 9, true);
+        put(web, "posthog", "WEB", "visitors", "", day(3), 4, false);
 
-        assertThat(metric(channel(overview7(), "WEB"), "visitors").provisionalDays()).isEqualTo(2);
+        ChannelView web7 = channel(overview7(), "WEB");
+        MetricView visitors = metric(web7, "visitors");
+
+        assertThat(web7.dataCompleteThrough()).isEqualTo(day(12));
+        assertThat(visitors.value()).isEqualTo(5.0);          // Oct 6-12; the provisional 7 and 9 are excluded
+        assertThat(visitors.previous()).isEqualTo(4.0);       // Sep 29 - Oct 5
+        assertThat(visitors.provisionalDays()).isEqualTo(2);
+        assertThat(visitors.series()).hasSize(9);             // Oct 6-12 plus Oct 13 and 14
+        assertThat(visitors.series().get(0).day()).isEqualTo(day(6));
+        assertThat(visitors.series().get(6).provisional()).isFalse();
+        assertThat(visitors.series().get(7).provisional()).isTrue();
+        assertThat(visitors.series().get(8).value()).isEqualTo(9.0);
+    }
+
+    @Test
+    void eachChannelEndsAtItsOwnDataCompleteDayAndTheOverallRangeSpansThem() {
+        String web = connectFresh("posthog");
+        String search = connectFresh("gsc");
+        for (int d = 1; d <= 14; d++) {
+            put(web, "posthog", "WEB", "visitors", "", day(d), 10, false);
+            put(search, "gsc", "SEARCH", "clicks", "", day(d), 3, d > 11); // search lags three days
+        }
+
+        Overview overview = overview7();
+
+        assertThat(channel(overview, "WEB").dataCompleteThrough()).isEqualTo(day(14));
+        assertThat(channel(overview, "SEARCH").dataCompleteThrough()).isEqualTo(day(11));
+        // a lagging source's seven complete days (Oct 5-11), not four settled ones against a full week
+        assertThat(metric(channel(overview, "SEARCH"), "clicks").value()).isEqualTo(21.0);
+        assertThat(metric(channel(overview, "SEARCH"), "clicks").previous()).isEqualTo(12.0); // Sep 28 - Oct 4; only Oct 1-4 have rows
+        assertThat(channel(overview, "ADS").dataCompleteThrough()).isEqualTo(day(14)); // no data: yesterday
+        assertThat(overview.window().from()).isEqualTo(day(5));
+        assertThat(overview.window().to()).isEqualTo(day(14));
+        assertThat(overview.funnel().get(0).dataCompleteThrough()).isEqualTo(day(14));
+    }
+
+    @Test
+    void theSlowestConnectionSetsTheDataCompleteDay() {
+        String a = connectFresh("posthog");
+        String b = connectFresh("posthog");
+        put(a, "posthog", "WEB", "visitors", day(14), 1);
+        put(b, "posthog", "WEB", "visitors", day(10), 1);
+
+        assertThat(channel(overview7(), "WEB").dataCompleteThrough()).isEqualTo(day(10));
     }
 
     @Test
@@ -278,12 +321,13 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
         assertThat(overview.funnel()).extracting(s -> s.key()).containsExactly(
                 "web_visitors", "web_conversion_clicks", "store_impressions", "store_page_views",
-                "store_downloads", "ads_taps", "ads_installs", "product_signups", "product_activations");
+                "store_downloads", "ads_taps", "ads_installs", "product_stages");
         assertThat(overview.funnel().get(0).available()).isTrue();
         assertThat(overview.funnel().get(0).value()).isEqualTo(40.0);
         assertThat(overview.funnel().get(1).available()).isFalse();
         assertThat(overview.funnel().get(2).unavailableReason()).isEqualTo("Connect App Store Connect (coming soon)");
         assertThat(overview.funnel().get(7).unavailableReason()).isEqualTo("Connect product metrics (coming soon)");
+        assertThat(overview.funnel().get(7).label()).isEqualTo("In-app stages (first open \u2192 paid)");
     }
 
     @Test

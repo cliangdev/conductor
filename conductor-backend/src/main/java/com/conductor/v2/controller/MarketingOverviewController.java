@@ -85,6 +85,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
 
     private static OverviewFunnelStage toStage(MarketingOverviewQueryService.FunnelStageView s) {
         return new OverviewFunnelStage(s.key(), s.label(), s.source(), s.available())
+                .dataCompleteThrough(s.dataCompleteThrough())
                 .value(s.value())
                 .previous(s.previous())
                 .change(s.change())
@@ -92,7 +93,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
     }
 
     private static OverviewChannel toChannel(MarketingOverviewQueryService.ChannelView c) {
-        OverviewChannel channel = new OverviewChannel(c.channel(), c.label(),
+        OverviewChannel channel = new OverviewChannel(c.dataCompleteThrough(), c.channel(), c.label(),
                 OverviewChannel.StatusEnum.valueOf(c.status()),
                 c.connections().stream()
                         .map(k -> new OverviewConnection(k.id(), k.connectorId(), k.name(),
@@ -109,7 +110,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
     private static OverviewMetric toMetric(MarketingOverviewQueryService.MetricView m) {
         return new OverviewMetric(m.metric(), m.label(), OverviewMetric.UnitEnum.valueOf(m.unit().name()), m.noise(),
                 m.provisionalDays(),
-                m.series().stream().map(p -> new OverviewSeriesPoint(p.day()).value(p.value())).toList())
+                m.series().stream().map(p -> new OverviewSeriesPoint(p.day(), p.provisional()).value(p.value())).toList())
                 .value(m.value())
                 .previous(m.previous())
                 .change(m.change())

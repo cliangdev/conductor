@@ -6076,7 +6076,10 @@ components:
 
     OverviewWindow:
       type: object
-      description: Inclusive UTC day ranges. `to` is yesterday; the previous window is the same length immediately before `from`.
+      description: >-
+        Inclusive UTC day ranges. Each channel's window ends at its dataCompleteThrough (at most yesterday) and
+        the previous window is the same length immediately before `from`. On the overview this is the overall
+        range: the earliest channel `from` to the latest channel `to`.
       required: [from, to, previousFrom, previousTo]
       properties:
         from: {type: string, format: date}
@@ -6098,11 +6101,20 @@ components:
           description: The channel (WEB, SEARCH, SOCIAL, STORE, ADS, PRODUCT) the stage reads from.
         available: {type: boolean}
         unavailableReason: {type: string, nullable: true}
+        dataCompleteThrough:
+          type: string
+          format: date
+          nullable: true
+          description: The last day included in the stage's value (its channel's dataCompleteThrough); null when the stage has no channel yet.
 
     OverviewChannel:
       type: object
-      required: [channel, label, status, connections, metrics]
+      required: [channel, label, status, connections, metrics, dataCompleteThrough]
       properties:
+        dataCompleteThrough:
+          type: string
+          format: date
+          description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday; yesterday when there is none).
         channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE or ADS."}
         label: {type: string}
         status:
@@ -6155,7 +6167,9 @@ components:
         noise:
           type: boolean
           description: True when the change is within normal variation (it did not clear the change detector's gates).
-        provisionalDays: {type: integer}
+        provisionalDays:
+          type: integer
+          description: Number of provisional days after the channel's dataCompleteThrough that appear at the end of the series. Values and changes exclude them.
         target:
           allOf:
             - $ref: "#/components/schemas/MarketingTarget"
@@ -6167,10 +6181,13 @@ components:
 
     OverviewSeriesPoint:
       type: object
-      required: [day]
+      required: [day, provisional]
       properties:
         day: {type: string, format: date}
         value: {type: number, format: double, nullable: true}
+        provisional:
+          type: boolean
+          description: True for days the source may still restate, including every day after the channel's dataCompleteThrough. Draw them differently; they are not in the totals.
 
     MarketingTarget:
       type: object

@@ -181,9 +181,7 @@ public final class MetricCatalog {
                     "Connect App Store Connect (coming soon)"),
             new FunnelStage("ads_taps", "Ad taps", MetricChannel.ADS, "taps", "Connect an ads account"),
             new FunnelStage("ads_installs", "Ad installs", MetricChannel.ADS, "installs", "Connect an ads account"),
-            new FunnelStage("product_signups", "In-app sign-ups", MetricChannel.PRODUCT, "signups",
-                    "Connect product metrics (coming soon)"),
-            new FunnelStage("product_activations", "In-app activations", MetricChannel.PRODUCT, "activations",
+            new FunnelStage("product_stages", "In-app stages (first open → paid)", MetricChannel.PRODUCT, "stages",
                     "Connect product metrics (coming soon)"));
 
     private MetricCatalog() {
