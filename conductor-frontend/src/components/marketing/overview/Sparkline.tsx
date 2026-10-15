@@ -24,8 +24,14 @@ export function splitSeries(series: OverviewSeriesPoint[]): Datum[] {
   })
 }
 
+/** A line needs two points to show; with fewer than three, draw a dot on every point instead. */
+export function isSparse(series: OverviewSeriesPoint[]): boolean {
+  return series.filter((p) => p.value !== null && p.value !== undefined).length < 3
+}
+
 export function Sparkline({ series, label }: { series: OverviewSeriesPoint[]; label: string }) {
   const data = splitSeries(series)
+  const sparse = isSparse(series)
   if (data.every((d) => d.solid === null && d.provisional === null)) return null
   return (
     <div role="img" aria-label={`${label} trend`} className="h-8 w-full">
@@ -37,7 +43,7 @@ export function Sparkline({ series, label }: { series: OverviewSeriesPoint[]; la
             dataKey="solid"
             stroke="hsl(var(--primary))"
             strokeWidth={1.5}
-            dot={false}
+            dot={sparse}
             isAnimationActive={false}
           />
           <Line
@@ -47,7 +53,7 @@ export function Sparkline({ series, label }: { series: OverviewSeriesPoint[]; la
             strokeOpacity={0.5}
             strokeWidth={1.5}
             strokeDasharray="3 3"
-            dot={false}
+            dot={sparse}
             isAnimationActive={false}
           />
         </LineChart>

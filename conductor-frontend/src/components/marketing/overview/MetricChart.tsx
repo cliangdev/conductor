@@ -5,11 +5,12 @@
 
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { chartAxis, formatMetricValue, shortDate } from './format'
-import { splitSeries } from './Sparkline'
+import { isSparse, splitSeries } from './Sparkline'
 import type { OverviewMetric } from './types'
 
 export function MetricChart({ metric }: { metric: OverviewMetric }) {
   const data = splitSeries(metric.series)
+  const sparse = isSparse(metric.series)
   const axis = chartAxis(metric.series.map((p) => p.value), metric.unit, metric.target?.value)
   const points = metric.series.filter((p) => p.value !== null && p.value !== undefined).length
   const summary = `${metric.label} by day, ${points} days of data${metric.target ? `, target ${formatMetricValue(metric.target.value, metric.unit)}` : ''}`
@@ -65,7 +66,7 @@ export function MetricChart({ metric }: { metric: OverviewMetric }) {
             name={metric.label}
             stroke="hsl(var(--primary))"
             strokeWidth={2}
-            dot={false}
+            dot={sparse}
             isAnimationActive={false}
           />
           <Line
@@ -76,7 +77,7 @@ export function MetricChart({ metric }: { metric: OverviewMetric }) {
             strokeOpacity={0.5}
             strokeWidth={2}
             strokeDasharray="4 4"
-            dot={false}
+            dot={sparse}
             isAnimationActive={false}
           />
         </LineChart>
