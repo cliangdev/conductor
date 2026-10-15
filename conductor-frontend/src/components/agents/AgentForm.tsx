@@ -115,7 +115,8 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
 
   const toolsBySource = useMemo(() => {
     const groups: Record<string, AvailableAgentTool[]> = {}
-    for (const t of tools) (groups[t.source] ??= []).push(t)
+    // Tools with a group (e.g. one remote MCP server per connection) get their own heading.
+    for (const t of tools) (groups[t.group ? `${t.source} · ${t.group}` : t.source] ??= []).push(t)
     return groups
   }, [tools])
 

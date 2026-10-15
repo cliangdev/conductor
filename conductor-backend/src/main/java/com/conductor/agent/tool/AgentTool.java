@@ -22,6 +22,14 @@ public interface AgentTool {
     /** Model-facing description — prescriptive about when to call it. */
     String description();
 
+    /**
+     * Optional human-readable group within the tool's source, for pickers — e.g. the connection a
+     * remote MCP tool comes from. {@code null} when the source needs no sub-grouping.
+     */
+    default String group() {
+        return null;
+    }
+
     /** JSON Schema object for the tool input. */
     Map<String, Object> inputSchema();
 

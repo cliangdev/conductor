@@ -255,3 +255,23 @@ describe('AgentForm blank-model copy', () => {
     expect(screen.queryByText('gpt-5.4 (default)')).not.toBeInTheDocument()
   })
 })
+
+describe('AgentForm tool picker grouping', () => {
+  it('groups tools by connection when the tool carries a group', async () => {
+    listAgentProvidersBehavior = () =>
+      Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8', defaultModelIsLive: false }])
+    listProviderModelsBehavior = () => Promise.resolve({ models: [] })
+    listAgentToolsBehavior = () =>
+      Promise.resolve([
+        { id: 'connector:posthog/x', name: 'posthog_x', source: 'connector' },
+        { id: 'mcp:c1/get_users', name: 'abc123_get_users', source: 'mcp', group: 'Admin server' },
+        { id: 'mcp:c2/get_orders', name: 'def456_get_orders', source: 'mcp', group: 'Billing server' },
+      ])
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={vi.fn()} />)
+
+    expect(await screen.findByText('mcp · Admin server')).toBeInTheDocument()
+    expect(screen.getByText('mcp · Billing server')).toBeInTheDocument()
+    expect(screen.getByText('connector')).toBeInTheDocument()
+    expect(screen.getByText('abc123_get_users')).toBeInTheDocument()
+  })
+})

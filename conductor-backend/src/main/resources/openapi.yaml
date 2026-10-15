@@ -8962,6 +8962,12 @@ components:
         source:
           type: string
           description: Tool source namespace (connector, http, builtin, mcp).
+        group:
+          type: string
+          nullable: true
+          description: >-
+            Label for grouping tools within a source, e.g. the remote MCP server connection a tool
+            comes from. Null when the source has no sub-grouping.
 
     AgentProviderInfo:
       type: object

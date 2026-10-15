@@ -618,6 +618,8 @@ export interface AvailableAgentTool {
   name: string
   description?: string | null
   source: string
+  /** Sub-group within a source, e.g. the remote MCP server connection a tool comes from. */
+  group?: string | null
 }
 
 export interface AgentProviderInfo {
