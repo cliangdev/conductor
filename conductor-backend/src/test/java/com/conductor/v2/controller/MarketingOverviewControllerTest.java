@@ -91,14 +91,16 @@ class MarketingOverviewControllerTest {
 
     private static Window window() {
         return new Window(LocalDate.of(2026, 9, 18), LocalDate.of(2026, 10, 14), LocalDate.of(2026, 8, 21),
-                LocalDate.of(2026, 9, 17));
+                LocalDate.of(2026, 9, 17), LocalDate.of(2026, 10, 11));
     }
 
     private static ChannelView webChannel(TargetView target) {
         MetricView visitors = new MetricView("visitors", "Visitors", MetricCatalog.Unit.COUNT, "UP", 70.0, 35.0, 35.0, 1.0,
-                false, 2, target, List.of(new MarketingOverviewQueryService.Point(LocalDate.of(2026, 10, 14), 10.0, true)));
+                false, 2, target, List.of(new MarketingOverviewQueryService.Point(LocalDate.of(2026, 10, 14), 10.0, true)), null);
         return new ChannelView("WEB", "Web", "LIVE", null,
-                List.of(new MarketingOverviewQueryService.ConnectionView("c1", "posthog", "Site", "LIVE")), "posthog",
+                List.of(new MarketingOverviewQueryService.ConnectionView("c1", "posthog", "Site", "LIVE")),
+                new MarketingOverviewQueryService.ConnectHint("posthog",
+                        List.of(new MarketingOverviewQueryService.ConnectorRef("posthog", "PostHog"))),
                 List.of(visitors), LocalDate.of(2026, 10, 12));
     }
 
@@ -109,7 +111,7 @@ class MarketingOverviewControllerTest {
         memberWithRole(MemberRole.REVIEWER);
         when(queryService.overview(PROJECT_ID, "7d")).thenReturn(new Overview(window(),
                 List.of(new MarketingOverviewQueryService.FunnelStageView("web_visitors", "Web visitors", 70.0, 35.0,
-                        35.0, "WEB", true, null, LocalDate.of(2026, 10, 12))),
+                        35.0, "WEB", true, null, LocalDate.of(2026, 10, 12), "WEB", null)),
                 List.of(webChannel(new TargetView(500, "UP")))));
 
         mockMvc.perform(get(BASE + "/overview").param("window", "7d")
@@ -120,7 +122,9 @@ class MarketingOverviewControllerTest {
                 .andExpect(jsonPath("$.funnel[0].available").value(true))
                 .andExpect(jsonPath("$.channels[0].channel").value("WEB"))
                 .andExpect(jsonPath("$.channels[0].status").value("LIVE"))
-                .andExpect(jsonPath("$.channels[0].connectHint.connectorId").value("posthog"))
+                .andExpect(jsonPath("$.channels[0].connectHint.connectors[0].name").value("PostHog"))
+                .andExpect(jsonPath("$.window.dataCompleteThroughMin").value("2026-10-11"))
+                .andExpect(jsonPath("$.funnel[0].path").value("WEB"))
                 .andExpect(jsonPath("$.channels[0].metrics[0].metric").value("visitors"))
                 .andExpect(jsonPath("$.channels[0].metrics[0].unit").value("COUNT"))
                 .andExpect(jsonPath("$.channels[0].metrics[0].goodDirection").value("UP"))
@@ -188,7 +192,7 @@ class MarketingOverviewControllerTest {
                 "Launch reel", "MARKETING", "caption", "t-1", "instagram", "REEL", "@brand", "https://example.com/p",
                 null, 1200L, 90L, 5L, 3L, 2L, 0.083, 0.61, null);
         when(queryService.channel(PROJECT_ID, "social", "28d")).thenReturn(new ChannelDetail(window(),
-                new ChannelView("SOCIAL", "Social", "LIVE", null, List.of(), "meta", List.of(),
+                new ChannelView("SOCIAL", "Social", "LIVE", null, List.of(), null, List.of(),
                         LocalDate.of(2026, 10, 14)),
                 List.of(), List.of(post)));
 

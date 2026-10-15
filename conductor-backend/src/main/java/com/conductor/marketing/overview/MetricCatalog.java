@@ -63,6 +63,10 @@ public final class MetricCatalog {
             return visibleMetrics().stream().limit(headline).toList();
         }
 
+        public boolean hasLevelMetrics() {
+            return metrics.stream().anyMatch(m -> m.agg() == Aggregation.LEVEL);
+        }
+
         public boolean usesDimensionSeries() {
             return metrics.stream().anyMatch(Metric::fromDimensions);
         }
@@ -70,10 +74,23 @@ public final class MetricCatalog {
 
     /** One funnel stage: a metric of a channel, in funnel order. */
     public record FunnelStage(String key, String label, MetricChannel channel, String metric,
-                              String unavailableReason) {}
+                              String unavailableReason, String conversionFrom) {}
 
     /** The ingest id of the feeds that write the daily metrics. */
     public static final String FEED_INGEST_ID = "channel_metrics";
+
+    private static final java.util.Map<String, String> CONNECTOR_NAMES = java.util.Map.of(
+            "posthog", "PostHog",
+            "gsc", "Search Console",
+            "apple-search-ads", "Apple Search Ads",
+            "meta", "Meta",
+            "tiktok", "TikTok",
+            "youtube", "YouTube");
+
+    /** The display name of a connector that feeds a channel; falls back to its id. */
+    public static String connectorName(String connectorId) {
+        return CONNECTOR_NAMES.getOrDefault(connectorId, connectorId);
+    }
 
     private static Metric sum(String key, String label, Unit unit, Good good) {
         return new Metric(key, label, unit, Aggregation.SUM, good, false, false, false, null, null);
@@ -170,19 +187,20 @@ public final class MetricCatalog {
     /** Funnel order. A stage with no data is reported unavailable with its reason, never dropped. */
     private static final List<FunnelStage> FUNNEL = List.of(
             new FunnelStage("web_visitors", "Web visitors", MetricChannel.WEB, "visitors",
-                    "Connect web analytics"),
+                    "Connect web analytics", null),
             new FunnelStage("web_conversion_clicks", "Conversion clicks", MetricChannel.WEB, "conversion_clicks",
-                    "Set a conversion event on the web analytics connection"),
+                    "Set a conversion event on the web analytics connection", "web_visitors"),
             new FunnelStage("store_impressions", "Store impressions", MetricChannel.STORE, "impressions",
-                    "Connect App Store Connect (coming soon)"),
+                    "Connect App Store Connect (coming soon)", null),
             new FunnelStage("store_page_views", "Store page views", MetricChannel.STORE, "page_views",
-                    "Connect App Store Connect (coming soon)"),
+                    "Connect App Store Connect (coming soon)", "store_impressions"),
             new FunnelStage("store_downloads", "Downloads", MetricChannel.STORE, "downloads",
-                    "Connect App Store Connect (coming soon)"),
-            new FunnelStage("ads_taps", "Ad taps", MetricChannel.ADS, "taps", "Connect an ads account"),
-            new FunnelStage("ads_installs", "Ad installs", MetricChannel.ADS, "installs", "Connect an ads account"),
+                    "Connect App Store Connect (coming soon)", "store_page_views"),
+            new FunnelStage("ads_taps", "Ad taps", MetricChannel.ADS, "taps", "Connect an ads account", null),
+            new FunnelStage("ads_installs", "Ad installs", MetricChannel.ADS, "installs", "Connect an ads account",
+                    "ads_taps"),
             new FunnelStage("product_stages", "In-app stages (first open → paid)", MetricChannel.PRODUCT, "stages",
-                    "Connect product metrics (coming soon)"));
+                    "Connect product metrics (coming soon)", null));
 
     private MetricCatalog() {
     }

@@ -6080,16 +6080,25 @@ components:
         Inclusive UTC day ranges. Each channel's window ends at its dataCompleteThrough (at most yesterday) and
         the previous window is the same length immediately before `from`. On the overview this is the overall
         range: the earliest channel `from` to the latest channel `to`.
-      required: [from, to, previousFrom, previousTo]
+      required: [from, previousFrom, previousTo]
       properties:
         from: {type: string, format: date}
-        to: {type: string, format: date}
+        to:
+          type: string
+          format: date
+          nullable: true
+          description: Overview - the latest dataCompleteThrough among channels that have data; null when none has. Channel detail - the channel's dataCompleteThrough.
         previousFrom: {type: string, format: date}
         previousTo: {type: string, format: date}
+        dataCompleteThroughMin:
+          type: string
+          format: date
+          nullable: true
+          description: The earliest dataCompleteThrough among channels that have data (equal to `to` on a channel); null when none has.
 
     OverviewFunnelStage:
       type: object
-      required: [key, label, source, available]
+      required: [key, label, source, available, path]
       properties:
         key: {type: string}
         label: {type: string}
@@ -6101,6 +6110,14 @@ components:
           description: The channel (WEB, SEARCH, SOCIAL, STORE, ADS, PRODUCT) the stage reads from.
         available: {type: boolean}
         unavailableReason: {type: string, nullable: true}
+        path:
+          type: string
+          enum: [WEB, STORE, ADS, PRODUCT]
+          description: The parallel path the stage belongs to; stages convert only within a path.
+        conversionFromKey:
+          type: string
+          nullable: true
+          description: Key of the previous stage on the same path that this stage converts from; null at a path start and when either stage is unavailable.
         dataCompleteThrough:
           type: string
           format: date
@@ -6147,9 +6164,23 @@ components:
 
     OverviewConnectHint:
       type: object
-      required: [connectorId]
+      required: [connectorId, connectors]
+      properties:
+        connectorId:
+          type: string
+          description: Deprecated; the first connector not yet connected. Use `connectors`.
+        connectors:
+          type: array
+          description: Every connector that can feed the channel, with its display name.
+          items:
+            $ref: "#/components/schemas/OverviewConnectorRef"
+
+    OverviewConnectorRef:
+      type: object
+      required: [connectorId, name]
       properties:
         connectorId: {type: string}
+        name: {type: string}
 
     OverviewMetric:
       type: object
@@ -6168,6 +6199,11 @@ components:
         previous: {type: number, format: double, nullable: true}
         change: {type: number, format: double, nullable: true}
         changePct: {type: number, format: double, nullable: true}
+        historyStartsOn:
+          type: string
+          format: date
+          nullable: true
+          description: When `previous` is null, the first day this metric has data (history starts here); null otherwise.
         noise:
           type: boolean
           description: True when the change is within normal variation (it did not clear the change detector's gates).

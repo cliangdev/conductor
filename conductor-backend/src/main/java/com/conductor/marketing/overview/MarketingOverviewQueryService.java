@@ -76,7 +76,13 @@ public class MarketingOverviewQueryService {
     private static final int HISTORY_PERIODS = 5;
     private static final int MAX_HISTORY_DAYS = 180;
 
-    public record Window(LocalDate from, LocalDate to, LocalDate previousFrom, LocalDate previousTo) {}
+    /** {@code to} and {@code dataCompleteThroughMin} are null on an overview with no data in any channel. */
+    public record Window(LocalDate from, LocalDate to, LocalDate previousFrom, LocalDate previousTo,
+                         LocalDate dataCompleteThroughMin) {}
+
+    public record ConnectorRef(String connectorId, String name) {}
+
+    public record ConnectHint(String connectorId, List<ConnectorRef> connectors) {}
 
     public record ConnectionView(String id, String connectorId, String name, String status) {}
 
@@ -86,15 +92,15 @@ public class MarketingOverviewQueryService {
 
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
-                             List<Point> series) {}
+                             List<Point> series, LocalDate historyStartsOn) {}
 
     public record ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
-                              List<ConnectionView> connections, String connectHintConnectorId,
+                              List<ConnectionView> connections, ConnectHint connectHint,
                               List<MetricView> metrics, LocalDate dataCompleteThrough) {}
 
     public record FunnelStageView(String key, String label, Double value, Double previous, Double change,
                                   String source, boolean available, String unavailableReason,
-                                  LocalDate dataCompleteThrough) {}
+                                  LocalDate dataCompleteThrough, String path, String conversionFromKey) {}
 
     public record Overview(Window window, List<FunnelStageView> funnel, List<ChannelView> channels) {}
 
@@ -144,19 +150,29 @@ public class MarketingOverviewQueryService {
         for (MetricCatalog.Channel channel : MetricCatalog.channels()) {
             builds.put(channel.channel(), build(ctx, channel));
         }
-        List<FunnelStageView> funnel = new ArrayList<>();
+        List<FunnelStageView> stages = new ArrayList<>();
         for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel()) {
-            funnel.add(funnelStage(stage, builds.get(stage.channel())));
+            stages.add(funnelStage(stage, builds.get(stage.channel())));
         }
+        List<FunnelStageView> funnel = withConversions(stages);
         List<ChannelView> channels = builds.values().stream()
                 .map(b -> b.view(true))
                 .toList();
-        // The overall range spans every channel's own window, which differ by how far each is data-complete.
-        Window overall = new Window(
-                builds.values().stream().map(b -> b.window.from()).min(Comparator.naturalOrder()).orElseThrow(),
-                builds.values().stream().map(b -> b.window.to()).max(Comparator.naturalOrder()).orElseThrow(),
-                builds.values().stream().map(b -> b.window.previousFrom()).min(Comparator.naturalOrder()).orElseThrow(),
-                builds.values().stream().map(b -> b.window.previousTo()).max(Comparator.naturalOrder()).orElseThrow());
+        // The overall range spans the windows of the channels that have data, which differ by how far each is
+        // data-complete. With none, there is no "data through" date to claim: both ends are null.
+        List<ChannelBuild> withData = builds.values().stream().filter(ChannelBuild::hasData).toList();
+        Window overall;
+        if (withData.isEmpty()) {
+            Window empty = windowEnding(ctx, ctx.fallbackEnd);
+            overall = new Window(empty.from(), null, empty.previousFrom(), empty.previousTo(), null);
+        } else {
+            overall = new Window(
+                    withData.stream().map(b -> b.window.from()).min(Comparator.naturalOrder()).orElseThrow(),
+                    withData.stream().map(b -> b.window.to()).max(Comparator.naturalOrder()).orElseThrow(),
+                    withData.stream().map(b -> b.window.previousFrom()).min(Comparator.naturalOrder()).orElseThrow(),
+                    withData.stream().map(b -> b.window.previousTo()).max(Comparator.naturalOrder()).orElseThrow(),
+                    withData.stream().map(b -> b.window.to()).min(Comparator.naturalOrder()).orElseThrow());
+        }
         return new Overview(overall, funnel, channels);
     }
 
@@ -260,6 +276,9 @@ public class MarketingOverviewQueryService {
         final String projectId;
         final int days;
         final LocalDate yesterday;
+        final LocalDate today;
+        /** Where a window ends when a channel has no settled data. */
+        final LocalDate fallbackEnd;
         final LocalDate historyStart;
         final OffsetDateTime now;
         final List<Connection> connections;
@@ -272,6 +291,10 @@ public class MarketingOverviewQueryService {
             this.now = now;
             LocalDate to = today.minusDays(1);
             this.yesterday = to;
+            this.today = today;
+            // Not yesterday: the UTC day before today is already the user's local today in the Americas, and a
+            // window must never end on a day that is still going. Two days back is complete everywhere.
+            this.fallbackEnd = today.minusDays(2);
             int lookback = Math.max(2 * days, Math.min(days * (HISTORY_PERIODS + 1), MAX_HISTORY_DAYS));
             this.historyStart = to.minusDays(lookback - 1L);
             this.connections = connectionRepository.findByProjectId(projectId).stream()
@@ -298,12 +321,13 @@ public class MarketingOverviewQueryService {
         final String status;
         final OffsetDateTime lastFetchedAt;
         final List<ConnectionView> connections;
-        final String connectHint;
+        final ConnectHint connectHint;
         final List<MetricView> metrics;
         final Window window;
 
         ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
-                     List<ConnectionView> connections, String connectHint, List<MetricView> metrics, Window window) {
+                     List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
+                     Window window) {
             this.window = window;
             this.channel = channel;
             this.status = status;
@@ -311,6 +335,10 @@ public class MarketingOverviewQueryService {
             this.connections = connections;
             this.connectHint = connectHint;
             this.metrics = metrics;
+        }
+
+        boolean hasData() {
+            return metrics.stream().anyMatch(m -> m.value() != null || m.previous() != null);
         }
 
         boolean live() {
@@ -334,15 +362,17 @@ public class MarketingOverviewQueryService {
                 .toList();
         if (channel.connectorIds().isEmpty()) {
             return new ChannelBuild(channel, "COMING_SOON", null, List.of(), null, List.of(),
-                    windowEnding(ctx, ctx.yesterday));
+                    windowEnding(ctx, ctx.fallbackEnd));
         }
         Set<String> connectedIds = new HashSet<>();
         connections.forEach(c -> connectedIds.add(c.getConnectorId()));
-        String hint = channel.connectorIds().stream().filter(id -> !connectedIds.contains(id)).findFirst()
+        String firstMissing = channel.connectorIds().stream().filter(id -> !connectedIds.contains(id)).findFirst()
                 .orElse(channel.connectorIds().get(0));
+        ConnectHint hint = new ConnectHint(firstMissing, channel.connectorIds().stream()
+                .map(id -> new ConnectorRef(id, MetricCatalog.connectorName(id))).toList());
         if (connections.isEmpty()) {
             return new ChannelBuild(channel, "NOT_CONNECTED", null, List.of(), hint, List.of(),
-                    windowEnding(ctx, ctx.yesterday));
+                    windowEnding(ctx, ctx.fallbackEnd));
         }
 
         List<ConnectionView> connectionViews = new ArrayList<>();
@@ -365,7 +395,7 @@ public class MarketingOverviewQueryService {
         Set<String> connectionIds = new HashSet<>();
         connections.forEach(c -> connectionIds.add(c.getId()));
         List<ChannelMetricDaily> rows = load(ctx, channel, connectionIds);
-        Window window = windowEnding(ctx, dataCompleteThrough(rows, ctx.yesterday));
+        Window window = windowEnding(ctx, dataCompleteThrough(ctx, channel, rows));
         ChannelData data = new ChannelData(channel, rows);
         List<MetricView> metrics = new ArrayList<>();
         for (Metric metric : channel.visibleMetrics()) {
@@ -392,29 +422,40 @@ public class MarketingOverviewQueryService {
 
     private static Window windowEnding(Context ctx, LocalDate to) {
         LocalDate from = to.minusDays(ctx.days - 1L);
-        return new Window(from, to, from.minusDays(ctx.days), from.minusDays(1));
+        return new Window(from, to, from.minusDays(ctx.days), from.minusDays(1), to);
     }
 
     /**
      * The latest day with non-provisional data on every connection that has any: a source that restates
      * (Search Console lags about three days) must not have its short window compared with a full previous
-     * one. The slowest connection wins; with no settled data at all the window simply ends yesterday.
+     * one. The slowest connection wins. Only flows count: a snapshot (a level such as followers) is a
+     * point-in-time reading with nothing to restate, so it never holds the date back. A channel with only
+     * snapshots is as current as today; one with no settled data at all ends at {@code fallbackEnd}.
      */
-    private static LocalDate dataCompleteThrough(List<ChannelMetricDaily> rows, LocalDate yesterday) {
+    private static LocalDate dataCompleteThrough(Context ctx, MetricCatalog.Channel channel,
+                                                 List<ChannelMetricDaily> rows) {
         Map<String, LocalDate> latestByConnection = new HashMap<>();
+        boolean anySnapshot = false;
         for (ChannelMetricDaily row : rows) {
-            if (!row.isProvisional() && !row.getDay().isAfter(yesterday)) {
+            Metric metric = channel.metric(row.getMetric()).orElse(null);
+            if (metric == null) {
+                continue;
+            }
+            if (metric.agg() == Aggregation.LEVEL) {
+                anySnapshot = true;
+            } else if (!row.isProvisional() && !row.getDay().isAfter(ctx.yesterday)) {
                 latestByConnection.merge(row.getConnectionId(), row.getDay(), (a, b) -> b.isAfter(a) ? b : a);
             }
         }
-        return latestByConnection.values().stream().min(Comparator.naturalOrder()).orElse(yesterday);
+        return latestByConnection.values().stream().min(Comparator.naturalOrder())
+                .orElse(anySnapshot ? ctx.today : ctx.fallbackEnd);
     }
 
     private List<ChannelMetricDaily> load(Context ctx, MetricCatalog.Channel channel, Set<String> connectionIds) {
         String name = channel.channel().name();
         List<ChannelMetricDaily> rows = channel.usesDimensionSeries()
                 ? dailyRepository.findByProjectIdAndChannelAndDayBetweenOrderByDayAsc(
-                        ctx.projectId, name, ctx.historyStart, ctx.yesterday)
+                        ctx.projectId, name, ctx.historyStart, ctx.today)
                 : dailyRepository.findByProjectIdAndChannelAndDimensionKeyAndDayBetween(
                         ctx.projectId, name, "", ctx.historyStart, ctx.yesterday);
         return rows.stream().filter(r -> connectionIds.contains(r.getConnectionId())).toList();
@@ -492,6 +533,16 @@ public class MarketingOverviewQueryService {
             };
         }
 
+        /** The first day this metric has any row (a derived metric: its numerator's), or null. */
+        LocalDate firstDay(Metric metric) {
+            return switch (metric.agg()) {
+                case SUM -> daily.containsKey(metric.key()) ? daily.get(metric.key()).firstKey() : null;
+                case LEVEL -> levels.getOrDefault(metric.key(), Map.of()).values().stream()
+                        .map(TreeMap::firstKey).min(Comparator.naturalOrder()).orElse(null);
+                case DERIVED -> firstDay(component(metric.numerator()));
+            };
+        }
+
         private Double levelAt(Metric metric, LocalDate day) {
             Map<String, TreeMap<LocalDate, Double>> series = levels.get(metric.key());
             if (series == null) {
@@ -548,7 +599,8 @@ public class MarketingOverviewQueryService {
         // The window's days, then any days after it that have only provisional data, flagged so a chart can
         // draw them differently. Totals and changes above use complete days only.
         int provisionalDays = 0;
-        for (LocalDate day = w.from(); !day.isAfter(ctx.yesterday); day = day.plusDays(1)) {
+        LocalDate seriesEnd = w.to().isAfter(ctx.yesterday) ? w.to() : ctx.yesterday;
+        for (LocalDate day = w.from(); !day.isAfter(seriesEnd); day = day.plusDays(1)) {
             Double dayValue = data.dayValue(metric, day);
             boolean afterWindow = day.isAfter(w.to());
             // a level is carried forward every day, so only flows have provisional days to show
@@ -565,8 +617,9 @@ public class MarketingOverviewQueryService {
         TargetView targetView = target == null ? null
                 : new TargetView(target.getTarget().doubleValue(), target.getDirection());
         boolean noise = value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
-        return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous, change, changePct,
-                noise, provisionalDays, targetView, series);
+        LocalDate historyStartsOn = previous == null ? data.firstDay(metric) : null;
+        return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
+                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn);
     }
 
     /**
@@ -610,11 +663,25 @@ public class MarketingOverviewQueryService {
         Optional<MetricView> metric = build == null ? Optional.empty() : build.metric(stage.metric());
         if (metric.isEmpty() || (metric.get().value() == null && metric.get().previous() == null)) {
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
-                    stage.unavailableReason(), build == null ? null : build.window.to());
+                    stage.unavailableReason(), build == null ? null : build.window.to(), stage.channel().name(),
+                    stage.conversionFrom());
         }
         MetricView m = metric.get();
         return new FunnelStageView(stage.key(), stage.label(), m.value(), m.previous(), m.change(),
-                stage.channel().name(), true, null, build.window.to());
+                stage.channel().name(), true, null, build.window.to(), stage.channel().name(), stage.conversionFrom());
+    }
+
+    /** Keeps {@code conversionFromKey} only where both the stage and the stage it converts from are available. */
+    private static List<FunnelStageView> withConversions(List<FunnelStageView> stages) {
+        Map<String, FunnelStageView> byKey = new HashMap<>();
+        stages.forEach(s -> byKey.put(s.key(), s));
+        return stages.stream().map(s -> {
+            FunnelStageView from = s.conversionFromKey() == null ? null : byKey.get(s.conversionFromKey());
+            boolean usable = s.available() && from != null && from.available();
+            return new FunnelStageView(s.key(), s.label(), s.value(), s.previous(), s.change(), s.source(),
+                    s.available(), s.unavailableReason(), s.dataCompleteThrough(), s.path(),
+                    usable ? s.conversionFromKey() : null);
+        }).toList();
     }
 
     // ---- dimension tables ---------------------------------------------------------------------------
@@ -633,7 +700,7 @@ public class MarketingOverviewQueryService {
                                           Set<String> connectionIds, Window w) {
         List<String> sources = dimension.columns().stream().map(Column::source).filter(s -> s != null).distinct().toList();
         List<ChannelMetricDaily> rows = dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(
-                ctx.projectId, channel.channel().name(), sources, w.from(), w.to()).stream()
+                ctx.projectId, channel.channel().name(), sources, ctx.historyStart.isBefore(w.from()) ? ctx.historyStart : w.from(), w.to()).stream()
                 .filter(r -> !r.getDimensionKey().isEmpty() && connectionIds.contains(r.getConnectionId()))
                 .toList();
 
@@ -645,7 +712,7 @@ public class MarketingOverviewQueryService {
             }
             Map<String, Double> perKey = column.agg() == Aggregation.LEVEL
                     ? latestPerSeries(rows, column.source())
-                    : sumPerKey(rows, column.source());
+                    : sumPerKey(rows, column.source(), w.from());
             perKey.forEach((key, value) -> byKey.computeIfAbsent(key, k -> new HashMap<>()).put(column.key(), value));
         }
         for (Map<String, Double> values : byKey.values()) {
@@ -689,10 +756,10 @@ public class MarketingOverviewQueryService {
         return new DimensionRowView(key, label, ordered);
     }
 
-    private static Map<String, Double> sumPerKey(List<ChannelMetricDaily> rows, String metric) {
+    private static Map<String, Double> sumPerKey(List<ChannelMetricDaily> rows, String metric, LocalDate from) {
         Map<String, Double> sums = new LinkedHashMap<>();
         for (ChannelMetricDaily row : rows) {
-            if (row.getMetric().equals(metric)) {
+            if (row.getMetric().equals(metric) && !row.getDay().isBefore(from)) {
                 sums.merge(row.getDimensionKey(), row.getValue().doubleValue(), Double::sum);
             }
         }

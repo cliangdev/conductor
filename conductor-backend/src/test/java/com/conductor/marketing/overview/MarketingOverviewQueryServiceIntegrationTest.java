@@ -126,11 +126,26 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     // ---- tests ----------------------------------------------------------------------------------
 
     @Test
-    void windowEndsYesterdayAndPreviousWindowIsTheSameLengthBefore() {
+    void anOverviewWithNoDataClaimsNoEndDateAndNeverEndsOnTheCurrentUtcDay() {
         Overview overview = overview7();
 
-        assertThat(overview.window().from()).isEqualTo(day(8));
+        assertThat(overview.window().to()).isNull();
+        assertThat(overview.window().dataCompleteThroughMin()).isNull();
+        // a channel with no data falls back two days, so a window never ends on anyone's local today
+        assertThat(channel(overview, "WEB").dataCompleteThrough()).isEqualTo(day(13));
+    }
+
+    @Test
+    void theOverallRangeCoversOnlyChannelsThatHaveData() {
+        String web = connectFresh("posthog");
+        connectFresh("gsc"); // connected but empty: must not drag the range
+        put(web, "posthog", "WEB", "visitors", day(14), 3);
+
+        Overview overview = overview7();
+
         assertThat(overview.window().to()).isEqualTo(day(14));
+        assertThat(overview.window().dataCompleteThroughMin()).isEqualTo(day(14));
+        assertThat(overview.window().from()).isEqualTo(day(8));
         assertThat(overview.window().previousFrom()).isEqualTo(day(1));
         assertThat(overview.window().previousTo()).isEqualTo(day(7));
     }
@@ -212,7 +227,11 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
                 .satisfies(c -> assertThat(c.status()).isEqualTo("LIVE"));
         assertThat(channel(overview, "SEARCH").status()).isEqualTo("STALE");
         assertThat(channel(overview, "ADS").status()).isEqualTo("NOT_CONNECTED");
-        assertThat(channel(overview, "ADS").connectHintConnectorId()).isEqualTo("apple-search-ads");
+        assertThat(channel(overview, "ADS").connectHint().connectorId()).isEqualTo("apple-search-ads");
+        assertThat(channel(overview, "ADS").connectHint().connectors()).singleElement()
+                .satisfies(c -> assertThat(c.name()).isEqualTo("Apple Search Ads"));
+        assertThat(channel(overview, "SOCIAL").connectHint().connectors())
+                .extracting(c -> c.name()).containsExactly("Meta", "TikTok", "YouTube");
         assertThat(channel(overview, "STORE").status()).isEqualTo("COMING_SOON");
         assertThat(channel(overview, "WEB").lastFetchedAt()).isEqualTo(NOW.minusHours(1));
         assertThat(overview.channels()).extracting(ChannelView::channel).doesNotContain("PRODUCT");
@@ -267,9 +286,10 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         // a lagging source's seven complete days (Oct 5-11), not four settled ones against a full week
         assertThat(metric(channel(overview, "SEARCH"), "clicks").value()).isEqualTo(21.0);
         assertThat(metric(channel(overview, "SEARCH"), "clicks").previous()).isEqualTo(12.0); // Sep 28 - Oct 4; only Oct 1-4 have rows
-        assertThat(channel(overview, "ADS").dataCompleteThrough()).isEqualTo(day(14)); // no data: yesterday
+        assertThat(channel(overview, "ADS").dataCompleteThrough()).isEqualTo(day(13)); // no data: two days back
         assertThat(overview.window().from()).isEqualTo(day(5));
         assertThat(overview.window().to()).isEqualTo(day(14));
+        assertThat(overview.window().dataCompleteThroughMin()).isEqualTo(day(11));
         assertThat(overview.funnel().get(0).dataCompleteThrough()).isEqualTo(day(14));
     }
 
@@ -428,5 +448,88 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
                 .isInstanceOf(BusinessException.class).hasMessageContaining("Unknown window");
         assertThatThrownBy(() -> service.overview(project.getId(), "week"))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void snapshotsNeverHoldBackTheWindowAndTodaysSnapshotIsTheLatestLevel() {
+        String meta = connectFresh("meta");
+        String tiktok = connectFresh("tiktok");
+        // provisional snapshots written today, as the social feeds do
+        put(meta, "meta", "SOCIAL", "followers", "facebook", day(15), 120, true);
+        put(meta, "meta", "SOCIAL", "followers", "instagram", day(15), 80, true);
+        put(tiktok, "tiktok", "SOCIAL", "followers", "tiktok", day(15), 40, true);
+
+        ChannelView social = channel(overview7(), "SOCIAL");
+        MetricView followers = metric(social, "followers");
+
+        assertThat(social.dataCompleteThrough()).isEqualTo(day(15));
+        assertThat(followers.value()).isEqualTo(240.0);
+        assertThat(followers.previous()).isNull();
+        assertThat(followers.historyStartsOn()).isEqualTo(day(15));
+    }
+
+    @Test
+    void aSocialChannelWithFlowMetricsEndsAtTheirDataCompleteDay() {
+        String meta = connectFresh("meta");
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(12), 4, false);
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(13), 6, true);
+        put(meta, "meta", "SOCIAL", "followers", "instagram", day(10), 50, false);
+
+        ChannelView social = channel(overview7(), "SOCIAL");
+
+        assertThat(social.dataCompleteThrough()).isEqualTo(day(12));
+        assertThat(metric(social, "website_clicks").value()).isEqualTo(4.0);
+        assertThat(metric(social, "followers").value()).isEqualTo(50.0);
+    }
+
+    @Test
+    void thePlatformsTableListsEveryConnectedPlatformWithItsLatestValues() {
+        String meta = connectFresh("meta");
+        String tiktok = connectFresh("tiktok");
+        String youtube = connectFresh("youtube");
+        put(meta, "meta", "SOCIAL", "followers", "facebook", day(4), 90, false);
+        put(meta, "meta", "SOCIAL", "followers", "facebook", day(15), 100, true);
+        put(meta, "meta", "SOCIAL", "followers", "instagram", day(15), 200, true);
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(15), 7, true);
+        put(tiktok, "tiktok", "SOCIAL", "followers", "tiktok", day(15), 300, true);
+        put(youtube, "youtube", "SOCIAL", "followers", "youtube", day(15), 50, true);
+        put(youtube, "youtube", "SOCIAL", "channel_views", "youtube", day(15), 999, true);
+
+        MarketingOverviewQueryService.DimensionTable platforms = service.channel(project.getId(),
+                MetricCatalog.channel("SOCIAL").orElseThrow(), 28, TODAY, NOW).dimensions().get(0);
+
+        assertThat(platforms.rows()).extracting(r -> r.key())
+                .containsExactly("tiktok", "instagram", "facebook", "youtube");
+        assertThat(platforms.rows().get(2).values().get(0)).isEqualTo(100.0);
+        assertThat(platforms.rows().get(3).values().get(2)).isEqualTo(999.0);
+    }
+
+    @Test
+    void conversionsLinkOnlyStagesOnTheSamePathWhenBothAreAvailable() {
+        String web = connectFresh("posthog");
+        String ads = connectFresh("apple-search-ads");
+        put(web, "posthog", "WEB", "visitors", day(10), 100);
+        put(ads, "apple-search-ads", "ADS", "taps", day(10), 50);
+
+        Overview onlyVisitors = overview7();
+        assertThat(onlyVisitors.funnel()).filteredOn(s -> s.key().equals("web_conversion_clicks"))
+                .singleElement().satisfies(s -> assertThat(s.conversionFromKey()).isNull());
+        assertThat(onlyVisitors.funnel()).filteredOn(s -> s.key().equals("ads_installs"))
+                .singleElement().satisfies(s -> assertThat(s.conversionFromKey()).isNull());
+
+        put(web, "posthog", "WEB", "conversion_clicks", day(10), 10);
+        put(ads, "apple-search-ads", "ADS", "installs", day(10), 5);
+        Overview both = overview7();
+
+        assertThat(both.funnel()).filteredOn(s -> s.key().equals("web_conversion_clicks"))
+                .singleElement().satisfies(s -> {
+                    assertThat(s.conversionFromKey()).isEqualTo("web_visitors");
+                    assertThat(s.path()).isEqualTo("WEB");
+                });
+        assertThat(both.funnel()).filteredOn(s -> s.key().equals("ads_installs"))
+                .singleElement().satisfies(s -> assertThat(s.conversionFromKey()).isEqualTo("ads_taps"));
+        // path starts never convert from anything, and nothing converts across paths
+        assertThat(both.funnel()).filteredOn(s -> s.key().equals("ads_taps") || s.key().equals("web_visitors"))
+                .allSatisfy(s -> assertThat(s.conversionFromKey()).isNull());
     }
 }

@@ -8,6 +8,7 @@ import com.conductor.generated.v2.model.MarketingTargetRequest;
 import com.conductor.generated.v2.model.OverviewChannel;
 import com.conductor.generated.v2.model.OverviewConnection;
 import com.conductor.generated.v2.model.OverviewConnectHint;
+import com.conductor.generated.v2.model.OverviewConnectorRef;
 import com.conductor.generated.v2.model.OverviewDimension;
 import com.conductor.generated.v2.model.OverviewDimensionColumn;
 import com.conductor.generated.v2.model.OverviewDimensionRow;
@@ -80,12 +81,15 @@ public class MarketingOverviewController implements MarketingOverviewApi {
     // ---- mapping ------------------------------------------------------------------------------------
 
     private static OverviewWindow toWindow(MarketingOverviewQueryService.Window w) {
-        return new OverviewWindow(w.from(), w.to(), w.previousFrom(), w.previousTo());
+        return new OverviewWindow(w.from(), w.previousFrom(), w.previousTo()).to(w.to())
+                .dataCompleteThroughMin(w.dataCompleteThroughMin());
     }
 
     private static OverviewFunnelStage toStage(MarketingOverviewQueryService.FunnelStageView s) {
-        return new OverviewFunnelStage(s.key(), s.label(), s.source(), s.available())
+        return new OverviewFunnelStage(s.key(), s.label(), s.source(), s.available(),
+                OverviewFunnelStage.PathEnum.valueOf(s.path()))
                 .dataCompleteThrough(s.dataCompleteThrough())
+                .conversionFromKey(s.conversionFromKey())
                 .value(s.value())
                 .previous(s.previous())
                 .change(s.change())
@@ -101,8 +105,10 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                         .toList(),
                 c.metrics().stream().map(MarketingOverviewController::toMetric).toList())
                 .lastFetchedAt(c.lastFetchedAt());
-        if (c.connectHintConnectorId() != null) {
-            channel.connectHint(new OverviewConnectHint(c.connectHintConnectorId()));
+        if (c.connectHint() != null) {
+            channel.connectHint(new OverviewConnectHint(c.connectHint().connectorId(),
+                    c.connectHint().connectors().stream()
+                            .map(k -> new OverviewConnectorRef(k.connectorId(), k.name())).toList()));
         }
         return channel;
     }
@@ -116,6 +122,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .previous(m.previous())
                 .change(m.change())
                 .changePct(m.changePct())
+                .historyStartsOn(m.historyStartsOn())
                 .target(m.target() == null ? null : toTarget(m.target()));
     }
 
