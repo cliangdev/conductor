@@ -54,11 +54,23 @@ public class ChannelMetricDailyStore {
         return replaceWindow(projectId, connectionId, connectorId, channel, from, to, provisionalFrom, points, true);
     }
 
-    /** @param pruneDroppedDimensions false keeps dimension rows this pull did not return (see the source's flag) */
     @Transactional
     public int replaceWindow(String projectId, String connectionId, String connectorId, String channel,
                              LocalDate from, LocalDate to, LocalDate provisionalFrom,
                              List<ChannelMetricPoint> points, boolean pruneDroppedDimensions) {
+        return replaceWindow(projectId, connectionId, connectorId, channel, from, to, provisionalFrom, points,
+                pruneDroppedDimensions, metric -> false);
+    }
+
+    /**
+     * @param pruneDroppedDimensions false keeps dimension rows this pull did not return (see the source's flag)
+     * @param snapshotMetric         metrics whose points are final readings, stored non-provisional whatever their day
+     */
+    @Transactional
+    public int replaceWindow(String projectId, String connectionId, String connectorId, String channel,
+                             LocalDate from, LocalDate to, LocalDate provisionalFrom,
+                             List<ChannelMetricPoint> points, boolean pruneDroppedDimensions,
+                             java.util.function.Predicate<String> snapshotMetric) {
         List<ChannelMetricPoint> valid = points.stream()
                 .filter(p -> p.day() != null && p.value() != null && p.metric() != null)
                 .toList();
@@ -82,7 +94,7 @@ public class ChannelMetricDailyStore {
                         .addValue("dimensionKey", p.dimensionKey())
                         .addValue("day", Date.valueOf(p.day()))
                         .addValue("value", p.value())
-                        .addValue("provisional", !p.day().isBefore(provisionalFrom));
+                        .addValue("provisional", !snapshotMetric.test(p.metric()) && !p.day().isBefore(provisionalFrom));
             }
             jdbc.batchUpdate(UPSERT, batch);
             written += chunk.size();

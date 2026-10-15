@@ -472,6 +472,10 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector, Chann
     @Override
     public boolean prunesMissingDimensions() { return false; }
 
+    /** Levels are final readings for the day they were taken. */
+    @Override
+    public boolean snapshot(String metric) { return true; }
+
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
         String token = ctx == null ? null : ctx.accessToken();

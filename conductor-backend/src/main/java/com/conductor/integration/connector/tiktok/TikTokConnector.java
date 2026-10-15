@@ -347,6 +347,10 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
     @Override
     public boolean prunesMissingDimensions() { return false; }
 
+    /** Levels are final readings for the day they were taken. */
+    @Override
+    public boolean snapshot(String metric) { return true; }
+
     /**
      * Follower and video totals for today. They need the {@code user.info.stats} scope, which
      * {@link #oauthScopes()} does not request (it is not in the app-review submission), so a real connection

@@ -50,6 +50,7 @@ class TikTokChannelMetricsTest {
         assertThat(connector.backfillDays()).isZero();
         assertThat(connector.trailingDays()).isEqualTo(1);
         assertThat(connector.prunesMissingDimensions()).isFalse();
+        assertThat(connector.snapshot("followers")).isTrue();
     }
 
     @Test

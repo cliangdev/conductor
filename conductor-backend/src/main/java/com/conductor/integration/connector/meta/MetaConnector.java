@@ -663,6 +663,10 @@ public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelM
     @Override
     public boolean prunesMissingDimensions() { return false; }
 
+    /** Levels are final readings; website_clicks is a daily flow Instagram may still restate. */
+    @Override
+    public boolean snapshot(String metric) { return !"website_clicks".equals(metric); }
+
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
         try {

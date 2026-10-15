@@ -49,6 +49,8 @@ class YouTubeChannelMetricsTest {
         assertThat(connector.backfillDays()).isZero();
         assertThat(connector.trailingDays()).isEqualTo(1);
         assertThat(connector.prunesMissingDimensions()).isFalse();
+        assertThat(connector.snapshot("followers")).isTrue();
+        assertThat(connector.snapshot("channel_views")).isTrue();
     }
 
     @Test

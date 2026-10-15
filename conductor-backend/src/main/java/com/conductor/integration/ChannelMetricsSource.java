@@ -30,6 +30,13 @@ public interface ChannelMetricsSource {
      */
     default boolean prunesMissingDimensions() { return true; }
 
+    /**
+     * Whether {@code metric} is a snapshot: the platform's reading at the time of the pull, which is the final
+     * value for the day it was taken (a follower count), as opposed to a daily flow the platform may still
+     * restate (clicks). Snapshot points are stored final (not provisional) even inside the trailing window.
+     */
+    default boolean snapshot(String metric) { return false; }
+
     /** How many days back the first pull reaches, capped by what the platform allows. */
     int backfillDays();
 

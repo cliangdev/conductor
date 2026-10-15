@@ -131,6 +131,21 @@ class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void snapshotMetricsAreStoredNonProvisionalInsideTheTrailingWindow() {
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        store.replaceWindow(project.getId(), connectionId, "meta", "SOCIAL", d, d, d,
+                List.of(pt("followers", "instagram", d, 2400), pt("website_clicks", "instagram", d, 9)),
+                false, metric -> !metric.equals("website_clicks"));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(repository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(connectionId))
+                .extracting(ChannelMetricDaily::getMetric, ChannelMetricDaily::isProvisional)
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple("followers", false),
+                        org.assertj.core.groups.Tuple.tuple("website_clicks", true));
+    }
+
+    @Test
     void pullingTheSameDaysTwiceKeepsOneRowEach() {
         LocalDate day = LocalDate.of(2026, 10, 10);
         for (int run = 0; run < 2; run++) {

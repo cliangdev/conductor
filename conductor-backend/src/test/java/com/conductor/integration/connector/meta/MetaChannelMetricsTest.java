@@ -66,6 +66,9 @@ class MetaChannelMetricsTest {
         assertThat(connector.backfillDays()).isEqualTo(28);
         assertThat(connector.trailingDays()).isEqualTo(1);
         assertThat(connector.prunesMissingDimensions()).isFalse();
+        assertThat(connector.snapshot("followers")).isTrue();
+        assertThat(connector.snapshot("media_count")).isTrue();
+        assertThat(connector.snapshot("website_clicks")).isFalse();
     }
 
     @Test

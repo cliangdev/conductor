@@ -306,6 +306,10 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector, 
     @Override
     public boolean prunesMissingDimensions() { return false; }
 
+    /** Levels are final readings for the day they were taken. */
+    @Override
+    public boolean snapshot(String metric) { return true; }
+
     @Override
     public int backfillDays() { return 0; }
 

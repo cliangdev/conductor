@@ -441,6 +441,10 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector, Cha
     @Override
     public boolean prunesMissingDimensions() { return false; }
 
+    /** Levels are final readings; website_clicks is a daily flow Instagram may still restate. */
+    @Override
+    public boolean snapshot(String metric) { return !"website_clicks".equals(metric); }
+
     @Override
     public int backfillDays() { return 28; }
 

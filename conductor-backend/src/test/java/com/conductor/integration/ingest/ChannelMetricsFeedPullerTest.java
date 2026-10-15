@@ -87,12 +87,12 @@ class ChannelMetricsFeedPullerTest {
         spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null, null, null,
                 null, IngestSink.CHANNEL_METRICS, null);
 
-        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenAnswer(inv -> {
                     LocalDate provisionalFrom = inv.getArgument(6);
                     for (ChannelMetricPoint p : inv.<List<ChannelMetricPoint>>getArgument(7)) {
                         upserts.add(new Upsert(inv.getArgument(3), p.metric(), p.dimensionKey(), p.day(), p.value(),
-                                !p.day().isBefore(provisionalFrom)));
+                                !inv.<java.util.function.Predicate<String>>getArgument(9).test(p.metric()) && !p.day().isBefore(provisionalFrom)));
                     }
                     return ((List<?>) inv.getArgument(7)).size();
                 });
@@ -197,7 +197,23 @@ class ChannelMetricsFeedPullerTest {
 
         pull(null);
 
-        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), eq(false));
+        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), eq(false), any());
+    }
+
+    @Test
+    void snapshotMetricsAreStoredFinalWhileFlowsInsideTheTrailingWindowStayProvisional() {
+        when(source.snapshot(anyString())).thenAnswer(inv -> !"website_clicks".equals(inv.getArgument(0)));
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of(
+                ChannelMetricPoint.of("followers", "instagram", TODAY, 2400),
+                ChannelMetricPoint.of("website_clicks", "instagram", TODAY, 9),
+                ChannelMetricPoint.of("website_clicks", "instagram", TODAY.minusDays(10), 7)));
+
+        pull(null);
+
+        assertThat(upserts).extracting(Upsert::metric, Upsert::day, Upsert::provisional).containsExactlyInAnyOrder(
+                org.assertj.core.groups.Tuple.tuple("followers", TODAY, false),
+                org.assertj.core.groups.Tuple.tuple("website_clicks", TODAY, true),
+                org.assertj.core.groups.Tuple.tuple("website_clicks", TODAY.minusDays(10), false));
     }
 
     @Test
@@ -217,7 +233,7 @@ class ChannelMetricsFeedPullerTest {
 
         assertThat(batch.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         assertThat(batch.errorMessage()).isEqualTo("reconnect");
-        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -245,6 +261,6 @@ class ChannelMetricsFeedPullerTest {
         pull(null);
 
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true));
+                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true), any());
     }
 }
