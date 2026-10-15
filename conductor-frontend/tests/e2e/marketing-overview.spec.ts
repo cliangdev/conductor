@@ -1,76 +1,117 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { setActiveProjectInStorage } from './helpers'
 
 const BACKEND = 'http://localhost:8080'
 
-async function getAuthToken(page: Page): Promise<string> {
-  return page.evaluate(() => localStorage.getItem('access_token') ?? '')
-}
+// The local profile's mock connectors feed daily metrics on a 60s scheduler tick, so seeding a fresh
+// workspace takes a while. Allow up to 3 minutes for Search to report values.
+const SEED_TIMEOUT_MS = 180_000
 
-async function createProjectViaApi(token: string, request: APIRequestContext) {
-  const res = await request.post(`${BACKEND}/api/v1/projects`, {
-    data: { name: `E2E Marketing ${Date.now()}`, description: 'Playwright marketing overview test' },
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+let projectId = ''
+
+async function authedApi(request: APIRequestContext) {
+  const login = await request.post(`${BACKEND}/api/v1/auth/local`, {
+    data: { email: 'playwright@example.com', password: 'conductor' },
   })
-  expect(res.ok()).toBeTruthy()
-  return res.json() as Promise<{ id: string; name: string }>
+  expect(login.ok()).toBeTruthy()
+  const { accessToken } = (await login.json()) as { accessToken: string }
+  return { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
 }
 
-test('marketing overview: funnel, channel cards, drill-down, window and mobile layout', async ({ page, request }) => {
-  await page.goto('/app/projects')
-  await page.waitForURL(/\/app\/projects/, { timeout: 15000 })
-  const token = await getAuthToken(page)
-  expect(token).toBeTruthy()
-  const project = await createProjectViaApi(token, request)
-  await setActiveProjectInStorage(page, project.id)
+test.describe('marketing overview', () => {
+  test.beforeAll(async ({ playwright }) => {
+    test.setTimeout(SEED_TIMEOUT_MS + 60_000)
+    const request = await playwright.request.newContext()
+    const headers = await authedApi(request)
 
-  // 1. Open Marketing → Overview. The route is a sibling of "What's working"; the sidebar entry only
-  // appears once the workspace has a Marketing workflow, so navigate by URL as the other specs do.
-  await page.goto(`/app/projects/${project.id}/marketing/overview`)
-  await expect(page.locator('h1')).toContainText('Marketing overview', { timeout: 15000 })
+    const project = await request.post(`${BACKEND}/api/v1/projects`, {
+      data: { name: `E2E Marketing ${Date.now()}`, description: 'Playwright marketing overview test' },
+      headers,
+    })
+    expect(project.ok()).toBeTruthy()
+    projectId = ((await project.json()) as { id: string }).id
 
-  // 2. The funnel and the five channel cards, in order.
-  // (A workspace with nothing connected shows the empty state in place of the funnel.)
-  await expect(
-    page.getByRole('region', { name: 'Funnel' }).or(page.getByText('Nothing is connected yet')),
-  ).toBeVisible({ timeout: 15000 })
-  for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads']) {
-    await expect(page.getByRole('region', { name, exact: true })).toBeVisible()
-  }
+    const web = await request.post(`${BACKEND}/api/v1/projects/${projectId}/integrations/posthog/connections`, {
+      data: { label: 'Web', apiKey: 'x', configJson: { projectId: '1', conversionEvent: 'signup_click' } },
+      headers,
+    })
+    expect(web.ok()).toBeTruthy()
+    const search = await request.post(`${BACKEND}/api/v1/projects/${projectId}/integrations/gsc/connections`, {
+      data: { label: 'Search', apiKey: 'x', configJson: { siteUrl: 'sc-domain:example.com' } },
+      headers,
+    })
+    expect(search.ok()).toBeTruthy()
 
-  // 3. Open the Search detail page from its card.
-  await page.getByRole('region', { name: 'Search', exact: true }).getByRole('link', { name: 'Search' }).click()
-  await page.waitForURL(/\/marketing\/overview\/search/)
-  await expect(page.getByRole('link', { name: /Marketing overview/ })).toBeVisible({ timeout: 15000 })
-  await expect(page.getByRole('tab', { name: '90d' })).toBeVisible()
-  await page.getByRole('link', { name: /Marketing overview/ }).click()
-  await page.waitForURL(/\/marketing\/overview$/)
+    // Wait for the feed scheduler to pull mock data: Search has metrics with values.
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(`${BACKEND}/api/v2/projects/${projectId}/marketing/overview?window=28d`, {
+            headers,
+          })
+          if (!res.ok()) return false
+          const body = (await res.json()) as {
+            channels: { channel: string; metrics: { value: number | null }[] }[]
+          }
+          const channel = body.channels.find((c) => c.channel === 'SEARCH')
+          return !!channel && channel.metrics.some((m) => m.value !== null && m.value !== undefined)
+        },
+        { timeout: SEED_TIMEOUT_MS, intervals: [5_000] },
+      )
+      .toBe(true)
+    await request.dispose()
+  })
 
-  // 5. Switch to 7d: the toggle is selected and the choice survives a reload.
-  await page.getByRole('tab', { name: '7d' }).click()
-  await expect(page.getByRole('tab', { name: '7d' })).toHaveAttribute('aria-selected', 'true')
-  await page.reload()
-  await expect(page.getByRole('tab', { name: '7d' })).toHaveAttribute('aria-selected', 'true', { timeout: 15000 })
+  test('funnel, channel cards, drill-down, targets, window and mobile layout', async ({ page }) => {
+    await page.goto('/app/projects')
+    await page.waitForURL(/\/app\/projects/, { timeout: 15000 })
+    await setActiveProjectInStorage(page, projectId)
 
-  // 6. No horizontal page scroll at phone width.
-  await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.getByRole('region', { name: 'Search', exact: true })).toBeVisible()
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
-  expect(overflow).toBeLessThanOrEqual(0)
-  await page.setViewportSize({ width: 1280, height: 800 })
+    // 1. Open Marketing → Overview. The sidebar entry only appears once the workspace has a Marketing
+    // workflow, so navigate by URL as the other specs do.
+    await page.goto(`/app/projects/${projectId}/marketing/overview`)
+    await expect(page.locator('h1')).toContainText('Marketing overview', { timeout: 15000 })
 
-  // 4. Set a target on a metric, see it on the card, then remove it. Needs a channel with metrics
-  // (the local profile's mock connectors); a bare workspace has none, so this part skips itself.
-  const setTarget = page.getByRole('button', { name: /^Set target for/ }).first()
-  const hasMetrics = await setTarget.isVisible().catch(() => false)
-  test.skip(!hasMetrics, 'no connected channel with metrics in this workspace')
+    // 2. The funnel and the five channel cards.
+    await expect(page.getByRole('region', { name: 'Funnel' })).toBeVisible({ timeout: 15000 })
+    const search = page.getByRole('region', { name: 'Search', exact: true })
+    for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads']) {
+      await expect(page.getByRole('region', { name, exact: true })).toBeVisible()
+    }
 
-  await setTarget.click()
-  await page.getByLabel(/^Target/).fill('4')
-  await page.getByRole('button', { name: 'Save target' }).click()
-  await expect(page.getByText(/Target .* there|Target /).first()).toBeVisible({ timeout: 10000 })
+    // 3. Open the Search detail page from its card. (The card also has a "Connect …" link in some
+    // states, so match the heading link exactly.)
+    await search.getByRole('link', { name: 'Search', exact: true }).click()
+    await page.waitForURL(/\/marketing\/overview\/search/)
+    await expect(page.getByRole('link', { name: /Marketing overview/ })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('tab', { name: '90d' })).toBeVisible()
+    await page.getByRole('link', { name: /Marketing overview/ }).click()
+    await page.waitForURL(/\/marketing\/overview$/)
+    await expect(search).toBeVisible()
 
-  await page.getByRole('button', { name: /^Edit target for/ }).first().click()
-  await page.getByRole('button', { name: 'Remove target' }).click()
-  await expect(page.getByRole('button', { name: /^Edit target for/ })).toHaveCount(0, { timeout: 10000 })
+    // 4. Set a target on a Search metric, see it on the card, then remove it.
+    await search.getByRole('button', { name: /^Set target for/ }).first().click()
+    await page.locator('#target-value').fill('5')
+    await page.getByRole('button', { name: 'Save target' }).click()
+    await expect(search.getByRole('button', { name: /^Edit target for/ })).toHaveCount(1, { timeout: 10000 })
+    await expect(search).toContainText(/Target/)
+
+    await search.getByRole('button', { name: /^Edit target for/ }).click()
+    await page.getByRole('button', { name: 'Remove target' }).click()
+    await expect(search.getByRole('button', { name: /^Edit target for/ })).toHaveCount(0, { timeout: 10000 })
+
+    // 5. Switch to 7d: the toggle is selected and the choice survives a reload.
+    await page.getByRole('tab', { name: '7d' }).click()
+    await expect(page.getByRole('tab', { name: '7d' })).toHaveAttribute('aria-selected', 'true')
+    await page.reload()
+    await expect(page.getByRole('tab', { name: '7d' })).toHaveAttribute('aria-selected', 'true', { timeout: 15000 })
+
+    // 6. No horizontal page scroll at phone width.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('region', { name: 'Search', exact: true })).toBeVisible()
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    expect(overflow).toBeLessThanOrEqual(0)
+  })
 })
