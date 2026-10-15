@@ -144,11 +144,7 @@ public class MarketingInsightsQueryService {
         List<Group> byHour = byHour(reporting);
         List<Group> byWeekday = byWeekday(reporting);
 
-        List<Post> ranked = reporting.stream()
-                .filter(t -> orZero(t.views()) >= 1)
-                .map(t -> toPost(t, workItems.get(t.workItemId())))
-                .sorted(Comparator.comparing(Post::engagementRate, Comparator.nullsLast(Comparator.reverseOrder())))
-                .toList();
+        List<Post> ranked = rank(reporting, workItems);
         List<Post> topPosts = ranked.stream().limit(TOP_POSTS_LIMIT).toList();
         List<Post> bottomPosts = reporting.size() >= BOTTOM_POSTS_MIN_POPULATION
                 ? reversed(ranked).stream().limit(BOTTOM_POSTS_LIMIT).toList()
@@ -164,6 +160,28 @@ public class MarketingInsightsQueryService {
 
         return new Insights(new Window(from, to, spec.days()), totals, byPlatform, byFormat, byHour, byWeekday,
                 topPosts, bottomPosts, movers, coverage, creatives);
+    }
+
+    /**
+     * The best {@code limit} destinations that fired in the last {@code days} days, by engagement rate;
+     * the same ranking as {@code topPosts} of {@link #compute}, without the rest of the report. No
+     * membership check: the caller has already authorised the project.
+     */
+    @Transactional(readOnly = true)
+    public List<Post> topPosts(String projectId, int days, int limit) {
+        InsightsWindowSpec spec = InsightsWindowSpec.ofDays(days);
+        OffsetDateTime now = OffsetDateTime.now();
+        List<TargetSnapshot> reporting = loadPopulation(projectId, null, spec.from(now), now).stream()
+                .filter(TargetSnapshot::hasSnapshot).toList();
+        return rank(reporting, loadWorkItems(reporting)).stream().limit(limit).toList();
+    }
+
+    private List<Post> rank(List<TargetSnapshot> reporting, Map<String, WorkItem> workItems) {
+        return reporting.stream()
+                .filter(t -> orZero(t.views()) >= 1)
+                .map(t -> toPost(t, workItems.get(t.workItemId())))
+                .sorted(Comparator.comparing(Post::engagementRate, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
     }
 
     // ---- population -------------------------------------------------------------------------------

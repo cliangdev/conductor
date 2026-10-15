@@ -10,6 +10,8 @@ servers:
     description: API v2
 
 tags:
+  - name: marketing-overview
+    description: Daily channel metrics, funnel and targets
   - name: work-items
     description: Work Item management endpoints (canonical successor to v1 issues)
   - name: work-item-reviewers
@@ -2040,6 +2042,225 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/overview:
+    get:
+      tags:
+        - marketing-overview
+      summary: Funnel and per-channel headline metrics for the project
+      description: >-
+        Daily channel metrics (web, search, social, store, ads) over a window of full UTC days ending
+        yesterday, each compared with the equal-length window immediately before it. `funnel` lists the
+        stages in order, with stages that have no source yet marked unavailable. `channels` lists every
+        channel with its freshness status, the connections behind it and its headline metrics (value,
+        previous, change, noise flag, target and daily series). Percent metrics are fractions (0.12 = 12%).
+      operationId: getMarketingOverview
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            default: 28d
+          description: 7d or 28d (default).
+      responses:
+        "200":
+          description: The overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingOverviewResponse"
+        "400":
+          description: Unknown window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/channels/{channel}:
+    get:
+      tags:
+        - marketing-overview
+      summary: One channel in detail
+      description: >-
+        The channel object from the overview with every metric, plus dimension tables (top 50 for the window:
+        referrers, queries, campaigns or platforms) and, for SOCIAL, the top 5 posts by engagement rate for
+        the same window.
+      operationId: getMarketingChannel
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: path
+          required: true
+          schema:
+            type: string
+          description: WEB, SEARCH, SOCIAL, STORE or ADS (case-insensitive).
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            default: 28d
+          description: 7d, 28d (default) or 90d.
+      responses:
+        "200":
+          description: The channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingChannelDetailResponse"
+        "400":
+          description: Unknown channel or window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/targets/{channel}/{metric}:
+    put:
+      tags:
+        - marketing-overview
+      summary: Set a target for a channel metric
+      description: >-
+        Idempotent: replaces any existing target for the metric. `direction` defaults to the metric's good
+        direction. Requires ADMIN or CREATOR.
+      operationId: setMarketingTarget
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metric
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingTargetRequest"
+      responses:
+        "200":
+          description: The stored target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingTarget"
+        "400":
+          description: Unknown channel or metric, or an invalid target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - marketing-overview
+      summary: Clear a target for a channel metric
+      description: "Idempotent: clearing a metric with no target is a no-op. Requires ADMIN or CREATOR."
+      operationId: deleteMarketingTarget
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metric
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Cleared
+        "400":
+          description: Unknown channel or metric
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
           content:
             application/json:
               schema:
@@ -5837,6 +6058,194 @@ components:
         observedAt:
           type: string
           format: date-time
+
+    MarketingOverviewResponse:
+      type: object
+      required: [window, funnel, channels]
+      properties:
+        window:
+          $ref: "#/components/schemas/OverviewWindow"
+        funnel:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewFunnelStage"
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewChannel"
+
+    OverviewWindow:
+      type: object
+      description: Inclusive UTC day ranges. `to` is yesterday; the previous window is the same length immediately before `from`.
+      required: [from, to, previousFrom, previousTo]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        previousFrom: {type: string, format: date}
+        previousTo: {type: string, format: date}
+
+    OverviewFunnelStage:
+      type: object
+      required: [key, label, source, available]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        value: {type: number, format: double, nullable: true}
+        previous: {type: number, format: double, nullable: true}
+        change: {type: number, format: double, nullable: true}
+        source:
+          type: string
+          description: The channel (WEB, SEARCH, SOCIAL, STORE, ADS, PRODUCT) the stage reads from.
+        available: {type: boolean}
+        unavailableReason: {type: string, nullable: true}
+
+    OverviewChannel:
+      type: object
+      required: [channel, label, status, connections, metrics]
+      properties:
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE or ADS."}
+        label: {type: string}
+        status:
+          type: string
+          enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON]
+        lastFetchedAt: {type: string, format: date-time, nullable: true}
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewConnection"
+        connectHint:
+          allOf:
+            - $ref: "#/components/schemas/OverviewConnectHint"
+          nullable: true
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewMetric"
+
+    OverviewConnection:
+      type: object
+      required: [id, connectorId, name, status]
+      properties:
+        id: {type: string}
+        connectorId: {type: string}
+        name: {type: string}
+        status:
+          type: string
+          enum: [LIVE, STALE]
+
+    OverviewConnectHint:
+      type: object
+      required: [connectorId]
+      properties:
+        connectorId: {type: string}
+
+    OverviewMetric:
+      type: object
+      required: [metric, label, unit, noise, provisionalDays, series]
+      properties:
+        metric: {type: string}
+        label: {type: string}
+        unit:
+          type: string
+          enum: [COUNT, CURRENCY, PERCENT, POSITION]
+        value: {type: number, format: double, nullable: true}
+        previous: {type: number, format: double, nullable: true}
+        change: {type: number, format: double, nullable: true}
+        changePct: {type: number, format: double, nullable: true}
+        noise:
+          type: boolean
+          description: True when the change is within normal variation (it did not clear the change detector's gates).
+        provisionalDays: {type: integer}
+        target:
+          allOf:
+            - $ref: "#/components/schemas/MarketingTarget"
+          nullable: true
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewSeriesPoint"
+
+    OverviewSeriesPoint:
+      type: object
+      required: [day]
+      properties:
+        day: {type: string, format: date}
+        value: {type: number, format: double, nullable: true}
+
+    MarketingTarget:
+      type: object
+      required: [value, direction]
+      properties:
+        value: {type: number, format: double}
+        direction:
+          type: string
+          enum: [UP, DOWN]
+
+    MarketingTargetRequest:
+      type: object
+      required: [target]
+      properties:
+        target:
+          type: number
+          format: double
+          minimum: 0
+        direction:
+          type: string
+          enum: [UP, DOWN]
+
+    MarketingChannelDetailResponse:
+      type: object
+      required: [window, channel, dimensions]
+      properties:
+        window:
+          $ref: "#/components/schemas/OverviewWindow"
+        channel:
+          $ref: "#/components/schemas/OverviewChannel"
+        dimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewDimension"
+        topPosts:
+          type: array
+          description: SOCIAL only; the top 5 posts of the window by engagement rate.
+          items:
+            $ref: "#/components/schemas/InsightsPost"
+
+    OverviewDimension:
+      type: object
+      required: [key, label, columns, rows]
+      properties:
+        key: {type: string, description: "referrers, queries, campaigns or platforms."}
+        label: {type: string}
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewDimensionColumn"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/OverviewDimensionRow"
+
+    OverviewDimensionColumn:
+      type: object
+      required: [key, label, unit]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        unit:
+          type: string
+          enum: [COUNT, CURRENCY, PERCENT, POSITION]
+
+    OverviewDimensionRow:
+      type: object
+      required: [key, label, values]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        values:
+          type: array
+          description: One entry per column, in column order.
+          items: {type: number, format: double, nullable: true}
 
     MarketingInsightsResponse:
       type: object

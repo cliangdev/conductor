@@ -41,4 +41,11 @@ public interface ChannelMetricDailyRepository extends JpaRepository<ChannelMetri
 
     List<ChannelMetricDaily> findByProjectIdAndChannelAndDayBetweenOrderByDayAsc(
             String projectId, String channel, LocalDate from, LocalDate to);
+
+    /** Totals rows only (dimension_key ''), for channels whose headline metrics are not split by dimension. */
+    List<ChannelMetricDaily> findByProjectIdAndChannelAndDimensionKeyAndDayBetween(
+            String projectId, String channel, String dimensionKey, LocalDate from, LocalDate to);
+
+    List<ChannelMetricDaily> findByProjectIdAndChannelAndMetricInAndDayBetween(
+            String projectId, String channel, java.util.Collection<String> metrics, LocalDate from, LocalDate to);
 }
