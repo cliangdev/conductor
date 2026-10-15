@@ -15,7 +15,7 @@ vi.mock('../mcp/api.js', () => ({
 }))
 
 import { apiGet, ApiError } from '../mcp/api.js'
-import { getMarketingInsights } from '../mcp/tools/insights.js'
+import { getMarketingInsights, bucketSeries } from '../mcp/tools/insights.js'
 
 const config: Config = {
   apiKey: 'k',
@@ -219,7 +219,7 @@ describe('get_marketing_insights include channels', () => {
     expect(mocked(apiGet).mock.calls[0]![0]).toBe('/api/v2/projects/proj-1/marketing/overview?window=7d')
     expect(result).not.toHaveProperty('totals')
     const m = result['marketing'] as Record<string, any>
-    expect(m.funnel).toEqual([{ key: 'visits', label: 'Visits', value: 120, change: 0.2 }])
+    expect(m.funnel).toEqual([{ key: 'visits', label: 'Visits', value: 120, previous: 100, changePct: 0.2 }])
     expect(m.unavailableStages).toEqual([{ key: 'installs', reason: 'Not connected' }])
     const web = m.channels[0]
     expect(web.dataCompleteThrough).toBe('2026-10-13')
@@ -252,9 +252,10 @@ describe('get_marketing_insights include channels', () => {
     expect(calls).toContain('/api/v2/projects/proj-1/marketing/channels/WEB?window=28d')
     const d = (result['marketing'] as Record<string, any>).channelDetail
     const series = d.metrics[0].series
-    expect(series).toHaveLength(14)
-    expect(series[0].day).toBe('d0')
-    expect(series[13]).toEqual({ day: 'd89', value: 89, provisional: true })
+    expect(series).toHaveLength(13)
+    expect(series[0]).toEqual({ from: 'd0', to: 'd5', value: 15, provisional: false })
+    expect(series[1]).toEqual({ from: 'd6', to: 'd12', value: 63, provisional: false })
+    expect(series[12]).toEqual({ from: 'd83', to: 'd89', value: 602, provisional: true })
     expect(d.dimensions[0].rows).toHaveLength(10)
     expect(d.dimensions[0].totalRows).toBe(15)
     expect(d.dimensions[0].columns).toEqual(['visits'])
@@ -274,5 +275,16 @@ describe('get_marketing_insights include channels', () => {
     await expect(getMarketingInsights(config, { include: ['channels'], channel: 'TV' })).rejects.toThrow(/Unknown channel/)
     await expect(getMarketingInsights(config, { include: ['channels'], platform: 'instagram' })).rejects.toThrow(/only filters posts/)
     expect(mocked(apiGet)).not.toHaveBeenCalled()
+  })
+})
+
+describe('bucketSeries', () => {
+  const pts = (vals: (number | null)[]) => vals.map((v, i) => ({ day: `d${i}`, value: v, provisional: i === vals.length - 1 }))
+  it('means for POSITION, skips null days, and drops empty leading buckets', () => {
+    const vals = [...Array(10).fill(null), 2, 4, null, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28]
+    const out = bucketSeries(pts(vals), 'POSITION')
+    expect(out[0]).toEqual({ from: 'd4', to: 'd10', value: 2, provisional: false })
+    expect(out).toHaveLength(3)
+    expect(out[2]!['provisional']).toBe(true)
   })
 })

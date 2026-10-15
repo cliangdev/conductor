@@ -210,6 +210,7 @@ interface OverviewMetric {
   value?: number | null
   previous?: number | null
   changePct?: number | null
+  goodDirection?: string
   noise: boolean
   target?: { value: number; direction: string } | null
   series?: OverviewSeriesPoint[]
@@ -228,7 +229,8 @@ interface OverviewFunnelStage {
   key: string
   label: string
   value?: number | null
-  change?: number | null
+  previous?: number | null
+  changePct?: number | null
   source: string
   available: boolean
   unavailableReason?: string | null
@@ -254,11 +256,29 @@ interface ChannelDetailResponse {
   topPosts?: InsightsPost[]
 }
 
-/** Evenly samples a series down to at most `max` points, always keeping the first and last. */
-export function downsample<T>(points: T[], max: number): T[] {
-  if (points.length <= max) return points
-  const out: T[] = []
-  for (let i = 0; i < max; i++) out.push(points[Math.round((i * (points.length - 1)) / (max - 1))]!)
+const BUCKET_DAYS = 7
+
+/**
+ * Aggregates a daily series into equal 7-day buckets ending at the last day (a 7-day series stays daily).
+ * COUNT and CURRENCY sum; PERCENT and POSITION average the days that have a value. A bucket is provisional
+ * if any day in it is; buckets with no values are dropped.
+ */
+export function bucketSeries(points: OverviewSeriesPoint[], unit: string): Record<string, unknown>[] {
+  const size = points.length <= MAX_SERIES_POINTS ? 1 : BUCKET_DAYS
+  const sum = unit === 'COUNT' || unit === 'CURRENCY'
+  const out: Record<string, unknown>[] = []
+  for (let end = points.length; end > 0; end -= size) {
+    const days = points.slice(Math.max(0, end - size), end)
+    const values = days.map((d) => d.value).filter((v): v is number => v !== null && v !== undefined)
+    if (values.length === 0) continue
+    const total = values.reduce((x, y) => x + y, 0)
+    out.unshift({
+      from: days[0]!.day,
+      to: days[days.length - 1]!.day,
+      value: round4(sum ? total : total / values.length),
+      provisional: days.some((d) => d.provisional),
+    })
+  }
   return out
 }
 
@@ -270,13 +290,10 @@ function trimMetric(m: OverviewMetric, withSeries: boolean): Record<string, unkn
     value: round4(m.value),
     previous: round4(m.previous),
     changePct: round4(m.changePct),
+    goodDirection: m.goodDirection,
     noise: m.noise,
     target: m.target,
-    series: withSeries
-      ? downsample(m.series ?? [], MAX_SERIES_POINTS).map((p) =>
-          omitNulls({ day: p.day, value: round4(p.value), provisional: p.provisional ? true : null })
-        )
-      : null,
+    series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,
   })
 }
 
@@ -306,7 +323,15 @@ function trimFunnel(funnel: OverviewFunnelStage[]) {
   return {
     funnel: funnel
       .filter((s) => s.available)
-      .map((s) => omitNulls({ key: s.key, label: s.label, value: round4(s.value), change: round4(s.change) })),
+      .map((s) =>
+        omitNulls({
+          key: s.key,
+          label: s.label,
+          value: round4(s.value),
+          previous: round4(s.previous),
+          changePct: round4(s.changePct ?? (s.previous && s.value != null ? (s.value - s.previous) / s.previous : null)),
+        })
+      ),
     unavailableStages: funnel
       .filter((s) => !s.available)
       .map((s) => omitNulls({ key: s.key, reason: s.unavailableReason })),
