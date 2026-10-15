@@ -22,7 +22,7 @@ import java.util.*;
 
 @Component
 @Profile("!local")
-public class GscConnector implements FetchConnector, OAuth2Connector {
+public class GscConnector implements FetchConnector, OAuth2Connector, ChannelMetricsSource {
 
     private static final Logger log = LoggerFactory.getLogger(GscConnector.class);
 
@@ -293,5 +293,67 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
     private static String stringConfig(ConnectionContext ctx, String key) {
         Object v = ctx.configValue(key);
         return v != null ? v.toString() : null;
+    }
+
+    // ── ChannelMetricsSource ────────────────────────────────────────────────
+
+    static final int TOP_QUERIES_PER_DAY = 100;
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.SEARCH; }
+
+    /** The API keeps 16 months; 90 days is what the overview needs on first connect. */
+    @Override
+    public int backfillDays() { return 90; }
+
+    /** Search Console restates (and delays) the last few days. */
+    @Override
+    public int trailingDays() { return 4; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        String siteUrl = stringConfig(ctx, "siteUrl");
+        if (siteUrl == null || siteUrl.isBlank()) {
+            throw ChannelMetricsSourceException.setupRequired("Configure your Search Console property");
+        }
+        DateTimeFormatter iso = DateTimeFormatter.ISO_LOCAL_DATE;
+        URI url = queryUri(siteUrl);
+        List<ChannelMetricPoint> points = new ArrayList<>();
+        try {
+            List<GscAnalyticsRow> days = queryRows(url, ctx.accessToken(), new GscAnalyticsRequest(
+                    from.format(iso), to.format(iso), List.of("date"), null, 1000, null));
+            for (GscAnalyticsRow row : days) {
+                LocalDate day = LocalDate.parse(row.firstKey());
+                points.add(ChannelMetricPoint.total("clicks", day, row.clicks()));
+                points.add(ChannelMetricPoint.total("impressions", day, row.impressions()));
+                points.add(ChannelMetricPoint.total("position_x_impressions", day, row.position() * row.impressions()));
+            }
+            // Per-day query breakdown: the API ranks across the whole window, so ask day by day.
+            for (GscAnalyticsRow dayRow : days) {
+                LocalDate day = LocalDate.parse(dayRow.firstKey());
+                String d = day.format(iso);
+                List<GscAnalyticsRow> queries = queryRows(url, ctx.accessToken(), new GscAnalyticsRequest(
+                        d, d, List.of("date", "query"), null, TOP_QUERIES_PER_DAY, null));
+                for (GscAnalyticsRow q : queries) {
+                    if (q.keys() == null || q.keys().size() < 2) continue;
+                    points.add(ChannelMetricPoint.of("query_clicks", q.keys().get(1), day, q.clicks()));
+                    points.add(ChannelMetricPoint.of("query_impressions", q.keys().get(1), day, q.impressions()));
+                }
+            }
+        } catch (HttpClientErrorException e) {
+            int status = e.getStatusCode().value();
+            if (status == 401 || status == 403 || status == 404) {
+                throw ChannelMetricsSourceException.setupRequired(
+                        "Search Console refused access to \"" + siteUrl + "\" (" + status + "). "
+                                + "Check the property and reconnect Google.");
+            }
+            if (status == 429) {
+                throw ChannelMetricsSourceException.degraded("Search Console rate limited the request, retrying later");
+            }
+            throw ChannelMetricsSourceException.degraded("Search Console API error: " + status);
+        } catch (org.springframework.web.client.RestClientException e) {
+            throw ChannelMetricsSourceException.degraded("Search Console request failed: " + e.getMessage());
+        }
+        return points;
     }
 }

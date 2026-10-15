@@ -85,6 +85,37 @@ class FeedPullServiceTest {
         org.assertj.core.api.Assertions.assertThat(feed.getCursorState()).isEqualTo("2026-09-04T14");
     }
 
+    @org.junit.jupiter.api.Test
+    void aChannelMetricsFeedIsPulledByItsPullerAndNeverReachesASink() {
+        ChannelMetricsFeedPuller channelPuller = mock(ChannelMetricsFeedPuller.class);
+        FeedPullService withChannel = new FeedPullService(feedRepository, connectionService, connectorRegistry,
+                snapshotIngestAdapter, digestSink, metricsDigestService, postMetricsFeedPuller, channelPuller);
+        ConnectorFeed feed = feed();
+        feed.setIngestId("channel_metrics");
+        feed.setCursorState(null);
+        feed.setIntervalMinutes(360);
+        Connection conn = connection();
+        when(connectionService.getById("conn-1")).thenReturn(Optional.of(conn));
+        when(connectionService.toContext(conn)).thenReturn(ctx());
+        IngestSpec spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null,
+                null, null, null, com.conductor.integration.IngestSink.CHANNEL_METRICS, null);
+        Connector connector = mock(Connector.class);
+        IntegrationToolSpec toolSpec = mock(IntegrationToolSpec.class);
+        when(toolSpec.ingest()).thenReturn(List.of(spec));
+        when(connector.getToolSpec()).thenReturn(toolSpec);
+        when(connectorRegistry.getById("gsc")).thenReturn(Optional.of(connector));
+        when(channelPuller.pull(org.mockito.ArgumentMatchers.eq(feed), any(), org.mockito.ArgumentMatchers.eq(conn), any()))
+                .thenReturn(IngestBatch.empty("{\"lastDay\":\"2026-10-14\"}"));
+
+        boolean more = withChannel.pull(feed);
+
+        assertThat(more).isFalse();
+        verify(channelPuller).pull(org.mockito.ArgumentMatchers.eq(feed), any(), org.mockito.ArgumentMatchers.eq(conn), any());
+        org.mockito.Mockito.verifyNoInteractions(digestSink, metricsDigestService, snapshotIngestAdapter, postMetricsFeedPuller);
+        assertThat(feed.getCursorState()).isEqualTo("{\"lastDay\":\"2026-10-14\"}");
+        assertThat(feed.getNextRunAt()).isNotNull();
+    }
+
     private static ConnectorFeed feed() {
         ConnectorFeed feed = new ConnectorFeed();
         feed.setId("feed-1");

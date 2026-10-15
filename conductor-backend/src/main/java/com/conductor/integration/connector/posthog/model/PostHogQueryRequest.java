@@ -13,5 +13,12 @@ public record PostHogQueryRequest(PostHogInnerQuery query) {
             String kind,
             String query,
             List<Map<String, Object>> series,
-            Map<String, Object> dateRange) {}
+            Map<String, Object> dateRange,
+            Map<String, Object> values) {
+
+        public PostHogInnerQuery(String kind, String query, List<Map<String, Object>> series,
+                                 Map<String, Object> dateRange) {
+            this(kind, query, series, dateRange, null);
+        }
+    }
 }

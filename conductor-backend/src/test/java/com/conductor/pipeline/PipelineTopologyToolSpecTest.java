@@ -46,7 +46,10 @@ class PipelineTopologyToolSpecTest {
                 // PostMetricsFeedPuller, which writes post_publish_target_metric rows and answers with no
                 // items, so neither FEEDS -> INBOX nor FEEDS -> DIGESTS is taken. It is outside this
                 // invariant, not an exception to it.
-                if (ingest.sink() == com.conductor.integration.IngestSink.POST_METRICS) {
+                // Channel-metrics feeds are the same shape: ChannelMetricsFeedPuller upserts
+                // channel_metric_daily rows and answers with no items.
+                if (ingest.sink() == com.conductor.integration.IngestSink.POST_METRICS
+                        || ingest.sink() == com.conductor.integration.IngestSink.CHANNEL_METRICS) {
                     continue;
                 }
                 if (!ingest.isMetricFeed()) {

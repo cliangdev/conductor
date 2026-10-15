@@ -17,7 +17,7 @@ import java.util.*;
 @Component
 @Profile("local")
 @Primary
-public class LocalAppleSearchAdsConnector implements FetchConnector {
+public class LocalAppleSearchAdsConnector implements FetchConnector, ChannelMetricsSource {
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE;
 
@@ -108,5 +108,39 @@ public class LocalAppleSearchAdsConnector implements FetchConnector {
 
     private static double round(double v) {
         return Math.round(v * 100.0) / 100.0;
+    }
+
+    // -- ChannelMetricsSource: deterministic 90-day series for the local stack --------------------
+
+    @Override
+    public int backfillDays() { return 90; }
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.ADS; }
+
+    @Override
+    public int trailingDays() { return 3; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, java.time.LocalDate from, java.time.LocalDate to) {
+        List<ChannelMetricPoint> points = new ArrayList<>();
+        String[] campaigns = {"campaign:1001:Brand", "campaign:1002:Discovery"};
+        double[] weight = {0.4, 0.6};
+        for (java.time.LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
+            double impressions = LocalChannelSeries.value("asa-impr", day, 2500);
+            double taps = Math.round(impressions * 0.07);
+            double installs = Math.round(taps * 0.35);
+            double spend = Math.round(taps * 0.9 * 100) / 100.0;
+            double[] daily = {spend, impressions, taps, installs};
+            String[] names = {"spend", "impressions", "taps", "installs"};
+            for (int m = 0; m < names.length; m++) {
+                points.add(ChannelMetricPoint.total(names[m], day, daily[m]));
+                for (int c = 0; c < campaigns.length; c++) {
+                    points.add(ChannelMetricPoint.of(names[m], campaigns[c], day,
+                            Math.round(daily[m] * weight[c] * 100) / 100.0));
+                }
+            }
+        }
+        return points;
     }
 }

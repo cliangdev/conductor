@@ -25,7 +25,7 @@ import java.util.*;
  */
 @Component
 @Profile("!local")
-public class AppleSearchAdsConnector implements FetchConnector {
+public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSource {
 
     private static final Logger log = LoggerFactory.getLogger(AppleSearchAdsConnector.class);
 
@@ -389,5 +389,103 @@ public class AppleSearchAdsConnector implements FetchConnector {
         if (!isBlank(a)) return a;
         if (!isBlank(b)) return b;
         return "";
+    }
+
+    // ── ChannelMetricsSource ────────────────────────────────────────────────
+
+    /** DAILY granularity is limited to a 90-day span per report request. */
+    private static final int MAX_SPAN_DAYS = 90;
+    private static final String[] DAILY_METRICS = {"impressions", "taps", "installs"};
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.ADS; }
+
+    @Override
+    public int backfillDays() { return 90; }
+
+    /** Apple restates installs (attribution windows) for a few days. */
+    @Override
+    public int trailingDays() { return 3; }
+
+    /**
+     * Per-day spend, impressions, taps and installs: totals across campaigns (empty dimension key) and per
+     * campaign, keyed {@code campaign:{id}:{name}} (the id never contains a colon, so split on the second one).
+     */
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        AppleAdsTokenService.Credentials creds = credentials(ctx);
+        String orgId = str(ctx.configValue("orgId"));
+        if (!creds.complete() || isBlank(orgId)) {
+            throw ChannelMetricsSourceException.setupRequired("Apple Search Ads credentials not configured");
+        }
+        String token;
+        try {
+            token = tokenService.accessToken(ctx.connectionId(), creds);
+        } catch (Exception e) {
+            throw ChannelMetricsSourceException.setupRequired("Check Apple Search Ads credentials");
+        }
+        HttpHeaders headers = headers(token, orgId);
+
+        // date -> metric -> total
+        Map<LocalDate, Map<String, Double>> totals = new TreeMap<>();
+        List<ChannelMetricPoint> points = new ArrayList<>();
+        try {
+            LocalDate start = from;
+            while (!start.isAfter(to)) {
+                LocalDate end = start.plusDays(MAX_SPAN_DAYS - 1L);
+                if (end.isAfter(to)) end = to;
+                Map<String, Object> report = postReport(API_BASE + "/reports/campaigns",
+                        campaignReportBody(start, end), headers);
+                collect(report, totals, points);
+                start = end.plusDays(1);
+            }
+        } catch (HttpClientErrorException e) {
+            int status = e.getStatusCode().value();
+            if (status == 401 || status == 403) {
+                throw ChannelMetricsSourceException.setupRequired("Apple Search Ads refused the credentials (" + status + ")");
+            }
+            if (status == 429) {
+                throw ChannelMetricsSourceException.degraded("Apple Search Ads rate limited the request, retrying later");
+            }
+            throw ChannelMetricsSourceException.degraded("Apple Search Ads API error: " + status);
+        } catch (org.springframework.web.client.RestClientException e) {
+            throw ChannelMetricsSourceException.degraded("Apple Search Ads request failed: " + e.getMessage());
+        }
+        totals.forEach((day, byMetric) -> byMetric.forEach(
+                (metric, value) -> points.add(ChannelMetricPoint.total(metric, day, value))));
+        return points;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collect(Map<String, Object> report, Map<LocalDate, Map<String, Double>> totals,
+                         List<ChannelMetricPoint> points) {
+        for (Map<String, Object> row : rows(report)) {
+            Map<String, Object> meta = metadata(row);
+            String campaignId = str(meta.get("campaignId"));
+            String name = str(meta.get("campaignName"));
+            String dimension = "campaign:" + (campaignId == null ? "" : campaignId) + ":" + (name == null ? "" : name);
+            if (!(row.get("granularity") instanceof List<?> buckets)) continue;
+            for (Object b : buckets) {
+                if (!(b instanceof Map<?, ?> raw)) continue;
+                Map<String, Object> bucket = (Map<String, Object>) raw;
+                String date = str(bucket.get("date"));
+                if (isBlank(date)) continue;
+                LocalDate day;
+                try {
+                    day = LocalDate.parse(date.length() > 10 ? date.substring(0, 10) : date);
+                } catch (RuntimeException e) {
+                    continue;
+                }
+                Map<String, Double> dayTotals = totals.computeIfAbsent(day, d -> new LinkedHashMap<>());
+                double spend = money(bucket.get("localSpend"));
+                dayTotals.merge("spend", spend, Double::sum);
+                points.add(ChannelMetricPoint.of("spend", dimension, day, spend));
+                for (String metric : DAILY_METRICS) {
+                    double v = num(bucket.get(metric));
+                    dayTotals.merge(metric, v, Double::sum);
+                    points.add(ChannelMetricPoint.of(metric, dimension, day, v));
+                }
+            }
+        }
     }
 }

@@ -11,22 +11,25 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.*;
 
 @Component
 @Profile("!local")
-public class PostHogConnector implements FetchConnector {
+public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
 
     private static final Logger log = LoggerFactory.getLogger(PostHogConnector.class);
 
     private final RestTemplate restTemplate;
+    private final PostHogChannelMetrics channelMetrics;
 
     public PostHogConnector() {
-        this.restTemplate = ConnectorHttp.restTemplate();
+        this(ConnectorHttp.restTemplate());
     }
 
     public PostHogConnector(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
+        this.channelMetrics = new PostHogChannelMetrics(restTemplate);
     }
 
     @Override
@@ -44,7 +47,13 @@ public class PostHogConnector implements FetchConnector {
             ConnectorConfigField.userInput("apiKey", "Personal API Key",
                 "PostHog → Settings → Personal API Keys", FieldType.SECRET, true),
             ConnectorConfigField.userInput("projectId", "PostHog Project ID",
-                "Found in your PostHog project URL", FieldType.STRING, false)
+                "Found in your PostHog project URL", FieldType.STRING, false),
+            ConnectorConfigField.userInput("host", "PostHog host",
+                "US, EU, or your self-hosted https URL. Leave empty for the default host", FieldType.STRING, false),
+            ConnectorConfigField.userInput("eventFilter", "Event filter",
+                "Only count events matching property = 'value', for example $lib = 'web'", FieldType.STRING, false),
+            ConnectorConfigField.userInput("conversionEvent", "Conversion event",
+                "Event name to track as conversion clicks (optional)", FieldType.STRING, false)
         ));
     }
 
@@ -59,7 +68,13 @@ public class PostHogConnector implements FetchConnector {
             return ConnectorData.setupRequired("PostHog Project ID not configured");
         }
         String projectId = projectIdObj.toString();
-        String queryUrl = "https://app.posthog.com/api/projects/" + projectId + "/query/";
+        String host;
+        try {
+            host = PostHogSettings.hostOf(ctx);
+        } catch (ChannelMetricsSourceException e) {
+            return ConnectorData.setupRequired(e.getMessage());
+        }
+        String queryUrl = host + "/api/projects/" + projectId + "/query/";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(apiKey);
@@ -244,11 +259,27 @@ public class PostHogConnector implements FetchConnector {
             headers.setBearerAuth(ctx.accessToken());
             HttpEntity<Void> request = new HttpEntity<>(headers);
 
-            String url = "https://app.posthog.com/api/projects/" + projectIdObj + "/";
+            String url = PostHogSettings.hostOf(ctx) + "/api/projects/" + projectIdObj + "/";
             restTemplate.exchange(url, HttpMethod.GET, request, Map.class);
             return ConnectorHealth.HEALTHY;
         } catch (Exception e) {
             return ConnectorHealth.DEGRADED;
         }
     }
+
+    // ── ChannelMetricsSource ────────────────────────────────────────────────
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.WEB; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        return channelMetrics.pull(ctx, from, to);
+    }
+
+    @Override
+    public int backfillDays() { return 90; }
+
+    @Override
+    public int trailingDays() { return 2; }
 }
