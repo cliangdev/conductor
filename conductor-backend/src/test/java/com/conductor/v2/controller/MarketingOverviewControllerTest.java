@@ -95,7 +95,7 @@ class MarketingOverviewControllerTest {
     }
 
     private static ChannelView webChannel(TargetView target) {
-        MetricView visitors = new MetricView("visitors", "Visitors", MetricCatalog.Unit.COUNT, 70.0, 35.0, 35.0, 1.0,
+        MetricView visitors = new MetricView("visitors", "Visitors", MetricCatalog.Unit.COUNT, "UP", 70.0, 35.0, 35.0, 1.0,
                 false, 2, target, List.of(new MarketingOverviewQueryService.Point(LocalDate.of(2026, 10, 14), 10.0, true)));
         return new ChannelView("WEB", "Web", "LIVE", null,
                 List.of(new MarketingOverviewQueryService.ConnectionView("c1", "posthog", "Site", "LIVE")), "posthog",
@@ -123,6 +123,7 @@ class MarketingOverviewControllerTest {
                 .andExpect(jsonPath("$.channels[0].connectHint.connectorId").value("posthog"))
                 .andExpect(jsonPath("$.channels[0].metrics[0].metric").value("visitors"))
                 .andExpect(jsonPath("$.channels[0].metrics[0].unit").value("COUNT"))
+                .andExpect(jsonPath("$.channels[0].metrics[0].goodDirection").value("UP"))
                 .andExpect(jsonPath("$.channels[0].metrics[0].provisionalDays").value(2))
                 .andExpect(jsonPath("$.channels[0].metrics[0].target.value").value(500.0))
                 .andExpect(jsonPath("$.channels[0].dataCompleteThrough").value("2026-10-12"))

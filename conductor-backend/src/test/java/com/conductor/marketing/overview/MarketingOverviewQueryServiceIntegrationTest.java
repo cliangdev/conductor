@@ -194,6 +194,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(metric(search, "position").value()).isCloseTo(9.92, org.assertj.core.data.Offset.offset(1e-9));
         assertThat(search.metrics()).extracting(MetricView::metric).doesNotContain("position_x_impressions");
         assertThat(metric(search, "ctr").unit()).isEqualTo(MetricCatalog.Unit.PERCENT);
+        assertThat(metric(search, "ctr").goodDirection()).isEqualTo("UP");
+        assertThat(metric(search, "position").goodDirection()).isEqualTo("DOWN");
     }
 
     @Test

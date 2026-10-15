@@ -6153,13 +6153,17 @@ components:
 
     OverviewMetric:
       type: object
-      required: [metric, label, unit, noise, provisionalDays, series]
+      required: [metric, label, unit, goodDirection, noise, provisionalDays, series]
       properties:
         metric: {type: string}
         label: {type: string}
         unit:
           type: string
           enum: [COUNT, CURRENCY, PERCENT, POSITION]
+        goodDirection:
+          type: string
+          enum: [UP, DOWN]
+          description: Which way a move reads as good news (DOWN for cost per install or search position).
         value: {type: number, format: double, nullable: true}
         previous: {type: number, format: double, nullable: true}
         change: {type: number, format: double, nullable: true}

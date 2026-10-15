@@ -108,7 +108,8 @@ public class MarketingOverviewController implements MarketingOverviewApi {
     }
 
     private static OverviewMetric toMetric(MarketingOverviewQueryService.MetricView m) {
-        return new OverviewMetric(m.metric(), m.label(), OverviewMetric.UnitEnum.valueOf(m.unit().name()), m.noise(),
+        return new OverviewMetric(m.metric(), m.label(), OverviewMetric.UnitEnum.valueOf(m.unit().name()),
+                OverviewMetric.GoodDirectionEnum.valueOf(m.goodDirection()), m.noise(),
                 m.provisionalDays(),
                 m.series().stream().map(p -> new OverviewSeriesPoint(p.day(), p.provisional()).value(p.value())).toList())
                 .value(m.value())

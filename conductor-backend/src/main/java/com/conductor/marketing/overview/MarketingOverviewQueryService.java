@@ -84,7 +84,7 @@ public class MarketingOverviewQueryService {
 
     public record TargetView(double value, String direction) {}
 
-    public record MetricView(String metric, String label, Unit unit, Double value, Double previous, Double change,
+    public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
                              List<Point> series) {}
 
@@ -565,7 +565,7 @@ public class MarketingOverviewQueryService {
         TargetView targetView = target == null ? null
                 : new TargetView(target.getTarget().doubleValue(), target.getDirection());
         boolean noise = value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
-        return new MetricView(metric.key(), metric.label(), metric.unit(), value, previous, change, changePct,
+        return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous, change, changePct,
                 noise, provisionalDays, targetView, series);
     }
 
