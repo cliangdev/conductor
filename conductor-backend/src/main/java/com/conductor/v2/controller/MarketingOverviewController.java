@@ -123,6 +123,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .change(m.change())
                 .changePct(m.changePct())
                 .historyStartsOn(m.historyStartsOn())
+                .asOf(m.asOf())
                 .target(m.target() == null ? null : toTarget(m.target()));
     }
 

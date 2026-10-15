@@ -466,6 +466,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(followers.value()).isEqualTo(240.0);
         assertThat(followers.previous()).isNull();
         assertThat(followers.historyStartsOn()).isEqualTo(day(15));
+        assertThat(followers.asOf()).isEqualTo(day(15));
     }
 
     @Test
@@ -531,5 +532,43 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         // path starts never convert from anything, and nothing converts across paths
         assertThat(both.funnel()).filteredOn(s -> s.key().equals("ads_taps") || s.key().equals("web_visitors"))
                 .allSatisfy(s -> assertThat(s.conversionFromKey()).isNull());
+    }
+
+    @Test
+    void levelsReadTheLatestSnapshotUpToTodayEvenWhenTheFlowWindowEndsEarlier() {
+        String meta = connectFresh("meta");
+        String tiktok = connectFresh("tiktok");
+        String youtube = connectFresh("youtube");
+        // flows settle through Oct 13 only
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(13), 4, false);
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(14), 9, true);
+        // snapshots: one week earlier, and today
+        put(meta, "meta", "SOCIAL", "followers", "facebook", day(8), 90, false);
+        put(meta, "meta", "SOCIAL", "followers", "instagram", day(8), 190, false);
+        put(meta, "meta", "SOCIAL", "followers", "facebook", day(15), 100, false);
+        put(meta, "meta", "SOCIAL", "followers", "instagram", day(15), 200, false);
+        put(tiktok, "tiktok", "SOCIAL", "followers", "tiktok", day(15), 300, false);
+        put(youtube, "youtube", "SOCIAL", "followers", "youtube", day(15), 50, false);
+        put(youtube, "youtube", "SOCIAL", "channel_views", "youtube", day(15), 999, false);
+
+        Overview overview = overview7();
+        ChannelView social = channel(overview, "SOCIAL");
+        MetricView followers = metric(social, "followers");
+
+        assertThat(social.dataCompleteThrough()).isEqualTo(day(13));       // the flow window is unchanged
+        assertThat(metric(social, "website_clicks").value()).isEqualTo(4.0);
+        assertThat(followers.value()).isEqualTo(650.0);
+        assertThat(followers.asOf()).isEqualTo(day(15));
+        assertThat(followers.previous()).isEqualTo(280.0);                 // snapshots on or before Oct 8
+        assertThat(followers.historyStartsOn()).isNull();
+        assertThat(metric(social, "channel_views").value()).isEqualTo(999.0);
+        assertThat(metric(social, "channel_views").previous()).isNull();
+        assertThat(metric(social, "channel_views").historyStartsOn()).isEqualTo(day(15));
+        assertThat(metric(social, "website_clicks").asOf()).isNull();
+
+        MarketingOverviewQueryService.DimensionTable platforms = service.channel(project.getId(),
+                MetricCatalog.channel("SOCIAL").orElseThrow(), 7, TODAY, NOW).dimensions().get(0);
+        assertThat(platforms.rows()).extracting(r -> r.key())
+                .containsExactlyInAnyOrder("tiktok", "instagram", "facebook", "youtube");
     }
 }

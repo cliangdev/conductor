@@ -92,7 +92,7 @@ public class MarketingOverviewQueryService {
 
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
-                             List<Point> series, LocalDate historyStartsOn) {}
+                             List<Point> series, LocalDate historyStartsOn, LocalDate asOf) {}
 
     public record ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                               List<ConnectionView> connections, ConnectHint connectHint,
@@ -533,6 +533,13 @@ public class MarketingOverviewQueryService {
             };
         }
 
+        /** The day of the latest snapshot of a level at or before {@code day} across its series, or null. */
+        LocalDate latestDay(Metric metric, LocalDate day) {
+            return levels.getOrDefault(metric.key(), Map.of()).values().stream()
+                    .map(s -> s.floorKey(day)).filter(java.util.Objects::nonNull)
+                    .max(Comparator.naturalOrder()).orElse(null);
+        }
+
         /** The first day this metric has any row (a derived metric: its numerator's), or null. */
         LocalDate firstDay(Metric metric) {
             return switch (metric.agg()) {
@@ -589,7 +596,11 @@ public class MarketingOverviewQueryService {
     }
 
     private MetricView metricView(Context ctx, MetricCatalog.Channel channel, ChannelData data, Metric metric,
-                                  Window w) {
+                                  Window flowWindow) {
+        // A level is a snapshot, not a flow: its value is the latest snapshot at or before today whatever the
+        // flow window, and its previous is the snapshot one window earlier than that.
+        LocalDate asOf = metric.agg() == Aggregation.LEVEL ? data.latestDay(metric, ctx.today) : null;
+        Window w = asOf != null ? windowEnding(ctx, asOf) : flowWindow;
         Double value = data.periodValue(metric, w.from(), w.to());
         Double previous = data.periodValue(metric, w.previousFrom(), w.previousTo());
         Double change = value != null && previous != null ? value - previous : null;
@@ -599,7 +610,8 @@ public class MarketingOverviewQueryService {
         // The window's days, then any days after it that have only provisional data, flagged so a chart can
         // draw them differently. Totals and changes above use complete days only.
         int provisionalDays = 0;
-        LocalDate seriesEnd = w.to().isAfter(ctx.yesterday) ? w.to() : ctx.yesterday;
+        LocalDate seriesEnd = metric.agg() == Aggregation.LEVEL ? w.to()
+                : (w.to().isAfter(ctx.yesterday) ? w.to() : ctx.yesterday);
         for (LocalDate day = w.from(); !day.isAfter(seriesEnd); day = day.plusDays(1)) {
             Double dayValue = data.dayValue(metric, day);
             boolean afterWindow = day.isAfter(w.to());
@@ -619,7 +631,7 @@ public class MarketingOverviewQueryService {
         boolean noise = value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
         LocalDate historyStartsOn = previous == null ? data.firstDay(metric) : null;
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
-                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn);
+                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf);
     }
 
     /**
@@ -700,7 +712,8 @@ public class MarketingOverviewQueryService {
                                           Set<String> connectionIds, Window w) {
         List<String> sources = dimension.columns().stream().map(Column::source).filter(s -> s != null).distinct().toList();
         List<ChannelMetricDaily> rows = dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(
-                ctx.projectId, channel.channel().name(), sources, ctx.historyStart.isBefore(w.from()) ? ctx.historyStart : w.from(), w.to()).stream()
+                ctx.projectId, channel.channel().name(), sources, ctx.historyStart.isBefore(w.from()) ? ctx.historyStart : w.from(),
+                w.to().isBefore(ctx.today) ? ctx.today : w.to()).stream()
                 .filter(r -> !r.getDimensionKey().isEmpty() && connectionIds.contains(r.getConnectionId()))
                 .toList();
 
@@ -712,7 +725,7 @@ public class MarketingOverviewQueryService {
             }
             Map<String, Double> perKey = column.agg() == Aggregation.LEVEL
                     ? latestPerSeries(rows, column.source())
-                    : sumPerKey(rows, column.source(), w.from());
+                    : sumPerKey(rows, column.source(), w.from(), w.to());
             perKey.forEach((key, value) -> byKey.computeIfAbsent(key, k -> new HashMap<>()).put(column.key(), value));
         }
         for (Map<String, Double> values : byKey.values()) {
@@ -756,10 +769,11 @@ public class MarketingOverviewQueryService {
         return new DimensionRowView(key, label, ordered);
     }
 
-    private static Map<String, Double> sumPerKey(List<ChannelMetricDaily> rows, String metric, LocalDate from) {
+    private static Map<String, Double> sumPerKey(List<ChannelMetricDaily> rows, String metric, LocalDate from,
+                                                 LocalDate to) {
         Map<String, Double> sums = new LinkedHashMap<>();
         for (ChannelMetricDaily row : rows) {
-            if (row.getMetric().equals(metric) && !row.getDay().isBefore(from)) {
+            if (row.getMetric().equals(metric) && !row.getDay().isBefore(from) && !row.getDay().isAfter(to)) {
                 sums.merge(row.getDimensionKey(), row.getValue().doubleValue(), Double::sum);
             }
         }

@@ -96,7 +96,7 @@ class MarketingOverviewControllerTest {
 
     private static ChannelView webChannel(TargetView target) {
         MetricView visitors = new MetricView("visitors", "Visitors", MetricCatalog.Unit.COUNT, "UP", 70.0, 35.0, 35.0, 1.0,
-                false, 2, target, List.of(new MarketingOverviewQueryService.Point(LocalDate.of(2026, 10, 14), 10.0, true)), null);
+                false, 2, target, List.of(new MarketingOverviewQueryService.Point(LocalDate.of(2026, 10, 14), 10.0, true)), null, LocalDate.of(2026, 10, 14));
         return new ChannelView("WEB", "Web", "LIVE", null,
                 List.of(new MarketingOverviewQueryService.ConnectionView("c1", "posthog", "Site", "LIVE")),
                 new MarketingOverviewQueryService.ConnectHint("posthog",

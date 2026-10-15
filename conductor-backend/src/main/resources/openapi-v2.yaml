@@ -6199,6 +6199,11 @@ components:
         previous: {type: number, format: double, nullable: true}
         change: {type: number, format: double, nullable: true}
         changePct: {type: number, format: double, nullable: true}
+        asOf:
+          type: string
+          format: date
+          nullable: true
+          description: For a level metric (followers etc.), the day of the snapshot `value` reads, the latest at or before today whatever the flow window; `previous` is the snapshot one window earlier. Null for flow metrics and when no snapshot exists.
         historyStartsOn:
           type: string
           format: date
