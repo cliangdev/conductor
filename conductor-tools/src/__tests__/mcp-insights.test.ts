@@ -175,3 +175,104 @@ describe('get_marketing_insights', () => {
     await expect(getMarketingInsights(config, {})).rejects.toMatchObject({ status: 404, message: 'Project not found' })
   })
 })
+
+describe('get_marketing_insights include channels', () => {
+  const metric = (series: { day: string; value: number }[] = []) => ({
+    metric: 'visitors', label: 'Visitors', unit: 'COUNT', value: 120.123456, previous: 100, change: 20.1, changePct: 0.2012,
+    noise: false, provisionalDays: 1, target: { value: 150, direction: 'UP' }, series,
+  })
+  const overview = () => ({
+    window: { from: '2026-09-17', to: '2026-10-14', previousFrom: '2026-08-20', previousTo: '2026-09-16' },
+    funnel: [
+      { key: 'visits', label: 'Visits', value: 120, previous: 100, change: 0.2, source: 'WEB', available: true },
+      { key: 'installs', label: 'Installs', source: 'STORE', available: false, unavailableReason: 'Not connected' },
+    ],
+    channels: [
+      { channel: 'WEB', label: 'Web', status: 'LIVE', dataCompleteThrough: '2026-10-13', connections: [{ id: 'c1' }], metrics: [metric([{ day: '2026-10-13', value: 1 }])] },
+      { channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connections: [], connectHint: { connectorId: 'apple-search-ads' }, metrics: [metric()] },
+    ],
+  })
+  const days = Array.from({ length: 90 }, (_, i) => ({ day: `d${i}`, value: i, provisional: i === 89 }))
+  const detail = () => ({
+    window: { from: '2026-07-17', to: '2026-10-14', previousFrom: 'a', previousTo: 'b' },
+    channel: { channel: 'WEB', label: 'Web', status: 'LIVE', dataCompleteThrough: '2026-10-13', connections: [], metrics: [metric(days)] },
+    dimensions: [
+      {
+        key: 'referrers', label: 'Referrers', columns: [{ key: 'visits', label: 'Visits', unit: 'COUNT' }],
+        rows: Array.from({ length: 15 }, (_, i) => ({ key: `r${i}`, label: `ref${i}`, values: [i] })),
+      },
+    ],
+  })
+
+  it('default output has no marketing section and does not call the overview', async () => {
+    mocked(apiGet).mockResolvedValue(fixture())
+    const result = await getMarketingInsights(config, { include: ['posts'] })
+    expect(result).toHaveProperty('totals')
+    expect(result).not.toHaveProperty('marketing')
+    expect(mocked(apiGet)).toHaveBeenCalledTimes(1)
+    expect(mocked(apiGet).mock.calls[0]![0]).toBe('/api/v2/projects/proj-1/marketing/insights')
+  })
+
+  it('channels only: compact channels and funnel, no posts, no series', async () => {
+    mocked(apiGet).mockResolvedValue(overview())
+    const result = await getMarketingInsights(config, { include: ['channels'], window: '7d' })
+    expect(mocked(apiGet).mock.calls[0]![0]).toBe('/api/v2/projects/proj-1/marketing/overview?window=7d')
+    expect(result).not.toHaveProperty('totals')
+    const m = result['marketing'] as Record<string, any>
+    expect(m.funnel).toEqual([{ key: 'visits', label: 'Visits', value: 120, change: 0.2 }])
+    expect(m.unavailableStages).toEqual([{ key: 'installs', reason: 'Not connected' }])
+    const web = m.channels[0]
+    expect(web.dataCompleteThrough).toBe('2026-10-13')
+    expect(web.metrics[0]).toEqual({
+      metric: 'visitors', label: 'Visitors', unit: 'COUNT', value: 120.1235, previous: 100, changePct: 0.2012, noise: false,
+      target: { value: 150, direction: 'UP' },
+    })
+    expect(m.channels[1]).toEqual({ channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connectHint: 'apple-search-ads' })
+  })
+
+  it('maps 30d to the 28d overview window', async () => {
+    mocked(apiGet).mockResolvedValue(overview())
+    await getMarketingInsights(config, { include: ['channels'], window: '30d' })
+    expect(mocked(apiGet).mock.calls[0]![0]).toContain('overview?window=28d')
+    await getMarketingInsights(config, { include: ['channels'] })
+    expect(mocked(apiGet).mock.calls[1]![0]).toContain('overview?window=28d')
+  })
+
+  it('both: posts keys plus a marketing section', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) => (path.includes('/overview') ? overview() : fixture()))
+    const result = await getMarketingInsights(config, { include: ['posts', 'channels'] })
+    expect(result).toHaveProperty('totals')
+    expect(result).toHaveProperty('marketing')
+  })
+
+  it('channel detail: series downsampled to 14 points, dimension rows capped at 10', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) => (path.includes('/channels/') ? detail() : overview()))
+    const result = await getMarketingInsights(config, { include: ['channels'], channel: 'WEB', window: '30d' })
+    const calls = mocked(apiGet).mock.calls.map((c) => c[0])
+    expect(calls).toContain('/api/v2/projects/proj-1/marketing/channels/WEB?window=28d')
+    const d = (result['marketing'] as Record<string, any>).channelDetail
+    const series = d.metrics[0].series
+    expect(series).toHaveLength(14)
+    expect(series[0].day).toBe('d0')
+    expect(series[13]).toEqual({ day: 'd89', value: 89, provisional: true })
+    expect(d.dimensions[0].rows).toHaveLength(10)
+    expect(d.dimensions[0].totalRows).toBe(15)
+    expect(d.dimensions[0].columns).toEqual(['visits'])
+  })
+
+  it('90d with a channel reads only the detail endpoint', async () => {
+    mocked(apiGet).mockResolvedValue(detail())
+    const result = await getMarketingInsights(config, { include: ['channels'], channel: 'WEB', window: '90d' })
+    expect(mocked(apiGet)).toHaveBeenCalledTimes(1)
+    expect(mocked(apiGet).mock.calls[0]![0]).toBe('/api/v2/projects/proj-1/marketing/channels/WEB?window=90d')
+    expect(result['marketing']).toHaveProperty('channelDetail')
+  })
+
+  it('rejects invalid combinations with a plain message and no request', async () => {
+    await expect(getMarketingInsights(config, { include: ['channels'], window: '90d' })).rejects.toThrow(/90d is only available for one channel/)
+    await expect(getMarketingInsights(config, { channel: 'WEB' })).rejects.toThrow(/needs include/)
+    await expect(getMarketingInsights(config, { include: ['channels'], channel: 'TV' })).rejects.toThrow(/Unknown channel/)
+    await expect(getMarketingInsights(config, { include: ['channels'], platform: 'instagram' })).rejects.toThrow(/only filters posts/)
+    expect(mocked(apiGet)).not.toHaveBeenCalled()
+  })
+})

@@ -160,7 +160,7 @@ function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> 
  * totals and per-platform/per-format engagement, the best hours and weekdays to post, the best and worst
  * destinations, and movers vs. the prior window of the same length.
  */
-export async function getMarketingInsights(
+async function getPostInsights(
   config: Config,
   params: { window?: '7d' | '30d' | '90d'; platform?: string }
 ): Promise<Record<string, unknown>> {
@@ -188,4 +188,190 @@ export async function getMarketingInsights(
     coverage: data.coverage,
     topCreatives: (data.creatives ?? []).slice(0, 5).map(trimCreative),
   }
+}
+
+// --- Channels: the marketing overview (/marketing/overview) and one channel's detail ---
+
+type MarketingChannel = 'WEB' | 'SEARCH' | 'SOCIAL' | 'ADS' | 'STORE'
+const CHANNELS: MarketingChannel[] = ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE']
+const MAX_SERIES_POINTS = 14
+const MAX_DIMENSION_ROWS = 10
+
+interface OverviewSeriesPoint {
+  day: string
+  value?: number | null
+  provisional?: boolean | null
+}
+
+interface OverviewMetric {
+  metric: string
+  label: string
+  unit: string
+  value?: number | null
+  previous?: number | null
+  changePct?: number | null
+  noise: boolean
+  target?: { value: number; direction: string } | null
+  series?: OverviewSeriesPoint[]
+}
+
+interface OverviewChannel {
+  channel: string
+  label: string
+  status: string
+  dataCompleteThrough?: string | null
+  connectHint?: { connectorId: string } | null
+  metrics: OverviewMetric[]
+}
+
+interface OverviewFunnelStage {
+  key: string
+  label: string
+  value?: number | null
+  change?: number | null
+  source: string
+  available: boolean
+  unavailableReason?: string | null
+}
+
+interface OverviewDimension {
+  key: string
+  label: string
+  columns: { key: string; label: string; unit: string }[]
+  rows: { key: string; label: string; values: (number | null)[] }[]
+}
+
+interface OverviewResponse {
+  window: Record<string, string>
+  funnel: OverviewFunnelStage[]
+  channels: OverviewChannel[]
+}
+
+interface ChannelDetailResponse {
+  window: Record<string, string>
+  channel: OverviewChannel
+  dimensions: OverviewDimension[]
+  topPosts?: InsightsPost[]
+}
+
+/** Evenly samples a series down to at most `max` points, always keeping the first and last. */
+export function downsample<T>(points: T[], max: number): T[] {
+  if (points.length <= max) return points
+  const out: T[] = []
+  for (let i = 0; i < max; i++) out.push(points[Math.round((i * (points.length - 1)) / (max - 1))]!)
+  return out
+}
+
+function trimMetric(m: OverviewMetric, withSeries: boolean): Record<string, unknown> {
+  return omitNulls({
+    metric: m.metric,
+    label: m.label,
+    unit: m.unit,
+    value: round4(m.value),
+    previous: round4(m.previous),
+    changePct: round4(m.changePct),
+    noise: m.noise,
+    target: m.target,
+    series: withSeries
+      ? downsample(m.series ?? [], MAX_SERIES_POINTS).map((p) =>
+          omitNulls({ day: p.day, value: round4(p.value), provisional: p.provisional ? true : null })
+        )
+      : null,
+  })
+}
+
+function trimChannel(c: OverviewChannel, withSeries: boolean): Record<string, unknown> {
+  const hasData = c.status === 'LIVE' || c.status === 'STALE'
+  return omitNulls({
+    channel: c.channel,
+    label: c.label,
+    status: c.status,
+    dataCompleteThrough: c.dataCompleteThrough,
+    connectHint: c.status === 'NOT_CONNECTED' ? c.connectHint?.connectorId : null,
+    metrics: hasData ? c.metrics.map((m) => trimMetric(m, withSeries)) : null,
+  })
+}
+
+function trimDimension(d: OverviewDimension): Record<string, unknown> {
+  return {
+    key: d.key,
+    label: d.label,
+    columns: d.columns.map((c) => c.key),
+    rows: d.rows.slice(0, MAX_DIMENSION_ROWS).map((r) => ({ label: r.label, values: r.values })),
+    ...(d.rows.length > MAX_DIMENSION_ROWS ? { totalRows: d.rows.length } : {}),
+  }
+}
+
+function trimFunnel(funnel: OverviewFunnelStage[]) {
+  return {
+    funnel: funnel
+      .filter((s) => s.available)
+      .map((s) => omitNulls({ key: s.key, label: s.label, value: round4(s.value), change: round4(s.change) })),
+    unavailableStages: funnel
+      .filter((s) => !s.available)
+      .map((s) => omitNulls({ key: s.key, reason: s.unavailableReason })),
+  }
+}
+
+/** Per-channel totals, change, status and target; plus one channel's dimension tables when `channel` is set. */
+async function getChannelInsights(
+  config: Config,
+  params: { window?: '7d' | '30d' | '90d'; channel?: MarketingChannel }
+): Promise<Record<string, unknown>> {
+  const window = params.window ?? '30d'
+  // The backend's windows are 7d / 28d (overview) and 7d / 28d / 90d (detail).
+  const backendWindow = window === '30d' ? '28d' : window
+  const base = `/api/v2/projects/${config.projectId}/marketing`
+  const out: Record<string, unknown> = {}
+
+  if (window !== '90d') {
+    const overview = await apiGet<OverviewResponse>(`${base}/overview?window=${backendWindow}`, config)
+    out['window'] = overview.window
+    Object.assign(out, trimFunnel(overview.funnel))
+    out['channels'] = overview.channels.map((c) => trimChannel(c, false))
+  }
+
+  if (params.channel) {
+    const detail = await apiGet<ChannelDetailResponse>(`${base}/channels/${params.channel}?window=${backendWindow}`, config)
+    if (window === '90d') out['window'] = detail.window
+    out['channelDetail'] = {
+      ...trimChannel(detail.channel, true),
+      dimensions: detail.dimensions.map(trimDimension),
+      ...(detail.topPosts?.length ? { topPosts: detail.topPosts.slice(0, 5).map(trimPost) } : {}),
+    }
+  }
+  return out
+}
+
+/**
+ * What is working in marketing. `include` picks the sections: `posts` (default; today's output, unchanged)
+ * and/or `channels` (the per-channel overview, plus one channel's dimension tables when `channel` is given).
+ */
+export async function getMarketingInsights(
+  config: Config,
+  params: { window?: '7d' | '30d' | '90d'; platform?: string; include?: ('posts' | 'channels')[]; channel?: string }
+): Promise<Record<string, unknown>> {
+  const include = params.include && params.include.length > 0 ? params.include : ['posts']
+  for (const i of include) {
+    if (i !== 'posts' && i !== 'channels') throw new Error(`Unknown include "${i}": use "posts" and/or "channels"`)
+  }
+  const wantPosts = include.includes('posts')
+  const wantChannels = include.includes('channels')
+  if (params.channel !== undefined && !CHANNELS.includes(params.channel as MarketingChannel)) {
+    throw new Error(`Unknown channel "${params.channel}": use one of ${CHANNELS.join(', ')}`)
+  }
+  if (params.channel && !wantChannels) {
+    throw new Error('`channel` needs include: ["channels"]')
+  }
+  if (wantChannels && params.window === '90d' && !params.channel) {
+    throw new Error("window 90d is only available for one channel's detail: pass `channel`, or use 7d or 30d for the overview")
+  }
+  if (params.platform && !wantPosts) {
+    throw new Error('`platform` only filters posts: add "posts" to include')
+  }
+
+  if (!wantChannels) return getPostInsights(config, params)
+  const marketing = await getChannelInsights(config, { window: params.window, channel: params.channel as MarketingChannel | undefined })
+  if (!wantPosts) return { marketing }
+  return { ...(await getPostInsights(config, params)), marketing }
 }
