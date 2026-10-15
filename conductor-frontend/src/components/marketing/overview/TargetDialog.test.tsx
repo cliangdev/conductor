@@ -23,7 +23,7 @@ describe('TargetDialog', () => {
   })
 
   it('defaults the direction to the metric good direction', () => {
-    setup(metric({ metric: 'position', label: 'Average position', unit: 'POSITION' }))
+    setup(metric({ metric: 'position', label: 'Average position', unit: 'POSITION', goodDirection: 'DOWN' }))
     expect(screen.getByLabelText('Good direction')).toHaveValue('DOWN')
   })
 

@@ -21,6 +21,7 @@ export function metric(overrides: Partial<OverviewMetric> = {}): OverviewMetric 
     metric: 'clicks',
     label: 'Clicks',
     unit: 'COUNT',
+    goodDirection: 'UP',
     value: 1200,
     previous: 1000,
     change: 200,
@@ -85,7 +86,7 @@ export function overviewResponse(overrides: Partial<MarketingOverviewResponse> =
             noise: true,
             target: { value: 0.04, direction: 'UP' },
           }),
-          metric({ metric: 'position', label: 'Average position', unit: 'POSITION', value: 8.2, previous: 9.1, change: -0.9, changePct: -0.099 }),
+          metric({ metric: 'position', label: 'Average position', unit: 'POSITION', goodDirection: 'DOWN', value: 8.2, previous: 9.1, change: -0.9, changePct: -0.099 }),
         ],
       }),
       channel({

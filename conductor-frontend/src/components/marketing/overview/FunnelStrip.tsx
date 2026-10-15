@@ -11,7 +11,7 @@ const FRESHNESS_NOTE =
 function stageChange(stage: OverviewFunnelStage) {
   const pct =
     stage.change !== null && stage.change !== undefined && stage.previous ? stage.change / Math.abs(stage.previous) : null
-  return { metric: stage.key, label: stage.label, unit: 'COUNT' as const, change: stage.change, changePct: pct, noise: false, series: [] }
+  return { metric: stage.key, label: stage.label, unit: 'COUNT' as const, goodDirection: 'UP' as const, change: stage.change, changePct: pct, noise: false, series: [] }
 }
 
 /** The acquisition funnel, left to right (stacked on phones). A stage with no source yet is muted and

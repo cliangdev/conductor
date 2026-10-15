@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
 import { Select } from '@/components/ui/select'
 import { apiErrorMessage } from '@/lib/api'
-import { goodDirection, inputToTarget, targetToInput } from './format'
+import { inputToTarget, targetToInput } from './format'
 import type { OverviewMetric, TargetDirection } from './types'
 
 export interface TargetDialogProps {
@@ -32,7 +32,7 @@ export function TargetDialog({ open, onOpenChange, metric, onSave, onRemove }: T
   useEffect(() => {
     if (!open || !metric) return
     setText(metric.target ? targetToInput(metric.target.value, metric.unit) : '')
-    setDirection(metric.target?.direction ?? goodDirection(metric))
+    setDirection(metric.target?.direction ?? metric.goodDirection)
     setError(null)
     setBusy(false)
   }, [open, metric])

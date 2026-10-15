@@ -26,20 +26,13 @@ export function formatMetricValue(value: number | null | undefined, unit: Metric
   }
 }
 
-/** Which way a move reads as good news. Mirrors the backend's metric catalog (lower is better for
- *  position, spend and every cost-per metric). */
-export function goodDirection(metric: Pick<OverviewMetric, 'metric' | 'unit'>): TargetDirection {
-  if (metric.unit === 'POSITION') return 'DOWN'
-  return /(^|_)(spend|cost|cpi|cpa|cpc|cpm|bounce)(_|$)/.test(metric.metric) ? 'DOWN' : 'UP'
-}
-
 export type ChangeTone = 'good' | 'bad' | 'neutral'
 
 export function changeTone(metric: OverviewMetric): ChangeTone {
   const change = metric.change
   if (change === null || change === undefined || change === 0 || metric.noise) return 'neutral'
   const up = change > 0
-  return up === (goodDirection(metric) === 'UP') ? 'good' : 'bad'
+  return up === (metric.goodDirection === 'UP') ? 'good' : 'bad'
 }
 
 export const TONE_CLASS: Record<ChangeTone, string> = {

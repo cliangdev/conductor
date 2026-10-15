@@ -50,13 +50,13 @@ describe('ChannelCard', () => {
   })
 
   it('treats a falling position as good', () => {
-    renderCard(channel({ metrics: [metric({ metric: 'position', label: 'Average position', unit: 'POSITION', value: 8.2, change: -0.9, changePct: -0.099 })] }))
+    renderCard(channel({ metrics: [metric({ metric: 'position', label: 'Average position', unit: 'POSITION', goodDirection: 'DOWN', value: 8.2, change: -0.9, changePct: -0.099 })] }))
     expect(screen.getByText('8.2')).toBeInTheDocument()
     expect(screen.getByText('-9.9%').closest('span')).toHaveClass('text-status-done')
   })
 
   it('treats a rising cost per install as bad', () => {
-    renderCard(channel({ metrics: [metric({ metric: 'cost_per_install', label: 'Cost per install', unit: 'CURRENCY', value: 2.5, change: 0.5, changePct: 0.25 })] }))
+    renderCard(channel({ metrics: [metric({ metric: 'cost_per_install', label: 'Cost per install', unit: 'CURRENCY', goodDirection: 'DOWN', value: 2.5, change: 0.5, changePct: 0.25 })] }))
     expect(screen.getByText('$2.50')).toBeInTheDocument()
     expect(screen.getByText('+25.0%').closest('span')).toHaveClass('text-status-failed')
   })

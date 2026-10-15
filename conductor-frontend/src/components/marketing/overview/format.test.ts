@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { changeTone, conversionRate, formatMetricValue, goodDirection, inputToTarget, targetLine, targetToInput } from './format'
+import { changeTone, conversionRate, formatMetricValue, inputToTarget, targetLine, targetToInput } from './format'
 import { metric } from './test-fixtures'
 
 describe('formatMetricValue', () => {
@@ -19,11 +19,10 @@ describe('changeTone', () => {
   })
 
   it('flips for position and cost metrics where lower is better', () => {
-    expect(goodDirection(metric({ metric: 'position', unit: 'POSITION' }))).toBe('DOWN')
-    expect(changeTone(metric({ metric: 'position', unit: 'POSITION', change: -0.9 }))).toBe('good')
-    expect(changeTone(metric({ metric: 'position', unit: 'POSITION', change: 0.9 }))).toBe('bad')
-    expect(changeTone(metric({ metric: 'cost_per_install', unit: 'CURRENCY', change: 1 }))).toBe('bad')
-    expect(changeTone(metric({ metric: 'cost_per_install', unit: 'CURRENCY', change: -1 }))).toBe('good')
+    expect(changeTone(metric({ unit: 'POSITION', goodDirection: 'DOWN', change: -0.9 }))).toBe('good')
+    expect(changeTone(metric({ unit: 'POSITION', goodDirection: 'DOWN', change: 0.9 }))).toBe('bad')
+    expect(changeTone(metric({ unit: 'CURRENCY', goodDirection: 'DOWN', change: 1 }))).toBe('bad')
+    expect(changeTone(metric({ unit: 'CURRENCY', goodDirection: 'DOWN', change: -1 }))).toBe('good')
   })
 
   it('stays neutral inside normal variation or with no change', () => {

@@ -61,6 +61,8 @@ export interface OverviewMetric {
   metric: string
   label: string
   unit: MetricUnit
+  /** Which way a move reads as good news; also the default direction of a target. */
+  goodDirection: TargetDirection
   value?: number | null
   previous?: number | null
   change?: number | null
