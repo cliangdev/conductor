@@ -14,12 +14,10 @@ import com.conductor.integration.IngestRequest;
 import com.conductor.integration.IngestSink;
 import com.conductor.integration.IngestSpec;
 import com.conductor.integration.MetricChannel;
-import com.conductor.repository.ChannelMetricDailyRepository;
 import com.conductor.service.ConnectionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -32,7 +30,6 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -47,7 +44,7 @@ class ChannelMetricsFeedPullerTest {
 
     private ConnectorRegistry registry;
     private ConnectionService connectionService;
-    private ChannelMetricDailyRepository repository;
+    private ChannelMetricDailyStore store;
     private ChannelMetricsSource source;
     private ChannelMetricsFeedPuller puller;
     private ConnectorFeed feed;
@@ -62,7 +59,7 @@ class ChannelMetricsFeedPullerTest {
     void setUp() {
         registry = mock(ConnectorRegistry.class);
         connectionService = mock(ConnectionService.class);
-        repository = mock(ChannelMetricDailyRepository.class);
+        store = mock(ChannelMetricDailyStore.class);
         Connector connector = mock(Connector.class, withSettings().extraInterfaces(ChannelMetricsSource.class));
         source = (ChannelMetricsSource) connector;
         when(source.channel()).thenReturn(MetricChannel.SEARCH);
@@ -88,14 +85,17 @@ class ChannelMetricsFeedPullerTest {
         spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null, null, null,
                 null, IngestSink.CHANNEL_METRICS, null);
 
-        when(repository.upsert(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), any(), anyBoolean())).thenAnswer(inv -> {
-            upserts.add(new Upsert(inv.getArgument(4), inv.getArgument(5), inv.getArgument(6), inv.getArgument(7),
-                    inv.getArgument(8), inv.getArgument(9)));
-            return 1;
-        });
+        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+                .thenAnswer(inv -> {
+                    LocalDate provisionalFrom = inv.getArgument(6);
+                    for (ChannelMetricPoint p : inv.<List<ChannelMetricPoint>>getArgument(7)) {
+                        upserts.add(new Upsert(inv.getArgument(3), p.metric(), p.dimensionKey(), p.day(), p.value(),
+                                !p.day().isBefore(provisionalFrom)));
+                    }
+                    return ((List<?>) inv.getArgument(7)).size();
+                });
 
-        puller = new ChannelMetricsFeedPuller(registry, connectionService, repository, new ObjectMapper(),
+        puller = new ChannelMetricsFeedPuller(registry, connectionService, store, new ObjectMapper(),
                 Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
     }
 
@@ -185,7 +185,7 @@ class ChannelMetricsFeedPullerTest {
 
         assertThat(batch.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         assertThat(batch.errorMessage()).isEqualTo("reconnect");
-        verify(repository, never()).upsert(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -207,14 +207,12 @@ class ChannelMetricsFeedPullerTest {
     }
 
     @Test
-    void theUpsertCarriesTheConnectionIdentity() {
+    void theWindowIsWrittenInOneCallWithTheConnectionIdentityAndBounds() {
         when(source.pullDaily(any(), any(), any())).thenReturn(List.of(point("clicks", TODAY, 1)));
 
         pull(null);
 
-        ArgumentCaptor<String> project = ArgumentCaptor.forClass(String.class);
-        verify(repository).upsert(anyString(), project.capture(), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq("clicks"), eq(""), eq(TODAY), any(), eq(true));
-        assertThat(project.getValue()).isEqualTo("proj-1");
+        verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
+                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any());
     }
 }

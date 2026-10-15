@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
 
     @Autowired private ChannelMetricDailyRepository repository;
+    @Autowired private com.conductor.integration.ingest.ChannelMetricDailyStore store;
     @Autowired private ChannelMetricTargetRepository targetRepository;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
@@ -66,6 +67,51 @@ class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
                 dimension, day, new BigDecimal(value), provisional);
         entityManager.flush();
         entityManager.clear();
+    }
+
+    private void replace(LocalDate from, LocalDate to, com.conductor.integration.ChannelMetricPoint... points) {
+        store.replaceWindow(project.getId(), connectionId, "gsc", "SEARCH", from, to, to.minusDays(1), List.of(points));
+        entityManager.flush();
+        entityManager.clear();
+    }
+
+    private static com.conductor.integration.ChannelMetricPoint pt(String metric, String dim, LocalDate day, double v) {
+        return com.conductor.integration.ChannelMetricPoint.of(metric, dim, day, v);
+    }
+
+    @Test
+    void batchedWindowWriteIsIdempotentAndRestatesInPlace() {
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        List<com.conductor.integration.ChannelMetricPoint> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 1200; i++) {
+            many.add(pt("query_clicks", "q" + i, d, i));
+        }
+        many.add(pt("clicks", "", d, 5));
+        com.conductor.integration.ChannelMetricPoint[] arr = many.toArray(new com.conductor.integration.ChannelMetricPoint[0]);
+        replace(d, d, arr);
+        replace(d, d, arr);
+        replace(d, d, pt("clicks", "", d, 9));
+
+        List<ChannelMetricDaily> rows = repository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(connectionId);
+        assertThat(rows).hasSize(1201);
+        assertThat(rows).filteredOn(r -> r.getMetric().equals("clicks")).singleElement()
+                .satisfies(r -> assertThat(r.getValue()).isEqualByComparingTo("9"));
+    }
+
+    @Test
+    void dimensionRowsNoLongerReturnedAreRemovedOnlyForReturnedMetricDaysInTheWindow() {
+        LocalDate d1 = LocalDate.of(2026, 10, 10);
+        LocalDate d2 = d1.plusDays(1);
+        LocalDate old = d1.minusDays(30);
+        replace(old, d2, pt("query_clicks", "gone", d1, 1), pt("query_clicks", "kept", d1, 2),
+                pt("query_clicks", "other-day", d2, 3), pt("query_clicks", "old", old, 4));
+
+        // Restated pull of d1 only: "gone" dropped out of the top N; d2 returned nothing, old is outside.
+        replace(d1, d2, pt("query_clicks", "kept", d1, 2), pt("query_clicks", "new", d1, 1));
+
+        assertThat(repository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(connectionId))
+                .extracting(ChannelMetricDaily::getDimensionKey)
+                .containsExactlyInAnyOrder("old", "kept", "new", "other-day");
     }
 
     @Test

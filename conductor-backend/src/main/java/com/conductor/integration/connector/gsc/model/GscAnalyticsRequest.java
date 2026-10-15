@@ -11,7 +11,14 @@ public record GscAnalyticsRequest(
         List<String> dimensions,
         String type,
         int rowLimit,
-        List<GscDimensionFilterGroup> dimensionFilterGroups) {
+        List<GscDimensionFilterGroup> dimensionFilterGroups,
+        Integer startRow) {
+
+    public GscAnalyticsRequest(String startDate, String endDate, List<String> dimensions, String type,
+                               int rowLimit, List<GscDimensionFilterGroup> dimensionFilterGroups) {
+        this(startDate, endDate, dimensions, type, rowLimit, dimensionFilterGroups, null);
+    }
+
 
     /** Convenience constructor for queries without a type filter or dimension filters. */
     public GscAnalyticsRequest(String startDate, String endDate, List<String> dimensions, int rowLimit) {

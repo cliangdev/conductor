@@ -10,18 +10,17 @@ import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.IngestBatch;
 import com.conductor.integration.IngestRequest;
 import com.conductor.integration.IngestSpec;
-import com.conductor.repository.ChannelMetricDailyRepository;
 import com.conductor.service.ConnectionService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.UUID;
 
 /**
  * The {@code CHANNEL_METRICS} sink: one pull asks the connection's {@link ChannelMetricsSource} for a window
@@ -45,30 +44,31 @@ public class ChannelMetricsFeedPuller {
 
     private final ConnectorRegistry connectorRegistry;
     private final ConnectionService connectionService;
-    private final ChannelMetricDailyRepository repository;
+    private final ChannelMetricDailyStore store;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
                                     ConnectionService connectionService,
-                                    ChannelMetricDailyRepository repository,
+                                    ChannelMetricDailyStore store,
                                     ObjectMapper objectMapper) {
-        this(connectorRegistry, connectionService, repository, objectMapper, Clock.systemUTC());
+        this(connectorRegistry, connectionService, store, objectMapper, Clock.systemUTC());
     }
 
     ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
                              ConnectionService connectionService,
-                             ChannelMetricDailyRepository repository,
+                             ChannelMetricDailyStore store,
                              ObjectMapper objectMapper,
                              Clock clock) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
-        this.repository = repository;
+        this.store = store;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
 
+    @Transactional
     public IngestBatch pull(ConnectorFeed feed, IngestSpec spec, Connection connection, IngestRequest request) {
         ChannelMetricsSource source = connectorRegistry.getById(connection.getConnectorId())
                 .filter(ChannelMetricsSource.class::isInstance)
@@ -109,17 +109,8 @@ public class ChannelMetricsFeedPuller {
                     : IngestBatch.degraded(e.getMessage());
         }
 
-        String channel = source.channel().name();
-        int written = 0;
-        for (ChannelMetricPoint point : points) {
-            if (point.day() == null || point.value() == null || point.metric() == null) {
-                continue;
-            }
-            repository.upsert(UUID.randomUUID().toString(), connection.getProjectId(), connection.getId(),
-                    connection.getConnectorId(), channel, point.metric(), point.dimensionKey(), point.day(),
-                    point.value(), !point.day().isBefore(provisionalFrom));
-            written++;
-        }
+        int written = store.replaceWindow(connection.getProjectId(), connection.getId(), connection.getConnectorId(),
+                source.channel().name(), from, today, provisionalFrom, points);
         log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, today);
         return IngestBatch.empty("{\"" + CURSOR_LAST_DAY + "\":\"" + today + "\"}");
     }

@@ -9,6 +9,8 @@ import java.util.List;
  * give. Implemented by the connector bean itself; {@code ChannelMetricsFeedPuller} finds it through the
  * {@link ConnectorRegistry}.
  *
+ * <p>Days are the platform's own reporting days (project, property or org time zone), never re-bucketed to UTC.
+ *
  * <p>Implementations throw {@link ChannelMetricsSourceException} for an expected remote failure (bad
  * credentials, missing configuration, rate limit) and never return partial garbage: either the whole
  * window, or an exception.
@@ -18,7 +20,7 @@ public interface ChannelMetricsSource {
     /** Which channel the points of this source belong to. */
     MetricChannel channel();
 
-    /** Daily points for {@code from..to} inclusive (UTC days). Totals use an empty dimension key. */
+    /** Daily points for {@code from..to} inclusive (platform-local days). Totals use an empty dimension key. */
     List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to);
 
     /** How many days back the first pull reaches, capped by what the platform allows. */

@@ -69,15 +69,13 @@ class GscChannelMetricsTest {
                         MediaType.APPLICATION_JSON));
         server.expect(once(), requestTo(URL))
                 .andExpect(jsonPath("$.startDate").value("2026-10-01"))
-                .andExpect(jsonPath("$.endDate").value("2026-10-01"))
+                .andExpect(jsonPath("$.endDate").value("2026-10-03"))
                 .andExpect(jsonPath("$.dimensions[1]").value("query"))
-                .andExpect(jsonPath("$.rowLimit").value(100))
+                .andExpect(jsonPath("$.rowLimit").value(25000))
+                .andExpect(jsonPath("$.startRow").value(0))
                 .andRespond(withSuccess("""
                         {"rows":[{"keys":["2026-10-01","acme pricing"],"clicks":6,"impressions":90,"ctr":0.06,"position":2.0}]}""",
                         MediaType.APPLICATION_JSON));
-        server.expect(once(), requestTo(URL))
-                .andExpect(jsonPath("$.startDate").value("2026-10-02"))
-                .andRespond(withSuccess("{\"rows\":[]}", MediaType.APPLICATION_JSON));
 
         List<ChannelMetricPoint> points = connector.pullDaily(ctx(), FROM, TO);
 
@@ -95,6 +93,44 @@ class GscChannelMetricsTest {
         assertThat(points).filteredOn(p -> p.metric().equals("query_impressions"))
                 .singleElement().satisfies(p -> assertThat(p.value()).isEqualByComparingTo("90"));
         server.verify();
+    }
+
+    @Test
+    void queryBreakdownPagesUntilAShortPageAndKeepsTheTopHundredPerDayByClicksThenImpressions() {
+        server.expect(once(), requestTo(URL))
+                .andRespond(withSuccess("{\"rows\":[{\"keys\":[\"2026-10-01\"],\"clicks\":1,\"impressions\":1,\"ctr\":1,\"position\":1}]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(URL)).andExpect(jsonPath("$.startRow").value(0))
+                .andRespond(withSuccess(page(25000, 0), MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(URL)).andExpect(jsonPath("$.startRow").value(25000))
+                .andRespond(withSuccess(page(10, 25000), MediaType.APPLICATION_JSON));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), FROM, TO);
+
+        List<ChannelMetricPoint> kept = points.stream().filter(p -> p.metric().equals("query_clicks")).toList();
+        assertThat(kept).hasSize(100);
+        // Highest clicks win; of the clicks=5 rows, higher impressions win the last slot.
+        assertThat(kept).extracting(ChannelMetricPoint::dimensionKey).contains("top0", "top98").doesNotContain("top99", "low0");
+        assertThat(kept).extracting(ChannelMetricPoint::dimensionKey).contains("tie-high").doesNotContain("tie-low");
+        server.verify();
+    }
+
+    private static String page(int rows, int offset) {
+        StringBuilder sb = new StringBuilder("{\"rows\":[");
+        for (int i = 0; i < rows; i++) {
+            int n = offset + i;
+            String key;
+            double clicks;
+            double impr = 1;
+            if (n < 99) { key = "top" + n; clicks = 1000 - n; }
+            else if (n == 99) { key = "tie-high"; clicks = 5; impr = 50; }
+            else if (n == 100) { key = "tie-low"; clicks = 5; impr = 10; }
+            else { key = "low" + (n - 101); clicks = 1; }
+            if (i > 0) sb.append(',');
+            sb.append("{\"keys\":[\"2026-10-01\",\"").append(key).append("\"],\"clicks\":").append(clicks)
+                    .append(",\"impressions\":").append(impr).append(",\"ctr\":0,\"position\":1}");
+        }
+        return sb.append("]}").toString();
     }
 
     @Test

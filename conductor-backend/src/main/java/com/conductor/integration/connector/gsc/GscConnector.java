@@ -298,6 +298,9 @@ public class GscConnector implements FetchConnector, OAuth2Connector, ChannelMet
     // ── ChannelMetricsSource ────────────────────────────────────────────────
 
     static final int TOP_QUERIES_PER_DAY = 100;
+    static final int QUERY_PAGE_SIZE = 25000;
+    /** Safety stop: 40 pages is a million rows. */
+    static final int MAX_QUERY_PAGES = 40;
 
     @Override
     public MetricChannel channel() { return MetricChannel.SEARCH; }
@@ -328,18 +331,27 @@ public class GscConnector implements FetchConnector, OAuth2Connector, ChannelMet
                 points.add(ChannelMetricPoint.total("impressions", day, row.impressions()));
                 points.add(ChannelMetricPoint.total("position_x_impressions", day, row.position() * row.impressions()));
             }
-            // Per-day query breakdown: the API ranks across the whole window, so ask day by day.
-            for (GscAnalyticsRow dayRow : days) {
-                LocalDate day = LocalDate.parse(dayRow.firstKey());
-                String d = day.format(iso);
-                List<GscAnalyticsRow> queries = queryRows(url, ctx.accessToken(), new GscAnalyticsRequest(
-                        d, d, List.of("date", "query"), null, TOP_QUERIES_PER_DAY, null));
-                for (GscAnalyticsRow q : queries) {
-                    if (q.keys() == null || q.keys().size() < 2) continue;
+            // Query breakdown: one paged date+query request for the whole window, top N per day kept here.
+            Map<String, List<GscAnalyticsRow>> queriesByDay = new TreeMap<>();
+            for (int start = 0, page = 0; page < MAX_QUERY_PAGES; page++, start += QUERY_PAGE_SIZE) {
+                List<GscAnalyticsRow> rows = queryRows(url, ctx.accessToken(), new GscAnalyticsRequest(
+                        from.format(iso), to.format(iso), List.of("date", "query"), null, QUERY_PAGE_SIZE, null, start));
+                for (GscAnalyticsRow q : rows) {
+                    if (q.keys() != null && q.keys().size() >= 2) {
+                        queriesByDay.computeIfAbsent(q.keys().get(0), k -> new ArrayList<>()).add(q);
+                    }
+                }
+                if (rows.size() < QUERY_PAGE_SIZE) break;
+            }
+            Comparator<GscAnalyticsRow> ranking = Comparator.comparingDouble(GscAnalyticsRow::clicks)
+                    .thenComparingDouble(GscAnalyticsRow::impressions).reversed();
+            queriesByDay.forEach((date, rows) -> {
+                LocalDate day = LocalDate.parse(date);
+                rows.stream().sorted(ranking).limit(TOP_QUERIES_PER_DAY).forEach(q -> {
                     points.add(ChannelMetricPoint.of("query_clicks", q.keys().get(1), day, q.clicks()));
                     points.add(ChannelMetricPoint.of("query_impressions", q.keys().get(1), day, q.impressions()));
-                }
-            }
+                });
+            });
         } catch (HttpClientErrorException e) {
             int status = e.getStatusCode().value();
             if (status == 401 || status == 403 || status == 404) {
