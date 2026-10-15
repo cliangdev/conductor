@@ -21,6 +21,7 @@ export type Capability =
   | 'issue.edit' // change issue status / edit issues
   | 'issue.assignReviewers' // assign or unassign reviewers on an issue
   | 'creative.manage' // create/edit/delete brand kits, Creative photos, and Creatives
+  | 'marketing.target.manage' // set/clear a marketing overview metric target
 
 // Capabilities held by CREATOR (the "write" role). ADMIN holds these plus the admin-only set.
 const CREATOR_CAPABILITIES: Capability[] = [
@@ -32,6 +33,7 @@ const CREATOR_CAPABILITIES: Capability[] = [
   'issue.edit',
   'issue.assignReviewers',
   'creative.manage',
+  'marketing.target.manage',
 ]
 
 const ADMIN_ONLY_CAPABILITIES: Capability[] = [

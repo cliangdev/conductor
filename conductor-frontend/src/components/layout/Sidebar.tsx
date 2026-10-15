@@ -8,6 +8,7 @@ import {
   FileTextIcon,
   FilmIcon,
   FolderIcon,
+  LayoutDashboardIcon,
   LayoutTemplateIcon,
   LogOutIcon,
   PanelLeftCloseIcon,
@@ -59,6 +60,12 @@ const AREA_EXTRA_NAV: Record<
   { key: string; label: string; icon: React.ComponentType<{ className?: string }>; path: (projectId: string) => string }[]
 > = {
   MARKETING: [
+    {
+      key: 'marketing-overview',
+      label: 'Overview',
+      icon: LayoutDashboardIcon,
+      path: (projectId) => `/app/projects/${projectId}/marketing/overview`,
+    },
     {
       key: 'marketing-insights',
       label: "What's working",

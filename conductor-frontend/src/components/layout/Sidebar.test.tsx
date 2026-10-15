@@ -285,6 +285,7 @@ describe('Sidebar', () => {
     expect(hrefs).toEqual([
       '/app/projects/proj-1/marketing/posts',
       '/app/projects/proj-1/marketing/campaigns',
+      '/app/projects/proj-1/marketing/overview',
       '/app/projects/proj-1/marketing/insights',
       '/app/projects/proj-1/marketing/creatives',
       '/app/projects/proj-1/marketing/media',
