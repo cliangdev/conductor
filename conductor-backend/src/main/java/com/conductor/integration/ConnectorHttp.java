@@ -21,10 +21,15 @@ public final class ConnectorHttp {
     }
 
     public static RestTemplate restTemplate(Duration timeout) {
+        return restTemplate(timeout, timeout);
+    }
+
+    /** Separate connect and read deadlines, for APIs whose queries legitimately run for minutes. */
+    public static RestTemplate restTemplate(Duration connectTimeout, Duration readTimeout) {
         RestTemplate restTemplate = new RestTemplate();
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout((int) timeout.toMillis());
-        factory.setReadTimeout((int) timeout.toMillis());
+        factory.setConnectTimeout((int) connectTimeout.toMillis());
+        factory.setReadTimeout((int) readTimeout.toMillis());
         restTemplate.setRequestFactory(factory);
         return restTemplate;
     }

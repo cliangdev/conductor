@@ -17,7 +17,7 @@ import com.conductor.integration.ingest.digest.MetricsDigestService;
 import com.conductor.service.ConnectionService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.DayOfWeek;
 import java.time.Instant;
@@ -54,6 +54,8 @@ public class FeedPullService {
     private final MetricsDigestService metricsDigestService;
     private PostMetricsFeedPuller postMetricsFeedPuller;
     private ChannelMetricsFeedPuller channelMetricsFeedPuller;
+    /** Null in plain unit tests, which then run each step directly. */
+    private TransactionTemplate tx;
 
     @org.springframework.beans.factory.annotation.Autowired
     public FeedPullService(ConnectorFeedRepository feedRepository,
@@ -63,10 +65,24 @@ public class FeedPullService {
                            DigestSink digestSink,
                            MetricsDigestService metricsDigestService,
                            PostMetricsFeedPuller postMetricsFeedPuller,
-                           ChannelMetricsFeedPuller channelMetricsFeedPuller) {
+                           ChannelMetricsFeedPuller channelMetricsFeedPuller,
+                           TransactionTemplate transactionTemplate) {
         this(feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink,
                 metricsDigestService, postMetricsFeedPuller);
         this.channelMetricsFeedPuller = channelMetricsFeedPuller;
+        this.tx = transactionTemplate;
+    }
+
+    FeedPullService(ConnectorFeedRepository feedRepository,
+                    ConnectionService connectionService,
+                    ConnectorRegistry connectorRegistry,
+                    SnapshotIngestAdapter snapshotIngestAdapter,
+                    DigestSink digestSink,
+                    MetricsDigestService metricsDigestService,
+                    PostMetricsFeedPuller postMetricsFeedPuller,
+                    ChannelMetricsFeedPuller channelMetricsFeedPuller) {
+        this(feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink,
+                metricsDigestService, postMetricsFeedPuller, channelMetricsFeedPuller, null);
     }
 
     FeedPullService(ConnectorFeedRepository feedRepository,
@@ -96,19 +112,53 @@ public class FeedPullService {
         this.metricsDigestService = metricsDigestService;
     }
 
-    @Transactional
+    /**
+     * Not {@code @Transactional}: a channel-metrics pull calls a remote API that can take minutes, and must not
+     * hold a database transaction open meanwhile (Postgres kills idle-in-transaction sessions). Every other
+     * sink still runs entirely inside one transaction; see {@link #pullInTransaction}.
+     */
     public boolean pull(String feedId) {
         ConnectorFeed feed = feedRepository.findById(feedId)
                 .orElseThrow(() -> new EntityNotFoundException("connector_feed not found: " + feedId));
-        return pull(feed);
+        if (isChannelMetrics(feed)) {
+            return pull(feed);
+        }
+        return inTransaction(() -> pull(feedRepository.findById(feedId)
+                .orElseThrow(() -> new EntityNotFoundException("connector_feed not found: " + feedId))));
     }
 
     /** Overload taking an already-loaded feed — the scheduler's claim query already has the row.
      *  Returns {@link IngestBatch#hasMore()} on a successful pull (false on SETUP_REQUIRED/DEGRADED,
      *  since no progress was made) — the caller uses this to re-due the feed immediately rather than
      *  waiting a full {@code interval_minutes} to drain a backlog. */
-    @Transactional
     public boolean pull(ConnectorFeed feed) {
+        if (isChannelMetrics(feed)) {
+            return pullChannelMetrics(feed);
+        }
+        return inTransaction(() -> pullInTransaction(feed));
+    }
+
+    private boolean isChannelMetrics(ConnectorFeed feed) {
+        return resolveSpec(feed).sink() == IngestSink.CHANNEL_METRICS;
+    }
+
+    private <T> T inTransaction(java.util.function.Supplier<T> work) {
+        return tx == null ? work.get() : tx.execute(status -> work.get());
+    }
+
+    /** Fetch with no transaction active; the puller's store write and {@link #recordOutcome} are short transactions. */
+    private boolean pullChannelMetrics(ConnectorFeed feed) {
+        Connection conn = connectionService.getById(feed.getConnectionId())
+                .orElseThrow(() -> new EntityNotFoundException("Connection not found: " + feed.getConnectionId()));
+        IngestSpec spec = resolveSpec(feed);
+        IngestRequest request = new IngestRequest(feed.getIngestId(), null, feed.getCursorState(), DEFAULT_MAX_ITEMS);
+        IngestBatch batch = channelMetricsFeedPuller == null
+                ? IngestBatch.setupRequired("This deployment has no channel-metrics sink")
+                : channelMetricsFeedPuller.pull(feed, spec, conn, request);
+        return inTransaction(() -> recordOutcome(feed, spec, null, batch));
+    }
+
+    private boolean pullInTransaction(ConnectorFeed feed) {
         Connection conn = connectionService.getById(feed.getConnectionId())
                 .orElseThrow(() -> new EntityNotFoundException("Connection not found: " + feed.getConnectionId()));
         ConnectionContext ctx = connectionService.toContext(conn);
@@ -128,12 +178,6 @@ public class FeedPullService {
                 batch = IngestBatch.setupRequired("This deployment has no post-metrics sink");
             } else {
                 batch = postMetricsFeedPuller.pull(feed, spec, conn, request);
-            }
-        } else if (spec.sink() == IngestSink.CHANNEL_METRICS) {
-            if (channelMetricsFeedPuller == null) {
-                batch = IngestBatch.setupRequired("This deployment has no channel-metrics sink");
-            } else {
-                batch = channelMetricsFeedPuller.pull(feed, spec, conn, request);
             }
         } else {
             batch = connectorRegistry.findIngest(feed.getConnectorId())

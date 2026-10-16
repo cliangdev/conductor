@@ -18,7 +18,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -79,7 +78,11 @@ public class ChannelMetricsFeedPuller {
         this.clock = clock;
     }
 
-    @Transactional
+    /**
+     * Deliberately not {@code @Transactional}: the remote fetch can take minutes and must not hold a database
+     * connection (or an idle-in-transaction session) open. The token refresh and the window write each run
+     * in their own short transaction.
+     */
     public IngestBatch pull(ConnectorFeed feed, IngestSpec spec, Connection connection, IngestRequest request) {
         ChannelMetricsSource source = connectorRegistry.getById(connection.getConnectorId())
                 .filter(ChannelMetricsSource.class::isInstance)
