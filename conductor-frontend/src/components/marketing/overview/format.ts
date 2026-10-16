@@ -190,9 +190,19 @@ export function readOnlyTargetSource(target: MarketingTarget): string {
   return /^set in /i.test(source) ? source : `Set in ${source}`
 }
 
-/** "Conductor 1,204 vs Product metrics 1,190 — 1.2% apart over settled days (Oct 1 – Oct 12)". */
-export function mismatchSummary(m: OverviewMismatch, sourceName: string): string {
-  const unit: MetricUnit = m.metric === 'spend' ? 'CURRENCY' : 'COUNT'
+/** What the channel's own connection and the product feed each say, in words a non-engineer can compare. */
+export function mismatchSummary(m: OverviewMismatch, channelLabel: string): string {
+  const currency = m.metric === 'spend'
+  const unit: MetricUnit = currency ? 'CURRENCY' : 'COUNT'
+  const noun = m.label.toLowerCase()
+  const amount = (v: number) => (currency ? `${formatMetricValue(v, unit)} in ${noun}` : `${formatMetricValue(v, unit)} ${noun}`)
+  const own = m.channelSource || channelLabel
+  const reference = `Product metrics${m.referenceSource ? ` (${m.referenceSource})` : ''}`
   const range = m.from === m.to ? shortDate(m.from) : `${shortDate(m.from)} – ${shortDate(m.to)}`
-  return `Conductor ${formatMetricValue(m.channelValue, unit)} vs ${sourceName} ${formatMetricValue(m.referenceValue, unit)} — ${(m.gapPct * 100).toFixed(1)}% apart over settled days (${range})`
+  return `${own} reports ${amount(m.channelValue)}; ${reference} reports ${formatMetricValue(m.referenceValue, unit)} — ${(m.gapPct * 100).toFixed(1)}% apart for ${range}, the days both have finished reporting.`
+}
+
+/** The short card line: "Downloads differ from Rexipe backend by 29.9%". */
+export function mismatchCardLine(m: OverviewMismatch): string {
+  return `${m.label} differ from ${m.referenceSource || 'Product metrics'} by ${(m.gapPct * 100).toFixed(1)}%`
 }

@@ -216,6 +216,8 @@ export function mismatch(overrides: Partial<OverviewMismatch> = {}): OverviewMis
     gapPct: 0.0116,
     from: '2026-09-01',
     to: '2026-09-12',
+    channelSource: 'App Store Connect',
+    referenceSource: 'Rexipe backend',
     ...overrides,
   }
 }

@@ -136,7 +136,7 @@ test.describe('marketing overview', () => {
     await expect(page.getByRole('region', { name: 'By traffic source' })).toContainText('App Store search')
     // The stub's reference downloads are not Conductor's own, so the store reads MISMATCH and says why.
     await expect(page.getByText('Mismatch', { exact: true })).toBeVisible()
-    await expect(page.getByText(/Conductor [\d,]+ vs Product metrics [\d,]+ — [\d.]+% apart over settled days/)).toBeVisible()
+    await expect(page.getByText(/reports [\d,]+ downloads; Product metrics \(.+\) reports [\d,]+ — [\d.]+% apart for/)).toBeVisible()
     await page.getByRole('link', { name: /Marketing overview/ }).click()
     await page.waitForURL(/\/marketing\/overview$/)
 

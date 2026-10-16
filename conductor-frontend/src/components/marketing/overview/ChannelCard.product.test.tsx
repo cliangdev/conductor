@@ -72,7 +72,8 @@ describe('ChannelCard for the In-app channel', () => {
   it('shows a mismatch pill and keeps the values visible', () => {
     renderCard(channel({ channel: 'STORE', label: 'App Store', status: 'MISMATCH', mismatch: mismatch() }))
     expect(screen.getByText('Mismatch')).toBeInTheDocument()
-    expect(screen.getByText(/Does not match the downloads reported by the product backend \(1\.2% apart\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Downloads differ from Rexipe backend by 1\.2%/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Details' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/overview/store#mismatch')
     expect(screen.getByText('Clicks')).toBeInTheDocument()
   })
 })

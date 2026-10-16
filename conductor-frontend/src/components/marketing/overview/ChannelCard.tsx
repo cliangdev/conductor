@@ -12,7 +12,7 @@ import { ChannelStatusPill } from './ChannelStatusPill'
 import { MetricFlags } from './MetricFlags'
 import { Sparkline } from './Sparkline'
 import { TargetNote } from './TargetNote'
-import { formatMetricValue, shortDate } from './format'
+import { formatMetricValue, mismatchCardLine, shortDate } from './format'
 import type { ChannelKey, OverviewChannel, OverviewMetric } from './types'
 
 const HEADLINE_COUNT = 4
@@ -99,7 +99,16 @@ export function ChannelCard({
             <p className="mb-3 text-xs text-muted-foreground">Last updated {timeAgo(channel.lastFetchedAt)}</p>
           )}
           {channel.status === 'MISMATCH' && channel.mismatch && (
-            <p className="mb-3 text-xs text-status-failed">Does not match the {channel.mismatch.label.toLowerCase()} reported by the product backend ({(channel.mismatch.gapPct * 100).toFixed(1)}% apart)</p>
+            <p className="mb-3 text-xs text-status-failed">
+              {mismatchCardLine(channel.mismatch)}
+              {' · '}
+              <Link
+                href={`${detailHref}#mismatch`}
+                className="relative z-10 rounded-sm font-medium underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Details
+              </Link>
+            </p>
           )}
           {metrics.length === 0 ? (
             <p className="text-sm text-muted-foreground">No data in this window yet.</p>

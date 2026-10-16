@@ -4,36 +4,44 @@ import { MismatchNotice } from './MismatchNotice'
 import { channel, mismatch } from './test-fixtures'
 
 describe('MismatchNotice', () => {
-  it('shows both values, the gap and what to do', () => {
-    render(
-      <MismatchNotice
-        projectId="proj-1"
-        channel={channel({ channel: 'STORE', label: 'App Store', status: 'MISMATCH', mismatch: mismatch() })}
-      />,
-    )
-    expect(screen.getByText(/Conductor 1,204 vs Product metrics 1,190 — 1\.2% apart over settled days \(Sep 1 – Sep 12\)/)).toBeInTheDocument()
-    expect(screen.getByText(/Check that Product metrics and the App Store/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open product metrics' })).toHaveAttribute('href', '/app/projects/proj-1/integrations/product-metrics')
+  it('names both sources, shows both figures and what to check', () => {
+    render(<MismatchNotice channel={channel({ channel: 'STORE', label: 'App Store', status: 'MISMATCH', mismatch: mismatch() })} />)
+    expect(
+      screen.getByText(
+        'App Store Connect reports 1,204 downloads; Product metrics (Rexipe backend) reports 1,190 — 1.2% apart for Sep 1 – Sep 12, the days both have finished reporting.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/one side is missing days or counts days in a different time zone/)).toBeInTheDocument()
+    expect(screen.getByText(/Check both connections.*last sync, then compare a single day/)).toBeInTheDocument()
+    expect(document.getElementById('mismatch')).not.toBeNull()
+    expect(screen.queryByText(/settled/)).not.toBeInTheDocument()
   })
 
-  it('formats an ads spend mismatch as currency and names the source', () => {
+  it('formats an ads spend mismatch as currency', () => {
     render(
       <MismatchNotice
-        projectId="proj-1"
-        sourceName="Rexipe backend"
         channel={channel({
           channel: 'ADS',
           label: 'Apple Ads',
           status: 'MISMATCH',
-          mismatch: mismatch({ metric: 'spend', label: 'Spend', channelValue: 520, referenceValue: 480 }),
+          mismatch: mismatch({ metric: 'spend', label: 'Spend', channelValue: 520, referenceValue: 480, channelSource: 'Apple Search Ads' }),
         })}
       />,
     )
-    expect(screen.getByText(/Conductor \$520 vs Rexipe backend \$480/)).toBeInTheDocument()
+    expect(screen.getByText(/Apple Search Ads reports \$520 in spend; Product metrics \(Rexipe backend\) reports \$480/)).toBeInTheDocument()
+  })
+
+  it('falls back to the channel name when the API names no source', () => {
+    render(
+      <MismatchNotice
+        channel={channel({ label: 'App Store', status: 'MISMATCH', mismatch: mismatch({ channelSource: undefined, referenceSource: undefined }) })}
+      />,
+    )
+    expect(screen.getByText(/^App Store reports 1,204 downloads; Product metrics reports 1,190/)).toBeInTheDocument()
   })
 
   it('renders nothing for a channel that matches', () => {
-    const { container } = render(<MismatchNotice projectId="proj-1" channel={channel()} />)
+    const { container } = render(<MismatchNotice channel={channel()} />)
     expect(container).toBeEmptyDOMElement()
   })
 })

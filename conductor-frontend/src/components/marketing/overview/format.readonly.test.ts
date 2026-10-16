@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mismatchSummary, readOnlyTargetSource } from './format'
+import { mismatchCardLine, mismatchSummary, readOnlyTargetSource } from './format'
 
 describe('read-only targets and mismatches', () => {
   it('names where a read-only target is set', () => {
@@ -8,18 +8,22 @@ describe('read-only targets and mismatches', () => {
     expect(readOnlyTargetSource({ value: 1, direction: 'UP', readOnly: true })).toBe('Set in the connected source')
   })
 
-  it('summarises a mismatch with both values, the gap and the days', () => {
+  it('summarises a mismatch with both sources, both values, the gap and the days', () => {
     expect(
       mismatchSummary(
-        { metric: 'downloads', label: 'Downloads', referenceValue: 1190, channelValue: 1204, gapPct: 0.0116, from: '2026-09-01', to: '2026-09-12' },
-        'Rexipe',
+        { metric: 'downloads', label: 'Downloads', referenceValue: 3504, channelValue: 4999, gapPct: 0.299, from: '2026-09-15', to: '2026-10-12', channelSource: 'App Store Connect', referenceSource: 'Rexipe' },
+        'App Store',
       ),
-    ).toBe('Conductor 1,204 vs Rexipe 1,190 — 1.2% apart over settled days (Sep 1 – Sep 12)')
+    ).toBe('App Store Connect reports 4,999 downloads; Product metrics (Rexipe) reports 3,504 — 29.9% apart for Sep 15 – Oct 12, the days both have finished reporting.')
     expect(
       mismatchSummary(
         { metric: 'spend', label: 'Spend', referenceValue: 480, channelValue: 520, gapPct: 0.077, from: '2026-09-05', to: '2026-09-05' },
-        'Rexipe',
+        'Apple Ads',
       ),
-    ).toBe('Conductor $520 vs Rexipe $480 — 7.7% apart over settled days (Sep 5)')
+    ).toBe('Apple Ads reports $520 in spend; Product metrics reports $480 — 7.7% apart for Sep 5, the days both have finished reporting.')
+  })
+
+  it('words the card line with the reference source', () => {
+    expect(mismatchCardLine({ metric: 'downloads', label: 'Downloads', referenceValue: 1, channelValue: 2, gapPct: 0.299, from: 'a', to: 'b', referenceSource: 'Rexipe' })).toBe('Downloads differ from Rexipe by 29.9%')
   })
 })

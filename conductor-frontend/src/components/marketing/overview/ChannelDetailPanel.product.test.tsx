@@ -86,8 +86,8 @@ describe('ChannelDetailPanel for the In-app channel', () => {
 
 describe('ChannelDetailPanel mismatch', () => {
   it.each([
-    ['STORE', 'App Store', mismatch(), /Conductor 1,204 vs Product metrics 1,190/],
-    ['ADS', 'Apple Ads', mismatch({ metric: 'spend', channelValue: 520, referenceValue: 480 }), /Conductor \$520 vs Product metrics \$480/],
+    ['STORE', 'App Store', mismatch(), /App Store Connect reports 1,204 downloads; Product metrics \(Rexipe backend\) reports 1,190/],
+    ['ADS', 'Apple Ads', mismatch({ metric: 'spend', label: 'Spend', channelValue: 520, referenceValue: 480, channelSource: 'Apple Search Ads' }), /Apple Search Ads reports \$520 in spend; Product metrics \(Rexipe backend\) reports \$480/],
   ] as const)('explains a %s mismatch with both values', async (key, label, m, text) => {
     serve(detailResponse({ channel: channel({ channel: key, label, status: 'MISMATCH', mismatch: m }), dimensions: [] }))
     render(<ChannelDetailPanel projectId="proj-1" channel={key.toLowerCase()} />)

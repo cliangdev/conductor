@@ -257,7 +257,7 @@ export function ChannelDetailPanel({
               )}
             </div>
 
-            <MismatchNotice projectId={projectId} channel={channel} />
+            <MismatchNotice channel={channel} />
 
             {channel.channel === "PRODUCT" && (
               <StageChart metrics={channel.metrics} />
