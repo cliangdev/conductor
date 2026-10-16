@@ -23,13 +23,22 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
     private final RestTemplate restTemplate;
     private final PostHogChannelMetrics channelMetrics;
 
+    /** HogQL over a large project can run for minutes; the default 8s connector deadline cut it off. */
+    static final Duration CHANNEL_METRICS_CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    static final Duration CHANNEL_METRICS_READ_TIMEOUT = Duration.ofSeconds(180);
+
     public PostHogConnector() {
-        this(ConnectorHttp.restTemplate());
+        this(ConnectorHttp.restTemplate(),
+                ConnectorHttp.restTemplate(CHANNEL_METRICS_CONNECT_TIMEOUT, CHANNEL_METRICS_READ_TIMEOUT));
     }
 
     public PostHogConnector(RestTemplate restTemplate) {
+        this(restTemplate, restTemplate);
+    }
+
+    PostHogConnector(RestTemplate restTemplate, RestTemplate channelMetricsRestTemplate) {
         this.restTemplate = restTemplate;
-        this.channelMetrics = new PostHogChannelMetrics(restTemplate);
+        this.channelMetrics = new PostHogChannelMetrics(channelMetricsRestTemplate);
     }
 
     @Override
@@ -282,7 +291,7 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
 
     /** Keeps each backfill pull short; see {@link ChannelMetricsSource#maxDaysPerPull()}. */
     @Override
-    public int maxDaysPerPull() { return 14; }
+    public int maxDaysPerPull() { return 7; }
 
     @Override
     public int trailingDays() { return 2; }
