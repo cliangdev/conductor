@@ -201,6 +201,8 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
         assertThat(channel(overview, "WEB").targetsEditable()).isTrue();
         // the card leads with the last two funnel stages, then fills with the rest in stage order
         assertThat(product.metrics()).extracting(m -> m.metric()).containsExactly("trial_started", "paid", "first_open", "revenue_events");
+        assertThat(product.metrics()).filteredOn(m -> m.metric().equals("paid")).singleElement()
+                .satisfies(m -> assertThat(m.aggregation()).isEqualTo("SUM"));
         // only the declared funnel stages carry a funnelOrder
         assertThat(product.metrics()).filteredOn(m -> m.funnelOrder() != null).extracting(m -> m.metric())
                 .containsExactlyInAnyOrder("first_open", "trial_started", "paid");
@@ -225,6 +227,7 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
         put(pm, "paid_trials", day(3), 5);
 
         MetricView costPerTrial = metric(channel(overview7(), "PRODUCT"), "cost_per_trial");
+        assertThat(costPerTrial.aggregation()).isEqualTo("DERIVED");
 
         assertThat(costPerTrial.value()).isCloseTo(120.0 / 11.0, org.assertj.core.data.Offset.offset(1e-9));
         assertThat(costPerTrial.previous()).isEqualTo(10.0);

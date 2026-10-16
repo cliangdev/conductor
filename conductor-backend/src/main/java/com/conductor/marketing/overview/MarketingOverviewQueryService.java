@@ -109,20 +109,20 @@ public class MarketingOverviewQueryService {
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
                              List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
-                             boolean insufficientData, Integer funnelOrder) {
+                             boolean insufficientData, Integer funnelOrder, String aggregation) {
         public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
                           Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
                           TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
                           boolean insufficientData) {
             this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
-                    target, series, historyStartsOn, asOf, insufficientData, null);
+                    target, series, historyStartsOn, asOf, insufficientData, null, "SUM");
         }
 
         public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
                           Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
                           TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf) {
             this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
-                    target, series, historyStartsOn, asOf, false, null);
+                    target, series, historyStartsOn, asOf, false, null, "SUM");
         }
     }
 
@@ -876,7 +876,8 @@ public class MarketingOverviewQueryService {
                 : value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
         LocalDate historyStartsOn = previous == null ? data.firstDay(metric) : null;
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
-                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder());
+                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder(),
+                metric.agg().name());
     }
 
     /**

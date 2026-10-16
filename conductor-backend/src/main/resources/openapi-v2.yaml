@@ -6268,6 +6268,9 @@ components:
         insufficientData:
           type: boolean
           description: True when the feed reported a sample size under 20 for the window; `noise` is then also true.
+        aggregation:
+          type: string
+          description: "How daily values combine over a window: SUM (a window total, so a target is a total and does not belong on a per-day chart), LEVEL (a stock, latest value) or DERIVED (a ratio of two metrics)."
         funnelOrder:
           type: integer
           nullable: true

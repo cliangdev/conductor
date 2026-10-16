@@ -143,7 +143,7 @@ export function detailResponse(overrides: Partial<MarketingChannelDetailResponse
     channel: channel({
       metrics: [
         metric(),
-        metric({ metric: 'ctr', label: 'Click-through rate', unit: 'PERCENT', value: 0.031, changePct: 0.033, target: { value: 0.04, direction: 'UP' } }),
+        metric({ metric: 'ctr', label: 'Click-through rate', unit: 'PERCENT', value: 0.031, changePct: 0.033, aggregation: 'DERIVED', target: { value: 0.04, direction: 'UP' } }),
       ],
     }),
     dimensions: [

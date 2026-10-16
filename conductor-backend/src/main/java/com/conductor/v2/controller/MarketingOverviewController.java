@@ -133,6 +133,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .asOf(m.asOf())
                 .insufficientData(m.insufficientData())
                 .funnelOrder(m.funnelOrder())
+                .aggregation(m.aggregation())
                 .target(m.target() == null ? null : toTarget(m.target()));
     }
 

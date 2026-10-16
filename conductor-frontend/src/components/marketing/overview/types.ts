@@ -83,6 +83,8 @@ export interface OverviewMetric {
   /** Snapshot day of a LEVEL metric (followers); null for metrics that sum a window. */
   asOf?: string | null
   noise: boolean
+  /** SUM is a window total (its target is a total, not a daily level); LEVEL and DERIVED share one scale per day and per window. */
+  aggregation?: 'SUM' | 'LEVEL' | 'DERIVED'
   /** PRODUCT only: the metric's place among the in-app funnel stages (1 first); null when it is not a stage. */
   funnelOrder?: number | null
   /** The feed reported a sample under 20 for the window; `noise` is then also true. */
