@@ -11,7 +11,7 @@ import java.util.*;
 @Component
 @Profile("local")
 @Primary
-public class LocalPostHogConnector implements FetchConnector {
+public class LocalPostHogConnector implements FetchConnector, ChannelMetricsSource {
 
     @Override
     public String getId() { return "posthog"; }
@@ -28,7 +28,13 @@ public class LocalPostHogConnector implements FetchConnector {
             ConnectorConfigField.userInput("apiKey", "Personal API Key",
                 "PostHog → Settings → Personal API Keys", FieldType.SECRET, true),
             ConnectorConfigField.userInput("projectId", "PostHog Project ID",
-                "Found in your PostHog project URL", FieldType.STRING, false)
+                "Found in your PostHog project URL", FieldType.STRING, false),
+            ConnectorConfigField.userInput("host", "PostHog host",
+                "US, EU, or your self-hosted https URL. Leave empty for the default host", FieldType.STRING, false),
+            ConnectorConfigField.userInput("eventFilter", "Event filter",
+                "Only count events matching property = 'value', for example $lib = 'web'", FieldType.STRING, false),
+            ConnectorConfigField.userInput("conversionEvent", "Conversion event",
+                "Event name to track as conversion clicks (optional)", FieldType.STRING, false)
         ));
     }
 
@@ -72,5 +78,38 @@ public class LocalPostHogConnector implements FetchConnector {
     @Override
     public ConnectorHealth checkHealth(ConnectionContext ctx) {
         return ConnectorHealth.HEALTHY;
+    }
+
+    // -- ChannelMetricsSource: deterministic 90-day series for the local stack --------------------
+
+    @Override
+    public int backfillDays() { return 90; }
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.WEB; }
+
+    @Override
+    public int trailingDays() { return 2; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, java.time.LocalDate from, java.time.LocalDate to) {
+        List<ChannelMetricPoint> points = new ArrayList<>();
+        String[] referrers = {"google.com", "(direct)", "news.ycombinator.com", "reddit.com", "t.co"};
+        double[] share = {0.45, 0.30, 0.10, 0.10, 0.05};
+        boolean conversions = ctx.configValue("conversionEvent") != null;
+        for (java.time.LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
+            double visitors = LocalChannelSeries.value("ph-visitors", day, 180);
+            double sessions = Math.round(visitors * 1.3);
+            points.add(ChannelMetricPoint.total("visitors", day, visitors));
+            points.add(ChannelMetricPoint.total("sessions", day, sessions));
+            points.add(ChannelMetricPoint.total("pageviews", day, Math.round(sessions * 2.4)));
+            if (conversions) {
+                points.add(ChannelMetricPoint.total("conversion_clicks", day, Math.round(sessions * 0.06)));
+            }
+            for (int i = 0; i < referrers.length; i++) {
+                points.add(ChannelMetricPoint.of("sessions_by_referrer", referrers[i], day, Math.round(sessions * share[i])));
+            }
+        }
+        return points;
     }
 }

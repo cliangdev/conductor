@@ -14,7 +14,7 @@ import java.util.Map;
 @Component
 @Profile("local")
 @Primary
-public class LocalGscConnector implements FetchConnector, OAuth2Connector {
+public class LocalGscConnector implements FetchConnector, OAuth2Connector, ChannelMetricsSource {
 
     @Override
     public String getId() { return "gsc"; }
@@ -117,5 +117,38 @@ public class LocalGscConnector implements FetchConnector, OAuth2Connector {
     @Override
     public ConnectorHealth checkHealth(ConnectionContext ctx) {
         return ConnectorHealth.HEALTHY;
+    }
+
+    // -- ChannelMetricsSource: deterministic 90-day series for the local stack --------------------
+
+    @Override
+    public int backfillDays() { return 90; }
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.SEARCH; }
+
+    @Override
+    public int trailingDays() { return 4; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        List<ChannelMetricPoint> points = new ArrayList<>();
+        String[] queries = {"acme analytics", "acme pricing", "best analytics dashboard", "acme login", "web analytics tool"};
+        double[] share = {0.35, 0.2, 0.2, 0.15, 0.1};
+        // Search Console lags: nothing for the last two days.
+        LocalDate last = to.minusDays(2);
+        for (LocalDate day = from; !day.isAfter(last); day = day.plusDays(1)) {
+            double clicks = LocalChannelSeries.value("gsc-clicks", day, 90);
+            double impressions = Math.round(clicks * 18);
+            double position = 11.5 - LocalChannelSeries.value("gsc-pos", day, 1) * 0.5;
+            points.add(ChannelMetricPoint.total("clicks", day, clicks));
+            points.add(ChannelMetricPoint.total("impressions", day, impressions));
+            points.add(ChannelMetricPoint.total("position_x_impressions", day, Math.round(position * impressions)));
+            for (int i = 0; i < queries.length; i++) {
+                points.add(ChannelMetricPoint.of("query_clicks", queries[i], day, Math.round(clicks * share[i])));
+                points.add(ChannelMetricPoint.of("query_impressions", queries[i], day, Math.round(impressions * share[i])));
+            }
+        }
+        return points;
     }
 }

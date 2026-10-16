@@ -53,6 +53,7 @@ public class FeedPullService {
     private final DigestSink digestSink;
     private final MetricsDigestService metricsDigestService;
     private PostMetricsFeedPuller postMetricsFeedPuller;
+    private ChannelMetricsFeedPuller channelMetricsFeedPuller;
 
     @org.springframework.beans.factory.annotation.Autowired
     public FeedPullService(ConnectorFeedRepository feedRepository,
@@ -61,7 +62,20 @@ public class FeedPullService {
                            SnapshotIngestAdapter snapshotIngestAdapter,
                            DigestSink digestSink,
                            MetricsDigestService metricsDigestService,
-                           PostMetricsFeedPuller postMetricsFeedPuller) {
+                           PostMetricsFeedPuller postMetricsFeedPuller,
+                           ChannelMetricsFeedPuller channelMetricsFeedPuller) {
+        this(feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink,
+                metricsDigestService, postMetricsFeedPuller);
+        this.channelMetricsFeedPuller = channelMetricsFeedPuller;
+    }
+
+    FeedPullService(ConnectorFeedRepository feedRepository,
+                    ConnectionService connectionService,
+                    ConnectorRegistry connectorRegistry,
+                    SnapshotIngestAdapter snapshotIngestAdapter,
+                    DigestSink digestSink,
+                    MetricsDigestService metricsDigestService,
+                    PostMetricsFeedPuller postMetricsFeedPuller) {
         this(feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink,
                 metricsDigestService);
         this.postMetricsFeedPuller = postMetricsFeedPuller;
@@ -114,6 +128,12 @@ public class FeedPullService {
                 batch = IngestBatch.setupRequired("This deployment has no post-metrics sink");
             } else {
                 batch = postMetricsFeedPuller.pull(feed, spec, conn, request);
+            }
+        } else if (spec.sink() == IngestSink.CHANNEL_METRICS) {
+            if (channelMetricsFeedPuller == null) {
+                batch = IngestBatch.setupRequired("This deployment has no channel-metrics sink");
+            } else {
+                batch = channelMetricsFeedPuller.pull(feed, spec, conn, request);
             }
         } else {
             batch = connectorRegistry.findIngest(feed.getConnectorId())

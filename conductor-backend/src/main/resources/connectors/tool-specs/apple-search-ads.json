@@ -31,5 +31,15 @@
       },
       "outputKeys": ["topKeywords"]
     }
+  ],
+  "ingest": [
+    {
+      "id": "channel_metrics",
+      "label": "Daily ad metrics",
+      "description": "Spend, impressions, taps and installs per day, in total and per campaign, kept for the channel overview",
+      "mode": "SNAPSHOT",
+      "sink": "CHANNEL_METRICS",
+      "defaultIntervalMinutes": 360
+    }
   ]
 }

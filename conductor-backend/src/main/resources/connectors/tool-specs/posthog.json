@@ -17,5 +17,15 @@
       },
       "outputKeys": ["series", "total", "visitors", "sessions", "bounceRate", "avgSessionDuration", "topPages", "topSources"]
     }
+  ],
+  "ingest": [
+    {
+      "id": "channel_metrics",
+      "label": "Daily web metrics",
+      "description": "Visitors, sessions, pageviews, conversion clicks and sessions by referrer per day, kept for the channel overview",
+      "mode": "SNAPSHOT",
+      "sink": "CHANNEL_METRICS",
+      "defaultIntervalMinutes": 360
+    }
   ]
 }

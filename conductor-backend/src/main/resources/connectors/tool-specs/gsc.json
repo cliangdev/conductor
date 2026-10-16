@@ -77,6 +77,14 @@
           { "key": "topPages", "label": "Top pages", "idField": "page", "valueField": "clicks", "topN": 5, "baselineN": 25, "minAbsolute": 25, "minRelative": 0.30, "minRankMove": 5 }
         ]
       }
+    },
+    {
+      "id": "channel_metrics",
+      "label": "Daily search metrics",
+      "description": "Clicks, impressions, position and top queries per day, kept for the channel overview",
+      "mode": "SNAPSHOT",
+      "sink": "CHANNEL_METRICS",
+      "defaultIntervalMinutes": 360
     }
   ]
 }

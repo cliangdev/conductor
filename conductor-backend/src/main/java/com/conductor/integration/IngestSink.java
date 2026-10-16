@@ -10,5 +10,10 @@ package com.conductor.integration;
  */
 public enum IngestSink {
     KNOWLEDGE,
-    POST_METRICS
+    POST_METRICS,
+    /**
+     * Daily per-channel numbers (visitors, clicks, spend...) read from a {@link ChannelMetricsSource} and
+     * upserted into {@code channel_metric_daily}; like {@link #POST_METRICS} it produces no items.
+     */
+    CHANNEL_METRICS
 }

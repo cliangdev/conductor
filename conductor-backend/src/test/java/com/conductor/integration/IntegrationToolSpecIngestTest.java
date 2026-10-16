@@ -29,8 +29,8 @@ class IntegrationToolSpecIngestTest {
      */
     @ParameterizedTest
     @ValueSource(strings = {
-            "apple-search-ads.json", "discord.json", "gcp-billing.json",
-            "gcp.json", "posthog.json", "revenuecat.json"
+            "discord.json", "gcp-billing.json",
+            "gcp.json", "revenuecat.json"
     })
     void unaffectedConnectorsYieldEmptyIngest(String fileName) throws Exception {
         IntegrationToolSpec spec = parse(fileName);
@@ -38,11 +38,23 @@ class IntegrationToolSpecIngestTest {
         assertThat(spec.ingest()).isEmpty();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"apple-search-ads.json", "posthog.json", "gsc.json"})
+    void channelMetricsFeedIsDeclaredWithTheChannelMetricsSink(String fileName) throws Exception {
+        IngestSpec feed = parse(fileName).ingest().stream()
+                .filter(i -> i.id().equals("channel_metrics")).findFirst().orElseThrow();
+
+        assertThat(feed.sink()).isEqualTo(com.conductor.integration.IngestSink.CHANNEL_METRICS);
+        assertThat(feed.defaultIntervalMinutes()).isEqualTo(360);
+        assertThat(feed.isMetricFeed()).isFalse();
+    }
+
     @Test
     void gscParsesToOneMetricFeedWithDefaultsApplied() throws Exception {
         IntegrationToolSpec spec = parse("gsc.json");
 
-        assertThat(spec.ingest()).hasSize(1);
+        assertThat(spec.ingest()).hasSize(2);
+        assertThat(spec.ingest().get(1).id()).isEqualTo("channel_metrics");
         IngestSpec feed = spec.ingest().get(0);
         assertThat(feed.id()).isEqualTo("search_analytics_weekly");
         assertThat(feed.mode()).isEqualTo(IngestMode.SNAPSHOT);
