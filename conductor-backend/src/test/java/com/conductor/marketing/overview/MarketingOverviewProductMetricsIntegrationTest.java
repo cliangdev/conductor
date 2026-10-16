@@ -196,6 +196,9 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
                 });
         ChannelView product = channel(overview, "PRODUCT");
         assertThat(product.status()).isEqualTo("LIVE");
+        // targets belong to the product connection, so the API says they cannot be edited here
+        assertThat(product.targetsEditable()).isFalse();
+        assertThat(channel(overview, "WEB").targetsEditable()).isTrue();
         // the card leads with the last two funnel stages, then fills with the rest in stage order
         assertThat(product.metrics()).extracting(m -> m.metric()).containsExactly("trial_started", "paid", "first_open", "revenue_events");
         // only the declared funnel stages carry a funnelOrder
@@ -284,6 +287,8 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
             assertThat(m.gapPct()).isCloseTo(70.0 / 770.0, org.assertj.core.data.Offset.offset(1e-9));
             assertThat(m.from()).isEqualTo(day(8));
             assertThat(m.to()).isEqualTo(day(14));
+            assertThat(m.channelSource()).isEqualTo("apple-search-ads account");
+            assertThat(m.referenceSource()).isEqualTo("product-metrics account");
         });
         // the metrics still read normally, and reference values are never listed as metrics
         assertThat(metric(adsChannel, "spend").value()).isEqualTo(700.0);

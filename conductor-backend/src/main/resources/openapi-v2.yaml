@@ -6169,6 +6169,9 @@ components:
           enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH]
           description: MISMATCH means the product metrics feed's reference figure (store downloads, ad spend) disagrees with this channel's own connector by more than 1%; see `mismatch`.
         lastFetchedAt: {type: string, format: date-time, nullable: true}
+        targetsEditable:
+          type: boolean
+          description: False when the channel's targets are owned by its connection (PRODUCT), so a target cannot be set or cleared here.
         mismatch:
           allOf:
             - $ref: "#/components/schemas/OverviewMismatch"
@@ -6191,6 +6194,8 @@ components:
       description: Set when status is MISMATCH. Both figures cover the same settled days, `from` to `to`.
       required: [metric, label, referenceValue, channelValue, gapPct, from, to]
       properties:
+        channelSource: {type: string, description: "Name of the connection(s) behind this channel's own figure, e.g. App Store Connect."}
+        referenceSource: {type: string, description: "Name of the product metrics connection(s) that reported the reference figure."}
         metric: {type: string, description: "The channel metric compared, e.g. downloads or spend."}
         label: {type: string}
         referenceValue: {type: number, format: double, description: "What the product metrics feed reports."}

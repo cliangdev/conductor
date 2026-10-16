@@ -105,11 +105,12 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                                 OverviewConnection.StatusEnum.valueOf(k.status())))
                         .toList(),
                 c.metrics().stream().map(MarketingOverviewController::toMetric).toList())
-                .lastFetchedAt(c.lastFetchedAt());
+                .lastFetchedAt(c.lastFetchedAt())
+                .targetsEditable(c.targetsEditable());
         if (c.mismatch() != null) {
             MarketingOverviewQueryService.MismatchView m = c.mismatch();
             channel.mismatch(new OverviewMismatch(m.metric(), m.label(), m.referenceValue(), m.channelValue(),
-                    m.gapPct(), m.from(), m.to()));
+                    m.gapPct(), m.from(), m.to()).channelSource(m.channelSource()).referenceSource(m.referenceSource()));
         }
         if (c.connectHint() != null) {
             channel.connectHint(new OverviewConnectHint(c.connectHint().connectorId(),

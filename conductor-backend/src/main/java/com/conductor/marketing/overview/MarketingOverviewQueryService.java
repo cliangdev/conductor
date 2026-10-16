@@ -128,15 +128,24 @@ public class MarketingOverviewQueryService {
 
     /** The product backend's reference figure against the channel's own connector, over the same settled days. */
     public record MismatchView(String metric, String label, double referenceValue, double channelValue,
-                               double gapPct, LocalDate from, LocalDate to) {}
+                               double gapPct, LocalDate from, LocalDate to,
+                               String channelSource, String referenceSource) {}
 
     public record ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                               List<ConnectionView> connections, ConnectHint connectHint,
-                              List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch) {
+                              List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch,
+                              boolean targetsEditable) {
+        public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
+                           List<ConnectionView> connections, ConnectHint connectHint,
+                           List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch) {
+            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough,
+                    mismatch, true);
+        }
+
         public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                            List<ConnectionView> connections, ConnectHint connectHint,
                            List<MetricView> metrics, LocalDate dataCompleteThrough) {
-            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough, null);
+            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough, null, true);
         }
     }
 
@@ -488,7 +497,7 @@ public class MarketingOverviewQueryService {
         ChannelView view(boolean headlineOnly) {
             List<MetricView> shown = headlineOnly ? headlineMetrics() : metrics;
             return new ChannelView(channel.channel().name(), channel.label(), status, lastFetchedAt, connections,
-                    connectHint, shown, window.to(), mismatch);
+                    connectHint, shown, window.to(), mismatch, channel.channel() != MetricChannel.PRODUCT);
         }
     }
 
@@ -589,7 +598,19 @@ public class MarketingOverviewQueryService {
             return null;
         }
         double gap = Math.abs(referenceSum - ownSum) / larger;
-        return gap > MISMATCH_THRESHOLD ? new MismatchView(own, label, referenceSum, ownSum, gap, first, last) : null;
+        return gap > MISMATCH_THRESHOLD ? new MismatchView(own, label, referenceSum, ownSum, gap, first, last,
+                sourceNames(ctx, channel.connectorIds(), channel.label()),
+                sourceNames(ctx, List.of(MetricCatalog.PRODUCT_CONNECTOR_ID), "Product metrics")) : null;
+    }
+
+    /** The display labels of the project's connections for these connectors, e.g. "Rexipe" or "Rexipe, Beta". */
+    private static String sourceNames(Context ctx, List<String> connectorIds, String fallback) {
+        String names = ctx.connections.stream()
+                .filter(c -> connectorIds.contains(c.getConnectorId()))
+                .map(c -> c.getDisplayLabel() != null && !c.getDisplayLabel().isBlank() ? c.getDisplayLabel()
+                        : MetricCatalog.connectorName(c.getConnectorId()))
+                .distinct().collect(java.util.stream.Collectors.joining(", "));
+        return names.isEmpty() ? fallback : names;
     }
 
     /** Live: a recent successful run, an active feed and a healthy connection. */
