@@ -136,4 +136,18 @@ describe('CreativesTab', () => {
     expect(await screen.findByText(/Only a preview was rendered/)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Use Creative 19a' })).toBeDisabled())
   })
+
+  it('marks the selected card with the brand colour and shows each frame at its own aspect ratio', async () => {
+    setup()
+    const card = screen.getByRole('button', { name: 'Choose Creative 18a Import carousel' })
+    await userEvent.click(card)
+    expect(card.className).toContain('border-primary')
+    expect(card.className).toContain('ring-primary')
+    expect(card.className).not.toContain('accent')
+    const preview = screen.getByTestId('creatives-preview')
+    await waitFor(() => expect(within(preview).getAllByTestId('frame-thumb').length).toBeGreaterThan(0))
+    // 4:5 frames are 32px wide at the fixed 40px height, not a one-size portrait box.
+    expect(within(preview).getAllByTestId('frame-thumb').every((t) => (t as HTMLElement).style.height === '40px')).toBe(true)
+    expect((within(preview).getAllByTestId('frame-thumb')[0] as HTMLElement).style.width).toBe('32px')
+  })
 })

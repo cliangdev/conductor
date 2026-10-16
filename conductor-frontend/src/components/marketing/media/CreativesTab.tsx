@@ -64,6 +64,7 @@ export function useCreatives(projectId: string, token: string) {
   const [creatives, setCreatives] = useState<Creative[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
+    if (!token) return
     let cancelled = false
     listCreatives(projectId, token)
       .then((rows) => {
@@ -240,7 +241,7 @@ export function CreativesTab({
                         onClick={() => setSelectedId(c.id)}
                         className={cn(
                           'block w-full overflow-hidden rounded-[10px] border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          isSelected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-border-strong',
+                          isSelected ? 'border-primary ring-2 ring-primary' : 'border-border hover:border-border-strong',
                           !rendered && 'cursor-not-allowed opacity-60',
                         )}
                       >
@@ -378,15 +379,28 @@ export function CreativesTab({
 const STRIP_MAX = 6
 
 /** A small row of the frames a destination gets, in publish order. */
+/** width / height of a frame: its real pixels, else the ratio in its placement key (e.g. "ig_feed_4x5"). */
+function frameRatio(f: CreativeRenderFrame): number {
+  if (f.width > 0 && f.height > 0) return f.width / f.height
+  const m = /(\d+)[x:_-](\d+)\s*$/.exec(f.placementKey ?? '')
+  if (m && Number(m[1]) > 0 && Number(m[2]) > 0) return Number(m[1]) / Number(m[2])
+  return 4 / 5
+}
+
 export function FrameStrip({ frames }: { frames: CreativeRenderFrame[] }) {
   const shown = frames.slice(0, STRIP_MAX)
   const extra = frames.length - shown.length
   return (
-    <div className="flex items-center gap-1" data-testid="frame-strip">
+    <div className="flex flex-wrap items-center gap-1" data-testid="frame-strip">
       {shown.map((f) => {
         const src = (f.contentType ?? '').startsWith('video/') ? f.posterUrl : f.url
         return (
-          <span key={f.id} className="h-10 w-8 shrink-0 overflow-hidden rounded bg-surface-3">
+          <span
+            key={f.id}
+            data-testid="frame-thumb"
+            style={{ height: 40, width: Math.round(40 * frameRatio(f)) }}
+            className="shrink-0 overflow-hidden rounded bg-surface-3"
+          >
             {src && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={src} alt="" className="h-full w-full object-cover" />

@@ -411,9 +411,23 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                     }
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Images and video. Every destination gets all of them unless you customize it below.
-                </p>
+                {creativeChoice ? (
+                  <>
+                    <p className="text-xs text-muted-foreground" data-testid="media-hint">
+                      Each destination gets its matching size from Creative {creativeChoice.creative.displayId}.
+                    </p>
+                    {(files.length > 0 || pickedMedia.length > 0) && (
+                      <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="media-unpublished-note">
+                        Other media added here won&rsquo;t be published &mdash; each destination already uses the
+                        Creative&rsquo;s frames. Customize a destination after creating the Post to include them.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground" data-testid="media-hint">
+                    Images and video. Every destination gets all of them unless you customize it below.
+                  </p>
+                )}
               </div>
             </div>
           </Card>

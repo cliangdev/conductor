@@ -440,5 +440,21 @@ describe('ComposePostPage', () => {
       await waitFor(() => expect(pushSpy).toHaveBeenCalled())
       expect(calls.some((c) => c.url.endsWith('/attach'))).toBe(false)
     })
+
+    it('explains that other media is not published once a Creative is attached', async () => {
+      await chooseCarousel()
+      expect(screen.getByTestId('media-hint')).toHaveTextContent('Each destination gets its matching size from Creative 18a.')
+      expect(screen.queryByTestId('media-unpublished-note')).not.toBeInTheDocument()
+      const input = document.getElementById('compose-media') as HTMLInputElement
+      await userEvent.upload(input, new File(['x'], 'extra.png', { type: 'image/png' }))
+      expect(await screen.findByTestId('media-unpublished-note')).toHaveTextContent(/won.t be published/)
+    })
+
+    it('keeps the original hint when no Creative is attached', async () => {
+      renderPage()
+      await account('@acme')
+      expect(screen.getByTestId('media-hint')).toHaveTextContent('Every destination gets all of them')
+      expect(screen.queryByTestId('media-unpublished-note')).not.toBeInTheDocument()
+    })
   })
 })
