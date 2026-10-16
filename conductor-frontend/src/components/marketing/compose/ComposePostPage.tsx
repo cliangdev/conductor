@@ -9,7 +9,7 @@
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Film, ImageIcon, Plus, X } from 'lucide-react'
+import { Film, ImageIcon, Plus, TriangleAlert, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -28,6 +28,10 @@ import { useDraftDestinations } from '@/components/marketing/destinations/useDra
 import type { WorkflowView } from '@/types/workItem'
 import { PickMediaDialog } from '@/components/marketing/media/PickMediaDialog'
 import type { CreativePhoto } from '@/components/marketing/creatives/types'
+import { CreativesTab, FrameStrip, useCreatives, type CreativeChoice } from '@/components/marketing/media/CreativesTab'
+import { creativeCaption, creativeSummary, hasRender } from '@/components/marketing/creatives/creativeCopy'
+import { groupFrames, placementChip, placementFor, shortReason } from '@/components/marketing/creatives/placementMap'
+import type { DestinationRowModel } from '@/components/marketing/destinations/model'
 import { createPost, PENDING_ASSET_PREFIX } from './createPost'
 
 export interface ComposePostPageProps {
@@ -52,7 +56,16 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
   // attached server-side after this Post exists — nothing to prefill here.
   const fromCreativeId = searchParams.get('creativeId')
   const fromRenderId = searchParams.get('renderId')
-  const attachCreative = fromCreativeId && fromRenderId ? { creativeId: fromCreativeId, renderId: fromRenderId } : undefined
+  const [urlCreativeDismissed, setUrlCreativeDismissed] = useState(false)
+  // A Creative picked in the chooser (Creatives tab) wins over one arriving in the URL; both feed the same
+  // server-side attach after the Post exists.
+  const [creativeChoice, setCreativeChoice] = useState<CreativeChoice | null>(null)
+  const [captionFromCreative, setCaptionFromCreative] = useState<string | null>(null)
+  const attachCreative = creativeChoice
+    ? { creativeId: creativeChoice.creative.id, renderId: creativeChoice.renderId }
+    : fromCreativeId && fromRenderId && !urlCreativeDismissed
+      ? { creativeId: fromCreativeId, renderId: fromRenderId }
+      : undefined
 
   const [title, setTitle] = useState('')
   const [caption, setCaption] = useState('')
@@ -72,6 +85,59 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
 
   const destinations = useDraftDestinations({ projectId, token })
   const picked = destinations.summary.total
+  const { creatives, error: creativesError } = useCreatives(projectId, token)
+  const hasRenderedCreative = (creatives ?? []).some(hasRender)
+
+  // What the Creatives tab previews against: the destinations picked right now.
+  const pickedDestinations = destinations.rows
+    .filter((r) => r.checked)
+    .map((r) => ({ platform: r.option.platform, format: r.format, label: r.option.label }))
+  const creativeGroups = useMemo(() => (creativeChoice ? groupFrames(creativeChoice.frames) : []), [creativeChoice])
+
+  // Small mono chip on a picked destination: the size it will get from the Creative, or why it gets none.
+  function creativeChip(row: DestinationRowModel) {
+    if (!creativeChoice || !row.checked) return null
+    const dest = { platform: row.option.platform, format: row.format }
+    const result = placementFor(creativeChoice.creative.kind ?? 'STILL', creativeGroups, dest)
+    if ('reason' in result) {
+      return (
+        <span
+          title={result.reason}
+          data-testid={`creative-chip-${row.key.replace(/\s+/g, '-')}`}
+          className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-status-progress/40 px-1 font-mono text-[11px] text-status-progress"
+        >
+          <TriangleAlert className="h-3 w-3" aria-hidden />
+          {shortReason(creativeChoice.creative.kind ?? 'STILL', dest)}
+        </span>
+      )
+    }
+    return (
+      <span
+        data-testid={`creative-chip-${row.key.replace(/\s+/g, '-')}`}
+        className="whitespace-nowrap rounded border border-border px-1 font-mono text-[11px] text-foreground"
+      >
+        {placementChip(result)}
+      </span>
+    )
+  }
+
+  function useCreative(choice: CreativeChoice) {
+    setCreativeChoice(choice)
+    setMediaPickerOpen(false)
+    if (choice.useCaption) {
+      const text = creativeCaption(choice.creative)
+      if (text) {
+        setCaption(text)
+        setCaptionFromCreative(choice.creative.displayId)
+      }
+    }
+  }
+
+  function removeCreative() {
+    setCreativeChoice(null)
+    setCaptionFromCreative(null)
+    setUrlCreativeDismissed(true)
+  }
 
   const canSubmit = caption.trim().length > 0 && picked > 0 && types.length > 0 && !saving
   // A disabled button with no reason is a dead end; say what is still missing, in the order the page
@@ -196,6 +262,11 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                   onChange={(e) => setCaption(e.target.value)}
                   placeholder={`What should this ${lowerNoun} say?`}
                 />
+                {captionFromCreative && creativeChoice && (
+                  <p className="text-xs text-muted-foreground" data-testid="caption-from-creative">
+                    From Creative {captionFromCreative}. Edit freely; the Creative stays as it is.
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="compose-title">
@@ -205,7 +276,42 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="compose-media">Media</Label>
-                {attachCreative && (
+                {creativeChoice && (
+                  <div
+                    data-testid="compose-creative-card"
+                    className="flex items-center gap-3 rounded-[10px] border border-border bg-surface-2 p-3"
+                  >
+                    {creativeChoice.creative.latestRenderThumbnailUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={creativeChoice.creative.latestRenderThumbnailUrl}
+                        alt=""
+                        className="h-16 w-14 shrink-0 rounded-md object-cover"
+                      />
+                    )}
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="flex items-center gap-2 text-sm text-foreground">
+                        <span className="rounded border border-border px-1 font-mono text-[11px] text-muted-foreground">
+                          {creativeChoice.creative.displayId}
+                        </span>
+                        <span className="truncate font-medium">{creativeChoice.creative.name || creativeChoice.creative.headline || 'Untitled'}</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {creativeSummary(creativeChoice.creative)} · each destination gets its matching size
+                      </p>
+                      {creativeGroups[0] && <FrameStrip frames={creativeGroups[0].frames} />}
+                    </div>
+                    <div className="flex shrink-0 gap-1.5">
+                      <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => setMediaPickerOpen(true)}>
+                        Change
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={removeCreative}>
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {!creativeChoice && attachCreative && (
                   <p className="text-xs text-muted-foreground">
                     This {lowerNoun}&rsquo;s media will come from that creative&rsquo;s render once it&rsquo;s created.
                   </p>
@@ -280,6 +386,26 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                     projectId={projectId}
                     token={token}
                     onFilesChosen={addFiles}
+                    defaultTab={hasRenderedCreative || creativeChoice ? 'creatives' : undefined}
+                    extraTabs={[
+                      {
+                        value: 'creatives',
+                        label: 'Creatives',
+                        ownFooter: true,
+                        content: (
+                          <CreativesTab
+                            creatives={creatives}
+                            loadError={creativesError}
+                            projectId={projectId}
+                            token={token}
+                            destinations={pickedDestinations}
+                            captionEmpty={caption.trim().length === 0}
+                            onUse={useCreative}
+                            onCancel={() => setMediaPickerOpen(false)}
+                          />
+                        ),
+                      },
+                    ]}
                     onPicked={(items) =>
                       setPickedMedia((prev) => [...prev, ...items.filter((i) => !prev.some((p) => p.id === i.id))])
                     }
@@ -300,6 +426,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
               canEdit
               noun={noun}
               statusLabel="Draft"
+              rowChip={creativeChip}
               headerSlot={
                 allByHand ? (
                   // Every platform always offers a by-hand destination, so a list of only those means no
