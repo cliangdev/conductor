@@ -8,6 +8,7 @@ import {
   FileTextIcon,
   FilmIcon,
   FolderIcon,
+  LayoutDashboardIcon,
   LayoutTemplateIcon,
   LogOutIcon,
   PanelLeftCloseIcon,
@@ -56,9 +57,23 @@ import type { Project } from '@/types'
 // Marketing Workflow keeps rendering in the same group with no layout change.
 const AREA_EXTRA_NAV: Record<
   string,
-  { key: string; label: string; icon: React.ComponentType<{ className?: string }>; path: (projectId: string) => string }[]
+  {
+    key: string
+    label: string
+    icon: React.ComponentType<{ className?: string }>
+    path: (projectId: string) => string
+    /** Renders before the area's Workflow entries instead of after them. */
+    leading?: boolean
+  }[]
 > = {
   MARKETING: [
+    {
+      key: 'marketing-overview',
+      leading: true,
+      label: 'Overview',
+      icon: LayoutDashboardIcon,
+      path: (projectId) => `/app/projects/${projectId}/marketing/overview`,
+    },
     {
       key: 'marketing-insights',
       label: "What's working",
@@ -343,6 +358,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 <div key={area}>
                   <SectionLabel>{humanizeId(area)}</SectionLabel>
                   <div className="space-y-0.5 mb-4">
+                    {(AREA_EXTRA_NAV[area.toUpperCase()] ?? []).filter((e) => e.leading).map(({ key, label, icon: Icon, path }) => (
+                      <NavItem
+                        key={key}
+                        href={path(currentWorkspace.id)}
+                        icon={<Icon className="h-4 w-4" />}
+                        onNavigate={onNavigate}
+                      >
+                        {label}
+                      </NavItem>
+                    ))}
                     {entries.map((entry) => (
                       <NavItem
                         key={entry.slug}
@@ -353,7 +378,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                         {entry.label}
                       </NavItem>
                     ))}
-                    {(AREA_EXTRA_NAV[area.toUpperCase()] ?? []).map(({ key, label, icon: Icon, path }) => (
+                    {(AREA_EXTRA_NAV[area.toUpperCase()] ?? []).filter((e) => !e.leading).map(({ key, label, icon: Icon, path }) => (
                       <NavItem
                         key={key}
                         href={path(currentWorkspace.id)}

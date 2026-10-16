@@ -14,6 +14,7 @@ const ALL_CAPABILITIES: Capability[] = [
   'issue.assignReviewers',
   'integration.appCredential.manage',
   'creative.manage',
+  'marketing.target.manage',
 ]
 
 describe('can', () => {
