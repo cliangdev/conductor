@@ -85,6 +85,7 @@ export function PostDetailBody({
         workflowView={workflowView}
         description={description}
         assets={assets}
+        destinations={destinations}
         canEdit={canEdit}
         onCaptionSaved={onCaptionSaved}
         onAssetsChanged={onAssetsChanged}

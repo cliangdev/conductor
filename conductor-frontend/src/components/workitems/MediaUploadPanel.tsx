@@ -45,6 +45,17 @@ export interface MediaAsset extends WorkItemAsset {
   uploadStatus?: 'PENDING' | 'UPLOADED' | null
   contentType?: string | null
   sizeBytes?: number | null
+  width?: number | null
+  height?: number | null
+  /** The Media library item this file links to (a Post's file is a link, never a copy). */
+  mediaId?: string | null
+  /** The Creative render frame this file came from ("Use in Post"). */
+  creativeFrameId?: string | null
+  /** Read-only origin of a Creative frame: placement (e.g. 9x16), slide position, and the Creative. */
+  placementKey?: string | null
+  sequenceIndex?: number | null
+  creativeId?: string | null
+  creativeDisplayId?: string | null
   /** Short-lived signed read URL, minted per response — present only once the upload is confirmed. */
   previewUrl?: string | null
 }
@@ -227,8 +238,10 @@ export interface MediaUploadPanelProps {
   /**
    * `full` (default) is its own card with full-width previews and a dropzone. `strip` is bare — a row of
    * thumbnails with remove-on-hover and an "Add" tile — for a card that already holds the caption.
+   * `button` is only the upload affordance (an "Upload" button, progress and errors) for a caller that
+   * renders the files itself; it renders nothing while uploads are locked.
    */
-  variant?: 'full' | 'strip'
+  variant?: 'full' | 'strip' | 'button'
   /**
    * An extra same-sized tile rendered after the "Add" tile in the `strip` variant (e.g. Post's
    * "From a creative"). Hidden whenever uploads are locked, alongside "Add" itself.
@@ -350,6 +363,37 @@ export function MediaUploadPanel({
     } finally {
       setRemoving(null)
     }
+  }
+
+  if (variant === 'button') {
+    if (locked) return null
+    return (
+      <div className={cn('inline-flex flex-col gap-1', className)} data-testid="media-upload-button">
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="sr-only"
+          accept={ALLOWED_MEDIA_CONTENT_TYPES.join(',')}
+          aria-label="Media file"
+          onChange={(e) => {
+            handleFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          disabled={uploading || !selectedType}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <UploadCloud className="h-3.5 w-3.5" aria-hidden />
+          {uploading ? `Uploading ${progress}%` : 'Upload'}
+        </Button>
+        {error && <Alert variant="destructive">{error}</Alert>}
+      </div>
+    )
   }
 
   if (variant === 'strip') {

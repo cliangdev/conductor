@@ -5525,6 +5525,23 @@ components:
           type: string
           nullable: true
           description: The Creative render frame this file Asset links to, when it came from "Use in Post".
+        placementKey:
+          type: string
+          nullable: true
+          description: Placement of the Creative frame this file came from (e.g. 9x16). Read-only; null unless creativeFrameId is set.
+        sequenceIndex:
+          type: integer
+          format: int32
+          nullable: true
+          description: Zero-based slide position within a carousel or story Creative. Read-only; null for non-sequence frames.
+        creativeId:
+          type: string
+          nullable: true
+          description: The Creative this file's frame belongs to. Read-only; null unless creativeFrameId is set.
+        creativeDisplayId:
+          type: string
+          nullable: true
+          description: The Creative's display id (e.g. 18a). Read-only; null unless creativeFrameId is set.
         previewUrl:
           type: string
           nullable: true

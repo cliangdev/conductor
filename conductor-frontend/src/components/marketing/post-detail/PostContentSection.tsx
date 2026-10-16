@@ -1,20 +1,14 @@
 'use client'
 
-// What the Post says and shows, in one card: the caption that goes out, then the media as a strip of
-// thumbnails. The caption editor and the upload flow are the existing ones, rendered without their own
+// What the Post says and shows, in one card: the caption that goes out, then the media by destination. The caption editor and the upload flow are the existing ones, rendered without their own
 // cards; a lock or a "sends it back for review" note is one quiet line, not a banner.
 
-import { useState } from 'react'
-import { FolderOpenIcon, ImagesIcon } from 'lucide-react'
 import { Card } from '@/components/ui/card'
-import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
+import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
-import { AttachCreativeDialog } from '@/components/marketing/creatives/AttachCreativeDialog'
-import { PickMediaDialog } from '@/components/marketing/media/PickMediaDialog'
-import { addMediaToWorkItem, type CreativePhoto } from '@/components/marketing/creatives/types'
-import { Alert } from '@/components/ui/alert'
-import { apiErrorMessage } from '@/lib/api'
+import type { DestinationsState } from '@/components/marketing/destinations/model'
 import type { WorkflowView } from '@/types/workItem'
+import { PostMediaSection } from './PostMediaSection'
 
 export interface PostContentSectionProps {
   projectId: string
@@ -24,6 +18,8 @@ export interface PostContentSectionProps {
   workflowView?: WorkflowView
   description?: string | null
   assets: MediaAsset[]
+  /** The Post's destinations, so media can be shown per destination. */
+  destinations?: DestinationsState
   canEdit: boolean
   onCaptionSaved: (description: string) => void
   onAssetsChanged: () => void | Promise<void>
@@ -37,24 +33,11 @@ export function PostContentSection({
   workflowView,
   description,
   assets,
+  destinations,
   canEdit,
   onCaptionSaved,
   onAssetsChanged,
 }: PostContentSectionProps) {
-  const [attachOpen, setAttachOpen] = useState(false)
-  const [mediaOpen, setMediaOpen] = useState(false)
-  const [mediaError, setMediaError] = useState<string | null>(null)
-
-  async function addFromMedia(items: CreativePhoto[]) {
-    setMediaError(null)
-    try {
-      await addMediaToWorkItem(projectId, token, workItemId, items.map((i) => i.id))
-      await onAssetsChanged()
-    } catch (err) {
-      setMediaError(apiErrorMessage(err, 'Could not add this media'))
-    }
-  }
-
   return (
     <Card data-testid="post-content">
       <WorkItemDescriptionCard
@@ -70,66 +53,20 @@ export function PostContentSection({
         canEdit={canEdit}
         onSaved={onCaptionSaved}
       />
-      {(workflowView?.assetTypes?.length ?? 0) > 0 && (
-        <div className="border-t border-border px-4 py-3">
-          <MediaUploadPanel
-            variant="strip"
-            projectId={projectId}
-            workItemId={workItemId}
-            token={token}
-            status={status}
-            workflowView={workflowView}
-            assets={assets}
-            onUploaded={onAssetsChanged}
-            extraTile={
-              canEdit ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setMediaOpen(true)}
-                    className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted"
-                  >
-                    <FolderOpenIcon className="h-4 w-4" aria-hidden />
-                    From media
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAttachOpen(true)}
-                    className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted"
-                  >
-                    <ImagesIcon className="h-4 w-4" aria-hidden />
-                    From a creative
-                  </button>
-                </>
-              ) : undefined
-            }
-          />
-          {mediaError && (
-            <Alert variant="destructive" className="mt-2">
-              {mediaError}
-            </Alert>
-          )}
-        </div>
-      )}
-      {canEdit && (
-        <PickMediaDialog
-          open={mediaOpen}
-          onOpenChange={setMediaOpen}
-          projectId={projectId}
-          token={token}
-          onPicked={(items) => void addFromMedia(items)}
-        />
-      )}
-      {canEdit && (
-        <AttachCreativeDialog
-          open={attachOpen}
-          onOpenChange={setAttachOpen}
+      <div className="border-t border-border px-4 py-3">
+        <PostMediaSection
           projectId={projectId}
           workItemId={workItemId}
           token={token}
-          onAttached={onAssetsChanged}
+          status={status}
+          workflowView={workflowView}
+          caption={description ?? null}
+          assets={assets}
+          canEdit={canEdit}
+          destinations={destinations}
+          onAssetsChanged={onAssetsChanged}
         />
-      )}
+      </div>
     </Card>
   )
 }
