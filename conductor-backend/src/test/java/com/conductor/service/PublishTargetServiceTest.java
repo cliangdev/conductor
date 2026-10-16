@@ -59,6 +59,8 @@ class PublishTargetServiceTest {
     private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
     private PublishBundleGuard publishBundleGuard;
+    private com.conductor.creative.CreativeRenderFrameRepository frameRepository;
+    private com.conductor.creative.CreativeRepository creativeRepository;
     private PublishTargetService service;
 
     private User caller;
@@ -73,9 +75,12 @@ class PublishTargetServiceTest {
         publishBundleGuard = mock(PublishBundleGuard.class);
         targetAssetRepository = mock(PostPublishTargetAssetRepository.class);
         assetRepository = mock(AssetRepository.class);
+        frameRepository = mock(com.conductor.creative.CreativeRenderFrameRepository.class);
+        creativeRepository = mock(com.conductor.creative.CreativeRepository.class);
         service = new PublishTargetService(new PublishPlatformRegistry(), connectionRepository, targetRepository, targetAssetRepository,
                 assetRepository, workItemRepository, projectSecurityService, publishBundleGuard,
-                new PublishTargetMediaResolver(assetRepository, targetAssetRepository));
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository),
+                new com.conductor.creative.CreativePlacementMedia(frameRepository, creativeRepository));
 
         caller = new User();
         caller.setId("user-1");
@@ -1166,5 +1171,156 @@ class PublishTargetServiceTest {
                 .allSatisfy(o -> assertThat(o.formats()).containsExactly("feed", "reel", "story"));
         assertThat(options).filteredOn(o -> "tiktok".equals(o.platform()))
                 .allSatisfy(o -> assertThat(o.formats()).containsExactly("feed"));
+    }
+
+    // ── destinations added after a Creative render was attached (Post media rework T4) ──────────
+
+    @Test
+    void aTikTokAddedAfterACarouselIsAttachedGetsOnlyTheNineBySixteenSlidesInOrder() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("CAROUSEL", frame("9x16", 0), frame("9x16", 1), frame("4x5", 0), frame("4x5", 1),
+                frame("1x1", 0), frame("1x1", 1));
+        PostPublishTarget igFeed = existingRow("instagram", "meta", "conn-meta");
+        igFeed.setFormat("FEED");
+        PostPublishTarget fbFeed = existingRow("facebook", "meta", "conn-meta");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(igFeed, fbFeed));
+        connections("tiktok", tiktokConnection("conn-tt", "acme"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("instagram", "conn-meta"),
+                        new PublishTargetService.TargetSelection("facebook", "conn-meta"),
+                        new PublishTargetService.TargetSelection("tiktok", "conn-tt")), caller);
+
+        PostPublishTarget added = savedRowOnly("tiktok");
+        assertThat(added.isCustomMedia()).isTrue();
+        assertThat(savedSelectionOf(added)).containsExactly("asset-9x16-0", "asset-9x16-1");
+    }
+
+    @Test
+    void anInstagramStoryAddedLaterGetsTheStoryFramesWhenTheRenderHasThem() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("STILL", frame("4x5", null), frame("story", null));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("instagram", "conn-meta", null, null, null, "story")),
+                caller);
+
+        PostPublishTarget added = savedRowOnly("instagram");
+        assertThat(added.isCustomMedia()).isTrue();
+        assertThat(savedSelectionOf(added)).containsExactly("asset-story-null");
+    }
+
+    @Test
+    void aDestinationNoPlacementMatchesKeepsInheritingThePostsMedia() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("STILL", frame("4x5", null), frame("1x1", null));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("instagram", "conn-meta", null, null, null, "reel")),
+                caller);
+
+        assertThat(savedRowOnly("instagram").isCustomMedia()).isFalse();
+        verify(targetAssetRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void aStoryAddedAfterACarouselGetsAnExplicitEmptySelectionNotTheWholeSet() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("CAROUSEL", frame("9x16", 0), frame("4x5", 0), frame("1x1", 0));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("instagram", "conn-meta", null, null, null, "story")),
+                caller);
+
+        PostPublishTarget added = savedRowOnly("instagram");
+        assertThat(added.isCustomMedia()).isTrue();
+        assertThat(savedSelectionOf(added)).isEmpty();
+    }
+
+    @Test
+    void aNewDestinationThatNamedItsOwnMediaIsLeftAlone() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("STILL", frame("4x5", null), frame("1x1", null));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("instagram", "conn-meta", null, null,
+                        List.of("asset-1x1-null"))), caller);
+
+        PostPublishTarget added = savedRowOnly("instagram");
+        assertThat(added.isCustomMedia()).isTrue();
+        assertThat(savedSelectionOf(added)).containsExactly("asset-1x1-null");
+    }
+
+    @Test
+    void aNewDestinationThatIsExplicitlyMediaLessIsLeftAlone() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("STILL", frame("4x5", null));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("instagram", "conn-meta", null, null, List.of(),
+                        "feed", true)), caller);
+
+        PostPublishTarget added = savedRowOnly("instagram");
+        assertThat(added.isCustomMedia()).isTrue();
+        assertThat(savedSelectionOf(added)).isEmpty();
+    }
+
+    @Test
+    void existingDestinationsAreNeverRewrittenWhenAnotherIsAdded() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("STILL", frame("4x5", null), frame("1x1", null));
+        PostPublishTarget fbFeed = existingRow("facebook", "meta", "conn-meta");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(fbFeed));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("facebook", "conn-meta"),
+                        new PublishTargetService.TargetSelection("instagram", "conn-meta")), caller);
+
+        assertThat(fbFeed.isCustomMedia()).isFalse();
+        verify(targetAssetRepository, never()).deleteAllByTargetId(fbFeed.getId());
+        assertThat(savedRows()).extracting(PostPublishTarget::getPlatform).containsExactly("instagram");
+    }
+
+    private PostPublishTarget savedRowOnly(String platform) {
+        return savedRows().stream().filter(r -> platform.equals(r.getPlatform())).findFirst().orElseThrow();
+    }
+
+    private static com.conductor.creative.CreativeRenderFrame frame(String placement, Integer sequence) {
+        com.conductor.creative.CreativeRenderFrame frame = new com.conductor.creative.CreativeRenderFrame();
+        frame.setId("frame-" + placement + "-" + sequence);
+        frame.setCreativeId("creative-1");
+        frame.setPlacementKey(placement);
+        frame.setSequenceIndex(sequence);
+        frame.setContentType("image/png");
+        return frame;
+    }
+
+    /** A Post whose assets are Creative frames: asset-{placement}-{sequence} carries frame-{placement}-{sequence}. */
+    private void givenRenderedPost(String creativeKind, com.conductor.creative.CreativeRenderFrame... frames) {
+        List<Asset> assets = new ArrayList<>();
+        for (com.conductor.creative.CreativeRenderFrame frame : frames) {
+            Asset asset = new Asset();
+            asset.setId("asset-" + frame.getPlacementKey() + "-" + frame.getSequenceIndex());
+            asset.setKind(AssetService.KIND_FILE);
+            asset.setCreativeFrameId(frame.getId());
+            assets.add(asset);
+        }
+        // An ordinary upload sits alongside: it carries no frame and must never be matched.
+        Asset upload = new Asset();
+        upload.setId("asset-upload");
+        upload.setKind(AssetService.KIND_FILE);
+        assets.add(upload);
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(assets);
+        when(frameRepository.findAllById(any())).thenReturn(List.of(frames));
+        com.conductor.creative.Creative creative = new com.conductor.creative.Creative();
+        creative.setId("creative-1");
+        creative.setKind(creativeKind);
+        when(creativeRepository.findById("creative-1")).thenReturn(Optional.of(creative));
+        // Give new rows ids so their stored selections can be read back.
+        org.mockito.Mockito.doAnswer(inv -> {
+            List<PostPublishTarget> rows = new ArrayList<>(inv.getArgument(0));
+            rows.forEach(r -> { if (r.getId() == null) r.setId("new-" + r.getPlatform()); });
+            return rows;
+        }).when(targetRepository).saveAll(any());
     }
 }
