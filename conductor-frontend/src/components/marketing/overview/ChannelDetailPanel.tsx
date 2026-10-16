@@ -199,6 +199,8 @@ export function ChannelDetailPanel({
           {data && detailsThrough && (
             <p className="text-xs text-muted-foreground">
               Data through {detailsThrough}
+              {channel?.metrics.some((m) => (m.provisionalDays ?? 0) > 0) &&
+                " · later days (dashed) are still updating and are not in the totals"}
             </p>
           )}
         </div>
@@ -243,6 +245,7 @@ export function ChannelDetailPanel({
                   className="flex flex-wrap gap-x-3 text-xs text-muted-foreground"
                   aria-label="Connections"
                 >
+                  <li>{channel.connections.length > 1 ? "Sources:" : "Source:"}</li>
                   {channel.connections.map((c) => (
                     <li key={c.id}>
                       <Link

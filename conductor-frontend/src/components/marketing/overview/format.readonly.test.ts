@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { mismatchCardLine, mismatchSummary, readOnlyTargetSource } from './format'
+import { channel } from './test-fixtures'
+import { dataThroughSummary, mismatchCardLine, mismatchSummary, readOnlyTargetSource } from './format'
 
 describe('read-only targets and mismatches', () => {
   it('names where a read-only target is set', () => {
@@ -25,5 +26,28 @@ describe('read-only targets and mismatches', () => {
 
   it('words the card line with the reference source', () => {
     expect(mismatchCardLine({ metric: 'downloads', label: 'Downloads', referenceValue: 1, channelValue: 2, gapPct: 0.299, from: 'a', to: 'b', referenceSource: 'Rexipe' })).toBe('Downloads differ from Rexipe by 29.9%')
+  })
+})
+
+describe('dataThroughSummary', () => {
+  it('names the earliest channel when channels end on different days', () => {
+    const channels = [
+      channel({ label: 'Web', dataCompleteThrough: '2026-10-15' }),
+      channel({ label: 'App Store', dataCompleteThrough: '2026-10-11' }),
+      channel({ label: 'Ads', status: 'NOT_CONNECTED', dataCompleteThrough: '2026-10-15' }),
+    ]
+    expect(dataThroughSummary(channels, '2026-10-15')).toBe('Oct 11 (App Store) – Oct 15')
+  })
+
+  it('shows one day when every reporting channel agrees, ignoring unconnected ones', () => {
+    const channels = [
+      channel({ dataCompleteThrough: '2026-10-15' }),
+      channel({ status: 'NOT_CONNECTED', dataCompleteThrough: '2026-10-01' }),
+    ]
+    expect(dataThroughSummary(channels, null)).toBe('Oct 15')
+  })
+
+  it('falls back to the window end with nothing reporting', () => {
+    expect(dataThroughSummary([], '2026-10-14')).toBe('Oct 14')
   })
 })

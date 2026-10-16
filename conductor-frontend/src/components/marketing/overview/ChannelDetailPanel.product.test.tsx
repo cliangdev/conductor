@@ -84,6 +84,16 @@ describe('ChannelDetailPanel for the In-app channel', () => {
   })
 })
 
+describe('ChannelDetailPanel freshness and sources', () => {
+  it('explains the dashed days and labels the connections as the source', async () => {
+    serve(detailResponse({ channel: productChannel(), dimensions: [] }))
+    render(<ChannelDetailPanel projectId="proj-1" channel="product" />)
+    expect(await screen.findByText(/Data through Sep 14 · later days \(dashed\) are still updating/)).toBeInTheDocument()
+    expect(screen.getByText('Source:')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Rexipe backend' })).toBeInTheDocument()
+  })
+})
+
 describe('ChannelDetailPanel mismatch', () => {
   it.each([
     ['STORE', 'App Store', mismatch(), /App Store Connect reports 1,204 downloads; Product metrics \(Rexipe backend\) reports 1,190/],

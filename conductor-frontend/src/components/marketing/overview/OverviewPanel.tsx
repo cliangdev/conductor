@@ -18,7 +18,7 @@ import { usePersistedStateAfterMount } from '@/lib/persisted'
 import { ChannelCard } from './ChannelCard'
 import { FunnelStrip } from './FunnelStrip'
 import { TargetDialog } from './TargetDialog'
-import { dataThroughLabel } from './format'
+import { dataThroughSummary } from './format'
 import { useTargetEditor } from './useTargetEditor'
 import {
   CHANNEL_ORDER,
@@ -103,7 +103,7 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
     return [...data.channels].sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel))
   }, [data])
 
-  const dataThrough = data ? dataThroughLabel(data.window.dataCompleteThroughMin, data.window.to) : null
+  const dataThrough = data ? dataThroughSummary(data.channels, data.window.to) : null
 
   const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.channel, c.label])), [channels])
 

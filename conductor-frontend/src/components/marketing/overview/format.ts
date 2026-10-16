@@ -1,6 +1,6 @@
 // Display helpers for the marketing overview: units, change direction, targets, windows.
 
-import type { MarketingTarget, MetricUnit, OverviewMetric, OverviewMismatch, TargetDirection } from './types'
+import type { MarketingTarget, MetricUnit, OverviewChannel, OverviewMetric, OverviewMismatch, TargetDirection } from './types'
 
 const PLACEHOLDER = '—'
 
@@ -104,6 +104,21 @@ export function dataThroughLabel(min: string | null | undefined, to: string | nu
   const [startMonth] = start.split(' ')
   const [, endDay] = end.split(' ')
   return startMonth === end.split(' ')[0] ? `${start}–${endDay}` : `${start} – ${end}`
+}
+
+/**
+ * "Oct 15" when every channel with data is complete through the same day; otherwise the earliest channel is
+ * named so a range explains itself: "Oct 11 (App Store) – Oct 15".
+ */
+export function dataThroughSummary(channels: OverviewChannel[], fallbackTo: string | null | undefined): string | null {
+  const reporting = channels
+    .filter((c) => (c.status === 'LIVE' || c.status === 'STALE' || c.status === 'MISMATCH') && c.dataCompleteThrough)
+    .sort((a, b) => (a.dataCompleteThrough as string).localeCompare(b.dataCompleteThrough as string))
+  if (reporting.length === 0) return dataThroughLabel(null, fallbackTo)
+  const first = reporting[0]
+  const last = reporting[reporting.length - 1]
+  if (first.dataCompleteThrough === last.dataCompleteThrough) return shortDate(last.dataCompleteThrough)
+  return `${shortDate(first.dataCompleteThrough)} (${first.label}) – ${shortDate(last.dataCompleteThrough)}`
 }
 
 // ── Chart axes ────────────────────────────────────────────────────────────────
