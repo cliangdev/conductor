@@ -384,6 +384,7 @@ export function MediaUploadPanel({
           type="button"
           variant="outline"
           size="sm"
+          className="gap-1.5"
           disabled={uploading || !selectedType}
           onClick={() => fileInputRef.current?.click()}
         >

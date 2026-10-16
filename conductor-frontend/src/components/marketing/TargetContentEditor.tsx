@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { MediaThumb } from './MediaThumb'
+import { assetDisplayLabel } from './post-detail/mediaGroups'
 
 /** What one destination publishes, as the picker holds it while it is being edited. */
 export interface TargetContent {
@@ -155,7 +156,10 @@ export function TargetContentEditor({
                     />
                     <MediaThumb asset={asset} />
                     <span className="min-w-0 flex-1 truncate text-xs">
-                      {asset.label || asset.type}
+                      {assetDisplayLabel(asset, { withRatio: true })}
+                      {asset.creativeFrameId && asset.creativeDisplayId && (
+                        <span className="text-muted-foreground"> · Creative {asset.creativeDisplayId}</span>
+                      )}
                     </span>
                     {included && (
                       <span className="flex shrink-0 items-center gap-0.5">

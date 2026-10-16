@@ -22,6 +22,7 @@ import { buildRows, summarize, type DestinationActions, type DestinationsState }
 import { draftFromTargets } from '@/components/marketing/destinations/selectionState'
 import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { PostMediaSection } from './PostMediaSection'
+import { assetDisplayLabel, placementLabel } from './mediaGroups'
 
 const ig = option({ platform: 'instagram', connectionId: 'ig', label: '@rexipe.ig' })
 const fb = option({ platform: 'facebook', connectionId: 'fb', label: 'Rexipe' })
@@ -162,8 +163,8 @@ describe('PostMediaSection', () => {
     const groups = screen.getAllByTestId('media-origin-group')
     expect(groups.map((g) => g.getAttribute('aria-label'))).toEqual(['Creative 18a', 'From library', 'Uploaded'])
     const creative = groups[0]!
-    expect(within(creative).getByText('4x5')).toBeInTheDocument()
-    expect(within(creative).getByText('9x16')).toBeInTheDocument()
+    expect(within(creative).getByText('4:5')).toBeInTheDocument()
+    expect(within(creative).getByText('9:16')).toBeInTheDocument()
     expect(within(creative).getByText(/Carousel · 3 files/)).toBeInTheDocument()
     // Facebook inherits everything, so nothing is unused here.
     expect(screen.queryByText('Not used by any destination')).not.toBeInTheDocument()
@@ -219,7 +220,7 @@ describe('PostMediaSection', () => {
     expect(within(aside).getByText('9:16 · 1080 × 1920 px · 2.0 KB')).toBeInTheDocument()
     expect(within(within(aside).getByRole('list')).getByText(/Instagram · @rexipe\.ig/)).toBeInTheDocument()
     expect(within(aside).getByText(/Reel · position 1/)).toBeInTheDocument()
-    expect(within(aside).getByText(/Creative 18a · 9x16 · slide 2/)).toBeInTheDocument()
+    expect(within(aside).getByText(/Creative 18a · 9:16 · slide 2/)).toBeInTheDocument()
     expect(within(aside).getByRole('link', { name: /open creative/i })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
@@ -244,5 +245,23 @@ describe('PostMediaSection', () => {
     setup({ destinations: undefined })
     expect(screen.getByText(/add destinations/i)).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /full size/i })).toHaveLength(5)
+  })
+})
+
+describe('placementLabel / assetDisplayLabel', () => {
+  it('writes every placement key in colon form', () => {
+    expect(placementLabel('4×5')).toBe('4:5')
+    expect(placementLabel('1x1')).toBe('1:1')
+    expect(placementLabel('9:16')).toBe('9:16')
+    expect(placementLabel('16x9')).toBe('16:9')
+    expect(placementLabel('story')).toBe('Story')
+    expect(placementLabel(null)).toBe('')
+  })
+
+  it('names creative frames by slide and leaves other files alone', () => {
+    const frame = asset('x', { creativeFrameId: 'f', placementKey: '4×5', sequenceIndex: 1, label: 'Creative 3a 4×5' })
+    expect(assetDisplayLabel(frame)).toBe('Slide 2')
+    expect(assetDisplayLabel(frame, { withRatio: true })).toBe('4:5 · slide 2')
+    expect(assetDisplayLabel(asset('u', { label: 'my upload' }))).toBe('my upload')
   })
 })

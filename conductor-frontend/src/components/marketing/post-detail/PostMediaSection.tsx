@@ -33,10 +33,12 @@ import {
   activeDestinations,
   aspectLabel,
   aspectOf,
+  assetDisplayLabel,
   destinationTitle,
   formatBytes,
   formatLabel,
   groupByOrigin,
+  placementLabel,
   usageByAsset,
   type OriginGroup,
 } from './mediaGroups'
@@ -73,23 +75,30 @@ function Thumb({
   height = TILE_HEIGHT,
   badge,
   className,
+  responsive,
 }: {
   asset: MediaAsset
   height?: number
+  /** Shrink to the small tile height below the sm breakpoint. */
+  responsive?: boolean
   badge?: number
   className?: string
 }) {
   return (
     <span
-      className={cn('relative block shrink-0 overflow-hidden rounded-md bg-surface-3', className)}
-      style={{ height, aspectRatio: String(aspectOf(asset)) }}
+      className={cn(
+        'relative block shrink-0 overflow-hidden rounded-md border border-border bg-surface-3',
+        responsive && 'h-[96px] sm:h-[120px]',
+        className,
+      )}
+      style={responsive ? { aspectRatio: String(aspectOf(asset)) } : { height, aspectRatio: String(aspectOf(asset)) }}
     >
       {asset.previewUrl ? (
         isVideoContentType(asset.contentType) ? (
           <video src={asset.previewUrl} preload="metadata" muted className="h-full w-full object-cover" />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={asset.previewUrl} alt={asset.label || asset.type} className="h-full w-full object-cover" />
+          <img src={asset.previewUrl} alt={assetDisplayLabel(asset)} className="h-full w-full object-cover" />
         )
       ) : null}
       {badge != null && (
@@ -222,7 +231,7 @@ export function PostMediaSection({
             <div className="space-y-1">
               <p className="text-foreground">
                 {asset.creativeDisplayId ? `Creative ${asset.creativeDisplayId}` : 'A Creative'}
-                {asset.placementKey ? ` · ${asset.placementKey}` : ''}
+                {asset.placementKey ? ` · ${placementLabel(asset.placementKey)}` : ''}
                 {asset.sequenceIndex != null ? ` · slide ${asset.sequenceIndex + 1}` : ''}
               </p>
               {asset.creativeId && (
@@ -245,7 +254,7 @@ export function PostMediaSection({
             variant="outline"
             size="sm"
             onClick={() => setRemoveId(asset.id)}
-            className="w-full justify-center text-destructive"
+            className="w-full justify-center gap-1.5 text-destructive"
           >
             <Trash2Icon className="h-3.5 w-3.5" aria-hidden />
             Remove from Post
@@ -261,6 +270,7 @@ export function PostMediaSection({
     const inherits = row.content.assetIds === null
     const title = destinationTitle(row)
     const ids = media.map((a) => a.id)
+    const hasFrames = files.some((f) => !!f.creativeFrameId)
     return (
       <section key={row.key} aria-label={title} className="space-y-2" data-testid="media-destination-group">
         <header className="flex flex-wrap items-center gap-2 text-sm">
@@ -281,9 +291,13 @@ export function PostMediaSection({
           </span>
         </header>
         {media.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing selected for this destination.</p>
+          <p className="text-sm text-muted-foreground">
+            {hasFrames
+              ? `Nothing for this destination — ${PLATFORM_NAME[row.option.platform]} can't post a photo carousel. Remove it or pick a video.`
+              : 'Nothing selected for this destination.'}
+          </p>
         ) : (
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          <div className="flex flex-wrap gap-2">
             {media.map((a, i) => (
               <button
                 key={a.id}
@@ -292,7 +306,7 @@ export function PostMediaSection({
                 onClick={() => openViewer(ids, a.id, title)}
                 className="shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Thumb asset={a} badge={media.length > 1 ? i + 1 : undefined} />
+                <Thumb asset={a} badge={media.length > 1 ? i + 1 : undefined} responsive />
               </button>
             ))}
           </div>
@@ -315,8 +329,8 @@ export function PostMediaSection({
         >
           <Thumb asset={a} height={96} />
         </button>
-        <p className="truncate text-xs text-foreground" title={a.label || a.type}>
-          {a.label || a.type}
+        <p className="truncate text-xs text-foreground" title={assetDisplayLabel(a)}>
+          {assetDisplayLabel(a)}
         </p>
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
           <span>{formatBytes(a.sizeBytes)}</span>
@@ -358,7 +372,7 @@ export function PostMediaSection({
         </header>
         {g.rows.map((r) => (
           <div key={r.key} className="space-y-1">
-            {g.kind === 'creative' && <p className="text-xs text-muted-foreground">{r.placementKey}</p>}
+            {g.kind === 'creative' && <p className="text-xs text-muted-foreground">{placementLabel(r.placementKey)}</p>}
             <div className="flex flex-wrap items-start gap-3">
               {r.assets.map((a) => fileTile(a, g.assets.map((x) => x.id), g.title))}
             </div>
@@ -370,7 +384,7 @@ export function PostMediaSection({
 
   return (
     <div className="space-y-3" data-testid="post-media">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
         <h3 className="text-xs font-medium text-muted-foreground">Media</h3>
         <div role="radiogroup" aria-label="Media view" className="inline-flex rounded-md border border-border p-0.5">
           {(
@@ -395,7 +409,7 @@ export function PostMediaSection({
           ))}
         </div>
         {editable && (
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
             <span className="text-xs text-muted-foreground">Add media</span>
             {canUpload && (
               <MediaUploadPanel
@@ -409,11 +423,11 @@ export function PostMediaSection({
                 onUploaded={onAssetsChanged}
               />
             )}
-            <Button variant="outline" size="sm" onClick={() => setMediaOpen(true)}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setMediaOpen(true)}>
               <FolderOpenIcon className="h-3.5 w-3.5" aria-hidden />
               From media
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setAttachOpen(true)}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAttachOpen(true)}>
               <ImagesIcon className="h-3.5 w-3.5" aria-hidden />
               From a creative
             </Button>
@@ -478,7 +492,7 @@ export function PostMediaSection({
       <FullSizeViewer
         open={!!current}
         onOpenChange={(open) => !open && setViewer(null)}
-        title={current?.label || current?.type || 'Media'}
+        title={current ? assetDisplayLabel(current, { withRatio: true }) : 'Media'}
         subtitle={viewer?.label}
         onPrev={viewerIndex > 0 ? () => setViewer((v) => v && { ...v, index: viewerIndex - 1 }) : undefined}
         onNext={

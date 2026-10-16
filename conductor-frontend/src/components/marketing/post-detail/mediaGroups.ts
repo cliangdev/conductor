@@ -37,6 +37,35 @@ export function aspectOf(asset: MediaAsset): number {
   return asset.width && asset.height ? asset.width / asset.height : 1
 }
 
+/** "4:5", "1:1", "9:16", "16:9" or "Story" for a placement key however it was written ("4×5", "4x5", "4:5"). */
+export function placementLabel(key: string | null | undefined): string {
+  if (!key) return ''
+  const m = key.match(/(\d+)\s*[x×:]\s*(\d+)/i)
+  if (m) return `${m[1]}:${m[2]}`
+  if (/story/i.test(key)) return 'Story'
+  return key
+}
+
+/**
+ * A file's name for people. A Creative frame is "Slide n" (prefixed with its ratio when `withRatio`, for places
+ * where the size is not already the context); anything else keeps its own label. The data is never changed.
+ */
+export function assetDisplayLabel(
+  asset: Pick<MediaAsset, 'label' | 'type' | 'creativeFrameId' | 'sequenceIndex' | 'placementKey'>,
+  opts: { withRatio?: boolean } = {},
+): string {
+  if (asset.creativeFrameId) {
+    const ratio = placementLabel(asset.placementKey)
+    if (asset.sequenceIndex != null) {
+      const slide = `slide ${asset.sequenceIndex + 1}`
+      if (opts.withRatio && ratio) return `${ratio} · ${slide}`
+      return `Slide ${asset.sequenceIndex + 1}`
+    }
+    if (ratio) return ratio
+  }
+  return asset.label || asset.type
+}
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null) return ''
   if (bytes < 1024) return `${bytes} B`
