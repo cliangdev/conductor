@@ -106,6 +106,10 @@ export interface OverviewMismatch {
   gapPct: number
   from: string
   to: string
+  /** Name of the connection(s) behind the channel's own figure, e.g. App Store Connect. */
+  channelSource?: string
+  /** Name of the product metrics connection(s) that reported the reference figure. */
+  referenceSource?: string
 }
 
 export interface OverviewChannel {
@@ -114,6 +118,8 @@ export interface OverviewChannel {
   status: ChannelStatus
   lastFetchedAt?: string | null
   dataCompleteThrough?: string | null
+  /** False when the channel's connection owns its targets (In-app): they cannot be set or cleared here. */
+  targetsEditable?: boolean
   mismatch?: OverviewMismatch | null
   connections: OverviewConnection[]
   connectHint?: { /** Deprecated. */ connectorId?: string; connectors: { connectorId: string; name: string }[] } | null

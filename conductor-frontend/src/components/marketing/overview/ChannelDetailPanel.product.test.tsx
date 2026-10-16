@@ -66,7 +66,7 @@ describe('ChannelDetailPanel for the In-app channel', () => {
     expect(screen.getAllByText('Provisional').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Small sample').length).toBeGreaterThan(0)
     expect(screen.getByText('Set in Rexipe backend')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Edit target for Trials started' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /target for/ })).not.toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'By source' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'By campaign' })).toBeInTheDocument()
     expect(screen.queryByText('Mismatch')).not.toBeInTheDocument()

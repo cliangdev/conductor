@@ -10,11 +10,17 @@ export function TargetNote({
   canEdit,
   onEdit,
   buttonClassName = '',
+  editable = true,
+  ownerLabel,
 }: {
   metric: OverviewMetric
   canEdit: boolean
   onEdit: () => void
   buttonClassName?: string
+  /** False when the channel's connection owns its targets: no edit button for any metric. */
+  editable?: boolean
+  /** The connection that owns the targets, named when they cannot be edited here. */
+  ownerLabel?: string
 }) {
   const line = targetLine(metric)
   if (metric.target?.readOnly) {
@@ -23,6 +29,15 @@ export function TargetNote({
         {line}
         {' · '}
         <span>{readOnlyTargetSource(metric.target)}</span>
+      </p>
+    )
+  }
+  if (!editable) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {line ?? 'No target set'}
+        {' · '}
+        {ownerLabel ? `set in ${ownerLabel}` : 'set in the connected source'}
       </p>
     )
   }

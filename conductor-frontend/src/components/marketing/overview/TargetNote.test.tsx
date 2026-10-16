@@ -40,4 +40,10 @@ describe('TargetNote', () => {
     )
     expect(screen.getByText('Set in Rexipe')).toBeInTheDocument()
   })
+
+  it('offers no button and names the owner when the channel does not allow editing', () => {
+    render(<TargetNote metric={metric()} canEdit editable={false} ownerLabel="Rexipe backend" onEdit={vi.fn()} />)
+    expect(screen.getByText('No target set · set in Rexipe backend')).toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
 })

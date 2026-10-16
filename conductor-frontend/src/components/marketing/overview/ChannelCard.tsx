@@ -21,12 +21,16 @@ function MetricRow({
   metric,
   canEditTargets,
   showFlags,
+  targetsEditable,
+  ownerLabel,
   onSetTarget,
 }: {
   metric: OverviewMetric
   canEditTargets: boolean
   /** In-app metrics carry the feed's provisional and small-sample flags. */
   showFlags: boolean
+  targetsEditable: boolean
+  ownerLabel?: string
   onSetTarget: () => void
 }) {
   return (
@@ -47,7 +51,14 @@ function MetricRow({
       </div>
       <ChangeLine metric={metric} />
       {showFlags && <MetricFlags metric={metric} />}
-      <TargetNote metric={metric} canEdit={canEditTargets} onEdit={onSetTarget} buttonClassName="relative z-10" />
+      <TargetNote
+        metric={metric}
+        canEdit={canEditTargets}
+        onEdit={onSetTarget}
+        buttonClassName="relative z-10"
+        editable={targetsEditable}
+        ownerLabel={ownerLabel}
+      />
     </li>
   )
 }
@@ -100,6 +111,8 @@ export function ChannelCard({
                   metric={m}
                   canEditTargets={canEditTargets}
                   showFlags={channel.channel === 'PRODUCT'}
+                  targetsEditable={channel.targetsEditable !== false}
+                  ownerLabel={channel.connections[0]?.name}
                   onSetTarget={() => onSetTarget(channel.channel, m)}
                 />
               ))}

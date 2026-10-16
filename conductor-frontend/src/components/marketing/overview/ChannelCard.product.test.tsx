@@ -28,8 +28,9 @@ describe('ChannelCard for the In-app channel', () => {
     expect(screen.getByText('Set in Rexipe backend')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Edit target for Trials started' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Set target for Trials started' })).not.toBeInTheDocument()
-    // a metric with no feed target can still be given one
-    expect(screen.getByRole('button', { name: 'Set target for Paid' })).toBeInTheDocument()
+    // the connection owns every In-app target: a metric without one says where it would be set
+    expect(screen.queryByRole('button', { name: /target for/ })).not.toBeInTheDocument()
+    expect(screen.getAllByText(/No target set · set in Rexipe backend/).length).toBeGreaterThan(0)
   })
 
   it('flags provisional days and a small sample on the metrics that have them', () => {
@@ -51,10 +52,11 @@ describe('ChannelCard for the In-app channel', () => {
     expect(screen.queryByText('Small sample')).not.toBeInTheDocument()
   })
 
-  it('opens the dialog for a metric without a feed target', () => {
-    const onSetTarget = renderCard()
-    fireEvent.click(screen.getByRole('button', { name: 'Set target for Paid' }))
-    expect(onSetTarget).toHaveBeenCalledWith('PRODUCT', expect.objectContaining({ metric: 'paid' }))
+  it('still offers Set target on a channel whose targets are editable', () => {
+    const onSetTarget = vi.fn()
+    render(<ChannelCard projectId="proj-1" channel={channel()} canEditTargets onSetTarget={onSetTarget} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Set target for Clicks' }))
+    expect(onSetTarget).toHaveBeenCalled()
   })
 
   it('links a not-connected card to the product metrics integration', () => {

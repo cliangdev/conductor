@@ -322,6 +322,8 @@ export function ChannelDetailPanel({
                         <TargetNote
                           metric={m}
                           canEdit={canEditTargets}
+                          editable={channel.targetsEditable !== false}
+                          ownerLabel={channel.connections[0]?.name}
                           onEdit={() =>
                             setEditing({ channel: channel.channel, metric: m })
                           }

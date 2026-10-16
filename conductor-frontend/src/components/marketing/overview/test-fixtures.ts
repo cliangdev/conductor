@@ -179,6 +179,7 @@ export function productChannel(overrides: Partial<OverviewChannel> = {}): Overvi
   return channel({
     channel: 'PRODUCT',
     label: 'In-app',
+    targetsEditable: false,
     connections: [{ id: 'c9', connectorId: 'product-metrics', name: 'Rexipe backend', status: 'LIVE' }],
     connectHint: { connectors: [{ connectorId: 'product-metrics', name: 'Product metrics' }] },
     metrics: [
