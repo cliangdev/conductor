@@ -1224,6 +1224,20 @@ class PublishTargetServiceTest {
     }
 
     @Test
+    void aStoryAddedAfterACarouselGetsAnExplicitEmptySelectionNotTheWholeSet() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        givenRenderedPost("CAROUSEL", frame("9x16", 0), frame("4x5", 0), frame("1x1", 0));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("instagram", "conn-meta", null, null, null, "story")),
+                caller);
+
+        PostPublishTarget added = savedRowOnly("instagram");
+        assertThat(added.isCustomMedia()).isTrue();
+        assertThat(savedSelectionOf(added)).isEmpty();
+    }
+
+    @Test
     void aNewDestinationThatNamedItsOwnMediaIsLeftAlone() {
         connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
         givenRenderedPost("STILL", frame("4x5", null), frame("1x1", null));

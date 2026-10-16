@@ -682,6 +682,10 @@ public class PublishTargetService {
             if (!media.isEmpty()) {
                 entry.setValue(new DesiredTarget(wanted.option(), wanted.optionsJson(), wanted.captionOverride(),
                         media, wanted.format(), false));
+            } else if (CreativePlacementMedia.carouselCannotPublishTo(placements)) {
+                // Exactly what attach does: never inherit a carousel's whole mixed-size set.
+                entry.setValue(new DesiredTarget(wanted.option(), wanted.optionsJson(), wanted.captionOverride(),
+                        List.of(), wanted.format(), true));
             }
         }
     }

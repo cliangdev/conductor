@@ -131,4 +131,13 @@ public class CreativePlacementMedia {
         }
         return List.of();
     }
+
+    /**
+     * Whether a target that matched nothing must get an explicit empty selection rather than inherit: true
+     * when the Post carries a carousel, whose whole set (every slide of every size) must never be inherited.
+     * Mirrors {@link CreativeAttachService}'s carousel branch.
+     */
+    public static boolean carouselCannotPublishTo(List<Placements> placements) {
+        return placements.stream().anyMatch(p -> p.isCarousel() && !p.isEmpty());
+    }
 }

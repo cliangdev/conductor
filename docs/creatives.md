@@ -216,7 +216,9 @@ rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is c
 
 A destination added to the Post *after* an attach gets the same treatment: when `replaceSelection` creates a new
 target with no media of its own and the Post holds Creative frames, the target's media is the matching frames
-(same `CreativePlacementMedia` rules). With no matching placement it inherits as before; an explicit selection
+(same `CreativePlacementMedia` rules). With no matching placement it inherits as before, except after a `CAROUSEL`: there, as at attach time, a
+destination the carousel cannot publish to (a story, a reel, YouTube) gets an explicit empty selection so it
+surfaces the "no media" blocker instead of publishing every slide; an explicit selection
 is never overridden and existing targets are never touched.
 
 ## Media library page {#media-library-page}
