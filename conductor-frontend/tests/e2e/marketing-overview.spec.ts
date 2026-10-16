@@ -53,9 +53,18 @@ test.describe('marketing overview', () => {
       },
     )
     expect(store.ok()).toBeTruthy()
+    // The local profile's product-metrics stub serves a sample in-app funnel whatever URL and key it is given.
+    const product = await request.post(
+      `${BACKEND}/api/v1/projects/${projectId}/integrations/product-metrics/connections`,
+      {
+        data: { label: 'Product', apiKey: 'x', configJson: { baseUrl: 'https://metrics.example.com/conductor' } },
+        headers,
+      },
+    )
+    expect(product.ok()).toBeTruthy()
 
-    // Wait for the feed scheduler to pull mock data: Search and the App Store have metrics with values.
-    for (const channelName of ['SEARCH', 'STORE']) {
+    // Wait for the feed scheduler to pull mock data: Search, the App Store and the In-app channel have metrics with values.
+    for (const channelName of ['SEARCH', 'STORE', 'PRODUCT']) {
       await expect
         .poll(
           async () => {
@@ -86,12 +95,35 @@ test.describe('marketing overview', () => {
     await page.goto(`/app/projects/${projectId}/marketing/overview`)
     await expect(page.locator('h1')).toContainText('Marketing overview', { timeout: 15000 })
 
-    // 2. The funnel and the five channel cards.
-    await expect(page.getByRole('region', { name: 'Funnel' })).toBeVisible({ timeout: 15000 })
+    // 2. The funnel and the six channel cards.
+    const funnel = page.getByRole('region', { name: 'Funnel' })
+    await expect(funnel).toBeVisible({ timeout: 15000 })
     const search = page.getByRole('region', { name: 'Search', exact: true })
-    for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads']) {
+    for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads', 'In-app']) {
       await expect(page.getByRole('region', { name, exact: true })).toBeVisible()
     }
+
+    // 2a. The funnel carries the in-app stages after store downloads, and the In-app card shows values.
+    for (const stage of ['First opens', 'Onboarding started', 'Paywall shown', 'Trials started', 'Paid']) {
+      await expect(funnel.getByRole('listitem').filter({ hasText: stage }).first()).toBeVisible()
+    }
+    await expect(funnel).not.toContainText('Connect product metrics')
+    const inApp = page.getByRole('region', { name: 'In-app', exact: true })
+    await expect(inApp).not.toContainText(/not connected|coming soon/i)
+    await expect(inApp).toContainText('Trials started')
+    await expect(inApp).toContainText('Cost per trial')
+    await expect(inApp.getByText(/^\$\d/).first()).toBeVisible()
+    // the stub's trial target comes from the feed: shown read-only, with no edit button
+    await expect(inApp).toContainText(/Set in/)
+    await expect(inApp.getByRole('button', { name: /target for Trials started/ })).toHaveCount(0)
+    await inApp.getByRole('link', { name: 'In-app', exact: true }).click()
+    await page.waitForURL(/\/marketing\/overview\/product/)
+    const stages = page.getByRole('region', { name: 'Stages' })
+    await expect(stages).toBeVisible({ timeout: 15000 })
+    await expect(stages.getByRole('listitem')).toHaveCount(5)
+    await expect(page.getByRole('region', { name: 'By source' })).toContainText('apple_search_ads')
+    await page.getByRole('link', { name: /Marketing overview/ }).click()
+    await page.waitForURL(/\/marketing\/overview$/)
 
     // 2b. The App Store is a real channel now: it shows values, not "coming soon", and its detail page
     // breaks the numbers down by traffic source.
@@ -102,6 +134,9 @@ test.describe('marketing overview', () => {
     await page.waitForURL(/\/marketing\/overview\/store/)
     await expect(page.getByRole('region', { name: 'By traffic source' })).toBeVisible({ timeout: 15000 })
     await expect(page.getByRole('region', { name: 'By traffic source' })).toContainText('App Store search')
+    // The stub's reference downloads are not Conductor's own, so the store reads MISMATCH and says why.
+    await expect(page.getByText('Mismatch', { exact: true })).toBeVisible()
+    await expect(page.getByText(/Conductor [\d,]+ vs Product metrics [\d,]+ — [\d.]+% apart over settled days/)).toBeVisible()
     await page.getByRole('link', { name: /Marketing overview/ }).click()
     await page.waitForURL(/\/marketing\/overview$/)
 
