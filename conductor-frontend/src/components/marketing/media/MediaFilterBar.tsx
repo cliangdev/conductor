@@ -26,7 +26,7 @@ export function FilterChip({ pressed, onClick, children }: { pressed: boolean; o
       onClick={onClick}
       className={cn(
         'rounded-full border px-3 py-1 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        pressed ? 'border-accent bg-accent-soft text-foreground' : 'border-border text-muted-foreground hover:bg-surface-3',
+        pressed ? 'border-primary bg-accent-soft text-foreground' : 'border-border text-muted-foreground hover:bg-surface-3',
       )}
     >
       {children}
@@ -54,7 +54,7 @@ export function MediaFilterBar({ filters, chips, kinds, sortable, trailing }: Me
           placeholder="Search labels…"
           value={filters.query}
           onChange={(e) => filters.setQuery(e.target.value)}
-          className="h-9 max-w-xs"
+          className="h-9 w-full sm:w-auto sm:max-w-xs"
         />
         {chips.map((c) => (
           <FilterChip key={c} pressed={filters.chips[c]} onClick={() => filters.toggleChip(c)}>
@@ -62,7 +62,7 @@ export function MediaFilterBar({ filters, chips, kinds, sortable, trailing }: Me
           </FilterChip>
         ))}
         {sortable && (
-          <div role="group" aria-label="Sort" className="ml-auto flex items-center gap-1 text-[13px]">
+          <div role="group" aria-label="Sort" className="flex items-center gap-1 text-[13px] sm:ml-auto">
             <span className="text-muted-foreground">Sort</span>
             <FilterChip pressed={filters.sort === 'newest'} onClick={() => filters.setSort('newest')}>
               Newest

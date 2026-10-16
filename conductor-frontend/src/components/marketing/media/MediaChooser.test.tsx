@@ -80,6 +80,8 @@ describe('MediaChooser', () => {
     expect(screen.getByTestId('order-badge-b')).toHaveTextContent('1')
     expect(screen.getByTestId('order-badge-a')).toHaveTextContent('2')
     expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByTestId('order-badge-b')).toHaveClass('bg-primary')
+    expect(screen.getByTestId('chooser-tile-b')).toHaveClass('border-primary', 'ring-primary')
 
     // Deselecting renumbers.
     await userEvent.click(screen.getByRole('button', { name: 'Select City night' }))
@@ -91,6 +93,12 @@ describe('MediaChooser', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Add 2' }))
     expect(onPicked.mock.calls[0][0].map((i: CreativePhoto) => i.id)).toEqual(['a', 'b'])
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('shows a Film placeholder, not a broken image, for a video with no poster', async () => {
+    setup()
+    const tile = await screen.findByTestId('chooser-tile-d')
+    expect(tile.querySelector('img')).toBeNull()
   })
 
   it('Clear empties the selection', async () => {

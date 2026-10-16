@@ -136,7 +136,7 @@ export function CarouselSlidesSection({
             if (dx <= -SWIPE_THRESHOLD_PX) setIndex(index + 1)
             else if (dx >= SWIPE_THRESHOLD_PX) setIndex(index - 1)
           }}
-          className="space-y-2 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="space-y-2 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <div className="flex justify-center rounded-md border border-border bg-surface-3 p-2">
             {current?.url ? (
@@ -175,7 +175,7 @@ export function CarouselSlidesSection({
               {ids.map((id, i) => (
                 <span
                   key={`${id}-${i}`}
-                  className={`h-1.5 w-1.5 rounded-full ${i === index ? 'bg-accent' : 'bg-border-strong'}`}
+                  className={`h-1.5 w-1.5 rounded-full ${i === index ? 'bg-primary' : 'bg-border-strong'}`}
                 />
               ))}
             </div>

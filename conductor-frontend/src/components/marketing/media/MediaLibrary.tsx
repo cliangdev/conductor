@@ -211,7 +211,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                 data-testid={`media-tile-${item.id}`}
                 className={cn(
                   'group relative overflow-hidden rounded-lg border bg-surface',
-                  isSelected ? 'border-accent ring-2 ring-accent' : 'border-border',
+                  isSelected ? 'border-primary ring-2 ring-primary' : 'border-border',
                 )}
               >
                 <button
@@ -221,7 +221,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                     if (e.shiftKey || e.metaKey || e.ctrlKey) select(item, index, e.shiftKey)
                     else setDetailId(item.id)
                   }}
-                  className={cn('relative block aspect-square w-full bg-surface-3', item.blocked && 'opacity-50')}
+                  className={cn('relative block aspect-square w-full border-b border-border bg-surface-3', item.blocked && 'opacity-50')}
                 >
                   <MediaTile item={item} />
                 </button>
@@ -234,7 +234,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                     onClick={(e) => select(item, index, e.shiftKey)}
                     className={cn(
                       'absolute left-1.5 top-1.5 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background',
-                      'checked:border-accent checked:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       'transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100',
                       selected.length === 0 && 'opacity-0',
                     )}

@@ -246,14 +246,14 @@ function MediaKindPanel({ kind, projectId, token, items, onSelect, onUploaded, o
               aria-pressed={selectedIds ? selectedIds.includes(item.id) : undefined}
               className={cn(
                 'relative block aspect-square w-full bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50',
-                selectedIds?.includes(item.id) && 'ring-2 ring-inset ring-accent',
+                selectedIds?.includes(item.id) && 'ring-2 ring-inset ring-primary',
               )}
             >
               <MediaTile item={item} />
               {selectedIds?.includes(item.id) && (
                 <span
                   data-testid={`selection-badge-${item.id}`}
-                  className="absolute left-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[11px] font-semibold text-accent-foreground"
+                  className="absolute left-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground shadow ring-1 ring-background"
                 >
                   {selectedIds.indexOf(item.id) + 1}
                 </span>
