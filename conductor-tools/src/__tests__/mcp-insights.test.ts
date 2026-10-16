@@ -234,6 +234,72 @@ describe('get_marketing_insights include channels', () => {
     expect(m.channels[1]).toEqual({ channel: 'ADS', label: 'Ads', status: 'NOT_CONNECTED', connect: 'Apple Search Ads' })
   })
 
+  it('PRODUCT: stages in funnel order with flags and a read-only target, other metrics apart, nothing for other channels', async () => {
+    const o = overview()
+    const stage = (key: string, label: string, order: number, extra: Record<string, unknown> = {}) => ({
+      metric: key, label, unit: 'COUNT', value: 100 - order, previous: 90, changePct: 0.1, noise: false, funnelOrder: order, series: [], ...extra,
+    })
+    o.channels.push({
+      channel: 'PRODUCT', label: 'In-app', status: 'LIVE', dataCompleteThrough: '2026-10-13', connections: [],
+      metrics: [
+        stage('paid', 'Paid', 5, { insufficientData: true, noise: true }),
+        { metric: 'cost_per_trial', label: 'Cost per trial', unit: 'CURRENCY', value: 4.2, previous: 4.8, changePct: -0.125, noise: false, series: [] },
+        stage('trial_started', 'Trials started', 4, {
+          provisionalDays: 2, target: { value: 200, direction: 'UP', readOnly: true, source: 'Set in Rexipe backend' },
+        }),
+      ],
+    } as never)
+    mocked(apiGet).mockResolvedValue(o)
+    const result = await getMarketingInsights(config, { include: ['channels'], window: '7d' })
+    const product = (result['marketing'] as Record<string, any>).channels[2]
+    expect(product.stages.map((s: any) => s.metric)).toEqual(['trial_started', 'paid'])
+    expect(product.stages[0]).toMatchObject({
+      provisional: true,
+      target: { value: 200, direction: 'UP', readOnly: true, setIn: 'Set in Rexipe backend' },
+    })
+    expect(product.stages[0]).not.toHaveProperty('smallSample')
+    expect(product.stages[1]).toMatchObject({ smallSample: true, noise: true })
+    expect(product.stages[1]).not.toHaveProperty('provisional')
+    expect(product.metrics.map((m: any) => m.metric)).toEqual(['cost_per_trial'])
+    // other channels keep their shape: no stages, no flags
+    const web = (result['marketing'] as Record<string, any>).channels[0]
+    expect(web).not.toHaveProperty('stages')
+    expect(web.metrics[0]).not.toHaveProperty('provisional')
+  })
+
+  it('PRODUCT not connected points at the connector to add', async () => {
+    const o = overview()
+    o.channels.push({
+      channel: 'PRODUCT', label: 'In-app', status: 'NOT_CONNECTED', connections: [],
+      connectHint: { connectors: [{ connectorId: 'product-metrics', name: 'Product metrics' }] }, metrics: [],
+    } as never)
+    mocked(apiGet).mockResolvedValue(o)
+    const result = await getMarketingInsights(config, { include: ['channels'], window: '7d' })
+    expect((result['marketing'] as Record<string, any>).channels[2]).toEqual({
+      channel: 'PRODUCT', label: 'In-app', status: 'NOT_CONNECTED', connect: 'Product metrics',
+    })
+  })
+
+  it('MISMATCH: keeps the metrics and adds both values and the gap', async () => {
+    const o = overview()
+    o.channels.push({
+      channel: 'STORE', label: 'App Store', status: 'MISMATCH', connections: [], metrics: [metric()],
+      mismatch: { metric: 'downloads', label: 'Downloads', referenceValue: 1190, channelValue: 1204, gapPct: 0.01163, from: '2026-09-01', to: '2026-09-12' },
+    } as never)
+    mocked(apiGet).mockResolvedValue(o)
+    const result = await getMarketingInsights(config, { include: ['channels'], window: '7d' })
+    const store = (result['marketing'] as Record<string, any>).channels[2]
+    expect(store.status).toBe('MISMATCH')
+    expect(store.mismatch).toEqual({ metric: 'downloads', conductor: 1204, reference: 1190, gapPct: 0.0116, from: '2026-09-01', to: '2026-09-12' })
+    expect(store.metrics).toHaveLength(1)
+  })
+
+  it('accepts PRODUCT as the channel to drill into', async () => {
+    mocked(apiGet).mockImplementation(async (path: string) => (path.includes('/channels/') ? detail() : overview()))
+    await getMarketingInsights(config, { include: ['channels'], channel: 'PRODUCT' })
+    expect(mocked(apiGet).mock.calls.map((c) => c[0])).toContain('/api/v2/projects/proj-1/marketing/channels/PRODUCT?window=28d')
+  })
+
   it('maps 30d to the 28d overview window', async () => {
     mocked(apiGet).mockResolvedValue(overview())
     await getMarketingInsights(config, { include: ['channels'], window: '30d' })

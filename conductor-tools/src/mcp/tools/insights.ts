@@ -192,8 +192,8 @@ async function getPostInsights(
 
 // --- Channels: the marketing overview (/marketing/overview) and one channel's detail ---
 
-type MarketingChannel = 'WEB' | 'SEARCH' | 'SOCIAL' | 'ADS' | 'STORE'
-const CHANNELS: MarketingChannel[] = ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE']
+type MarketingChannel = 'WEB' | 'SEARCH' | 'SOCIAL' | 'ADS' | 'STORE' | 'PRODUCT'
+const CHANNELS: MarketingChannel[] = ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT']
 const MAX_SERIES_POINTS = 14
 const MAX_DIMENSION_ROWS = 10
 
@@ -214,8 +214,21 @@ interface OverviewMetric {
   asOf?: string | null
   historyStartsOn?: string | null
   noise: boolean
-  target?: { value: number; direction: string } | null
+  insufficientData?: boolean | null
+  provisionalDays?: number | null
+  funnelOrder?: number | null
+  target?: { value: number; direction: string; readOnly?: boolean | null; source?: string | null } | null
   series?: OverviewSeriesPoint[]
+}
+
+interface OverviewMismatch {
+  metric: string
+  label: string
+  referenceValue: number
+  channelValue: number
+  gapPct: number
+  from: string
+  to: string
 }
 
 interface OverviewChannel {
@@ -223,6 +236,7 @@ interface OverviewChannel {
   label: string
   status: string
   dataCompleteThrough?: string | null
+  mismatch?: OverviewMismatch | null
   connectHint?: { connectors?: { connectorId: string; name: string }[] } | null
   metrics: OverviewMetric[]
 }
@@ -286,7 +300,17 @@ export function bucketSeries(points: OverviewSeriesPoint[], unit: string): Recor
   return out
 }
 
-function trimMetric(m: OverviewMetric, withSeries: boolean): Record<string, unknown> {
+/** A target a connector feed owns says so and where it is set: it cannot be changed through Conductor. */
+function trimTarget(t: NonNullable<OverviewMetric['target']>): Record<string, unknown> {
+  return omitNulls({
+    value: t.value,
+    direction: t.direction,
+    readOnly: t.readOnly ? true : null,
+    setIn: t.readOnly ? t.source : null,
+  })
+}
+
+function trimMetric(m: OverviewMetric, withSeries: boolean, flags = false): Record<string, unknown> {
   return omitNulls({
     metric: m.metric,
     label: m.label,
@@ -298,20 +322,44 @@ function trimMetric(m: OverviewMetric, withSeries: boolean): Record<string, unkn
     changePct: round4(m.changePct),
     goodDirection: m.goodDirection,
     noise: m.noise,
-    target: m.target,
+    // In-app data-quality flags (PRODUCT only, omitted when false): the newest days may still change, and the value
+    // rests on too few users or events to read as a real change.
+    provisional: flags && (m.provisionalDays ?? 0) > 0 ? true : null,
+    smallSample: flags && m.insufficientData ? true : null,
+    target: m.target ? trimTarget(m.target) : null,
     series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,
   })
 }
 
+/**
+ * The In-app channel splits into `stages` (the funnel stages, in funnel order, each with its flags and
+ * read-only target) and `metrics` (the rest, e.g. cost per trial); every other channel has `metrics` only.
+ */
 function trimChannel(c: OverviewChannel, withSeries: boolean): Record<string, unknown> {
-  const hasData = c.status === 'LIVE' || c.status === 'STALE'
+  const hasData = c.status === 'LIVE' || c.status === 'STALE' || c.status === 'MISMATCH'
+  const isStage = (m: OverviewMetric) => c.channel === 'PRODUCT' && m.funnelOrder !== null && m.funnelOrder !== undefined
+  const stages = hasData
+    ? c.metrics.filter(isStage).sort((a, b) => (a.funnelOrder ?? 0) - (b.funnelOrder ?? 0))
+    : []
   return omitNulls({
     channel: c.channel,
     label: c.label,
     status: c.status,
     dataCompleteThrough: c.dataCompleteThrough,
     connect: c.status === 'NOT_CONNECTED' ? c.connectHint?.connectors?.map((x) => x.name).join(', ') || null : null,
-    metrics: hasData ? c.metrics.map((m) => trimMetric(m, withSeries)) : null,
+    // MISMATCH: a connector's own figure and the product backend's reference disagree by more than 1%.
+    mismatch: c.mismatch
+      ? omitNulls({
+          metric: c.mismatch.metric,
+          conductor: round4(c.mismatch.channelValue),
+          reference: round4(c.mismatch.referenceValue),
+          gapPct: round4(c.mismatch.gapPct),
+          from: c.mismatch.from,
+          to: c.mismatch.to,
+        })
+      : null,
+    stages: stages.length > 0 ? stages.map((m) => trimMetric(m, withSeries, true)) : null,
+    metrics: hasData ? c.metrics.filter((m) => !isStage(m)).map((m) => trimMetric(m, withSeries, c.channel === 'PRODUCT')) : null,
   })
 }
 
