@@ -1162,12 +1162,14 @@ export const TOOLS = [
   },
   {
     name: 'get_marketing_insights',
-    description: 'What is working across the project\'s published Posts: totals, engagement rate by platform, format and time, best and worst posts, top-performing Creatives, and movers vs the prior window. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
+    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON), the acquisition funnel, and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
     inputSchema: {
       type: 'object',
       properties: {
-        window: { type: 'string', enum: ['7d', '30d', '90d'], description: 'How far back to look (default 30d)' },
-        platform: { type: 'string', description: 'Restrict to one platform, from the project\'s connected platforms (optional)' },
+        include: { type: 'array', items: { type: 'string', enum: ['posts', 'channels'] }, description: 'Sections to return (default ["posts"], the original output)' },
+        window: { type: 'string', enum: ['7d', '30d', '90d'], description: 'How far back to look (default 30d). Channels: 30d means 28 days; 90d only with `channel`' },
+        platform: { type: 'string', description: 'Restrict posts to one platform, from the project\'s connected platforms (optional; needs "posts")' },
+        channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE'], description: 'With "channels": add this channel\'s series and breakdown tables (optional)' },
       },
     },
   },
@@ -2264,6 +2266,8 @@ export async function runMcpServer(): Promise<void> {
             await getMarketingInsights(config, {
               window: params['window'] as '7d' | '30d' | '90d' | undefined,
               platform: params['platform'] as string | undefined,
+              include: params['include'] as ('posts' | 'channels')[] | undefined,
+              channel: params['channel'] as string | undefined,
             })
           )
         }
