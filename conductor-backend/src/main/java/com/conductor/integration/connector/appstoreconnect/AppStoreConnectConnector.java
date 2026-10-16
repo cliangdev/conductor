@@ -70,6 +70,7 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     private final RestTemplate restTemplate;
     private final AppStoreConnectTokenService tokenService;
     private final AppStoreAnalyticsClient client;
+    private final AppStoreListingClient listingClient;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public AppStoreConnectConnector() {
@@ -82,6 +83,7 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         this.restTemplate = restTemplate;
         this.tokenService = tokenService;
         this.client = new AppStoreAnalyticsClient(restTemplate);
+        this.listingClient = new AppStoreListingClient(restTemplate);
     }
 
     @Override
@@ -132,7 +134,25 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         } catch (RuntimeException e) {
             log.warn("App Store rating lookup failed for app {}: {}", appId, e.getMessage());
         }
+        readListing(ctx, appId, data);
         return ConnectorData.healthy(data);
+    }
+
+    /**
+     * The store listing for the {@code get_app_store_listing} agent tool. Agent tool calls reach the connector with
+     * no arguments, so this is always the whole (size-budgeted) listing. A failure is reported as
+     * {@code listingError}; it never fails the status snapshot.
+     */
+    private void readListing(ConnectionContext ctx, String appId, Map<String, Object> data) {
+        try {
+            String token = tokenService.token(ctx.connectionId(), credentials(ctx));
+            data.put("listing", listingClient.read(token, appId));
+        } catch (HttpClientErrorException e) {
+            data.put("listingError", httpMessage(e, "listing read"));
+        } catch (RuntimeException e) {
+            log.warn("App Store listing read failed for app {}: {}", appId, e.getMessage());
+            data.put("listingError", "App Store listing could not be read: " + e.getMessage());
+        }
     }
 
     @Override
