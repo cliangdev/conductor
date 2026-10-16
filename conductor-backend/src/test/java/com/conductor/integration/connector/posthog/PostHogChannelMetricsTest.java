@@ -125,6 +125,19 @@ class PostHogChannelMetricsTest {
     }
 
     @Test
+    void posthogsDirectValueBecomesDirect() {
+        server.expect(requestTo("https://app.posthog.com/api/projects/42/query/"))
+                .andRespond(withSuccess(TOTALS_JSON, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://app.posthog.com/api/projects/42/query/"))
+                .andRespond(withSuccess("{\"results\":[[\"2026-10-01\",\"$direct\",5]]}", MediaType.APPLICATION_JSON));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(Map.of()), FROM, TO);
+
+        assertThat(points).filteredOn(p -> p.metric().equals("sessions_by_referrer"))
+                .singleElement().extracting(ChannelMetricPoint::dimensionKey).isEqualTo("(direct)");
+    }
+
+    @Test
     void filterAndConversionEventTravelAsPlaceholdersNeverInTheSql() {
         server.expect(requestTo("https://app.posthog.com/api/projects/42/query/"))
                 .andExpect(jsonPath("$.query.query").value(containsString("{filterProperty}")))
