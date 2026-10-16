@@ -196,8 +196,8 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
                 });
         ChannelView product = channel(overview, "PRODUCT");
         assertThat(product.status()).isEqualTo("LIVE");
-        // funnel stages come first in the channel's metric list, then the rest
-        assertThat(product.metrics()).extracting(m -> m.metric()).containsExactly("first_open", "trial_started", "paid", "revenue_events");
+        // the card leads with the last two funnel stages, then fills with the rest in stage order
+        assertThat(product.metrics()).extracting(m -> m.metric()).containsExactly("trial_started", "paid", "first_open", "revenue_events");
     }
 
     @Test

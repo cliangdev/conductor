@@ -453,8 +453,35 @@ public class MarketingOverviewQueryService {
             return metrics.stream().filter(m -> m.metric().equals(key)).findFirst();
         }
 
+        /**
+         * The metrics a card shows. For the in-app channel the first metrics are the early funnel stages, which
+         * the funnel strip already shows, so the card leads with the last two stages (trials, paid) and then the
+         * ratios (cost per trial). Other channels show their first metrics.
+         */
+        private List<MetricView> headlineMetrics() {
+            if (channel.channel() != MetricChannel.PRODUCT) {
+                return metrics.stream().limit(channel.headline()).toList();
+            }
+            List<MetricView> stages = metrics.stream()
+                    .filter(m -> channel.metric(m.metric()).map(c -> c.funnelOrder() != null).orElse(false))
+                    .toList();
+            List<MetricView> picked = new java.util.ArrayList<>(stages.subList(Math.max(0, stages.size() - 2), stages.size()));
+            metrics.stream()
+                    .filter(m -> channel.metric(m.metric()).map(c -> c.agg() == MetricCatalog.Aggregation.DERIVED).orElse(false))
+                    .forEach(picked::add);
+            for (MetricView m : metrics) {
+                if (picked.size() >= channel.headline()) {
+                    break;
+                }
+                if (!picked.contains(m)) {
+                    picked.add(m);
+                }
+            }
+            return picked.stream().limit(channel.headline()).toList();
+        }
+
         ChannelView view(boolean headlineOnly) {
-            List<MetricView> shown = headlineOnly ? metrics.stream().limit(channel.headline()).toList() : metrics;
+            List<MetricView> shown = headlineOnly ? headlineMetrics() : metrics;
             return new ChannelView(channel.channel().name(), channel.label(), status, lastFetchedAt, connections,
                     connectHint, shown, window.to(), mismatch);
         }
