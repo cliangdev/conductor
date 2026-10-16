@@ -107,6 +107,8 @@ class ChannelMetricsFeedPullTransactionIntegrationTest extends AbstractNoneWebIn
         when(source.trailingDays()).thenReturn(2);
         when(source.prunesMissingDimensions()).thenReturn(true);
         when(source.maxDaysPerPull()).thenReturn(3);
+        when(source.pull(any(), any(), any())).thenCallRealMethod();
+        when(source.trailingDays(any())).thenCallRealMethod();
         IngestSpec spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null,
                 null, null, null, IngestSink.CHANNEL_METRICS, null);
         IntegrationToolSpec toolSpec = mock(IntegrationToolSpec.class);
@@ -121,7 +123,7 @@ class ChannelMetricsFeedPullTransactionIntegrationTest extends AbstractNoneWebIn
             return inv.getArgument(1);
         });
         ChannelMetricsFeedPuller puller = new ChannelMetricsFeedPuller(registry, connectionService, store,
-                objectMapper, oauth);
+                mock(ChannelMetricDefinitionStore.class), objectMapper, oauth);
         service = new FeedPullService(feedRepository, connectionService, registry, mock(SnapshotIngestAdapter.class),
                 mock(DigestSink.class), mock(com.conductor.integration.ingest.digest.MetricsDigestService.class),
                 mock(com.conductor.service.publish.PostMetricsFeedPuller.class), puller, transactionTemplate);

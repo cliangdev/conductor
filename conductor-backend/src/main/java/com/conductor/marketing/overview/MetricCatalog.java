@@ -1,5 +1,6 @@
 package com.conductor.marketing.overview;
 
+import com.conductor.entity.ChannelMetricDefinitionRow;
 import com.conductor.integration.MetricChannel;
 
 import java.util.List;
@@ -35,9 +36,11 @@ public final class MetricCatalog {
      * @param optional       omitted from output until the channel has reported at least one row for it
      * @param fromDimensions the rows carry their series in {@code dimension_key} (a platform), so the metric
      *                       is the sum across all dimension keys instead of the '' total row
+     * @param funnelOrder    position as a stage of the in-app funnel (a PRODUCT metric a feed declared), else null
      */
     public record Metric(String key, String label, Unit unit, Aggregation agg, Good good, boolean hidden,
-                         boolean optional, boolean fromDimensions, String numerator, String denominator) {}
+                         boolean optional, boolean fromDimensions, String numerator, String denominator,
+                         Integer funnelOrder) {}
 
     /**
      * One column of a dimension table. {@code source} is the stored metric the column reads (ratio columns
@@ -46,7 +49,12 @@ public final class MetricCatalog {
     public record Column(String key, String source, String label, Unit unit, Aggregation agg,
                          String numerator, String denominator) {}
 
-    public record Dimension(String key, String label, List<Column> columns) {}
+    /** @param keyPrefix when set, only rows whose dimension key starts with it belong to the table (and it is stripped from labels) */
+    public record Dimension(String key, String label, List<Column> columns, String keyPrefix) {
+        public Dimension(String key, String label, List<Column> columns) {
+            this(key, label, columns, null);
+        }
+    }
 
     public record Channel(MetricChannel channel, String label, List<String> connectorIds, List<Metric> metrics,
                           List<Dimension> dimensions, int headline) {
@@ -76,6 +84,9 @@ public final class MetricCatalog {
     public record FunnelStage(String key, String label, MetricChannel channel, String metric,
                               String unavailableReason, String conversionFrom) {}
 
+    /** The connector whose feeds fill the PRODUCT (in-app) channel; its metrics come from stored definitions. */
+    public static final String PRODUCT_CONNECTOR_ID = "product-metrics";
+
     /** The ingest id of the feeds that write the daily metrics. */
     public static final String FEED_INGEST_ID = "channel_metrics";
 
@@ -84,7 +95,8 @@ public final class MetricCatalog {
             "gsc", "Search Console",
             "apple-search-ads", "Apple Search Ads",
             "meta", "Meta",
-            "youtube", "YouTube");
+            "youtube", "YouTube",
+            PRODUCT_CONNECTOR_ID, "Product metrics");
 
     /** The display name of a connector that feeds a channel; falls back to its id. */
     public static String connectorName(String connectorId) {
@@ -92,23 +104,23 @@ public final class MetricCatalog {
     }
 
     private static Metric sum(String key, String label, Unit unit, Good good) {
-        return new Metric(key, label, unit, Aggregation.SUM, good, false, false, false, null, null);
+        return new Metric(key, label, unit, Aggregation.SUM, good, false, false, false, null, null, null);
     }
 
     private static Metric optionalSum(String key, String label, Unit unit, Good good, boolean fromDimensions) {
-        return new Metric(key, label, unit, Aggregation.SUM, good, false, true, fromDimensions, null, null);
+        return new Metric(key, label, unit, Aggregation.SUM, good, false, true, fromDimensions, null, null, null);
     }
 
     private static Metric hiddenSum(String key) {
-        return new Metric(key, key, Unit.COUNT, Aggregation.SUM, Good.UP, true, false, false, null, null);
+        return new Metric(key, key, Unit.COUNT, Aggregation.SUM, Good.UP, true, false, false, null, null, null);
     }
 
     private static Metric level(String key, String label, boolean optional) {
-        return new Metric(key, label, Unit.COUNT, Aggregation.LEVEL, Good.UP, false, optional, true, null, null);
+        return new Metric(key, label, Unit.COUNT, Aggregation.LEVEL, Good.UP, false, optional, true, null, null, null);
     }
 
     private static Metric derived(String key, String label, Unit unit, Good good, String numerator, String denominator) {
-        return new Metric(key, label, unit, Aggregation.DERIVED, good, false, false, false, numerator, denominator);
+        return new Metric(key, label, unit, Aggregation.DERIVED, good, false, false, false, numerator, denominator, null);
     }
 
     private static Column sumColumn(String key, String source, String label, Unit unit) {
@@ -183,7 +195,9 @@ public final class MetricCatalog {
                             sumColumn("taps", "taps", "Taps", Unit.COUNT),
                             sumColumn("installs", "installs", "Installs", Unit.COUNT),
                             ratioColumn("cost_per_install", "Cost per install", Unit.CURRENCY, "spend", "installs")))),
-                    4));
+                    4),
+            // The in-app channel has no fixed metrics: each connected backend declares its own (see productChannel).
+            new Channel(MetricChannel.PRODUCT, "In-app", List.of(PRODUCT_CONNECTOR_ID), List.of(), List.of(), 4));
 
     /** Funnel order. A stage with no data is reported unavailable with its reason, never dropped. */
     private static final List<FunnelStage> FUNNEL = List.of(
@@ -201,7 +215,7 @@ public final class MetricCatalog {
             new FunnelStage("ads_installs", "Ad installs", MetricChannel.ADS, "installs", "Connect an ads account",
                     "ads_taps"),
             new FunnelStage("product_stages", "In-app stages (first open → paid)", MetricChannel.PRODUCT, "stages",
-                    "Connect product metrics (coming soon)", null));
+                    "Connect product metrics", null));
 
     private MetricCatalog() {
     }
@@ -212,6 +226,95 @@ public final class MetricCatalog {
 
     public static List<FunnelStage> funnel() {
         return FUNNEL;
+    }
+
+    /**
+     * The funnel with the in-app stages a connected backend declared (its {@code funnelOrder} metrics) placed
+     * right after store downloads in place of the placeholder. The first in-app stage converts from downloads,
+     * each later one from the stage before it. With no declared stages the placeholder stays.
+     */
+    public static List<FunnelStage> funnel(Channel productChannel) {
+        List<Metric> stages = productChannel.metrics().stream()
+                .filter(m -> m.funnelOrder() != null)
+                .sorted(java.util.Comparator.comparing(Metric::funnelOrder).thenComparing(Metric::key))
+                .toList();
+        if (stages.isEmpty()) {
+            return FUNNEL;
+        }
+        List<FunnelStage> out = new java.util.ArrayList<>();
+        for (FunnelStage stage : FUNNEL) {
+            if (stage.channel() == MetricChannel.PRODUCT) {
+                continue;
+            }
+            out.add(stage);
+            if (stage.key().equals("store_downloads")) {
+                String previous = stage.key();
+                for (Metric m : stages) {
+                    String key = "product_" + m.key();
+                    out.add(new FunnelStage(key, m.label(), MetricChannel.PRODUCT, m.key(),
+                            "No data yet for this in-app stage", previous));
+                    previous = key;
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The PRODUCT channel for a workspace: its metrics are the definitions the connected product backends
+     * declared. Funnel stages first (by funnelOrder), then the rest by key. Where several backends declare the
+     * same key the first wins and their daily values add up. A RATIO whose parts are missing or are themselves
+     * ratios is dropped, so a roll-up can never loop.
+     */
+    public static Channel productChannel(List<ChannelMetricDefinitionRow> definitions) {
+        Channel base = channel(MetricChannel.PRODUCT).orElseThrow();
+        java.util.Map<String, ChannelMetricDefinitionRow> byKey = new java.util.LinkedHashMap<>();
+        for (ChannelMetricDefinitionRow d : definitions) {
+            byKey.putIfAbsent(d.getMetric(), d);
+        }
+        List<Metric> metrics = new java.util.ArrayList<>();
+        List<Column> columns = new java.util.ArrayList<>();
+        List<ChannelMetricDefinitionRow> ordered = byKey.values().stream()
+                .sorted(java.util.Comparator
+                        .comparing((ChannelMetricDefinitionRow d) -> d.getFunnelOrder() == null ? Integer.MAX_VALUE : d.getFunnelOrder())
+                        .thenComparing(ChannelMetricDefinitionRow::getMetric))
+                .toList();
+        for (ChannelMetricDefinitionRow d : ordered) {
+            Unit unit = Unit.valueOf(d.getUnit());
+            Good good = Good.valueOf(d.getGood());
+            if (d.getAggregation().equals("RATIO")) {
+                ChannelMetricDefinitionRow n = byKey.get(d.getNumerator());
+                ChannelMetricDefinitionRow dn = byKey.get(d.getDenominator());
+                if (n == null || dn == null || n.getAggregation().equals("RATIO") || dn.getAggregation().equals("RATIO")) {
+                    continue;
+                }
+                metrics.add(new Metric(d.getMetric(), d.getLabel(), unit, Aggregation.DERIVED, good, false, false,
+                        false, d.getNumerator(), d.getDenominator(), d.getFunnelOrder()));
+            } else {
+                Aggregation agg = d.getAggregation().equals("LEVEL") ? Aggregation.LEVEL : Aggregation.SUM;
+                metrics.add(new Metric(d.getMetric(), d.getLabel(), unit, agg, good, false, false, false, null, null,
+                        d.getFunnelOrder()));
+            }
+        }
+        // Breakdown tables read SUM metrics (and ratios of two of them) per source and per campaign.
+        List<Column> dimensionColumns = new java.util.ArrayList<>();
+        for (Metric m : metrics) {
+            if (m.agg() == Aggregation.SUM) {
+                dimensionColumns.add(sumColumn(m.key(), m.key(), m.label(), m.unit()));
+            }
+        }
+        for (Metric m : metrics) {
+            if (m.agg() == Aggregation.DERIVED
+                    && dimensionColumns.stream().anyMatch(c -> c.key().equals(m.numerator()))
+                    && dimensionColumns.stream().anyMatch(c -> c.key().equals(m.denominator()))) {
+                dimensionColumns.add(ratioColumn(m.key(), m.label(), m.unit(), m.numerator(), m.denominator()));
+            }
+        }
+        List<Dimension> dimensions = dimensionColumns.isEmpty() ? List.of() : List.of(
+                new Dimension("sources", "By source", dimensionColumns, "source:"),
+                new Dimension("campaigns", "By campaign", dimensionColumns, "campaign:"));
+        return new Channel(MetricChannel.PRODUCT, base.label(), base.connectorIds(), metrics, dimensions,
+                base.headline());
     }
 
     /** The catalog channel for a caller-supplied name (case-insensitive), or empty for an unknown one. */
