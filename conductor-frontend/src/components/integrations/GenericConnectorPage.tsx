@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createConnection, deleteConnection, apiPost, apiErrorMessage, listRemoteMcpTools } from '@/lib/api';
-import { buildConnectionPayload } from '@/lib/connectorConnectForm';
+import { buildConnectionPayload, defaultConnectionLabel } from '@/lib/connectorConnectForm';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
 import {
@@ -119,7 +119,7 @@ export default function GenericConnectorPage({
     e.preventDefault();
     if (!item || !accessToken) return;
 
-    const payload = buildConnectionPayload(item, formValues);
+    const payload = buildConnectionPayload(item, formValues, defaultConnectionLabel(item.name, item.connections.length));
     if (!payload.ok) {
       setConnectError(payload.error);
       return;

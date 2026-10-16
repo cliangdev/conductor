@@ -41,7 +41,15 @@ const FEED_STATUS: Record<ConnectorFeedStatus, { status: string; label: string }
  *  silently shows the wrong selection. */
 function cadenceOptions(currentMinutes: number) {
   if (CADENCE_PRESETS.some((p) => p.minutes === currentMinutes)) return CADENCE_PRESETS
-  return [...CADENCE_PRESETS, { minutes: currentMinutes, label: `Every ${currentMinutes}m` }]
+  return [...CADENCE_PRESETS, { minutes: currentMinutes, label: cadenceLabel(currentMinutes) }]
+}
+
+/** "Every 6 hours", "Every 15 minutes", "Every 2 days": an interval outside the presets, in plain words. */
+export function cadenceLabel(minutes: number): string {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`
+  if (minutes % 1440 === 0) return `Every ${minutes === 1440 ? 'day' : plural(minutes / 1440, 'day')}`
+  if (minutes % 60 === 0) return `Every ${minutes === 60 ? 'hour' : plural(minutes / 60, 'hour')}`
+  return `Every ${plural(minutes, 'minute')}`
 }
 
 /**

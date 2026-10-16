@@ -123,7 +123,7 @@ describe('IntegrationsPage — JSON field (gcp connector)', () => {
       expect(api.createConnection).toHaveBeenCalledWith(
         'proj-1',
         'gcp',
-        { serviceAccountKey: VALID_KEY, configJson: {} },
+        { label: 'Google Cloud', serviceAccountKey: VALID_KEY, configJson: {} },
         'test-token',
       )
     })
