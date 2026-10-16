@@ -115,6 +115,24 @@ class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aDayThePlatformHasNotPublishedYetKeepsEverythingStoredForIt() {
+        LocalDate published = LocalDate.of(2026, 10, 10);
+        LocalDate unpublished = published.plusDays(1);
+        replace(published, unpublished, pt("downloads", "", unpublished, 7),
+                pt("downloads", "source:APP_STORE_SEARCH", unpublished, 4),
+                pt("downloads", "source:APP_REFERRER", unpublished, 3));
+
+        // Apple restated nothing for the newest day: the window covers it but returns no rows for it.
+        replace(published, unpublished, pt("downloads", "", published, 11),
+                pt("downloads", "source:APP_STORE_SEARCH", published, 11));
+
+        assertThat(repository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(connectionId))
+                .filteredOn(r -> r.getDay().equals(unpublished))
+                .extracting(ChannelMetricDaily::getDimensionKey)
+                .containsExactlyInAnyOrder("", "source:APP_STORE_SEARCH", "source:APP_REFERRER");
+    }
+
+    @Test
     void aClosedDimensionSetKeepsAPlatformThatThisPullSkipped() {
         LocalDate d = LocalDate.of(2026, 10, 10);
         replace(d, d, pt("followers", "facebook", d, 900), pt("followers", "instagram", d, 2400));

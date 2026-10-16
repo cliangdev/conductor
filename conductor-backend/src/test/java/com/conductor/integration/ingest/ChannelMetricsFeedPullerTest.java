@@ -165,6 +165,19 @@ class ChannelMetricsFeedPullerTest {
     }
 
     @Test
+    void aDayTheSourceHasNothingYetForIsLeftAloneAndTheWindowStillAdvances() {
+        // The store platform publishes late: the newest two days come back with no rows at all.
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of(
+                point("downloads", TODAY.minusDays(3), 5), point("downloads", TODAY.minusDays(2), 6)));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\"}");
+
+        assertThat(upserts).extracting(Upsert::day).containsExactly(TODAY.minusDays(3), TODAY.minusDays(2));
+        assertThat(upserts).noneMatch(u -> u.day().isAfter(TODAY.minusDays(2)));
+        assertThat(batch.nextCursor()).isEqualTo("{\"lastDay\":\"2026-10-14\"}");
+    }
+
+    @Test
     void dimensionRowsKeepTheirKey() {
         when(source.pullDaily(any(), any(), any())).thenReturn(List.of(
                 ChannelMetricPoint.of("query_clicks", "acme pricing", TODAY, 3)));

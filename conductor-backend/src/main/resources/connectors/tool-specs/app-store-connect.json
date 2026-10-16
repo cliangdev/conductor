@@ -1,0 +1,14 @@
+{
+  "description": "Daily App Store impressions, page views, downloads and ratings for an iOS app, from App Store Connect",
+  "operations": [],
+  "ingest": [
+    {
+      "id": "channel_metrics",
+      "label": "Daily App Store metrics",
+      "description": "Impressions, page views, first-time downloads and redownloads per day, in total and per source type, plus the public rating, kept for the channel overview",
+      "mode": "SNAPSHOT",
+      "sink": "CHANNEL_METRICS",
+      "defaultIntervalMinutes": 360
+    }
+  ]
+}

@@ -39,7 +39,7 @@ class IntegrationToolSpecIngestTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"apple-search-ads.json", "posthog.json", "gsc.json",
+    @ValueSource(strings = {"apple-search-ads.json", "app-store-connect.json", "posthog.json", "gsc.json",
             "meta.json", "youtube.json"})
     void channelMetricsFeedIsDeclaredWithTheChannelMetricsSink(String fileName) throws Exception {
         IngestSpec feed = parse(fileName).ingest().stream()
