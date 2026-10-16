@@ -180,14 +180,12 @@ describe('PostContentSection — From media', () => {
     const { onAssetsChanged } = setup()
 
     await userEvent.click(screen.getByRole('button', { name: /from media/i }))
-    // Posts can't carry audio: no Audio tab.
-    expect(await screen.findByRole('tab', { name: 'Photos' })).toBeInTheDocument()
+    // Posts can't carry audio: no Audio tab, and the audio item is not listed.
+    expect(await screen.findByRole('tab', { name: 'Images' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Audio' })).not.toBeInTheDocument()
-    const grid = await screen.findByTestId('photo-picker-grid')
-    await waitFor(() => expect(grid.querySelectorAll('button[aria-pressed]')).toHaveLength(2))
-    const tiles = grid.querySelectorAll('button[aria-pressed]')
-    await userEvent.click(tiles[1]!)
-    await userEvent.click(tiles[0]!)
+    expect(screen.queryByRole('button', { name: 'Select a track' })).not.toBeInTheDocument()
+    await userEvent.click(await screen.findByRole('button', { name: 'Select second pic' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Select first pic' }))
     await userEvent.click(screen.getByRole('button', { name: 'Add 2' }))
 
     await waitFor(() =>
@@ -205,9 +203,7 @@ describe('PostContentSection — From media', () => {
     ;(apiPost as Mock).mockRejectedValue(new Error('nope'))
     const { onAssetsChanged } = setup()
     await userEvent.click(screen.getByRole('button', { name: /from media/i }))
-    const grid = await screen.findByTestId('photo-picker-grid')
-    await waitFor(() => expect(grid.querySelectorAll('button[aria-pressed]')).toHaveLength(2))
-    await userEvent.click(grid.querySelectorAll('button[aria-pressed]')[0]!)
+    await userEvent.click(await screen.findByRole('button', { name: 'Select first pic' }))
     await userEvent.click(screen.getByRole('button', { name: 'Add 1' }))
     expect(await screen.findByText('Could not add this media')).toBeInTheDocument()
     expect(onAssetsChanged).not.toHaveBeenCalled()

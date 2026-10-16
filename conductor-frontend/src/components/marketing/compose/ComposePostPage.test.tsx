@@ -242,7 +242,7 @@ describe('ComposePostPage', () => {
     await userEvent.upload(document.getElementById('compose-media') as HTMLInputElement, file)
     expect(await screen.findByText('story.jpg')).toBeInTheDocument()
     expect(screen.getByAltText('Image 1')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add another' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add media' })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
     await waitFor(() => expect(pushSpy).toHaveBeenCalled())
@@ -324,12 +324,9 @@ describe('ComposePostPage', () => {
       document.getElementById('compose-media') as HTMLInputElement,
       new File([new Uint8Array([1])], 'own.jpg', { type: 'image/jpeg' }),
     )
-    await userEvent.click(screen.getByRole('button', { name: /from media/i }))
-    const grid = await screen.findByTestId('photo-picker-grid')
-    await waitFor(() => expect(grid.querySelectorAll('button[aria-pressed]')).toHaveLength(2))
-    const tiles = grid.querySelectorAll('button[aria-pressed]')
-    await userEvent.click(tiles[1]!)
-    await userEvent.click(tiles[0]!)
+    await userEvent.click(screen.getByRole('button', { name: 'Add media' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Select pic m-2' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Select pic m-1' }))
     await userEvent.click(screen.getByRole('button', { name: 'Add 2' }))
 
     const strip = screen.getByTestId('compose-media-strip')

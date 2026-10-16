@@ -1,15 +1,12 @@
 'use client'
 
-// "From media": the library picker a Post uses to reuse files that are already in Media. Loads the
-// library when opened, shows images and video only (a Post can't carry audio) and hands the picked
-// items back in click order. What happens next (link them now, or after a Post is created) is the
+// "From media": the library picker a Post uses to reuse files that are already in Media. A thin
+// wrapper over MediaChooser restricted to images and video (a Post can't carry audio); the picked
+// items come back in pick order. What happens next (link them now, or after a Post is created) is the
 // caller's — the Post detail strip links straight away, the compose page waits for the new Post.
 
-import { useCallback, useEffect, useState } from 'react'
-import { MediaPicker } from '@/components/marketing/creatives/MediaPicker'
-import { listCreativePhotos, type CreativePhoto } from '@/components/marketing/creatives/types'
-
-const POST_KINDS: ('IMAGE' | 'VIDEO')[] = ['IMAGE', 'VIDEO']
+import { MediaChooser } from './MediaChooser'
+import type { CreativePhoto } from '@/components/marketing/creatives/types'
 
 export interface PickMediaDialogProps {
   open: boolean
@@ -17,38 +14,20 @@ export interface PickMediaDialogProps {
   projectId: string
   token: string
   onPicked: (items: CreativePhoto[]) => void
+  /** Upload tab hands raw files to the caller instead of saving them to the library. */
+  onFilesChosen?: (files: File[]) => void
 }
 
-export function PickMediaDialog({ open, onOpenChange, projectId, token, onPicked }: PickMediaDialogProps) {
-  const [media, setMedia] = useState<CreativePhoto[]>([])
-
-  const load = useCallback(async () => {
-    try {
-      const rows = await listCreativePhotos(projectId, token, false)
-      setMedia(rows.filter((m) => m.uploadStatus === 'UPLOADED' && !m.blocked))
-    } catch {
-      setMedia([])
-    }
-  }, [projectId, token])
-
-  useEffect(() => {
-    if (open) void load()
-  }, [open, load])
-
+export function PickMediaDialog({ open, onOpenChange, projectId, token, onPicked, onFilesChosen }: PickMediaDialogProps) {
   return (
-    <MediaPicker
-      projectId={projectId}
-      token={token}
+    <MediaChooser
       open={open}
       onOpenChange={onOpenChange}
-      media={media}
-      kinds={POST_KINDS}
-      multiple
-      onSelectMany={(items) => {
-        onPicked(items)
-        onOpenChange(false)
-      }}
-      onMediaChanged={load}
+      projectId={projectId}
+      token={token}
+      onPicked={onPicked}
+      kinds={['IMAGE', 'VIDEO']}
+      onFilesChosen={onFilesChosen}
     />
   )
 }

@@ -9,7 +9,7 @@
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Film, FolderOpen, ImageIcon, Plus, X } from 'lucide-react'
+import { Film, ImageIcon, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -69,7 +69,6 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
   const [schedule, setSchedule] = useState<ScheduleEditorValue>({ onApproval: false, local: '', tz: browserTimeZone() })
   const [saving, setSaving] = useState(false)
   const [step, setStep] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const destinations = useDraftDestinations({ projectId, token })
   const picked = destinations.summary.total
@@ -117,6 +116,12 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
 
   // Uploaded files first, then picked media — the order createPost links them in.
   const pendingAssets = useMemo(() => [...filePendingAssets, ...mediaPendingAssets], [filePendingAssets, mediaPendingAssets])
+
+  function addFiles(chosen: File[]) {
+    const ids = chosen.map(() => `${PENDING_ASSET_PREFIX}${nextFileId.current++}`)
+    setFiles((prev) => [...prev, ...chosen])
+    setFileIds((prev) => [...prev, ...ids])
+  }
 
   function removeFile(index: number) {
     URL.revokeObjectURL(previews[index]?.url ?? '')
@@ -207,18 +212,13 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                 )}
                 <input
                   id="compose-media"
-                  ref={fileInputRef}
                   type="file"
                   multiple
                   accept={ALLOWED_MEDIA_CONTENT_TYPES.join(',')}
                   className="sr-only"
                   onChange={(e) => {
-                    // Read the list now: the updater below runs after this handler, by which time the
-                    // input has been cleared so the same file can be picked again.
-                    const chosen = Array.from(e.target.files ?? [])
-                    const ids = chosen.map(() => `${PENDING_ASSET_PREFIX}${nextFileId.current++}`)
-                    setFiles((prev) => [...prev, ...chosen])
-                    setFileIds((prev) => [...prev, ...ids])
+                    // Read the list now: the input is cleared so the same file can be picked again.
+                    addFiles(Array.from(e.target.files ?? []))
                     e.target.value = ''
                   }}
                 />
@@ -267,27 +267,19 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                   ))}
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={saving}
-                    className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
-                  >
-                    <Plus className="h-4 w-4" aria-hidden />
-                    {files.length === 0 ? 'Add' : 'Add another'}
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setMediaPickerOpen(true)}
                     disabled={saving}
                     className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border-strong text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
                   >
-                    <FolderOpen className="h-4 w-4" aria-hidden />
-                    From media
+                    <Plus className="h-4 w-4" aria-hidden />
+                    Add media
                   </button>
                   <PickMediaDialog
                     open={mediaPickerOpen}
                     onOpenChange={setMediaPickerOpen}
                     projectId={projectId}
                     token={token}
+                    onFilesChosen={addFiles}
                     onPicked={(items) =>
                       setPickedMedia((prev) => [...prev, ...items.filter((i) => !prev.some((p) => p.id === i.id))])
                     }
