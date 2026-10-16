@@ -115,6 +115,7 @@ CLI + MCP for agent use: see the [conductor-tools README](conductor-tools/README
 | [docs/api-guidelines.md](docs/api-guidelines.md) | OpenAPI-first workflow, external vs internal API split |
 | [docs/mcp-tool-guidelines.md](docs/mcp-tool-guidelines.md) | MCP tool design principles |
 | [docs/integrations-adding-a-connector.md](docs/integrations-adding-a-connector.md) | Building a new connector |
+| [docs/integrations-remote-mcp.md](docs/integrations-remote-mcp.md) | Remote MCP server connector: giving agents an external MCP server's tools |
 | [docs/design-system.md](docs/design-system.md) | Frontend design tokens and patterns |
 | [docs/dev-workflow.md](docs/dev-workflow.md) | PR deploy labels, live testing, log access |
 

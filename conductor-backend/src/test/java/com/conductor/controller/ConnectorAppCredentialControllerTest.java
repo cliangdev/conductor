@@ -109,6 +109,7 @@ class ConnectorAppCredentialControllerTest {
     @MockitoBean private CredentialService credentialService;
     /** The controller's own mapper (connection-config parsing only) — response JSON is the framework's. */
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    @MockitoBean private com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider;
 
     @MockitoBean private JwtService jwtService;
     @MockitoBean private UserRepository userRepository;

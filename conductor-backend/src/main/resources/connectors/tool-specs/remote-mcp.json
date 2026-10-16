@@ -1,0 +1,4 @@
+{
+  "description": "Tools exposed by a remote MCP server. They reach agents through the tool picker, not as data operations.",
+  "operations": []
+}

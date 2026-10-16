@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { Breadcrumb } from '@/components/layout/PageHeader';
 import { Tabs } from '@/components/ui/tabs';
 import WorkflowToolsPanel from '@/components/integrations/WorkflowToolsPanel';
+import RemoteMcpToolsPanel from '@/components/integrations/RemoteMcpToolsPanel';
 import ConnectorDocsPanel from '@/components/integrations/ConnectorDocsPanel';
 import ConnectorFeedsPanel from '@/components/integrations/ConnectorFeedsPanel';
 import { ConnectorCatalogProvider, useConnectorCatalogItem } from '@/components/integrations/ConnectorCatalogContext';
@@ -61,7 +62,12 @@ function ConnectorLayoutInner({ children }: { children: React.ReactNode }) {
           <ConnectorFeedsPanel projectId={projectId} connectorId={connectorId} />
         </>
       )}
-      {tab === 'tools' && <WorkflowToolsPanel projectId={projectId} connectorId={connectorId} />}
+      {tab === 'tools' &&
+        (connectorId === 'remote-mcp' ? (
+          <RemoteMcpToolsPanel projectId={projectId} />
+        ) : (
+          <WorkflowToolsPanel projectId={projectId} connectorId={connectorId} />
+        ))}
       {tab === 'docs' && <ConnectorDocsPanel connectorId={connectorId} />}
     </>
   );

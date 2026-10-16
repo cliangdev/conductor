@@ -3783,6 +3783,48 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /projects/{projectId}/integrations/{connectorId}/connections/{connectionId}/mcp-tools:
+    get:
+      tags: [integrations]
+      summary: List the tools a remote MCP server connection offers
+      description: >-
+        Live tool list for a `remote-mcp` connection. Served from a 10-minute cache unless
+        `refresh=true`, which re-runs initialize and tools/list. A failing server returns 200 with
+        `error` set to a plain-language reason and no tools.
+      operationId: listRemoteMcpConnectionTools
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectionId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: refresh
+          in: query
+          required: false
+          schema: {type: boolean, default: false}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoteMcpToolsResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /projects/{projectId}/integrations/{connectorId}/connections/{connectionId}/webhook-events:
     get:
       tags: [integrations]
@@ -6871,6 +6913,32 @@ components:
           type: string
           nullable: true
 
+    RemoteMcpToolsResponse:
+      type: object
+      required: [tools, toolCount]
+      properties:
+        toolCount:
+          type: integer
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/RemoteMcpTool'
+        error:
+          type: string
+          nullable: true
+          description: Plain-language reason the server could not be reached or listed; null on success.
+
+    RemoteMcpTool:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: The server's own tool name.
+        description:
+          type: string
+          nullable: true
+
     OAuthAuthorizeRequest:
       type: object
 
@@ -8962,6 +9030,18 @@ components:
         source:
           type: string
           description: Tool source namespace (connector, http, builtin, mcp).
+        group:
+          type: string
+          nullable: true
+          description: >-
+            Label for grouping tools within a source, e.g. the remote MCP server connection a tool
+            comes from. Null when the source has no sub-grouping.
+        displayName:
+          type: string
+          nullable: true
+          description: >-
+            Name to show people when `name` is a model-facing alias (e.g. a remote MCP tool's own
+            name). Null means show `name`.
 
     AgentProviderInfo:
       type: object

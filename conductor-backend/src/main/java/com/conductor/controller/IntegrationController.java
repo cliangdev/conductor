@@ -9,6 +9,8 @@ import com.conductor.generated.api.IntegrationsApi;
 import com.conductor.generated.model.BqDatasetsResponse;
 import com.conductor.generated.model.BqDatasetsResponseDatasetsInner;
 import com.conductor.generated.model.ConnectionDataResponse;
+import com.conductor.generated.model.RemoteMcpTool;
+import com.conductor.generated.model.RemoteMcpToolsResponse;
 import com.conductor.generated.model.ConnectionHealthResponse;
 import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.ConnectionSummary;
@@ -109,6 +111,7 @@ public class IntegrationController implements IntegrationsApi {
     private final Optional<GcpBillingConnector> gcpBillingConnector;
     /** Present only outside the {@code local} profile (the real {@link GscConnector} is {@code @Profile("!local")}). */
     private final Optional<GscConnector> gscConnector;
+    private final com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider;
     private final ConnectorAppCredentialService appCredentialService;
     private final ConnectorAppCredentialVerificationService appCredentialVerificationService;
 
@@ -128,7 +131,9 @@ public class IntegrationController implements IntegrationsApi {
                                 Optional<GscConnector> gscConnector,
                                 ConnectorAppCredentialService appCredentialService,
                                 ConnectorAppCredentialVerificationService appCredentialVerificationService,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider) {
+        this.remoteMcpToolProvider = remoteMcpToolProvider;
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
         this.fetchService = fetchService;
@@ -588,6 +593,26 @@ public class IntegrationController implements IntegrationsApi {
                 .propertyAccessible(propertyAccessible)
                 .status(status)
                 .errorMessage(errorMessage));
+    }
+
+    @Override
+    public ResponseEntity<RemoteMcpToolsResponse> listRemoteMcpConnectionTools(
+            String projectId, String connectorId, String connectionId, Boolean refresh) {
+        requireMember(projectId);
+        Connection conn = requireConnection(projectId, connectorId, connectionId);
+        if (!com.conductor.integration.connector.mcp.RemoteMcpConnector.ID.equals(conn.getConnectorId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Not a remote MCP connection");
+        }
+        RemoteMcpToolsResponse response = new RemoteMcpToolsResponse().toolCount(0);
+        try {
+            for (var t : remoteMcpToolProvider.listForConnection(conn, Boolean.TRUE.equals(refresh))) {
+                response.addToolsItem(new RemoteMcpTool().name(t.name()).description(t.description()));
+            }
+            response.toolCount(response.getTools().size());
+        } catch (com.conductor.integration.connector.mcp.McpException e) {
+            response.error(e.getMessage());
+        }
+        return ResponseEntity.ok(response);
     }
 
     private GcpBillingConnector requireGcpBillingConnector() {
