@@ -34,6 +34,8 @@ final class PostHogChannelMetrics {
     static final String METRIC_CONVERSION_CLICKS = "conversion_clicks";
     static final String METRIC_SESSIONS_BY_REFERRER = "sessions_by_referrer";
     static final String DIRECT = "(direct)";
+    /** PostHog's own value for {@code $referring_domain} on a visit with no referrer. */
+    static final String POSTHOG_DIRECT = "$direct";
     static final int TOP_REFERRERS_PER_DAY = 50;
     private static final int ROW_LIMIT = 200_000;
 
@@ -94,6 +96,7 @@ final class PostHogChannelMetrics {
             LocalDate day = day(row.get(0));
             if (day == null) continue;
             String referrer = row.get(1) == null || String.valueOf(row.get(1)).isBlank()
+                    || POSTHOG_DIRECT.equals(String.valueOf(row.get(1)))
                     ? DIRECT : String.valueOf(row.get(1));
             byDay.computeIfAbsent(day, d -> new ArrayList<>()).add(
                     ChannelMetricPoint.of(METRIC_SESSIONS_BY_REFERRER, referrer, day, num(row, 2)));
