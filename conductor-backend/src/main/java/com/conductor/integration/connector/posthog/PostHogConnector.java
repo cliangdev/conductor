@@ -280,6 +280,10 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
     @Override
     public int backfillDays() { return 90; }
 
+    /** Keeps each backfill pull short; see {@link ChannelMetricsSource#maxDaysPerPull()}. */
+    @Override
+    public int maxDaysPerPull() { return 14; }
+
     @Override
     public int trailingDays() { return 2; }
 }

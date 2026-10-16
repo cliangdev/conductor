@@ -403,6 +403,10 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
     @Override
     public int backfillDays() { return 90; }
 
+    /** Keeps each backfill pull short; see {@link ChannelMetricsSource#maxDaysPerPull()}. */
+    @Override
+    public int maxDaysPerPull() { return 30; }
+
     /** Apple restates installs (attribution windows) for a few days. */
     @Override
     public int trailingDays() { return 3; }

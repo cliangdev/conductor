@@ -14,6 +14,9 @@ import com.conductor.integration.IngestRequest;
 import com.conductor.integration.IngestSink;
 import com.conductor.integration.IngestSpec;
 import com.conductor.integration.MetricChannel;
+import com.conductor.integration.OAuthReauthRequiredException;
+import com.conductor.integration.ConnectorMetadata;
+import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ConnectionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +49,7 @@ class ChannelMetricsFeedPullerTest {
     private ConnectorRegistry registry;
     private ConnectionService connectionService;
     private ChannelMetricDailyStore store;
+    private OAuthFlowService oAuthFlowService;
     private ChannelMetricsSource source;
     private ChannelMetricsFeedPuller puller;
     private ConnectorFeed feed;
@@ -61,12 +65,15 @@ class ChannelMetricsFeedPullerTest {
         registry = mock(ConnectorRegistry.class);
         connectionService = mock(ConnectionService.class);
         store = mock(ChannelMetricDailyStore.class);
+        oAuthFlowService = mock(OAuthFlowService.class);
+        when(oAuthFlowService.withFreshToken(any(), any())).thenAnswer(inv -> inv.getArgument(1));
         Connector connector = mock(Connector.class, withSettings().extraInterfaces(ChannelMetricsSource.class));
         source = (ChannelMetricsSource) connector;
         when(source.channel()).thenReturn(MetricChannel.SEARCH);
         when(source.backfillDays()).thenReturn(90);
         when(source.trailingDays()).thenReturn(4);
         when(source.prunesMissingDimensions()).thenReturn(true);
+        when(source.maxDaysPerPull()).thenReturn(Integer.MAX_VALUE);
         when(registry.getById("gsc")).thenReturn(Optional.of(connector));
 
         connection = new Connection();
@@ -98,7 +105,7 @@ class ChannelMetricsFeedPullerTest {
                 });
 
         puller = new ChannelMetricsFeedPuller(registry, connectionService, store, new ObjectMapper(),
-                Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
+                oAuthFlowService, Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
     }
 
     private IngestBatch pull(String cursor) {
@@ -262,5 +269,137 @@ class ChannelMetricsFeedPullerTest {
 
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
                 eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true), any());
+    }
+
+    // ---- chunked backfill ----
+
+    @Test
+    void aBackfillIsDrainedInContiguousChunksUntilCaughtUp() {
+        when(source.maxDaysPerPull()).thenReturn(30);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+        org.mockito.ArgumentCaptor<LocalDate> from = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        org.mockito.ArgumentCaptor<LocalDate> to = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+
+        String cursor = null;
+        int pulls = 0;
+        IngestBatch batch;
+        do {
+            batch = pull(cursor);
+            cursor = batch.nextCursor();
+            pulls++;
+            assertThat(pulls).isLessThan(20);
+        } while (batch.hasMore());
+
+        verify(source, org.mockito.Mockito.times(pulls)).pullDaily(any(), from.capture(), to.capture());
+        assertThat(from.getAllValues().get(0)).isEqualTo(TODAY.minusDays(90));
+        assertThat(to.getAllValues().get(0)).isEqualTo(TODAY.minusDays(90).plusDays(29));
+        for (int i = 1; i < pulls; i++) {
+            // each chunk restarts exactly trailing-1 (3) days before the previous chunk's last day
+            assertThat(from.getAllValues().get(i)).isEqualTo(to.getAllValues().get(i - 1).minusDays(3));
+            assertThat(to.getAllValues().get(i)).isAfter(to.getAllValues().get(i - 1));
+        }
+        assertThat(to.getAllValues().get(pulls - 1)).isEqualTo(TODAY);
+        assertThat(cursor).isEqualTo("{\"lastDay\":\"2026-10-14\"}");
+        assertThat(batch.hasMore()).isFalse();
+    }
+
+    @Test
+    void aMidBackfillChunkReportsHasMoreAndStoresOnlyItsOwnRange() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        IngestBatch batch = pull(null);
+
+        LocalDate from = TODAY.minusDays(90);
+        LocalDate to = from.plusDays(13);
+        verify(source).pullDaily(any(), eq(from), eq(to));
+        verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
+                eq(from), eq(to), eq(TODAY.minusDays(4)), any(), anyBoolean(), any());
+        assertThat(batch.hasMore()).isTrue();
+        assertThat(batch.nextCursor()).isEqualTo("{\"lastDay\":\"" + to + "\"}");
+    }
+
+    @Test
+    void aChunkNoWiderThanTheTrailingOverlapStillMakesProgress() {
+        when(source.maxDaysPerPull()).thenReturn(3); // < trailing (4)
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        String cursor = null;
+        int pulls = 0;
+        IngestBatch batch;
+        do {
+            batch = pull(cursor);
+            cursor = batch.nextCursor();
+            pulls++;
+            assertThat(pulls).isLessThan(200);
+        } while (batch.hasMore());
+
+        assertThat(cursor).isEqualTo("{\"lastDay\":\"2026-10-14\"}");
+    }
+
+    @Test
+    void anEmptyChunkStillAdvancesTheCursor() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        IngestBatch first = pull(null);
+        IngestBatch second = pull(first.nextCursor());
+
+        assertThat(second.nextCursor()).isNotEqualTo(first.nextCursor());
+    }
+
+    @Test
+    void whenCaughtUpAChunkedSourceReadsJustTheTrailingWindow() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-14\"}");
+
+        verify(source).pullDaily(any(), eq(TODAY.minusDays(4)), eq(TODAY));
+        assertThat(batch.hasMore()).isFalse();
+    }
+
+    @Test
+    void aSnapshotSourceIsAlwaysAskedForAWindowEndingToday() {
+        // the default maxDaysPerPull never chunks; backfill 1, trailing 1 like a rolling-snapshot source
+        when(source.backfillDays()).thenReturn(1);
+        when(source.trailingDays()).thenReturn(1);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        IngestBatch first = pull(null);
+        IngestBatch second = pull("{\"lastDay\":\"2026-10-01\"}");
+
+        verify(source, org.mockito.Mockito.times(2)).pullDaily(any(), any(), eq(TODAY));
+        assertThat(first.hasMore()).isFalse();
+        assertThat(second.hasMore()).isFalse();
+    }
+
+    // ---- OAuth token freshness ----
+
+    @Test
+    void theSourceIsPulledWithTheRefreshedContext() {
+        ConnectionContext fresh = new ConnectionContext("proj-1", "gsc", "conn-1", "fresh-token", null, null,
+                java.util.Map.of(), null);
+        when(oAuthFlowService.withFreshToken(eq(connection), any())).thenReturn(fresh);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        pull(null);
+
+        verify(source).pullDaily(eq(fresh), any(), any());
+    }
+
+    @Test
+    void aDeadRefreshTokenAsksForAReconnectInPlainWords() {
+        when(oAuthFlowService.withFreshToken(any(), any()))
+                .thenThrow(new OAuthReauthRequiredException("invalid_grant", null));
+        when(((Connector) source).getMetadata()).thenReturn(new ConnectorMetadata("gsc", "Google Search Console",
+                null, "d", "G"));
+
+        IngestBatch batch = pull(null);
+
+        assertThat(batch.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+        assertThat(batch.errorMessage()).isEqualTo("Reconnect Google Search Console — its sign-in has expired");
+        verify(source, never()).pullDaily(any(), any(), any());
+        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
     }
 }
