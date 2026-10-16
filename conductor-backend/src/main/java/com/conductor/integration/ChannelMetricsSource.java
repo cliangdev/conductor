@@ -42,4 +42,15 @@ public interface ChannelMetricsSource {
 
     /** How many recent days the platform may still restate; re-pulled every run and flagged provisional. */
     int trailingDays();
+
+    /**
+     * The widest {@code from..to} window one pull may ask for. The puller splits a long backfill into chunks
+     * of this many days (one chunk per feed run, the feed is re-dued immediately until caught up) so no single
+     * call holds a database connection for minutes. Sources whose {@link #pullDaily} only returns a value for
+     * {@code to} (rolling snapshots) keep the default, which never chunks, so they are always asked for a
+     * window ending today.
+     */
+    default int maxDaysPerPull() {
+        return Integer.MAX_VALUE;
+    }
 }

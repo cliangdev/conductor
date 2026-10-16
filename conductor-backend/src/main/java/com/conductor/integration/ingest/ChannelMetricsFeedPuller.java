@@ -10,6 +10,8 @@ import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.IngestBatch;
 import com.conductor.integration.IngestRequest;
 import com.conductor.integration.IngestSpec;
+import com.conductor.integration.OAuthReauthRequiredException;
+import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ConnectionService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,6 +34,11 @@ import java.time.ZoneOffset;
  * Afterwards each pull re-reads the source's {@link ChannelMetricsSource#trailingDays()} ending today, because
  * the platforms restate recent days; if the feed was down for longer than that, the window reaches back to
  * the last day already stored. Days within the trailing window are stored {@code provisional}.
+ *
+ * <p>A pull covers at most {@link ChannelMetricsSource#maxDaysPerPull()} days. When that stops short of today
+ * the cursor records the chunk's last day and the batch says {@code hasMore}, so the scheduler re-dues the
+ * feed at once; the next pull restarts {@code trailing - 1} days earlier and moves on, until it reaches today.
+ * The OAuth access token is refreshed first (Google tokens last an hour).
  */
 @Service
 public class ChannelMetricsFeedPuller {
@@ -46,25 +53,29 @@ public class ChannelMetricsFeedPuller {
     private final ConnectionService connectionService;
     private final ChannelMetricDailyStore store;
     private final ObjectMapper objectMapper;
+    private final OAuthFlowService oAuthFlowService;
     private final Clock clock;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
                                     ConnectionService connectionService,
                                     ChannelMetricDailyStore store,
-                                    ObjectMapper objectMapper) {
-        this(connectorRegistry, connectionService, store, objectMapper, Clock.systemUTC());
+                                    ObjectMapper objectMapper,
+                                    OAuthFlowService oAuthFlowService) {
+        this(connectorRegistry, connectionService, store, objectMapper, oAuthFlowService, Clock.systemUTC());
     }
 
     ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
                              ConnectionService connectionService,
                              ChannelMetricDailyStore store,
                              ObjectMapper objectMapper,
+                             OAuthFlowService oAuthFlowService,
                              Clock clock) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
         this.store = store;
         this.objectMapper = objectMapper;
+        this.oAuthFlowService = oAuthFlowService;
         this.clock = clock;
     }
 
@@ -98,10 +109,26 @@ public class ChannelMetricsFeedPuller {
         }
         LocalDate provisionalFrom = today.minusDays(trailing);
 
-        ConnectionContext ctx = connectionService.toContext(connection);
+        // One chunk per pull so a backfill never holds a connection for minutes. The window always advances
+        // past the stored lastDay, even when the trailing overlap is as wide as a chunk.
+        long chunkEnd = (long) from.toEpochDay() + Math.max(1, source.maxDaysPerPull()) - 1;
+        if (lastDay != null) {
+            chunkEnd = Math.max(chunkEnd, lastDay.toEpochDay() + 1);
+        }
+        LocalDate to = chunkEnd >= today.toEpochDay() ? today : LocalDate.ofEpochDay(chunkEnd);
+
+        ConnectionContext ctx;
+        try {
+            ctx = oAuthFlowService.withFreshToken(connection, connectionService.toContext(connection));
+        } catch (OAuthReauthRequiredException e) {
+            log.warn("Channel metrics feed {} ({}): sign-in expired: {}", feed.getId(), connection.getConnectorId(),
+                    e.getMessage());
+            return IngestBatch.setupRequired("Reconnect " + displayName(source, connection)
+                    + " \u2014 its sign-in has expired");
+        }
         java.util.List<ChannelMetricPoint> points;
         try {
-            points = source.pullDaily(ctx, from, today);
+            points = source.pullDaily(ctx, from, to);
         } catch (ChannelMetricsSourceException e) {
             log.warn("Channel metrics feed {} ({}): {}", feed.getId(), connection.getConnectorId(), e.getMessage());
             return e.health() == ConnectorHealth.SETUP_REQUIRED
@@ -110,10 +137,19 @@ public class ChannelMetricsFeedPuller {
         }
 
         int written = store.replaceWindow(connection.getProjectId(), connection.getId(), connection.getConnectorId(),
-                source.channel().name(), from, today, provisionalFrom, points, source.prunesMissingDimensions(),
+                source.channel().name(), from, to, provisionalFrom, points, source.prunesMissingDimensions(),
                 source::snapshot);
-        log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, today);
-        return IngestBatch.empty("{\"" + CURSOR_LAST_DAY + "\":\"" + today + "\"}");
+        log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, to);
+        return new IngestBatch(java.util.List.of(), "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\"}",
+                to.isBefore(today), false, ConnectorHealth.HEALTHY, null);
+    }
+
+    private static String displayName(ChannelMetricsSource source, Connection connection) {
+        if (source instanceof com.conductor.integration.Connector c && c.getMetadata() != null
+                && c.getMetadata().name() != null && !c.getMetadata().name().isBlank()) {
+            return c.getMetadata().name();
+        }
+        return connection.getConnectorId();
     }
 
     private LocalDate parseLastDay(String cursor) {
