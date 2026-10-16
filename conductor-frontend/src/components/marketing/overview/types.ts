@@ -17,7 +17,7 @@ export type ChannelKey = 'WEB' | 'SEARCH' | 'SOCIAL' | 'STORE' | 'ADS'
 export const CHANNEL_ORDER: ChannelKey[] = ['WEB', 'SEARCH', 'SOCIAL', 'STORE', 'ADS']
 
 export type ChannelStatus = 'LIVE' | 'STALE' | 'NOT_CONNECTED' | 'COMING_SOON'
-export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION'
+export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION' | 'RATING'
 export type TargetDirection = 'UP' | 'DOWN'
 
 export interface OverviewWindowRange {

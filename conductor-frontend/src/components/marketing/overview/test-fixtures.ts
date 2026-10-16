@@ -47,6 +47,21 @@ export function channel(overrides: Partial<OverviewChannel> = {}): OverviewChann
   }
 }
 
+/** A channel the platform lists but has no connector for yet (status COMING_SOON). */
+export function comingSoonChannel(overrides: Partial<OverviewChannel> = {}): OverviewChannel {
+  return channel({
+    channel: 'PRODUCT' as unknown as OverviewChannel['channel'],
+    label: 'Product',
+    status: 'COMING_SOON',
+    lastFetchedAt: null,
+    dataCompleteThrough: null,
+    connections: [],
+    connectHint: null,
+    metrics: [],
+    ...overrides,
+  })
+}
+
 export function overviewResponse(overrides: Partial<MarketingOverviewResponse> = {}): MarketingOverviewResponse {
   return {
     window: { from: '2026-08-18', to: '2026-09-14', dataCompleteThroughMin: '2026-09-14', previousFrom: '2026-07-21', previousTo: '2026-08-17' },
@@ -96,7 +111,16 @@ export function overviewResponse(overrides: Partial<MarketingOverviewResponse> =
         connectHint: { connectors: [{ connectorId: 'meta', name: 'Meta' }, { connectorId: 'tiktok', name: 'TikTok' }, { connectorId: 'youtube', name: 'YouTube' }] },
         metrics: [metric({ metric: 'followers', label: 'Followers', value: 3200 })],
       }),
-      channel({ channel: 'STORE', label: 'App Store', status: 'COMING_SOON', connections: [], connectHint: null, metrics: [] }),
+      channel({
+        channel: 'STORE',
+        label: 'App Store',
+        connections: [{ id: 'c2', connectorId: 'app-store-connect', name: 'Rexipe', status: 'LIVE' }],
+        connectHint: { connectors: [{ connectorId: 'app-store-connect', name: 'App Store Connect' }] },
+        metrics: [
+          metric({ metric: 'impressions', label: 'Impressions', value: 52000 }),
+          metric({ metric: 'downloads', label: 'Downloads', value: 310 }),
+        ],
+      }),
       channel({
         channel: 'ADS',
         label: 'Ads',

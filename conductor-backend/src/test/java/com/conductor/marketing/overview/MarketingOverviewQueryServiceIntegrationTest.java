@@ -214,7 +214,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
-    void channelStatusIsLiveStaleNotConnectedOrComingSoon() {
+    void channelStatusIsLiveStaleOrNotConnected() {
         String web = connect("posthog", NOW.minusHours(1));          // within 2 x 360 min
         String search = connect("gsc", NOW.minusHours(13));          // past 2 x 360 min
         put(web, "posthog", "WEB", "visitors", day(10), 1);
@@ -232,7 +232,9 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
                 .satisfies(c -> assertThat(c.name()).isEqualTo("Apple Search Ads"));
         assertThat(channel(overview, "SOCIAL").connectHint().connectors())
                 .extracting(c -> c.name()).containsExactly("Meta", "YouTube");
-        assertThat(channel(overview, "STORE").status()).isEqualTo("COMING_SOON");
+        assertThat(channel(overview, "STORE").status()).isEqualTo("NOT_CONNECTED");
+        assertThat(channel(overview, "STORE").connectHint().connectors()).singleElement()
+                .satisfies(c -> assertThat(c.name()).isEqualTo("App Store Connect"));
         assertThat(channel(overview, "WEB").lastFetchedAt()).isEqualTo(NOW.minusHours(1));
         assertThat(overview.channels()).extracting(ChannelView::channel).doesNotContain("PRODUCT");
     }
@@ -347,7 +349,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(overview.funnel().get(0).available()).isTrue();
         assertThat(overview.funnel().get(0).value()).isEqualTo(40.0);
         assertThat(overview.funnel().get(1).available()).isFalse();
-        assertThat(overview.funnel().get(2).unavailableReason()).isEqualTo("Connect App Store Connect (coming soon)");
+        assertThat(overview.funnel().get(2).unavailableReason()).isEqualTo("Connect App Store Connect");
         assertThat(overview.funnel().get(7).unavailableReason()).isEqualTo("Connect product metrics (coming soon)");
         assertThat(overview.funnel().get(7).label()).isEqualTo("In-app stages (first open \u2192 paid)");
     }
@@ -393,6 +395,63 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         // the detail view carries every visible metric, not just the headline
         assertThat(detail.channel().metrics()).extracting(MetricView::metric)
                 .contains("tap_through_rate", "impressions");
+    }
+
+    @Test
+    void conversionRateIsDownloadsOverUniqueImpressionsAndUniqueImpressionsStayHidden() {
+        String asc = connectFresh("app-store-connect");
+        put(asc, "app-store-connect", "STORE", "downloads", day(9), 10);
+        put(asc, "app-store-connect", "STORE", "downloads", day(10), 30);
+        put(asc, "app-store-connect", "STORE", "impressions", day(9), 5000);
+        put(asc, "app-store-connect", "STORE", "impressions", day(10), 5000);
+        put(asc, "app-store-connect", "STORE", "impressions_unique", day(9), 400);
+        put(asc, "app-store-connect", "STORE", "impressions_unique", day(10), 600);
+        // per-source rows must not be added on top of the totals
+        put(asc, "app-store-connect", "STORE", "downloads", "source:APP_STORE_SEARCH", day(10), 30, false);
+
+        ChannelView store = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW)
+                .channel();
+
+        assertThat(store.status()).isEqualTo("LIVE");
+        assertThat(channel(overview7(), "STORE").metrics()).extracting(MetricView::metric)
+                .containsExactly("impressions", "page_views", "downloads");
+        assertThat(metric(store, "downloads").value()).isEqualTo(40.0);
+        assertThat(metric(store, "conversion_rate").value()).isCloseTo(0.04, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(metric(store, "conversion_rate").unit()).isEqualTo(MetricCatalog.Unit.PERCENT);
+        assertThat(store.metrics()).extracting(MetricView::metric)
+                .doesNotContain("impressions_unique", "redownloads");
+    }
+
+    @Test
+    void theSourcesTableLabelsEachSourceTypeAndCarriesADownloadsPerPageViewColumn() {
+        String asc = connectFresh("app-store-connect");
+        put(asc, "app-store-connect", "STORE", "impressions", "source:APP_STORE_SEARCH", day(9), 900, false);
+        put(asc, "app-store-connect", "STORE", "page_views", "source:APP_STORE_SEARCH", day(9), 100, false);
+        put(asc, "app-store-connect", "STORE", "downloads", "source:APP_STORE_SEARCH", day(9), 25, false);
+        put(asc, "app-store-connect", "STORE", "impressions", "source:WEB_REFERRER", day(9), 100, false);
+        put(asc, "app-store-connect", "STORE", "downloads", "source:WEB_REFERRER", day(9), 1, false);
+        put(asc, "app-store-connect", "STORE", "impressions", day(9), 1000);
+        put(asc, "app-store-connect", "STORE", "rating_count", day(10), 120);
+        put(asc, "app-store-connect", "STORE", "rating_avg", day(10), 4.6);
+
+        MarketingOverviewQueryService.ChannelDetail detail = service.channel(project.getId(),
+                MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        MarketingOverviewQueryService.DimensionTable sources = detail.dimensions().get(0);
+        assertThat(sources.key()).isEqualTo("sources");
+        assertThat(sources.columns()).extracting(MarketingOverviewQueryService.ColumnView::key)
+                .containsExactly("impressions", "page_views", "downloads", "download_rate");
+        assertThat(sources.rows()).extracting(MarketingOverviewQueryService.DimensionRowView::label)
+                .containsExactly("App Store search", "Web referrer");
+        assertThat(sources.rows().get(0).key()).isEqualTo("APP_STORE_SEARCH");
+        assertThat(sources.rows().get(0).values()).containsExactly(900.0, 100.0, 25.0, 0.25);
+        assertThat(sources.rows().get(1).values().get(3)).isNull();
+        assertThat(detail.channel().metrics()).extracting(MetricView::metric)
+                .contains("rating_count", "rating_avg");
+        assertThat(metric(detail.channel(), "rating_avg").value()).isEqualTo(4.6);
+        assertThat(metric(detail.channel(), "rating_avg").unit()).isEqualTo(MetricCatalog.Unit.RATING);
+        // the source rows do not inflate the total
+        assertThat(metric(detail.channel(), "impressions").value()).isEqualTo(1000.0);
     }
 
     @Test

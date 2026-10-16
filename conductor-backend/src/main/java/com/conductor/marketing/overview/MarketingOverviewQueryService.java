@@ -479,6 +479,11 @@ public class MarketingOverviewQueryService {
                 if (metric == null) {
                     continue;
                 }
+                if (metric.agg() != Aggregation.LEVEL && !metric.fromDimensions()
+                        && !row.getDimensionKey().isEmpty()) {
+                    // a total metric: its per-dimension rows (loaded for the channel's level series) would double count
+                    continue;
+                }
                 if (metric.agg() == Aggregation.LEVEL) {
                     levels.computeIfAbsent(metric.key(), k -> new HashMap<>())
                             .computeIfAbsent(row.getConnectionId() + "|" + row.getDimensionKey(), k -> new TreeMap<>())
@@ -761,6 +766,11 @@ public class MarketingOverviewQueryService {
             if (parts.length == 3) {
                 key = parts[1];
                 label = parts[2].isBlank() ? parts[1] : parts[2];
+            }
+        } else if (channel == MetricChannel.STORE) {
+            if (dimensionKey.startsWith(MetricCatalog.STORE_SOURCE_PREFIX)) {
+                key = dimensionKey.substring(MetricCatalog.STORE_SOURCE_PREFIX.length());
+                label = MetricCatalog.storeSourceLabel(key);
             }
         } else if (channel == MetricChannel.SOCIAL) {
             label = platformRegistry.labelOf(dimensionKey);

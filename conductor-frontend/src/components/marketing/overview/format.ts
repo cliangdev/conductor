@@ -11,6 +11,7 @@ export function formatMetricValue(value: number | null | undefined, unit: Metric
     case 'PERCENT':
       return `${(value * 100).toFixed(1)}%`
     case 'POSITION':
+    case 'RATING':
       return value.toFixed(1)
     case 'CURRENCY':
       return new Intl.NumberFormat('en-US', {
@@ -112,6 +113,7 @@ function formatWithDecimals(value: number, unit: MetricUnit, decimals: number): 
     case 'PERCENT':
       return `${(value * 100).toFixed(decimals)}%`
     case 'POSITION':
+    case 'RATING':
       return value.toFixed(decimals)
     case 'CURRENCY':
       return new Intl.NumberFormat('en-US', {
@@ -167,7 +169,7 @@ export function chartAxis(values: (number | null | undefined)[], unit: MetricUni
   const hi = Math.ceil(rawHi / step) * step
   const count = Math.round((hi - lo) / step) + 1
   const ticks = Array.from({ length: count }, (_, i) => Number((lo + step * i).toPrecision(12)))
-  let decimals = unit === 'POSITION' ? 1 : 0
+  let decimals = unit === 'POSITION' || unit === 'RATING' ? 1 : 0
   for (; decimals < 6; decimals++) {
     const labels = ticks.map((t) => formatWithDecimals(t, unit, decimals))
     if (new Set(labels).size === labels.length) break

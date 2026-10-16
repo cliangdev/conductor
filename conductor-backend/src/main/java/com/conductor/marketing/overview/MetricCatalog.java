@@ -17,7 +17,7 @@ import java.util.Optional;
  */
 public final class MetricCatalog {
 
-    public enum Unit { COUNT, CURRENCY, PERCENT, POSITION }
+    public enum Unit { COUNT, CURRENCY, PERCENT, POSITION, RATING }
 
     /**
      * SUM adds the daily counts in a window. LEVEL is a stock (followers): the latest value at or before
@@ -84,7 +84,26 @@ public final class MetricCatalog {
             "gsc", "Search Console",
             "apple-search-ads", "Apple Search Ads",
             "meta", "Meta",
-            "youtube", "YouTube");
+            "youtube", "YouTube",
+            "app-store-connect", "App Store Connect");
+
+    private static final java.util.Map<String, String> STORE_SOURCE_LABELS = java.util.Map.of(
+            "APP_STORE_SEARCH", "App Store search",
+            "APP_STORE_BROWSE", "App Store browse",
+            "APP_REFERRER", "App referrer",
+            "WEB_REFERRER", "Web referrer",
+            "APP_CLIP", "App Clip",
+            "INSTITUTIONAL_PURCHASE", "Institutional purchase",
+            "UNAVAILABLE", "Unavailable",
+            "OTHER", "Other");
+
+    /** The dimension-key prefix of the App Store traffic-source rows ({@code source:APP_STORE_SEARCH}). */
+    public static final String STORE_SOURCE_PREFIX = "source:";
+
+    /** Human label for an App Store source type; an unknown type is shown as written. */
+    public static String storeSourceLabel(String type) {
+        return STORE_SOURCE_LABELS.getOrDefault(type, type);
+    }
 
     /** The display name of a connector that feeds a channel; falls back to its id. */
     public static String connectorName(String connectorId) {
@@ -101,6 +120,10 @@ public final class MetricCatalog {
 
     private static Metric hiddenSum(String key) {
         return new Metric(key, key, Unit.COUNT, Aggregation.SUM, Good.UP, true, false, false, null, null);
+    }
+
+    private static Metric ratingLevel(String key, String label, Unit unit) {
+        return new Metric(key, label, unit, Aggregation.LEVEL, Good.UP, false, true, true, null, null);
     }
 
     private static Metric level(String key, String label, boolean optional) {
@@ -160,12 +183,24 @@ public final class MetricCatalog {
                             levelColumn("channel_views", "Channel views"),
                             sumColumn("website_clicks", "website_clicks", "Website clicks", Unit.COUNT)))),
                     4),
-            new Channel(MetricChannel.STORE, "App Store", List.of(),
+            new Channel(MetricChannel.STORE, "App Store", List.of("app-store-connect"),
                     List.of(
                             sum("impressions", "Impressions", Unit.COUNT, Good.UP),
                             sum("page_views", "Page views", Unit.COUNT, Good.UP),
-                            sum("downloads", "Downloads", Unit.COUNT, Good.UP)),
-                    List.of(),
+                            sum("downloads", "Downloads", Unit.COUNT, Good.UP),
+                            // Apple's definition: first-time downloads over unique impressions
+                            derived("conversion_rate", "Conversion rate", Unit.PERCENT, Good.UP,
+                                    "downloads", "impressions_unique"),
+                            optionalSum("redownloads", "Redownloads", Unit.COUNT, Good.UP, false),
+                            ratingLevel("rating_count", "Ratings", Unit.COUNT),
+                            ratingLevel("rating_avg", "Average rating", Unit.RATING),
+                            hiddenSum("impressions_unique")),
+                    List.of(new Dimension("sources", "By traffic source", List.of(
+                            sumColumn("impressions", "impressions", "Impressions", Unit.COUNT),
+                            sumColumn("page_views", "page_views", "Page views", Unit.COUNT),
+                            sumColumn("downloads", "downloads", "Downloads", Unit.COUNT),
+                            ratioColumn("download_rate", "Downloads per page view", Unit.PERCENT,
+                                    "downloads", "page_views")))),
                     3),
             new Channel(MetricChannel.ADS, "Ads", List.of("apple-search-ads"),
                     List.of(
@@ -192,11 +227,11 @@ public final class MetricCatalog {
             new FunnelStage("web_conversion_clicks", "Conversion clicks", MetricChannel.WEB, "conversion_clicks",
                     "Set a conversion event on the web analytics connection", "web_visitors"),
             new FunnelStage("store_impressions", "Store impressions", MetricChannel.STORE, "impressions",
-                    "Connect App Store Connect (coming soon)", null),
+                    "Connect App Store Connect", null),
             new FunnelStage("store_page_views", "Store page views", MetricChannel.STORE, "page_views",
-                    "Connect App Store Connect (coming soon)", "store_impressions"),
+                    "Connect App Store Connect", "store_impressions"),
             new FunnelStage("store_downloads", "Downloads", MetricChannel.STORE, "downloads",
-                    "Connect App Store Connect (coming soon)", "store_page_views"),
+                    "Connect App Store Connect", "store_page_views"),
             new FunnelStage("ads_taps", "Ad taps", MetricChannel.ADS, "taps", "Connect an ads account", null),
             new FunnelStage("ads_installs", "Ad installs", MetricChannel.ADS, "installs", "Connect an ads account",
                     "ads_taps"),

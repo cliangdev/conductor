@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { clearAllSidebarCaches } from '@/lib/workflows'
-import { channel, metric, overviewResponse } from './test-fixtures'
+import { channel, comingSoonChannel, metric, overviewResponse } from './test-fixtures'
 
 let role: 'ADMIN' | 'CREATOR' | 'REVIEWER' = 'ADMIN'
 
@@ -103,7 +103,7 @@ describe('OverviewPanel', () => {
       overviewResponse({
         channels: [
           channel({ channel: 'WEB', label: 'Web', status: 'NOT_CONNECTED', metrics: [], lastFetchedAt: null }),
-          channel({ channel: 'STORE', label: 'App Store', status: 'COMING_SOON', metrics: [] }),
+          comingSoonChannel(),
         ],
       }),
     )

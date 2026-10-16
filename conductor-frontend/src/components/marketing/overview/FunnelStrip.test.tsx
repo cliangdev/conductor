@@ -17,7 +17,7 @@ describe('FunnelStrip', () => {
   })
 
   it('collapses consecutive unavailable stages with one reason into a single muted tile', () => {
-    const reason = 'Connect the store (coming soon)'
+    const reason = 'Connect the store'
     const gone = (key: string, label: string) => ({
       key, label, value: null, source: 'STORE', path: 'STORE', available: false, unavailableReason: reason,
     })

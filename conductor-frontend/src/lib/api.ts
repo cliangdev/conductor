@@ -190,7 +190,7 @@ export interface ConnectorConfigField {
   key: string
   label: string
   hint: string | null
-  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY' | 'JSON'
+  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY' | 'JSON' | 'SECRET_TEXT'
   source: 'USER_INPUT' | 'GENERATED'
   required: boolean
   secret: boolean

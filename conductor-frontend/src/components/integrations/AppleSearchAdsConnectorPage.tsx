@@ -24,6 +24,7 @@ import {
 import { ExternalLink } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { ConnectorHeader } from './ConnectorHeader';
+import { SecretTextField } from './SecretTextField';
 import { formatUsd } from '@/lib/format';
 
 interface InstallPoint { date: string; newDownloads: number; installs: number }
@@ -167,18 +168,9 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
               onChange={v => setConnectForm(f => ({ ...f, teamId: v }))} required />
             <Field label="Key ID" placeholder="xxxx-xxxx-..." value={connectForm.keyId}
               onChange={v => setConnectForm(f => ({ ...f, keyId: v }))} required />
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Private Key (.p8)</label>
-              <textarea
-                value={connectForm.privateKey}
-                onChange={e => setConnectForm(f => ({ ...f, privateKey: e.target.value }))}
-                placeholder={'-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----'}
-                required
-                rows={5}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              <p className="text-xs text-muted-foreground mt-1">Stored encrypted; never shown again.</p>
-            </div>
+            <SecretTextField id="asa-private-key" label="Private Key (.p8)" required
+              value={connectForm.privateKey}
+              onChange={v => setConnectForm(f => ({ ...f, privateKey: v }))} />
             <Field label="Org ID" placeholder="From GET /api/v5/acls" value={connectForm.orgId}
               onChange={v => setConnectForm(f => ({ ...f, orgId: v }))} required />
             <Field label="Campaign ID (optional)" placeholder="For keyword & search-term reports"

@@ -6,6 +6,7 @@ describe('formatMetricValue', () => {
   it('formats each unit', () => {
     expect(formatMetricValue(0.031, 'PERCENT')).toBe('3.1%')
     expect(formatMetricValue(8.24, 'POSITION')).toBe('8.2')
+    expect(formatMetricValue(4.66, 'RATING')).toBe('4.7')
     expect(formatMetricValue(12.5, 'CURRENCY')).toBe('$12.50')
     expect(formatMetricValue(1234, 'COUNT')).toBe('1,234')
     expect(formatMetricValue(null, 'COUNT')).toBe('—')

@@ -6207,7 +6207,7 @@ components:
         label: {type: string}
         unit:
           type: string
-          enum: [COUNT, CURRENCY, PERCENT, POSITION]
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
         goodDirection:
           type: string
           enum: [UP, DOWN]
@@ -6313,7 +6313,7 @@ components:
         label: {type: string}
         unit:
           type: string
-          enum: [COUNT, CURRENCY, PERCENT, POSITION]
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
 
     OverviewDimensionRow:
       type: object

@@ -41,24 +41,38 @@ test.describe('marketing overview', () => {
       headers,
     })
     expect(search.ok()).toBeTruthy()
-
-    // Wait for the feed scheduler to pull mock data: Search has metrics with values.
-    await expect
-      .poll(
-        async () => {
-          const res = await request.get(`${BACKEND}/api/v2/projects/${projectId}/marketing/overview?window=28d`, {
-            headers,
-          })
-          if (!res.ok()) return false
-          const body = (await res.json()) as {
-            channels: { channel: string; metrics: { value: number | null }[] }[]
-          }
-          const channel = body.channels.find((c) => c.channel === 'SEARCH')
-          return !!channel && channel.metrics.some((m) => m.value !== null && m.value !== undefined)
+    const store = await request.post(
+      `${BACKEND}/api/v1/projects/${projectId}/integrations/app-store-connect/connections`,
+      {
+        data: {
+          label: 'Store',
+          apiKey: '-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----',
+          configJson: { issuerId: 'issuer', keyId: 'key', appId: '123456789' },
         },
-        { timeout: SEED_TIMEOUT_MS, intervals: [5_000] },
-      )
-      .toBe(true)
+        headers,
+      },
+    )
+    expect(store.ok()).toBeTruthy()
+
+    // Wait for the feed scheduler to pull mock data: Search and the App Store have metrics with values.
+    for (const channelName of ['SEARCH', 'STORE']) {
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get(`${BACKEND}/api/v2/projects/${projectId}/marketing/overview?window=28d`, {
+              headers,
+            })
+            if (!res.ok()) return false
+            const body = (await res.json()) as {
+              channels: { channel: string; metrics: { value: number | null }[] }[]
+            }
+            const channel = body.channels.find((c) => c.channel === channelName)
+            return !!channel && channel.metrics.some((m) => m.value !== null && m.value !== undefined)
+          },
+          { timeout: SEED_TIMEOUT_MS, intervals: [5_000] },
+        )
+        .toBe(true)
+    }
     await request.dispose()
   })
 
@@ -78,6 +92,18 @@ test.describe('marketing overview', () => {
     for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads']) {
       await expect(page.getByRole('region', { name, exact: true })).toBeVisible()
     }
+
+    // 2b. The App Store is a real channel now: it shows values, not "coming soon", and its detail page
+    // breaks the numbers down by traffic source.
+    const store = page.getByRole('region', { name: 'App Store', exact: true })
+    await expect(store).not.toContainText(/coming soon/i)
+    await expect(store).toContainText('Downloads')
+    await store.getByRole('link', { name: 'App Store', exact: true }).click()
+    await page.waitForURL(/\/marketing\/overview\/store/)
+    await expect(page.getByRole('region', { name: 'By traffic source' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('region', { name: 'By traffic source' })).toContainText('App Store search')
+    await page.getByRole('link', { name: /Marketing overview/ }).click()
+    await page.waitForURL(/\/marketing\/overview$/)
 
     // 3. Open the Search detail page from its card. (The card also has a "Connect …" link in some
     // states, so match the heading link exactly.)

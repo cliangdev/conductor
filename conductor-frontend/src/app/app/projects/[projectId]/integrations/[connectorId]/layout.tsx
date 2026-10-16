@@ -21,6 +21,7 @@ const CONNECTOR_LABELS: Record<string, string> = {
   revenuecat: 'RevenueCat',
   gsc: 'Search Console',
   'apple-search-ads': 'Apple Search Ads',
+  'app-store-connect': 'App Store Connect',
 };
 
 type Tab = 'overview' | 'tools' | 'docs';

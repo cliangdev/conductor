@@ -1,3 +1,4 @@
+import { SecretTextField } from './SecretTextField';
 import { ServiceAccountKeyField } from './ServiceAccountKeyField';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,6 +37,15 @@ export function ConnectorConfigFields({
                 value={formValues[field.key] || ''}
                 error={jsonFieldErrors[field.key] || null}
                 onChange={(text) => applyJsonField(field.key, text)}
+              />
+            ) : field.type === 'SECRET_TEXT' ? (
+              <SecretTextField
+                id={`connector-field-${field.key}`}
+                label={field.label}
+                hint={field.hint}
+                required={field.required}
+                value={formValues[field.key] || ''}
+                onChange={(text) => setFormValues((prev) => ({ ...prev, [field.key]: text }))}
               />
             ) : field.type === 'SELECT' ? (
               <>

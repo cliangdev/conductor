@@ -4,6 +4,7 @@ package com.conductor.integration;
 public enum FieldType {
     STRING,
     SECRET,        // masked input / never returned
+    SECRET_TEXT,   // multiline secret (e.g. a .p8 private key): textarea, never returned
     SELECT,
     MULTISELECT,
     BOOLEAN,
