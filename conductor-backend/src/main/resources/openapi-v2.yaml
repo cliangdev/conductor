@@ -4546,7 +4546,7 @@ paths:
         - creatives
       summary: Attach a render's frames to a Post
       description: >-
-        Copies every non-`sheet` frame of a SUCCEEDED render into the Post's own assets, then — for
+        Links every non-`sheet` frame of a SUCCEEDED render to the Post as its own asset (one Asset per frame, all pointing at the frame's stored object; nothing is copied), then — for
         targets with `custom_media = false` only — sets each destination's media by placement (`9x16` to
         TikTok and Instagram Reels, `4x5` to Instagram feed, `1x1` to Facebook, `story` to story-format
         targets; sequences in index order, never sorted) through the same target media-selection path a

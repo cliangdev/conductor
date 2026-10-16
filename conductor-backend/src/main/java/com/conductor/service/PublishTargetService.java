@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.creative.CreativePlacementMedia;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
@@ -229,6 +230,7 @@ public class PublishTargetService {
     private final ProjectSecurityService projectSecurityService;
     private final PublishBundleGuard publishBundleGuard;
     private final PublishTargetMediaResolver mediaResolver;
+    private final CreativePlacementMedia creativePlacementMedia;
 
     public PublishTargetService(PublishPlatformRegistry platformRegistry,
                                 ConnectionRepository connectionRepository,
@@ -238,7 +240,8 @@ public class PublishTargetService {
                                 WorkItemRepository workItemRepository,
                                 ProjectSecurityService projectSecurityService,
                                 PublishBundleGuard publishBundleGuard,
-                                PublishTargetMediaResolver mediaResolver) {
+                                PublishTargetMediaResolver mediaResolver,
+                                CreativePlacementMedia creativePlacementMedia) {
         this.platformRegistry = platformRegistry;
         this.connectionRepository = connectionRepository;
         this.targetRepository = targetRepository;
@@ -248,6 +251,7 @@ public class PublishTargetService {
         this.projectSecurityService = projectSecurityService;
         this.publishBundleGuard = publishBundleGuard;
         this.mediaResolver = mediaResolver;
+        this.creativePlacementMedia = creativePlacementMedia;
     }
 
     /** Every target this project can currently publish to, grouped platform by platform. */
@@ -589,6 +593,8 @@ public class PublishTargetService {
             existingByKey.put(selectionKey(target.getPlatform(), target.getConnectionId()), target);
         }
 
+        giveNewTargetsTheirCreativeSize(workItem, desired, existingByKey.keySet());
+
         List<PostPublishTarget> removed = existingByKey.entrySet().stream()
                 .filter(entry -> !desired.containsKey(entry.getKey()))
                 .map(Map.Entry::getValue)
@@ -647,6 +653,37 @@ public class PublishTargetService {
         rewriteSelections(withContent, desired);
 
         return views(workItem, sorted(kept));
+    }
+
+    /**
+     * A destination added to a Post that already carries Creative render frames gets the frames sized for
+     * it (same rule as attaching: {@link CreativePlacementMedia}), instead of inheriting every size. Only
+     * brand-new destinations that supplied no media of their own are touched; existing rows and explicit
+     * choices (including explicit emptiness) are left alone, and a destination no placement matches keeps
+     * inheriting.
+     */
+    private void giveNewTargetsTheirCreativeSize(WorkItem workItem, Map<String, DesiredTarget> desired,
+                                                 Set<String> existingKeys) {
+        List<CreativePlacementMedia.Placements> placements = null;
+        for (Map.Entry<String, DesiredTarget> entry : desired.entrySet()) {
+            DesiredTarget wanted = entry.getValue();
+            if (existingKeys.contains(entry.getKey()) || wanted.customMedia()) {
+                continue;
+            }
+            if (placements == null) {
+                placements = creativePlacementMedia.forPostAssets(assetRepository.findAllByWorkItemId(workItem.getId()).stream()
+                        .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
+                        .toList());
+            }
+            PostPublishTarget probe = new PostPublishTarget();
+            probe.setPlatform(wanted.option().platform());
+            probe.setFormat(wanted.format().name());
+            List<String> media = CreativePlacementMedia.mediaFor(placements, probe);
+            if (!media.isEmpty()) {
+                entry.setValue(new DesiredTarget(wanted.option(), wanted.optionsJson(), wanted.captionOverride(),
+                        media, wanted.format(), false));
+            }
+        }
     }
 
     /**
