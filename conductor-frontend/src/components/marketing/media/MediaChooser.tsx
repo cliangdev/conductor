@@ -23,6 +23,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs } from '@/components/ui/tabs'
 import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage } from '@/lib/api'
+import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
 import {
@@ -78,18 +79,28 @@ function itemMeta(item: CreativePhoto): string {
 }
 
 function Thumb({ item }: { item: CreativePhoto }) {
-  const src = item.mediaKind === 'VIDEO' ? item.posterUrl : item.url
+  const [failed, setFailed] = useState(false)
+  const isVideo = item.mediaKind === 'VIDEO'
+  const src = isVideo ? item.posterUrl : item.url
   return (
     <>
-      {src ? (
+      {src && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={item.label || 'Media'} className="h-full w-full object-contain" />
+        <img
+          src={src}
+          alt={item.label || 'Media'}
+          onError={() => setFailed(true)}
+          className="h-full w-full object-contain"
+        />
       ) : (
-        <span className="flex h-full items-center justify-center text-muted-foreground">
+        <span className="flex h-full flex-col items-center justify-center gap-1 text-muted-foreground">
           <FilmIcon className="h-5 w-5" aria-hidden />
+          {isVideo && item.durationSeconds != null && (
+            <span className="text-[11px]">{formatDuration(item.durationSeconds)}</span>
+          )}
         </span>
       )}
-      {item.mediaKind === 'VIDEO' && (
+      {isVideo && (
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <PlayIcon className="h-6 w-6 fill-background text-background drop-shadow" aria-hidden />
         </span>
@@ -152,7 +163,7 @@ function LibraryTab({
       {loadError && <Alert variant="destructive">{loadError}</Alert>}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {items == null ? (
-          <div data-testid="chooser-skeleton" className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3" aria-hidden>
+          <div data-testid="chooser-skeleton" className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" aria-hidden>
             {Array.from({ length: 12 }, (_, i) => (
               <Skeleton key={i} className="aspect-square" />
             ))}
@@ -172,7 +183,7 @@ function LibraryTab({
                 {section.heading && (
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.heading}</h3>
                 )}
-                <ul className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
+                <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                   {section.items.map((item) => {
                     const order = selected.findIndex((s) => s.id === item.id)
                     const isSelected = order >= 0
@@ -183,7 +194,7 @@ function LibraryTab({
                         data-testid={`chooser-tile-${item.id}`}
                         className={cn(
                           'group relative overflow-hidden rounded-lg border bg-surface',
-                          isSelected ? 'border-accent ring-2 ring-accent' : 'border-border',
+                          isSelected ? 'border-primary ring-2 ring-primary' : 'border-border',
                         )}
                       >
                         <button
@@ -193,7 +204,7 @@ function LibraryTab({
                           onClick={() => onToggle(item)}
                           className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
-                          <span className="relative block aspect-square w-full bg-surface-2">
+                          <span className="relative m-1.5 block aspect-square overflow-hidden rounded-md border border-border bg-surface-2">
                             <Thumb item={item} />
                           </span>
                           <span className="block space-y-0.5 border-t border-border px-2 py-1.5">
@@ -211,7 +222,7 @@ function LibraryTab({
                         {isSelected && (
                           <span
                             data-testid={`order-badge-${item.id}`}
-                            className="pointer-events-none absolute left-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[11px] font-semibold text-accent-foreground"
+                            className="pointer-events-none absolute left-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground shadow ring-1 ring-background"
                           >
                             {order + 1}
                           </span>
@@ -344,7 +355,7 @@ function UploadTab({
         data-testid="chooser-dropzone"
         className={cn(
           'flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-14 text-center transition-colors',
-          dragging ? 'border-accent bg-accent-soft' : 'border-border-strong bg-surface-2',
+          dragging ? 'border-primary bg-accent-soft' : 'border-border-strong bg-surface-2',
         )}
       >
         <UploadCloudIcon className="h-8 w-8 text-muted-foreground" aria-hidden />
@@ -487,7 +498,7 @@ function ChooserBody({
 
   return (
     <>
-    <div className="flex shrink-0 items-start justify-between gap-3 px-5 pt-4">
+    <div className="flex shrink-0 items-start justify-between gap-3 px-4 pt-4 sm:px-5">
       <div className="min-w-0">
         <Dialog.Title className="text-base font-semibold text-foreground">Add media</Dialog.Title>
         <Dialog.Description className="text-sm text-muted-foreground">
@@ -499,11 +510,11 @@ function ChooserBody({
       </Button>
     </div>
 
-    <div className="shrink-0 px-5 pt-3">
+    <div className="min-w-0 shrink-0 overflow-x-auto px-4 pt-3 sm:px-5">
       <Tabs ariaLabel="Media source" value={activeTab} onValueChange={setTab} items={tabs} />
     </div>
 
-    <div className="flex min-h-0 flex-1 flex-col px-5 py-4">
+    <div className="flex min-h-0 flex-1 flex-col px-4 py-4 sm:px-5">
       {extra ? (
         extra.content
       ) : activeTab === 'upload' ? (
@@ -531,7 +542,7 @@ function ChooserBody({
     </div>
 
     {!extra?.ownFooter && (
-    <div className="flex shrink-0 items-center gap-3 border-t border-border px-5 py-3">
+    <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-3 sm:px-5">
       <span className="text-sm text-muted-foreground" aria-live="polite">
         {selected.length === 0 ? 'Nothing selected' : `${selected.length} selected`}
       </span>

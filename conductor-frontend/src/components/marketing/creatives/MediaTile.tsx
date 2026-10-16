@@ -1,21 +1,25 @@
+'use client'
+
 // The thumbnail body of one media item (image / video poster + duration / audio icon), shared by the
 // MediaPicker grid and the Media library page. Render it inside a `relative` sized box.
 
-import { FileAudioIcon, ImageOffIcon, PlayIcon, VideoOffIcon } from 'lucide-react'
+import { useState } from 'react'
+import { FileAudioIcon, FilmIcon, ImageOffIcon, PlayIcon } from 'lucide-react'
 import { formatDuration } from '@/lib/format'
 import type { CreativePhoto } from '@/components/marketing/creatives/types'
 
 export function MediaTile({ item }: { item: CreativePhoto }) {
+  const [posterFailed, setPosterFailed] = useState(false)
   const kind = item.mediaKind ?? 'IMAGE'
   if (kind === 'VIDEO') {
     return (
       <>
-        {item.posterUrl ? (
+        {item.posterUrl && !posterFailed ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.posterUrl} alt={item.label || 'Clip'} className="h-full w-full object-cover" />
+          <img src={item.posterUrl} alt={item.label || 'Clip'} onError={() => setPosterFailed(true)} className="h-full w-full object-cover" />
         ) : (
           <span className="flex h-full items-center justify-center text-muted-foreground">
-            <VideoOffIcon className="h-4 w-4" aria-hidden />
+            <FilmIcon className="h-5 w-5" aria-hidden />
           </span>
         )}
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
