@@ -17,7 +17,7 @@ export default function MarketingOverviewPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Marketing' }, { label: 'Overview' }]}
         title="Marketing overview"
-        description="Traffic, search, social and ads in one place: how each channel is doing against the period before."
+        description="Web, search, social, ads, the App Store and in-app numbers in one place: how each channel is doing against the period before."
       />
       <OverviewPanel projectId={projectId} />
     </PageContainer>

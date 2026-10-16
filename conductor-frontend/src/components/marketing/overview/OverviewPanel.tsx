@@ -48,8 +48,8 @@ function OverviewSkeleton() {
         ))}
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-64 w-full" />
+        {CHANNEL_ORDER.map((c) => (
+          <Skeleton key={c} className="h-64 w-full" />
         ))}
       </div>
     </div>

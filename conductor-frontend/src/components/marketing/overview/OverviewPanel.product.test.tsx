@@ -59,4 +59,11 @@ describe('OverviewPanel with the In-app channel', () => {
     // the funnel stage and the card both carry the flags
     expect(screen.getAllByText('Small sample').length).toBeGreaterThanOrEqual(2)
   })
+
+  it('loads with one placeholder per channel card', () => {
+    ;(apiGet as Mock).mockReturnValue(new Promise(() => {}))
+    render(<OverviewPanel projectId="proj-1" />)
+    const loading = screen.getByLabelText('Loading overview')
+    expect(loading.querySelectorAll('.md\\:grid-cols-2 > *')).toHaveLength(6)
+  })
 })
