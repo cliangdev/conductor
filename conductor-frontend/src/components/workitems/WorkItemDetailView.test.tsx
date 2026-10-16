@@ -883,7 +883,7 @@ describe('a Post on a publishing Workflow', () => {
     expect(within(rail).queryByText('Schedule')).not.toBeInTheDocument()
     expect(within(rail).getByText('Status')).toBeInTheDocument()
     expect(within(content).getByText('Crispy in 20 minutes.')).toBeInTheDocument()
-    expect(within(content).getByTestId('media-strip')).toBeInTheDocument()
+    expect(within(content).getByTestId('post-media')).toBeInTheDocument()
   })
 
   it('offers one primary move and a More menu in the header, and no old cards', async () => {

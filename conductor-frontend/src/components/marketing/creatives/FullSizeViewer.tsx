@@ -22,9 +22,11 @@ export interface FullSizeViewerProps {
   onPrev?: () => void
   onNext?: () => void
   children: React.ReactNode
+  /** An optional side panel beside the media (details, actions). Omitted by the Creative viewers. */
+  aside?: React.ReactNode
 }
 
-export function FullSizeViewer({ open, onOpenChange, title, subtitle, onPrev, onNext, children }: FullSizeViewerProps) {
+export function FullSizeViewer({ open, onOpenChange, title, subtitle, onPrev, onNext, children, aside }: FullSizeViewerProps) {
   useEffect(() => {
     if (!open) return
     const handler = (e: KeyboardEvent) => {
@@ -60,6 +62,7 @@ export function FullSizeViewer({ open, onOpenChange, title, subtitle, onPrev, on
             </Button>
           </div>
 
+          <div className="flex min-h-0 flex-1 flex-col overflow-auto md:flex-row">
           <div className="flex min-h-0 flex-1 items-center justify-center gap-1 overflow-auto p-4">
             {onPrev && (
               <Button variant="ghost" size="icon" aria-label="Previous" onClick={onPrev} className="shrink-0">
@@ -72,6 +75,12 @@ export function FullSizeViewer({ open, onOpenChange, title, subtitle, onPrev, on
                 <ChevronRightIcon className="h-5 w-5" aria-hidden />
               </Button>
             )}
+          </div>
+          {aside && (
+            <aside className="w-full shrink-0 overflow-y-auto border-t border-border p-4 md:w-72 md:border-l md:border-t-0">
+              {aside}
+            </aside>
+          )}
           </div>
         </Dialog.Popup>
       </Dialog.Portal>
