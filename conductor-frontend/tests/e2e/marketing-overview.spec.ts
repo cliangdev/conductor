@@ -86,6 +86,13 @@ test.describe('marketing overview', () => {
   })
 
   test('funnel, channel cards, drill-down, targets, window and mobile layout', async ({ page }) => {
+    // Hydration and React warnings (a saved window rendered differently on server and client, a script tag
+    // rendered by a component) surface as console errors; there must be none.
+    const problems: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' && /hydrat|did not match|script tag/i.test(msg.text())) problems.push(msg.text())
+    })
+    page.on('pageerror', (err) => problems.push(err.message))
     await page.goto('/app/projects')
     await page.waitForURL(/\/app\/projects/, { timeout: 15000 })
     await setActiveProjectInStorage(page, projectId)
@@ -174,5 +181,10 @@ test.describe('marketing overview', () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     )
     expect(overflow).toBeLessThanOrEqual(0)
+
+    // 7. After a reload with a saved 7d window (step 5) and the detail pages, the console stayed clean.
+    await page.goto(`/app/projects/${projectId}/marketing/overview/product`)
+    await expect(page.getByRole('region', { name: 'Stages' })).toBeVisible({ timeout: 15000 })
+    expect(problems).toEqual([])
   })
 })
