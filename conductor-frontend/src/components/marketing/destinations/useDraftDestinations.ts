@@ -33,6 +33,8 @@ export function useDraftDestinations({
   const [draft, setDraft] = useState<DestinationDraft>(EMPTY_DRAFT)
 
   useEffect(() => {
+    // No token yet (auth still restoring): an empty Bearer would 401 and sign the user out.
+    if (!token) return
     let cancelled = false
     apiGet<PublishTargetOption[]>(`/api/v2/projects/${projectId}/publish-targets`, token)
       .then((list) => {

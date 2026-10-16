@@ -23,7 +23,8 @@ const engineering: WorkflowView = { ...publishing, slug: 'ENGINEERING', noun: 'I
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1', area: 'marketing', noun: 'posts' }),
 }))
-vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ accessToken: 'token' }) }))
+let accessToken: string | null = 'token'
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ accessToken }) }))
 vi.mock('@/lib/workflows', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/workflows')>()
   return { ...actual, useWorkflowByAreaNoun: () => resolution, useWorkflowView: () => view }
@@ -40,6 +41,7 @@ describe('area/noun compose route', () => {
   beforeEach(() => {
     resolution = { status: 'ready', workflow: workflow() }
     view = publishing
+    accessToken = 'token'
   })
 
   it('renders the compose page for a publishing Workflow with its real slug and noun', async () => {
@@ -57,5 +59,11 @@ describe('area/noun compose route', () => {
     resolution = { status: 'notfound' }
     render(<ComposeWorkItemPage />)
     expect(await screen.findByText(/Nothing to compose here/)).toBeInTheDocument()
+  })
+
+  it('does not render the compose page until the access token is restored', () => {
+    accessToken = null
+    render(<ComposeWorkItemPage />)
+    expect(screen.queryByTestId('compose-page')).not.toBeInTheDocument()
   })
 })

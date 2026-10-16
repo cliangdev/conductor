@@ -21,7 +21,7 @@ export default function ComposeWorkItemPage() {
   const slug = workflow?.slug ?? workflow?.name ?? ''
   const view = useWorkflowView(projectId, slug || undefined, accessToken)
 
-  if (status === 'loading' || (status === 'ready' && !view)) {
+  if (!accessToken || status === 'loading' || (status === 'ready' && !view)) {
     return <WorkItemDetailSkeleton />
   }
 
@@ -41,7 +41,7 @@ export default function ComposeWorkItemPage() {
       workflowView={view}
       detailArea={workflow.area ?? area}
       noun={view.noun}
-      token={accessToken ?? ''}
+      token={accessToken}
     />
   )
 }
