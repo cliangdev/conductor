@@ -35,6 +35,14 @@ public final class InsightsWindowSpec {
         return new InsightsWindowSpec(days);
     }
 
+    /** A window of an arbitrary length, for callers (the channel overview) whose windows are not the insights set. */
+    public static InsightsWindowSpec ofDays(int days) {
+        if (days < 1) {
+            throw new IllegalArgumentException("days must be positive");
+        }
+        return new InsightsWindowSpec(days);
+    }
+
     public int days() {
         return days;
     }

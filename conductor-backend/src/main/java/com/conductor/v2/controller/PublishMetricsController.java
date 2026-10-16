@@ -118,7 +118,7 @@ public class PublishMetricsController implements PublishMetricsApi {
                 .avgViewPct(g.avgViewPct());
     }
 
-    private static InsightsPost toInsightsPost(MarketingInsightsQueryService.Post p) {
+    static InsightsPost toInsightsPost(MarketingInsightsQueryService.Post p) {
         return new InsightsPost(p.workItemId(), p.targetId(), p.platform(), p.views(), p.observedAt())
                 .displayId(p.displayId())
                 .title(p.title())
