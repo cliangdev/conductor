@@ -27,10 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * "Use in Post" (COND-24 T3, AC-P0-3.3): copies a SUCCEEDED render's frames into a Post's own assets and,
@@ -131,12 +129,10 @@ public class CreativeAttachService {
 
         String assetType = assetService.defaultAssetType(projectId, workItem);
         List<AttachedAsset> attachedAssets = new ArrayList<>();
-        // placementKey -> assetIds, in the same order the frames were rendered (never re-sorted).
-        Map<String, List<String>> assetIdsByPlacement = new LinkedHashMap<>();
-        // Every placement whose frame(s) are video (a CLIP creative's frames) — decides whether a target
-        // is matched with the image or the video mapping rule, and feeds the video mapping's own
-        // "only when nothing more specific exists" fallbacks (see CreativePlacementTargetMapper#matchesVideo).
-        Set<String> videoPlacementKeys = new LinkedHashSet<>();
+        // Frames grouped by placement in render order; the matching rules live in CreativePlacementMedia,
+        // shared with PublishTargetService for destinations added after this attach.
+        boolean carousel = Creative.KIND_CAROUSEL.equals(creative.getKind());
+        CreativePlacementMedia.Placements placements = new CreativePlacementMedia.Placements(carousel);
 
         // Attaching the same render again (say, to fill a destination added afterwards) reuses the frames
         // already on this Post instead of copying them a second time.
@@ -146,13 +142,10 @@ public class CreativeAttachService {
         }
 
         for (CreativeRenderFrame frame : frames) {
-            if (isVideo(frame)) {
-                videoPlacementKeys.add(frame.getPlacementKey());
-            }
             Asset reused = alreadyAttached.get(frame.getId());
             if (reused != null) {
                 attachedAssets.add(new AttachedAsset(reused.getId(), frame.getId(), frame.getPlacementKey(), frame.getSequenceIndex()));
-                assetIdsByPlacement.computeIfAbsent(frame.getPlacementKey(), k -> new ArrayList<>()).add(reused.getId());
+                placements.add(frame, reused.getId());
                 continue;
             }
             // The Asset links the frame's own stored object: nothing is copied. A succeeded render's frames are
@@ -165,14 +158,13 @@ public class CreativeAttachService {
                     frame.getDurationSeconds()));
 
             attachedAssets.add(new AttachedAsset(asset.getId(), frame.getId(), frame.getPlacementKey(), frame.getSequenceIndex()));
-            assetIdsByPlacement.computeIfAbsent(frame.getPlacementKey(), k -> new ArrayList<>()).add(asset.getId());
+            placements.add(frame, asset.getId());
         }
 
         List<TargetUpdate> updates = new ArrayList<>();
         List<TargetSkip> skipped = new ArrayList<>();
         List<PublishTargetService.TargetSelection> selections = new ArrayList<>();
 
-        boolean carousel = Creative.KIND_CAROUSEL.equals(creative.getKind());
         for (PostPublishTarget target : targetRepository.findAllByWorkItemId(workItemId)) {
             List<String> ownAssetIds = target.isCustomMedia() ? currentCustomAssetIds(target) : List.of();
             // Explicitly media-less (custom, no rows — left by an earlier carousel attach or a deselect)
@@ -184,10 +176,8 @@ public class CreativeAttachService {
                 selections.add(selectionFor(target, ownAssetIds));
                 continue;
             }
-            List<String> matched;
+            List<String> matched = placements.mediaFor(target);
             if (carousel) {
-                String placement = CreativePlacementTargetMapper.carouselPlacementFor(target, assetIdsByPlacement.keySet());
-                matched = placement != null ? assetIdsByPlacement.get(placement) : List.of();
                 if (matched.isEmpty()) {
                     // Never inherit: an inheriting target publishes the Post's WHOLE asset set, i.e. every
                     // slide of every placement. An explicit empty selection keeps the carousel off it, and
@@ -197,8 +187,6 @@ public class CreativeAttachService {
                     selections.add(selectionFor(target, List.of(), true));
                     continue;
                 }
-            } else {
-                matched = matchedAssetIds(target, assetIdsByPlacement, videoPlacementKeys);
             }
             if (matched.isEmpty()) {
                 selections.add(selectionFor(target, List.of(), explicitlyEmpty));
@@ -211,33 +199,6 @@ public class CreativeAttachService {
         publishTargetService.replaceSelection(projectId, workItemId, selections, caller);
 
         return new AttachResult(attachedAssets, updates, skipped);
-    }
-
-    private boolean isVideo(CreativeRenderFrame frame) {
-        return frame.getContentType() != null && frame.getContentType().startsWith("video/");
-    }
-
-    /**
-     * The one placement (if any) this target matches, in the order the frames actually rendered — the
-     * image mapping ({@link CreativePlacementTargetMapper#matches}) for an image placement, the video
-     * mapping ({@link CreativePlacementTargetMapper#matchesVideo}) for one whose frame(s) are video
-     * (COND-24 PR1). A target that could otherwise match two video placements (say both a {@code 9x16}
-     * and a {@code 16x9} frame exist and both claim YouTube) gets whichever comes first here, so it
-     * always ends up with exactly one video, never two.
-     */
-    private List<String> matchedAssetIds(PostPublishTarget target, Map<String, List<String>> assetIdsByPlacement,
-                                         Set<String> videoPlacementKeys) {
-        Set<String> presentPlacementKeys = assetIdsByPlacement.keySet();
-        for (Map.Entry<String, List<String>> entry : assetIdsByPlacement.entrySet()) {
-            String placementKey = entry.getKey();
-            boolean matches = videoPlacementKeys.contains(placementKey)
-                    ? CreativePlacementTargetMapper.matchesVideo(placementKey, target, presentPlacementKeys)
-                    : CreativePlacementTargetMapper.matches(placementKey, target);
-            if (matches) {
-                return entry.getValue();
-            }
-        }
-        return List.of();
     }
 
     private List<String> currentCustomAssetIds(PostPublishTarget target) {

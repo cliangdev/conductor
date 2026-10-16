@@ -191,7 +191,7 @@ names the route (`openai-api` or `codex`) and model; `model` and `quality` repor
 
 ## Attach — "Use in Post"
 
-`POST .../creatives/{creativeId}/attach` copies a `SUCCEEDED` render's frames into a Post's own Assets and
+`POST .../creatives/{creativeId}/attach` links a `SUCCEEDED` render's frames to a Post as its own Assets (one per frame, same stored object, nothing copied) and
 sets each inheriting destination's media by placement:
 
 | Placement | Goes to |
@@ -213,6 +213,13 @@ selection and pushes it through `PublishTargetService#replaceSelection` — the 
 own edit in the UI goes through — so the approval gate reverts and the bundle hash changes exactly as if a
 human had picked that media by hand. Sequence frames (a carousel's beats) attach in the order they
 rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is content.
+
+A destination added to the Post *after* an attach gets the same treatment: when `replaceSelection` creates a new
+target with no media of its own and the Post holds Creative frames, the target's media is the matching frames
+(same `CreativePlacementMedia` rules). With no matching placement it inherits as before, except after a `CAROUSEL`: there, as at attach time, a
+destination the carousel cannot publish to (a story, a reel, YouTube) gets an explicit empty selection so it
+surfaces the "no media" blocker instead of publishing every slide; an explicit selection
+is never overridden and existing targets are never touched.
 
 ## Media library page {#media-library-page}
 
