@@ -231,7 +231,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(channel(overview, "ADS").connectHint().connectors()).singleElement()
                 .satisfies(c -> assertThat(c.name()).isEqualTo("Apple Search Ads"));
         assertThat(channel(overview, "SOCIAL").connectHint().connectors())
-                .extracting(c -> c.name()).containsExactly("Meta", "TikTok", "YouTube");
+                .extracting(c -> c.name()).containsExactly("Meta", "YouTube");
         assertThat(channel(overview, "STORE").status()).isEqualTo("COMING_SOON");
         assertThat(channel(overview, "WEB").lastFetchedAt()).isEqualTo(NOW.minusHours(1));
         assertThat(overview.channels()).extracting(ChannelView::channel).doesNotContain("PRODUCT");
@@ -453,17 +453,15 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @Test
     void snapshotsNeverHoldBackTheWindowAndTodaysSnapshotIsTheLatestLevel() {
         String meta = connectFresh("meta");
-        String tiktok = connectFresh("tiktok");
         // provisional snapshots written today, as the social feeds do
         put(meta, "meta", "SOCIAL", "followers", "facebook", day(15), 120, true);
         put(meta, "meta", "SOCIAL", "followers", "instagram", day(15), 80, true);
-        put(tiktok, "tiktok", "SOCIAL", "followers", "tiktok", day(15), 40, true);
 
         ChannelView social = channel(overview7(), "SOCIAL");
         MetricView followers = metric(social, "followers");
 
         assertThat(social.dataCompleteThrough()).isEqualTo(day(15));
-        assertThat(followers.value()).isEqualTo(240.0);
+        assertThat(followers.value()).isEqualTo(200.0);
         assertThat(followers.previous()).isNull();
         assertThat(followers.historyStartsOn()).isEqualTo(day(15));
         assertThat(followers.asOf()).isEqualTo(day(15));
@@ -486,13 +484,11 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @Test
     void thePlatformsTableListsEveryConnectedPlatformWithItsLatestValues() {
         String meta = connectFresh("meta");
-        String tiktok = connectFresh("tiktok");
         String youtube = connectFresh("youtube");
         put(meta, "meta", "SOCIAL", "followers", "facebook", day(4), 90, false);
         put(meta, "meta", "SOCIAL", "followers", "facebook", day(15), 100, true);
         put(meta, "meta", "SOCIAL", "followers", "instagram", day(15), 200, true);
         put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(15), 7, true);
-        put(tiktok, "tiktok", "SOCIAL", "followers", "tiktok", day(15), 300, true);
         put(youtube, "youtube", "SOCIAL", "followers", "youtube", day(15), 50, true);
         put(youtube, "youtube", "SOCIAL", "channel_views", "youtube", day(15), 999, true);
 
@@ -500,9 +496,9 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
                 MetricCatalog.channel("SOCIAL").orElseThrow(), 28, TODAY, NOW).dimensions().get(0);
 
         assertThat(platforms.rows()).extracting(r -> r.key())
-                .containsExactly("tiktok", "instagram", "facebook", "youtube");
-        assertThat(platforms.rows().get(2).values().get(0)).isEqualTo(100.0);
-        assertThat(platforms.rows().get(3).values().get(2)).isEqualTo(999.0);
+                .containsExactly("instagram", "facebook", "youtube");
+        assertThat(platforms.rows().get(1).values().get(0)).isEqualTo(100.0);
+        assertThat(platforms.rows().get(2).values().get(2)).isEqualTo(999.0);
     }
 
     @Test
@@ -537,7 +533,6 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @Test
     void levelsReadTheLatestSnapshotUpToTodayEvenWhenTheFlowWindowEndsEarlier() {
         String meta = connectFresh("meta");
-        String tiktok = connectFresh("tiktok");
         String youtube = connectFresh("youtube");
         // flows settle through Oct 13 only
         put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(13), 4, false);
@@ -547,7 +542,6 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         put(meta, "meta", "SOCIAL", "followers", "instagram", day(8), 190, false);
         put(meta, "meta", "SOCIAL", "followers", "facebook", day(15), 100, false);
         put(meta, "meta", "SOCIAL", "followers", "instagram", day(15), 200, false);
-        put(tiktok, "tiktok", "SOCIAL", "followers", "tiktok", day(15), 300, false);
         put(youtube, "youtube", "SOCIAL", "followers", "youtube", day(15), 50, false);
         put(youtube, "youtube", "SOCIAL", "channel_views", "youtube", day(15), 999, false);
 
@@ -557,7 +551,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
         assertThat(social.dataCompleteThrough()).isEqualTo(day(13));       // the flow window is unchanged
         assertThat(metric(social, "website_clicks").value()).isEqualTo(4.0);
-        assertThat(followers.value()).isEqualTo(650.0);
+        assertThat(followers.value()).isEqualTo(350.0);
         assertThat(followers.asOf()).isEqualTo(day(15));
         assertThat(followers.previous()).isEqualTo(280.0);                 // snapshots on or before Oct 8
         assertThat(followers.historyStartsOn()).isNull();
@@ -569,6 +563,6 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         MarketingOverviewQueryService.DimensionTable platforms = service.channel(project.getId(),
                 MetricCatalog.channel("SOCIAL").orElseThrow(), 7, TODAY, NOW).dimensions().get(0);
         assertThat(platforms.rows()).extracting(r -> r.key())
-                .containsExactlyInAnyOrder("tiktok", "instagram", "facebook", "youtube");
+                .containsExactlyInAnyOrder("instagram", "facebook", "youtube");
     }
 }

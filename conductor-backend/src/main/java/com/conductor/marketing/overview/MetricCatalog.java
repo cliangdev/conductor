@@ -84,7 +84,6 @@ public final class MetricCatalog {
             "gsc", "Search Console",
             "apple-search-ads", "Apple Search Ads",
             "meta", "Meta",
-            "tiktok", "TikTok",
             "youtube", "YouTube");
 
     /** The display name of a connector that feeds a channel; falls back to its id. */
@@ -147,7 +146,9 @@ public final class MetricCatalog {
                             sumColumn("impressions", "query_impressions", "Impressions", Unit.COUNT),
                             ratioColumn("ctr", "Click-through rate", Unit.PERCENT, "clicks", "impressions")))),
                     4),
-            new Channel(MetricChannel.SOCIAL, "Social", List.of("meta", "tiktok", "youtube"),
+            // TikTok's follower and video counts need the user.info.stats scope, which Conductor does not
+            // request, so TikTok feeds no account stats; its posts still count through post metrics.
+            new Channel(MetricChannel.SOCIAL, "Social", List.of("meta", "youtube"),
                     List.of(
                             level("followers", "Followers", false),
                             level("media_count", "Posts", true),
