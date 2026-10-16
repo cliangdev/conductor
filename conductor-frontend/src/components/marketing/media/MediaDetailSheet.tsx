@@ -112,7 +112,7 @@ function UsedIn({ projectId, token, mediaId }: { projectId: string; token: strin
           <ul className="space-y-1 text-sm">
             {usage.creatives.map((c) => (
               <li key={c.id}>
-                <Link href={`/app/projects/${projectId}/marketing/creatives/${c.id}`} className="text-accent hover:underline">
+                <Link href={`/app/projects/${projectId}/marketing/creatives/${c.id}`} className="text-primary hover:underline">
                   {c.displayId} {c.name}
                 </Link>
               </li>
@@ -126,7 +126,7 @@ function UsedIn({ projectId, token, mediaId }: { projectId: string; token: strin
           <ul className="space-y-1 text-sm">
             {usage.posts.map((p) => (
               <li key={p.workItemId}>
-                <Link href={postHref(p)} className="text-accent hover:underline">
+                <Link href={postHref(p)} className="text-primary hover:underline">
                   {p.displayId} {p.title}
                 </Link>
               </li>

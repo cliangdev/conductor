@@ -9,9 +9,7 @@ import { FilmIcon, UploadCloudIcon, XIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs } from '@/components/ui/tabs'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCan } from '@/contexts/PermissionsContext'
 import { apiErrorMessage } from '@/lib/api'
@@ -30,33 +28,11 @@ import {
 } from '@/components/marketing/creatives/types'
 import { MakeCarouselDialog } from './MakeCarouselDialog'
 import { MediaDetailSheet } from './MediaDetailSheet'
-import { inSet, setPrefix, sortNatural } from './mediaSets'
-
-type KindTab = 'ALL' | 'IMAGE' | 'VIDEO' | 'AUDIO'
-const TABS: { value: KindTab; label: string }[] = [
-  { value: 'ALL', label: 'All' },
-  { value: 'IMAGE', label: 'Images' },
-  { value: 'VIDEO', label: 'Video' },
-  { value: 'AUDIO', label: 'Audio' },
-]
+import { inSet, setPrefix } from './mediaSets'
+import { MediaFilterBar } from './MediaFilterBar'
+import { useMediaFilters } from './useMediaFilters'
 
 const ACCEPT = Object.values(ALLOWED_CONTENT_TYPES).flat().join(',')
-
-function FilterChip({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      onClick={onClick}
-      className={cn(
-        'rounded-full border px-3 py-1 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        pressed ? 'border-accent bg-accent-soft text-foreground' : 'border-border text-muted-foreground hover:bg-surface-3',
-      )}
-    >
-      {children}
-    </button>
-  )
-}
 
 export function MediaLibrary({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth()
@@ -65,13 +41,6 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
 
   const [items, setItems] = useState<CreativePhoto[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [kind, setKind] = useState<KindTab>('ALL')
-  const [query, setQuery] = useState('')
-  const [unchecked, setUnchecked] = useState(false)
-  const [showBlocked, setShowBlocked] = useState(false)
-  const [aiOnly, setAiOnly] = useState(false)
-  const [onPosts, setOnPosts] = useState(false)
-  const [unused, setUnused] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   // The id (not index) of the last plain-clicked tile: indexes shift when a filter or search changes.
   const anchor = useRef<string | null>(null)
@@ -82,6 +51,8 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
   const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const filters = useMediaFilters(items)
+  const showBlocked = filters.chips.blocked
 
   useEffect(() => {
     if (!projectId || !accessToken) return
@@ -106,19 +77,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
     }
   }, [projectId, accessToken, showBlocked, reloadKey])
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return sortNatural(items ?? []).filter(
-      (i) =>
-        (kind === 'ALL' || (i.mediaKind ?? 'IMAGE') === kind) &&
-        (!q || (i.label ?? '').toLowerCase().includes(q)) &&
-        (!unchecked || !i.checked) &&
-        (!aiOnly || i.aiGenerated) &&
-        (!onPosts || (i.postCount ?? 0) > 0) &&
-        (!unused || ((i.postCount ?? 0) === 0 && (i.creativeCount ?? 0) === 0)) &&
-        (showBlocked || !i.blocked),
-    )
-  }, [items, kind, query, unchecked, aiOnly, onPosts, unused, showBlocked])
+  const { visible, filtering } = filters
 
   // Bulk actions and Make carousel act on what's selected *and shown*: a selection hidden by a search,
   // filter or tab is kept (clearing the filter brings it back) but never acted on unseen.
@@ -192,62 +151,35 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
     setReloadKey((k) => k + 1)
   }
 
-  const filtering = query.trim() !== '' || unchecked || aiOnly || onPosts || unused || kind !== 'ALL'
-
   return (
     <div className="space-y-4 pb-20">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          type="search"
-          aria-label="Search by label"
-          placeholder="Search labels…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="h-9 max-w-xs"
-        />
-        <FilterChip pressed={unchecked} onClick={() => setUnchecked((v) => !v)}>
-          Unchecked
-        </FilterChip>
-        <FilterChip pressed={showBlocked} onClick={() => setShowBlocked((v) => !v)}>
-          Blocked
-        </FilterChip>
-        <FilterChip pressed={aiOnly} onClick={() => setAiOnly((v) => !v)}>
-          AI-generated
-        </FilterChip>
-        <FilterChip pressed={onPosts} onClick={() => setOnPosts((v) => !v)}>
-          On posts
-        </FilterChip>
-        <FilterChip pressed={unused} onClick={() => setUnused((v) => !v)}>
-          Unused
-        </FilterChip>
-        {canManage && (
-          <div className="ml-auto">
-            <input
-              ref={fileInput}
-              type="file"
-              multiple
-              accept={ACCEPT}
-              aria-label="Media files"
-              className="sr-only"
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? [])
-                e.target.value = ''
-                if (files.length) void upload(files)
-              }}
-            />
-            <Button type="button" size="sm" disabled={uploadStatus != null} onClick={() => fileInput.current?.click()}>
-              <UploadCloudIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {uploadStatus ?? 'Upload'}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      <Tabs
-        ariaLabel="Media type"
-        value={kind}
-        onValueChange={(v) => setKind(v as KindTab)}
-        items={TABS.map((t) => ({ value: t.value, label: t.label }))}
+      <MediaFilterBar
+        filters={filters}
+        chips={['unchecked', 'blocked', 'ai', 'onPosts', 'unused']}
+        kinds={['ALL', 'IMAGE', 'VIDEO', 'AUDIO']}
+        trailing={
+          canManage && (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                accept={ACCEPT}
+                aria-label="Media files"
+                className="sr-only"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? [])
+                  e.target.value = ''
+                  if (files.length) void upload(files)
+                }}
+              />
+              <Button type="button" size="sm" disabled={uploadStatus != null} onClick={() => fileInput.current?.click()}>
+                <UploadCloudIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                {uploadStatus ?? 'Upload'}
+              </Button>
+            </>
+          )
+        }
       />
 
       {error && <Alert variant="destructive">{error}</Alert>}
@@ -279,7 +211,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                 data-testid={`media-tile-${item.id}`}
                 className={cn(
                   'group relative overflow-hidden rounded-lg border bg-surface',
-                  isSelected ? 'border-accent ring-2 ring-accent' : 'border-border',
+                  isSelected ? 'border-primary ring-2 ring-primary' : 'border-border',
                 )}
               >
                 <button
@@ -289,7 +221,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                     if (e.shiftKey || e.metaKey || e.ctrlKey) select(item, index, e.shiftKey)
                     else setDetailId(item.id)
                   }}
-                  className={cn('relative block aspect-square w-full bg-surface-3', item.blocked && 'opacity-50')}
+                  className={cn('relative block aspect-square w-full border-b border-border bg-surface-3', item.blocked && 'opacity-50')}
                 >
                   <MediaTile item={item} />
                 </button>
@@ -302,7 +234,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                     onClick={(e) => select(item, index, e.shiftKey)}
                     className={cn(
                       'absolute left-1.5 top-1.5 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background',
-                      'checked:border-accent checked:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       'transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100',
                       selected.length === 0 && 'opacity-0',
                     )}
