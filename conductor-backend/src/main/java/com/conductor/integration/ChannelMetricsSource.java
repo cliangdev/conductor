@@ -24,6 +24,15 @@ public interface ChannelMetricsSource {
     List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to);
 
     /**
+     * Like {@link #pullDaily} but lets the source say more about the window: when its numbers stop being
+     * provisional, the metric definitions it declares, which metrics are snapshots, and how far back it needs
+     * to be re-read next time. The default wraps {@link #pullDaily} with none of that.
+     */
+    default ChannelMetricsPull pull(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        return ChannelMetricsPull.of(pullDaily(ctx, from, to));
+    }
+
+    /**
      * Whether a dimension row stored for a (metric, day) this pull returned, but absent from it, is deleted
      * (a restated top-N list). A source whose dimensions are a closed set that a partial pull may skip, such as
      * the social platforms, returns false so one platform's refusal never erases another's stored value.
@@ -42,6 +51,12 @@ public interface ChannelMetricsSource {
 
     /** How many recent days the platform may still restate; re-pulled every run and flagged provisional. */
     int trailingDays();
+
+    /**
+     * The trailing window to re-read, given what the previous pull asked for ({@link ChannelMetricsPull#trailingDays}),
+     * or null on the first run. Sources with a fixed window ignore the hint.
+     */
+    default int trailingDays(Integer previousPullHint) { return trailingDays(); }
 
     /**
      * The widest {@code from..to} window one pull may ask for. The puller splits a long backfill into chunks

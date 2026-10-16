@@ -236,7 +236,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(channel(overview, "STORE").connectHint().connectors()).singleElement()
                 .satisfies(c -> assertThat(c.name()).isEqualTo("App Store Connect"));
         assertThat(channel(overview, "WEB").lastFetchedAt()).isEqualTo(NOW.minusHours(1));
-        assertThat(overview.channels()).extracting(ChannelView::channel).doesNotContain("PRODUCT");
+        assertThat(channel(overview, "PRODUCT").status()).isEqualTo("NOT_CONNECTED");
     }
 
     @Test
@@ -350,7 +350,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(overview.funnel().get(0).value()).isEqualTo(40.0);
         assertThat(overview.funnel().get(1).available()).isFalse();
         assertThat(overview.funnel().get(2).unavailableReason()).isEqualTo("Connect App Store Connect");
-        assertThat(overview.funnel().get(7).unavailableReason()).isEqualTo("Connect product metrics (coming soon)");
+        assertThat(overview.funnel().get(7).unavailableReason()).isEqualTo("Connect product metrics");
         assertThat(overview.funnel().get(7).label()).isEqualTo("In-app stages (first open \u2192 paid)");
     }
 

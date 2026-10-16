@@ -1,7 +1,7 @@
 package com.conductor.integration.ingest;
 
 import com.conductor.entity.Connection;
-import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsPull;
 import com.conductor.integration.ChannelMetricsSource;
 import com.conductor.integration.ChannelMetricsSourceException;
 import com.conductor.integration.ConnectionContext;
@@ -45,12 +45,15 @@ public class ChannelMetricsFeedPuller {
     private static final Logger log = LoggerFactory.getLogger(ChannelMetricsFeedPuller.class);
 
     static final String CURSOR_LAST_DAY = "lastDay";
+    /** Optional: how many trailing days the source asked to re-read next time (see {@link ChannelMetricsPull}). */
+    static final String CURSOR_TRAILING_DAYS = "trailingDays";
     /** Never reach back further than this, whatever a source asks for (GSC allows ~16 months, we keep it sane). */
     static final int MAX_BACKFILL_DAYS = 480;
 
     private final ConnectorRegistry connectorRegistry;
     private final ConnectionService connectionService;
     private final ChannelMetricDailyStore store;
+    private final ChannelMetricDefinitionStore definitionStore;
     private final ObjectMapper objectMapper;
     private final OAuthFlowService oAuthFlowService;
     private final Clock clock;
@@ -59,20 +62,24 @@ public class ChannelMetricsFeedPuller {
     public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
                                     ConnectionService connectionService,
                                     ChannelMetricDailyStore store,
+                                    ChannelMetricDefinitionStore definitionStore,
                                     ObjectMapper objectMapper,
                                     OAuthFlowService oAuthFlowService) {
-        this(connectorRegistry, connectionService, store, objectMapper, oAuthFlowService, Clock.systemUTC());
+        this(connectorRegistry, connectionService, store, definitionStore, objectMapper, oAuthFlowService,
+                Clock.systemUTC());
     }
 
     ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
                              ConnectionService connectionService,
                              ChannelMetricDailyStore store,
+                             ChannelMetricDefinitionStore definitionStore,
                              ObjectMapper objectMapper,
                              OAuthFlowService oAuthFlowService,
                              Clock clock) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
         this.store = store;
+        this.definitionStore = definitionStore;
         this.objectMapper = objectMapper;
         this.oAuthFlowService = oAuthFlowService;
         this.clock = clock;
@@ -94,7 +101,8 @@ public class ChannelMetricsFeedPuller {
         }
 
         LocalDate today = LocalDate.now(clock.withZone(ZoneOffset.UTC));
-        int trailing = Math.max(1, source.trailingDays());
+        Integer previousHint = parseTrailingHint(request.cursor());
+        int trailing = Math.max(1, source.trailingDays(previousHint));
         int backfill = Math.min(Math.max(trailing, source.backfillDays()), MAX_BACKFILL_DAYS);
         LocalDate lastDay = parseLastDay(request.cursor());
 
@@ -129,9 +137,9 @@ public class ChannelMetricsFeedPuller {
             return IngestBatch.setupRequired("Reconnect " + displayName(source, connection)
                     + " \u2014 its sign-in has expired");
         }
-        java.util.List<ChannelMetricPoint> points;
+        ChannelMetricsPull pulled;
         try {
-            points = source.pullDaily(ctx, from, to);
+            pulled = source.pull(ctx, from, to);
         } catch (ChannelMetricsSourceException e) {
             log.warn("Channel metrics feed {} ({}): {}", feed.getId(), connection.getConnectorId(), e.getMessage());
             return e.health() == ConnectorHealth.SETUP_REQUIRED
@@ -139,12 +147,22 @@ public class ChannelMetricsFeedPuller {
                     : IngestBatch.degraded(e.getMessage());
         }
 
+        // A source that knows when its own numbers settle overrides the generic trailing window.
+        if (pulled.provisionalFrom() != null) {
+            provisionalFrom = pulled.provisionalFrom();
+        }
+        java.util.Set<String> pulledSnapshots = pulled.snapshotMetrics();
         int written = store.replaceWindow(connection.getProjectId(), connection.getId(), connection.getConnectorId(),
-                source.channel().name(), from, to, provisionalFrom, points, source.prunesMissingDimensions(),
-                source::snapshot);
+                source.channel().name(), from, to, provisionalFrom, pulled.points(), source.prunesMissingDimensions(),
+                metric -> source.snapshot(metric) || pulledSnapshots.contains(metric));
+        if (pulled.definitions() != null) {
+            definitionStore.replace(connection.getProjectId(), connection.getId(), pulled.definitions());
+        }
         log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, to);
-        return new IngestBatch(java.util.List.of(), "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\"}",
-                to.isBefore(today), false, ConnectorHealth.HEALTHY, null);
+        Integer hint = pulled.trailingDays() != null ? pulled.trailingDays() : previousHint;
+        String cursor = "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\""
+                + (hint == null ? "" : ",\"" + CURSOR_TRAILING_DAYS + "\":" + hint) + "}";
+        return new IngestBatch(java.util.List.of(), cursor, to.isBefore(today), false, ConnectorHealth.HEALTHY, null);
     }
 
     private static String displayName(ChannelMetricsSource source, Connection connection) {
@@ -153,6 +171,18 @@ public class ChannelMetricsFeedPuller {
             return c.getMetadata().name();
         }
         return connection.getConnectorId();
+    }
+
+    private Integer parseTrailingHint(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(cursor).get(CURSOR_TRAILING_DAYS);
+            return node == null || !node.canConvertToInt() ? null : node.asInt();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private LocalDate parseLastDay(String cursor) {
