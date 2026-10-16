@@ -48,14 +48,6 @@
         "maxCallsPerPull": 10,
         "maxPostAgeDays": 90
       }
-    },
-    {
-      "id": "channel_metrics",
-      "label": "Account stats",
-      "description": "TikTok follower and video counts, kept for the channel overview",
-      "mode": "SNAPSHOT",
-      "sink": "CHANNEL_METRICS",
-      "defaultIntervalMinutes": 360
     }
   ]
 }

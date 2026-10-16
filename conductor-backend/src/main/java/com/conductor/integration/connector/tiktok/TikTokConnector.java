@@ -353,8 +353,8 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
 
     /**
      * Follower and video totals for today. They need the {@code user.info.stats} scope, which
-     * {@link #oauthScopes()} does not request (it is not in the app-review submission), so a real connection
-     * is told to extend the app's scopes rather than shown a silent gap.
+     * {@link #oauthScopes()} does not request (it is not in the app-review submission), so tiktok.json declares
+     * no {@code channel_metrics} feed and this never runs on a schedule. Add the scope and the feed together.
      */
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
