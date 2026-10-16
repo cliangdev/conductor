@@ -30,6 +30,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -65,6 +66,7 @@ class ChannelMetricsFeedPullerTest {
         when(source.channel()).thenReturn(MetricChannel.SEARCH);
         when(source.backfillDays()).thenReturn(90);
         when(source.trailingDays()).thenReturn(4);
+        when(source.prunesMissingDimensions()).thenReturn(true);
         when(registry.getById("gsc")).thenReturn(Optional.of(connector));
 
         connection = new Connection();
@@ -85,12 +87,12 @@ class ChannelMetricsFeedPullerTest {
         spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null, null, null,
                 null, IngestSink.CHANNEL_METRICS, null);
 
-        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenAnswer(inv -> {
                     LocalDate provisionalFrom = inv.getArgument(6);
                     for (ChannelMetricPoint p : inv.<List<ChannelMetricPoint>>getArgument(7)) {
                         upserts.add(new Upsert(inv.getArgument(3), p.metric(), p.dimensionKey(), p.day(), p.value(),
-                                !p.day().isBefore(provisionalFrom)));
+                                !inv.<java.util.function.Predicate<String>>getArgument(9).test(p.metric()) && !p.day().isBefore(provisionalFrom)));
                     }
                     return ((List<?>) inv.getArgument(7)).size();
                 });
@@ -169,6 +171,52 @@ class ChannelMetricsFeedPullerTest {
     }
 
     @Test
+    void aSnapshotSourceWithoutBackfillStillReadsOneDayAndStoresTodaysLevel() {
+        when(source.channel()).thenReturn(MetricChannel.SOCIAL);
+        when(source.backfillDays()).thenReturn(0);
+        when(source.trailingDays()).thenReturn(1);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of(
+                ChannelMetricPoint.of("followers", "youtube", TODAY, 950)));
+
+        IngestBatch first = pull(null);
+        pull(first.nextCursor());
+
+        verify(source, org.mockito.Mockito.times(2)).pullDaily(any(), eq(TODAY.minusDays(1)), eq(TODAY));
+        assertThat(upserts).hasSize(2).allSatisfy(u -> {
+            assertThat(u.channel()).isEqualTo("SOCIAL");
+            assertThat(u.dimension()).isEqualTo("youtube");
+            assertThat(u.day()).isEqualTo(TODAY);
+            assertThat(u.value()).isEqualByComparingTo("950");
+        });
+    }
+
+    @Test
+    void aClosedDimensionSetSourceAsksTheStoreNotToPruneMissingDimensions() {
+        when(source.prunesMissingDimensions()).thenReturn(false);
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        pull(null);
+
+        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), eq(false), any());
+    }
+
+    @Test
+    void snapshotMetricsAreStoredFinalWhileFlowsInsideTheTrailingWindowStayProvisional() {
+        when(source.snapshot(anyString())).thenAnswer(inv -> !"website_clicks".equals(inv.getArgument(0)));
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of(
+                ChannelMetricPoint.of("followers", "instagram", TODAY, 2400),
+                ChannelMetricPoint.of("website_clicks", "instagram", TODAY, 9),
+                ChannelMetricPoint.of("website_clicks", "instagram", TODAY.minusDays(10), 7)));
+
+        pull(null);
+
+        assertThat(upserts).extracting(Upsert::metric, Upsert::day, Upsert::provisional).containsExactlyInAnyOrder(
+                org.assertj.core.groups.Tuple.tuple("followers", TODAY, false),
+                org.assertj.core.groups.Tuple.tuple("website_clicks", TODAY, true),
+                org.assertj.core.groups.Tuple.tuple("website_clicks", TODAY.minusDays(10), false));
+    }
+
+    @Test
     void aBrokenCursorIsTreatedAsAFirstRun() {
         when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
 
@@ -185,7 +233,7 @@ class ChannelMetricsFeedPullerTest {
 
         assertThat(batch.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         assertThat(batch.errorMessage()).isEqualTo("reconnect");
-        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -213,6 +261,6 @@ class ChannelMetricsFeedPullerTest {
         pull(null);
 
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any());
+                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true), any());
     }
 }

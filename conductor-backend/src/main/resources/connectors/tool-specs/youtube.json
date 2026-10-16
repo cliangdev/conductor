@@ -82,6 +82,14 @@
         "maxCallsPerPull": 10,
         "maxPostAgeDays": 90
       }
+    },
+    {
+      "id": "channel_metrics",
+      "label": "Account stats",
+      "description": "YouTube subscribers, video count and channel views, kept for the channel overview",
+      "mode": "SNAPSHOT",
+      "sink": "CHANNEL_METRICS",
+      "defaultIntervalMinutes": 360
     }
   ]
 }

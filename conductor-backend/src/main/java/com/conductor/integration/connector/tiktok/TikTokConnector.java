@@ -2,6 +2,10 @@ package com.conductor.integration.connector.tiktok;
 
 import com.conductor.integration.ActionConnector;
 import com.conductor.integration.ActionResult;
+import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsSource;
+import com.conductor.integration.ChannelMetricsSourceException;
+import com.conductor.integration.MetricChannel;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorCategory;
 import com.conductor.integration.ConnectorConfigField;
@@ -14,6 +18,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,7 +65,7 @@ import java.util.Optional;
  */
 @Component
 @Profile("!local")
-public class TikTokConnector implements OAuth2Connector, ActionConnector {
+public class TikTokConnector implements OAuth2Connector, ActionConnector, ChannelMetricsSource {
 
     static final String CONFIG_CREATOR_NICKNAME = "creatorNickname";
     static final String CONFIG_CREATOR_USERNAME = "creatorUsername";
@@ -324,5 +329,63 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
     public Optional<String> accountIdentity(Map<String, Object> config) {
         return config != null && config.get(CONFIG_CREATOR_USERNAME) instanceof String value && !value.isBlank()
                 ? Optional.of(value) : Optional.empty();
+    }
+
+    // ---- ChannelMetricsSource: account-level social stats -------------------------------------------
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.SOCIAL; }
+
+    /** TikTok only reports today's totals, so nothing is back-filled. */
+    @Override
+    public int backfillDays() { return 0; }
+
+    @Override
+    public int trailingDays() { return 1; }
+
+    /** Platforms are a closed set; a platform skipped this pull keeps the value stored earlier. */
+    @Override
+    public boolean prunesMissingDimensions() { return false; }
+
+    /** Levels are final readings for the day they were taken. */
+    @Override
+    public boolean snapshot(String metric) { return true; }
+
+    /**
+     * Follower and video totals for today. They need the {@code user.info.stats} scope, which
+     * {@link #oauthScopes()} does not request (it is not in the app-review submission), so tiktok.json declares
+     * no {@code channel_metrics} feed and this never runs on a schedule. Add the scope and the feed together.
+     */
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        String token = ctx == null ? null : ctx.accessToken();
+        if (token == null || token.isBlank()) {
+            throw ChannelMetricsSourceException.setupRequired("Reconnect TikTok to read account stats");
+        }
+        TikTokClient.UserStats stats;
+        try {
+            stats = client.queryUserStats(token);
+        } catch (TikTokClient.TikTokApiException e) {
+            if (e.isTransient()) {
+                throw ChannelMetricsSourceException.degraded("TikTok account stats unavailable: " + e.getMessage());
+            }
+            throw ChannelMetricsSourceException.setupRequired("TikTok did not return follower and video counts ("
+                    + e.code() + "). They need the user.info.stats scope, which Conductor's TikTok app does not "
+                    + "request yet");
+        } catch (org.springframework.web.client.RestClientException e) {
+            throw ChannelMetricsSourceException.degraded("TikTok account stats unavailable: " + e.getMessage());
+        }
+        List<ChannelMetricPoint> points = new java.util.ArrayList<>();
+        if (stats.followerCount() != null) {
+            points.add(ChannelMetricPoint.of("followers", "tiktok", to, stats.followerCount()));
+        }
+        if (stats.videoCount() != null) {
+            points.add(ChannelMetricPoint.of("media_count", "tiktok", to, stats.videoCount()));
+        }
+        if (points.isEmpty()) {
+            throw ChannelMetricsSourceException.setupRequired(
+                    "TikTok returned no follower or video counts; the user.info.stats scope is likely missing");
+        }
+        return points;
     }
 }

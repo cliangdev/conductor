@@ -110,7 +110,8 @@ public class ChannelMetricsFeedPuller {
         }
 
         int written = store.replaceWindow(connection.getProjectId(), connection.getId(), connection.getConnectorId(),
-                source.channel().name(), from, today, provisionalFrom, points);
+                source.channel().name(), from, today, provisionalFrom, points, source.prunesMissingDimensions(),
+                source::snapshot);
         log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, today);
         return IngestBatch.empty("{\"" + CURSOR_LAST_DAY + "\":\"" + today + "\"}");
     }

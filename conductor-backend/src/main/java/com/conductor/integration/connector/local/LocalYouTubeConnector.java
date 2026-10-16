@@ -2,6 +2,9 @@ package com.conductor.integration.connector.local;
 
 import com.conductor.integration.ActionConnector;
 import com.conductor.integration.ActionResult;
+import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsSource;
+import com.conductor.integration.MetricChannel;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorCategory;
 import com.conductor.integration.ConnectorConfigField;
@@ -14,6 +17,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,7 +53,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 @Profile("local")
 @Primary
-public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
+public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector, ChannelMetricsSource {
 
     static final String CONFIG_CHANNEL_ID = "channelId";
     static final String CONFIG_CHANNEL_TITLE = "channelTitle";
@@ -288,5 +292,32 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
     public Optional<String> accountIdentity(Map<String, Object> config) {
         return config != null && config.get(CONFIG_CHANNEL_ID) instanceof String value && !value.isBlank()
                 ? Optional.of(value) : Optional.empty();
+    }
+
+    // -- ChannelMetricsSource: deterministic account stats for the local stack ----------------------
+
+    @Override
+    public MetricChannel channel() { return MetricChannel.SOCIAL; }
+
+    @Override
+    public int trailingDays() { return 1; }
+
+    /** Platforms are a closed set; a platform skipped this pull keeps the value stored earlier. */
+    @Override
+    public boolean prunesMissingDimensions() { return false; }
+
+    /** Levels are final readings for the day they were taken. */
+    @Override
+    public boolean snapshot(String metric) { return true; }
+
+    @Override
+    public int backfillDays() { return 0; }
+
+    @Override
+    public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        return List.of(
+                ChannelMetricPoint.of("followers", "youtube", to, LocalChannelSeries.value("yt-subs", to, 950)),
+                ChannelMetricPoint.of("media_count", "youtube", to, 31),
+                ChannelMetricPoint.of("channel_views", "youtube", to, LocalChannelSeries.value("yt-views", to, 42000)));
     }
 }

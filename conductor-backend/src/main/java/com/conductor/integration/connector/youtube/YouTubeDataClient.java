@@ -257,6 +257,34 @@ public class YouTubeDataClient {
         return toVideoStatus(items.get(0));
     }
 
+    /** A channel's public totals; any field is null when YouTube hides it (hiddenSubscriberCount) or omits it. */
+    public record ChannelStatistics(Long subscribers, Long videos, Long views) {}
+
+    /**
+     * The authorizing identity's channel totals ({@code channels.list?part=statistics}), one quota unit. With a
+     * {@code channelId} it reads that channel (a connection may own several); otherwise {@code mine=true}.
+     * Null when the account has no channel.
+     */
+    public ChannelStatistics getChannelStatistics(String accessToken, String channelId) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(API_BASE + "/channels")
+                .queryParam("part", "statistics");
+        if (channelId != null && !channelId.isBlank()) {
+            builder.queryParam("id", channelId);
+        } else {
+            builder.queryParam("mine", "true");
+        }
+        ResponseEntity<String> response = restTemplate.exchange(builder.build().toUri(), HttpMethod.GET,
+                new HttpEntity<>(bearer(accessToken)), String.class);
+        JsonNode items = parse(response.getBody()).path("items");
+        if (!items.isArray() || items.isEmpty()) {
+            return null;
+        }
+        JsonNode stats = items.get(0).path("statistics");
+        boolean hidden = stats.path("hiddenSubscriberCount").asBoolean(false);
+        return new ChannelStatistics(hidden ? null : count(stats, "subscriberCount"),
+                count(stats, "videoCount"), count(stats, "viewCount"));
+    }
+
     /** A video's public counters; {@code unavailable} when the channel no longer holds it. */
     public record VideoStatistics(String id, Long views, Long likes, Long comments, boolean unavailable) {}
 
