@@ -4,7 +4,7 @@
 // key and display-mode/explicit-preference flags (useWorkItemListState, WorkItemListView), all of
 // which must degrade silently rather than throw (private browsing, storage quota, SSR).
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 /** Reads a raw string value, returning `fallback` if missing, invalid, or if localStorage throws. */
 export function readPersisted<T extends string>(key: string, isValid: (v: string) => v is T, fallback: T): T {
@@ -43,6 +43,33 @@ export function usePersistedState<T extends string>(
     writePersisted(key, next)
   }
   return [value, set]
+}
+
+/**
+ * Like {@link usePersistedState}, but the stored value is read after mount, never during render: the server
+ * and the first client render both use `fallback`, so a saved preference cannot cause a hydration mismatch.
+ * The third element is false until the stored value has been applied; wait for it before acting on the value
+ * (e.g. fetching data for a saved window) so the page does not load twice.
+ */
+export function usePersistedStateAfterMount<T extends string>(
+  key: string,
+  isValid: (v: string) => v is T,
+  fallback: T
+): [T, (next: T) => void, boolean] {
+  const [value, setValue] = useState<T>(fallback)
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- storage is only readable on the client, after hydration
+    setValue(readPersisted(key, isValid, fallback))
+    setReady(true)
+    // key/isValid/fallback are constants at every call site
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  function set(next: T) {
+    setValue(next)
+    writePersisted(key, next)
+  }
+  return [value, set, ready]
 }
 
 /** Reads and JSON-parses a value, returning `fallback` if missing, malformed, or if localStorage

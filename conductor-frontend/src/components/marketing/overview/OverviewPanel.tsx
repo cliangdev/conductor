@@ -14,7 +14,7 @@ import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiErrorMessage } from '@/lib/api'
-import { usePersistedState } from '@/lib/persisted'
+import { usePersistedStateAfterMount } from '@/lib/persisted'
 import { ChannelCard } from './ChannelCard'
 import { FunnelStrip } from './FunnelStrip'
 import { TargetDialog } from './TargetDialog'
@@ -61,18 +61,22 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
   const { can } = usePermissions()
   const canEditTargets = can('marketing.target.manage')
 
-  const [range, setRange] = usePersistedState(OVERVIEW_WINDOW_STORAGE_KEY, isOverviewWindow, DEFAULT_OVERVIEW_WINDOW)
+  const [range, setRange, rangeReady] = usePersistedStateAfterMount(
+    OVERVIEW_WINDOW_STORAGE_KEY,
+    isOverviewWindow,
+    DEFAULT_OVERVIEW_WINDOW,
+  )
   const [data, setData] = useState<MarketingOverviewResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    if (!accessToken) return
+    if (!accessToken || !rangeReady) return
     setError(null)
     setData(null)
     getMarketingOverview(projectId, accessToken, range)
       .then(setData)
       .catch((err) => setError(apiErrorMessage(err, 'Could not load the overview — please try again.')))
-  }, [projectId, accessToken, range])
+  }, [projectId, accessToken, range, rangeReady])
 
   useEffect(() => {
     void load()

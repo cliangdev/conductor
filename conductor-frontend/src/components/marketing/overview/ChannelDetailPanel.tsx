@@ -15,7 +15,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { apiErrorMessage } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
-import { usePersistedState } from "@/lib/persisted";
+import { usePersistedStateAfterMount } from "@/lib/persisted";
 import { useSidebarWorkNav, workItemDetailPath } from "@/lib/workflows";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { InsightsPostList } from "@/components/marketing/insights/InsightsPostList";
@@ -66,7 +66,7 @@ export function ChannelDetailPanel({
   const channelKey = channelParam.toUpperCase();
   const known = isChannelKey(channelKey);
 
-  const [range, setRange] = usePersistedState(
+  const [range, setRange, rangeReady] = usePersistedStateAfterMount(
     WINDOW_STORAGE_KEY,
     isDetailWindow,
     "28d",
@@ -81,7 +81,7 @@ export function ChannelDetailPanel({
   );
 
   const load = useCallback(() => {
-    if (!accessToken || !known) return;
+    if (!accessToken || !known || !rangeReady) return;
     setError(null);
     setData(null);
     getMarketingChannel(projectId, accessToken, channelKey, range)
@@ -94,7 +94,7 @@ export function ChannelDetailPanel({
           ),
         ),
       );
-  }, [projectId, accessToken, known, channelKey, range]);
+  }, [projectId, accessToken, known, channelKey, range, rangeReady]);
 
   useEffect(() => {
     void load();
