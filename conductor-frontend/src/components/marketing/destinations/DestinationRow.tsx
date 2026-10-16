@@ -20,6 +20,8 @@ import { permalinkText } from './publishState'
 
 export interface DestinationRowProps {
   row: DestinationRowModel
+  /** Extra chip after the state/time text, e.g. which Creative size this row gets. */
+  chip?: React.ReactNode
   mode: DestinationMode
   /** Whether this row's details are the open ones. */
   expanded: boolean
@@ -37,6 +39,7 @@ export interface DestinationRowProps {
 
 export function DestinationRow({
   row,
+  chip,
   mode,
   expanded,
   hasDetails,
@@ -111,6 +114,7 @@ export function DestinationRow({
           {row.settled && row.stateLabel && (
             <StatusBadge status={target?.state ?? ''} hue={row.hue ?? undefined} label={row.stateLabel} />
           )}
+          {chip}
           {row.timeText && <span className="whitespace-nowrap">{row.timeText}</span>}
           {row.metrics && <DestinationMetrics metrics={row.metrics} />}
           {row.settled && target?.permalink && (

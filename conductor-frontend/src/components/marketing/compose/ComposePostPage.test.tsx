@@ -17,6 +17,14 @@ vi.mock('@/contexts/PermissionsContext', () => ({
 
 import type { WorkflowView } from '@/types/workItem'
 import { ComposePostPage } from './ComposePostPage'
+import { CAROUSEL_FRAMES, creative, render as creativeRender } from '../media/creativeFixtures'
+
+const CAROUSEL = creative('18a', {
+  name: 'Import carousel',
+  kind: 'CAROUSEL',
+  caption: 'Plan the week, shop once.',
+  slides: { '4x5': ['a', 'b', 'c'], '1x1': ['a', 'b', 'c'], '9x16': ['a', 'b', 'c'] },
+})
 
 const { pushSpy, toastErrorSpy, searchParamsRef } = vi.hoisted(() => ({
   pushSpy: vi.fn(),
@@ -79,6 +87,7 @@ const ACCOUNTS = [
 ]
 
 let accounts: unknown[] = ACCOUNTS
+let creativesList: unknown[] = []
 let calls: Array<{ method: string; url: string; body: unknown }> = []
 let createRejection: { status: number; detail: string } | null = null
 let targetsRejection: { status: number; detail: string } | null = null
@@ -109,6 +118,10 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   }
   if (method === 'PUT' && url.startsWith('http://storage.test/')) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
   if (method === 'POST' && /\/assets\/asset-\d+\/confirm$/.test(url)) return { ok: true, status: 204, headers: { get: () => null }, json: async () => ({}) }
+  if (method === 'GET' && url.endsWith('/marketing/creatives')) return json(200, creativesList)
+  if (method === 'GET' && url.endsWith(`/marketing/creatives/${CAROUSEL.id}`)) {
+    return json(200, { ...CAROUSEL, latestRender: creativeRender('render-18a', CAROUSEL_FRAMES) })
+  }
   if (method === 'GET' && url.includes('/marketing/photos')) return json(200, PHOTOS)
   if (method === 'POST' && url.endsWith('/assets/from-media')) {
     return json(201, (body as { mediaIds: string[] }).mediaIds.map((id) => ({ id: `link-${id}` })))
@@ -120,6 +133,7 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
 
 beforeEach(() => {
   accounts = ACCOUNTS
+  creativesList = []
   calls = []
   createRejection = null
   targetsRejection = null
@@ -355,5 +369,92 @@ describe('ComposePostPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
     await waitFor(() => expect(pushSpy).toHaveBeenCalled())
     expect(String(toastErrorSpy.mock.calls[0]![0])).toContain('Not a publishable target')
+  })
+
+  describe('starting from a Creative', () => {
+    async function chooseCarousel() {
+      creativesList = [CAROUSEL]
+      renderPage()
+      await account('@acme')
+      await userEvent.click(screen.getByRole('button', { name: 'Add media' }))
+      // The Creatives tab opens first because a Creative has a render.
+      await userEvent.click(await screen.findByRole('button', { name: /Choose Creative 18a/ }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Use Creative 18a' }))
+    }
+
+    it('shows a Creative card, fills an empty caption and attaches the chosen render', async () => {
+      await chooseCarousel()
+      const card = screen.getByTestId('compose-creative-card')
+      expect(within(card).getByText('18a')).toBeInTheDocument()
+      expect(card).toHaveTextContent('Carousel · 3 slides · 9:16, 4:5, 1:1 · each destination gets its matching size')
+      expect(within(card).getByRole('button', { name: 'Change' })).toBeInTheDocument()
+      expect(screen.getByLabelText('Caption')).toHaveValue('Plan the week, shop once.')
+      expect(screen.getByTestId('caption-from-creative')).toHaveTextContent('From Creative 18a. Edit freely; the Creative stays as it is.')
+
+      await userEvent.click(await account('@acme'))
+      expect(await screen.findByTestId('creative-chip-instagram-c-ig')).toHaveTextContent('4:5 ×3')
+      await pickUtc()
+      await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+
+      await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/app/projects/project-1/marketing/posts/MK-9'))
+      const attach = calls.find((c) => c.method === 'POST' && c.url.endsWith('/attach'))
+      expect(attach?.url).toContain(`/creatives/${CAROUSEL.id}/attach`)
+      expect(attach?.body).toEqual({ renderId: 'render-18a', workItemId: 'wi-9' })
+      expect(toastErrorSpy).not.toHaveBeenCalled()
+    })
+
+    it('flags a destination the Creative has no size for', async () => {
+      await chooseCarousel()
+      await userEvent.click(await account('@acme'))
+      const row = screen.getByTestId('destination-row-instagram-c-ig')
+      await userEvent.click(within(row).getByRole('button', { name: 'Show details' }))
+      await userEvent.click(screen.getByRole('radio', { name: 'Reel' }))
+      const chip = await screen.findByTestId('creative-chip-instagram-c-ig')
+      expect(chip).toHaveTextContent('No carousel')
+      expect(chip).toHaveAttribute('title', expect.stringContaining('Reels take one video'))
+    })
+
+    it('never overwrites a caption that is already written', async () => {
+      creativesList = [CAROUSEL]
+      renderPage()
+      await account('@acme')
+      await userEvent.type(screen.getByLabelText('Caption'), 'My own words')
+      await userEvent.click(screen.getByRole('button', { name: 'Add media' }))
+      await userEvent.click(await screen.findByRole('button', { name: /Choose Creative 18a/ }))
+      expect(screen.getByRole('checkbox', { name: /Use the Creative’s caption/ })).not.toBeChecked()
+      await userEvent.click(await screen.findByRole('button', { name: 'Use Creative 18a' }))
+      expect(screen.getByTestId('compose-creative-card')).toBeInTheDocument()
+      expect(screen.getByLabelText('Caption')).toHaveValue('My own words')
+      expect(screen.queryByTestId('caption-from-creative')).not.toBeInTheDocument()
+    })
+
+    it('Remove clears the Creative so nothing is attached', async () => {
+      await chooseCarousel()
+      await userEvent.click(screen.getByRole('button', { name: 'Remove' }))
+      expect(screen.queryByTestId('compose-creative-card')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('caption-from-creative')).not.toBeInTheDocument()
+
+      await userEvent.click(await account('@acme'))
+      await pickUtc()
+      await userEvent.click(screen.getByRole('button', { name: 'Create post' }))
+      await waitFor(() => expect(pushSpy).toHaveBeenCalled())
+      expect(calls.some((c) => c.url.endsWith('/attach'))).toBe(false)
+    })
+
+    it('explains that other media is not published once a Creative is attached', async () => {
+      await chooseCarousel()
+      expect(screen.getByTestId('media-hint')).toHaveTextContent('Each destination gets its matching size from Creative 18a.')
+      expect(screen.queryByTestId('media-unpublished-note')).not.toBeInTheDocument()
+      const input = document.getElementById('compose-media') as HTMLInputElement
+      await userEvent.upload(input, new File(['x'], 'extra.png', { type: 'image/png' }))
+      expect(await screen.findByTestId('media-unpublished-note')).toHaveTextContent(/won.t be published/)
+    })
+
+    it('keeps the original hint when no Creative is attached', async () => {
+      renderPage()
+      await account('@acme')
+      expect(screen.getByTestId('media-hint')).toHaveTextContent('Every destination gets all of them')
+      expect(screen.queryByTestId('media-unpublished-note')).not.toBeInTheDocument()
+    })
   })
 })

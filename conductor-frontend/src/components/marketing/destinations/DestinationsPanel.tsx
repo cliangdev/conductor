@@ -17,7 +17,7 @@ import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { DestinationTotals } from './DestinationMetrics'
 import { DestinationRow } from './DestinationRow'
 import { DestinationRowDetails, rowHasDetails } from './DestinationRowDetails'
-import type { DestinationsState } from './model'
+import type { DestinationRowModel, DestinationsState } from './model'
 
 export interface DestinationsPanelProps {
   state: DestinationsState
@@ -31,6 +31,8 @@ export interface DestinationsPanelProps {
   /** What the item is right now, for the locked line. */
   statusLabel: string
   title?: string
+  /** Optional per-row chip rendered next to the row's state (compose uses it for "4:5 ×5"). */
+  rowChip?: (row: DestinationRowModel) => React.ReactNode
 }
 
 export function DestinationsPanel({
@@ -42,6 +44,7 @@ export function DestinationsPanel({
   noun,
   statusLabel,
   title = 'Destinations',
+  rowChip,
 }: DestinationsPanelProps) {
   const { rows, mode, summary, actions } = state
   /** The one row whose details are open, and the one whose "mark published" form is. */
@@ -148,6 +151,7 @@ export function DestinationsPanel({
                   <DestinationRow
                     key={row.key}
                     row={row}
+                    chip={rowChip?.(row)}
                     mode={mode}
                     expanded={expanded}
                     hasDetails={hasDetails}

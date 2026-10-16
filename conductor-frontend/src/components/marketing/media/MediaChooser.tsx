@@ -43,6 +43,8 @@ export interface ChooserExtraTab {
   value: string
   label: string
   content: ReactNode
+  /** The tab brings its own footer (its action is not "Add N"), so the chooser hides the default one. */
+  ownFooter?: boolean
 }
 
 export interface MediaChooserProps {
@@ -539,6 +541,7 @@ function ChooserBody({
       )}
     </div>
 
+    {!extra?.ownFooter && (
     <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-3 sm:px-5">
       <span className="text-sm text-muted-foreground" aria-live="polite">
         {selected.length === 0 ? 'Nothing selected' : `${selected.length} selected`}
@@ -565,6 +568,7 @@ function ChooserBody({
         </Button>
       </div>
     </div>
+    )}
     </>
   )
 }
