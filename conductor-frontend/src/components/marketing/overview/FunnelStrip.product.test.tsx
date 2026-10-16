@@ -52,4 +52,15 @@ describe('FunnelStrip with in-app stages', () => {
     )
     expect(screen.getByText('Connect product metrics')).toBeInTheDocument()
   })
+
+  it('wraps tiles into rows on wide screens instead of scrolling sideways, keeping stage order', () => {
+    renderFunnel()
+    const list = screen.getByRole('list')
+    expect(list.className).toContain('lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))]')
+    expect(list.className).not.toContain('overflow-x-auto')
+    expect(list.className).not.toContain('grid-flow-col')
+    // the conversion line stays inside its own tile
+    const tile = screen.getByText('Onboarding started').closest('li')
+    expect(tile).toHaveTextContent('62.2% of first opens')
+  })
 })

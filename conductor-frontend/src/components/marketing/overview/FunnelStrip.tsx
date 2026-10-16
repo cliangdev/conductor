@@ -89,7 +89,7 @@ export function FunnelStrip({
           <InfoIcon className="h-3.5 w-3.5" aria-hidden />
         </span>
       </div>
-      <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card lg:grid lg:auto-cols-[minmax(9rem,1fr)] lg:grid-flow-col lg:overflow-x-auto lg:divide-x lg:divide-y-0">
+      <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card lg:grid lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] lg:gap-2 lg:divide-y-0 lg:overflow-visible lg:border-0 lg:bg-transparent">
         {items.map((item) => {
           if (item.kind === 'unavailable') {
             const first = item.stages[0]
@@ -97,7 +97,7 @@ export function FunnelStrip({
             const prefix = channelLabels[first.source]
             const title = item.stages.length > 1 && prefix ? `${prefix}: ${names}` : item.stages.length > 1 ? names : first.label
             return (
-              <li key={item.stages.map((s) => s.key).join('+')} className="min-w-0 bg-muted/40 px-4 py-2.5 lg:py-3">
+              <li key={item.stages.map((s) => s.key).join('+')} className="min-w-0 bg-muted/40 px-4 py-2.5 lg:rounded-md lg:border lg:border-border lg:py-3">
                 <p className="text-xs font-medium text-muted-foreground">{title}</p>
                 <p className="text-xs text-muted-foreground">{first.unavailableReason ?? 'No data source yet'}</p>
               </li>
@@ -110,7 +110,7 @@ export function FunnelStrip({
           return (
             <li
               key={stage.key}
-              className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-4 py-2.5 lg:block lg:py-3"
+              className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-4 py-2.5 lg:block lg:rounded-md lg:border lg:border-border lg:bg-card lg:py-3"
             >
               <p className="text-xs font-medium text-muted-foreground">{stage.label}</p>
               <div className="flex flex-col items-end lg:mt-1 lg:items-start">
