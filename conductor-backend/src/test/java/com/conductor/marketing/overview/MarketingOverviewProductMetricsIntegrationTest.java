@@ -198,6 +198,9 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
         assertThat(product.status()).isEqualTo("LIVE");
         // the card leads with the last two funnel stages, then fills with the rest in stage order
         assertThat(product.metrics()).extracting(m -> m.metric()).containsExactly("trial_started", "paid", "first_open", "revenue_events");
+        // only the declared funnel stages carry a funnelOrder
+        assertThat(product.metrics()).filteredOn(m -> m.funnelOrder() != null).extracting(m -> m.metric())
+                .containsExactlyInAnyOrder("first_open", "trial_started", "paid");
     }
 
     @Test

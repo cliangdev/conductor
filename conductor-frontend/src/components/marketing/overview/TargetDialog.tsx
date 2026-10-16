@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
 import { Select } from '@/components/ui/select'
 import { apiErrorMessage } from '@/lib/api'
-import { inputToTarget, targetToInput } from './format'
+import { inputToTarget, readOnlyTargetSource, targetToInput } from './format'
 import type { OverviewMetric, TargetDirection } from './types'
 
 export interface TargetDialogProps {
@@ -39,6 +39,29 @@ export function TargetDialog({ open, onOpenChange, metric, onSave, onRemove }: T
 
   if (!metric) return null
   const percent = metric.unit === 'PERCENT'
+
+  // A target a connector feed owns is changed in that source, never here.
+  if (metric.target?.readOnly) {
+    return (
+      <Modal
+        open={open}
+        onOpenChange={onOpenChange}
+        title={`Target for ${metric.label}`}
+        description="This target comes from a connected source."
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-foreground">
+            {readOnlyTargetSource(metric.target)}. Change it there and it updates here on the next sync.
+          </p>
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true)

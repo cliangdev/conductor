@@ -1,6 +1,6 @@
 // Display helpers for the marketing overview: units, change direction, targets, windows.
 
-import type { MarketingTarget, MetricUnit, OverviewMetric, TargetDirection } from './types'
+import type { MarketingTarget, MetricUnit, OverviewMetric, OverviewMismatch, TargetDirection } from './types'
 
 const PLACEHOLDER = '—'
 
@@ -181,4 +181,18 @@ export function chartAxis(values: (number | null | undefined)[], unit: MetricUni
 export function conversionRate(prev: number | null | undefined, current: number | null | undefined): number | null {
   if (prev === null || prev === undefined || current === null || current === undefined || prev <= 0) return null
   return current / prev
+}
+
+/** "Set in Product metrics": where a read-only (feed-owned) target is changed. */
+export function readOnlyTargetSource(target: MarketingTarget): string {
+  const source = target.source?.trim()
+  if (!source) return 'Set in the connected source'
+  return /^set in /i.test(source) ? source : `Set in ${source}`
+}
+
+/** "Conductor 1,204 vs Product metrics 1,190 — 1.2% apart over settled days (Oct 1 – Oct 12)". */
+export function mismatchSummary(m: OverviewMismatch, sourceName: string): string {
+  const unit: MetricUnit = m.metric === 'spend' ? 'CURRENCY' : 'COUNT'
+  const range = m.from === m.to ? shortDate(m.from) : `${shortDate(m.from)} – ${shortDate(m.to)}`
+  return `Conductor ${formatMetricValue(m.channelValue, unit)} vs ${sourceName} ${formatMetricValue(m.referenceValue, unit)} — ${(m.gapPct * 100).toFixed(1)}% apart over settled days (${range})`
 }

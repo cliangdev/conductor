@@ -111,7 +111,7 @@ describe('ChannelCard', () => {
 
   it('does not stretch a coming-soon card to the row height', () => {
     renderCard(comingSoonChannel())
-    expect(screen.getByRole('region', { name: 'Product' })).toHaveClass('self-start')
+    expect(screen.getByRole('region', { name: 'Newsletter' })).toHaveClass('self-start')
   })
 
   it('says "Target met" instead of a percentage once the target is reached', () => {

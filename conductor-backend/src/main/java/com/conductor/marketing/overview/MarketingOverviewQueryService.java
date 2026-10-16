@@ -104,16 +104,25 @@ public class MarketingOverviewQueryService {
         }
     }
 
-    /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window. */
+    /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window.
+     *  {@code funnelOrder}: the metric's place among the in-app funnel stages (PRODUCT only), else null. */
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
                              List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
-                             boolean insufficientData) {
+                             boolean insufficientData, Integer funnelOrder) {
+        public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
+                          Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
+                          TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
+                          boolean insufficientData) {
+            this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
+                    target, series, historyStartsOn, asOf, insufficientData, null);
+        }
+
         public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
                           Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
                           TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf) {
             this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
-                    target, series, historyStartsOn, asOf, false);
+                    target, series, historyStartsOn, asOf, false, null);
         }
     }
 
@@ -454,9 +463,11 @@ public class MarketingOverviewQueryService {
         }
 
         /**
-         * The metrics a card shows. For the in-app channel the first metrics are the early funnel stages, which
-         * the funnel strip already shows, so the card leads with the last two stages (trials, paid) and then the
-         * ratios (cost per trial). Other channels show their first metrics.
+         * The metrics an overview card gets. Other channels show their first few. The in-app channel's first
+         * metrics are the early funnel stages, which the funnel strip already shows, so it leads with the last
+         * two stages (trials, paid), then the ratios (cost per trial), then the rest in order. It keeps every
+         * metric, because the funnel strip reads the stage flags and targets from them; a card shows the first
+         * {@code headline}.
          */
         private List<MetricView> headlineMetrics() {
             if (channel.channel() != MetricChannel.PRODUCT) {
@@ -465,19 +476,13 @@ public class MarketingOverviewQueryService {
             List<MetricView> stages = metrics.stream()
                     .filter(m -> channel.metric(m.metric()).map(c -> c.funnelOrder() != null).orElse(false))
                     .toList();
-            List<MetricView> picked = new java.util.ArrayList<>(stages.subList(Math.max(0, stages.size() - 2), stages.size()));
+            List<MetricView> ordered = new java.util.ArrayList<>(stages.subList(Math.max(0, stages.size() - 2), stages.size()));
             metrics.stream()
                     .filter(m -> channel.metric(m.metric()).map(c -> c.agg() == MetricCatalog.Aggregation.DERIVED).orElse(false))
-                    .forEach(picked::add);
-            for (MetricView m : metrics) {
-                if (picked.size() >= channel.headline()) {
-                    break;
-                }
-                if (!picked.contains(m)) {
-                    picked.add(m);
-                }
-            }
-            return picked.stream().limit(channel.headline()).toList();
+                    .filter(m -> !ordered.contains(m))
+                    .forEach(ordered::add);
+            metrics.stream().filter(m -> !ordered.contains(m)).forEach(ordered::add);
+            return ordered;
         }
 
         ChannelView view(boolean headlineOnly) {
@@ -850,7 +855,7 @@ public class MarketingOverviewQueryService {
                 : value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
         LocalDate historyStartsOn = previous == null ? data.firstDay(metric) : null;
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
-                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient);
+                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder());
     }
 
     /**

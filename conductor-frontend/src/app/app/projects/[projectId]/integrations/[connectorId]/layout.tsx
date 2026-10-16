@@ -22,6 +22,7 @@ const CONNECTOR_LABELS: Record<string, string> = {
   gsc: 'Search Console',
   'apple-search-ads': 'Apple Search Ads',
   'app-store-connect': 'App Store Connect',
+  'product-metrics': 'Product metrics',
 };
 
 type Tab = 'overview' | 'tools' | 'docs';

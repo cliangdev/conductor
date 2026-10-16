@@ -145,7 +145,11 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
               }
             />
           ) : (
-            <FunnelStrip stages={data.funnel} channelLabels={channelLabels} />
+            <FunnelStrip
+              stages={data.funnel}
+              channelLabels={channelLabels}
+              productMetrics={channels.find((c) => c.channel === 'PRODUCT')?.metrics ?? []}
+            />
           )}
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

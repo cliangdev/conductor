@@ -11,6 +11,7 @@ import youtube from './youtube';
 import tiktok from './tiktok';
 import remoteMcp from './remote-mcp';
 import appStoreConnect from './app-store-connect';
+import productMetrics from './product-metrics';
 
 export const CONNECTOR_DOCS: Record<string, string> = {
   gcp,
@@ -26,4 +27,5 @@ export const CONNECTOR_DOCS: Record<string, string> = {
   tiktok,
   'remote-mcp': remoteMcp,
   'app-store-connect': appStoreConnect,
+  'product-metrics': productMetrics,
 };

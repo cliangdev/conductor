@@ -6,6 +6,7 @@ const STATUS: Record<ChannelStatus, { label: string; hue: StatusHue }> = {
   STALE: { label: 'Stale', hue: 'amber' },
   NOT_CONNECTED: { label: 'Not connected', hue: 'gray' },
   COMING_SOON: { label: 'Coming soon', hue: 'slate' },
+  MISMATCH: { label: 'Mismatch', hue: 'red' },
 }
 
 export function ChannelStatusPill({ status }: { status: ChannelStatus }) {
