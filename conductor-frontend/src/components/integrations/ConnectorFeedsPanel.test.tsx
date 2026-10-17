@@ -51,6 +51,41 @@ describe('ConnectorFeedsPanel', () => {
     mockCanMutate = true
   })
 
+  it('names the connection on each feed only when the connector has more than one', async () => {
+    vi.mocked(api.listConnectorFeeds).mockResolvedValue([
+      { ...weeklyMrrFeed, id: 'f1', connectionId: 'c1' },
+      { ...weeklyMrrFeed, id: 'f2', connectionId: 'c2' },
+    ])
+    const { rerender } = render(
+      <ConnectorFeedsPanel
+        projectId="proj-1"
+        connectorId="app-store-connect"
+        connections={[{ id: 'c1', label: 'Rexipe iOS' }, { id: 'c2', label: null }]}
+      />,
+    )
+
+    expect(await screen.findByText('Rexipe iOS')).toBeInTheDocument()
+    expect(screen.getByText('Connection 2')).toBeInTheDocument()
+
+    rerender(
+      <ConnectorFeedsPanel projectId="proj-1" connectorId="app-store-connect" connections={[{ id: 'c1', label: 'Rexipe iOS' }]} />,
+    )
+    expect(screen.queryByTestId('feed-connection')).not.toBeInTheDocument()
+  })
+
+  it('reloads the feeds when a connection is added or removed', async () => {
+    vi.mocked(api.listConnectorFeeds).mockResolvedValue([{ ...weeklyMrrFeed, connectionId: 'c1' }])
+    const { rerender } = render(
+      <ConnectorFeedsPanel projectId="proj-1" connectorId="app-store-connect"
+        connections={[{ id: 'c1', label: 'A' }, { id: 'c2', label: 'B' }]} />,
+    )
+    await waitFor(() => expect(api.listConnectorFeeds).toHaveBeenCalledTimes(1))
+
+    rerender(<ConnectorFeedsPanel projectId="proj-1" connectorId="app-store-connect" connections={[{ id: 'c1', label: 'A' }]} />)
+
+    await waitFor(() => expect(api.listConnectorFeeds).toHaveBeenCalledTimes(2))
+  })
+
   it('renders nothing when the connector declares no feeds', async () => {
     vi.mocked(api.listConnectorFeeds).mockResolvedValue([])
     const { container } = render(<ConnectorFeedsPanel projectId="proj-1" connectorId="posthog" />)

@@ -12,12 +12,12 @@ export const OVERVIEW_WINDOWS: OverviewPageWindow[] = ['7d', '28d']
 export const DETAIL_WINDOWS: OverviewWindowValue[] = ['7d', '28d', '90d']
 export const DEFAULT_OVERVIEW_WINDOW: OverviewPageWindow = '28d'
 
-export type ChannelKey = 'WEB' | 'SEARCH' | 'SOCIAL' | 'STORE' | 'ADS'
+export type ChannelKey = 'WEB' | 'SEARCH' | 'SOCIAL' | 'STORE' | 'ADS' | 'PRODUCT'
 /** Display order of the channel grid. */
-export const CHANNEL_ORDER: ChannelKey[] = ['WEB', 'SEARCH', 'SOCIAL', 'STORE', 'ADS']
+export const CHANNEL_ORDER: ChannelKey[] = ['WEB', 'SEARCH', 'SOCIAL', 'STORE', 'ADS', 'PRODUCT']
 
-export type ChannelStatus = 'LIVE' | 'STALE' | 'NOT_CONNECTED' | 'COMING_SOON'
-export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION'
+export type ChannelStatus = 'LIVE' | 'STALE' | 'NOT_CONNECTED' | 'COMING_SOON' | 'MISMATCH'
+export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION' | 'RATING'
 export type TargetDirection = 'UP' | 'DOWN'
 
 export interface OverviewWindowRange {
@@ -56,6 +56,10 @@ export interface OverviewConnection {
 export interface MarketingTarget {
   value: number
   direction: TargetDirection
+  /** True when a connector feed owns the target: it cannot be set or cleared here. */
+  readOnly?: boolean
+  /** Where a read-only target is set, e.g. "Set in Product metrics". */
+  source?: string | null
 }
 
 export interface OverviewSeriesPoint {
@@ -79,8 +83,35 @@ export interface OverviewMetric {
   /** Snapshot day of a LEVEL metric (followers); null for metrics that sum a window. */
   asOf?: string | null
   noise: boolean
+  /** SUM is a window total (its target is a total, not a daily level); LEVEL and DERIVED share one scale per day and per window. */
+  aggregation?: 'SUM' | 'LEVEL' | 'DERIVED'
+  /** PRODUCT only: the metric's place among the in-app funnel stages (1 first); null when it is not a stage. */
+  funnelOrder?: number | null
+  /** The feed reported a sample under 20 for the window; `noise` is then also true. */
+  insufficientData?: boolean
+  /** Days after the channel's data-complete day that the series still shows (excluded from the value). */
+  provisionalDays?: number
   target?: MarketingTarget | null
   series: OverviewSeriesPoint[]
+}
+
+/** Set when a channel's status is MISMATCH: both figures cover the same settled days. */
+export interface OverviewMismatch {
+  /** The channel metric compared, e.g. downloads or spend. */
+  metric: string
+  label: string
+  /** What the product metrics feed reports. */
+  referenceValue: number
+  /** What this channel's own connector reports. */
+  channelValue: number
+  /** Absolute gap as a fraction of the larger figure (0.05 is 5%). */
+  gapPct: number
+  from: string
+  to: string
+  /** Name of the connection(s) behind the channel's own figure, e.g. App Store Connect. */
+  channelSource?: string
+  /** Name of the product metrics connection(s) that reported the reference figure. */
+  referenceSource?: string
 }
 
 export interface OverviewChannel {
@@ -89,6 +120,9 @@ export interface OverviewChannel {
   status: ChannelStatus
   lastFetchedAt?: string | null
   dataCompleteThrough?: string | null
+  /** False when the channel's connection owns its targets (In-app): they cannot be set or cleared here. */
+  targetsEditable?: boolean
+  mismatch?: OverviewMismatch | null
   connections: OverviewConnection[]
   connectHint?: { /** Deprecated. */ connectorId?: string; connectors: { connectorId: string; name: string }[] } | null
   metrics: OverviewMetric[]

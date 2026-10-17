@@ -104,30 +104,48 @@ public class MarketingOverviewQueryService {
         }
     }
 
-    /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window. */
+    /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window.
+     *  {@code funnelOrder}: the metric's place among the in-app funnel stages (PRODUCT only), else null. */
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
                              List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
-                             boolean insufficientData) {
+                             boolean insufficientData, Integer funnelOrder, String aggregation) {
+        public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
+                          Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
+                          TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
+                          boolean insufficientData) {
+            this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
+                    target, series, historyStartsOn, asOf, insufficientData, null, "SUM");
+        }
+
         public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
                           Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
                           TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf) {
             this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
-                    target, series, historyStartsOn, asOf, false);
+                    target, series, historyStartsOn, asOf, false, null, "SUM");
         }
     }
 
     /** The product backend's reference figure against the channel's own connector, over the same settled days. */
     public record MismatchView(String metric, String label, double referenceValue, double channelValue,
-                               double gapPct, LocalDate from, LocalDate to) {}
+                               double gapPct, LocalDate from, LocalDate to,
+                               String channelSource, String referenceSource) {}
 
     public record ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                               List<ConnectionView> connections, ConnectHint connectHint,
-                              List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch) {
+                              List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch,
+                              boolean targetsEditable) {
+        public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
+                           List<ConnectionView> connections, ConnectHint connectHint,
+                           List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch) {
+            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough,
+                    mismatch, true);
+        }
+
         public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                            List<ConnectionView> connections, ConnectHint connectHint,
                            List<MetricView> metrics, LocalDate dataCompleteThrough) {
-            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough, null);
+            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough, null, true);
         }
     }
 
@@ -186,9 +204,12 @@ public class MarketingOverviewQueryService {
         for (MetricCatalog.Channel channel : MetricCatalog.channels()) {
             builds.put(channel.channel(), build(ctx, channel));
         }
+        // One window for every funnel stage: a conversion between stages of different channels is only meaningful
+        // over the same days, so it ends at the earliest data-complete day of the channels that contribute stages.
+        Window funnelWindow = funnelWindow(ctx, builds);
         List<FunnelStageView> stages = new ArrayList<>();
         for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel(ctx.productChannel)) {
-            stages.add(funnelStage(stage, builds.get(stage.channel())));
+            stages.add(funnelStage(stage, builds.get(stage.channel()), funnelWindow));
         }
         List<FunnelStageView> funnel = withConversions(stages);
         List<ChannelView> channels = builds.values().stream()
@@ -202,11 +223,10 @@ public class MarketingOverviewQueryService {
             Window empty = windowEnding(ctx, ctx.fallbackEnd);
             overall = new Window(empty.from(), null, empty.previousFrom(), empty.previousTo(), null);
         } else {
-            overall = new Window(
-                    withData.stream().map(b -> b.window.from()).min(Comparator.naturalOrder()).orElseThrow(),
-                    withData.stream().map(b -> b.window.to()).max(Comparator.naturalOrder()).orElseThrow(),
-                    withData.stream().map(b -> b.window.previousFrom()).min(Comparator.naturalOrder()).orElseThrow(),
-                    withData.stream().map(b -> b.window.previousTo()).max(Comparator.naturalOrder()).orElseThrow(),
+            // The overall range is the funnel's own window (current and previous never overlap); the slowest
+            // channel's data-complete day is reported separately so the page can say which data lags.
+            overall = new Window(funnelWindow.from(), funnelWindow.to(), funnelWindow.previousFrom(),
+                    funnelWindow.previousTo(),
                     withData.stream().map(b -> b.window.to()).min(Comparator.naturalOrder()).orElseThrow());
         }
         return new Overview(overall, funnel, channels);
@@ -421,6 +441,8 @@ public class MarketingOverviewQueryService {
         final List<MetricView> metrics;
         final Window window;
         final MismatchView mismatch;
+        /** The channel's rows (null when it has no connection), so the funnel can re-read them over its own window. */
+        ChannelData data;
 
         ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
                      List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
@@ -453,10 +475,33 @@ public class MarketingOverviewQueryService {
             return metrics.stream().filter(m -> m.metric().equals(key)).findFirst();
         }
 
+        /**
+         * The metrics an overview card gets. Other channels show their first few. The in-app channel's first
+         * metrics are the early funnel stages, which the funnel strip already shows, so it leads with the last
+         * two stages (trials, paid), then the ratios (cost per trial), then the rest in order. It keeps every
+         * metric, because the funnel strip reads the stage flags and targets from them; a card shows the first
+         * {@code headline}.
+         */
+        private List<MetricView> headlineMetrics() {
+            if (channel.channel() != MetricChannel.PRODUCT) {
+                return metrics.stream().limit(channel.headline()).toList();
+            }
+            List<MetricView> stages = metrics.stream()
+                    .filter(m -> channel.metric(m.metric()).map(c -> c.funnelOrder() != null).orElse(false))
+                    .toList();
+            List<MetricView> ordered = new java.util.ArrayList<>(stages.subList(Math.max(0, stages.size() - 2), stages.size()));
+            metrics.stream()
+                    .filter(m -> channel.metric(m.metric()).map(c -> c.agg() == MetricCatalog.Aggregation.DERIVED).orElse(false))
+                    .filter(m -> !ordered.contains(m))
+                    .forEach(ordered::add);
+            metrics.stream().filter(m -> !ordered.contains(m)).forEach(ordered::add);
+            return ordered;
+        }
+
         ChannelView view(boolean headlineOnly) {
-            List<MetricView> shown = headlineOnly ? metrics.stream().limit(channel.headline()).toList() : metrics;
+            List<MetricView> shown = headlineOnly ? headlineMetrics() : metrics;
             return new ChannelView(channel.channel().name(), channel.label(), status, lastFetchedAt, connections,
-                    connectHint, shown, window.to(), mismatch);
+                    connectHint, shown, window.to(), mismatch, channel.channel() != MetricChannel.PRODUCT);
         }
     }
 
@@ -511,7 +556,10 @@ public class MarketingOverviewQueryService {
         }
         MismatchView mismatch = mismatch(ctx, channel, data, window);
         String status = mismatch != null ? "MISMATCH" : anyLive ? "LIVE" : "STALE";
-        return new ChannelBuild(channel, status, lastFetchedAt, connectionViews, hint, metrics, window, mismatch);
+        ChannelBuild built = new ChannelBuild(channel, status, lastFetchedAt, connectionViews, hint, metrics, window,
+                mismatch);
+        built.data = data;
+        return built;
     }
 
     /**
@@ -557,7 +605,19 @@ public class MarketingOverviewQueryService {
             return null;
         }
         double gap = Math.abs(referenceSum - ownSum) / larger;
-        return gap > MISMATCH_THRESHOLD ? new MismatchView(own, label, referenceSum, ownSum, gap, first, last) : null;
+        return gap > MISMATCH_THRESHOLD ? new MismatchView(own, label, referenceSum, ownSum, gap, first, last,
+                sourceNames(ctx, channel.connectorIds(), channel.label()),
+                sourceNames(ctx, List.of(MetricCatalog.PRODUCT_CONNECTOR_ID), "Product metrics")) : null;
+    }
+
+    /** The display labels of the project's connections for these connectors, e.g. "Rexipe" or "Rexipe, Beta". */
+    private static String sourceNames(Context ctx, List<String> connectorIds, String fallback) {
+        String names = ctx.connections.stream()
+                .filter(c -> connectorIds.contains(c.getConnectorId()))
+                .map(c -> c.getDisplayLabel() != null && !c.getDisplayLabel().isBlank() ? c.getDisplayLabel()
+                        : MetricCatalog.connectorName(c.getConnectorId()))
+                .distinct().collect(java.util.stream.Collectors.joining(", "));
+        return names.isEmpty() ? fallback : names;
     }
 
     /** Live: a recent successful run, an active feed and a healthy connection. */
@@ -632,6 +692,11 @@ public class MarketingOverviewQueryService {
             for (ChannelMetricDaily row : rows) {
                 Metric metric = channel.metric(row.getMetric()).orElse(null);
                 if (metric == null) {
+                    continue;
+                }
+                if (metric.agg() != Aggregation.LEVEL && !metric.fromDimensions()
+                        && !row.getDimensionKey().isEmpty()) {
+                    // a total metric: its per-dimension rows (loaded for the channel's level series) would double count
                     continue;
                 }
                 if (metric.agg() == Aggregation.LEVEL) {
@@ -735,6 +800,9 @@ public class MarketingOverviewQueryService {
             if (series == null) {
                 return null;
             }
+            if (metric.denominator() != null) {
+                return weightedLevelAt(series, levels.get(metric.denominator()), day);
+            }
             double total = 0;
             boolean any = false;
             for (TreeMap<LocalDate, Double> s : series.values()) {
@@ -745,6 +813,39 @@ public class MarketingOverviewQueryService {
                 }
             }
             return any ? total : null;
+        }
+
+        /**
+         * An average-valued snapshot across connections: each connection's latest value weighted by its own latest
+         * weight (rating average by rating count), so an app with 3 ratings cannot outvote one with 3,000. A plain
+         * mean when any connection has no positive weight; a single connection is returned unchanged.
+         */
+        private static Double weightedLevelAt(Map<String, TreeMap<LocalDate, Double>> values,
+                                              Map<String, TreeMap<LocalDate, Double>> weights, LocalDate day) {
+            double weighted = 0;
+            double weightSum = 0;
+            double plain = 0;
+            int n = 0;
+            boolean allWeighted = true;
+            for (Map.Entry<String, TreeMap<LocalDate, Double>> e : values.entrySet()) {
+                var entry = e.getValue().floorEntry(day);
+                if (entry == null) {
+                    continue;
+                }
+                n++;
+                plain += entry.getValue();
+                var w = weights == null || weights.get(e.getKey()) == null ? null : weights.get(e.getKey()).floorEntry(day);
+                if (w == null || w.getValue() <= 0) {
+                    allWeighted = false;
+                } else {
+                    weighted += entry.getValue() * w.getValue();
+                    weightSum += w.getValue();
+                }
+            }
+            if (n == 0) {
+                return null;
+            }
+            return allWeighted && weightSum > 0 ? weighted / weightSum : plain / n;
         }
 
         /** True when any row feeding {@code metric} for {@code day} is provisional. */
@@ -783,6 +884,14 @@ public class MarketingOverviewQueryService {
         Window w = asOf != null ? windowEnding(ctx, asOf) : flowWindow;
         Double value = data.periodValue(metric, w.from(), w.to());
         Double previous = data.periodValue(metric, w.previousFrom(), w.previousTo());
+        LocalDate firstDay = data.firstDay(metric);
+        // A flow whose history starts inside the previous window has only part of it: the sum of a few days
+        // against a full window is no comparison (it reads as +10000%), so treat it as having no previous data.
+        boolean partialPrevious = previous != null && metric.agg() != Aggregation.LEVEL
+                && firstDay != null && firstDay.isAfter(w.previousFrom());
+        if (partialPrevious) {
+            previous = null;
+        }
         Double change = value != null && previous != null ? value - previous : null;
         Double changePct = change != null && previous != 0 ? change / Math.abs(previous) : null;
 
@@ -816,9 +925,10 @@ public class MarketingOverviewQueryService {
         boolean insufficient = sample != null && sample < MIN_SAMPLE;
         boolean noise = sample != null ? insufficient
                 : value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
-        LocalDate historyStartsOn = previous == null ? data.firstDay(metric) : null;
+        LocalDate historyStartsOn = previous == null ? firstDay : null;
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
-                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient);
+                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder(),
+                metric.agg().name());
     }
 
     /**
@@ -858,16 +968,51 @@ public class MarketingOverviewQueryService {
 
     // ---- funnel -------------------------------------------------------------------------------------
 
-    private FunnelStageView funnelStage(MetricCatalog.FunnelStage stage, ChannelBuild build) {
-        Optional<MetricView> metric = build == null ? Optional.empty() : build.metric(stage.metric());
-        if (metric.isEmpty() || (metric.get().value() == null && metric.get().previous() == null)) {
+    /**
+     * The window every funnel stage is computed over: it ends at the earliest data-complete day of the channels that
+     * contribute an available stage (or, when none does, of the channels that have any data).
+     */
+    private Window funnelWindow(Context ctx, Map<MetricChannel, ChannelBuild> builds) {
+        Set<MetricChannel> contributing = new HashSet<>();
+        for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel(ctx.productChannel)) {
+            ChannelBuild build = builds.get(stage.channel());
+            if (build != null && build.hasData() && build.metric(stage.metric())
+                    .filter(m -> m.value() != null || m.previous() != null).isPresent()) {
+                contributing.add(stage.channel());
+            }
+        }
+        List<ChannelBuild> sources = contributing.isEmpty()
+                ? builds.values().stream().filter(ChannelBuild::hasData).toList()
+                : contributing.stream().map(builds::get).toList();
+        LocalDate end = sources.stream().map(b -> b.window.to()).min(Comparator.naturalOrder())
+                .orElse(ctx.fallbackEnd);
+        return windowEnding(ctx, end);
+    }
+
+    private FunnelStageView funnelStage(MetricCatalog.FunnelStage stage, ChannelBuild build, Window w) {
+        Optional<MetricView> shown = build == null ? Optional.empty() : build.metric(stage.metric());
+        Optional<Metric> catalogMetric = build == null ? Optional.empty() : build.channel.metric(stage.metric());
+        if (shown.isEmpty() || catalogMetric.isEmpty() || build.data == null
+                || (shown.get().value() == null && shown.get().previous() == null)) {
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
                     stage.unavailableReason(), build == null ? null : build.window.to(), stage.channel().name(),
                     stage.conversionFrom());
         }
-        MetricView m = metric.get();
-        return new FunnelStageView(stage.key(), stage.label(), m.value(), m.previous(), m.change(),
-                stage.channel().name(), true, null, build.window.to(), stage.channel().name(), stage.conversionFrom());
+        Metric metric = catalogMetric.get();
+        Double value = build.data.periodValue(metric, w.from(), w.to());
+        Double previous = build.data.periodValue(metric, w.previousFrom(), w.previousTo());
+        LocalDate firstDay = build.data.firstDay(metric);
+        if (previous != null && metric.agg() != Aggregation.LEVEL && firstDay != null
+                && firstDay.isAfter(w.previousFrom())) {
+            previous = null; // only partly covered by history: no comparison
+        }
+        if (value == null && previous == null) {
+            return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
+                    stage.unavailableReason(), w.to(), stage.channel().name(), stage.conversionFrom());
+        }
+        Double change = value != null && previous != null ? value - previous : null;
+        return new FunnelStageView(stage.key(), stage.label(), value, previous, change,
+                stage.channel().name(), true, null, w.to(), stage.channel().name(), stage.conversionFrom());
     }
 
     /** Keeps {@code conversionFromKey} only where both the stage and the stage it converts from are available. */
@@ -953,6 +1098,11 @@ public class MarketingOverviewQueryService {
             if (parts.length == 3) {
                 key = parts[1];
                 label = parts[2].isBlank() ? parts[1] : parts[2];
+            }
+        } else if (channel == MetricChannel.STORE) {
+            if (dimensionKey.startsWith(MetricCatalog.STORE_SOURCE_PREFIX)) {
+                key = dimensionKey.substring(MetricCatalog.STORE_SOURCE_PREFIX.length());
+                label = MetricCatalog.storeSourceLabel(key);
             }
         } else if (channel == MetricChannel.SOCIAL) {
             label = platformRegistry.labelOf(dimensionKey);

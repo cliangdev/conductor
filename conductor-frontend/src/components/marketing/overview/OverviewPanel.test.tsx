@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { clearAllSidebarCaches } from '@/lib/workflows'
-import { channel, metric, overviewResponse } from './test-fixtures'
+import { channel, comingSoonChannel, metric, overviewResponse } from './test-fixtures'
 
 let role: 'ADMIN' | 'CREATOR' | 'REVIEWER' = 'ADMIN'
 
@@ -71,13 +71,18 @@ describe('OverviewPanel', () => {
   })
 
   it('shows a range when channels are complete through different days', async () => {
+    const base = overviewResponse()
     ;(apiGet as Mock).mockResolvedValue(
       overviewResponse({
         window: { from: '2026-09-14', to: '2026-10-12', dataCompleteThroughMin: '2026-10-11', previousFrom: '2026-08-17', previousTo: '2026-09-13' },
+        channels: base.channels.map((c) => ({
+          ...c,
+          dataCompleteThrough: c.channel === 'STORE' ? '2026-10-11' : '2026-10-12',
+        })),
       }),
     )
     render(<OverviewPanel projectId="proj-1" />)
-    expect(await screen.findByText('Data through Oct 11–12')).toBeInTheDocument()
+    expect(await screen.findByText('Data through Oct 11 (App Store) – Oct 12')).toBeInTheDocument()
   })
 
   it('switches to 7d and remembers the choice', async () => {
@@ -103,7 +108,7 @@ describe('OverviewPanel', () => {
       overviewResponse({
         channels: [
           channel({ channel: 'WEB', label: 'Web', status: 'NOT_CONNECTED', metrics: [], lastFetchedAt: null }),
-          channel({ channel: 'STORE', label: 'App Store', status: 'COMING_SOON', metrics: [] }),
+          comingSoonChannel(),
         ],
       }),
     )

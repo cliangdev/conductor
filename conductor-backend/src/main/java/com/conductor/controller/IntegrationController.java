@@ -813,6 +813,7 @@ public class IntegrationController implements IntegrationsApi {
         return new ConnectorFeedDto()
                 .id(feed.getId())
                 .ingestId(feed.getIngestId())
+                .connectionId(feed.getConnectionId())
                 .label(spec != null ? spec.label() : feed.getIngestId())
                 .description(spec != null ? spec.description() : null)
                 .enabled(feed.isEnabled())

@@ -14,11 +14,11 @@ import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiErrorMessage } from '@/lib/api'
-import { usePersistedState } from '@/lib/persisted'
+import { usePersistedStateAfterMount } from '@/lib/persisted'
 import { ChannelCard } from './ChannelCard'
 import { FunnelStrip } from './FunnelStrip'
 import { TargetDialog } from './TargetDialog'
-import { dataThroughLabel } from './format'
+import { dataThroughSummary } from './format'
 import { useTargetEditor } from './useTargetEditor'
 import {
   CHANNEL_ORDER,
@@ -48,8 +48,8 @@ function OverviewSkeleton() {
         ))}
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-64 w-full" />
+        {CHANNEL_ORDER.map((c) => (
+          <Skeleton key={c} className="h-64 w-full" />
         ))}
       </div>
     </div>
@@ -61,18 +61,22 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
   const { can } = usePermissions()
   const canEditTargets = can('marketing.target.manage')
 
-  const [range, setRange] = usePersistedState(OVERVIEW_WINDOW_STORAGE_KEY, isOverviewWindow, DEFAULT_OVERVIEW_WINDOW)
+  const [range, setRange, rangeReady] = usePersistedStateAfterMount(
+    OVERVIEW_WINDOW_STORAGE_KEY,
+    isOverviewWindow,
+    DEFAULT_OVERVIEW_WINDOW,
+  )
   const [data, setData] = useState<MarketingOverviewResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    if (!accessToken) return
+    if (!accessToken || !rangeReady) return
     setError(null)
     setData(null)
     getMarketingOverview(projectId, accessToken, range)
       .then(setData)
       .catch((err) => setError(apiErrorMessage(err, 'Could not load the overview — please try again.')))
-  }, [projectId, accessToken, range])
+  }, [projectId, accessToken, range, rangeReady])
 
   useEffect(() => {
     void load()
@@ -99,7 +103,7 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
     return [...data.channels].sort((a, b) => CHANNEL_ORDER.indexOf(a.channel) - CHANNEL_ORDER.indexOf(b.channel))
   }, [data])
 
-  const dataThrough = data ? dataThroughLabel(data.window.dataCompleteThroughMin, data.window.to) : null
+  const dataThrough = data ? dataThroughSummary(data.channels, data.window.to) : null
 
   const channelLabels = useMemo(() => Object.fromEntries(channels.map((c) => [c.channel, c.label])), [channels])
 
@@ -145,7 +149,11 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
               }
             />
           ) : (
-            <FunnelStrip stages={data.funnel} channelLabels={channelLabels} />
+            <FunnelStrip
+              stages={data.funnel}
+              channelLabels={channelLabels}
+              productMetrics={channels.find((c) => c.channel === 'PRODUCT')?.metrics ?? []}
+            />
           )}
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

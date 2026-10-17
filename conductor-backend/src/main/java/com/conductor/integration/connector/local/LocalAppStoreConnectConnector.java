@@ -53,7 +53,7 @@ public class LocalAppStoreConnectConnector implements FetchConnector, ChannelMet
             ConnectorConfigField.userInput("ratingsCountry", "Ratings country", "Two-letter country (default us)",
                 FieldType.STRING, false),
             ConnectorConfigField.userInput("apiKey", "Private Key (.p8)", "Contents of the .p8 file",
-                FieldType.SECRET, true)
+                FieldType.SECRET_TEXT, true)
         ));
     }
 

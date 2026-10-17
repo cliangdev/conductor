@@ -173,6 +173,67 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void aPreviousWindowOnlyPartlyCoveredByHistoryGivesNoPercentChangeJustWhereHistoryStarts() {
+        String web = connectFresh("posthog");
+        // history starts on the 5th: the previous window (1st-7th) holds only three of its seven days
+        for (int d = 5; d <= 7; d++) {
+            put(web, "posthog", "WEB", "visitors", day(d), 1);
+        }
+        for (int d = 8; d <= 14; d++) {
+            put(web, "posthog", "WEB", "visitors", day(d), 10);
+        }
+
+        MetricView visitors = metric(channel(overview7(), "WEB"), "visitors");
+
+        assertThat(visitors.value()).isEqualTo(70.0);
+        assertThat(visitors.previous()).isNull();
+        assertThat(visitors.change()).isNull();
+        assertThat(visitors.changePct()).isNull();
+        assertThat(visitors.historyStartsOn()).isEqualTo(day(5));
+    }
+
+    @Test
+    void theAverageRatingAcrossTwoAppsIsWeightedByEachAppsRatingCountWhileCountsAdd() {
+        String a = connectFresh("app-store-connect");
+        String b = connectFresh("app-store-connect");
+        // previous snapshot (Oct 3): 3.5 x 10 and 4.5 x 10 -> 4.0
+        put(a, "app-store-connect", "STORE", "rating_avg", day(3), 3.5);
+        put(a, "app-store-connect", "STORE", "rating_count", day(3), 10);
+        put(b, "app-store-connect", "STORE", "rating_avg", day(3), 4.5);
+        put(b, "app-store-connect", "STORE", "rating_count", day(3), 10);
+        // latest (Oct 10): 4.0 x 10 and 5.0 x 30 -> 4.75, never 9.0
+        put(a, "app-store-connect", "STORE", "rating_avg", day(10), 4.0);
+        put(a, "app-store-connect", "STORE", "rating_count", day(10), 10);
+        put(b, "app-store-connect", "STORE", "rating_avg", day(10), 5.0);
+        put(b, "app-store-connect", "STORE", "rating_count", day(10), 30);
+
+        var detail = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        MetricView avg = metric(detail.channel(), "rating_avg");
+        assertThat(avg.value()).isCloseTo(4.75, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(avg.previous()).isCloseTo(4.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(metric(detail.channel(), "rating_count").value()).isEqualTo(40.0);
+        // every day of the series uses the same rule (Oct 9 still reads the Oct 3 snapshots)
+        assertThat(avg.series()).filteredOn(p -> p.day().equals(day(9))).singleElement()
+                .satisfies(p -> assertThat(p.value()).isCloseTo(4.0, org.assertj.core.data.Offset.offset(1e-9)));
+        assertThat(avg.series()).filteredOn(p -> p.day().equals(day(10))).singleElement()
+                .satisfies(p -> assertThat(p.value()).isCloseTo(4.75, org.assertj.core.data.Offset.offset(1e-9)));
+    }
+
+    @Test
+    void theAverageRatingFallsBackToAPlainMeanWhenACountIsMissing() {
+        String a = connectFresh("app-store-connect");
+        String b = connectFresh("app-store-connect");
+        put(a, "app-store-connect", "STORE", "rating_avg", day(10), 4.0);
+        put(b, "app-store-connect", "STORE", "rating_avg", day(10), 5.0);
+        put(b, "app-store-connect", "STORE", "rating_count", day(10), 30);
+
+        var detail = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        assertThat(metric(detail.channel(), "rating_avg").value()).isEqualTo(4.5);
+    }
+
+    @Test
     void levelMetricsTakeTheLatestValuePerPlatformThenSumAcrossPlatforms() {
         String meta = connectFresh("meta");
         String youtube = connectFresh("youtube");
@@ -214,7 +275,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
-    void channelStatusIsLiveStaleNotConnectedOrComingSoon() {
+    void channelStatusIsLiveStaleOrNotConnected() {
         String web = connect("posthog", NOW.minusHours(1));          // within 2 x 360 min
         String search = connect("gsc", NOW.minusHours(13));          // past 2 x 360 min
         put(web, "posthog", "WEB", "visitors", day(10), 1);
@@ -232,7 +293,9 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
                 .satisfies(c -> assertThat(c.name()).isEqualTo("Apple Search Ads"));
         assertThat(channel(overview, "SOCIAL").connectHint().connectors())
                 .extracting(c -> c.name()).containsExactly("Meta", "YouTube");
-        assertThat(channel(overview, "STORE").status()).isEqualTo("COMING_SOON");
+        assertThat(channel(overview, "STORE").status()).isEqualTo("NOT_CONNECTED");
+        assertThat(channel(overview, "STORE").connectHint().connectors()).singleElement()
+                .satisfies(c -> assertThat(c.name()).isEqualTo("App Store Connect"));
         assertThat(channel(overview, "WEB").lastFetchedAt()).isEqualTo(NOW.minusHours(1));
         assertThat(channel(overview, "PRODUCT").status()).isEqualTo("NOT_CONNECTED");
     }
@@ -261,7 +324,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
         assertThat(web7.dataCompleteThrough()).isEqualTo(day(12));
         assertThat(visitors.value()).isEqualTo(5.0);          // Oct 6-12; the provisional 7 and 9 are excluded
-        assertThat(visitors.previous()).isEqualTo(4.0);       // Sep 29 - Oct 5
+        assertThat(visitors.previous()).isNull();             // Sep 29 - Oct 5 is only partly covered: history starts Oct 3
+        assertThat(visitors.historyStartsOn()).isEqualTo(day(3));
         assertThat(visitors.provisionalDays()).isEqualTo(2);
         assertThat(visitors.series()).hasSize(9);             // Oct 6-12 plus Oct 13 and 14
         assertThat(visitors.series().get(0).day()).isEqualTo(day(6));
@@ -285,12 +349,50 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(channel(overview, "SEARCH").dataCompleteThrough()).isEqualTo(day(11));
         // a lagging source's seven complete days (Oct 5-11), not four settled ones against a full week
         assertThat(metric(channel(overview, "SEARCH"), "clicks").value()).isEqualTo(21.0);
-        assertThat(metric(channel(overview, "SEARCH"), "clicks").previous()).isEqualTo(12.0); // Sep 28 - Oct 4; only Oct 1-4 have rows
+        // Sep 28 - Oct 4 has rows only from Oct 1: partly covered, so no previous and no percent change
+        assertThat(metric(channel(overview, "SEARCH"), "clicks").previous()).isNull();
+        assertThat(metric(channel(overview, "SEARCH"), "clicks").historyStartsOn()).isEqualTo(day(1));
         assertThat(channel(overview, "ADS").dataCompleteThrough()).isEqualTo(day(13)); // no data: two days back
-        assertThat(overview.window().from()).isEqualTo(day(5));
+        // the overall range is the funnel's window (web is the only channel with funnel stages here)
+        assertThat(overview.window().from()).isEqualTo(day(8));
         assertThat(overview.window().to()).isEqualTo(day(14));
         assertThat(overview.window().dataCompleteThroughMin()).isEqualTo(day(11));
         assertThat(overview.funnel().get(0).dataCompleteThrough()).isEqualTo(day(14));
+    }
+
+    @Test
+    void everyFunnelStageUsesOneWindowEndingAtTheEarliestContributingChannelAndTheOverallRangeMatchesIt() {
+        String web = connectFresh("posthog");
+        String store = connectFresh("app-store-connect");
+        put(web, "posthog", "WEB", "visitors", LocalDate.of(2026, 9, 30), 1);
+        for (int d = 1; d <= 14; d++) {
+            put(web, "posthog", "WEB", "visitors", day(d), d);          // complete through Oct 14
+        }
+        put(store, "app-store-connect", "STORE", "downloads", LocalDate.of(2026, 9, 30), 1);
+        for (int d = 1; d <= 13; d++) {
+            put(store, "app-store-connect", "STORE", "impressions", day(d), 100); // complete through Oct 13
+            put(store, "app-store-connect", "STORE", "page_views", day(d), 10);
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 1);
+        }
+
+        Overview overview = overview7();
+
+        // one window: Oct 7-13 against Sep 30 - Oct 6, no overlap, matching the funnel
+        assertThat(overview.window().from()).isEqualTo(day(7));
+        assertThat(overview.window().to()).isEqualTo(day(13));
+        assertThat(overview.window().previousFrom()).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(overview.window().previousTo()).isEqualTo(day(6));
+        var visitors = overview.funnel().stream().filter(s -> s.key().equals("web_visitors")).findFirst().orElseThrow();
+        var downloads = overview.funnel().stream().filter(s -> s.key().equals("store_downloads")).findFirst().orElseThrow();
+        assertThat(visitors.value()).isEqualTo(70.0);           // 7+8+...+13, not Oct 8-14
+        assertThat(visitors.previous()).isEqualTo(22.0);        // 1 + (1+2+...+6)
+        assertThat(visitors.dataCompleteThrough()).isEqualTo(day(13));
+        assertThat(downloads.value()).isEqualTo(7.0);
+        assertThat(downloads.dataCompleteThrough()).isEqualTo(day(13));
+        // the WEB card keeps its own window (Oct 8-14)
+        assertThat(metric(channel(overview, "WEB"), "visitors").value()).isEqualTo(77.0);
+        assertThat(channel(overview, "WEB").dataCompleteThrough()).isEqualTo(day(14));
+        assertThat(channel(overview, "STORE").dataCompleteThrough()).isEqualTo(day(13));
     }
 
     @Test
@@ -347,7 +449,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(overview.funnel().get(0).available()).isTrue();
         assertThat(overview.funnel().get(0).value()).isEqualTo(40.0);
         assertThat(overview.funnel().get(1).available()).isFalse();
-        assertThat(overview.funnel().get(2).unavailableReason()).isEqualTo("Connect App Store Connect (coming soon)");
+        assertThat(overview.funnel().get(2).unavailableReason()).isEqualTo("Connect App Store Connect");
         assertThat(overview.funnel().get(7).unavailableReason()).isEqualTo("Connect product metrics");
         assertThat(overview.funnel().get(7).label()).isEqualTo("In-app stages (first open \u2192 paid)");
     }
@@ -393,6 +495,63 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         // the detail view carries every visible metric, not just the headline
         assertThat(detail.channel().metrics()).extracting(MetricView::metric)
                 .contains("tap_through_rate", "impressions");
+    }
+
+    @Test
+    void conversionRateIsDownloadsOverUniqueImpressionsAndUniqueImpressionsStayHidden() {
+        String asc = connectFresh("app-store-connect");
+        put(asc, "app-store-connect", "STORE", "downloads", day(9), 10);
+        put(asc, "app-store-connect", "STORE", "downloads", day(10), 30);
+        put(asc, "app-store-connect", "STORE", "impressions", day(9), 5000);
+        put(asc, "app-store-connect", "STORE", "impressions", day(10), 5000);
+        put(asc, "app-store-connect", "STORE", "impressions_unique", day(9), 400);
+        put(asc, "app-store-connect", "STORE", "impressions_unique", day(10), 600);
+        // per-source rows must not be added on top of the totals
+        put(asc, "app-store-connect", "STORE", "downloads", "source:APP_STORE_SEARCH", day(10), 30, false);
+
+        ChannelView store = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW)
+                .channel();
+
+        assertThat(store.status()).isEqualTo("LIVE");
+        assertThat(channel(overview7(), "STORE").metrics()).extracting(MetricView::metric)
+                .containsExactly("impressions", "page_views", "downloads");
+        assertThat(metric(store, "downloads").value()).isEqualTo(40.0);
+        assertThat(metric(store, "conversion_rate").value()).isCloseTo(0.04, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(metric(store, "conversion_rate").unit()).isEqualTo(MetricCatalog.Unit.PERCENT);
+        assertThat(store.metrics()).extracting(MetricView::metric)
+                .doesNotContain("impressions_unique", "redownloads");
+    }
+
+    @Test
+    void theSourcesTableLabelsEachSourceTypeAndCarriesADownloadsPerPageViewColumn() {
+        String asc = connectFresh("app-store-connect");
+        put(asc, "app-store-connect", "STORE", "impressions", "source:APP_STORE_SEARCH", day(9), 900, false);
+        put(asc, "app-store-connect", "STORE", "page_views", "source:APP_STORE_SEARCH", day(9), 100, false);
+        put(asc, "app-store-connect", "STORE", "downloads", "source:APP_STORE_SEARCH", day(9), 25, false);
+        put(asc, "app-store-connect", "STORE", "impressions", "source:WEB_REFERRER", day(9), 100, false);
+        put(asc, "app-store-connect", "STORE", "downloads", "source:WEB_REFERRER", day(9), 1, false);
+        put(asc, "app-store-connect", "STORE", "impressions", day(9), 1000);
+        put(asc, "app-store-connect", "STORE", "rating_count", day(10), 120);
+        put(asc, "app-store-connect", "STORE", "rating_avg", day(10), 4.6);
+
+        MarketingOverviewQueryService.ChannelDetail detail = service.channel(project.getId(),
+                MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        MarketingOverviewQueryService.DimensionTable sources = detail.dimensions().get(0);
+        assertThat(sources.key()).isEqualTo("sources");
+        assertThat(sources.columns()).extracting(MarketingOverviewQueryService.ColumnView::key)
+                .containsExactly("impressions", "page_views", "downloads", "download_rate");
+        assertThat(sources.rows()).extracting(MarketingOverviewQueryService.DimensionRowView::label)
+                .containsExactly("App Store search", "Web referrer");
+        assertThat(sources.rows().get(0).key()).isEqualTo("APP_STORE_SEARCH");
+        assertThat(sources.rows().get(0).values()).containsExactly(900.0, 100.0, 25.0, 0.25);
+        assertThat(sources.rows().get(1).values().get(3)).isNull();
+        assertThat(detail.channel().metrics()).extracting(MetricView::metric)
+                .contains("rating_count", "rating_avg");
+        assertThat(metric(detail.channel(), "rating_avg").value()).isEqualTo(4.6);
+        assertThat(metric(detail.channel(), "rating_avg").unit()).isEqualTo(MetricCatalog.Unit.RATING);
+        // the source rows do not inflate the total
+        assertThat(metric(detail.channel(), "impressions").value()).isEqualTo(1000.0);
     }
 
     @Test

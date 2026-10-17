@@ -117,7 +117,7 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
                 "Two-letter App Store country the rating is read from (default us)", FieldType.STRING, false),
             // Keyed "apiKey" so the framework stores it as the ENCRYPTED secret (ctx.accessToken()).
             ConnectorConfigField.userInput("apiKey", "Private Key (.p8)",
-                "Contents of the .p8 file downloaded when the API key was created", FieldType.SECRET, true)
+                "Contents of the .p8 file downloaded when the API key was created", FieldType.SECRET_TEXT, true)
         ));
     }
 

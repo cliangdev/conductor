@@ -9,8 +9,10 @@ import { buttonVariants } from '@/components/ui/button'
 import { timeAgo } from '@/lib/format'
 import { ChangeLine } from './ChangeLine'
 import { ChannelStatusPill } from './ChannelStatusPill'
+import { MetricFlags } from './MetricFlags'
 import { Sparkline } from './Sparkline'
-import { formatMetricValue, shortDate, targetLine } from './format'
+import { TargetNote } from './TargetNote'
+import { formatMetricValue, mismatchCardLine, shortDate } from './format'
 import type { ChannelKey, OverviewChannel, OverviewMetric } from './types'
 
 const HEADLINE_COUNT = 4
@@ -18,13 +20,19 @@ const HEADLINE_COUNT = 4
 function MetricRow({
   metric,
   canEditTargets,
+  showFlags,
+  targetsEditable,
+  ownerLabel,
   onSetTarget,
 }: {
   metric: OverviewMetric
   canEditTargets: boolean
+  /** In-app metrics carry the feed's provisional and small-sample flags. */
+  showFlags: boolean
+  targetsEditable: boolean
+  ownerLabel?: string
   onSetTarget: () => void
 }) {
-  const line = targetLine(metric)
   return (
     <li className="space-y-1 py-3 first:pt-0 last:pb-0">
       <div className="flex items-end justify-between gap-3">
@@ -42,22 +50,15 @@ function MetricRow({
         </div>
       </div>
       <ChangeLine metric={metric} />
-      <p className="text-xs text-muted-foreground">
-        {line ?? 'No target set'}
-        {canEditTargets && (
-          <>
-            {' · '}
-            <button
-              type="button"
-              onClick={onSetTarget}
-              className="relative z-10 rounded-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={`${metric.target ? 'Edit' : 'Set'} target for ${metric.label}`}
-            >
-              {metric.target ? 'Edit target' : 'Set target'}
-            </button>
-          </>
-        )}
-      </p>
+      {showFlags && <MetricFlags metric={metric} />}
+      <TargetNote
+        metric={metric}
+        canEdit={canEditTargets}
+        onEdit={onSetTarget}
+        buttonClassName="relative z-10"
+        editable={targetsEditable}
+        ownerLabel={ownerLabel}
+      />
     </li>
   )
 }
@@ -74,7 +75,7 @@ export function ChannelCard({
   onSetTarget: (channel: ChannelKey, metric: OverviewMetric) => void
 }) {
   const detailHref = `/app/projects/${projectId}/marketing/overview/${channel.channel.toLowerCase()}`
-  const live = channel.status === 'LIVE' || channel.status === 'STALE'
+  const live = channel.status === 'LIVE' || channel.status === 'STALE' || channel.status === 'MISMATCH'
   const metrics = channel.metrics.slice(0, HEADLINE_COUNT)
   const connectors = channel.connectHint?.connectors ?? []
 
@@ -97,6 +98,18 @@ export function ChannelCard({
           {channel.lastFetchedAt && (
             <p className="mb-3 text-xs text-muted-foreground">Last updated {timeAgo(channel.lastFetchedAt)}</p>
           )}
+          {channel.status === 'MISMATCH' && channel.mismatch && (
+            <p className="mb-3 text-xs text-status-failed">
+              {mismatchCardLine(channel.mismatch)}
+              {' · '}
+              <Link
+                href={`${detailHref}#mismatch`}
+                className="relative z-10 rounded-sm font-medium underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Details
+              </Link>
+            </p>
+          )}
           {metrics.length === 0 ? (
             <p className="text-sm text-muted-foreground">No data in this window yet.</p>
           ) : (
@@ -106,6 +119,9 @@ export function ChannelCard({
                   key={m.metric}
                   metric={m}
                   canEditTargets={canEditTargets}
+                  showFlags={channel.channel === 'PRODUCT'}
+                  targetsEditable={channel.targetsEditable !== false}
+                  ownerLabel={channel.connections[0]?.name}
                   onSetTarget={() => onSetTarget(channel.channel, m)}
                 />
               ))}
@@ -116,7 +132,11 @@ export function ChannelCard({
 
       {channel.status === 'NOT_CONNECTED' && (
         <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">Connect a data source to see this channel here.</p>
+          <p className="text-sm text-muted-foreground">
+            {channel.channel === 'PRODUCT'
+              ? 'Connect your product’s metrics to see trials, paid and cost per trial here.'
+              : 'Connect a data source to see this channel here.'}
+          </p>
           {connectors.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {connectors.map((c) => (

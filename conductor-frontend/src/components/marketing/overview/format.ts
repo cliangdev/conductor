@@ -1,6 +1,6 @@
 // Display helpers for the marketing overview: units, change direction, targets, windows.
 
-import type { MarketingTarget, MetricUnit, OverviewMetric, TargetDirection } from './types'
+import type { MarketingTarget, MetricUnit, OverviewChannel, OverviewMetric, OverviewMismatch, TargetDirection } from './types'
 
 const PLACEHOLDER = '—'
 
@@ -11,6 +11,7 @@ export function formatMetricValue(value: number | null | undefined, unit: Metric
     case 'PERCENT':
       return `${(value * 100).toFixed(1)}%`
     case 'POSITION':
+    case 'RATING':
       return value.toFixed(1)
     case 'CURRENCY':
       return new Intl.NumberFormat('en-US', {
@@ -105,6 +106,21 @@ export function dataThroughLabel(min: string | null | undefined, to: string | nu
   return startMonth === end.split(' ')[0] ? `${start}–${endDay}` : `${start} – ${end}`
 }
 
+/**
+ * "Oct 15" when every channel with data is complete through the same day; otherwise the earliest channel is
+ * named so a range explains itself: "Oct 11 (App Store) – Oct 15".
+ */
+export function dataThroughSummary(channels: OverviewChannel[], fallbackTo: string | null | undefined): string | null {
+  const reporting = channels
+    .filter((c) => (c.status === 'LIVE' || c.status === 'STALE' || c.status === 'MISMATCH') && c.dataCompleteThrough)
+    .sort((a, b) => (a.dataCompleteThrough as string).localeCompare(b.dataCompleteThrough as string))
+  if (reporting.length === 0) return dataThroughLabel(null, fallbackTo)
+  const first = reporting[0]
+  const last = reporting[reporting.length - 1]
+  if (first.dataCompleteThrough === last.dataCompleteThrough) return shortDate(last.dataCompleteThrough)
+  return `${shortDate(first.dataCompleteThrough)} (${first.label}) – ${shortDate(last.dataCompleteThrough)}`
+}
+
 // ── Chart axes ────────────────────────────────────────────────────────────────
 
 function formatWithDecimals(value: number, unit: MetricUnit, decimals: number): string {
@@ -112,6 +128,7 @@ function formatWithDecimals(value: number, unit: MetricUnit, decimals: number): 
     case 'PERCENT':
       return `${(value * 100).toFixed(decimals)}%`
     case 'POSITION':
+    case 'RATING':
       return value.toFixed(decimals)
     case 'CURRENCY':
       return new Intl.NumberFormat('en-US', {
@@ -140,15 +157,23 @@ export interface ChartAxis {
 /** Y axis for a metric's daily series (and its target): counts start at zero; other units pad the
  *  range to at least +-10% of the mean so a tiny wobble does not look dramatic; tick labels get enough
  *  precision that neighbouring ticks never read the same. */
-export function chartAxis(values: (number | null | undefined)[], unit: MetricUnit, target?: number | null): ChartAxis {
+export function chartAxis(
+  values: (number | null | undefined)[],
+  unit: MetricUnit,
+  target?: number | null,
+  /** A summed flow (spend, revenue) reads honestly from zero; ratios and levels (rating, position) do not. */
+  includeZero = false,
+): ChartAxis {
   const nums = values.filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v))
   if (target !== null && target !== undefined) nums.push(target)
+  if (includeZero && nums.length > 0) nums.push(0)
   if (nums.length === 0) return { domain: [0, 1], ticks: [0, 1], format: (v) => formatMetricValue(v, unit) }
   const min = Math.min(...nums)
   const max = Math.max(...nums)
 
   if (unit === 'COUNT') {
-    const step = niceStep(Math.max(max, 1) / 4)
+    // Whole numbers only: a 0-1 series must read 0, 1, not 0, 0.5, 1 rounded to "0, 1, 1".
+    const step = Math.max(1, niceStep(Math.max(max, 1) / 4))
     const top = Math.ceil(Math.max(max, 1) / step) * step
     const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step)
     return { domain: [0, top], ticks, format: (v) => formatMetricValue(v, 'COUNT') }
@@ -164,10 +189,16 @@ export function chartAxis(values: (number | null | undefined)[], unit: MetricUni
   const step = niceStep((rawHi - rawLo) / 4)
   let lo = Math.floor(rawLo / step) * step
   if (min >= 0 && lo < 0) lo = 0
-  const hi = Math.ceil(rawHi / step) * step
+  let hi = Math.ceil(rawHi / step) * step
+  // A star rating tops out at 5: never pad the axis beyond it.
+  if (unit === 'RATING' && hi > 5) hi = Math.max(5, lo + step)
   const count = Math.round((hi - lo) / step) + 1
-  const ticks = Array.from({ length: count }, (_, i) => Number((lo + step * i).toPrecision(12)))
-  let decimals = unit === 'POSITION' ? 1 : 0
+  let ticks = Array.from({ length: count }, (_, i) => Number((lo + step * i).toPrecision(12)))
+  if (unit === 'RATING') {
+    ticks = ticks.filter((t) => t <= hi)
+    if (ticks[ticks.length - 1] < hi) ticks.push(hi)
+  }
+  let decimals = unit === 'POSITION' || unit === 'RATING' ? 1 : 0
   for (; decimals < 6; decimals++) {
     const labels = ticks.map((t) => formatWithDecimals(t, unit, decimals))
     if (new Set(labels).size === labels.length) break
@@ -179,4 +210,28 @@ export function chartAxis(values: (number | null | undefined)[], unit: MetricUni
 export function conversionRate(prev: number | null | undefined, current: number | null | undefined): number | null {
   if (prev === null || prev === undefined || current === null || current === undefined || prev <= 0) return null
   return current / prev
+}
+
+/** "Set in Product metrics": where a read-only (feed-owned) target is changed. */
+export function readOnlyTargetSource(target: MarketingTarget): string {
+  const source = target.source?.trim()
+  if (!source) return 'Set in the connected source'
+  return /^set in /i.test(source) ? source : `Set in ${source}`
+}
+
+/** What the channel's own connection and the product feed each say, in words a non-engineer can compare. */
+export function mismatchSummary(m: OverviewMismatch, channelLabel: string): string {
+  const currency = m.metric === 'spend'
+  const unit: MetricUnit = currency ? 'CURRENCY' : 'COUNT'
+  const noun = m.label.toLowerCase()
+  const amount = (v: number) => (currency ? `${formatMetricValue(v, unit)} in ${noun}` : `${formatMetricValue(v, unit)} ${noun}`)
+  const own = m.channelSource || channelLabel
+  const reference = `Product metrics${m.referenceSource ? ` (${m.referenceSource})` : ''}`
+  const range = m.from === m.to ? shortDate(m.from) : `${shortDate(m.from)} – ${shortDate(m.to)}`
+  return `${own} reports ${amount(m.channelValue)}; ${reference} reports ${formatMetricValue(m.referenceValue, unit)} — ${(m.gapPct * 100).toFixed(1)}% apart for ${range}, the days both have finished reporting.`
+}
+
+/** The short card line: "Downloads differ from Rexipe backend by 29.9%". */
+export function mismatchCardLine(m: OverviewMismatch): string {
+  return `${m.label} differ from ${m.referenceSource || 'Product metrics'} by ${(m.gapPct * 100).toFixed(1)}%`
 }

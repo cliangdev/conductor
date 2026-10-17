@@ -12,7 +12,7 @@ public record ConnectorConfigField(String key, String label, String hint,
      * JSON fields carry credential material too (e.g. a GCP service-account key) and land in the same
      * encrypted token slot as SECRET fields, so they're treated as secret as well.
      */
-    public boolean secret() { return type == FieldType.SECRET || type == FieldType.JSON; }
+    public boolean secret() { return type == FieldType.SECRET || type == FieldType.SECRET_TEXT || type == FieldType.JSON; }
 
     public static ConnectorConfigField userInput(String key, String label, String hint,
                                                  FieldType type, boolean required) {

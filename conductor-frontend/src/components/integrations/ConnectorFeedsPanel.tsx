@@ -41,7 +41,15 @@ const FEED_STATUS: Record<ConnectorFeedStatus, { status: string; label: string }
  *  silently shows the wrong selection. */
 function cadenceOptions(currentMinutes: number) {
   if (CADENCE_PRESETS.some((p) => p.minutes === currentMinutes)) return CADENCE_PRESETS
-  return [...CADENCE_PRESETS, { minutes: currentMinutes, label: `Every ${currentMinutes}m` }]
+  return [...CADENCE_PRESETS, { minutes: currentMinutes, label: cadenceLabel(currentMinutes) }]
+}
+
+/** "Every 6 hours", "Every 15 minutes", "Every 2 days": an interval outside the presets, in plain words. */
+export function cadenceLabel(minutes: number): string {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`
+  if (minutes % 1440 === 0) return `Every ${minutes === 1440 ? 'day' : plural(minutes / 1440, 'day')}`
+  if (minutes % 60 === 0) return `Every ${minutes === 60 ? 'hour' : plural(minutes / 60, 'hour')}`
+  return `Every ${plural(minutes, 'minute')}`
 }
 
 /**
@@ -53,9 +61,12 @@ function cadenceOptions(currentMinutes: number) {
 export default function ConnectorFeedsPanel({
   projectId,
   connectorId,
+  connections = [],
 }: {
   projectId: string
   connectorId: string
+  /** The connector's connections; their labels tell same-named feeds apart when there is more than one. */
+  connections?: { id: string; label?: string | null }[]
 }) {
   const { accessToken } = useAuth()
   const { showToast } = useToast()
@@ -63,6 +74,9 @@ export default function ConnectorFeedsPanel({
 
   const [feeds, setFeeds] = useState<ConnectorFeedDto[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+
+  // The feeds belong to the connections: when one is added or removed the list is stale, so reload it.
+  const connectionKey = connections.map((c) => c.id).join(',')
 
   const load = useCallback(async () => {
     if (!accessToken) return
@@ -74,13 +88,21 @@ export default function ConnectorFeedsPanel({
       // unrendered rather than surfacing an error for what's usually a minor/optional setting.
       setFeeds([])
     }
-  }, [projectId, connectorId, accessToken])
+  }, [projectId, connectorId, accessToken, connectionKey])
 
   useEffect(() => {
     load()
   }, [load])
 
   if (!feeds || feeds.length === 0) return null
+
+  // One identical feed per connection says nothing on its own: name the connection it belongs to.
+  const connectionName = (feed: ConnectorFeedDto): string | null => {
+    if (connections.length < 2 || !feed.connectionId) return null
+    const index = connections.findIndex((c) => c.id === feed.connectionId)
+    if (index < 0) return null
+    return connections[index].label?.trim() || `Connection ${index + 1}`
+  }
 
   async function handleToggle(feed: ConnectorFeedDto, enabled: boolean) {
     if (!accessToken) return
@@ -134,11 +156,17 @@ export default function ConnectorFeedsPanel({
       <Card className="divide-y divide-border">
         {feeds.map((feed) => {
           const health = FEED_STATUS[feed.status]
+          const connection = connectionName(feed)
           return (
             <div key={feed.id} className="p-4 flex items-center justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-foreground truncate">{feed.label}</span>
+                  {connection && (
+                    <span className="text-xs text-muted-foreground truncate" data-testid="feed-connection">
+                      {connection}
+                    </span>
+                  )}
                   <StatusBadge status={health.status} label={health.label} />
                 </div>
                 {feed.description && (

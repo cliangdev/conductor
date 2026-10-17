@@ -6599,6 +6599,10 @@ components:
           type: string
         ingestId:
           type: string
+        connectionId:
+          type: string
+          nullable: true
+          description: The connection this feed pulls for, so a connector with several connections can tell its feeds apart.
         label:
           type: string
         description:

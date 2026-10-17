@@ -6,6 +6,7 @@ describe('formatMetricValue', () => {
   it('formats each unit', () => {
     expect(formatMetricValue(0.031, 'PERCENT')).toBe('3.1%')
     expect(formatMetricValue(8.24, 'POSITION')).toBe('8.2')
+    expect(formatMetricValue(4.66, 'RATING')).toBe('4.7')
     expect(formatMetricValue(12.5, 'CURRENCY')).toBe('$12.50')
     expect(formatMetricValue(1234, 'COUNT')).toBe('1,234')
     expect(formatMetricValue(null, 'COUNT')).toBe('—')
@@ -89,6 +90,32 @@ describe('dataThroughLabel', () => {
 })
 
 describe('chartAxis', () => {
+  it('starts a summed currency axis at zero when asked', () => {
+    const padded = chartAxis([80, 100, 120, 140], 'CURRENCY')
+    expect(padded.domain[0]).toBeGreaterThan(0)
+    const axis = chartAxis([80, 100, 120, 140], 'CURRENCY', null, true)
+    expect(axis.domain[0]).toBe(0)
+    expect(axis.ticks[0]).toBe(0)
+    expect(axis.domain[1]).toBeGreaterThanOrEqual(140)
+  })
+
+  it('never pads a rating axis beyond 5 stars', () => {
+    const axis = chartAxis([4.6, 4.7, 4.8, 4.75], 'RATING')
+    expect(axis.domain[1]).toBe(5)
+    expect(Math.max(...axis.ticks)).toBe(5)
+    const wide = chartAxis([1, 5], 'RATING')
+    expect(wide.domain[1]).toBe(5)
+    expect(wide.ticks.every((t) => t <= 5)).toBe(true)
+  })
+
+  it('uses whole-number ticks for a small count series', () => {
+    const axis = chartAxis([0, 1, 0, 1], 'COUNT')
+    expect(axis.ticks).toEqual([0, 1])
+    const labels = axis.ticks.map(axis.format)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(chartAxis([0, 2], 'COUNT').ticks.every(Number.isInteger)).toBe(true)
+  })
+
   it('gives every tick of a flat percent series a distinct label', () => {
     const axis = chartAxis([0.07, 0.0701, 0.07, 0.0699], 'PERCENT')
     const labels = axis.ticks.map(axis.format)

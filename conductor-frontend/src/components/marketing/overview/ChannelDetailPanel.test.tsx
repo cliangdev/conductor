@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import { clearAllSidebarCaches } from '@/lib/workflows'
-import { detailResponse, metric } from './test-fixtures'
+import { channel, detailResponse, metric } from './test-fixtures'
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1' }),
@@ -60,6 +60,46 @@ describe('ChannelDetailPanel', () => {
     expect(firstColumn()).toEqual(['alpha query', 'gamma query', 'beta query'])
     fireEvent.click(table.getByRole('button', { name: 'Name' }))
     expect(firstColumn()).toEqual(['gamma query', 'beta query', 'alpha query'].sort())
+  })
+
+  it('shows the App Store charts, the rating with its date and the source table', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) =>
+      path.includes('/marketing/channels/')
+        ? Promise.resolve(
+            detailResponse({
+              channel: channel({
+                channel: 'STORE',
+                label: 'App Store',
+                connections: [{ id: 'c2', connectorId: 'app-store-connect', name: 'Rexipe', status: 'LIVE' }],
+                metrics: [
+                  metric({ metric: 'downloads', label: 'Downloads', value: 310 }),
+                  metric({ metric: 'conversion_rate', label: 'Conversion rate', unit: 'PERCENT', value: 0.042 }),
+                  metric({ metric: 'rating_avg', label: 'Average rating', unit: 'RATING', value: 4.66, asOf: '2026-09-14' }),
+                ],
+              }),
+              dimensions: [
+                {
+                  key: 'sources',
+                  label: 'By traffic source',
+                  columns: [
+                    { key: 'impressions', label: 'Impressions', unit: 'COUNT' },
+                    { key: 'download_rate', label: 'Downloads per page view', unit: 'PERCENT' },
+                  ],
+                  rows: [{ key: 'APP_STORE_SEARCH', label: 'App Store search', values: [900, 0.25] }],
+                },
+              ],
+            }),
+          )
+        : Promise.resolve([]),
+    )
+    render(<ChannelDetailPanel projectId="proj-1" channel="store" />)
+    expect(await screen.findByRole('img', { name: /Conversion rate by day/ })).toBeInTheDocument()
+    const rating = screen.getByRole('region', { name: 'Average rating' })
+    expect(within(rating).getByText('4.7')).toBeInTheDocument()
+    expect(within(rating).getByText(/as of Sep 14/)).toBeInTheDocument()
+    const sources = within(screen.getByRole('region', { name: 'By traffic source' }))
+    expect(sources.getByText('App Store search')).toBeInTheDocument()
+    expect(sources.getByText('25.0%')).toBeInTheDocument()
   })
 
   it('shows "No breakdown yet" for an empty dimension', async () => {

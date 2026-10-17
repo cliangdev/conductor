@@ -41,28 +41,58 @@ test.describe('marketing overview', () => {
       headers,
     })
     expect(search.ok()).toBeTruthy()
-
-    // Wait for the feed scheduler to pull mock data: Search has metrics with values.
-    await expect
-      .poll(
-        async () => {
-          const res = await request.get(`${BACKEND}/api/v2/projects/${projectId}/marketing/overview?window=28d`, {
-            headers,
-          })
-          if (!res.ok()) return false
-          const body = (await res.json()) as {
-            channels: { channel: string; metrics: { value: number | null }[] }[]
-          }
-          const channel = body.channels.find((c) => c.channel === 'SEARCH')
-          return !!channel && channel.metrics.some((m) => m.value !== null && m.value !== undefined)
+    const store = await request.post(
+      `${BACKEND}/api/v1/projects/${projectId}/integrations/app-store-connect/connections`,
+      {
+        data: {
+          label: 'Store',
+          apiKey: '-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----',
+          configJson: { issuerId: 'issuer', keyId: 'key', appId: '123456789' },
         },
-        { timeout: SEED_TIMEOUT_MS, intervals: [5_000] },
-      )
-      .toBe(true)
+        headers,
+      },
+    )
+    expect(store.ok()).toBeTruthy()
+    // The local profile's product-metrics stub serves a sample in-app funnel whatever URL and key it is given.
+    const product = await request.post(
+      `${BACKEND}/api/v1/projects/${projectId}/integrations/product-metrics/connections`,
+      {
+        data: { label: 'Product', apiKey: 'x', configJson: { baseUrl: 'https://metrics.example.com/conductor' } },
+        headers,
+      },
+    )
+    expect(product.ok()).toBeTruthy()
+
+    // Wait for the feed scheduler to pull mock data: Search, the App Store and the In-app channel have metrics with values.
+    for (const channelName of ['SEARCH', 'STORE', 'PRODUCT']) {
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get(`${BACKEND}/api/v2/projects/${projectId}/marketing/overview?window=28d`, {
+              headers,
+            })
+            if (!res.ok()) return false
+            const body = (await res.json()) as {
+              channels: { channel: string; metrics: { value: number | null }[] }[]
+            }
+            const channel = body.channels.find((c) => c.channel === channelName)
+            return !!channel && channel.metrics.some((m) => m.value !== null && m.value !== undefined)
+          },
+          { timeout: SEED_TIMEOUT_MS, intervals: [5_000] },
+        )
+        .toBe(true)
+    }
     await request.dispose()
   })
 
   test('funnel, channel cards, drill-down, targets, window and mobile layout', async ({ page }) => {
+    // Hydration and React warnings (a saved window rendered differently on server and client, a script tag
+    // rendered by a component) surface as console errors; there must be none.
+    const problems: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' && /hydrat|did not match|script tag/i.test(msg.text())) problems.push(msg.text())
+    })
+    page.on('pageerror', (err) => problems.push(err.message))
     await page.goto('/app/projects')
     await page.waitForURL(/\/app\/projects/, { timeout: 15000 })
     await setActiveProjectInStorage(page, projectId)
@@ -72,12 +102,50 @@ test.describe('marketing overview', () => {
     await page.goto(`/app/projects/${projectId}/marketing/overview`)
     await expect(page.locator('h1')).toContainText('Marketing overview', { timeout: 15000 })
 
-    // 2. The funnel and the five channel cards.
-    await expect(page.getByRole('region', { name: 'Funnel' })).toBeVisible({ timeout: 15000 })
+    // 2. The funnel and the six channel cards.
+    const funnel = page.getByRole('region', { name: 'Funnel' })
+    await expect(funnel).toBeVisible({ timeout: 15000 })
     const search = page.getByRole('region', { name: 'Search', exact: true })
-    for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads']) {
+    for (const name of ['Web', 'Search', 'Social', 'App Store', 'Ads', 'In-app']) {
       await expect(page.getByRole('region', { name, exact: true })).toBeVisible()
     }
+
+    // 2a. The funnel carries the in-app stages after store downloads, and the In-app card shows values.
+    for (const stage of ['First opens', 'Onboarding started', 'Paywall shown', 'Trials started', 'Paid']) {
+      await expect(funnel.getByRole('listitem').filter({ hasText: stage }).first()).toBeVisible()
+    }
+    await expect(funnel).not.toContainText('Connect product metrics')
+    const inApp = page.getByRole('region', { name: 'In-app', exact: true })
+    await expect(inApp).not.toContainText(/not connected|coming soon/i)
+    await expect(inApp).toContainText('Trials started')
+    await expect(inApp).toContainText('Cost per trial')
+    await expect(inApp.getByText(/^\$\d/).first()).toBeVisible()
+    // the stub's trial target comes from the feed: shown read-only, with no edit button
+    await expect(inApp).toContainText(/Set in/)
+    await expect(inApp.getByRole('button', { name: /target for Trials started/ })).toHaveCount(0)
+    await inApp.getByRole('link', { name: 'In-app', exact: true }).click()
+    await page.waitForURL(/\/marketing\/overview\/product/)
+    const stages = page.getByRole('region', { name: 'Stages' })
+    await expect(stages).toBeVisible({ timeout: 15000 })
+    await expect(stages.getByRole('listitem')).toHaveCount(5)
+    await expect(page.getByRole('region', { name: 'By source' })).toContainText('apple_search_ads')
+    await page.getByRole('link', { name: /Marketing overview/ }).click()
+    await page.waitForURL(/\/marketing\/overview$/)
+
+    // 2b. The App Store is a real channel now: it shows values, not "coming soon", and its detail page
+    // breaks the numbers down by traffic source.
+    const store = page.getByRole('region', { name: 'App Store', exact: true })
+    await expect(store).not.toContainText(/coming soon/i)
+    await expect(store).toContainText('Downloads')
+    await store.getByRole('link', { name: 'App Store', exact: true }).click()
+    await page.waitForURL(/\/marketing\/overview\/store/)
+    await expect(page.getByRole('region', { name: 'By traffic source' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('region', { name: 'By traffic source' })).toContainText('App Store search')
+    // The stub's reference downloads are not Conductor's own, so the store reads MISMATCH and says why.
+    await expect(page.getByText('Mismatch', { exact: true })).toBeVisible()
+    await expect(page.getByText(/reports [\d,]+ downloads; Product metrics \(.+\) reports [\d,]+ — [\d.]+% apart for/)).toBeVisible()
+    await page.getByRole('link', { name: /Marketing overview/ }).click()
+    await page.waitForURL(/\/marketing\/overview$/)
 
     // 3. Open the Search detail page from its card. (The card also has a "Connect …" link in some
     // states, so match the heading link exactly.)
@@ -113,5 +181,10 @@ test.describe('marketing overview', () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     )
     expect(overflow).toBeLessThanOrEqual(0)
+
+    // 7. After a reload with a saved 7d window (step 5) and the detail pages, the console stayed clean.
+    await page.goto(`/app/projects/${projectId}/marketing/overview/product`)
+    await expect(page.getByRole('region', { name: 'Stages' })).toBeVisible({ timeout: 15000 })
+    expect(problems).toEqual([])
   })
 })

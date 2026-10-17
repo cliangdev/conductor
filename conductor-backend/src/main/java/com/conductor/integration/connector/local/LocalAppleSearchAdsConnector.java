@@ -41,7 +41,7 @@ public class LocalAppleSearchAdsConnector implements FetchConnector, ChannelMetr
                 "Apple Ads → Account Settings → API → Key ID", FieldType.STRING, true),
             ConnectorConfigField.userInput("apiKey", "Private Key (.p8)",
                 "Contents of the .p8 private key from Apple Ads → Account Settings → API",
-                FieldType.SECRET, true),
+                FieldType.SECRET_TEXT, true),
             ConnectorConfigField.userInput("orgId", "Org ID",
                 "Your Apple Ads org ID (from GET /api/v5/acls)", FieldType.STRING, true),
             ConnectorConfigField.userInput("campaignId", "Campaign ID",

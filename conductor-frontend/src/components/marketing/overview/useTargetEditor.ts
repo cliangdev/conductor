@@ -22,7 +22,7 @@ export function useTargetEditor(
 
   const save = useCallback(
     async (body: { target: number; direction: TargetDirection }) => {
-      if (!editing || !accessToken) return
+      if (!editing || !accessToken || editing.metric.target?.readOnly) return
       const { channel, metric } = editing
       patchTarget(channel, metric.metric, { value: body.target, direction: body.direction })
       try {
@@ -37,7 +37,7 @@ export function useTargetEditor(
   )
 
   const remove = useCallback(async () => {
-    if (!editing || !accessToken) return
+    if (!editing || !accessToken || editing.metric.target?.readOnly) return
     const { channel, metric } = editing
     patchTarget(channel, metric.metric, null)
     try {

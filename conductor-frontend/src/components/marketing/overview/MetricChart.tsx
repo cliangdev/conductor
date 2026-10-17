@@ -1,19 +1,25 @@
 'use client'
 
-// A larger line chart for one metric on the channel detail page: provisional days dashed, the target
-// as a reference line.
+// A larger line chart for one metric on the channel detail page: provisional days dashed, and the target as a
+// reference line when it shares the daily scale (levels and ratios; a window-total target stays in the header).
 
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { chartAxis, formatMetricValue, shortDate } from './format'
 import { isSparse, splitSeries } from './Sparkline'
 import type { OverviewMetric } from './types'
 
+/** A window-total target (SUM) is on a different scale from one day's value, so only LEVEL and ratio metrics draw it. */
+export function targetBelongsOnDailyChart(metric: OverviewMetric): boolean {
+  return !!metric.target && (metric.aggregation === 'LEVEL' || metric.aggregation === 'DERIVED')
+}
+
 export function MetricChart({ metric }: { metric: OverviewMetric }) {
+  const drawTarget = targetBelongsOnDailyChart(metric)
   const data = splitSeries(metric.series)
   const sparse = isSparse(metric.series)
-  const axis = chartAxis(metric.series.map((p) => p.value), metric.unit, metric.target?.value)
+  const axis = chartAxis(metric.series.map((p) => p.value), metric.unit, drawTarget ? metric.target?.value : undefined, metric.aggregation !== 'LEVEL' && metric.aggregation !== 'DERIVED')
   const points = metric.series.filter((p) => p.value !== null && p.value !== undefined).length
-  const summary = `${metric.label} by day, ${points} days of data${metric.target ? `, target ${formatMetricValue(metric.target.value, metric.unit)}` : ''}`
+  const summary = `${metric.label} by day, ${points} days of data${drawTarget && metric.target ? `, target ${formatMetricValue(metric.target.value, metric.unit)}` : ''}`
   if (points === 0) {
     return <p className="py-8 text-center text-sm text-muted-foreground">No daily data in this window yet.</p>
   }
@@ -52,7 +58,7 @@ export function MetricChart({ metric }: { metric: OverviewMetric }) {
               color: 'hsl(var(--foreground))',
             }}
           />
-          {metric.target && (
+          {drawTarget && metric.target && (
             <ReferenceLine
               y={metric.target.value}
               stroke="hsl(var(--status-progress))"

@@ -196,8 +196,16 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
                 });
         ChannelView product = channel(overview, "PRODUCT");
         assertThat(product.status()).isEqualTo("LIVE");
-        // funnel stages come first in the channel's metric list, then the rest
-        assertThat(product.metrics()).extracting(m -> m.metric()).containsExactly("first_open", "trial_started", "paid", "revenue_events");
+        // targets belong to the product connection, so the API says they cannot be edited here
+        assertThat(product.targetsEditable()).isFalse();
+        assertThat(channel(overview, "WEB").targetsEditable()).isTrue();
+        // the card leads with the last two funnel stages, then fills with the rest in stage order
+        assertThat(product.metrics()).extracting(m -> m.metric()).containsExactly("trial_started", "paid", "first_open", "revenue_events");
+        assertThat(product.metrics()).filteredOn(m -> m.metric().equals("paid")).singleElement()
+                .satisfies(m -> assertThat(m.aggregation()).isEqualTo("SUM"));
+        // only the declared funnel stages carry a funnelOrder
+        assertThat(product.metrics()).filteredOn(m -> m.funnelOrder() != null).extracting(m -> m.metric())
+                .containsExactlyInAnyOrder("first_open", "trial_started", "paid");
     }
 
     @Test
@@ -214,11 +222,15 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
         put(pm, "paid_trials", day(9), 9);
         put(pm, "paid_spend", day(10), 20);
         put(pm, "paid_trials", day(10), 1);
-        // previous window: $50 over 5 trials
+        // previous window: $50 over 5 trials, with history starting on its first day (a partly covered previous
+        // window is not compared)
+        put(pm, "paid_spend", java.time.LocalDate.of(2026, 9, 27), 0);
+        put(pm, "paid_trials", java.time.LocalDate.of(2026, 9, 27), 0);
         put(pm, "paid_spend", day(3), 50);
         put(pm, "paid_trials", day(3), 5);
 
         MetricView costPerTrial = metric(channel(overview7(), "PRODUCT"), "cost_per_trial");
+        assertThat(costPerTrial.aggregation()).isEqualTo("DERIVED");
 
         assertThat(costPerTrial.value()).isCloseTo(120.0 / 11.0, org.assertj.core.data.Offset.offset(1e-9));
         assertThat(costPerTrial.previous()).isEqualTo(10.0);
@@ -281,6 +293,8 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
             assertThat(m.gapPct()).isCloseTo(70.0 / 770.0, org.assertj.core.data.Offset.offset(1e-9));
             assertThat(m.from()).isEqualTo(day(8));
             assertThat(m.to()).isEqualTo(day(14));
+            assertThat(m.channelSource()).isEqualTo("apple-search-ads account");
+            assertThat(m.referenceSource()).isEqualTo("product-metrics account");
         });
         // the metrics still read normally, and reference values are never listed as metrics
         assertThat(metric(adsChannel, "spend").value()).isEqualTo(700.0);

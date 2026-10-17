@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiPost, createConnection, deleteConnection, apiErrorMessage, listIntegrations } from '@/lib/api';
 import type { IntegrationListItem } from '@/lib/api';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
-import { buildConnectionPayload } from '@/lib/connectorConnectForm';
+import { buildConnectionPayload, defaultConnectionLabel } from '@/lib/connectorConnectForm';
 import { ConnectorConfigFields } from '@/components/integrations/ConnectorConfigFields';
 import { usePermissions } from '@/contexts/PermissionsContext';
 import { useToast } from '@/components/ui/toast';
@@ -115,7 +115,7 @@ export default function IntegrationsPage() {
     if (!connectModal || !accessToken) return;
 
     const { connector } = connectModal;
-    const payload = buildConnectionPayload(connector, formValues);
+    const payload = buildConnectionPayload(connector, formValues, defaultConnectionLabel(connector.name, connector.connections.length));
     if (!payload.ok) {
       setConnectError(payload.error);
       return;

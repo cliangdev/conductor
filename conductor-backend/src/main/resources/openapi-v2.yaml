@@ -6173,6 +6173,9 @@ components:
           enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH]
           description: MISMATCH means the product metrics feed's reference figure (store downloads, ad spend) disagrees with this channel's own connector by more than 1%; see `mismatch`.
         lastFetchedAt: {type: string, format: date-time, nullable: true}
+        targetsEditable:
+          type: boolean
+          description: False when the channel's targets are owned by its connection (PRODUCT), so a target cannot be set or cleared here.
         mismatch:
           allOf:
             - $ref: "#/components/schemas/OverviewMismatch"
@@ -6195,6 +6198,8 @@ components:
       description: Set when status is MISMATCH. Both figures cover the same settled days, `from` to `to`.
       required: [metric, label, referenceValue, channelValue, gapPct, from, to]
       properties:
+        channelSource: {type: string, description: "Name of the connection(s) behind this channel's own figure, e.g. App Store Connect."}
+        referenceSource: {type: string, description: "Name of the product metrics connection(s) that reported the reference figure."}
         metric: {type: string, description: "The channel metric compared, e.g. downloads or spend."}
         label: {type: string}
         referenceValue: {type: number, format: double, description: "What the product metrics feed reports."}
@@ -6242,7 +6247,7 @@ components:
         label: {type: string}
         unit:
           type: string
-          enum: [COUNT, CURRENCY, PERCENT, POSITION]
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
         goodDirection:
           type: string
           enum: [UP, DOWN]
@@ -6267,6 +6272,13 @@ components:
         insufficientData:
           type: boolean
           description: True when the feed reported a sample size under 20 for the window; `noise` is then also true.
+        aggregation:
+          type: string
+          description: "How daily values combine over a window: SUM (a window total, so a target is a total and does not belong on a per-day chart), LEVEL (a stock, latest value) or DERIVED (a ratio of two metrics)."
+        funnelOrder:
+          type: integer
+          nullable: true
+          description: PRODUCT only - the metric's place among the in-app funnel stages (1 first); null for a metric that is not a stage.
         provisionalDays:
           type: integer
           description: Number of provisional days after the channel's dataCompleteThrough that appear at the end of the series. Values and changes exclude them.
@@ -6358,7 +6370,7 @@ components:
         label: {type: string}
         unit:
           type: string
-          enum: [COUNT, CURRENCY, PERCENT, POSITION]
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
 
     OverviewDimensionRow:
       type: object

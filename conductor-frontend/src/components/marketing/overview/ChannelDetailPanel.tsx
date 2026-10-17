@@ -15,7 +15,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { apiErrorMessage } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
-import { usePersistedState } from "@/lib/persisted";
+import { usePersistedStateAfterMount } from "@/lib/persisted";
 import { useSidebarWorkNav, workItemDetailPath } from "@/lib/workflows";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { InsightsPostList } from "@/components/marketing/insights/InsightsPostList";
@@ -24,8 +24,12 @@ import { ChangeLine } from "./ChangeLine";
 import { ChannelStatusPill } from "./ChannelStatusPill";
 import { DimensionTable } from "./DimensionTable";
 import { MetricChart } from "./MetricChart";
+import { MetricFlags } from "./MetricFlags";
+import { MismatchNotice } from "./MismatchNotice";
+import { StageChart } from "./StageChart";
+import { TargetNote } from "./TargetNote";
 import { TargetDialog } from "./TargetDialog";
-import { dataThroughLabel, formatMetricValue, shortDate, targetLine } from "./format";
+import { dataThroughLabel, formatMetricValue, shortDate } from "./format";
 import { useTargetEditor } from "./useTargetEditor";
 import {
   DETAIL_WINDOWS,
@@ -62,7 +66,7 @@ export function ChannelDetailPanel({
   const channelKey = channelParam.toUpperCase();
   const known = isChannelKey(channelKey);
 
-  const [range, setRange] = usePersistedState(
+  const [range, setRange, rangeReady] = usePersistedStateAfterMount(
     WINDOW_STORAGE_KEY,
     isDetailWindow,
     "28d",
@@ -77,7 +81,7 @@ export function ChannelDetailPanel({
   );
 
   const load = useCallback(() => {
-    if (!accessToken || !known) return;
+    if (!accessToken || !known || !rangeReady) return;
     setError(null);
     setData(null);
     getMarketingChannel(projectId, accessToken, channelKey, range)
@@ -90,7 +94,7 @@ export function ChannelDetailPanel({
           ),
         ),
       );
-  }, [projectId, accessToken, known, channelKey, range]);
+  }, [projectId, accessToken, known, channelKey, range, rangeReady]);
 
   useEffect(() => {
     void load();
@@ -195,6 +199,8 @@ export function ChannelDetailPanel({
           {data && detailsThrough && (
             <p className="text-xs text-muted-foreground">
               Data through {detailsThrough}
+              {channel?.metrics.some((m) => (m.provisionalDays ?? 0) > 0) &&
+                " · later days (dashed) are still updating and are not in the totals"}
             </p>
           )}
         </div>
@@ -239,6 +245,7 @@ export function ChannelDetailPanel({
                   className="flex flex-wrap gap-x-3 text-xs text-muted-foreground"
                   aria-label="Connections"
                 >
+                  <li>{channel.connections.length > 1 ? "Sources:" : "Source:"}</li>
                   {channel.connections.map((c) => (
                     <li key={c.id}>
                       <Link
@@ -252,6 +259,12 @@ export function ChannelDetailPanel({
                 </ul>
               )}
             </div>
+
+            <MismatchNotice channel={channel} />
+
+            {channel.channel === "PRODUCT" && (
+              <StageChart metrics={channel.metrics} />
+            )}
 
             {channel.metrics.length === 0 ? (
               <EmptyState
@@ -307,27 +320,18 @@ export function ChannelDetailPanel({
                       </p>
                         <ChangeLine metric={m} />
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {targetLine(m) ?? "No target set"}
-                        {canEditTargets && (
-                          <>
-                            {" · "}
-                            <button
-                              type="button"
-                              className="rounded-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              aria-label={`${m.target ? "Edit" : "Set"} target for ${m.label}`}
-                              onClick={() =>
-                                setEditing({
-                                  channel: channel.channel,
-                                  metric: m,
-                                })
-                              }
-                            >
-                              {m.target ? "Edit target" : "Set target"}
-                            </button>
-                          </>
-                        )}
-                      </p>
+                      <div className="flex flex-col items-end gap-1">
+                        {channel.channel === "PRODUCT" && <MetricFlags metric={m} />}
+                        <TargetNote
+                          metric={m}
+                          canEdit={canEditTargets}
+                          editable={channel.targetsEditable !== false}
+                          ownerLabel={channel.connections[0]?.name}
+                          onEdit={() =>
+                            setEditing({ channel: channel.channel, metric: m })
+                          }
+                        />
+                      </div>
                     </div>
                     <MetricChart metric={m} />
                   </section>

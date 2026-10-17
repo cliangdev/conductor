@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { ChannelCard } from './ChannelCard'
-import { channel, metric } from './test-fixtures'
+import { channel, comingSoonChannel, metric } from './test-fixtures'
 
 function renderCard(ch = channel(), canEditTargets = true, onSetTarget = vi.fn()) {
   render(<ChannelCard projectId="proj-1" channel={ch} canEditTargets={canEditTargets} onSetTarget={onSetTarget} />)
@@ -31,7 +31,7 @@ describe('ChannelCard', () => {
   })
 
   it('shows a plain note when coming soon', () => {
-    renderCard(channel({ channel: 'STORE', label: 'App Store', status: 'COMING_SOON', metrics: [], connectHint: null }))
+    renderCard(comingSoonChannel())
     expect(screen.getByText('Coming soon')).toBeInTheDocument()
     expect(screen.getByText(/not available yet/)).toBeInTheDocument()
   })
@@ -110,8 +110,8 @@ describe('ChannelCard', () => {
   })
 
   it('does not stretch a coming-soon card to the row height', () => {
-    renderCard(channel({ channel: 'STORE', label: 'App Store', status: 'COMING_SOON', metrics: [], connectHint: null }))
-    expect(screen.getByRole('region', { name: 'App Store' })).toHaveClass('self-start')
+    renderCard(comingSoonChannel())
+    expect(screen.getByRole('region', { name: 'Newsletter' })).toHaveClass('self-start')
   })
 
   it('says "Target met" instead of a percentage once the target is reached', () => {

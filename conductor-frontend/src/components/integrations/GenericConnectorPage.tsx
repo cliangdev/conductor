@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { createConnection, deleteConnection, apiPost, apiErrorMessage, listRemoteMcpTools } from '@/lib/api';
-import { buildConnectionPayload } from '@/lib/connectorConnectForm';
+import { buildConnectionPayload, defaultConnectionLabel } from '@/lib/connectorConnectForm';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
 import {
@@ -16,8 +17,15 @@ import { ConnectionRow } from './ConnectionRow';
 import { OAuthAccountPicker } from './OAuthAccountPicker';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { useCan } from '@/contexts/PermissionsContext';
 import { toastError } from '@/components/ui/toast';
+
+/** Connectors that feed a Marketing overview channel -> where their numbers are shown. */
+const OVERVIEW_CHANNELS: Record<string, { slug: string; label: string; retention?: string }> = {
+  'app-store-connect': { slug: 'store', label: 'App Store', retention: 'Apple keeps only about 35 days of daily reports.' },
+  'product-metrics': { slug: 'product', label: 'In-app' },
+};
 
 /**
  * Fallback overview page for any connector without a bespoke dashboard (e.g. action-only connectors
@@ -42,6 +50,7 @@ export default function GenericConnectorPage({
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState<string | null>(null);
   const [pendingAccountConnectionId, setPendingAccountConnectionId] = useState<string | null>(null);
   // The catalog entry carries readiness, so it's on screen with the first paint; the panel's own
   // responses then take over. Derived during render rather than mirrored into state, so the Connect
@@ -119,7 +128,7 @@ export default function GenericConnectorPage({
     e.preventDefault();
     if (!item || !accessToken) return;
 
-    const payload = buildConnectionPayload(item, formValues);
+    const payload = buildConnectionPayload(item, formValues, defaultConnectionLabel(item.name, item.connections.length));
     if (!payload.ok) {
       setConnectError(payload.error);
       return;
@@ -163,6 +172,7 @@ export default function GenericConnectorPage({
       setConnectError(apiErrorMessage(e, 'Failed to disconnect. Please try again.'));
     } finally {
       setDisconnecting(null);
+      setConfirmingDisconnect(null);
     }
   };
 
@@ -188,6 +198,9 @@ export default function GenericConnectorPage({
   }
 
   const showsConnectForm = (!item.singleInstance || item.connections.length === 0) && canMutate;
+  const overviewChannel = OVERVIEW_CHANNELS[item.connectorId];
+  const confirmingConnection = item.connections.find((c) => c.id === confirmingDisconnect);
+  const confirmingName = confirmingConnection?.label || item.name;
   const errorShownInForm = showsConnectForm && item.authType !== 'OAUTH2';
 
   return (
@@ -240,7 +253,7 @@ export default function GenericConnectorPage({
                   : `${toolCounts[conn.id]} ${toolCounts[conn.id] === 1 ? 'tool' : 'tools'}`
               }
               disconnecting={disconnecting === conn.id}
-              onDisconnect={handleDisconnect}
+              onDisconnect={setConfirmingDisconnect}
               onChooseAccount={setPendingAccountConnectionId}
             />
           ))}
@@ -293,10 +306,46 @@ export default function GenericConnectorPage({
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground mt-6">
-        This connector doesn&apos;t have a dedicated dashboard yet. See the Tools tab for what it can
-        do in workflows and agents.
-      </p>
+      <ConfirmModal
+        open={confirmingConnection !== undefined}
+        title={`Disconnect ${confirmingName}?`}
+        confirmLabel="Disconnect"
+        busyLabel="Disconnecting…"
+        busy={disconnecting !== null}
+        onCancel={() => setConfirmingDisconnect(null)}
+        onConfirm={() => confirmingConnection && handleDisconnect(confirmingConnection.id)}
+      >
+        <div className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            {confirmingName} stops syncing, and all history stored for this connection is deleted from this
+            workspace.
+          </p>
+          {overviewChannel && (
+            <p>
+              Its numbers leave the Marketing overview. History older than what the platform still keeps cannot be
+              fetched again. {overviewChannel.retention}
+            </p>
+          )}
+        </div>
+      </ConfirmModal>
+
+      {overviewChannel ? (
+        <p className="text-sm text-muted-foreground mt-6">
+          {item.name} numbers appear on the Marketing overview.{' '}
+          <Link
+            href={`/app/projects/${projectId}/marketing/overview/${overviewChannel.slug}`}
+            className="text-primary hover:underline"
+          >
+            Open the {overviewChannel.label} overview
+          </Link>
+          . See the Tools tab for what this connector can do in workflows and agents.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground mt-6">
+          This connector doesn&apos;t have a dedicated dashboard yet. See the Tools tab for what it can
+          do in workflows and agents.
+        </p>
+      )}
     </div>
   );
 }

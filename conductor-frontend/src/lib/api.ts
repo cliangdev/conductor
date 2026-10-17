@@ -132,6 +132,8 @@ export type ConnectorFeedStatus = 'ACTIVE' | 'PAUSED' | 'SETUP_REQUIRED' | 'DEAD
 export interface ConnectorFeedDto {
   id: string
   ingestId: string
+  /** The connection this feed pulls for. */
+  connectionId?: string | null
   label: string
   description?: string | null
   enabled: boolean
@@ -190,7 +192,7 @@ export interface ConnectorConfigField {
   key: string
   label: string
   hint: string | null
-  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY' | 'JSON'
+  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY' | 'JSON' | 'SECRET_TEXT'
   source: 'USER_INPUT' | 'GENERATED'
   required: boolean
   secret: boolean
