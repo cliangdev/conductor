@@ -150,7 +150,8 @@ export function chartAxis(values: (number | null | undefined)[], unit: MetricUni
   const max = Math.max(...nums)
 
   if (unit === 'COUNT') {
-    const step = niceStep(Math.max(max, 1) / 4)
+    // Whole numbers only: a 0-1 series must read 0, 1, not 0, 0.5, 1 rounded to "0, 1, 1".
+    const step = Math.max(1, niceStep(Math.max(max, 1) / 4))
     const top = Math.ceil(Math.max(max, 1) / step) * step
     const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step)
     return { domain: [0, top], ticks, format: (v) => formatMetricValue(v, 'COUNT') }
@@ -166,9 +167,15 @@ export function chartAxis(values: (number | null | undefined)[], unit: MetricUni
   const step = niceStep((rawHi - rawLo) / 4)
   let lo = Math.floor(rawLo / step) * step
   if (min >= 0 && lo < 0) lo = 0
-  const hi = Math.ceil(rawHi / step) * step
+  let hi = Math.ceil(rawHi / step) * step
+  // A star rating tops out at 5: never pad the axis beyond it.
+  if (unit === 'RATING' && hi > 5) hi = Math.max(5, lo + step)
   const count = Math.round((hi - lo) / step) + 1
-  const ticks = Array.from({ length: count }, (_, i) => Number((lo + step * i).toPrecision(12)))
+  let ticks = Array.from({ length: count }, (_, i) => Number((lo + step * i).toPrecision(12)))
+  if (unit === 'RATING') {
+    ticks = ticks.filter((t) => t <= hi)
+    if (ticks[ticks.length - 1] < hi) ticks.push(hi)
+  }
   let decimals = unit === 'POSITION' || unit === 'RATING' ? 1 : 0
   for (; decimals < 6; decimals++) {
     const labels = ticks.map((t) => formatWithDecimals(t, unit, decimals))
