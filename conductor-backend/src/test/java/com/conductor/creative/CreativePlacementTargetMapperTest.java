@@ -77,12 +77,20 @@ class CreativePlacementTargetMapperTest {
     void nineBySixteenVideoMatchesTikTokInstagramReelFacebookReelAndYouTube() {
         assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("tiktok", "FEED"), Set.of("9x16"))).isTrue();
         assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("instagram", "REEL"), Set.of("9x16"))).isTrue();
-        assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("instagram", "FEED"), Set.of("9x16"))).isFalse();
+        assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("instagram", "FEED"), Set.of("9x16"))).isTrue();
         assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("facebook", "REEL"), Set.of("9x16"))).isTrue();
         // Facebook publishes a lone Page video as a Reel, so its feed takes the vertical cut unless there is a square one.
         assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("facebook", "FEED"), Set.of("9x16"))).isTrue();
         assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("facebook", "FEED"), Set.of("9x16", "1x1"))).isFalse();
         assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", target("youtube", "FEED"), Set.of("9x16"))).isTrue();
+    }
+
+    @Test
+    void instagramFeedVideoTakesTheVerticalCutUnlessThereIsAFourByFive() {
+        PostPublishTarget igFeed = target("instagram", "FEED");
+        assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", igFeed, Set.of("9x16", "16x9"))).isTrue();
+        assertThat(CreativePlacementTargetMapper.matchesVideo("9x16", igFeed, Set.of("9x16", "4x5"))).isFalse();
+        assertThat(CreativePlacementTargetMapper.matchesVideo("4x5", igFeed, Set.of("9x16", "4x5"))).isTrue();
     }
 
     @Test

@@ -4,7 +4,7 @@
 // Pure: no React, no fetches.
 
 import type { StatusHue } from '@/components/ui/status-badge'
-import type { PublishFinding, PublishPreflight } from '@/components/marketing/publishReadiness'
+import { dedupeFindings, type PublishFinding, type PublishPreflight } from '@/components/marketing/publishReadiness'
 import type { PublishMetricsResponse, PublishMetricsTarget } from './DestinationMetrics'
 import type { PostFormat } from '@/components/marketing/PostFormatSelector'
 import type { InstagramPublishOptionValues } from '@/components/marketing/InstagramPublishOptions'
@@ -201,7 +201,7 @@ export function buildRows(args: BuildRowsArgs, now: Date = new Date()): Destinat
   for (const o of all) byPlatform.set(o.platform, [...(byPlatform.get(o.platform) ?? []), o])
 
   const findingsFor = (target: SelectedPublishTarget | undefined, list: PublishFinding[] | undefined) =>
-    target ? (list ?? []).filter((f) => f.targetId === target.id) : []
+    target ? dedupeFindings((list ?? []).filter((f) => f.targetId === target.id)) : []
   const metricsByTarget = new Map((metrics?.targets ?? []).map((m) => [m.targetId, m]))
 
   const rows = all.map((option): DestinationRowModel => {
