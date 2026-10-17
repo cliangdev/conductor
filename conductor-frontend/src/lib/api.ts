@@ -132,6 +132,8 @@ export type ConnectorFeedStatus = 'ACTIVE' | 'PAUSED' | 'SETUP_REQUIRED' | 'DEAD
 export interface ConnectorFeedDto {
   id: string
   ingestId: string
+  /** The connection this feed pulls for. */
+  connectionId?: string | null
   label: string
   description?: string | null
   enabled: boolean
