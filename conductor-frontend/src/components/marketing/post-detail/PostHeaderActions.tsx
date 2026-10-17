@@ -29,7 +29,7 @@ export function PostHeaderActions({
   menu,
 }: PostHeaderActionsProps) {
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2" data-testid="post-header-actions">
+    <div className="flex max-w-full flex-wrap items-center justify-end gap-2" data-testid="post-header-actions">
       <PublishReadinessAction state={readiness} forReviewer={reviewerActs} />
       {reviewerActs && (
         <>

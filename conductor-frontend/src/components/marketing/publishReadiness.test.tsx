@@ -111,9 +111,20 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
     renderCard()
 
     expect(await screen.findByText(/2 things to fix/)).toBeInTheDocument()
+    // On a phone the sentence takes its own line and the button wraps below it instead of overflowing.
+    const bar = screen.getByTestId('readiness-action')
+    expect(bar).toHaveClass('flex-wrap', 'min-w-0', 'max-w-full')
+    expect(screen.getByText(/2 things to fix/)).toHaveClass('max-sm:basis-full')
     const button = screen.getByRole('button', { name: 'Submit for review' })
     expect(button).toBeDisabled()
     expect(button).toHaveAttribute('title', expect.stringContaining('no uploaded media file'))
+  })
+
+  it('counts a finding once when the server repeats it per file', async () => {
+    const dup = { code: 'MEDIA_SIZE', message: 'This image is too small' }
+    current = preflight({ ready: false, blockers: [dup, { ...dup }, { ...dup }, { code: 'NO_TARGETS', message: 'pick an account' }, { ...dup }] })
+    renderCard()
+    expect(await screen.findByText(/2 things to fix/)).toBeInTheDocument()
   })
 
   it('takes the next move when ready, reports the new status, and re-asks the server', async () => {

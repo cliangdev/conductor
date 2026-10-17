@@ -34,6 +34,22 @@ export interface PublishFinding {
   targetId?: string | null
 }
 
+/**
+ * The same finding can arrive once per file (five identical lines for a 5-slide carousel). One finding
+ * is one code+message, per target; the first occurrence keeps its place.
+ */
+export function dedupeFindings(list: PublishFinding[] | undefined | null): PublishFinding[] {
+  const seen = new Set<string>()
+  const out: PublishFinding[] = []
+  for (const f of list ?? []) {
+    const key = `${f.targetId ?? ''}\u0000${f.code}\u0000${f.message}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(f)
+  }
+  return out
+}
+
 export interface PublishPreflight {
   publishing: boolean
   ready: boolean
@@ -164,10 +180,11 @@ export function usePublishReadiness({
 
   const load = useCallback(async () => {
     try {
-      const data = await apiGet<PublishPreflight>(
+      const fetched = await apiGet<PublishPreflight>(
         `/api/v2/projects/${projectId}/work-items/${workItemId}/publish-preflight`,
         token
       )
+      const data = { ...fetched, blockers: dedupeFindings(fetched.blockers), warnings: dedupeFindings(fetched.warnings) }
       setPreflight(data)
       setError(null)
       onPreflightRef.current?.(data)
@@ -308,8 +325,8 @@ export function PublishReadinessAction({
     : state.summaryText
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-3">
-      {summaryText && <p className="text-sm text-muted-foreground">{summaryText}</p>}
+    <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3" data-testid="readiness-action">
+      {summaryText && <p className="min-w-0 text-sm text-muted-foreground max-sm:basis-full max-sm:text-right">{summaryText}</p>}
       {state.offersButton && (
         <Button
           size="sm"

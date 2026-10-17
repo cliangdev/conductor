@@ -11,7 +11,7 @@ import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPost, apiPut } from '@/lib/api'
 import { statusMeta } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
-import type { PublishPreflight } from '@/components/marketing/publishReadiness'
+import { dedupeFindings, type PublishPreflight } from '@/components/marketing/publishReadiness'
 import { tiktokOptionsProblem } from '@/components/marketing/TikTokPublishOptions'
 import { unreportedNote, type PublishMetricsResponse } from './DestinationMetrics'
 import {
@@ -343,8 +343,8 @@ export function usePostDestinations({
   const summary = useMemo(() => summarize(rows, mode), [rows, mode])
   const postLevel = useMemo(
     () => ({
-      blockers: (preflight?.blockers ?? []).filter((f) => !f.targetId),
-      warnings: (preflight?.warnings ?? []).filter((f) => !f.targetId),
+      blockers: dedupeFindings((preflight?.blockers ?? []).filter((f) => !f.targetId)),
+      warnings: dedupeFindings((preflight?.warnings ?? []).filter((f) => !f.targetId)),
     }),
     [preflight]
   )

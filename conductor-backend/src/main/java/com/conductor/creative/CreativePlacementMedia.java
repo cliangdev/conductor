@@ -25,6 +25,27 @@ public class CreativePlacementMedia {
     private final CreativeRenderFrameRepository frameRepository;
     private final CreativeRepository creativeRepository;
 
+    /** The alt text a single still from {@code creative} carries: its altText, else slideAltText[0]. */
+    public static String stillAltTextOf(Creative creative) {
+        if (creative == null) return null;
+        if (creative.getAltText() != null && !creative.getAltText().isBlank()) return creative.getAltText();
+        var slides = creative.getSlideAltText();
+        if (slides != null && slides.isArray() && slides.size() > 0 && slides.get(0).isTextual()
+                && !slides.get(0).asText().isBlank()) {
+            return slides.get(0).asText();
+        }
+        return null;
+    }
+
+    /**
+     * {@code optionsJson}/{@code options} helper: whether the options bag already holds a non-blank altText.
+     */
+    public static boolean hasAltText(Map<String, Object> options) {
+        if (options == null) return false;
+        Object v = options.get("altText");
+        return v != null && !v.toString().isBlank();
+    }
+
     public CreativePlacementMedia(CreativeRenderFrameRepository frameRepository,
                                   CreativeRepository creativeRepository) {
         this.frameRepository = frameRepository;
@@ -43,11 +64,38 @@ public class CreativePlacementMedia {
         // video mapping rule applies, and feeds the video rule's "only when nothing more specific" fallbacks.
         private final Set<String> videoPlacementKeys = new LinkedHashSet<>();
 
+        // Asset ids whose frame is a still image (content type image/*).
+        private final Set<String> imageAssetIds = new LinkedHashSet<>();
+        // The Creative's alt text for a single still: its own altText, else slideAltText[0]. Null when blank.
+        private String stillAltText;
+
         public Placements(boolean carousel) {
             this.carousel = carousel;
         }
 
+        public Placements withStillAltText(String altText) {
+            this.stillAltText = altText == null || altText.isBlank() ? null : altText.strip();
+            return this;
+        }
+
+        /**
+         * The alt text to set on {@code target}'s {@code altText} option for the {@code matched} media, or
+         * null. Only an Instagram target that ends up with exactly one still image from a non-carousel
+         * Creative gets one: carousels, video and other platforms take none.
+         */
+        public String altTextFor(PostPublishTarget target, List<String> matched) {
+            if (stillAltText == null || carousel || target == null || target.getPlatform() == null
+                    || !"instagram".equals(target.getPlatform().trim().toLowerCase(java.util.Locale.ROOT))
+                    || matched == null || matched.size() != 1 || !imageAssetIds.contains(matched.get(0))) {
+                return null;
+            }
+            return stillAltText;
+        }
+
         public void add(CreativeRenderFrame frame, String assetId) {
+            if (frame.getContentType() != null && frame.getContentType().startsWith("image/")) {
+                imageAssetIds.add(assetId);
+            }
             if (frame.getContentType() != null && frame.getContentType().startsWith("video/")) {
                 videoPlacementKeys.add(frame.getPlacementKey());
             }
@@ -112,9 +160,9 @@ public class CreativePlacementMedia {
                 .collect(Collectors.groupingBy(CreativeRenderFrame::getCreativeId, LinkedHashMap::new, Collectors.toList()));
         List<Placements> result = new ArrayList<>();
         byCreative.forEach((creativeId, frames) -> {
-            boolean carousel = creativeRepository.findById(creativeId)
-                    .map(c -> Creative.KIND_CAROUSEL.equals(c.getKind())).orElse(false);
-            Placements placements = new Placements(carousel);
+            Creative creative = creativeRepository.findById(creativeId).orElse(null);
+            boolean carousel = creative != null && Creative.KIND_CAROUSEL.equals(creative.getKind());
+            Placements placements = new Placements(carousel).withStillAltText(stillAltTextOf(creative));
             frames.forEach(f -> placements.add(f, assetIdByFrameId.get(f.getId())));
             result.add(placements);
         });
