@@ -90,6 +90,8 @@ export function matchesVideo(key: string, d: DestinationLike, present: Set<strin
         (p === 'instagram' && f === 'reel') ||
         (p === 'facebook' && f === 'reel') ||
         (p === 'facebook' && f === 'feed' && !present.has('1x1')) ||
+        // Instagram publishes a single video as a Reel, so its feed takes the vertical cut without a 4:5.
+        (p === 'instagram' && f === 'feed' && !present.has('4x5')) ||
         (p === 'youtube' && !present.has('16x9')) ||
         (f === 'story' && !present.has('story'))
       )

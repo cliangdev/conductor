@@ -189,7 +189,8 @@ describe('CreativesTab', () => {
     const { onUse } = setup()
     await userEvent.click(screen.getByRole('button', { name: 'Choose Creative 22a Dinner clip' }))
     const panel = screen.getByTestId('creatives-preview')
-    expect(await within(panel).findAllByTestId('frame-thumb')).toHaveLength(1)
+    // The 9:16 cut serves both Instagram feed (published as a Reel) and YouTube.
+    expect(await within(panel).findAllByTestId('frame-thumb')).toHaveLength(2)
     expect(requestCreativeRender).toHaveBeenCalledTimes(1)
     expect(requestCreativeRender).toHaveBeenCalledWith('proj-1', 'cr-22a', { renderer: 'web' }, 'tok')
     await userEvent.click(screen.getByRole('button', { name: 'Use Creative 22a' }))
