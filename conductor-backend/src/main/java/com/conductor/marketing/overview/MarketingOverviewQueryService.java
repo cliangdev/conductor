@@ -608,6 +608,14 @@ public class MarketingOverviewQueryService {
         Window w = asOf != null ? windowEnding(ctx, asOf) : flowWindow;
         Double value = data.periodValue(metric, w.from(), w.to());
         Double previous = data.periodValue(metric, w.previousFrom(), w.previousTo());
+        LocalDate firstDay = data.firstDay(metric);
+        // A flow whose history starts inside the previous window has only part of it: the sum of a few days
+        // against a full window is no comparison (it reads as +10000%), so treat it as having no previous data.
+        boolean partialPrevious = previous != null && metric.agg() != Aggregation.LEVEL
+                && firstDay != null && firstDay.isAfter(w.previousFrom());
+        if (partialPrevious) {
+            previous = null;
+        }
         Double change = value != null && previous != null ? value - previous : null;
         Double changePct = change != null && previous != 0 ? change / Math.abs(previous) : null;
 
@@ -634,7 +642,7 @@ public class MarketingOverviewQueryService {
         TargetView targetView = target == null ? null
                 : new TargetView(target.getTarget().doubleValue(), target.getDirection());
         boolean noise = value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
-        LocalDate historyStartsOn = previous == null ? data.firstDay(metric) : null;
+        LocalDate historyStartsOn = previous == null ? firstDay : null;
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
                 change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf);
     }
