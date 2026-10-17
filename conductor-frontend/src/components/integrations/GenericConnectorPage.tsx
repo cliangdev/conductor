@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { createConnection, deleteConnection, apiPost, apiErrorMessage, listRemoteMcpTools } from '@/lib/api';
 import { buildConnectionPayload, defaultConnectionLabel } from '@/lib/connectorConnectForm';
@@ -18,6 +19,11 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useCan } from '@/contexts/PermissionsContext';
 import { toastError } from '@/components/ui/toast';
+
+/** Connectors that feed a Marketing overview channel -> where their numbers are shown. */
+const OVERVIEW_CHANNELS: Record<string, { slug: string; label: string }> = {
+  'app-store-connect': { slug: 'store', label: 'App Store' },
+};
 
 /**
  * Fallback overview page for any connector without a bespoke dashboard (e.g. action-only connectors
@@ -187,6 +193,10 @@ export default function GenericConnectorPage({
     );
   }
 
+  const showsConnectForm = (!item.singleInstance || item.connections.length === 0) && canMutate;
+  const overviewChannel = OVERVIEW_CHANNELS[item.connectorId];
+  const errorShownInForm =showsConnectForm && item.authType !== 'OAUTH2';
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <PageHeader
@@ -194,7 +204,8 @@ export default function GenericConnectorPage({
         description={item.description}
       />
 
-      {connectError && <p className="text-sm text-destructive mb-4">{connectError}</p>}
+      {/* A refused connect (bad credentials) is shown inline in the form, next to the fields to fix. */}
+      {connectError && !errorShownInForm && <p className="text-sm text-destructive mb-4">{connectError}</p>}
 
       {pendingAccountConnectionId && canMutate && (
         <OAuthAccountPicker
@@ -243,7 +254,7 @@ export default function GenericConnectorPage({
         </div>
       )}
 
-      {(!item.singleInstance || item.connections.length === 0) && canMutate && (
+      {showsConnectForm && (
         <div className="bg-card rounded-lg border border-border p-6 max-w-md">
           <h2 className="text-base font-semibold text-foreground mb-1">
             {item.connections.length > 0 ? 'Add another connection' : `Connect ${item.name}`}
@@ -276,6 +287,11 @@ export default function GenericConnectorPage({
                 jsonFieldErrors={jsonFieldErrors}
                 applyJsonField={applyJsonField}
               />
+              {connectError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {connectError}
+                </p>
+              )}
               <Button type="submit" disabled={connecting}>
                 {connecting ? 'Connecting…' : 'Connect'}
               </Button>
@@ -284,10 +300,23 @@ export default function GenericConnectorPage({
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground mt-6">
-        This connector doesn&apos;t have a dedicated dashboard yet. See the Tools tab for what it can
-        do in workflows and agents.
-      </p>
+      {overviewChannel ? (
+        <p className="text-sm text-muted-foreground mt-6">
+          {item.name} numbers appear on the Marketing overview.{' '}
+          <Link
+            href={`/app/projects/${projectId}/marketing/overview/${overviewChannel.slug}`}
+            className="text-primary hover:underline"
+          >
+            Open the {overviewChannel.label} overview
+          </Link>
+          . See the Tools tab for what this connector can do in workflows and agents.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground mt-6">
+          This connector doesn&apos;t have a dedicated dashboard yet. See the Tools tab for what it can
+          do in workflows and agents.
+        </p>
+      )}
     </div>
   );
 }

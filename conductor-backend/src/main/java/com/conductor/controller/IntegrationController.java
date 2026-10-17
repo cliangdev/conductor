@@ -93,6 +93,8 @@ import java.util.stream.Stream;
 @RestController
 public class IntegrationController implements IntegrationsApi {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(IntegrationController.class);
+
     private final ConnectorRegistry connectorRegistry;
     private final ConnectionService connectionService;
     private final IntegrationFetchService fetchService;
@@ -346,6 +348,12 @@ public class IntegrationController implements IntegrationsApi {
         Connector connector = requireConnector(connectorId);
         ConnectorSpec spec = connector.getSpec();
         String label = request != null ? request.getLabel() : null;
+
+        // Opt-in credential check: a connector that can prove the credentials work refuses bad ones here,
+        // before anything is saved, with a plain message the connect form shows inline.
+        if (connector instanceof FetchConnector fetchConnector) {
+            verifyCredentialsOrRefuse(fetchConnector, projectId, connectorId, spec, request);
+        }
 
         Connection conn;
         if (spec.singleInstance()) {
@@ -790,6 +798,7 @@ public class IntegrationController implements IntegrationsApi {
         return new ConnectorFeedDto()
                 .id(feed.getId())
                 .ingestId(feed.getIngestId())
+                .connectionId(feed.getConnectionId())
                 .label(spec != null ? spec.label() : feed.getIngestId())
                 .description(spec != null ? spec.description() : null)
                 .enabled(feed.isEnabled())
@@ -804,6 +813,29 @@ public class IntegrationController implements IntegrationsApi {
     }
 
     /** SERVICE_ACCOUNT connectors (GCP) require a well-formed GCP service-account JSON key. */
+    private void verifyCredentialsOrRefuse(FetchConnector connector, String projectId, String connectorId,
+                                           ConnectorSpec spec, CreateConnectionRequest request) {
+        String secret = null;
+        if (request != null) {
+            secret = spec.authType() == AuthType.SERVICE_ACCOUNT ? request.getServiceAccountKey() : request.getApiKey();
+        }
+        Map<String, Object> config = request != null && request.getConfigJson() != null
+                ? new java.util.HashMap<>(request.getConfigJson()) : Map.of();
+        // Transient context: a throwaway connection id, nothing persisted.
+        ConnectionContext ctx = new ConnectionContext(projectId, connectorId, "verify-" + java.util.UUID.randomUUID(),
+                secret, null, null, config, null);
+        Optional<String> problem;
+        try {
+            problem = connector.verifyCredentials(ctx);
+        } catch (RuntimeException e) {
+            log.warn("Credential check for connector {} failed unexpectedly: {}", connectorId, e.getMessage());
+            problem = Optional.of("Could not check the credentials: " + e.getMessage());
+        }
+        if (problem.isPresent()) {
+            throw new BusinessException(problem.get());
+        }
+    }
+
     private void requireValidServiceAccountKey(String key) {
         Map<String, Object> parsed;
         try {

@@ -49,10 +49,11 @@ export function ConnectorConfigFields({
               />
             ) : field.type === 'SELECT' ? (
               <>
-                <Label>{field.label}</Label>
+                <Label htmlFor={`connector-field-${field.key}`}>{field.label}</Label>
                 {/* No connector currently ships enumerated options for the backend to send;
                     this is a structural placeholder ready for that data. */}
                 <Select
+                  id={`connector-field-${field.key}`}
                   value={formValues[field.key] || ''}
                   onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                   required={field.required}
@@ -64,8 +65,9 @@ export function ConnectorConfigFields({
               </>
             ) : (
               <>
-                <Label>{field.label}</Label>
+                <Label htmlFor={`connector-field-${field.key}`}>{field.label}</Label>
                 <Input
+                  id={`connector-field-${field.key}`}
                   type={field.secret ? 'password' : 'text'}
                   value={formValues[field.key] || ''}
                   onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}

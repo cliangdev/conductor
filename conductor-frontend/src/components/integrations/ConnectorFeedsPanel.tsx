@@ -61,9 +61,12 @@ export function cadenceLabel(minutes: number): string {
 export default function ConnectorFeedsPanel({
   projectId,
   connectorId,
+  connections = [],
 }: {
   projectId: string
   connectorId: string
+  /** The connector's connections; their labels tell same-named feeds apart when there is more than one. */
+  connections?: { id: string; label?: string | null }[]
 }) {
   const { accessToken } = useAuth()
   const { showToast } = useToast()
@@ -89,6 +92,14 @@ export default function ConnectorFeedsPanel({
   }, [load])
 
   if (!feeds || feeds.length === 0) return null
+
+  // One identical feed per connection says nothing on its own: name the connection it belongs to.
+  const connectionName = (feed: ConnectorFeedDto): string | null => {
+    if (connections.length < 2 || !feed.connectionId) return null
+    const index = connections.findIndex((c) => c.id === feed.connectionId)
+    if (index < 0) return null
+    return connections[index].label?.trim() || `Connection ${index + 1}`
+  }
 
   async function handleToggle(feed: ConnectorFeedDto, enabled: boolean) {
     if (!accessToken) return
@@ -142,11 +153,17 @@ export default function ConnectorFeedsPanel({
       <Card className="divide-y divide-border">
         {feeds.map((feed) => {
           const health = FEED_STATUS[feed.status]
+          const connection = connectionName(feed)
           return (
             <div key={feed.id} className="p-4 flex items-center justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-foreground truncate">{feed.label}</span>
+                  {connection && (
+                    <span className="text-xs text-muted-foreground truncate" data-testid="feed-connection">
+                      {connection}
+                    </span>
+                  )}
                   <StatusBadge status={health.status} label={health.label} />
                 </div>
                 {feed.description && (

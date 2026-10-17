@@ -90,6 +90,23 @@ describe('dataThroughLabel', () => {
 })
 
 describe('chartAxis', () => {
+  it('never pads a rating axis beyond 5 stars', () => {
+    const axis = chartAxis([4.6, 4.7, 4.8, 4.75], 'RATING')
+    expect(axis.domain[1]).toBe(5)
+    expect(Math.max(...axis.ticks)).toBe(5)
+    const wide = chartAxis([1, 5], 'RATING')
+    expect(wide.domain[1]).toBe(5)
+    expect(wide.ticks.every((t) => t <= 5)).toBe(true)
+  })
+
+  it('uses whole-number ticks for a small count series', () => {
+    const axis = chartAxis([0, 1, 0, 1], 'COUNT')
+    expect(axis.ticks).toEqual([0, 1])
+    const labels = axis.ticks.map(axis.format)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(chartAxis([0, 2], 'COUNT').ticks.every(Number.isInteger)).toBe(true)
+  })
+
   it('gives every tick of a flat percent series a distinct label', () => {
     const axis = chartAxis([0.07, 0.0701, 0.07, 0.0699], 'PERCENT')
     const labels = axis.ticks.map(axis.format)

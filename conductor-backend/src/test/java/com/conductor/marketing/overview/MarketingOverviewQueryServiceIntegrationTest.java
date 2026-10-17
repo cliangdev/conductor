@@ -173,6 +173,26 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void aPreviousWindowOnlyPartlyCoveredByHistoryGivesNoPercentChangeJustWhereHistoryStarts() {
+        String web = connectFresh("posthog");
+        // history starts on the 5th: the previous window (1st-7th) holds only three of its seven days
+        for (int d = 5; d <= 7; d++) {
+            put(web, "posthog", "WEB", "visitors", day(d), 1);
+        }
+        for (int d = 8; d <= 14; d++) {
+            put(web, "posthog", "WEB", "visitors", day(d), 10);
+        }
+
+        MetricView visitors = metric(channel(overview7(), "WEB"), "visitors");
+
+        assertThat(visitors.value()).isEqualTo(70.0);
+        assertThat(visitors.previous()).isNull();
+        assertThat(visitors.change()).isNull();
+        assertThat(visitors.changePct()).isNull();
+        assertThat(visitors.historyStartsOn()).isEqualTo(day(5));
+    }
+
+    @Test
     void levelMetricsTakeTheLatestValuePerPlatformThenSumAcrossPlatforms() {
         String meta = connectFresh("meta");
         String youtube = connectFresh("youtube");
@@ -263,7 +283,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
         assertThat(web7.dataCompleteThrough()).isEqualTo(day(12));
         assertThat(visitors.value()).isEqualTo(5.0);          // Oct 6-12; the provisional 7 and 9 are excluded
-        assertThat(visitors.previous()).isEqualTo(4.0);       // Sep 29 - Oct 5
+        assertThat(visitors.previous()).isNull();             // Sep 29 - Oct 5 is only partly covered: history starts Oct 3
+        assertThat(visitors.historyStartsOn()).isEqualTo(day(3));
         assertThat(visitors.provisionalDays()).isEqualTo(2);
         assertThat(visitors.series()).hasSize(9);             // Oct 6-12 plus Oct 13 and 14
         assertThat(visitors.series().get(0).day()).isEqualTo(day(6));
@@ -287,7 +308,9 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(channel(overview, "SEARCH").dataCompleteThrough()).isEqualTo(day(11));
         // a lagging source's seven complete days (Oct 5-11), not four settled ones against a full week
         assertThat(metric(channel(overview, "SEARCH"), "clicks").value()).isEqualTo(21.0);
-        assertThat(metric(channel(overview, "SEARCH"), "clicks").previous()).isEqualTo(12.0); // Sep 28 - Oct 4; only Oct 1-4 have rows
+        // Sep 28 - Oct 4 has rows only from Oct 1: partly covered, so no previous and no percent change
+        assertThat(metric(channel(overview, "SEARCH"), "clicks").previous()).isNull();
+        assertThat(metric(channel(overview, "SEARCH"), "clicks").historyStartsOn()).isEqualTo(day(1));
         assertThat(channel(overview, "ADS").dataCompleteThrough()).isEqualTo(day(13)); // no data: two days back
         assertThat(overview.window().from()).isEqualTo(day(5));
         assertThat(overview.window().to()).isEqualTo(day(14));

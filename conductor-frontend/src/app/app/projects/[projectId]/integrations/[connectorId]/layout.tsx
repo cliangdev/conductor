@@ -61,7 +61,7 @@ function ConnectorLayoutInner({ children }: { children: React.ReactNode }) {
           {children}
           {/* Owns its own container/spacing and renders nothing (zero DOM) when the connector
               declares no feeds -- the six pre-existing connectors must look unchanged. */}
-          <ConnectorFeedsPanel projectId={projectId} connectorId={connectorId} />
+          <ConnectorFeedsPanel projectId={projectId} connectorId={connectorId} connections={item?.connections} />
         </>
       )}
       {tab === 'tools' &&
