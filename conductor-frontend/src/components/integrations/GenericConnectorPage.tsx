@@ -23,6 +23,7 @@ import { toastError } from '@/components/ui/toast';
 /** Connectors that feed a Marketing overview channel -> where their numbers are shown. */
 const OVERVIEW_CHANNELS: Record<string, { slug: string; label: string }> = {
   'app-store-connect': { slug: 'store', label: 'App Store' },
+  'product-metrics': { slug: 'product', label: 'In-app' },
 };
 
 /**
@@ -195,7 +196,7 @@ export default function GenericConnectorPage({
 
   const showsConnectForm = (!item.singleInstance || item.connections.length === 0) && canMutate;
   const overviewChannel = OVERVIEW_CHANNELS[item.connectorId];
-  const errorShownInForm =showsConnectForm && item.authType !== 'OAUTH2';
+  const errorShownInForm = showsConnectForm && item.authType !== 'OAUTH2';
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

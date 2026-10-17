@@ -111,6 +111,16 @@ describe('GenericConnectorPage', () => {
     expect(screen.queryByText(/doesn.t have a dedicated dashboard/i)).not.toBeInTheDocument()
   })
 
+  it('links Product metrics to the In-app overview', async () => {
+    vi.mocked(api.listIntegrations).mockResolvedValue([
+      { ...discordConnector, connectorId: 'product-metrics', name: 'Product metrics' },
+    ])
+    renderPage('product-metrics')
+
+    const link = await screen.findByRole('link', { name: /open the in-app overview/i })
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/marketing/overview/product')
+  })
+
   it('falls back to the unknown-connector message when the id is absent from the catalog', async () => {
     vi.mocked(api.listIntegrations).mockResolvedValue([])
     renderPage('not-a-real-connector')

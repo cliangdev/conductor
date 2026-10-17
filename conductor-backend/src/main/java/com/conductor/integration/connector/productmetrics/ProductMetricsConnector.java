@@ -1,7 +1,5 @@
 package com.conductor.integration.connector.productmetrics;
 
-import com.conductor.entity.Connection;
-import com.conductor.exception.BusinessException;
 import com.conductor.integration.ChannelMetricsPull;
 import com.conductor.integration.ChannelMetricPoint;
 import com.conductor.integration.ChannelMetricsSource;
@@ -24,6 +22,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Generic "Product metrics" connector: any product backend that serves the product metrics contract
@@ -104,11 +103,11 @@ public class ProductMetricsConnector implements FetchConnector, ChannelMetricsSo
         return ConnectorData.healthy(Map.of("metricCount", p.metricCount()));
     }
 
-    /** Refuse a connection that cannot work, with a plain reason (bad URL, rejected key, wrong contract version). */
+    /** Refuse a connection that cannot work before it is saved, with a plain reason (bad URL, rejected key, wrong contract version). */
     @Override
-    public void onConnectionCreated(Connection connection, ConnectionContext ctx) {
+    public Optional<String> verifyCredentials(ConnectionContext ctx) {
         Probe p = probe(ctx);
-        if (!p.ok()) throw new BusinessException(p.message());
+        return p.ok() ? Optional.empty() : Optional.of(p.message());
     }
 
     // ---- ChannelMetricsSource ----------------------------------------------------------------------
