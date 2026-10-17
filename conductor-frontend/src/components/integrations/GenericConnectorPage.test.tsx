@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'test-token' }),
@@ -75,6 +75,50 @@ describe('GenericConnectorPage', () => {
     expect(screen.queryByRole('button', { name: /^connect$/i })).not.toBeInTheDocument()
   })
 
+  it('asks before disconnecting, naming the connection and what is lost, and only deletes on confirm', async () => {
+    const asc = {
+      ...discordConnector,
+      connectorId: 'app-store-connect',
+      name: 'App Store Connect',
+      singleInstance: false,
+      connections: [{ id: 'c1', status: 'ACTIVE' as const, label: 'Rexipe iOS' }],
+    }
+    vi.mocked(api.listIntegrations).mockResolvedValue([asc])
+    vi.mocked(api.deleteConnection).mockResolvedValue(undefined as never)
+    renderPage('app-store-connect')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Disconnect Rexipe iOS?')).toBeInTheDocument()
+    expect(dialog).toHaveTextContent(/history stored for this connection is deleted/i)
+    expect(dialog).toHaveTextContent(/cannot be fetched again/i)
+    expect(dialog).toHaveTextContent(/about 35 days/i)
+    expect(api.deleteConnection).not.toHaveBeenCalled()
+
+    // Cancel leaves everything alone
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.deleteConnection).not.toHaveBeenCalled()
+
+    // Confirm deletes
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Disconnect' }))
+    await waitFor(() =>
+      expect(api.deleteConnection).toHaveBeenCalledWith('proj-1', 'app-store-connect', 'c1', 'test-token'),
+    )
+  })
+
+  it('does not mention the Marketing overview for a connector that does not feed it', async () => {
+    vi.mocked(api.listIntegrations).mockResolvedValue([discordConnector])
+    renderPage('discord')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent(/history stored for this connection is deleted/i)
+    expect(dialog).not.toHaveTextContent(/Marketing overview/)
+  })
+
   it('shows a refused connect (bad credentials) inline in the form, once, and keeps the form filled', async () => {
     const asc = {
       ...discordConnector,
@@ -124,6 +168,7 @@ describe('GenericConnectorPage', () => {
     renderPage('discord')
 
     fireEvent.click(await screen.findByRole('button', { name: /disconnect/i }))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Disconnect' }))
 
     await waitFor(() => {
       expect(screen.getAllByText('Cannot disconnect right now')).toHaveLength(1)
