@@ -187,6 +187,9 @@ export default function GenericConnectorPage({
     );
   }
 
+  const showsConnectForm = (!item.singleInstance || item.connections.length === 0) && canMutate;
+  const errorShownInForm = showsConnectForm && item.authType !== 'OAUTH2';
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <PageHeader
@@ -194,7 +197,8 @@ export default function GenericConnectorPage({
         description={item.description}
       />
 
-      {connectError && <p className="text-sm text-destructive mb-4">{connectError}</p>}
+      {/* A refused connect (bad credentials) is shown inline in the form, next to the fields to fix. */}
+      {connectError && !errorShownInForm && <p className="text-sm text-destructive mb-4">{connectError}</p>}
 
       {pendingAccountConnectionId && canMutate && (
         <OAuthAccountPicker
@@ -243,7 +247,7 @@ export default function GenericConnectorPage({
         </div>
       )}
 
-      {(!item.singleInstance || item.connections.length === 0) && canMutate && (
+      {showsConnectForm && (
         <div className="bg-card rounded-lg border border-border p-6 max-w-md">
           <h2 className="text-base font-semibold text-foreground mb-1">
             {item.connections.length > 0 ? 'Add another connection' : `Connect ${item.name}`}
@@ -276,6 +280,11 @@ export default function GenericConnectorPage({
                 jsonFieldErrors={jsonFieldErrors}
                 applyJsonField={applyJsonField}
               />
+              {connectError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {connectError}
+                </p>
+              )}
               <Button type="submit" disabled={connecting}>
                 {connecting ? 'Connecting…' : 'Connect'}
               </Button>

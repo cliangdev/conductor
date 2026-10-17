@@ -3604,6 +3604,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConnectionResponse'
+        '400':
+          description: >
+            The connector refused the credentials (or its setup step failed). Connectors that can check
+            credentials (e.g. app-store-connect, product-metrics) do so before anything is saved; `detail`
+            carries the plain message to show on the connect form, and no connection is created.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthenticated
         '403':
