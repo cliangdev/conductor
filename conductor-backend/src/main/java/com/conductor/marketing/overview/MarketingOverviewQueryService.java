@@ -1,9 +1,11 @@
 package com.conductor.marketing.overview;
 
 import com.conductor.entity.ChannelMetricDaily;
+import com.conductor.entity.ChannelMetricDefinitionRow;
 import com.conductor.entity.ChannelMetricTarget;
 import com.conductor.entity.Connection;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.integration.Direction;
 import com.conductor.integration.DigestSpec;
 import com.conductor.integration.MetricChannel;
@@ -21,6 +23,7 @@ import com.conductor.marketing.overview.MetricCatalog.Dimension;
 import com.conductor.marketing.overview.MetricCatalog.Metric;
 import com.conductor.marketing.overview.MetricCatalog.Unit;
 import com.conductor.repository.ChannelMetricDailyRepository;
+import com.conductor.repository.ChannelMetricDefinitionRepository;
 import com.conductor.repository.ChannelMetricTargetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.publish.PublishPlatformRegistry;
@@ -72,6 +75,12 @@ public class MarketingOverviewQueryService {
     static final int STALE_INTERVALS = 2;
     static final int DIMENSION_ROWS = 50;
     static final int TOP_POSTS = 5;
+    /** A feed-reported sample below this reads as insufficient data (and so as noise). */
+    static final long MIN_SAMPLE = 20;
+    /** A reference figure that differs from the channel's own connector by more than this is a mismatch. */
+    static final double MISMATCH_THRESHOLD = 0.01;
+    /** Reference values a product feed sends are stored as PRODUCT rows under this metric prefix. */
+    static final String REFERENCE_PREFIX = "ref_";
     /** How many earlier windows feed the noise baseline, bounded by {@link #MAX_HISTORY_DAYS}. */
     private static final int HISTORY_PERIODS = 5;
     private static final int MAX_HISTORY_DAYS = 180;
@@ -88,15 +97,39 @@ public class MarketingOverviewQueryService {
 
     public record Point(LocalDate day, Double value, boolean provisional) {}
 
-    public record TargetView(double value, String direction) {}
+    /** {@code readOnly} targets come from a connector feed (the product backend sets them); {@code source} says where. */
+    public record TargetView(double value, String direction, boolean readOnly, String source) {
+        public TargetView(double value, String direction) {
+            this(value, direction, false, null);
+        }
+    }
 
+    /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window. */
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
-                             List<Point> series, LocalDate historyStartsOn, LocalDate asOf) {}
+                             List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
+                             boolean insufficientData) {
+        public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
+                          Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
+                          TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf) {
+            this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
+                    target, series, historyStartsOn, asOf, false);
+        }
+    }
+
+    /** The product backend's reference figure against the channel's own connector, over the same settled days. */
+    public record MismatchView(String metric, String label, double referenceValue, double channelValue,
+                               double gapPct, LocalDate from, LocalDate to) {}
 
     public record ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                               List<ConnectionView> connections, ConnectHint connectHint,
-                              List<MetricView> metrics, LocalDate dataCompleteThrough) {}
+                              List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch) {
+        public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
+                           List<ConnectionView> connections, ConnectHint connectHint,
+                           List<MetricView> metrics, LocalDate dataCompleteThrough) {
+            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough, null);
+        }
+    }
 
     public record FunnelStageView(String key, String label, Double value, Double previous, Double change,
                                   String source, boolean available, String unavailableReason,
@@ -115,6 +148,7 @@ public class MarketingOverviewQueryService {
 
     private final ChannelMetricDailyRepository dailyRepository;
     private final ChannelMetricTargetRepository targetRepository;
+    private final ChannelMetricDefinitionRepository definitionRepository;
     private final ConnectionRepository connectionRepository;
     private final ConnectorFeedRepository feedRepository;
     private final MarketingInsightsQueryService insightsQueryService;
@@ -123,12 +157,14 @@ public class MarketingOverviewQueryService {
 
     public MarketingOverviewQueryService(ChannelMetricDailyRepository dailyRepository,
                                          ChannelMetricTargetRepository targetRepository,
+                                         ChannelMetricDefinitionRepository definitionRepository,
                                          ConnectionRepository connectionRepository,
                                          ConnectorFeedRepository feedRepository,
                                          MarketingInsightsQueryService insightsQueryService,
                                          PublishPlatformRegistry platformRegistry) {
         this.dailyRepository = dailyRepository;
         this.targetRepository = targetRepository;
+        this.definitionRepository = definitionRepository;
         this.connectionRepository = connectionRepository;
         this.feedRepository = feedRepository;
         this.insightsQueryService = insightsQueryService;
@@ -151,7 +187,7 @@ public class MarketingOverviewQueryService {
             builds.put(channel.channel(), build(ctx, channel));
         }
         List<FunnelStageView> stages = new ArrayList<>();
-        for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel()) {
+        for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel(ctx.productChannel)) {
             stages.add(funnelStage(stage, builds.get(stage.channel())));
         }
         List<FunnelStageView> funnel = withConversions(stages);
@@ -186,6 +222,7 @@ public class MarketingOverviewQueryService {
     ChannelDetail channel(String projectId, MetricCatalog.Channel channel, int days, LocalDate today,
                           OffsetDateTime now) {
         Context ctx = context(projectId, days, today, now);
+        channel = ctx.resolve(channel);
         ChannelBuild build = build(ctx, channel);
         List<DimensionTable> dimensions = build.live() ? dimensions(ctx, channel, build) : List.of();
         List<MarketingInsightsQueryService.Post> topPosts = channel.channel() == MetricChannel.SOCIAL
@@ -201,6 +238,7 @@ public class MarketingOverviewQueryService {
     public TargetView setTarget(String projectId, String channelRaw, String metricKey, Double target,
                                 String directionRaw, String updatedBy) {
         MetricCatalog.Channel channel = requireChannel(channelRaw);
+        requireWorkspaceTarget(channel);
         Metric metric = requireMetric(channel, metricKey);
         if (target == null || target.isNaN() || target.isInfinite() || target < 0) {
             throw new BusinessException("Target must be a number of zero or more");
@@ -228,9 +266,18 @@ public class MarketingOverviewQueryService {
     @Transactional
     public void clearTarget(String projectId, String channelRaw, String metricKey) {
         MetricCatalog.Channel channel = requireChannel(channelRaw);
+        requireWorkspaceTarget(channel);
         Metric metric = requireMetric(channel, metricKey);
         targetRepository.findByProjectIdAndChannelAndMetric(projectId, channel.channel().name(), metric.key())
                 .ifPresent(targetRepository::delete);
+    }
+
+    /** In-app targets come from the product metrics feed, so they cannot be set or cleared in Conductor. */
+    private static void requireWorkspaceTarget(MetricCatalog.Channel channel) {
+        if (channel.channel() == MetricChannel.PRODUCT) {
+            throw new ConflictException("In-app targets are set in your product metrics connection, not here."
+                    + " Change the target there and it will update on the next sync.");
+        }
     }
 
     private static String parseDirection(String raw) {
@@ -284,6 +331,12 @@ public class MarketingOverviewQueryService {
         final List<Connection> connections;
         final List<ConnectorFeed> feeds;
         final Map<String, ChannelMetricTarget> targets;
+        /** The in-app channel as the connected backends declared it. */
+        final MetricCatalog.Channel productChannel;
+        /** Targets declared by the product feeds, by metric key (read-only). */
+        final Map<String, TargetView> feedTargets = new HashMap<>();
+        final Set<String> productConnectionIds = new HashSet<>();
+        private List<ChannelMetricDaily> referenceRows;
 
         Context(String projectId, int days, LocalDate today, OffsetDateTime now) {
             this.projectId = projectId;
@@ -307,6 +360,49 @@ public class MarketingOverviewQueryService {
             for (ChannelMetricTarget t : targetRepository.findByProjectId(projectId)) {
                 targets.put(t.getChannel() + "/" + t.getMetric(), t);
             }
+            Map<String, Connection> productConnections = new LinkedHashMap<>();
+            for (Connection c : connections) {
+                if (MetricCatalog.PRODUCT_CONNECTOR_ID.equals(c.getConnectorId())) {
+                    productConnections.put(c.getId(), c);
+                    productConnectionIds.add(c.getId());
+                }
+            }
+            List<String> connectionOrder = new ArrayList<>(productConnections.keySet());
+            List<ChannelMetricDefinitionRow> definitions = productConnections.isEmpty() ? List.of()
+                    : definitionRepository.findByProjectId(projectId).stream()
+                            .filter(d -> productConnections.containsKey(d.getConnectionId()))
+                            .sorted(Comparator.comparing((ChannelMetricDefinitionRow d) ->
+                                    connectionOrder.indexOf(d.getConnectionId())))
+                            .toList();
+            this.productChannel = MetricCatalog.productChannel(definitions);
+            for (ChannelMetricDefinitionRow d : definitions) {
+                if (d.getTargetValue() != null && !feedTargets.containsKey(d.getMetric())) {
+                    Connection c = productConnections.get(d.getConnectionId());
+                    String label = c.getDisplayLabel() != null ? c.getDisplayLabel()
+                            : MetricCatalog.connectorName(c.getConnectorId());
+                    feedTargets.put(d.getMetric(), new TargetView(d.getTargetValue().doubleValue(),
+                            d.getTargetDirection() != null ? d.getTargetDirection() : d.getGood(), true,
+                            "Set in " + label));
+                }
+            }
+        }
+
+        MetricCatalog.Channel resolve(MetricCatalog.Channel channel) {
+            return channel.channel() == MetricChannel.PRODUCT ? productChannel : channel;
+        }
+
+        /** The product backends' reference figures (settled days only), loaded once per request. */
+        List<ChannelMetricDaily> referenceRows() {
+            if (referenceRows == null) {
+                referenceRows = productConnectionIds.isEmpty() ? List.of()
+                        : dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(projectId, "PRODUCT",
+                                List.of(REFERENCE_PREFIX + "store_downloads", REFERENCE_PREFIX + "ads_spend"),
+                                historyStart, yesterday).stream()
+                        .filter(r -> r.getDimensionKey().isEmpty() && !r.isProvisional()
+                                && productConnectionIds.contains(r.getConnectionId()))
+                        .toList();
+            }
+            return referenceRows;
         }
     }
 
@@ -324,10 +420,18 @@ public class MarketingOverviewQueryService {
         final ConnectHint connectHint;
         final List<MetricView> metrics;
         final Window window;
+        final MismatchView mismatch;
 
         ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
                      List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
                      Window window) {
+            this(channel, status, lastFetchedAt, connections, connectHint, metrics, window, null);
+        }
+
+        ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
+                     List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
+                     Window window, MismatchView mismatch) {
+            this.mismatch = mismatch;
             this.window = window;
             this.channel = channel;
             this.status = status;
@@ -342,7 +446,7 @@ public class MarketingOverviewQueryService {
         }
 
         boolean live() {
-            return status.equals("LIVE") || status.equals("STALE");
+            return status.equals("LIVE") || status.equals("STALE") || status.equals("MISMATCH");
         }
 
         Optional<MetricView> metric(String key) {
@@ -352,11 +456,12 @@ public class MarketingOverviewQueryService {
         ChannelView view(boolean headlineOnly) {
             List<MetricView> shown = headlineOnly ? metrics.stream().limit(channel.headline()).toList() : metrics;
             return new ChannelView(channel.channel().name(), channel.label(), status, lastFetchedAt, connections,
-                    connectHint, shown, window.to());
+                    connectHint, shown, window.to(), mismatch);
         }
     }
 
-    private ChannelBuild build(Context ctx, MetricCatalog.Channel channel) {
+    private ChannelBuild build(Context ctx, MetricCatalog.Channel catalogChannel) {
+        MetricCatalog.Channel channel = ctx.resolve(catalogChannel);
         List<Connection> connections = ctx.connections.stream()
                 .filter(c -> channel.connectorIds().contains(c.getConnectorId()))
                 .toList();
@@ -404,7 +509,55 @@ public class MarketingOverviewQueryService {
             }
             metrics.add(metricView(ctx, channel, data, metric, window));
         }
-        return new ChannelBuild(channel, anyLive ? "LIVE" : "STALE", lastFetchedAt, connectionViews, hint, metrics, window);
+        MismatchView mismatch = mismatch(ctx, channel, data, window);
+        String status = mismatch != null ? "MISMATCH" : anyLive ? "LIVE" : "STALE";
+        return new ChannelBuild(channel, status, lastFetchedAt, connectionViews, hint, metrics, window, mismatch);
+    }
+
+    /**
+     * Compares a product feed's reference figure with this channel's own connector over the settled days both
+     * have (store downloads against STORE downloads, ad spend against ADS spend). A gap above
+     * {@link #MISMATCH_THRESHOLD} of the larger figure is a mismatch; with no day in common there is nothing to say.
+     */
+    private MismatchView mismatch(Context ctx, MetricCatalog.Channel channel, ChannelData data, Window w) {
+        String reference;
+        String own;
+        String label;
+        switch (channel.channel()) {
+            case ADS -> { reference = REFERENCE_PREFIX + "ads_spend"; own = "spend"; label = "Spend"; }
+            case STORE -> { reference = REFERENCE_PREFIX + "store_downloads"; own = "downloads"; label = "Downloads"; }
+            default -> { return null; }
+        }
+        Metric ownMetric = channel.metric(own).orElse(null);
+        if (ownMetric == null) {
+            return null;
+        }
+        Map<LocalDate, Double> referenceByDay = new TreeMap<>();
+        for (ChannelMetricDaily row : ctx.referenceRows()) {
+            if (row.getMetric().equals(reference) && !row.getDay().isBefore(w.from()) && !row.getDay().isAfter(w.to())) {
+                referenceByDay.merge(row.getDay(), row.getValue().doubleValue(), Double::sum);
+            }
+        }
+        double referenceSum = 0;
+        double ownSum = 0;
+        LocalDate first = null;
+        LocalDate last = null;
+        for (Map.Entry<LocalDate, Double> e : referenceByDay.entrySet()) {
+            Double ownValue = data.dayValue(ownMetric, e.getKey());
+            if (ownValue == null) {
+                continue;
+            }
+            referenceSum += e.getValue();
+            ownSum += ownValue;
+            first = first == null ? e.getKey() : first;
+            last = e.getKey();
+        }
+        double larger = Math.max(referenceSum, ownSum);
+        if (first == null || larger <= 0) {
+            return null;
+        }
+        double gap = Math.abs(referenceSum - ownSum) / larger;
+        return gap > MISMATCH_THRESHOLD ? new MismatchView(own, label, referenceSum, ownSum, gap, first, last) : null;
     }
 
     /** Live: a recent successful run, an active feed and a healthy connection. */
@@ -471,6 +624,8 @@ public class MarketingOverviewQueryService {
         /** LEVEL: one series per (connection, dimension), summed after carrying each forward. */
         private final Map<String, Map<String, TreeMap<LocalDate, Double>>> levels = new HashMap<>();
         private final Map<String, Set<LocalDate>> provisional = new HashMap<>();
+        /** Observations behind each day's value, when the feed said (summed across connections). */
+        private final Map<String, TreeMap<LocalDate, Long>> samples = new HashMap<>();
 
         ChannelData(MetricCatalog.Channel channel, List<ChannelMetricDaily> rows) {
             this.channel = channel;
@@ -490,7 +645,32 @@ public class MarketingOverviewQueryService {
                 if (row.isProvisional()) {
                     provisional.computeIfAbsent(metric.key(), k -> new HashSet<>()).add(row.getDay());
                 }
+                if (row.getSampleSize() != null) {
+                    samples.computeIfAbsent(metric.key(), k -> new TreeMap<>())
+                            .merge(row.getDay(), row.getSampleSize(), Long::sum);
+                }
             }
+        }
+
+        /**
+         * The observations behind {@code metric} in the window as the feed reported them (a flow: summed over
+         * the days; a level: the latest reading; a ratio: its denominator's), or null when it never said.
+         */
+        Long sampleSize(Metric metric, LocalDate from, LocalDate to) {
+            if (metric.agg() == Aggregation.DERIVED) {
+                Long denominator = sampleSize(component(metric.denominator()), from, to);
+                return denominator != null ? denominator : sampleSize(component(metric.numerator()), from, to);
+            }
+            TreeMap<LocalDate, Long> series = samples.get(metric.key());
+            if (series == null) {
+                return null;
+            }
+            if (metric.agg() == Aggregation.LEVEL) {
+                var latest = series.floorEntry(to);
+                return latest == null ? null : latest.getValue();
+            }
+            var window = series.subMap(from, true, to, true);
+            return window.isEmpty() ? null : window.values().stream().mapToLong(Long::longValue).sum();
         }
 
         boolean hasRows(Metric metric) {
@@ -626,12 +806,19 @@ public class MarketingOverviewQueryService {
         }
 
         ChannelMetricTarget target = ctx.targets.get(channel.channel().name() + "/" + metric.key());
-        TargetView targetView = target == null ? null
+        TargetView feedTarget = channel.channel() == MetricChannel.PRODUCT ? ctx.feedTargets.get(metric.key()) : null;
+        TargetView targetView = feedTarget != null ? feedTarget
+                : target == null ? null
                 : new TargetView(target.getTarget().doubleValue(), target.getDirection());
-        boolean noise = value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
+        // A feed that reports how many observations stand behind a number decides for itself: too few is
+        // insufficient data. Otherwise the change detector judges.
+        Long sample = data.sampleSize(metric, w.from(), w.to());
+        boolean insufficient = sample != null && sample < MIN_SAMPLE;
+        boolean noise = sample != null ? insufficient
+                : value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
         LocalDate historyStartsOn = previous == null ? data.firstDay(metric) : null;
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
-                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf);
+                change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient);
     }
 
     /**
@@ -703,7 +890,11 @@ public class MarketingOverviewQueryService {
         build.connections.forEach(c -> connectionIds.add(c.id()));
         List<DimensionTable> tables = new ArrayList<>();
         for (Dimension dimension : channel.dimensions()) {
-            tables.add(dimensionTable(ctx, channel, dimension, connectionIds, build.window));
+            DimensionTable table = dimensionTable(ctx, channel, dimension, connectionIds, build.window);
+            // the in-app tables are optional breakdowns: a feed with no sources or campaigns shows none
+            if (channel.channel() != MetricChannel.PRODUCT || !table.rows().isEmpty()) {
+                tables.add(table);
+            }
         }
         return tables;
     }
@@ -714,7 +905,8 @@ public class MarketingOverviewQueryService {
         List<ChannelMetricDaily> rows = dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(
                 ctx.projectId, channel.channel().name(), sources, ctx.historyStart.isBefore(w.from()) ? ctx.historyStart : w.from(),
                 w.to().isBefore(ctx.today) ? ctx.today : w.to()).stream()
-                .filter(r -> !r.getDimensionKey().isEmpty() && connectionIds.contains(r.getConnectionId()))
+                .filter(r -> !r.getDimensionKey().isEmpty() && connectionIds.contains(r.getConnectionId())
+                        && (dimension.keyPrefix() == null || r.getDimensionKey().startsWith(dimension.keyPrefix())))
                 .toList();
 
         // dimension key -> column key -> value
@@ -764,6 +956,17 @@ public class MarketingOverviewQueryService {
             }
         } else if (channel == MetricChannel.SOCIAL) {
             label = platformRegistry.labelOf(dimensionKey);
+        } else if (channel == MetricChannel.PRODUCT && dimension.keyPrefix() != null) {
+            // source:{name} or campaign:{id}:{name}
+            String rest = dimensionKey.substring(dimension.keyPrefix().length());
+            if (dimension.keyPrefix().equals("campaign:")) {
+                String[] parts = rest.split(":", 2);
+                key = parts[0];
+                label = parts.length == 2 && !parts[1].isBlank() ? parts[1] : parts[0];
+            } else {
+                key = rest;
+                label = rest;
+            }
         }
         List<Double> ordered = dimension.columns().stream().map(c -> values.get(c.key())).toList();
         return new DimensionRowView(key, label, ordered);

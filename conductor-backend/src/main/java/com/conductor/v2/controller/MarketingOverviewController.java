@@ -14,6 +14,7 @@ import com.conductor.generated.v2.model.OverviewDimensionColumn;
 import com.conductor.generated.v2.model.OverviewDimensionRow;
 import com.conductor.generated.v2.model.OverviewFunnelStage;
 import com.conductor.generated.v2.model.OverviewMetric;
+import com.conductor.generated.v2.model.OverviewMismatch;
 import com.conductor.generated.v2.model.OverviewSeriesPoint;
 import com.conductor.generated.v2.model.OverviewWindow;
 import com.conductor.marketing.overview.MarketingOverviewQueryService;
@@ -105,6 +106,11 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                         .toList(),
                 c.metrics().stream().map(MarketingOverviewController::toMetric).toList())
                 .lastFetchedAt(c.lastFetchedAt());
+        if (c.mismatch() != null) {
+            MarketingOverviewQueryService.MismatchView m = c.mismatch();
+            channel.mismatch(new OverviewMismatch(m.metric(), m.label(), m.referenceValue(), m.channelValue(),
+                    m.gapPct(), m.from(), m.to()));
+        }
         if (c.connectHint() != null) {
             channel.connectHint(new OverviewConnectHint(c.connectHint().connectorId(),
                     c.connectHint().connectors().stream()
@@ -124,11 +130,16 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .changePct(m.changePct())
                 .historyStartsOn(m.historyStartsOn())
                 .asOf(m.asOf())
+                .insufficientData(m.insufficientData())
                 .target(m.target() == null ? null : toTarget(m.target()));
     }
 
     private static MarketingTarget toTarget(MarketingOverviewQueryService.TargetView t) {
-        return new MarketingTarget(t.value(), MarketingTarget.DirectionEnum.valueOf(t.direction()));
+        MarketingTarget target = new MarketingTarget(t.value(), MarketingTarget.DirectionEnum.valueOf(t.direction()));
+        if (t.readOnly()) {
+            target.readOnly(true).source(t.source());
+        }
+        return target;
     }
 
     private static OverviewDimension toDimension(MarketingOverviewQueryService.DimensionTable d) {

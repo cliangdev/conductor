@@ -29,10 +29,11 @@ public class ChannelMetricDailyStore {
 
     private static final String UPSERT = """
             INSERT INTO channel_metric_daily
-                (id, project_id, connection_id, connector_id, channel, metric, dimension_key, day, value, provisional, fetched_at)
-            VALUES (:id, :projectId, :connectionId, :connectorId, :channel, :metric, :dimensionKey, :day, :value, :provisional, now())
+                (id, project_id, connection_id, connector_id, channel, metric, dimension_key, day, value, provisional, sample_size, fetched_at)
+            VALUES (:id, :projectId, :connectionId, :connectorId, :channel, :metric, :dimensionKey, :day, :value, :provisional, :sampleSize, now())
             ON CONFLICT (connection_id, metric, dimension_key, day)
-            DO UPDATE SET value = EXCLUDED.value, provisional = EXCLUDED.provisional, fetched_at = EXCLUDED.fetched_at
+            DO UPDATE SET value = EXCLUDED.value, provisional = EXCLUDED.provisional,
+                          sample_size = EXCLUDED.sample_size, fetched_at = EXCLUDED.fetched_at
             """;
 
     private final NamedParameterJdbcTemplate jdbc;
@@ -94,6 +95,7 @@ public class ChannelMetricDailyStore {
                         .addValue("dimensionKey", p.dimensionKey())
                         .addValue("day", Date.valueOf(p.day()))
                         .addValue("value", p.value())
+                        .addValue("sampleSize", p.sampleSize())
                         .addValue("provisional", !snapshotMetric.test(p.metric()) && !p.day().isBefore(provisionalFrom));
             }
             jdbc.batchUpdate(UPSERT, batch);
