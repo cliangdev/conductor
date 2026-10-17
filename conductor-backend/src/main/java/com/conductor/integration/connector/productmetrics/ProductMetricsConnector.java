@@ -104,6 +104,17 @@ public class ProductMetricsConnector implements FetchConnector, ChannelMetricsSo
     }
 
     /** Refuse a connection that cannot work before it is saved, with a plain reason (bad URL, rejected key, wrong contract version). */
+    /** One connection per metrics endpoint: the URL, lower-cased, without a trailing slash. */
+    @Override
+    public Optional<String> identityKey(ConnectionContext ctx) {
+        Object url = ctx.configValue("baseUrl");
+        if (url == null || url.toString().isBlank()) return Optional.empty();
+        return Optional.of(url.toString().trim().toLowerCase(java.util.Locale.ROOT).replaceAll("/+$", ""));
+    }
+
+    @Override
+    public String identityNoun() { return "metrics URL"; }
+
     @Override
     public Optional<String> verifyCredentials(ConnectionContext ctx) {
         Probe p = probe(ctx);

@@ -445,6 +445,95 @@ class IntegrationControllerTest {
         org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never()).updateConfig(any(), any());
     }
 
+    private com.conductor.integration.FetchConnector identityConnector() {
+        com.conductor.integration.FetchConnector connector = mock(com.conductor.integration.FetchConnector.class);
+        when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(false, List.of()));
+        when(connector.identityNoun()).thenReturn("app");
+        when(connector.identityKey(any())).thenAnswer(inv -> {
+            Object app = ((com.conductor.integration.ConnectionContext) inv.getArgument(0)).configValue("appId");
+            return Optional.ofNullable(app).map(Object::toString);
+        });
+        when(connector.verifyCredentials(any())).thenReturn(Optional.empty());
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        return connector;
+    }
+
+    private Connection existingApp(String id, String label, String appId) {
+        Connection other = new Connection();
+        other.setId(id);
+        other.setProjectId(PROJECT_ID);
+        other.setConnectorId(GCP_SA_CONNECTOR_ID);
+        other.setDisplayLabel(label);
+        when(connectionService.toContext(other)).thenReturn(new com.conductor.integration.ConnectionContext(
+                PROJECT_ID, GCP_SA_CONNECTOR_ID, id, null, null, null, Map.of("appId", appId), null));
+        return other;
+    }
+
+    @Test
+    void createConnection_theSameAppTwiceInOneWorkspace_returns400NamingTheExistingConnection() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        identityConnector();
+        Connection existing = existingApp("c-1", "Rexipe iOS", "123");
+        when(connectionService.list(PROJECT_ID, GCP_SA_CONNECTOR_ID)).thenReturn(List.of(existing));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"k\",\"configJson\":{\"appId\":\"123\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("This app is already connected in this workspace as \"Rexipe iOS\""));
+
+        org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never())
+                .create(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void createConnection_aDifferentAppIsAllowed() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        identityConnector();
+        Connection existing = existingApp("c-1", "Rexipe iOS", "123");
+        when(connectionService.list(PROJECT_ID, GCP_SA_CONNECTOR_ID)).thenReturn(List.of(existing));
+        Connection created = new Connection();
+        created.setId("c-2");
+        created.setConnectorId(GCP_SA_CONNECTOR_ID);
+        when(connectionService.create(eq(PROJECT_ID), eq(GCP_SA_CONNECTOR_ID), eq(AuthType.API_KEY), isNull(),
+                eq("member-user-id"))).thenReturn(created);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"k\",\"configJson\":{\"appId\":\"456\"}}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void updateConnection_editingAnAppIdToOneAlreadyConnected_returns400_butKeepingYourOwnIsFine() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        identityConnector();
+        Connection self = existingApp("c-2", "Second", "456");
+        Connection other = existingApp("c-1", "Rexipe iOS", "123");
+        when(connectionService.getById("c-2", GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(self));
+        when(connectionService.list(PROJECT_ID, GCP_SA_CONNECTOR_ID)).thenReturn(List.of(other, self));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_SA_CONNECTOR_ID
+                        + "/connections/c-2")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"appId\":\"123\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("This app is already connected in this workspace as \"Rexipe iOS\""));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_SA_CONNECTOR_ID
+                        + "/connections/c-2")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"appId\":\"456\"}}"))
+                .andExpect(status().isOk());
+    }
+
     @Test
     void deleteConnection_flipsReferencingRuntimeTargetsBeforeDeleting() throws Exception {
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
