@@ -59,6 +59,14 @@ export function DestinationRow({
   const disabled = row.unhealthy && !row.checked
   const noteId = `${detailsId}-note`
 
+  const hasMeta =
+    (row.settled && !!row.stateLabel) ||
+    !!chip ||
+    !!row.timeText ||
+    !!row.metrics ||
+    (row.settled && !!target?.permalink) ||
+    (!row.settled && row.customized && mode === 'pick')
+
   const identity = (
     <span className="flex min-w-0 items-center gap-2">
       <PlatformIcon platform={option.platform} />
@@ -91,7 +99,7 @@ export function DestinationRow({
   return (
     <li className={cn(disabled && 'opacity-60')} data-testid={`destination-row-${row.key.replace(/\s+/g, '-')}`}>
       <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2', !disabled && 'hover:bg-muted/40')}>
-        <div className="flex min-w-0 flex-1 basis-full items-center sm:basis-auto">
+        <div className="flex min-w-0 flex-1 items-center">
           {picking ? (
             <Checkbox
               checked={row.checked}
@@ -106,9 +114,11 @@ export function DestinationRow({
           )}
         </div>
 
+        {hasMeta && (
         <div
+          data-testid="destination-meta"
           className={cn(
-            'flex basis-full flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground sm:basis-auto sm:pl-0',
+            'order-last flex basis-full flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground sm:order-none sm:basis-auto sm:pl-0',
             picking ? 'pl-[26px]' : 'pl-7'
           )}
         >
@@ -133,6 +143,7 @@ export function DestinationRow({
             <span className="whitespace-nowrap">customized</span>
           )}
         </div>
+        )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {action}

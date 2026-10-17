@@ -44,4 +44,25 @@ describe('DestinationRow findings', () => {
     expect(error.mock.calls.flat().join(' ')).not.toMatch(/same key/)
     error.mockRestore()
   })
+
+  it('has no empty second band when a row has nothing to say beside its name', () => {
+    render(
+      <ul>
+        <DestinationRow
+          row={row([])}
+          mode="outcome"
+          expanded={false}
+          hasDetails
+          detailsId="d"
+          retrying={false}
+          onToggle={() => {}}
+          onExpand={() => {}}
+          onRetry={() => {}}
+          onMarkPublished={() => {}}
+        />
+      </ul>,
+    )
+    expect(screen.queryByTestId('destination-meta')).not.toBeInTheDocument()
+    expect(screen.getByText('@acme')).toHaveClass('truncate')
+  })
 })

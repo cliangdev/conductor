@@ -325,8 +325,8 @@ export function PublishReadinessAction({
     : state.summaryText
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-3">
-      {summaryText && <p className="text-sm text-muted-foreground">{summaryText}</p>}
+    <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3" data-testid="readiness-action">
+      {summaryText && <p className="min-w-0 text-sm text-muted-foreground max-sm:basis-full max-sm:text-right">{summaryText}</p>}
       {state.offersButton && (
         <Button
           size="sm"

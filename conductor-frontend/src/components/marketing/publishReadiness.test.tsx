@@ -111,6 +111,10 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
     renderCard()
 
     expect(await screen.findByText(/2 things to fix/)).toBeInTheDocument()
+    // On a phone the sentence takes its own line and the button wraps below it instead of overflowing.
+    const bar = screen.getByTestId('readiness-action')
+    expect(bar).toHaveClass('flex-wrap', 'min-w-0', 'max-w-full')
+    expect(screen.getByText(/2 things to fix/)).toHaveClass('max-sm:basis-full')
     const button = screen.getByRole('button', { name: 'Submit for review' })
     expect(button).toBeDisabled()
     expect(button).toHaveAttribute('title', expect.stringContaining('no uploaded media file'))
