@@ -34,6 +34,7 @@ import {
   aspectLabel,
   aspectOf,
   assetDisplayLabel,
+  creativeLabel,
   destinationTitle,
   formatBytes,
   formatLabel,
@@ -229,8 +230,8 @@ export function PostMediaSection({
           <p className="text-xs font-medium text-muted-foreground">Came from</p>
           {asset.creativeFrameId ? (
             <div className="space-y-1">
-              <p className="text-foreground">
-                {asset.creativeDisplayId ? `Creative ${asset.creativeDisplayId}` : 'A Creative'}
+              <p className="break-words text-foreground">
+                {asset.creativeDisplayId ? creativeLabel(asset.creativeDisplayId, asset.creativeName) : 'A Creative'}
                 {asset.placementKey ? ` · ${placementLabel(asset.placementKey)}` : ''}
                 {asset.sequenceIndex != null ? ` · slide ${asset.sequenceIndex + 1}` : ''}
               </p>
@@ -365,7 +366,9 @@ export function PostMediaSection({
     return (
       <section key={g.key} aria-label={g.title} className="space-y-2" data-testid="media-origin-group">
         <header className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-medium text-foreground">{g.title}</span>
+          <span className="min-w-0 max-w-full truncate font-medium text-foreground" title={g.title}>
+            {g.title}
+          </span>
           <span className="text-muted-foreground">
             {[g.detail, `${g.assets.length} file${g.assets.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
           </span>
@@ -436,22 +439,23 @@ export function PostMediaSection({
       </div>
 
       {creativeGroups.length > 0 && (
-        <p className="text-xs text-muted-foreground" data-testid="media-origin-line">
-          {creativeGroups.map((g, i) => (
-            <span key={g.key}>
-              {i > 0 && '; '}
-              From Creative {g.creativeDisplayId ?? ''}
+        <ul className="space-y-0.5 text-xs text-muted-foreground" data-testid="media-origin-line">
+          {creativeGroups.map((g) => (
+            <li key={g.key} className="flex min-w-0 items-baseline gap-1" data-testid="media-origin-item">
+              <span className="min-w-0 truncate" title={creativeLabel(g.creativeDisplayId, g.creativeName)}>
+                From {creativeLabel(g.creativeDisplayId, g.creativeName)}
+              </span>
               {g.creativeId && (
                 <>
-                  {' · '}
-                  <Link href={creativeHref(g.creativeId)} className="text-primary hover:underline">
+                  <span aria-hidden>·</span>
+                  <Link href={creativeHref(g.creativeId)} className="shrink-0 text-primary hover:underline">
                     Open Creative
                   </Link>
                 </>
               )}
-            </span>
+            </li>
           ))}
-        </p>
+        </ul>
       )}
 
       {locked && canEdit && (
