@@ -800,6 +800,9 @@ public class MarketingOverviewQueryService {
             if (series == null) {
                 return null;
             }
+            if (metric.denominator() != null) {
+                return weightedLevelAt(series, levels.get(metric.denominator()), day);
+            }
             double total = 0;
             boolean any = false;
             for (TreeMap<LocalDate, Double> s : series.values()) {
@@ -810,6 +813,39 @@ public class MarketingOverviewQueryService {
                 }
             }
             return any ? total : null;
+        }
+
+        /**
+         * An average-valued snapshot across connections: each connection's latest value weighted by its own latest
+         * weight (rating average by rating count), so an app with 3 ratings cannot outvote one with 3,000. A plain
+         * mean when any connection has no positive weight; a single connection is returned unchanged.
+         */
+        private static Double weightedLevelAt(Map<String, TreeMap<LocalDate, Double>> values,
+                                              Map<String, TreeMap<LocalDate, Double>> weights, LocalDate day) {
+            double weighted = 0;
+            double weightSum = 0;
+            double plain = 0;
+            int n = 0;
+            boolean allWeighted = true;
+            for (Map.Entry<String, TreeMap<LocalDate, Double>> e : values.entrySet()) {
+                var entry = e.getValue().floorEntry(day);
+                if (entry == null) {
+                    continue;
+                }
+                n++;
+                plain += entry.getValue();
+                var w = weights == null || weights.get(e.getKey()) == null ? null : weights.get(e.getKey()).floorEntry(day);
+                if (w == null || w.getValue() <= 0) {
+                    allWeighted = false;
+                } else {
+                    weighted += entry.getValue() * w.getValue();
+                    weightSum += w.getValue();
+                }
+            }
+            if (n == 0) {
+                return null;
+            }
+            return allWeighted && weightSum > 0 ? weighted / weightSum : plain / n;
         }
 
         /** True when any row feeding {@code metric} for {@code day} is provisional. */

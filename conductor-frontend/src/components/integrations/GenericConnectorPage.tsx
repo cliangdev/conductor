@@ -17,12 +17,13 @@ import { ConnectionRow } from './ConnectionRow';
 import { OAuthAccountPicker } from './OAuthAccountPicker';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { useCan } from '@/contexts/PermissionsContext';
 import { toastError } from '@/components/ui/toast';
 
 /** Connectors that feed a Marketing overview channel -> where their numbers are shown. */
-const OVERVIEW_CHANNELS: Record<string, { slug: string; label: string }> = {
-  'app-store-connect': { slug: 'store', label: 'App Store' },
+const OVERVIEW_CHANNELS: Record<string, { slug: string; label: string; retention?: string }> = {
+  'app-store-connect': { slug: 'store', label: 'App Store', retention: 'Apple keeps only about 35 days of daily reports.' },
   'product-metrics': { slug: 'product', label: 'In-app' },
 };
 
@@ -49,6 +50,7 @@ export default function GenericConnectorPage({
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState<string | null>(null);
   const [pendingAccountConnectionId, setPendingAccountConnectionId] = useState<string | null>(null);
   // The catalog entry carries readiness, so it's on screen with the first paint; the panel's own
   // responses then take over. Derived during render rather than mirrored into state, so the Connect
@@ -170,6 +172,7 @@ export default function GenericConnectorPage({
       setConnectError(apiErrorMessage(e, 'Failed to disconnect. Please try again.'));
     } finally {
       setDisconnecting(null);
+      setConfirmingDisconnect(null);
     }
   };
 
@@ -196,6 +199,8 @@ export default function GenericConnectorPage({
 
   const showsConnectForm = (!item.singleInstance || item.connections.length === 0) && canMutate;
   const overviewChannel = OVERVIEW_CHANNELS[item.connectorId];
+  const confirmingConnection = item.connections.find((c) => c.id === confirmingDisconnect);
+  const confirmingName = confirmingConnection?.label || item.name;
   const errorShownInForm = showsConnectForm && item.authType !== 'OAUTH2';
 
   return (
@@ -248,7 +253,7 @@ export default function GenericConnectorPage({
                   : `${toolCounts[conn.id]} ${toolCounts[conn.id] === 1 ? 'tool' : 'tools'}`
               }
               disconnecting={disconnecting === conn.id}
-              onDisconnect={handleDisconnect}
+              onDisconnect={setConfirmingDisconnect}
               onChooseAccount={setPendingAccountConnectionId}
             />
           ))}
@@ -300,6 +305,29 @@ export default function GenericConnectorPage({
           )}
         </div>
       )}
+
+      <ConfirmModal
+        open={confirmingConnection !== undefined}
+        title={`Disconnect ${confirmingName}?`}
+        confirmLabel="Disconnect"
+        busyLabel="Disconnecting…"
+        busy={disconnecting !== null}
+        onCancel={() => setConfirmingDisconnect(null)}
+        onConfirm={() => confirmingConnection && handleDisconnect(confirmingConnection.id)}
+      >
+        <div className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            {confirmingName} stops syncing, and all history stored for this connection is deleted from this
+            workspace.
+          </p>
+          {overviewChannel && (
+            <p>
+              Its numbers leave the Marketing overview. History older than what the platform still keeps cannot be
+              fetched again. {overviewChannel.retention}
+            </p>
+          )}
+        </div>
+      </ConfirmModal>
 
       {overviewChannel ? (
         <p className="text-sm text-muted-foreground mt-6">

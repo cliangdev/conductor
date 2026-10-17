@@ -367,6 +367,14 @@ class AppStoreConnectChannelMetricsTest {
                 .noneMatch(d -> d.isAfter(LocalDate.of(2026, 10, 2)));
     }
 
+    @Test
+    void aConnectionIsIdentifiedByItsAppId() {
+        assertThat(connector.identityKey(ctxWithAppId(" 12345 "))).hasValue("12345");
+        assertThat(connector.identityKey(ctxWithAppId("67890"))).hasValue("67890");
+        assertThat(connector.identityKey(new ConnectionContext("p", "app-store-connect", "c", null, null, null,
+                Map.of(), null))).isEmpty();
+    }
+
     // -- credential check -------------------------------------------------------------------------------
 
     @Test
