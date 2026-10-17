@@ -171,6 +171,13 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         }
     }
 
+    /** One connection per app: the numeric App Apple ID. */
+    @Override
+    public Optional<String> identityKey(ConnectionContext ctx) {
+        String appId = str(ctx.configValue("appId"));
+        return isBlank(appId) ? Optional.empty() : Optional.of(appId.trim());
+    }
+
     /**
      * Runs the same calls a pull makes (the app, then the ONGOING analytics request, creating it when missing) so a
      * bad Issuer ID, Key ID, .p8, role or app id is refused at connect time with the plain message a feed pull

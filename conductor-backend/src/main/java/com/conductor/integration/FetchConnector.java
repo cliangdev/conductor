@@ -21,5 +21,12 @@ public interface FetchConnector extends Connector {
      */
     default Optional<String> verifyCredentials(ConnectionContext ctx) { return Optional.empty(); }
 
+    /**
+     * What a connection is ABOUT (e.g. the app id, the metrics URL), normalized, or empty when a workspace may
+     * connect the same thing more than once. The connect and edit paths refuse a second connection in the same
+     * workspace with the same identity, since both would feed the same numbers and double every total.
+     */
+    default Optional<String> identityKey(ConnectionContext ctx) { return Optional.empty(); }
+
     default Duration getMaxCacheAge() { return Duration.ofHours(1); }
 }

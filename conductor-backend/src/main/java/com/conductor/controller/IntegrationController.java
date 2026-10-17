@@ -352,6 +352,9 @@ public class IntegrationController implements IntegrationsApi {
         // Opt-in credential check: a connector that can prove the credentials work refuses bad ones here,
         // before anything is saved, with a plain message the connect form shows inline.
         if (connector instanceof FetchConnector fetchConnector) {
+            ConnectionContext candidate = new ConnectionContext(projectId, connectorId, "verify", null, null, null,
+                    request != null && request.getConfigJson() != null ? request.getConfigJson() : Map.of(), null);
+            refuseIfAlreadyConnected(fetchConnector, candidate, null);
             verifyCredentialsOrRefuse(fetchConnector, projectId, connectorId, spec, request);
         }
 
@@ -410,9 +413,11 @@ public class IntegrationController implements IntegrationsApi {
             ConnectionContext stored = connectionService.toContext(conn);
             Map<String, Object> merged = new java.util.HashMap<>(stored.config() != null ? stored.config() : Map.of());
             merged.putAll(request.getConfig());
-            refuseIfCredentialsFail(fetchConnector, new ConnectionContext(projectId, connectorId,
+            ConnectionContext edited = new ConnectionContext(projectId, connectorId,
                     "verify-" + java.util.UUID.randomUUID(), stored.accessToken(), stored.refreshToken(),
-                    stored.expiresAt(), merged, stored.webhookSecret()));
+                    stored.expiresAt(), merged, stored.webhookSecret());
+            refuseIfAlreadyConnected(fetchConnector, edited, conn.getId());
+            refuseIfCredentialsFail(fetchConnector, edited);
         }
         if (request != null && request.getLabel() != null) {
             connectionService.updateLabel(conn, request.getLabel());
@@ -834,6 +839,25 @@ public class IntegrationController implements IntegrationsApi {
         ConnectionContext ctx = new ConnectionContext(projectId, connectorId, "verify-" + java.util.UUID.randomUUID(),
                 secret, null, null, config, null);
         refuseIfCredentialsFail(connector, ctx);
+    }
+
+    /** One thing (an app, a metrics URL) is connected once per workspace: a second would double its numbers. */
+    private void refuseIfAlreadyConnected(FetchConnector connector, ConnectionContext candidate, String selfId) {
+        Optional<String> key = connector.identityKey(candidate);
+        if (key.isEmpty()) {
+            return;
+        }
+        for (Connection other : connectionService.list(candidate.projectId(), candidate.connectorId())) {
+            if (other.getId().equals(selfId)) {
+                continue;
+            }
+            Optional<String> otherKey = connector.identityKey(connectionService.toContext(other));
+            if (otherKey.isPresent() && otherKey.get().equals(key.get())) {
+                String label = other.getDisplayLabel() != null && !other.getDisplayLabel().isBlank()
+                        ? other.getDisplayLabel() : candidate.connectorId();
+                throw new BusinessException("This app is already connected in this workspace as \"" + label + "\"");
+            }
+        }
     }
 
     private void refuseIfCredentialsFail(FetchConnector connector, ConnectionContext ctx) {
