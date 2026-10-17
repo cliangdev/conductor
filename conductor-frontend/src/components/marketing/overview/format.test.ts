@@ -90,6 +90,15 @@ describe('dataThroughLabel', () => {
 })
 
 describe('chartAxis', () => {
+  it('starts a summed currency axis at zero when asked', () => {
+    const padded = chartAxis([80, 100, 120, 140], 'CURRENCY')
+    expect(padded.domain[0]).toBeGreaterThan(0)
+    const axis = chartAxis([80, 100, 120, 140], 'CURRENCY', null, true)
+    expect(axis.domain[0]).toBe(0)
+    expect(axis.ticks[0]).toBe(0)
+    expect(axis.domain[1]).toBeGreaterThanOrEqual(140)
+  })
+
   it('never pads a rating axis beyond 5 stars', () => {
     const axis = chartAxis([4.6, 4.7, 4.8, 4.75], 'RATING')
     expect(axis.domain[1]).toBe(5)
