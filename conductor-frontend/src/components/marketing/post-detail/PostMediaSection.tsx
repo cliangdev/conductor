@@ -564,6 +564,7 @@ export function PostMediaSection({
           projectId={projectId}
           workItemId={workItemId}
           token={token}
+          destinations={rows.map((r) => ({ platform: r.option.platform, format: r.format, label: r.option.label, keepsOwnMedia: (r.content.assetIds?.length ?? 0) > 0 }))}
           onAttached={onAssetsChanged}
         />
       )}

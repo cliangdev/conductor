@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import { render as rtl, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -125,6 +125,18 @@ describe('CreativesTab', () => {
     expect(getCreative).toHaveBeenCalledTimes(1)
   })
 
+  it('says a destination with its own media keeps it, with no frames or warning', async () => {
+    setup({ destinations: [IG, { ...YT, keepsOwnMedia: true }] })
+    await userEvent.click(screen.getByRole('button', { name: 'Choose Creative 18a Import carousel' }))
+    const panel = screen.getByTestId('creatives-preview')
+    const kept = await within(panel).findByTestId('keeps-own-media')
+    expect(kept).toHaveTextContent('Acme Channel')
+    expect(kept).toHaveTextContent('Keeps its own media')
+    expect(within(kept).queryByTestId('frame-strip')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('creative-warning')).not.toBeInTheDocument()
+    expect(within(panel).getAllByTestId('frame-strip')).toHaveLength(1)
+  })
+
   it('lists the Creative’s sizes when no destination is picked yet', async () => {
     setup({ destinations: [] })
     await userEvent.click(screen.getByRole('button', { name: 'Choose Creative 18a Import carousel' }))
@@ -209,5 +221,40 @@ describe('CreativesTab', () => {
     setup({ creatives: [clip, draft] })
     expect(cardNames()).toEqual(['Choose Creative 22a Dinner clip'])
     expect(screen.getByRole('button', { name: 'Ready' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  describe('on a phone', () => {
+    function narrow(matches: boolean) {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }))
+    }
+    afterEach(() => vi.unstubAllGlobals())
+
+    it('shows the per-destination preview below the grid once a Creative is chosen, with the footer still there', async () => {
+      narrow(true)
+      setup()
+      expect(screen.queryByTestId('creatives-preview')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('creatives-preview-mobile')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: 'Choose Creative 18a Import carousel' }))
+      const panel = await screen.findByTestId('creatives-preview-mobile')
+      expect(await within(panel).findByText('4:5 ×3')).toBeInTheDocument()
+      expect(within(panel).getByText('@acme')).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: 'Use Creative 18a' })).toBeEnabled()
+      // Collapsible, so the grid can have the room back.
+      await userEvent.click(within(panel).getByRole('button', { name: /What each destination gets/ }))
+      expect(within(panel).queryByText('@acme')).not.toBeInTheDocument()
+    })
+
+    it('keeps the side panel and no stacked copy on a wide screen', async () => {
+      narrow(false)
+      setup()
+      await userEvent.click(screen.getByRole('button', { name: 'Choose Creative 18a Import carousel' }))
+      expect(await screen.findByTestId('creatives-preview')).toBeInTheDocument()
+      expect(screen.queryByTestId('creatives-preview-mobile')).not.toBeInTheDocument()
+    })
   })
 })
