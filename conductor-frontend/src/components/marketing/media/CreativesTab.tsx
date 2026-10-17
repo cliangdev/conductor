@@ -251,7 +251,7 @@ export function CreativesTab({
 
           {loadError && <Alert variant="destructive">{loadError}</Alert>}
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
             {creatives === null ? (
               <Skeleton className="h-40 w-full" />
             ) : visible.length === 0 ? (
