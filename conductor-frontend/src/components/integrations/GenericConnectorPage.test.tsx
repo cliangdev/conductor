@@ -100,6 +100,17 @@ describe('GenericConnectorPage', () => {
     expect(screen.getByLabelText('Issuer ID')).toHaveValue('bad')
   })
 
+  it('links a connector that feeds the Marketing overview to its overview page instead of saying it has no dashboard', async () => {
+    vi.mocked(api.listIntegrations).mockResolvedValue([
+      { ...discordConnector, connectorId: 'app-store-connect', name: 'App Store Connect' },
+    ])
+    renderPage('app-store-connect')
+
+    const link = await screen.findByRole('link', { name: /open the app store overview/i })
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/marketing/overview/store')
+    expect(screen.queryByText(/doesn.t have a dedicated dashboard/i)).not.toBeInTheDocument()
+  })
+
   it('falls back to the unknown-connector message when the id is absent from the catalog', async () => {
     vi.mocked(api.listIntegrations).mockResolvedValue([])
     renderPage('not-a-real-connector')

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { createConnection, deleteConnection, apiPost, apiErrorMessage, listRemoteMcpTools } from '@/lib/api';
 import { buildConnectionPayload } from '@/lib/connectorConnectForm';
@@ -18,6 +19,11 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useCan } from '@/contexts/PermissionsContext';
 import { toastError } from '@/components/ui/toast';
+
+/** Connectors that feed a Marketing overview channel -> where their numbers are shown. */
+const OVERVIEW_CHANNELS: Record<string, { slug: string; label: string }> = {
+  'app-store-connect': { slug: 'store', label: 'App Store' },
+};
 
 /**
  * Fallback overview page for any connector without a bespoke dashboard (e.g. action-only connectors
@@ -188,7 +194,8 @@ export default function GenericConnectorPage({
   }
 
   const showsConnectForm = (!item.singleInstance || item.connections.length === 0) && canMutate;
-  const errorShownInForm = showsConnectForm && item.authType !== 'OAUTH2';
+  const overviewChannel = OVERVIEW_CHANNELS[item.connectorId];
+  const errorShownInForm =showsConnectForm && item.authType !== 'OAUTH2';
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -293,10 +300,23 @@ export default function GenericConnectorPage({
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground mt-6">
-        This connector doesn&apos;t have a dedicated dashboard yet. See the Tools tab for what it can
-        do in workflows and agents.
-      </p>
+      {overviewChannel ? (
+        <p className="text-sm text-muted-foreground mt-6">
+          {item.name} numbers appear on the Marketing overview.{' '}
+          <Link
+            href={`/app/projects/${projectId}/marketing/overview/${overviewChannel.slug}`}
+            className="text-primary hover:underline"
+          >
+            Open the {overviewChannel.label} overview
+          </Link>
+          . See the Tools tab for what this connector can do in workflows and agents.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground mt-6">
+          This connector doesn&apos;t have a dedicated dashboard yet. See the Tools tab for what it can
+          do in workflows and agents.
+        </p>
+      )}
     </div>
   );
 }
