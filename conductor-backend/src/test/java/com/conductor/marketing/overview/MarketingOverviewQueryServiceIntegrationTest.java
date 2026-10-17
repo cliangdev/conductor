@@ -193,6 +193,47 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void theAverageRatingAcrossTwoAppsIsWeightedByEachAppsRatingCountWhileCountsAdd() {
+        String a = connectFresh("app-store-connect");
+        String b = connectFresh("app-store-connect");
+        // previous snapshot (Oct 3): 3.5 x 10 and 4.5 x 10 -> 4.0
+        put(a, "app-store-connect", "STORE", "rating_avg", day(3), 3.5);
+        put(a, "app-store-connect", "STORE", "rating_count", day(3), 10);
+        put(b, "app-store-connect", "STORE", "rating_avg", day(3), 4.5);
+        put(b, "app-store-connect", "STORE", "rating_count", day(3), 10);
+        // latest (Oct 10): 4.0 x 10 and 5.0 x 30 -> 4.75, never 9.0
+        put(a, "app-store-connect", "STORE", "rating_avg", day(10), 4.0);
+        put(a, "app-store-connect", "STORE", "rating_count", day(10), 10);
+        put(b, "app-store-connect", "STORE", "rating_avg", day(10), 5.0);
+        put(b, "app-store-connect", "STORE", "rating_count", day(10), 30);
+
+        var detail = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        MetricView avg = metric(detail.channel(), "rating_avg");
+        assertThat(avg.value()).isCloseTo(4.75, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(avg.previous()).isCloseTo(4.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(metric(detail.channel(), "rating_count").value()).isEqualTo(40.0);
+        // every day of the series uses the same rule (Oct 9 still reads the Oct 3 snapshots)
+        assertThat(avg.series()).filteredOn(p -> p.day().equals(day(9))).singleElement()
+                .satisfies(p -> assertThat(p.value()).isCloseTo(4.0, org.assertj.core.data.Offset.offset(1e-9)));
+        assertThat(avg.series()).filteredOn(p -> p.day().equals(day(10))).singleElement()
+                .satisfies(p -> assertThat(p.value()).isCloseTo(4.75, org.assertj.core.data.Offset.offset(1e-9)));
+    }
+
+    @Test
+    void theAverageRatingFallsBackToAPlainMeanWhenACountIsMissing() {
+        String a = connectFresh("app-store-connect");
+        String b = connectFresh("app-store-connect");
+        put(a, "app-store-connect", "STORE", "rating_avg", day(10), 4.0);
+        put(b, "app-store-connect", "STORE", "rating_avg", day(10), 5.0);
+        put(b, "app-store-connect", "STORE", "rating_count", day(10), 30);
+
+        var detail = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        assertThat(metric(detail.channel(), "rating_avg").value()).isEqualTo(4.5);
+    }
+
+    @Test
     void levelMetricsTakeTheLatestValuePerPlatformThenSumAcrossPlatforms() {
         String meta = connectFresh("meta");
         String youtube = connectFresh("youtube");

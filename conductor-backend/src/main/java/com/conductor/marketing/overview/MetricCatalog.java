@@ -126,6 +126,15 @@ public final class MetricCatalog {
         return new Metric(key, label, unit, Aggregation.LEVEL, Good.UP, false, true, true, null, null);
     }
 
+    /**
+     * A snapshot that is an average over another snapshot's population (the average rating of the ratings counted
+     * by {@code weightKey}). Across connections it is the weighted mean, never the sum. The weight key rides in the
+     * metric's {@code denominator}, which a LEVEL otherwise never uses.
+     */
+    private static Metric weightedRatingLevel(String key, String label, Unit unit, String weightKey) {
+        return new Metric(key, label, unit, Aggregation.LEVEL, Good.UP, false, true, true, null, weightKey);
+    }
+
     private static Metric level(String key, String label, boolean optional) {
         return new Metric(key, label, Unit.COUNT, Aggregation.LEVEL, Good.UP, false, optional, true, null, null);
     }
@@ -193,7 +202,7 @@ public final class MetricCatalog {
                                     "downloads", "impressions_unique"),
                             optionalSum("redownloads", "Redownloads", Unit.COUNT, Good.UP, false),
                             ratingLevel("rating_count", "Ratings", Unit.COUNT),
-                            ratingLevel("rating_avg", "Average rating", Unit.RATING),
+                            weightedRatingLevel("rating_avg", "Average rating", Unit.RATING, "rating_count"),
                             hiddenSum("impressions_unique")),
                     List.of(new Dimension("sources", "By traffic source", List.of(
                             sumColumn("impressions", "impressions", "Impressions", Unit.COUNT),
