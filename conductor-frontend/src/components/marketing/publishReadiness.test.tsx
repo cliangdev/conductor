@@ -116,6 +116,13 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
     expect(button).toHaveAttribute('title', expect.stringContaining('no uploaded media file'))
   })
 
+  it('counts a finding once when the server repeats it per file', async () => {
+    const dup = { code: 'MEDIA_SIZE', message: 'This image is too small' }
+    current = preflight({ ready: false, blockers: [dup, { ...dup }, { ...dup }, { code: 'NO_TARGETS', message: 'pick an account' }, { ...dup }] })
+    renderCard()
+    expect(await screen.findByText(/2 things to fix/)).toBeInTheDocument()
+  })
+
   it('takes the next move when ready, reports the new status, and re-asks the server', async () => {
     const { onStatusChanged } = renderCard()
     const button = await screen.findByRole('button', { name: 'Submit for review' })

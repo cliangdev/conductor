@@ -15,6 +15,7 @@ import { FormatBadge } from '@/components/marketing/PostFormatSelector'
 import { cn } from '@/lib/utils'
 import { DestinationMetrics } from './DestinationMetrics'
 import { PlatformIcon } from './PlatformIcon'
+import { dedupeFindings } from '@/components/marketing/publishReadiness'
 import type { DestinationMode, DestinationRowModel } from './model'
 import { permalinkText } from './publishState'
 
@@ -163,13 +164,13 @@ export function DestinationRow({
               <ShowDetails detail={row.noteDetail} message={row.note} />
             </div>
           )}
-          {row.blockers.map((f) => (
+          {dedupeFindings(row.blockers).map((f) => (
             <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-failed">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>{f.message}</span>
             </p>
           ))}
-          {row.warnings.map((f) => (
+          {dedupeFindings(row.warnings).map((f) => (
             <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-progress">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>{f.message}</span>
