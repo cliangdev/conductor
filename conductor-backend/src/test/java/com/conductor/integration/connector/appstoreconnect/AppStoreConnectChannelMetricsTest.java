@@ -96,7 +96,12 @@ class AppStoreConnectChannelMetricsTest {
         expectJson(API + "/v1/analyticsReportInstances/" + instanceId + "/segments", "{\"data\":[" + data + "]}");
     }
 
+    private void expectApp() {
+        expectJson(API + "/v1/apps/12345", "{\"data\":{\"id\":\"12345\"}}");
+    }
+
     private void expectRequestAndReports() {
+        expectApp();
         expectJson(REQUESTS, "{\"data\":[{\"id\":\"REQ1\"}]}");
         expectJson(DISCOVERY_LOOKUP, "{\"data\":[{\"id\":\"R1\"}]}");
         expectJson(DOWNLOADS_LOOKUP, "{\"data\":[{\"id\":\"R2\"}]}");
@@ -229,6 +234,7 @@ class AppStoreConnectChannelMetricsTest {
 
     @Test
     void createsTheOngoingRequestWhenNoneExistsAndReusesTheExistingOneOn409() {
+        expectApp();
         expectJson(REQUESTS, "{\"data\":[]}");
         server.expect(once(), requestTo(API + "/v1/analyticsReportRequests")).andExpect(method(HttpMethod.POST))
                 .andExpect(header("Authorization", "Bearer jwt-token"))
@@ -266,6 +272,7 @@ class AppStoreConnectChannelMetricsTest {
 
     @Test
     void anAuthRefusalNeedsSetupAndRateLimitingIsDegraded() {
+        expectApp();
         server.expect(once(), requestTo(REQUESTS)).andRespond(withStatus(HttpStatus.FORBIDDEN));
         assertThatThrownBy(() -> connector.pullDaily(ctx(null), FROM, TO))
                 .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
@@ -274,6 +281,7 @@ class AppStoreConnectChannelMetricsTest {
                 });
 
         server.reset();
+        expectApp();
         server.expect(once(), requestTo(REQUESTS)).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
         assertThatThrownBy(() -> connector.pullDaily(ctx(null), FROM, TO))
                 .isInstanceOfSatisfying(ChannelMetricsSourceException.class,
@@ -286,6 +294,124 @@ class AppStoreConnectChannelMetricsTest {
         assertThatThrownBy(() -> connector.pullDaily(none, FROM, TO))
                 .isInstanceOfSatisfying(ChannelMetricsSourceException.class,
                         e -> assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED));
+    }
+
+    @Test
+    void anAppTheKeyCannotSeeIsNamedAsSuchNotAsARoleProblem() {
+        server.expect(once(), requestTo(API + "/v1/apps/12345")).andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> connector.pullDaily(ctx(null), FROM, TO))
+                .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
+                    assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+                    assertThat(e.getMessage()).isEqualTo(
+                            "No app with Apple ID 12345 is visible to this API key — check the App Apple ID");
+                });
+        server.verify();
+    }
+
+    @Test
+    void aNonNumericAppIdNeedsSetupWithoutCallingApple() {
+        ConnectionContext bad = ctxWithAppId("abc");
+        assertThatThrownBy(() -> connector.pullDaily(bad, FROM, TO))
+                .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
+                    assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+                    assertThat(e.getMessage()).contains("numbers only");
+                });
+        assertThat(connector.checkHealth(bad)).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+        server.verify(); // no request was made
+    }
+
+    private static ConnectionContext ctxWithAppId(String appId) {
+        return new ConnectionContext("proj", "app-store-connect", "conn",
+                "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
+                null, null, Map.of("issuerId", "ISSUER", "keyId", "KEY123", "appId", appId), null);
+    }
+
+    // -- zero days --------------------------------------------------------------------------------------
+
+    @Test
+    void aProcessedDayWithNoRowsForAMetricIsStoredAsZeroButAnUnpublishedDayIsLeftAlone() {
+        expectRequestAndReports();
+        // Oct 2 (processed Oct 3) has impressions only; Oct 1 (processed Oct 2) has no rows at all. Nothing is
+        // processed after Oct 3, so Oct 3 and later are unpublished and must stay untouched.
+        expectJson(DISCOVERY_INSTANCES, """
+                {"data":[{"id":"A","attributes":{"processingDate":"2026-10-03"}},
+                         {"id":"B","attributes":{"processingDate":"2026-10-02"}}]}""");
+        expectSegmentList("A", "https://segments.example.com/a1");
+        expectSegment("https://segments.example.com/a1", gzip(
+                "Date\tEvent\tSource Type\tCounts\tUnique Counts\n2026-10-02\tImpression\tApp Store Search\t5\t4\n"));
+        expectJson(API + "/v1/analyticsReportInstances/B/segments", "{\"data\":[]}");
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("D", "https://segments.example.com/d1");
+        expectSegment("https://segments.example.com/d1", gzip(
+                "Date\tDownload Type\tSource Type\tCounts\n2026-10-02\tFirst-time download\tApp Store Search\t3\n"));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null), FROM, TO.plusDays(2));
+
+        server.verify();
+        Map<String, Double> m = byKey(points);
+        // Oct 2: impressions present, the rest of Discovery is an explicit zero; downloads present, redownloads zero.
+        assertThat(m).containsEntry("impressions||2026-10-02", 5.0)
+                .containsEntry("page_views||2026-10-02", 0.0)
+                .containsEntry("page_views_unique||2026-10-02", 0.0)
+                .containsEntry("downloads||2026-10-02", 3.0)
+                .containsEntry("redownloads||2026-10-02", 0.0);
+        // Oct 1: a processed Discovery day with no rows -> zeros for all four Discovery metrics (and nothing else).
+        assertThat(m).containsEntry("impressions||2026-10-01", 0.0)
+                .containsEntry("impressions_unique||2026-10-01", 0.0)
+                .containsEntry("page_views||2026-10-01", 0.0)
+                .containsEntry("page_views_unique||2026-10-01", 0.0)
+                .doesNotContainKey("downloads||2026-10-01");
+        // Nothing for a day without a processed instance.
+        assertThat(points).extracting(ChannelMetricPoint::day)
+                .noneMatch(d -> d.isAfter(LocalDate.of(2026, 10, 2)));
+    }
+
+    // -- credential check -------------------------------------------------------------------------------
+
+    @Test
+    void verifyAcceptsWorkingCredentialsAfterCheckingTheAppAndTheOngoingRequest() {
+        expectApp();
+        expectJson(REQUESTS, "{\"data\":[{\"id\":\"REQ1\"}]}");
+
+        assertThat(connector.verifyCredentials(ctx(null))).isEmpty();
+        server.verify();
+    }
+
+    @Test
+    void verifyRefusesBadInputWithPlainMessages() {
+        assertThat(connector.verifyCredentials(ctxWithAppId("abc")))
+                .hasValueSatisfying(m -> assertThat(m).contains("numbers only"));
+        assertThat(connector.verifyCredentials(new ConnectionContext("p", "app-store-connect", "c", null, null, null,
+                Map.of(), null))).hasValueSatisfying(m -> assertThat(m).contains("Issuer ID"));
+
+        AppStoreConnectTokenService garbage = new AppStoreConnectTokenService() {
+            @Override public String token(String connectionId, Credentials creds) {
+                throw new IllegalArgumentException("bad pem");
+            }
+        };
+        AppStoreConnectConnector withGarbageKey = new AppStoreConnectConnector(new RestTemplate(), garbage);
+        assertThat(withGarbageKey.verifyCredentials(ctx(null))).hasValueSatisfying(m -> assertThat(m).contains(".p8"));
+    }
+
+    @Test
+    void verifyMapsAppleStatusesToThePlainMessagesAFeedPullUses() {
+        // wrong Issuer/Key id -> 401
+        server.expect(once(), requestTo(API + "/v1/apps/12345")).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        assertThat(connector.verifyCredentials(ctx(null)))
+                .hasValueSatisfying(m -> assertThat(m).contains("rejected the API key"));
+
+        // wrong app id -> 404 on the app
+        server.reset();
+        server.expect(once(), requestTo(API + "/v1/apps/12345")).andRespond(withStatus(HttpStatus.NOT_FOUND));
+        assertThat(connector.verifyCredentials(ctx(null))).hasValue(
+                "No app with Apple ID 12345 is visible to this API key — check the App Apple ID");
+
+        // narrow role: app readable, analytics 403
+        server.reset();
+        expectApp();
+        server.expect(once(), requestTo(REQUESTS)).andRespond(withStatus(HttpStatus.FORBIDDEN));
+        assertThat(connector.verifyCredentials(ctx(null))).hasValueSatisfying(m -> assertThat(m).contains("role"));
     }
 
     // -- ratings ----------------------------------------------------------------------------------------
