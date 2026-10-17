@@ -60,13 +60,20 @@ public class AppStoreAnalyticsClient {
     static final String M_DOWNLOADS = "downloads";
     static final String M_REDOWNLOADS = "redownloads";
 
+    private static final List<String> DISCOVERY_METRICS =
+            List.of(M_IMPRESSIONS, M_IMPRESSIONS_UNIQUE, M_PAGE_VIEWS, M_PAGE_VIEWS_UNIQUE);
+    private static final List<String> DOWNLOADS_METRICS = List.of(M_DOWNLOADS, M_REDOWNLOADS);
     private static final List<String> DISCOVERY_COLUMNS = List.of("Date", "Event", "Source Type", "Counts", "Unique Counts");
     private static final List<String> DOWNLOADS_COLUMNS = List.of("Date", "Download Type", "Source Type", "Counts");
     private static final Set<String> KNOWN_SOURCES = Set.of("APP_STORE_SEARCH", "APP_STORE_BROWSE", "APP_REFERRER",
             "WEB_REFERRER", "APP_CLIP", "INSTITUTIONAL_PURCHASE", "UNAVAILABLE");
 
-    /** source type -> metric -> value, for one report day. */
-    public record DayRows(Map<String, Map<String, Double>> bySource) {}
+    /**
+     * source type -> metric -> value, for one report day, plus the metrics Apple's processed reports cover for
+     * that day ({@code coveredMetrics}). A covered metric with no rows is a real zero: Apple's TSVs omit
+     * zero rows, so the connector stores it as 0 instead of leaving a gap.
+     */
+    public record DayRows(Map<String, Map<String, Double>> bySource, Set<String> coveredMetrics) {}
 
     /** The failure to read or understand Apple's reports (as opposed to an HTTP status failure). */
     public static class ReportException extends RuntimeException {
@@ -136,15 +143,22 @@ public class AppStoreAnalyticsClient {
     public Map<LocalDate, DayRows> fetchDays(String token, String appId, LocalDate from, LocalDate to) {
         String requestId = findOrCreateOngoingRequest(token, appId);
         Map<LocalDate, Map<String, Map<String, Double>>> merged = new TreeMap<>();
-        collect(token, requestId, DISCOVERY_REPORT, DISCOVERY_COLUMNS, from, to, merged);
-        collect(token, requestId, DOWNLOADS_REPORT, DOWNLOADS_COLUMNS, from, to, merged);
+        Map<LocalDate, Set<String>> covered = new TreeMap<>();
+        collect(token, requestId, DISCOVERY_REPORT, DISCOVERY_COLUMNS, DISCOVERY_METRICS, from, to, merged, covered);
+        collect(token, requestId, DOWNLOADS_REPORT, DOWNLOADS_COLUMNS, DOWNLOADS_METRICS, from, to, merged, covered);
         Map<LocalDate, DayRows> out = new TreeMap<>();
-        merged.forEach((day, rows) -> out.put(day, new DayRows(rows)));
+        Set<LocalDate> days = new java.util.TreeSet<>(merged.keySet());
+        days.addAll(covered.keySet());
+        for (LocalDate day : days) {
+            out.put(day, new DayRows(merged.getOrDefault(day, Map.of()), covered.getOrDefault(day, Set.of())));
+        }
         return out;
     }
 
     private void collect(String token, String requestId, String reportName, List<String> required,
-                         LocalDate from, LocalDate to, Map<LocalDate, Map<String, Map<String, Double>>> merged) {
+                         List<String> reportMetrics, LocalDate from, LocalDate to,
+                         Map<LocalDate, Map<String, Map<String, Double>>> merged,
+                         Map<LocalDate, Set<String>> covered) {
         Optional<String> reportId = findReportId(token, requestId, reportName);
         if (reportId.isEmpty()) {
             log.warn("App Store Connect report '{}' not found under request {}; no data yet", reportName, requestId);
@@ -156,6 +170,14 @@ public class AppStoreAnalyticsClient {
         instances.sort(Comparator.comparing(Instance::processingDate, Comparator.nullsFirst(Comparator.naturalOrder()))
                 .thenComparing(Instance::id));
         for (Instance instance : instances) {
+            // An instance processed on day P carries report day P-1 (and restates P-2). Apple omits zero rows, so
+            // P-1 is covered even when the segments have no row for it: that is a real zero, not a missing day.
+            if (instance.processingDate() != null) {
+                LocalDate reportDay = instance.processingDate().minusDays(1);
+                if (!reportDay.isBefore(from) && !reportDay.isAfter(to)) {
+                    covered.computeIfAbsent(reportDay, d -> new java.util.HashSet<>()).addAll(reportMetrics);
+                }
+            }
             Map<LocalDate, Map<String, Map<String, Double>>> perInstance = new HashMap<>();
             for (byte[] segment : segments(token, instance.id())) {
                 parseSegment(reportName, required, text(segment), perInstance);

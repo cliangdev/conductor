@@ -387,6 +387,29 @@ class IntegrationControllerTest {
         verify(connectionService).delete("conn-hook-1");
     }
 
+    @Test
+    void createConnection_credentialCheckRefuses_returns400WithMessage_andSavesNothing() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+
+        com.conductor.integration.FetchConnector connector = mock(com.conductor.integration.FetchConnector.class);
+        when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(false, List.of()));
+        when(connector.verifyCredentials(any())).thenReturn(Optional.of("No app with Apple ID 1 is visible"));
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(connector));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"secret\",\"configJson\":{\"appId\":\"1\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("No app with Apple ID 1 is visible"));
+
+        org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never())
+                .create(any(), any(), any(), any(), any());
+        org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never()).storeTokens(any(), any(), any(), any());
+    }
+
     // ---- deleteConnection ----
 
     @Test

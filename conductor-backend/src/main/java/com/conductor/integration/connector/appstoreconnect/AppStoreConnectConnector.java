@@ -38,7 +38,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * App Store Connect (FETCH connector): the daily App Store numbers of one iOS app, from Apple's Analytics
@@ -61,6 +63,11 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     static final String LOOKUP_URL = "https://itunes.apple.com/lookup";
     static final String RATING_COUNT = "rating_count";
     static final String RATING_AVG = "rating_avg";
+    private static final Pattern NUMERIC = Pattern.compile("\\d+");
+    static final String APP_ID_MESSAGE = "The App Apple ID must be numbers only, e.g. 1234567890 "
+            + "(App Store Connect → the app → App Information)";
+    static final String KEY_UNUSABLE_MESSAGE =
+            "App Store Connect could not use the private key — paste the whole .p8 file";
     private static final Set<String> SNAPSHOT_METRICS = Set.of(RATING_COUNT, RATING_AVG);
     private static final String[] REPORT_METRICS = {
             AppStoreAnalyticsClient.M_IMPRESSIONS, AppStoreAnalyticsClient.M_IMPRESSIONS_UNIQUE,
@@ -104,7 +111,7 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
             ConnectorConfigField.userInput("keyId", "Key ID",
                 "The Key ID of the API key you created (same page)", FieldType.STRING, true),
             ConnectorConfigField.userInput("appId", "App Apple ID",
-                "The numeric Apple ID of the app (App Store Connect → the app → App Information)",
+                "The numeric Apple ID of the app, digits only (App Store Connect → the app → App Information)",
                 FieldType.STRING, true),
             ConnectorConfigField.userInput("ratingsCountry", "Ratings country",
                 "Two-letter App Store country the rating is read from (default us)", FieldType.STRING, false),
@@ -159,16 +166,19 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     public ConnectorHealth checkHealth(ConnectionContext ctx) {
         AppStoreConnectTokenService.Credentials creds = credentials(ctx);
         String appId = str(ctx.configValue("appId"));
-        if (!creds.complete() || isBlank(appId)) {
+        if (!creds.complete() || isBlank(appId) || !isNumeric(appId)) {
             return ConnectorHealth.SETUP_REQUIRED;
         }
+        appId = appId.trim();
+        boolean appStep = true;
         try {
             String token = tokenService.token(ctx.connectionId(), creds);
             client.getApp(token, appId);
+            appStep = false;
             client.findOrCreateOngoingRequest(token, appId);
             return ConnectorHealth.HEALTHY;
         } catch (HttpClientErrorException e) {
-            log.warn("App Store Connect health check for app {}: {}", appId, httpMessage(e, "check"));
+            log.warn("App Store Connect health check for app {}: {}", appId, httpMessage(e, appId, appStep));
             int status = e.getStatusCode().value();
             return status == 401 || status == 403 || status == 404 ? ConnectorHealth.SETUP_REQUIRED
                     : ConnectorHealth.DEGRADED;
@@ -178,6 +188,45 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         } catch (RuntimeException e) {
             log.warn("App Store Connect health check failed: {}", e.getMessage());
             return ConnectorHealth.DEGRADED;
+        }
+    }
+
+    /**
+     * Runs the same calls a pull makes (the app, then the ONGOING analytics request, creating it when missing) so a
+     * bad Issuer ID, Key ID, .p8, role or app id is refused at connect time with the plain message a feed pull
+     * would later report.
+     */
+    @Override
+    public Optional<String> verifyCredentials(ConnectionContext ctx) {
+        AppStoreConnectTokenService.Credentials creds = credentials(ctx);
+        String appId = str(ctx.configValue("appId"));
+        if (!creds.complete() || isBlank(appId)) {
+            return Optional.of("Fill in the Issuer ID, Key ID, App Apple ID and the private key (.p8)");
+        }
+        if (!isNumeric(appId)) {
+            return Optional.of(APP_ID_MESSAGE);
+        }
+        appId = appId.trim();
+        String token;
+        try {
+            token = tokenService.token(ctx.connectionId(), creds);
+        } catch (RuntimeException e) {
+            return Optional.of(KEY_UNUSABLE_MESSAGE);
+        } finally {
+            tokenService.evict(ctx.connectionId());
+        }
+        boolean appStep = true;
+        try {
+            client.getApp(token, appId);
+            appStep = false;
+            client.findOrCreateOngoingRequest(token, appId);
+            return Optional.empty();
+        } catch (HttpClientErrorException e) {
+            return Optional.of(httpMessage(e, appId, appStep));
+        } catch (AppStoreAnalyticsClient.ReportException e) {
+            return Optional.of(e.getMessage());
+        } catch (RestClientException e) {
+            return Optional.of("Could not reach App Store Connect to check the credentials: " + e.getMessage());
         }
     }
 
@@ -212,19 +261,31 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         if (!creds.complete() || isBlank(appId)) {
             throw ChannelMetricsSourceException.setupRequired("App Store Connect credentials not configured");
         }
+        if (!isNumeric(appId)) {
+            throw ChannelMetricsSourceException.setupRequired(APP_ID_MESSAGE);
+        }
+        appId = appId.trim();
         String token;
         try {
             token = tokenService.token(ctx.connectionId(), creds);
         } catch (RuntimeException e) {
-            throw ChannelMetricsSourceException.setupRequired(
-                    "App Store Connect could not use the private key — paste the whole .p8 file");
+            throw ChannelMetricsSourceException.setupRequired(KEY_UNUSABLE_MESSAGE);
+        }
+
+        // Check the app first: Apple answers 404 for an app the key cannot see, but 403 ("role") for its analytics.
+        try {
+            client.getApp(token, appId);
+        } catch (HttpClientErrorException e) {
+            throw map(e, appId, true);
+        } catch (RestClientException e) {
+            throw ChannelMetricsSourceException.degraded("App Store Connect request failed: " + e.getMessage());
         }
 
         Map<LocalDate, AppStoreAnalyticsClient.DayRows> days;
         try {
             days = client.fetchDays(token, appId, from, to);
         } catch (HttpClientErrorException e) {
-            throw map(e);
+            throw map(e, appId, false);
         } catch (AppStoreAnalyticsClient.ReportException e) {
             throw ChannelMetricsSourceException.degraded(e.getMessage());
         } catch (RestClientException e) {
@@ -258,6 +319,9 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
             }
             if (present) {
                 out.add(ChannelMetricPoint.total(metric, day, total));
+            } else if (rows.coveredMetrics().contains(metric)) {
+                // Apple's TSVs omit zero rows; a processed day with none for this metric really was zero.
+                out.add(ChannelMetricPoint.total(metric, day, 0));
             }
         }
     }
@@ -288,9 +352,9 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
 
     // -- errors / plumbing -----------------------------------------------------------------------------
 
-    private static ChannelMetricsSourceException map(HttpClientErrorException e) {
+    private static ChannelMetricsSourceException map(HttpClientErrorException e, String appId, boolean appStep) {
         int status = e.getStatusCode().value();
-        String message = httpMessage(e, "pull");
+        String message = httpMessage(e, appId, appStep);
         if (status == 401 || status == 403 || status == 404) {
             return ChannelMetricsSourceException.setupRequired(message);
         }
@@ -300,13 +364,15 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         return ChannelMetricsSourceException.degraded("App Store Connect API error: " + status);
     }
 
-    private static String httpMessage(HttpClientErrorException e, String what) {
+    private static String httpMessage(HttpClientErrorException e, String appId, boolean appStep) {
         return switch (e.getStatusCode().value()) {
             case 401 -> "App Store Connect rejected the API key — check the Issuer ID, Key ID and .p8 file";
             case 403 -> "The API key's role can't read analytics reports — use a key with the Admin role, or a role "
                     + "that can read Analytics Reports";
-            case 404 -> "App Store Connect cannot find that app — check the App Apple ID and that the key can see it";
-            default -> "App Store Connect API error " + e.getStatusCode().value() + " during " + what;
+            case 404 -> appStep
+                    ? "No app with Apple ID " + appId + " is visible to this API key — check the App Apple ID"
+                    : "App Store Connect cannot find the app's analytics — check the App Apple ID and that the key can see it";
+            default -> "App Store Connect API error " + e.getStatusCode().value();
         };
     }
 
@@ -317,6 +383,10 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
 
     private static String str(Object value) {
         return value == null ? null : value.toString();
+    }
+
+    private static boolean isNumeric(String s) {
+        return s != null && NUMERIC.matcher(s.trim()).matches();
     }
 
     private static boolean isBlank(String s) {
