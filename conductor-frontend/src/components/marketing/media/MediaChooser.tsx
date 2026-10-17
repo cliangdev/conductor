@@ -161,7 +161,7 @@ function LibraryTab({
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <MediaFilterBar filters={filters} chips={['unused', 'onPosts', 'ai']} kinds={kindTabs} sortable />
       {loadError && <Alert variant="destructive">{loadError}</Alert>}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
         {items == null ? (
           <div data-testid="chooser-skeleton" className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" aria-hidden>
             {Array.from({ length: 12 }, (_, i) => (

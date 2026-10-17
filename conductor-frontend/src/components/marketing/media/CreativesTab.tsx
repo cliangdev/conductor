@@ -5,8 +5,8 @@
 // renders, not a file, so this tab brings its own footer ("Use Creative 18a") rather than the Library's
 // "Add N".
 
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangleIcon, FilmIcon } from 'lucide-react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { AlertTriangleIcon, ChevronDownIcon, FilmIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -18,8 +18,9 @@ import { cn } from '@/lib/utils'
 import { PlatformIcon } from '@/components/marketing/destinations/PlatformIcon'
 import type { PublishPlatform } from '@/components/marketing/destinations/types'
 import {
+  canUseInPost,
   creativeSummary,
-  hasRender,
+  needsServerRender,
   kindFilterOf,
   kindLabel,
   slideCount,
@@ -35,10 +36,14 @@ import {
 } from '@/components/marketing/creatives/placementMap'
 import {
   getCreative,
+  listCreativePhotos,
   listCreatives,
+  requestCreativeRender,
   type Creative,
+  type CreativePhoto,
   type CreativeRenderFrame,
 } from '@/components/marketing/creatives/types'
+import { CarouselThumb, ClipThumb } from '@/components/marketing/creatives/CreativeThumbs'
 import { FilterChip } from './MediaFilterBar'
 
 /** A destination the caller has picked, as the preview needs it. */
@@ -47,6 +52,8 @@ export interface ChooserDestination {
   format?: string | null
   /** e.g. "@acme" — shown beside the platform icon. */
   label: string
+  /** The destination has its own non-empty media selection, which attach never overwrites. */
+  keepsOwnMedia?: boolean
 }
 
 /** What choosing a Creative hands back to the caller. */
@@ -84,6 +91,7 @@ export function useCreatives(projectId: string, token: string) {
 
 type Detail =
   | { status: 'loading' }
+  | { status: 'preparing' }
   | { status: 'error'; message: string }
   | { status: 'ready'; renderId: string; frames: CreativeRenderFrame[] }
   | { status: 'unusable'; message: string }
@@ -100,6 +108,20 @@ function matchesQuery(c: Creative, q: string): boolean {
   return [c.name, c.displayId, c.headline].some((s) => (s ?? '').toLowerCase().includes(needle))
 }
 
+/** True under the `md` breakpoint (768px), where the side panel is not shown. False when it can't be known. */
+function useIsNarrow(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {}
+      const mq = window.matchMedia('(max-width: 767px)')
+      mq.addEventListener('change', notify)
+      return () => mq.removeEventListener('change', notify)
+    },
+    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 767px)').matches,
+    () => false,
+  )
+}
+
 export interface CreativesTabProps {
   creatives: Creative[] | null
   loadError?: string | null
@@ -108,6 +130,10 @@ export interface CreativesTabProps {
   destinations: ChooserDestination[]
   /** The Post's caption is empty, so the Creative's caption is offered (and pre-ticked). */
   captionEmpty: boolean
+  /** false hides the caption checkbox, for a caller that never changes the caption (attaching to a saved Post). */
+  offerCaption?: boolean
+  /** An attach is in flight: the Use button waits and the chooser can't be re-submitted. */
+  busy?: boolean
   onUse: (choice: CreativeChoice) => void
   onCancel: () => void
 }
@@ -119,11 +145,13 @@ export function CreativesTab({
   token,
   destinations,
   captionEmpty,
+  offerCaption = true,
+  busy = false,
   onUse,
   onCancel,
 }: CreativesTabProps) {
   const [query, setQuery] = useState('')
-  const anyReady = (creatives ?? []).some((c) => c.state === 'READY' && hasRender(c))
+  const anyReady = (creatives ?? []).some((c) => c.state === 'READY' && canUseInPost(c))
   // Until the person chooses, Ready is the default whenever any Creative is ready to use.
   const [readyChoice, setReadyOnly] = useState<boolean | null>(null)
   const readyOnly = readyChoice ?? anyReady
@@ -131,6 +159,8 @@ export function CreativesTab({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [details, setDetails] = useState<Record<string, Detail>>({})
   const [useCaption, setUseCaption] = useState(captionEmpty)
+  const narrow = useIsNarrow()
+  const [previewOpen, setPreviewOpen] = useState(true)
 
   const visible = useMemo(
     () =>
@@ -143,6 +173,26 @@ export function CreativesTab({
     [creatives, readyOnly, kinds, query],
   )
 
+  // Clip and Carousel tiles without a render thumbnail fall back to media posters; load each list once.
+  const needsVideoMedia = (creatives ?? []).some((c) => c.kind === 'CLIP' && !c.latestRenderThumbnailUrl)
+  const needsImageMedia = (creatives ?? []).some((c) => c.kind === 'CAROUSEL' && !c.latestRenderThumbnailUrl)
+  const [videoMedia, setVideoMedia] = useState<CreativePhoto[]>([])
+  const [imageMedia, setImageMedia] = useState<CreativePhoto[]>([])
+  useEffect(() => {
+    if (!token || !needsVideoMedia) return
+    listCreativePhotos(projectId, token, true, 'VIDEO').then(setVideoMedia).catch(() => setVideoMedia([]))
+  }, [projectId, token, needsVideoMedia])
+  useEffect(() => {
+    if (!token || !needsImageMedia) return
+    listCreativePhotos(projectId, token, true, 'IMAGE').then(setImageMedia).catch(() => setImageMedia([]))
+  }, [projectId, token, needsImageMedia])
+  const mediaById = useMemo(() => {
+    const map = new Map<string, CreativePhoto>()
+    for (const m of videoMedia) map.set(m.id, m)
+    for (const m of imageMedia) map.set(m.id, m)
+    return map
+  }, [videoMedia, imageMedia])
+
   const selected = (creatives ?? []).find((c) => c.id === selectedId) ?? null
   const detail = selected ? details[selected.id] : undefined
 
@@ -154,6 +204,18 @@ export function CreativesTab({
     getCreative(projectId, id, token)
       .then((full) => {
         const render = full.latestRender
+        const ready = render && render.state === 'SUCCEEDED' && !render.previewOnly
+        if (!ready && needsServerRender(full)) {
+          // Clip and Carousel renders are assembled by the backend in this one call.
+          setDetails((d) => ({ ...d, [id]: { status: 'preparing' } }))
+          return requestCreativeRender(projectId, id, { renderer: 'web' }, token).then((made) => {
+            const next: Detail =
+              made.state === 'SUCCEEDED' && made.frames.length > 0
+                ? { status: 'ready', renderId: made.id, frames: made.frames }
+                : { status: 'error', message: made.error || 'Could not prepare this Creative for posting' }
+            setDetails((d) => ({ ...d, [id]: next }))
+          })
+        }
         const next: Detail =
           !render || render.state !== 'SUCCEEDED'
             ? { status: 'unusable', message: 'This Creative has no finished render yet.' }
@@ -162,7 +224,7 @@ export function CreativesTab({
               : { status: 'ready', renderId: render.id, frames: render.frames }
         setDetails((d) => ({ ...d, [id]: next }))
       })
-      .catch((err) => setDetails((d) => ({ ...d, [id]: { status: 'error', message: apiErrorMessage(err, 'Could not load this Creative') } })))
+      .catch((err) => setDetails((d) => ({ ...d, [id]: { status: 'error', message: apiErrorMessage(err, 'Could not prepare this Creative') } })))
   }, [selected, details, projectId, token])
 
   const groups: PlacementGroup[] = useMemo(
@@ -179,7 +241,7 @@ export function CreativesTab({
     })
   }
 
-  const canUse = selected != null && detail?.status === 'ready'
+  const canUse = selected != null && detail?.status === 'ready' && !busy
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="creatives-tab">
@@ -213,7 +275,7 @@ export function CreativesTab({
 
           {loadError && <Alert variant="destructive">{loadError}</Alert>}
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
             {creatives === null ? (
               <Skeleton className="h-40 w-full" />
             ) : visible.length === 0 ? (
@@ -229,13 +291,14 @@ export function CreativesTab({
             ) : (
               <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid="creatives-grid">
                 {visible.map((c) => {
-                  const rendered = hasRender(c)
+                  const rendered = canUseInPost(c)
                   const isSelected = c.id === selectedId
                   return (
                     <li key={c.id}>
                       <button
                         type="button"
                         disabled={!rendered}
+                        title={rendered ? undefined : 'Render it from Claude Code first'}
                         aria-pressed={isSelected}
                         aria-label={`Choose Creative ${c.displayId}${c.name ? ` ${c.name}` : ''}`}
                         onClick={() => setSelectedId(c.id)}
@@ -245,17 +308,23 @@ export function CreativesTab({
                           !rendered && 'cursor-not-allowed opacity-60',
                         )}
                       >
-                        <span className="relative block aspect-[4/5] w-full bg-surface-3">
-                          {c.latestRenderThumbnailUrl && (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={c.latestRenderThumbnailUrl} alt="" className="h-full w-full object-cover" />
-                          )}
-                          {!rendered && (
-                            <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-                              No render yet
-                            </span>
-                          )}
-                        </span>
+                        {c.kind === 'CLIP' ? (
+                          <ClipThumb creative={c} mediaById={mediaById} />
+                        ) : c.kind === 'CAROUSEL' ? (
+                          <CarouselThumb creative={c} mediaById={mediaById} />
+                        ) : (
+                          <span className="relative block aspect-[4/5] w-full bg-surface-3">
+                            {c.latestRenderThumbnailUrl && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={c.latestRenderThumbnailUrl} alt="" className="h-full w-full object-cover" />
+                            )}
+                            {!rendered && (
+                              <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                                Not rendered yet
+                              </span>
+                            )}
+                          </span>
+                        )}
                         <span className="block space-y-0.5 border-t border-border px-2.5 py-2">
                           <span className="flex items-center gap-1.5">
                             <span className="rounded border border-border px-1 font-mono text-[11px] text-muted-foreground">
@@ -283,78 +352,50 @@ export function CreativesTab({
           </div>
         </div>
 
-        <aside
-          aria-label="What each destination gets"
-          className="hidden w-[300px] shrink-0 flex-col gap-3 overflow-y-auto rounded-[10px] border border-border bg-surface-2 p-4 md:flex"
-          data-testid="creatives-preview"
-        >
-          <h3 className="text-sm font-semibold text-foreground">What each destination gets</h3>
-          {!selected ? (
-            <p className="text-sm text-muted-foreground">Pick a Creative to see which size each destination will use.</p>
-          ) : detail?.status === 'ready' ? (
-            <>
-              <p className="text-xs text-muted-foreground">
-                <span className="font-mono">{selected.displayId}</span> · {creativeSummary(selected)}
-              </p>
-              {destinations.length === 0 ? (
-                <div className="space-y-2 text-sm text-muted-foreground">
-                  <p>No destinations picked yet. This Creative comes in:</p>
-                  <ul className="space-y-1">
-                    {groups.map((g) => (
-                      <li key={g.placementKey} className="flex items-center justify-between">
-                        <span className="font-mono text-foreground">{placementLabel(g.placementKey)}</span>
-                        <span>
-                          {g.frames.length} {g.frames.length === 1 ? 'file' : 'files'}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                  <p>Each destination you add then gets its matching size.</p>
-                </div>
-              ) : (
-                <ul className="space-y-3">
-                  {destinations.map((d, i) => {
-                    const result = placementFor(selected.kind ?? 'STILL', groups, d)
-                    return (
-                      <li key={`${d.platform}-${d.format}-${d.label}-${i}`} className="space-y-1.5">
-                        <div className="flex items-center gap-2 text-sm">
-                          <PlatformIcon platform={d.platform} />
-                          <span className="truncate font-medium text-foreground">{d.label}</span>
-                          {'reason' in result ? null : (
-                            <span className="ml-auto rounded border border-border px-1 font-mono text-[11px] text-foreground">
-                              {placementChip(result)}
-                            </span>
-                          )}
-                        </div>
-                        {'reason' in result ? (
-                          <p className="flex items-start gap-1.5 text-[13px] text-status-progress" data-testid="creative-warning">
-                            <AlertTriangleIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                            <span>{result.reason}</span>
-                          </p>
-                        ) : (
-                          <FrameStrip frames={result.frames} />
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </>
-          ) : detail?.status === 'loading' || detail == null ? (
-            <Skeleton className="h-24 w-full" />
-          ) : (
-            <Alert variant={detail.status === 'error' ? 'destructive' : 'info'}>{detail.message}</Alert>
-          )}
-        </aside>
+        {!narrow && (
+          <aside
+            aria-label="What each destination gets"
+            className="hidden w-[300px] shrink-0 flex-col gap-3 overflow-y-auto rounded-[10px] border border-border bg-surface-2 p-4 md:flex"
+            data-testid="creatives-preview"
+          >
+            <h3 className="text-sm font-semibold text-foreground">What each destination gets</h3>
+            <PreviewBody selected={selected} detail={detail} destinations={destinations} groups={groups} />
+          </aside>
+        )}
       </div>
 
+      {narrow && selected && (
+        <section
+          aria-label="What each destination gets"
+          className="mt-3 shrink-0 rounded-[10px] border border-border bg-surface-2"
+          data-testid="creatives-preview-mobile"
+        >
+          <button
+            type="button"
+            aria-expanded={previewOpen}
+            onClick={() => setPreviewOpen((o) => !o)}
+            className="flex min-h-11 w-full items-center justify-between gap-2 rounded-[10px] px-3 text-left text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            What each destination gets
+            <ChevronDownIcon className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', previewOpen && 'rotate-180')} aria-hidden />
+          </button>
+          {previewOpen && (
+            <div className="flex max-h-[40vh] flex-col gap-3 overflow-y-auto border-t border-border p-3">
+              <PreviewBody selected={selected} detail={detail} destinations={destinations} groups={groups} />
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="mt-4 flex shrink-0 flex-wrap items-center gap-3 border-t border-border pt-3">
-        <Checkbox
-          checked={useCaption}
-          onCheckedChange={setUseCaption}
-          label="Use the Creative’s caption"
-          description={captionEmpty ? undefined : 'This would replace the caption you have already written.'}
-        />
+        {offerCaption && (
+          <Checkbox
+            checked={useCaption}
+            onCheckedChange={setUseCaption}
+            label="Use the Creative’s caption"
+            description={captionEmpty ? undefined : 'This would replace the caption you have already written.'}
+          />
+        )}
         <div className="ml-auto flex items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onCancel}>
             Cancel
@@ -365,14 +406,101 @@ export function CreativesTab({
             disabled={!canUse}
             onClick={() => {
               if (!selected || detail?.status !== 'ready') return
-              onUse({ creative: selected, renderId: detail.renderId, frames: detail.frames, useCaption })
+              onUse({ creative: selected, renderId: detail.renderId, frames: detail.frames, useCaption: offerCaption && useCaption })
             }}
           >
-            {selected ? `Use Creative ${selected.displayId}` : 'Use Creative'}
+            {busy ? 'Attaching…' : selected ? `Use Creative ${selected.displayId}` : 'Use Creative'}
           </Button>
         </div>
       </div>
     </div>
+  )
+}
+
+interface PreviewBodyProps {
+  selected: Creative | null
+  detail: Detail | undefined
+  destinations: ChooserDestination[]
+  groups: PlacementGroup[]
+}
+
+/** What the selected Creative gives each destination; shared by the side panel and the phone layout. */
+function PreviewBody({ selected, detail, destinations, groups }: PreviewBodyProps) {
+  return (
+    <>
+      {!selected ? (
+        <p className="text-sm text-muted-foreground">Pick a Creative to see which size each destination will use.</p>
+      ) : detail?.status === 'ready' ? (
+        <>
+          <p className="text-xs text-muted-foreground">
+            <span className="font-mono">{selected.displayId}</span> · {creativeSummary(selected)}
+          </p>
+          {destinations.length === 0 ? (
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>No destinations picked yet. This Creative comes in:</p>
+              <ul className="space-y-1">
+                {groups.map((g) => (
+                  <li key={g.placementKey} className="flex items-center justify-between">
+                    <span className="font-mono text-foreground">{placementLabel(g.placementKey)}</span>
+                    <span>
+                      {g.frames.length} {g.frames.length === 1 ? 'file' : 'files'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p>Each destination you add then gets its matching size.</p>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {destinations.map((d, i) => {
+                if (d.keepsOwnMedia) {
+                  return (
+                    <li key={`${d.platform}-${d.format}-${d.label}-${i}`} className="space-y-1.5" data-testid="keeps-own-media">
+                      <div className="flex items-center gap-2 text-sm">
+                        <PlatformIcon platform={d.platform} />
+                        <span className="truncate font-medium text-foreground">{d.label}</span>
+                      </div>
+                      <p className="text-[13px] text-muted-foreground">Keeps its own media</p>
+                    </li>
+                  )
+                }
+                const result = placementFor(selected.kind ?? 'STILL', groups, d)
+                return (
+                  <li key={`${d.platform}-${d.format}-${d.label}-${i}`} className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-sm">
+                      <PlatformIcon platform={d.platform} />
+                      <span className="truncate font-medium text-foreground">{d.label}</span>
+                      {'reason' in result ? null : (
+                        <span className="ml-auto rounded border border-border px-1 font-mono text-[11px] text-foreground">
+                          {placementChip(result)}
+                        </span>
+                      )}
+                    </div>
+                    {'reason' in result ? (
+                      <p className="flex items-start gap-1.5 text-[13px] text-status-progress" data-testid="creative-warning">
+                        <AlertTriangleIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span>{result.reason}</span>
+                      </p>
+                    ) : (
+                      <FrameStrip frames={result.frames} />
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </>
+      ) : detail?.status === 'preparing' ? (
+        <div className="space-y-2" role="status">
+          <p className="text-sm text-muted-foreground">Preparing for posting…</p>
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : detail?.status === 'loading' || detail == null ? (
+        <Skeleton className="h-24 w-full" />
+      ) : (
+        <Alert variant={detail.status === 'error' ? 'destructive' : 'info'}>{detail.message}</Alert>
+      )}
+    </>
   )
 }
 

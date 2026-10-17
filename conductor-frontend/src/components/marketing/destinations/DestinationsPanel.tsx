@@ -17,6 +17,7 @@ import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { DestinationTotals } from './DestinationMetrics'
 import { DestinationRow } from './DestinationRow'
 import { DestinationRowDetails, rowHasDetails } from './DestinationRowDetails'
+import { dedupeFindings } from '@/components/marketing/publishReadiness'
 import type { DestinationRowModel, DestinationsState } from './model'
 
 export interface DestinationsPanelProps {
@@ -93,13 +94,13 @@ export function DestinationsPanel({
           )}
           {(state.postLevel.blockers.length > 0 || state.postLevel.warnings.length > 0 || state.consentError) && (
             <div className="space-y-1" data-testid="publish-readiness">
-              {state.postLevel.blockers.map((f) => (
+              {dedupeFindings(state.postLevel.blockers).map((f) => (
                 <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-failed">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span>{f.message}</span>
                 </p>
               ))}
-              {state.postLevel.warnings.map((f) => (
+              {dedupeFindings(state.postLevel.warnings).map((f) => (
                 <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-progress">
                   <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span>{f.message}</span>
