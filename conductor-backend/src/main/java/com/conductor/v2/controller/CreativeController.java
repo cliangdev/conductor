@@ -314,7 +314,7 @@ public class CreativeController implements CreativesApi {
                         .sequenceIndex(a.sequenceIndex()))
                 .toList();
         List<AttachCreativeTargetUpdate> updated = result.targetsUpdated().stream()
-                .map(u -> new AttachCreativeTargetUpdate(u.targetId(), u.platform(), u.assetIds()))
+                .map(u -> new AttachCreativeTargetUpdate(u.targetId(), u.platform(), u.assetIds()).altText(u.altText()))
                 .toList();
         List<AttachCreativeTargetSkip> skipped = result.targetsSkipped().stream()
                 .map(s -> new AttachCreativeTargetSkip(s.targetId(), s.platform(), s.reason()))

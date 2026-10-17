@@ -214,7 +214,14 @@ own edit in the UI goes through — so the approval gate reverts and the bundle 
 human had picked that media by hand. Sequence frames (a carousel's beats) attach in the order they
 rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is content.
 
-A destination added to the Post *after* an attach gets the same treatment: when `replaceSelection` creates a new
+**Alt text reaches Instagram.** Instagram is the only platform here with an `altText` option (sent as
+`alt_text`, single feed images only). When attach gives an Instagram target exactly one still image, and the
+target's options hold no non-blank `altText`, attach sets that option to the Creative's `altText`, or
+`slideAltText[0]` when that is blank (`CreativePlacementMedia.Placements#altTextFor`). An alt text the author
+already wrote is never overwritten; video, carousels and other platforms are skipped. The attach response's
+`targetsUpdated[].altText` reports the text it set (null otherwise).
+
+A destination added to the Post *after* an attach gets the same treatment (including the alt text rule above): when `replaceSelection` creates a new
 target with no media of its own and the Post holds Creative frames, the target's media is the matching frames
 (same `CreativePlacementMedia` rules). With no matching placement it inherits as before, except after a `CAROUSEL`: there, as at attach time, a
 destination the carousel cannot publish to (a story, a reel, YouTube) gets an explicit empty selection so it
