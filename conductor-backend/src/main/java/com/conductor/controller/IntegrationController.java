@@ -855,7 +855,7 @@ public class IntegrationController implements IntegrationsApi {
             if (otherKey.isPresent() && otherKey.get().equals(key.get())) {
                 String label = other.getDisplayLabel() != null && !other.getDisplayLabel().isBlank()
                         ? other.getDisplayLabel() : candidate.connectorId();
-                throw new BusinessException("This app is already connected in this workspace as \"" + label + "\"");
+                throw new BusinessException("This " + connector.identityNoun() + " is already connected in this workspace as \"" + label + "\"");
             }
         }
     }

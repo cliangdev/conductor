@@ -448,6 +448,7 @@ class IntegrationControllerTest {
     private com.conductor.integration.FetchConnector identityConnector() {
         com.conductor.integration.FetchConnector connector = mock(com.conductor.integration.FetchConnector.class);
         when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(false, List.of()));
+        when(connector.identityNoun()).thenReturn("app");
         when(connector.identityKey(any())).thenAnswer(inv -> {
             Object app = ((com.conductor.integration.ConnectionContext) inv.getArgument(0)).configValue("appId");
             return Optional.ofNullable(app).map(Object::toString);

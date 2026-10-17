@@ -173,6 +173,9 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
 
     /** One connection per app: the numeric App Apple ID. */
     @Override
+    public String identityNoun() { return "app"; }
+
+    @Override
     public Optional<String> identityKey(ConnectionContext ctx) {
         String appId = str(ctx.configValue("appId"));
         return isBlank(appId) ? Optional.empty() : Optional.of(appId.trim());

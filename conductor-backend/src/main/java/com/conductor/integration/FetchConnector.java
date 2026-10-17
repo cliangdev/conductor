@@ -28,5 +28,8 @@ public interface FetchConnector extends Connector {
      */
     default Optional<String> identityKey(ConnectionContext ctx) { return Optional.empty(); }
 
+    /** What {@link #identityKey} identifies, for the refusal message ("This app is already connected ..."). */
+    default String identityNoun() { return "connection"; }
+
     default Duration getMaxCacheAge() { return Duration.ofHours(1); }
 }
