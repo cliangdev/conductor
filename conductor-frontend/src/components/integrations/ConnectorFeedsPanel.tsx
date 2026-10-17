@@ -67,6 +67,9 @@ export default function ConnectorFeedsPanel({
   const [feeds, setFeeds] = useState<ConnectorFeedDto[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
 
+  // The feeds belong to the connections: when one is added or removed the list is stale, so reload it.
+  const connectionKey = connections.map((c) => c.id).join(',')
+
   const load = useCallback(async () => {
     if (!accessToken) return
     try {
@@ -77,7 +80,7 @@ export default function ConnectorFeedsPanel({
       // unrendered rather than surfacing an error for what's usually a minor/optional setting.
       setFeeds([])
     }
-  }, [projectId, connectorId, accessToken])
+  }, [projectId, connectorId, accessToken, connectionKey])
 
   useEffect(() => {
     load()

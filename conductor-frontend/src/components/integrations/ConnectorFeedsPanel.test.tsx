@@ -73,6 +73,19 @@ describe('ConnectorFeedsPanel', () => {
     expect(screen.queryByTestId('feed-connection')).not.toBeInTheDocument()
   })
 
+  it('reloads the feeds when a connection is added or removed', async () => {
+    vi.mocked(api.listConnectorFeeds).mockResolvedValue([{ ...weeklyMrrFeed, connectionId: 'c1' }])
+    const { rerender } = render(
+      <ConnectorFeedsPanel projectId="proj-1" connectorId="app-store-connect"
+        connections={[{ id: 'c1', label: 'A' }, { id: 'c2', label: 'B' }]} />,
+    )
+    await waitFor(() => expect(api.listConnectorFeeds).toHaveBeenCalledTimes(1))
+
+    rerender(<ConnectorFeedsPanel projectId="proj-1" connectorId="app-store-connect" connections={[{ id: 'c1', label: 'A' }]} />)
+
+    await waitFor(() => expect(api.listConnectorFeeds).toHaveBeenCalledTimes(2))
+  })
+
   it('renders nothing when the connector declares no feeds', async () => {
     vi.mocked(api.listConnectorFeeds).mockResolvedValue([])
     const { container } = render(<ConnectorFeedsPanel projectId="proj-1" connectorId="posthog" />)
