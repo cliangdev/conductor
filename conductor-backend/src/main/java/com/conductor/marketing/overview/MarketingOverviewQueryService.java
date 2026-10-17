@@ -150,9 +150,12 @@ public class MarketingOverviewQueryService {
         for (MetricCatalog.Channel channel : MetricCatalog.channels()) {
             builds.put(channel.channel(), build(ctx, channel));
         }
+        // One window for every funnel stage: a conversion between stages of different channels is only meaningful
+        // over the same days, so it ends at the earliest data-complete day of the channels that contribute stages.
+        Window funnelWindow = funnelWindow(ctx, builds);
         List<FunnelStageView> stages = new ArrayList<>();
         for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel()) {
-            stages.add(funnelStage(stage, builds.get(stage.channel())));
+            stages.add(funnelStage(stage, builds.get(stage.channel()), funnelWindow));
         }
         List<FunnelStageView> funnel = withConversions(stages);
         List<ChannelView> channels = builds.values().stream()
@@ -166,11 +169,10 @@ public class MarketingOverviewQueryService {
             Window empty = windowEnding(ctx, ctx.fallbackEnd);
             overall = new Window(empty.from(), null, empty.previousFrom(), empty.previousTo(), null);
         } else {
-            overall = new Window(
-                    withData.stream().map(b -> b.window.from()).min(Comparator.naturalOrder()).orElseThrow(),
-                    withData.stream().map(b -> b.window.to()).max(Comparator.naturalOrder()).orElseThrow(),
-                    withData.stream().map(b -> b.window.previousFrom()).min(Comparator.naturalOrder()).orElseThrow(),
-                    withData.stream().map(b -> b.window.previousTo()).max(Comparator.naturalOrder()).orElseThrow(),
+            // The overall range is the funnel's own window (current and previous never overlap); the slowest
+            // channel's data-complete day is reported separately so the page can say which data lags.
+            overall = new Window(funnelWindow.from(), funnelWindow.to(), funnelWindow.previousFrom(),
+                    funnelWindow.previousTo(),
                     withData.stream().map(b -> b.window.to()).min(Comparator.naturalOrder()).orElseThrow());
         }
         return new Overview(overall, funnel, channels);
@@ -324,6 +326,8 @@ public class MarketingOverviewQueryService {
         final ConnectHint connectHint;
         final List<MetricView> metrics;
         final Window window;
+        /** The channel's rows (null when it has no connection), so the funnel can re-read them over its own window. */
+        ChannelData data;
 
         ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
                      List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
@@ -404,7 +408,10 @@ public class MarketingOverviewQueryService {
             }
             metrics.add(metricView(ctx, channel, data, metric, window));
         }
-        return new ChannelBuild(channel, anyLive ? "LIVE" : "STALE", lastFetchedAt, connectionViews, hint, metrics, window);
+        ChannelBuild built = new ChannelBuild(channel, anyLive ? "LIVE" : "STALE", lastFetchedAt, connectionViews, hint,
+                metrics, window);
+        built.data = data;
+        return built;
     }
 
     /** Live: a recent successful run, an active feed and a healthy connection. */
@@ -684,16 +691,51 @@ public class MarketingOverviewQueryService {
 
     // ---- funnel -------------------------------------------------------------------------------------
 
-    private FunnelStageView funnelStage(MetricCatalog.FunnelStage stage, ChannelBuild build) {
-        Optional<MetricView> metric = build == null ? Optional.empty() : build.metric(stage.metric());
-        if (metric.isEmpty() || (metric.get().value() == null && metric.get().previous() == null)) {
+    /**
+     * The window every funnel stage is computed over: it ends at the earliest data-complete day of the channels that
+     * contribute an available stage (or, when none does, of the channels that have any data).
+     */
+    private Window funnelWindow(Context ctx, Map<MetricChannel, ChannelBuild> builds) {
+        Set<MetricChannel> contributing = new HashSet<>();
+        for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel()) {
+            ChannelBuild build = builds.get(stage.channel());
+            if (build != null && build.hasData() && build.metric(stage.metric())
+                    .filter(m -> m.value() != null || m.previous() != null).isPresent()) {
+                contributing.add(stage.channel());
+            }
+        }
+        List<ChannelBuild> sources = contributing.isEmpty()
+                ? builds.values().stream().filter(ChannelBuild::hasData).toList()
+                : contributing.stream().map(builds::get).toList();
+        LocalDate end = sources.stream().map(b -> b.window.to()).min(Comparator.naturalOrder())
+                .orElse(ctx.fallbackEnd);
+        return windowEnding(ctx, end);
+    }
+
+    private FunnelStageView funnelStage(MetricCatalog.FunnelStage stage, ChannelBuild build, Window w) {
+        Optional<MetricView> shown = build == null ? Optional.empty() : build.metric(stage.metric());
+        Optional<Metric> catalogMetric = build == null ? Optional.empty() : build.channel.metric(stage.metric());
+        if (shown.isEmpty() || catalogMetric.isEmpty() || build.data == null
+                || (shown.get().value() == null && shown.get().previous() == null)) {
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
                     stage.unavailableReason(), build == null ? null : build.window.to(), stage.channel().name(),
                     stage.conversionFrom());
         }
-        MetricView m = metric.get();
-        return new FunnelStageView(stage.key(), stage.label(), m.value(), m.previous(), m.change(),
-                stage.channel().name(), true, null, build.window.to(), stage.channel().name(), stage.conversionFrom());
+        Metric metric = catalogMetric.get();
+        Double value = build.data.periodValue(metric, w.from(), w.to());
+        Double previous = build.data.periodValue(metric, w.previousFrom(), w.previousTo());
+        LocalDate firstDay = build.data.firstDay(metric);
+        if (previous != null && metric.agg() != Aggregation.LEVEL && firstDay != null
+                && firstDay.isAfter(w.previousFrom())) {
+            previous = null; // only partly covered by history: no comparison
+        }
+        if (value == null && previous == null) {
+            return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
+                    stage.unavailableReason(), w.to(), stage.channel().name(), stage.conversionFrom());
+        }
+        Double change = value != null && previous != null ? value - previous : null;
+        return new FunnelStageView(stage.key(), stage.label(), value, previous, change,
+                stage.channel().name(), true, null, w.to(), stage.channel().name(), stage.conversionFrom());
     }
 
     /** Keeps {@code conversionFromKey} only where both the stage and the stage it converts from are available. */

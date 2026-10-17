@@ -312,10 +312,46 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(metric(channel(overview, "SEARCH"), "clicks").previous()).isNull();
         assertThat(metric(channel(overview, "SEARCH"), "clicks").historyStartsOn()).isEqualTo(day(1));
         assertThat(channel(overview, "ADS").dataCompleteThrough()).isEqualTo(day(13)); // no data: two days back
-        assertThat(overview.window().from()).isEqualTo(day(5));
+        // the overall range is the funnel's window (web is the only channel with funnel stages here)
+        assertThat(overview.window().from()).isEqualTo(day(8));
         assertThat(overview.window().to()).isEqualTo(day(14));
         assertThat(overview.window().dataCompleteThroughMin()).isEqualTo(day(11));
         assertThat(overview.funnel().get(0).dataCompleteThrough()).isEqualTo(day(14));
+    }
+
+    @Test
+    void everyFunnelStageUsesOneWindowEndingAtTheEarliestContributingChannelAndTheOverallRangeMatchesIt() {
+        String web = connectFresh("posthog");
+        String store = connectFresh("app-store-connect");
+        put(web, "posthog", "WEB", "visitors", LocalDate.of(2026, 9, 30), 1);
+        for (int d = 1; d <= 14; d++) {
+            put(web, "posthog", "WEB", "visitors", day(d), d);          // complete through Oct 14
+        }
+        put(store, "app-store-connect", "STORE", "downloads", LocalDate.of(2026, 9, 30), 1);
+        for (int d = 1; d <= 13; d++) {
+            put(store, "app-store-connect", "STORE", "impressions", day(d), 100); // complete through Oct 13
+            put(store, "app-store-connect", "STORE", "page_views", day(d), 10);
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 1);
+        }
+
+        Overview overview = overview7();
+
+        // one window: Oct 7-13 against Sep 30 - Oct 6, no overlap, matching the funnel
+        assertThat(overview.window().from()).isEqualTo(day(7));
+        assertThat(overview.window().to()).isEqualTo(day(13));
+        assertThat(overview.window().previousFrom()).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(overview.window().previousTo()).isEqualTo(day(6));
+        var visitors = overview.funnel().stream().filter(s -> s.key().equals("web_visitors")).findFirst().orElseThrow();
+        var downloads = overview.funnel().stream().filter(s -> s.key().equals("store_downloads")).findFirst().orElseThrow();
+        assertThat(visitors.value()).isEqualTo(70.0);           // 7+8+...+13, not Oct 8-14
+        assertThat(visitors.previous()).isEqualTo(22.0);        // 1 + (1+2+...+6)
+        assertThat(visitors.dataCompleteThrough()).isEqualTo(day(13));
+        assertThat(downloads.value()).isEqualTo(7.0);
+        assertThat(downloads.dataCompleteThrough()).isEqualTo(day(13));
+        // the WEB card keeps its own window (Oct 8-14)
+        assertThat(metric(channel(overview, "WEB"), "visitors").value()).isEqualTo(77.0);
+        assertThat(channel(overview, "WEB").dataCompleteThrough()).isEqualTo(day(14));
+        assertThat(channel(overview, "STORE").dataCompleteThrough()).isEqualTo(day(13));
     }
 
     @Test
