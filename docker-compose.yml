@@ -28,6 +28,7 @@ services:
       LOCAL_STORAGE_PATH: /app/local-uploads
       LOCAL_DEV_PASSWORD: ${LOCAL_DEV_PASSWORD:-conductor}
       SERVER_BASE_URL: ${SERVER_BASE_URL:-http://localhost:8090}
+      CONDUCTOR_BACKEND_URL: http://localhost:8090
     volumes:
       - ./local-uploads:/app/local-uploads
     ports:

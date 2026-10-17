@@ -56,7 +56,9 @@ describe('matchesVideo — mirrors the backend video cases', () => {
   it.each([
     ['9x16', 'tiktok', 'FEED', ['9x16'], true],
     ['9x16', 'instagram', 'REEL', ['9x16'], true],
-    ['9x16', 'instagram', 'FEED', ['9x16'], false],
+    ['9x16', 'instagram', 'FEED', ['9x16'], true],
+    ['9x16', 'instagram', 'FEED', ['9x16', '16x9'], true],
+    ['9x16', 'instagram', 'FEED', ['9x16', '4x5'], false],
     ['9x16', 'facebook', 'REEL', ['9x16'], true],
     ['9x16', 'facebook', 'FEED', ['9x16'], true],
     ['9x16', 'facebook', 'FEED', ['9x16', '1x1'], false],

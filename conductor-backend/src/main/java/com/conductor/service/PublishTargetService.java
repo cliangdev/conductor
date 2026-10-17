@@ -680,14 +680,45 @@ public class PublishTargetService {
             probe.setFormat(wanted.format().name());
             List<String> media = CreativePlacementMedia.mediaFor(placements, probe);
             if (!media.isEmpty()) {
-                entry.setValue(new DesiredTarget(wanted.option(), wanted.optionsJson(), wanted.captionOverride(),
-                        media, wanted.format(), false));
+                entry.setValue(new DesiredTarget(wanted.option(), withCreativeAltText(wanted.optionsJson(), placements, probe, media),
+                        wanted.captionOverride(), media, wanted.format(), false));
             } else if (CreativePlacementMedia.carouselCannotPublishTo(placements)) {
                 // Exactly what attach does: never inherit a carousel's whole mixed-size set.
                 entry.setValue(new DesiredTarget(wanted.option(), wanted.optionsJson(), wanted.captionOverride(),
                         List.of(), wanted.format(), true));
             }
         }
+    }
+
+    /**
+     * The same Instagram alt-text rule attach applies: a lone still from a Creative becomes the new
+     * destination's {@code altText} option unless the author already supplied one.
+     */
+    private static String withCreativeAltText(String optionsJson, List<CreativePlacementMedia.Placements> placements,
+                                              PostPublishTarget probe, List<String> media) {
+        Map<String, Object> options;
+        try {
+            options = optionsJson == null || optionsJson.isBlank() ? null
+                    : MAPPER.readValue(optionsJson, new TypeReference<Map<String, Object>>() { });
+        } catch (Exception e) {
+            return optionsJson;
+        }
+        if (CreativePlacementMedia.hasAltText(options)) {
+            return optionsJson;
+        }
+        for (CreativePlacementMedia.Placements p : placements) {
+            if (p.mediaFor(probe).isEmpty()) {
+                continue;
+            }
+            String alt = p.altTextFor(probe, media);
+            if (alt == null) {
+                return optionsJson;
+            }
+            Map<String, Object> withAlt = options == null ? new LinkedHashMap<>() : new LinkedHashMap<>(options);
+            withAlt.put("altText", alt);
+            return canonicalOptions(withAlt);
+        }
+        return optionsJson;
     }
 
     /**
