@@ -1,7 +1,5 @@
 package com.conductor.integration.connector.productmetrics;
 
-import com.conductor.entity.Connection;
-import com.conductor.exception.BusinessException;
 import com.conductor.integration.ChannelMetricPoint;
 import com.conductor.integration.ChannelMetricsPull;
 import com.conductor.integration.ChannelMetricsSourceException;
@@ -385,16 +383,15 @@ class ProductMetricsConnectorTest {
     void aConnectionThatCannotWorkIsRefusedWithTheReason() {
         server.expect(once(), r -> { }).andRespond(withStatus(HttpStatus.FORBIDDEN));
 
-        assertThatThrownBy(() -> connector.onConnectionCreated(new Connection(), ctx(URL)))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageStartingWith("The server rejected the API key (HTTP 403).");
+        assertThat(connector.verifyCredentials(ctx(URL))).hasValueSatisfying(m ->
+                assertThat(m).startsWith("The server rejected the API key (HTTP 403)."));
     }
 
     @Test
     void aWorkingConnectionIsAccepted() {
         server.expect(once(), r -> { }).andRespond(withSuccess(response("1", METRICS, "[]", "[]"), MediaType.APPLICATION_JSON));
 
-        connector.onConnectionCreated(new Connection(), ctx(URL));
+        assertThat(connector.verifyCredentials(ctx(URL))).isEmpty();
 
         server.verify();
     }
