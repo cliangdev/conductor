@@ -388,6 +388,14 @@ class ProductMetricsConnectorTest {
     }
 
     @Test
+    void aConnectionIsIdentifiedByItsNormalizedUrl() {
+        assertThat(connector.identityKey(ctx("https://API.example.com/v1/metrics/")))
+                .isEqualTo(connector.identityKey(ctx("https://api.example.com/v1/metrics")));
+        assertThat(connector.identityKey(ctx("https://api.example.com/v1/metrics")))
+                .isNotEqualTo(connector.identityKey(ctx("https://api.example.com/v1/other")));
+    }
+
+    @Test
     void aWorkingConnectionIsAccepted() {
         server.expect(once(), r -> { }).andRespond(withSuccess(response("1", METRICS, "[]", "[]"), MediaType.APPLICATION_JSON));
 
