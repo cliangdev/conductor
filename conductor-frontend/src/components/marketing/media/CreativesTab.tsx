@@ -18,8 +18,9 @@ import { cn } from '@/lib/utils'
 import { PlatformIcon } from '@/components/marketing/destinations/PlatformIcon'
 import type { PublishPlatform } from '@/components/marketing/destinations/types'
 import {
+  canUseInPost,
   creativeSummary,
-  hasRender,
+  needsServerRender,
   kindFilterOf,
   kindLabel,
   slideCount,
@@ -35,10 +36,14 @@ import {
 } from '@/components/marketing/creatives/placementMap'
 import {
   getCreative,
+  listCreativePhotos,
   listCreatives,
+  requestCreativeRender,
   type Creative,
+  type CreativePhoto,
   type CreativeRenderFrame,
 } from '@/components/marketing/creatives/types'
+import { CarouselThumb, ClipThumb } from '@/components/marketing/creatives/CreativeThumbs'
 import { FilterChip } from './MediaFilterBar'
 
 /** A destination the caller has picked, as the preview needs it. */
@@ -84,6 +89,7 @@ export function useCreatives(projectId: string, token: string) {
 
 type Detail =
   | { status: 'loading' }
+  | { status: 'preparing' }
   | { status: 'error'; message: string }
   | { status: 'ready'; renderId: string; frames: CreativeRenderFrame[] }
   | { status: 'unusable'; message: string }
@@ -123,7 +129,7 @@ export function CreativesTab({
   onCancel,
 }: CreativesTabProps) {
   const [query, setQuery] = useState('')
-  const anyReady = (creatives ?? []).some((c) => c.state === 'READY' && hasRender(c))
+  const anyReady = (creatives ?? []).some((c) => c.state === 'READY' && canUseInPost(c))
   // Until the person chooses, Ready is the default whenever any Creative is ready to use.
   const [readyChoice, setReadyOnly] = useState<boolean | null>(null)
   const readyOnly = readyChoice ?? anyReady
@@ -143,6 +149,26 @@ export function CreativesTab({
     [creatives, readyOnly, kinds, query],
   )
 
+  // Clip and Carousel tiles without a render thumbnail fall back to media posters; load each list once.
+  const needsVideoMedia = (creatives ?? []).some((c) => c.kind === 'CLIP' && !c.latestRenderThumbnailUrl)
+  const needsImageMedia = (creatives ?? []).some((c) => c.kind === 'CAROUSEL' && !c.latestRenderThumbnailUrl)
+  const [videoMedia, setVideoMedia] = useState<CreativePhoto[]>([])
+  const [imageMedia, setImageMedia] = useState<CreativePhoto[]>([])
+  useEffect(() => {
+    if (!token || !needsVideoMedia) return
+    listCreativePhotos(projectId, token, true, 'VIDEO').then(setVideoMedia).catch(() => setVideoMedia([]))
+  }, [projectId, token, needsVideoMedia])
+  useEffect(() => {
+    if (!token || !needsImageMedia) return
+    listCreativePhotos(projectId, token, true, 'IMAGE').then(setImageMedia).catch(() => setImageMedia([]))
+  }, [projectId, token, needsImageMedia])
+  const mediaById = useMemo(() => {
+    const map = new Map<string, CreativePhoto>()
+    for (const m of videoMedia) map.set(m.id, m)
+    for (const m of imageMedia) map.set(m.id, m)
+    return map
+  }, [videoMedia, imageMedia])
+
   const selected = (creatives ?? []).find((c) => c.id === selectedId) ?? null
   const detail = selected ? details[selected.id] : undefined
 
@@ -154,6 +180,18 @@ export function CreativesTab({
     getCreative(projectId, id, token)
       .then((full) => {
         const render = full.latestRender
+        const ready = render && render.state === 'SUCCEEDED' && !render.previewOnly
+        if (!ready && needsServerRender(full)) {
+          // Clip and Carousel renders are assembled by the backend in this one call.
+          setDetails((d) => ({ ...d, [id]: { status: 'preparing' } }))
+          return requestCreativeRender(projectId, id, { renderer: 'web' }, token).then((made) => {
+            const next: Detail =
+              made.state === 'SUCCEEDED' && made.frames.length > 0
+                ? { status: 'ready', renderId: made.id, frames: made.frames }
+                : { status: 'error', message: made.error || 'Could not prepare this Creative for posting' }
+            setDetails((d) => ({ ...d, [id]: next }))
+          })
+        }
         const next: Detail =
           !render || render.state !== 'SUCCEEDED'
             ? { status: 'unusable', message: 'This Creative has no finished render yet.' }
@@ -162,7 +200,7 @@ export function CreativesTab({
               : { status: 'ready', renderId: render.id, frames: render.frames }
         setDetails((d) => ({ ...d, [id]: next }))
       })
-      .catch((err) => setDetails((d) => ({ ...d, [id]: { status: 'error', message: apiErrorMessage(err, 'Could not load this Creative') } })))
+      .catch((err) => setDetails((d) => ({ ...d, [id]: { status: 'error', message: apiErrorMessage(err, 'Could not prepare this Creative') } })))
   }, [selected, details, projectId, token])
 
   const groups: PlacementGroup[] = useMemo(
@@ -229,13 +267,14 @@ export function CreativesTab({
             ) : (
               <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid="creatives-grid">
                 {visible.map((c) => {
-                  const rendered = hasRender(c)
+                  const rendered = canUseInPost(c)
                   const isSelected = c.id === selectedId
                   return (
                     <li key={c.id}>
                       <button
                         type="button"
                         disabled={!rendered}
+                        title={rendered ? undefined : 'Render it from Claude Code first'}
                         aria-pressed={isSelected}
                         aria-label={`Choose Creative ${c.displayId}${c.name ? ` ${c.name}` : ''}`}
                         onClick={() => setSelectedId(c.id)}
@@ -245,17 +284,23 @@ export function CreativesTab({
                           !rendered && 'cursor-not-allowed opacity-60',
                         )}
                       >
-                        <span className="relative block aspect-[4/5] w-full bg-surface-3">
-                          {c.latestRenderThumbnailUrl && (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={c.latestRenderThumbnailUrl} alt="" className="h-full w-full object-cover" />
-                          )}
-                          {!rendered && (
-                            <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-                              No render yet
-                            </span>
-                          )}
-                        </span>
+                        {c.kind === 'CLIP' ? (
+                          <ClipThumb creative={c} mediaById={mediaById} />
+                        ) : c.kind === 'CAROUSEL' ? (
+                          <CarouselThumb creative={c} mediaById={mediaById} />
+                        ) : (
+                          <span className="relative block aspect-[4/5] w-full bg-surface-3">
+                            {c.latestRenderThumbnailUrl && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={c.latestRenderThumbnailUrl} alt="" className="h-full w-full object-cover" />
+                            )}
+                            {!rendered && (
+                              <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                                Not rendered yet
+                              </span>
+                            )}
+                          </span>
+                        )}
                         <span className="block space-y-0.5 border-t border-border px-2.5 py-2">
                           <span className="flex items-center gap-1.5">
                             <span className="rounded border border-border px-1 font-mono text-[11px] text-muted-foreground">
@@ -340,6 +385,11 @@ export function CreativesTab({
                 </ul>
               )}
             </>
+          ) : detail?.status === 'preparing' ? (
+            <div className="space-y-2" role="status">
+              <p className="text-sm text-muted-foreground">Preparing for posting…</p>
+              <Skeleton className="h-24 w-full" />
+            </div>
           ) : detail?.status === 'loading' || detail == null ? (
             <Skeleton className="h-24 w-full" />
           ) : (
