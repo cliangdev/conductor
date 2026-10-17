@@ -222,7 +222,10 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
         put(pm, "paid_trials", day(9), 9);
         put(pm, "paid_spend", day(10), 20);
         put(pm, "paid_trials", day(10), 1);
-        // previous window: $50 over 5 trials
+        // previous window: $50 over 5 trials, with history starting on its first day (a partly covered previous
+        // window is not compared)
+        put(pm, "paid_spend", java.time.LocalDate.of(2026, 9, 27), 0);
+        put(pm, "paid_trials", java.time.LocalDate.of(2026, 9, 27), 0);
         put(pm, "paid_spend", day(3), 50);
         put(pm, "paid_trials", day(3), 5);
 
