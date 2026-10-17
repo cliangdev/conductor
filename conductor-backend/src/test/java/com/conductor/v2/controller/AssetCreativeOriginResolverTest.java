@@ -30,6 +30,7 @@ class AssetCreativeOriginResolverTest {
         c1.setId("c1");
         c1.setNumber(18);
         c1.setVariantLetter("a");
+        c1.setName("Weeknight chicken bowls");
         when(frames.findAllById(anyIterable()))
                 .thenReturn(List.of(frame("f1", "c1", "9x16", 0), frame("f2", "c1", "4x5", null)));
         when(creatives.findAllById(anyIterable())).thenReturn(List.of(c1));
@@ -38,7 +39,7 @@ class AssetCreativeOriginResolverTest {
                 resolver.resolve(List.of(asset("a1", "f1"), asset("a2", "f2"), asset("a3", null)));
 
         assertThat(out).containsOnlyKeys("a1", "a2");
-        assertThat(out.get("a1")).isEqualTo(new AssetCreativeOriginResolver.Origin("9x16", 0, "c1", "18a"));
+        assertThat(out.get("a1")).isEqualTo(new AssetCreativeOriginResolver.Origin("9x16", 0, "c1", "18a", "Weeknight chicken bowls"));
         assertThat(out.get("a2").sequenceIndex()).isNull();
         verify(frames, times(1)).findAllById(anyIterable());
         verify(creatives, times(1)).findAllById(anyIterable());

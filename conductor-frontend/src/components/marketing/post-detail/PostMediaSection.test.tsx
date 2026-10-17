@@ -157,6 +157,30 @@ describe('PostMediaSection', () => {
     )
   })
 
+  it('shows the Creative name next to its display id', async () => {
+    const named = ASSETS.map((a) => (a.creativeId ? { ...a, creativeName: 'Weeknight chicken bowls' } : a))
+    setup({ assets: named })
+    expect(screen.getByTestId('media-origin-line')).toHaveTextContent('From Creative 18a · Weeknight chicken bowls')
+    expect(screen.getByTitle('Creative 18a · Weeknight chicken bowls')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: /all files 5/i }))
+    expect(screen.getAllByTestId('media-origin-group')[0]).toHaveTextContent('Creative 18a · Weeknight chicken bowls')
+  })
+
+  it('falls back to the display id alone when the Creative has no name', () => {
+    setup()
+    expect(screen.getByTestId('media-origin-line')).toHaveTextContent('From Creative 18a')
+    expect(screen.getByTitle('Creative 18a')).toBeInTheDocument()
+  })
+
+  it('names the Creative in the full-size viewer source line', async () => {
+    const named = ASSETS.map((a) => (a.creativeId ? { ...a, creativeName: 'Weeknight chicken bowls' } : a))
+    setup({ assets: named })
+    const igGroup = screen.getAllByTestId('media-destination-group').find((g) => within(g).queryByText(/@rexipe\.ig/))!
+    await userEvent.click(within(igGroup).getByRole('button', { name: 'Open file s2 full size' }))
+    const aside = await screen.findByTestId('viewer-aside')
+    expect(within(aside).getByText(/Creative 18a · Weeknight chicken bowls · 9:16 · slide 2/)).toBeInTheDocument()
+  })
+
   it('All files groups by Creative placement, library and uploads, and flags unused files', async () => {
     setup()
     await userEvent.click(screen.getByRole('radio', { name: /all files 5/i }))
