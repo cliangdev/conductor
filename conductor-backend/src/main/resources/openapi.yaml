@@ -3655,6 +3655,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConnectionResponse'
+        '400':
+          description: >
+            The new config failed the connector's credential check (same as on create); `detail` carries the
+            plain message and nothing is changed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthenticated
         '403':
