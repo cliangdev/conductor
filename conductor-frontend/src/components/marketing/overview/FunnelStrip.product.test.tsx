@@ -16,9 +16,9 @@ describe('FunnelStrip with in-app stages', () => {
     expect(screen.getByText('25.0% of onboarding started')).toBeInTheDocument()
   })
 
-  it('flags provisional and small-sample stages', () => {
+  it('flags small-sample stages and never shows a Provisional badge', () => {
     renderFunnel()
-    expect(screen.getByText('Provisional')).toBeInTheDocument()
+    expect(screen.queryByText('Provisional')).not.toBeInTheDocument()
     expect(screen.getByText('Small sample')).toBeInTheDocument()
   })
 

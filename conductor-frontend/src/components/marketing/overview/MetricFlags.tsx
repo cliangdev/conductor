@@ -1,17 +1,14 @@
-// Data-quality flags for one metric: the last days are still provisional, and/or the value rests on too
-// few users or events to read as a real change. Renders nothing when neither applies.
+// Data-quality flag for one metric: the value rests on too few users or events to read as a real change.
+// Renders nothing otherwise. There is deliberately no "provisional" flag: days after the window are never in the
+// total and are drawn dashed, and the page already says "Data through ... later days are still updating".
 
 import { cn } from '@/lib/utils'
 import type { OverviewMetric } from './types'
 
-export const PROVISIONAL_NOTE = 'Recent days may still change and are left out of the total.'
 export const SMALL_SAMPLE_NOTE = 'Too few users or events to read this as a real change.'
 
-export function metricFlags(metric: Pick<OverviewMetric, 'provisionalDays' | 'insufficientData'>) {
-  return {
-    provisional: (metric.provisionalDays ?? 0) > 0,
-    smallSample: metric.insufficientData === true,
-  }
+export function metricFlags(metric: Pick<OverviewMetric, 'insufficientData'>) {
+  return { smallSample: metric.insufficientData === true }
 }
 
 function Chip({ children, title }: { children: string; title: string }) {
@@ -29,14 +26,13 @@ export function MetricFlags({
   metric,
   className,
 }: {
-  metric: Pick<OverviewMetric, 'provisionalDays' | 'insufficientData'>
+  metric: Pick<OverviewMetric, 'insufficientData'>
   className?: string
 }) {
-  const { provisional, smallSample } = metricFlags(metric)
-  if (!provisional && !smallSample) return null
+  const { smallSample } = metricFlags(metric)
+  if (!smallSample) return null
   return (
     <span className={cn('inline-flex flex-wrap items-center gap-1', className)}>
-      {provisional && <Chip title={PROVISIONAL_NOTE}>Provisional</Chip>}
       {smallSample && <Chip title={SMALL_SAMPLE_NOTE}>Small sample</Chip>}
     </span>
   )

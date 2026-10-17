@@ -63,7 +63,7 @@ describe('ChannelDetailPanel for the In-app channel', () => {
       'Trials started',
       'Paid',
     ])
-    expect(screen.getAllByText('Provisional').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Provisional')).not.toBeInTheDocument()
     expect(screen.getAllByText('Small sample').length).toBeGreaterThan(0)
     expect(screen.getByText('Set in Rexipe backend')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /target for/ })).not.toBeInTheDocument()

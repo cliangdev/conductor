@@ -17,7 +17,7 @@ export function MetricChart({ metric }: { metric: OverviewMetric }) {
   const drawTarget = targetBelongsOnDailyChart(metric)
   const data = splitSeries(metric.series)
   const sparse = isSparse(metric.series)
-  const axis = chartAxis(metric.series.map((p) => p.value), metric.unit, drawTarget ? metric.target?.value : undefined)
+  const axis = chartAxis(metric.series.map((p) => p.value), metric.unit, drawTarget ? metric.target?.value : undefined, metric.aggregation !== 'LEVEL' && metric.aggregation !== 'DERIVED')
   const points = metric.series.filter((p) => p.value !== null && p.value !== undefined).length
   const summary = `${metric.label} by day, ${points} days of data${drawTarget && metric.target ? `, target ${formatMetricValue(metric.target.value, metric.unit)}` : ''}`
   if (points === 0) {

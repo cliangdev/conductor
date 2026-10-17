@@ -17,10 +17,10 @@ describe('StageChart', () => {
     expect(within(items[0]).queryByText(/% of/)).not.toBeInTheDocument()
   })
 
-  it('flags provisional and small-sample stages', () => {
+  it('flags small-sample stages and never shows a Provisional badge', () => {
     render(<StageChart metrics={productChannel().metrics} />)
     const items = within(screen.getByRole('region', { name: 'Stages' })).getAllByRole('listitem')
-    expect(within(items[2]).getByText('Provisional')).toBeInTheDocument()
+    expect(screen.queryByText('Provisional')).not.toBeInTheDocument()
     expect(within(items[3]).getByText('Small sample')).toBeInTheDocument()
   })
 

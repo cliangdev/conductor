@@ -33,9 +33,9 @@ describe('ChannelCard for the In-app channel', () => {
     expect(screen.getAllByText(/No target set · set in Rexipe backend/).length).toBeGreaterThan(0)
   })
 
-  it('flags provisional days and a small sample on the metrics that have them', () => {
+  it('flags a small sample on the metrics that have one, and never "Provisional"', () => {
     renderCard()
-    expect(screen.getAllByText('Provisional')).toHaveLength(1)
+    expect(screen.queryByText('Provisional')).not.toBeInTheDocument()
     expect(screen.getAllByText('Small sample')).toHaveLength(1)
   })
 
