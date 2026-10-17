@@ -439,24 +439,23 @@ export function PostMediaSection({
       </div>
 
       {creativeGroups.length > 0 && (
-        <p className="text-xs text-muted-foreground" data-testid="media-origin-line">
-          {creativeGroups.map((g, i) => (
-            <span key={g.key}>
-              {i > 0 && '; '}
-              <span className="inline-block max-w-[28rem] truncate align-bottom" title={creativeLabel(g.creativeDisplayId, g.creativeName)}>
+        <ul className="space-y-0.5 text-xs text-muted-foreground" data-testid="media-origin-line">
+          {creativeGroups.map((g) => (
+            <li key={g.key} className="flex min-w-0 items-baseline gap-1" data-testid="media-origin-item">
+              <span className="min-w-0 truncate" title={creativeLabel(g.creativeDisplayId, g.creativeName)}>
                 From {creativeLabel(g.creativeDisplayId, g.creativeName)}
               </span>
               {g.creativeId && (
                 <>
-                  {' · '}
-                  <Link href={creativeHref(g.creativeId)} className="text-primary hover:underline">
+                  <span aria-hidden>·</span>
+                  <Link href={creativeHref(g.creativeId)} className="shrink-0 text-primary hover:underline">
                     Open Creative
                   </Link>
                 </>
               )}
-            </span>
+            </li>
           ))}
-        </p>
+        </ul>
       )}
 
       {locked && canEdit && (

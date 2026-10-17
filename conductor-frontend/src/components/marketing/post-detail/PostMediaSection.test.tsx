@@ -172,6 +172,26 @@ describe('PostMediaSection', () => {
     expect(screen.getByTitle('Creative 18a')).toBeInTheDocument()
   })
 
+  it('lists several Creatives one per line, each with its own link', () => {
+    const extra = asset('x1', {
+      creativeFrameId: 'f9',
+      creativeId: 'cr-2',
+      creativeDisplayId: '2a',
+      creativeName: 'Describe a dinner',
+      placementKey: '4x5',
+    })
+    setup({ assets: [...ASSETS, extra] })
+    const items = screen.getAllByTestId('media-origin-item')
+    expect(items).toHaveLength(2)
+    expect(items[1]).toHaveTextContent('From Creative 2a · Describe a dinner')
+    expect(within(items[1]!).getByRole('link', { name: 'Open Creative' })).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/marketing/creatives/cr-2',
+    )
+    expect(within(items[0]!).getByRole('link', { name: 'Open Creative' })).toBeInTheDocument()
+    expect(screen.getByTestId('media-origin-line')).not.toHaveTextContent(';')
+  })
+
   it('names the Creative in the full-size viewer source line', async () => {
     const named = ASSETS.map((a) => (a.creativeId ? { ...a, creativeName: 'Weeknight chicken bowls' } : a))
     setup({ assets: named })
