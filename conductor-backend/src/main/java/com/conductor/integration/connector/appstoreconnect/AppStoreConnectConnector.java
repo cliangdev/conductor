@@ -155,7 +155,7 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
             String token = tokenService.token(ctx.connectionId(), credentials(ctx));
             data.put("listing", listingClient.read(token, appId));
         } catch (HttpClientErrorException e) {
-            data.put("listingError", httpMessage(e, "listing read"));
+            data.put("listingError", httpMessage(e, appId, true));
         } catch (RuntimeException e) {
             log.warn("App Store listing read failed for app {}: {}", appId, e.getMessage());
             data.put("listingError", "App Store listing could not be read: " + e.getMessage());
