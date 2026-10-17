@@ -290,7 +290,7 @@ one.
 **Attach is video-aware.** `CreativePlacementTargetMapper#matchesVideo` extends the STILL mapping: a
 `9x16` video also fills TikTok (its one format), an Instagram or Facebook reel, YouTube when the set has no
 `16x9` cut (it goes out as a Short), Facebook's feed when there is no `1x1` cut (Facebook publishes a lone Page
-video as a Reel), and any story-format target left unclaimed by a dedicated `story` frame; a `16x9` video
+video as a Reel), Instagram's feed when there is no `4x5` cut (Instagram publishes a single video as a Reel), and any story-format target left unclaimed by a dedicated `story` frame; a `16x9` video
 fills YouTube, and Facebook's feed only when the set has neither a `1x1` nor a `9x16` cut. `CreativeAttachService`
 copies the video bytes into the Post's own asset prefix and records `durationSeconds` on the resulting
 Asset (via `AssetService.StoredObjectInput`), so `MediaTargetValidator`'s reel/story/TikTok duration rules
