@@ -188,6 +188,27 @@ class IntegrationFetchServiceTest {
     }
 
     @Test
+    void noneAuth_withNullAccessToken_isNotShortCircuitedToSetupRequired() {
+        // Built-in credential-free connectors (e.g. Marketing insights) have no token at all; the
+        // connector itself decides whether it is set up.
+        Connection noneConn = new Connection();
+        noneConn.setId(CONNECTION_ID);
+        noneConn.setProjectId(PROJECT_ID);
+        noneConn.setConnectorId(CONNECTOR_ID);
+        noneConn.setAuthType("NONE");
+        when(connectionService.getById(CONNECTION_ID)).thenReturn(Optional.of(noneConn));
+        when(connectionService.toContext(noneConn)).thenReturn(
+                new ConnectionContext(PROJECT_ID, CONNECTOR_ID, CONNECTION_ID, null, null, null, Map.of(), null));
+        when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.empty());
+        when(connector.fetchData(any())).thenReturn(ConnectorData.healthy(Map.of("rows", 5)));
+
+        ConnectorData result = service.fetchData(CONNECTION_ID, true);
+
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.HEALTHY);
+        verify(connector).fetchData(any());
+    }
+
+    @Test
     void apiKeyAuth_withNullAccessToken_returnsSetupRequired_withoutCallingConnector() {
         Connection apiKeyConn = new Connection();
         apiKeyConn.setId(CONNECTION_ID);

@@ -61,7 +61,8 @@ public final class CreativePlacementTargetMapper {
     /**
      * The video-aware mapping (COND-24 PR1): a CLIP creative's frames are always video, so the rule set
      * differs from {@link #matches} in three ways beyond the extra platforms — a {@code 9x16} video also
-     * fills TikTok (its one format), an Instagram or Facebook reel, and YouTube (its one format) when the set
+     * fills TikTok (its one format), an Instagram or Facebook reel, Instagram's feed when the set has no {@code 4x5} frame (Instagram
+     * publishes a single video as a Reel), and YouTube (its one format) when the set
      * has no {@code 16x9} frame — YouTube prefers the landscape cut, so the choice never depends on order; a
      * {@code 16x9} video fills YouTube and, only when the clip set has no {@code 1x1} frame of its own,
      * Facebook's feed too; and {@code 9x16} additionally fills any story-format target left unclaimed by
@@ -86,6 +87,9 @@ public final class CreativePlacementTargetMapper {
                     // Facebook publishes a single Page video as a Reel (vertical recommended), so its feed takes
                     // the vertical cut when there is no square one.
                     || (FACEBOOK.equals(platform) && format == PostFormat.FEED && !present.contains(PLACEMENT_1X1))
+                    // Instagram publishes a single video as a Reel whatever the format, so its feed takes the
+                    // vertical cut too, unless the set has a 4:5 cut of its own.
+                    || (INSTAGRAM.equals(platform) && format == PostFormat.FEED && !present.contains(PLACEMENT_4X5))
                     // YouTube takes the landscape cut when the set has one; the vertical one goes out as a Short.
                     || (YOUTUBE.equals(platform) && !present.contains(PLACEMENT_16X9))
                     || (format == PostFormat.STORY && !present.contains(PLACEMENT_STORY));

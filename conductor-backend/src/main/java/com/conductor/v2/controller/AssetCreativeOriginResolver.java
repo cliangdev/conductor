@@ -21,7 +21,8 @@ import java.util.Set;
 @Component
 public class AssetCreativeOriginResolver {
 
-    public record Origin(String placementKey, Integer sequenceIndex, String creativeId, String creativeDisplayId) {}
+    public record Origin(String placementKey, Integer sequenceIndex, String creativeId, String creativeDisplayId,
+                         String creativeName) {}
 
     private final CreativeRenderFrameRepository frames;
     private final CreativeRepository creatives;
@@ -52,7 +53,7 @@ public class AssetCreativeOriginResolver {
             if (f == null) continue;
             Creative c = creativeById.get(f.getCreativeId());
             out.put(a.getId(), new Origin(f.getPlacementKey(), f.getSequenceIndex(), f.getCreativeId(),
-                    c == null ? null : c.displayId()));
+                    c == null ? null : c.displayId(), c == null ? null : c.getName()));
         }
         return out;
     }

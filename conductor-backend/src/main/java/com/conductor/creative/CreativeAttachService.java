@@ -93,7 +93,7 @@ public class CreativeAttachService {
     public record AttachedAsset(String assetId, String frameId, String placementKey, Integer sequenceIndex) {
     }
 
-    public record TargetUpdate(String targetId, String platform, List<String> assetIds) {
+    public record TargetUpdate(String targetId, String platform, List<String> assetIds, String altText) {
     }
 
     public record TargetSkip(String targetId, String platform, String reason) {
@@ -132,7 +132,8 @@ public class CreativeAttachService {
         // Frames grouped by placement in render order; the matching rules live in CreativePlacementMedia,
         // shared with PublishTargetService for destinations added after this attach.
         boolean carousel = Creative.KIND_CAROUSEL.equals(creative.getKind());
-        CreativePlacementMedia.Placements placements = new CreativePlacementMedia.Placements(carousel);
+        CreativePlacementMedia.Placements placements = new CreativePlacementMedia.Placements(carousel)
+                .withStillAltText(CreativePlacementMedia.stillAltTextOf(creative));
 
         // Attaching the same render again (say, to fill a destination added afterwards) reuses the frames
         // already on this Post instead of copying them a second time.
@@ -192,8 +193,18 @@ public class CreativeAttachService {
                 selections.add(selectionFor(target, List.of(), explicitlyEmpty));
                 continue;
             }
-            updates.add(new TargetUpdate(target.getId(), target.getPlatform(), matched));
-            selections.add(selectionFor(target, matched));
+            // Instagram alt text: only a lone still, and never over one the author already wrote.
+            Map<String, Object> options = parsePublishOptions(target.getPublishOptions());
+            String altText = CreativePlacementMedia.hasAltText(options) ? null : placements.altTextFor(target, matched);
+            PublishTargetService.TargetSelection selection = selectionFor(target, matched);
+            if (altText != null) {
+                Map<String, Object> withAlt = options == null ? new LinkedHashMap<>() : new LinkedHashMap<>(options);
+                withAlt.put("altText", altText);
+                selection = new PublishTargetService.TargetSelection(selection.platform(), selection.connectionId(),
+                        withAlt, selection.captionOverride(), selection.assetIds(), selection.format(), selection.noMedia());
+            }
+            updates.add(new TargetUpdate(target.getId(), target.getPlatform(), matched, altText));
+            selections.add(selection);
         }
 
         publishTargetService.replaceSelection(projectId, workItemId, selections, caller);

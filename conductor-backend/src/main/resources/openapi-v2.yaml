@@ -5555,6 +5555,10 @@ components:
           type: string
           nullable: true
           description: The Creative's display id (e.g. 18a). Read-only; null unless creativeFrameId is set.
+        creativeName:
+          type: string
+          nullable: true
+          description: The Creative's name. Read-only; null unless creativeFrameId is set, or when the Creative has no name.
         previewUrl:
           type: string
           nullable: true
@@ -8796,6 +8800,12 @@ components:
           items:
             type: string
           description: In publish order — never re-sorted.
+        altText:
+          type: string
+          nullable: true
+          description: >-
+            The alt text attach set on this Instagram destination's `altText` option (from the Creative's
+            alt text). Null when attach set none.
 
     AttachCreativeTargetSkip:
       type: object

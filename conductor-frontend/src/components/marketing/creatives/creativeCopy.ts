@@ -58,3 +58,17 @@ export function creativeSummary(c: Pick<Creative, 'kind' | 'slides' | 'placement
 export function hasRender(c: Pick<Creative, 'latestRenderId'>): boolean {
   return !!c.latestRenderId
 }
+
+/**
+ * Whether a Creative can be used in a Post from the chooser. CLIP and CAROUSEL renders are assembled by
+ * the backend in one synchronous call, so a READY one is usable even before its first render; STILL and
+ * MOTION need a local render (Claude Code / CLI) first.
+ */
+export function canUseInPost(c: Pick<Creative, 'latestRenderId' | 'kind' | 'state'>): boolean {
+  return hasRender(c) || (c.state === 'READY' && (c.kind === 'CLIP' || c.kind === 'CAROUSEL'))
+}
+
+/** Whether using this Creative means the backend must assemble its render first. */
+export function needsServerRender(c: Pick<Creative, 'kind'>): boolean {
+  return c.kind === 'CLIP' || c.kind === 'CAROUSEL'
+}

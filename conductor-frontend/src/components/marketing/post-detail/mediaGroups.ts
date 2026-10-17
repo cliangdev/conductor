@@ -132,10 +132,17 @@ export interface OriginGroup {
   detail: string | null
   creativeId: string | null
   creativeDisplayId: string | null
+  creativeName: string | null
   /** Creatives split by placement; the other kinds have one unnamed row. */
   rows: PlacementRow[]
   /** Every file in walking order. */
   assets: MediaAsset[]
+}
+
+/** "Creative 4a · Weeknight chicken bowls"; the display id alone when the Creative has no name. */
+export function creativeLabel(displayId: string | null | undefined, name: string | null | undefined): string {
+  const base = displayId ? `Creative ${displayId}` : 'Creative'
+  return name ? `${base} · ${name}` : base
 }
 
 function bySequence(a: MediaAsset, b: MediaAsset): number {
@@ -169,14 +176,16 @@ export function groupByOrigin(assets: MediaAsset[]): OriginGroup[] {
         assets: [...list].sort(bySequence),
       }))
       .sort((a, b) => a.placementKey.localeCompare(b.placementKey))
+    const name = files.find((f) => f.creativeName)?.creativeName ?? null
     const displayId = files.find((f) => f.creativeDisplayId)?.creativeDisplayId ?? null
     groups.push({
       key: `creative:${key}`,
       kind: 'creative',
-      title: displayId ? `Creative ${displayId}` : 'Creative',
+      title: creativeLabel(displayId, name),
       detail: files.some((f) => f.sequenceIndex != null) ? 'Carousel' : null,
       creativeId: files.find((f) => f.creativeId)?.creativeId ?? null,
       creativeDisplayId: displayId,
+      creativeName: name,
       rows,
       assets: rows.flatMap((r) => r.assets),
     })
@@ -189,6 +198,7 @@ export function groupByOrigin(assets: MediaAsset[]): OriginGroup[] {
       detail: null,
       creativeId: null,
       creativeDisplayId: null,
+      creativeName: null,
       rows: [{ key: 'library', placementKey: '', assets: library }],
       assets: library,
     })
@@ -201,6 +211,7 @@ export function groupByOrigin(assets: MediaAsset[]): OriginGroup[] {
       detail: null,
       creativeId: null,
       creativeDisplayId: null,
+      creativeName: null,
       rows: [{ key: 'upload', placementKey: '', assets: uploaded }],
       assets: uploaded,
     })

@@ -62,7 +62,27 @@ public class LocalAppStoreConnectConnector implements FetchConnector, ChannelMet
 
     @Override
     public ConnectorData fetchData(ConnectionContext ctx) {
-        return ConnectorData.healthy(Map.of("appId", "0", "rating_count", 128.0, "rating_avg", 4.6));
+        return ConnectorData.healthy(Map.of("appId", "0", "rating_count", 128.0, "rating_avg", 4.6,
+                "listing", listing()));
+    }
+
+    /** A believable generic listing, in the shape of the real {@code get_app_store_listing} output. */
+    private static Map<String, Object> listing() {
+        Map<String, Object> live = Map.of("version", "1.4.0", "state", "READY_FOR_SALE", "locales", List.of(
+                Map.of("locale", "en-US", "name", "Sample App", "subtitle", "Plan your week",
+                        "keywords", "planner,habits,routine,tasks", "promotionalText", "Now with widgets",
+                        "descriptionLength", 1840),
+                Map.of("locale", "de-DE", "name", "Sample App", "subtitle", "Plane deine Woche",
+                        "keywords", "planer,gewohnheiten,aufgaben", "descriptionLength", 1710)));
+        Map<String, Object> draft = Map.of("version", "1.5.0", "state", "PREPARE_FOR_SUBMISSION", "locales", List.of(
+                Map.of("locale", "en-US", "name", "Sample App", "subtitle", "Plan your week",
+                        "keywords", "planner,habits,routine,tasks,focus", "promotionalText", "Focus mode is here",
+                        "descriptionLength", 1900)));
+        return Map.of("appId", "0", "live", live, "draft", draft,
+                "customProductPages", List.of(Map.of("id", "cpp-1", "name", "Habits", "visible", true)),
+                "experimentsAvailable", true,
+                "experiments", List.of(Map.of("name", "Icon test", "state", "COMPLETED")),
+                "localesTotal", 2, "localesIncluded", 2, "truncated", false);
     }
 
     @Override

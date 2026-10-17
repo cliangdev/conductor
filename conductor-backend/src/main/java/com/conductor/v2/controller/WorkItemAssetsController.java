@@ -170,7 +170,8 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
             response.placementKey(origin.placementKey())
                     .sequenceIndex(origin.sequenceIndex())
                     .creativeId(origin.creativeId())
-                    .creativeDisplayId(origin.creativeDisplayId());
+                    .creativeDisplayId(origin.creativeDisplayId())
+                    .creativeName(origin.creativeName());
         }
         if (AssetService.KIND_FILE.equals(asset.getKind())
                 && AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())) {
