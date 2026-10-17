@@ -157,9 +157,16 @@ export interface ChartAxis {
 /** Y axis for a metric's daily series (and its target): counts start at zero; other units pad the
  *  range to at least +-10% of the mean so a tiny wobble does not look dramatic; tick labels get enough
  *  precision that neighbouring ticks never read the same. */
-export function chartAxis(values: (number | null | undefined)[], unit: MetricUnit, target?: number | null): ChartAxis {
+export function chartAxis(
+  values: (number | null | undefined)[],
+  unit: MetricUnit,
+  target?: number | null,
+  /** A summed flow (spend, revenue) reads honestly from zero; ratios and levels (rating, position) do not. */
+  includeZero = false,
+): ChartAxis {
   const nums = values.filter((v): v is number => v !== null && v !== undefined && Number.isFinite(v))
   if (target !== null && target !== undefined) nums.push(target)
+  if (includeZero && nums.length > 0) nums.push(0)
   if (nums.length === 0) return { domain: [0, 1], ticks: [0, 1], format: (v) => formatMetricValue(v, unit) }
   const min = Math.min(...nums)
   const max = Math.max(...nums)
