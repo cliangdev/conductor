@@ -413,6 +413,39 @@ class IntegrationControllerTest {
     // ---- deleteConnection ----
 
     @Test
+    void updateConnection_configFailsTheCredentialCheck_returns400AndChangesNothing() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        com.conductor.integration.FetchConnector connector = mock(com.conductor.integration.FetchConnector.class);
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        Connection conn = new Connection();
+        conn.setId("conn-u");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId(GCP_SA_CONNECTOR_ID);
+        when(connectionService.getById("conn-u", GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+        when(connectionService.toContext(conn)).thenReturn(new com.conductor.integration.ConnectionContext(
+                PROJECT_ID, GCP_SA_CONNECTOR_ID, "conn-u", "stored-secret", null, null,
+                Map.of("issuerId", "I", "appId", "1"), null));
+        when(connector.verifyCredentials(any())).thenReturn(Optional.of("No app with Apple ID 2 is visible"));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_SA_CONNECTOR_ID
+                        + "/connections/conn-u")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"appId\":\"2\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("No app with Apple ID 2 is visible"));
+
+        org.mockito.ArgumentCaptor<com.conductor.integration.ConnectionContext> ctx =
+                org.mockito.ArgumentCaptor.forClass(com.conductor.integration.ConnectionContext.class);
+        verify(connector).verifyCredentials(ctx.capture());
+        org.assertj.core.api.Assertions.assertThat(ctx.getValue().accessToken()).isEqualTo("stored-secret");
+        org.assertj.core.api.Assertions.assertThat(ctx.getValue().config())
+                .containsEntry("appId", "2").containsEntry("issuerId", "I");
+        org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never()).updateConfig(any(), any());
+    }
+
+    @Test
     void deleteConnection_flipsReferencingRuntimeTargetsBeforeDeleting() throws Exception {
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
                 .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
