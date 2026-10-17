@@ -1,5 +1,6 @@
 package com.conductor.integration.connector.applesearchads;
 
+import com.conductor.integration.connector.apple.ApplePrivateKeys;
 import io.jsonwebtoken.Jwts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,12 +13,9 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
-import java.security.KeyFactory;
 import java.security.PrivateKey;
-import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.Date;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -111,22 +109,9 @@ public class AppleAdsTokenService {
                 .compact();
     }
 
-    /** Parse a PKCS#8 EC private key out of a .p8 PEM (strip the armor + whitespace, Base64-decode). */
+    /** Parse a PKCS#8 EC private key out of a .p8 PEM; shared with the other Apple connectors. */
     static PrivateKey parsePrivateKey(String pem) {
-        try {
-            String normalized = pem.replace("\\n", "\n");
-            String body = normalized
-                    .replaceAll("-----BEGIN [A-Z ]+-----", "")
-                    .replaceAll("-----END [A-Z ]+-----", "")
-                    .replaceAll("\\s", "");
-            byte[] der = Base64.getDecoder().decode(body);
-            KeyFactory kf = KeyFactory.getInstance("EC");
-            return kf.generatePrivate(new PKCS8EncodedKeySpec(der));
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    "Failed to parse the Apple Search Ads .p8 private key — must be a PKCS#8 EC PEM "
-                            + "('BEGIN PRIVATE KEY')", e);
-        }
+        return ApplePrivateKeys.parse(pem);
     }
 
     @SuppressWarnings("unchecked")

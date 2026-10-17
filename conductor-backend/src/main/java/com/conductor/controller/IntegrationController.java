@@ -93,6 +93,8 @@ import java.util.stream.Stream;
 @RestController
 public class IntegrationController implements IntegrationsApi {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(IntegrationController.class);
+
     private final ConnectorRegistry connectorRegistry;
     private final ConnectionService connectionService;
     private final IntegrationFetchService fetchService;
@@ -347,6 +349,15 @@ public class IntegrationController implements IntegrationsApi {
         ConnectorSpec spec = connector.getSpec();
         String label = request != null ? request.getLabel() : null;
 
+        // Opt-in credential check: a connector that can prove the credentials work refuses bad ones here,
+        // before anything is saved, with a plain message the connect form shows inline.
+        if (connector instanceof FetchConnector fetchConnector) {
+            ConnectionContext candidate = new ConnectionContext(projectId, connectorId, "verify", null, null, null,
+                    request != null && request.getConfigJson() != null ? request.getConfigJson() : Map.of(), null);
+            refuseIfAlreadyConnected(fetchConnector, candidate, null);
+            verifyCredentialsOrRefuse(fetchConnector, projectId, connectorId, spec, request);
+        }
+
         Connection conn;
         if (spec.singleInstance()) {
             conn = connectionService.getOrCreateSingle(projectId, connectorId, spec.authType());
@@ -396,6 +407,18 @@ public class IntegrationController implements IntegrationsApi {
             String projectId, String connectorId, String connectionId, UpdateConnectionRequest request) {
         requireAdminOrCreator(projectId);
         Connection conn = requireConnection(projectId, connectorId, connectionId);
+        if (request != null && request.getConfig() != null && !request.getConfig().isEmpty()
+                && connectorRegistry.getById(connectorId).orElse(null) instanceof FetchConnector fetchConnector) {
+            // Re-check with the merged config and the stored secret before anything is changed.
+            ConnectionContext stored = connectionService.toContext(conn);
+            Map<String, Object> merged = new java.util.HashMap<>(stored.config() != null ? stored.config() : Map.of());
+            merged.putAll(request.getConfig());
+            ConnectionContext edited = new ConnectionContext(projectId, connectorId,
+                    "verify-" + java.util.UUID.randomUUID(), stored.accessToken(), stored.refreshToken(),
+                    stored.expiresAt(), merged, stored.webhookSecret());
+            refuseIfAlreadyConnected(fetchConnector, edited, conn.getId());
+            refuseIfCredentialsFail(fetchConnector, edited);
+        }
         if (request != null && request.getLabel() != null) {
             connectionService.updateLabel(conn, request.getLabel());
         }
@@ -804,6 +827,53 @@ public class IntegrationController implements IntegrationsApi {
     }
 
     /** SERVICE_ACCOUNT connectors (GCP) require a well-formed GCP service-account JSON key. */
+    private void verifyCredentialsOrRefuse(FetchConnector connector, String projectId, String connectorId,
+                                           ConnectorSpec spec, CreateConnectionRequest request) {
+        String secret = null;
+        if (request != null) {
+            secret = spec.authType() == AuthType.SERVICE_ACCOUNT ? request.getServiceAccountKey() : request.getApiKey();
+        }
+        Map<String, Object> config = request != null && request.getConfigJson() != null
+                ? new java.util.HashMap<>(request.getConfigJson()) : Map.of();
+        // Transient context: a throwaway connection id, nothing persisted.
+        ConnectionContext ctx = new ConnectionContext(projectId, connectorId, "verify-" + java.util.UUID.randomUUID(),
+                secret, null, null, config, null);
+        refuseIfCredentialsFail(connector, ctx);
+    }
+
+    /** One thing (an app, a metrics URL) is connected once per workspace: a second would double its numbers. */
+    private void refuseIfAlreadyConnected(FetchConnector connector, ConnectionContext candidate, String selfId) {
+        Optional<String> key = connector.identityKey(candidate);
+        if (key.isEmpty()) {
+            return;
+        }
+        for (Connection other : connectionService.list(candidate.projectId(), candidate.connectorId())) {
+            if (other.getId().equals(selfId)) {
+                continue;
+            }
+            Optional<String> otherKey = connector.identityKey(connectionService.toContext(other));
+            if (otherKey.isPresent() && otherKey.get().equals(key.get())) {
+                String label = other.getDisplayLabel() != null && !other.getDisplayLabel().isBlank()
+                        ? other.getDisplayLabel() : candidate.connectorId();
+                throw new BusinessException("This " + connector.identityNoun() + " is already connected in this workspace as \"" + label + "\"");
+            }
+        }
+    }
+
+    private void refuseIfCredentialsFail(FetchConnector connector, ConnectionContext ctx) {
+        String connectorId = ctx.connectorId();
+        Optional<String> problem;
+        try {
+            problem = connector.verifyCredentials(ctx);
+        } catch (RuntimeException e) {
+            log.warn("Credential check for connector {} failed unexpectedly: {}", connectorId, e.getMessage());
+            problem = Optional.of("Could not check the credentials: " + e.getMessage());
+        }
+        if (problem.isPresent()) {
+            throw new BusinessException(problem.get());
+        }
+    }
+
     private void requireValidServiceAccountKey(String key) {
         Map<String, Object> parsed;
         try {

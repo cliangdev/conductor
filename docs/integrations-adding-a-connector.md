@@ -181,6 +181,7 @@ Each entry is an `IngestSpec`:
 | `sourceType` | no | The `KnowledgeSubmission.sourceType` stamped on filed items/digests. Supports only the platform placeholders `{connector}`, `{ingest}`, `{period}` — any other `{...}` token passes through literally. Typically `metrics.digest.{connector}.{ingest}` for a metric feed. |
 | `defaultIntervalMinutes` | no, default `1440` | Seeds `connector_feed.interval_minutes` at first provisioning only — an operator can change it afterward via the Feeds panel / `PATCH .../feeds/{feedId}`, and that edit is never overwritten by this default again. |
 | `window` | required iff `mode: WINDOW` | See below. Also used by a `SNAPSHOT`+`digest` feed (e.g. GSC) to select which slice of the already-fetched series to aggregate — it does not drive a separate pull in that case. |
+| `sink` | no, default `KNOWLEDGE` | Where a pull lands. `KNOWLEDGE` files items/digests into the Knowledge Center. `POST_METRICS` reads performance numbers for the connection's published posts (publishing pipeline). `CHANNEL_METRICS` stores daily per-channel numbers in `channel_metric_daily` for the Marketing overview and files no items; the connector bean must implement `ChannelMetricsSource` (see [Channel metrics feeds](#channel-metrics-feeds-the-channel_metrics-sink)). |
 | `suggestedDisposition` / `suggestedDomain` | no | One-time seeds for a `DispositionPolicy` row, read only at first provisioning (see `ConnectorFeedProvisioner`) — never consulted again at pull/digest time, so the platform never has two disagreeing copies of the same routing policy. |
 | `digest` | no | Present **iff** this feed is a metric feed (`IngestSpec#isMetricFeed()`) — a `DigestSpec`, see below. Omit entirely for a feed that files raw items straight into the inbox instead of going through the digest/narration pipeline. |
 
@@ -224,6 +225,33 @@ Each entry is an `IngestSpec`:
 | `topN` | How many top rows to watch for movers (defaults to all rows). |
 | `baselineN` | How many rows to persist as the next period's baseline — bounds `connector_feed.last_stats` regardless of how wide the source's own top-N list is (defaults to the current row count). |
 | `minAbsolute` / `minRelative` / `minRankMove` | Thresholds for flagging a rank-stable entry as a mover by value change, or a rank shift as material on its own. |
+
+### Channel metrics feeds (the `CHANNEL_METRICS` sink)
+
+A connector that should appear as a channel in the Marketing overview implements `ChannelMetricsSource`
+(on the same bean as `FetchConnector`) and declares a `SNAPSHOT` feed with `"sink": "CHANNEL_METRICS"`:
+
+```json
+{ "id": "channel_metrics", "label": "Daily App Store metrics", "mode": "SNAPSHOT",
+  "sink": "CHANNEL_METRICS", "defaultIntervalMinutes": 360 }
+```
+
+`ChannelMetricsFeedPuller` drives the source; it never calls `fetchData`. The source declares:
+
+- `channel()` — the `MetricChannel` (`WEB`, `SEARCH`, `SOCIAL`, `STORE`, `ADS`, `PRODUCT`).
+- `pullDaily(ctx, from, to)` — `ChannelMetricPoint`s for `from..to` inclusive: `total(...)` has an empty
+  dimension key, `of(metric, "kind:value", ...)` a breakdown member. Return no point for a day the platform
+  has not published yet (the store leaves such a day untouched; never emit a zero). Throw
+  `ChannelMetricsSourceException.setupRequired` (bad credentials/config) or `.degraded` (rate limit,
+  outage) for expected failures.
+- `backfillDays()`, `trailingDays()` (recent days re-pulled every run and stored provisional) and
+  `maxDaysPerPull()` (a long backfill is split into chunks of this many days).
+- Optionally `snapshot(metric)` (the platform's reading at pull time, stored final, e.g. a rating count)
+  and `prunesMissingDimensions()` (default true: a dimension row absent from a returned metric-day is
+  deleted).
+
+No migration is needed. Add the spec to the parameterised list in `IntegrationToolSpecIngestTest`. Worked
+example: [`integrations-app-store-connect.md`](integrations-app-store-connect.md).
 
 ### The `SnapshotIngestAdapter` bridge
 
