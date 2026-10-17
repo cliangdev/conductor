@@ -404,6 +404,16 @@ public class IntegrationController implements IntegrationsApi {
             String projectId, String connectorId, String connectionId, UpdateConnectionRequest request) {
         requireAdminOrCreator(projectId);
         Connection conn = requireConnection(projectId, connectorId, connectionId);
+        if (request != null && request.getConfig() != null && !request.getConfig().isEmpty()
+                && connectorRegistry.getById(connectorId).orElse(null) instanceof FetchConnector fetchConnector) {
+            // Re-check with the merged config and the stored secret before anything is changed.
+            ConnectionContext stored = connectionService.toContext(conn);
+            Map<String, Object> merged = new java.util.HashMap<>(stored.config() != null ? stored.config() : Map.of());
+            merged.putAll(request.getConfig());
+            refuseIfCredentialsFail(fetchConnector, new ConnectionContext(projectId, connectorId,
+                    "verify-" + java.util.UUID.randomUUID(), stored.accessToken(), stored.refreshToken(),
+                    stored.expiresAt(), merged, stored.webhookSecret()));
+        }
         if (request != null && request.getLabel() != null) {
             connectionService.updateLabel(conn, request.getLabel());
         }
@@ -823,6 +833,11 @@ public class IntegrationController implements IntegrationsApi {
         // Transient context: a throwaway connection id, nothing persisted.
         ConnectionContext ctx = new ConnectionContext(projectId, connectorId, "verify-" + java.util.UUID.randomUUID(),
                 secret, null, null, config, null);
+        refuseIfCredentialsFail(connector, ctx);
+    }
+
+    private void refuseIfCredentialsFail(FetchConnector connector, ConnectionContext ctx) {
+        String connectorId = ctx.connectorId();
         Optional<String> problem;
         try {
             problem = connector.verifyCredentials(ctx);
