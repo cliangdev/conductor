@@ -144,7 +144,7 @@ public final class MetricCatalog {
      * metric's {@code denominator}, which a LEVEL otherwise never uses.
      */
     private static Metric weightedRatingLevel(String key, String label, Unit unit, String weightKey) {
-        return new Metric(key, label, unit, Aggregation.LEVEL, Good.UP, false, true, true, null, weightKey);
+        return new Metric(key, label, unit, Aggregation.LEVEL, Good.UP, false, true, true, null, weightKey, null);
     }
 
     private static Metric level(String key, String label, boolean optional) {
