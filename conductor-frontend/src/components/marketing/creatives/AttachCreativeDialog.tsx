@@ -40,9 +40,10 @@ function AttachBody({ onOpenChange, projectId, workItemId, token, destinations, 
     try {
       const result = await attachCreativeRender(projectId, choice.creative.id, { renderId: choice.renderId, workItemId }, token)
       await onAttached()
+      const kept = result.targetsSkipped.length
       toastSuccess(
-        result.targetsSkipped.length > 0
-          ? `Attached Creative ${choice.creative.displayId} — ${result.targetsSkipped.length} destination${result.targetsSkipped.length === 1 ? '' : 's'} kept its own media`
+        kept > 0
+          ? `Attached Creative ${choice.creative.displayId} — ${kept} destination${kept === 1 ? ' kept its' : 's kept their'} own media`
           : `Attached Creative ${choice.creative.displayId}`,
       )
       onOpenChange(false)

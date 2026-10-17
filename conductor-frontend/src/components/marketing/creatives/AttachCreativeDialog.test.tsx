@@ -93,7 +93,10 @@ describe('AttachCreativeDialog', () => {
     ;(attachCreativeRender as Mock).mockResolvedValue({
       assets: [{ assetId: 'a1', frameId: 'f1', placementKey: '4x5', sequenceIndex: null }],
       targetsUpdated: [{ targetId: 't1', platform: 'instagram', assetIds: ['a1'] }],
-      targetsSkipped: [{ targetId: 't2', platform: 'facebook', reason: 'custom media' }],
+      targetsSkipped: [
+        { targetId: 't2', platform: 'facebook', reason: 'custom media' },
+        { targetId: 't3', platform: 'tiktok', reason: 'custom media' },
+      ],
     })
     const { onAttached, onOpenChange } = setup()
 
@@ -105,7 +108,7 @@ describe('AttachCreativeDialog', () => {
     )
     await waitFor(() => expect(onAttached).toHaveBeenCalled())
     expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(toastSuccessSpy).toHaveBeenCalledWith(expect.stringContaining('1 destination kept its own media'))
+    expect(toastSuccessSpy).toHaveBeenCalledWith(expect.stringContaining('2 destinations kept their own media'))
   })
 
   it('renders a Carousel on demand before attaching it', async () => {

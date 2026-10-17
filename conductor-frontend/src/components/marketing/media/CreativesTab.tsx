@@ -52,6 +52,8 @@ export interface ChooserDestination {
   format?: string | null
   /** e.g. "@acme" — shown beside the platform icon. */
   label: string
+  /** The destination has its own non-empty media selection, which attach never overwrites. */
+  keepsOwnMedia?: boolean
 }
 
 /** What choosing a Creative hands back to the caller. */
@@ -451,6 +453,17 @@ function PreviewBody({ selected, detail, destinations, groups }: PreviewBodyProp
           ) : (
             <ul className="space-y-3">
               {destinations.map((d, i) => {
+                if (d.keepsOwnMedia) {
+                  return (
+                    <li key={`${d.platform}-${d.format}-${d.label}-${i}`} className="space-y-1.5" data-testid="keeps-own-media">
+                      <div className="flex items-center gap-2 text-sm">
+                        <PlatformIcon platform={d.platform} />
+                        <span className="truncate font-medium text-foreground">{d.label}</span>
+                      </div>
+                      <p className="text-[13px] text-muted-foreground">Keeps its own media</p>
+                    </li>
+                  )
+                }
                 const result = placementFor(selected.kind ?? 'STILL', groups, d)
                 return (
                   <li key={`${d.platform}-${d.format}-${d.label}-${i}`} className="space-y-1.5">

@@ -125,6 +125,18 @@ describe('CreativesTab', () => {
     expect(getCreative).toHaveBeenCalledTimes(1)
   })
 
+  it('says a destination with its own media keeps it, with no frames or warning', async () => {
+    setup({ destinations: [IG, { ...YT, keepsOwnMedia: true }] })
+    await userEvent.click(screen.getByRole('button', { name: 'Choose Creative 18a Import carousel' }))
+    const panel = screen.getByTestId('creatives-preview')
+    const kept = await within(panel).findByTestId('keeps-own-media')
+    expect(kept).toHaveTextContent('Acme Channel')
+    expect(kept).toHaveTextContent('Keeps its own media')
+    expect(within(kept).queryByTestId('frame-strip')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('creative-warning')).not.toBeInTheDocument()
+    expect(within(panel).getAllByTestId('frame-strip')).toHaveLength(1)
+  })
+
   it('lists the Creative’s sizes when no destination is picked yet', async () => {
     setup({ destinations: [] })
     await userEvent.click(screen.getByRole('button', { name: 'Choose Creative 18a Import carousel' }))
