@@ -56,6 +56,8 @@ export interface MediaAsset extends WorkItemAsset {
   sequenceIndex?: number | null
   creativeId?: string | null
   creativeDisplayId?: string | null
+  /** The Creative's name, when it has one. */
+  creativeName?: string | null
   /** Short-lived signed read URL, minted per response — present only once the upload is confirmed. */
   previewUrl?: string | null
 }

@@ -2125,7 +2125,7 @@ paths:
           required: true
           schema:
             type: string
-          description: WEB, SEARCH, SOCIAL, STORE or ADS (case-insensitive).
+          description: WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT (case-insensitive).
         - name: window
           in: query
           required: false
@@ -2166,7 +2166,8 @@ paths:
       summary: Set a target for a channel metric
       description: >-
         Idempotent: replaces any existing target for the metric. `direction` defaults to the metric's good
-        direction. Requires ADMIN or CREATOR.
+        direction. Requires ADMIN or CREATOR. A PRODUCT metric's target comes from the product metrics feed
+        and is read-only here (409).
       operationId: setMarketingTarget
       security:
         - bearerAuth: []
@@ -2218,12 +2219,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The metric's target is set by its connector feed and cannot be changed here
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
     delete:
       tags:
         - marketing-overview
       summary: Clear a target for a channel metric
-      description: "Idempotent: clearing a metric with no target is a no-op. Requires ADMIN or CREATOR."
+      description: "Idempotent: clearing a metric with no target is a no-op. Requires ADMIN or CREATOR. A PRODUCT metric's feed-set target cannot be cleared here (409)."
       operationId: deleteMarketingTarget
       security:
         - bearerAuth: []
@@ -2247,6 +2254,12 @@ paths:
       responses:
         "204":
           description: Cleared
+        "409":
+          description: The metric's target is set by its connector feed and cannot be changed here
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "400":
           description: Unknown channel or metric
           content:
@@ -5542,6 +5555,10 @@ components:
           type: string
           nullable: true
           description: The Creative's display id (e.g. 18a). Read-only; null unless creativeFrameId is set.
+        creativeName:
+          type: string
+          nullable: true
+          description: The Creative's name. Read-only; null unless creativeFrameId is set, or when the Creative has no name.
         previewUrl:
           type: string
           nullable: true
@@ -6130,7 +6147,7 @@ components:
         path:
           type: string
           enum: [WEB, STORE, ADS, PRODUCT]
-          description: The parallel path the stage belongs to; stages convert only within a path.
+          description: The parallel path the stage belongs to; stages convert only within a path, except that the first PRODUCT stage converts from store downloads.
         conversionFromKey:
           type: string
           nullable: true
@@ -6149,12 +6166,17 @@ components:
           type: string
           format: date
           description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday; yesterday when there is none).
-        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE or ADS."}
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
         label: {type: string}
         status:
           type: string
-          enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON]
+          enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH]
+          description: MISMATCH means the product metrics feed's reference figure (store downloads, ad spend) disagrees with this channel's own connector by more than 1%; see `mismatch`.
         lastFetchedAt: {type: string, format: date-time, nullable: true}
+        mismatch:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMismatch"
+          nullable: true
         connections:
           type: array
           items:
@@ -6167,6 +6189,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OverviewMetric"
+
+    OverviewMismatch:
+      type: object
+      description: Set when status is MISMATCH. Both figures cover the same settled days, `from` to `to`.
+      required: [metric, label, referenceValue, channelValue, gapPct, from, to]
+      properties:
+        metric: {type: string, description: "The channel metric compared, e.g. downloads or spend."}
+        label: {type: string}
+        referenceValue: {type: number, format: double, description: "What the product metrics feed reports."}
+        channelValue: {type: number, format: double, description: "What this channel's own connector reports."}
+        gapPct: {type: number, format: double, description: "Absolute gap as a fraction of the larger figure (0.05 is 5%)."}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
 
     OverviewConnection:
       type: object
@@ -6229,6 +6264,9 @@ components:
         noise:
           type: boolean
           description: True when the change is within normal variation (it did not clear the change detector's gates).
+        insufficientData:
+          type: boolean
+          description: True when the feed reported a sample size under 20 for the window; `noise` is then also true.
         provisionalDays:
           type: integer
           description: Number of provisional days after the channel's dataCompleteThrough that appear at the end of the series. Values and changes exclude them.
@@ -6259,6 +6297,13 @@ components:
         direction:
           type: string
           enum: [UP, DOWN]
+        readOnly:
+          type: boolean
+          description: True when a connector feed owns the target (cannot be set or cleared here).
+        source:
+          type: string
+          nullable: true
+          description: Where a read-only target is set, e.g. "Set in Product metrics".
 
     MarketingTargetRequest:
       type: object
@@ -8743,6 +8788,12 @@ components:
           items:
             type: string
           description: In publish order — never re-sorted.
+        altText:
+          type: string
+          nullable: true
+          description: >-
+            The alt text attach set on this Instagram destination's `altText` option (from the Creative's
+            alt text). Null when attach set none.
 
     AttachCreativeTargetSkip:
       type: object

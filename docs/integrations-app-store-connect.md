@@ -56,3 +56,34 @@ key's role is too weak (403), when the key is wrong (401) and when the app id is
   expiry) used directly as the bearer; it is cached for 10 minutes per connection.
 - **Local development** uses `LocalAppStoreConnectConnector` (the `local` profile), which returns a
   deterministic fake series and makes no Apple calls.
+
+## Agent tool: `get_app_store_listing`
+
+A read-only operation agents get through the connector tool bridge (`app-store-connect_get_app_store_listing`).
+It returns the app's listing so an agent can reason about App Store optimisation:
+
+- the **live** version and the newest **draft** (editable) version, each with per-locale `name`,
+  `subtitle`, `keywords` (comma string), `promotionalText` and `descriptionLength` (the long description
+  itself is not returned);
+- **Custom Product Pages** (`id`, `name`, `visible`);
+- **Product Page Optimization tests** (`name`, `state`). When the account cannot read them (403/404) the
+  rest still returns and `experimentsAvailable` is `false`.
+
+Calls (all `https://api.appstoreconnect.apple.com`): `/v1/apps/{id}/appStoreVersions?filter[platform]=IOS&limit=200`
+(never with `sort`, Apple answers 400; the live and draft versions are picked client-side by parsed version
+number), `/v1/appStoreVersions/{id}/appStoreVersionLocalizations`, `/v1/apps/{id}/appInfos` then
+`/v1/appInfos/{id}/appInfoLocalizations`, `/v1/apps/{id}/appCustomProductPages`,
+`/v1/apps/{id}/appStoreVersionExperimentsV2`. `links.next` is followed.
+
+Things to know:
+
+- **No arguments.** Connector tools ignore the model's arguments and read from the connection's first active
+  connection, so the tool takes none and always returns every locale that fits.
+- **Size.** The agent tool cuts results at 8,000 bytes. The result is built to stay under ~7 KB: locales are
+  dropped from the end (`en-US` first, then other `en-*`, then the rest alphabetically) and
+  `truncated: true` is set with `localesIncluded` / `localesTotal`. More than 25 Custom Product Pages or tests are
+  capped with `customProductPagesTotal` / `experimentsTotal`.
+- **Errors.** If the versions call fails the output carries `listingError` (plain message) instead of `listing`.
+- **Cost.** The listing is read inside the connector's `fetchData`, so it is fetched with each status refresh
+  too (cached 6 hours); agent calls force a fresh read.
+- The `local` profile returns a generic sample listing.

@@ -50,6 +50,10 @@ public class ChannelMetricDaily {
     @Column(name = "fetched_at", nullable = false)
     private OffsetDateTime fetchedAt;
 
+    /** How many users or events the value rests on, when the source says (V150). */
+    @Column(name = "sample_size")
+    private Long sampleSize;
+
     @PrePersist
     void assign() {
         if (id == null) {
@@ -80,6 +84,8 @@ public class ChannelMetricDaily {
     public void setValue(BigDecimal value) { this.value = value; }
     public boolean isProvisional() { return provisional; }
     public void setProvisional(boolean provisional) { this.provisional = provisional; }
+    public Long getSampleSize() { return sampleSize; }
+    public void setSampleSize(Long sampleSize) { this.sampleSize = sampleSize; }
     public OffsetDateTime getFetchedAt() { return fetchedAt; }
     public void setFetchedAt(OffsetDateTime fetchedAt) { this.fetchedAt = fetchedAt; }
 }

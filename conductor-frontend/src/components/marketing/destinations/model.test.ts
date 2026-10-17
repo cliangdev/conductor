@@ -90,6 +90,21 @@ describe('buildRows', () => {
     expect(igRow.metrics).toBeUndefined()
   })
 
+  it('shows a finding once when it arrives once per file', () => {
+    const ig = { ...selection(instagram, WORK_ITEM, 'ig-target'), state: 'PENDING' }
+    const dup = { code: 'MEDIA_SIZE', message: 'Slide is too tall', targetId: 'ig-target' }
+    const preflight = {
+      publishing: true,
+      ready: false,
+      blockers: [dup, { ...dup }, { code: 'OTHER', message: 'Other', targetId: 'ig-target' }, { ...dup }],
+      warnings: [],
+      consent: { required: false, verdict: 'NOT_REQUIRED' },
+      review: { gated: false, assignedReviewers: 0, satisfied: false },
+    } as PublishPreflight
+    const rows = buildRows(args({ selected: [ig], draft: picked(ig), preflight, mode: 'pick' }), NOW)
+    expect(rows.find((r) => r.option.platform === 'instagram')!.blockers.map((b) => b.code)).toEqual(['MEDIA_SIZE', 'OTHER'])
+  })
+
   it('hides a by-hand row for a platform with an account unless it is already on the Post', () => {
     const manualIg = manualOption('instagram')
     const manualYt = manualOption('youtube')

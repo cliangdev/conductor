@@ -248,6 +248,114 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 .noneMatch(PublishFinding::blocks);
     }
 
+    // ── Instagram alt text from the Creative ────────────────────────────────────────────────────
+
+    private String altTextOption(String platform) {
+        String json = targetOf(platform).getPublishOptions();
+        if (json == null) return null;
+        try {
+            var node = objectMapper.readTree(json).get("altText");
+            return node == null ? null : node.asText();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    void aStillAttachedToInstagramCarriesTheCreativesAltTextAndFacebookGetsNone() {
+        creative.setAltText("A bowl of chicken and rice");
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        newFrame(render, "4x5", null, "instagram", 1080, 1350);
+        newFrame(render, "1x1", null, "facebook", 1080, 1080);
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(altTextOption("instagram")).isEqualTo("A bowl of chicken and rice");
+        assertThat(altTextOption("facebook")).isNull();
+        assertThat(result.targetsUpdated()).filteredOn(u -> "instagram".equals(u.platform()))
+                .singleElement().satisfies(u -> assertThat(u.altText()).isEqualTo("A bowl of chicken and rice"));
+        assertThat(result.targetsUpdated()).filteredOn(u -> "facebook".equals(u.platform()))
+                .singleElement().satisfies(u -> assertThat(u.altText()).isNull());
+    }
+
+    @Test
+    void aBlankAltTextFallsBackToTheFirstSlideAltText() {
+        creative.setSlideAltText(objectMapper.valueToTree(List.of("Slide one description")));
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        newFrame(render, "4x5", null, "instagram", 1080, 1350);
+
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+
+        assertThat(altTextOption("instagram")).isEqualTo("Slide one description");
+    }
+
+    @Test
+    void anAltTextTheAuthorSetIsNeverOverwritten() {
+        PostPublishTarget ig = targetOf("instagram");
+        ig.setPublishOptions("{\"altText\":\"Mine\"}");
+        targetRepository.save(ig);
+        creative.setAltText("From the Creative");
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        newFrame(render, "4x5", null, "instagram", 1080, 1350);
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(altTextOption("instagram")).isEqualTo("Mine");
+        assertThat(result.targetsUpdated()).filteredOn(u -> "instagram".equals(u.platform()))
+                .singleElement().satisfies(u -> assertThat(u.altText()).isNull());
+    }
+
+    @Test
+    void aCarouselGetsNoInstagramAltText() {
+        creative.setAltText("Described");
+        creative.setKind(Creative.KIND_CAROUSEL);
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        newFrame(render, "4x5", 0, "instagram", 1080, 1350);
+        newFrame(render, "4x5", 1, "instagram", 1080, 1350);
+
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+
+        assertThat(altTextOption("instagram")).isNull();
+    }
+
+    @Test
+    void aVideoFrameGetsNoInstagramAltText() {
+        creative.setAltText("Described");
+        creative.setKind(Creative.KIND_CLIP);
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        newFrame(render, "9x16", null, "instagram", 1080, 1920, "video/mp4");
+
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+
+        assertThat(altTextOption("instagram")).isNull();
+    }
+
+    @Test
+    void anInstagramDestinationAddedAfterTheAttachGetsTheAltTextToo() {
+        creative.setAltText("A bowl of chicken and rice");
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        newFrame(render, "4x5", null, "instagram", 1080, 1350);
+        newFrame(render, "1x1", null, "facebook", 1080, 1080);
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("facebook", metaConnectionId)), admin);
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("facebook", metaConnectionId),
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId)), admin);
+
+        assertThat(altTextOption("instagram")).isEqualTo("A bowl of chicken and rice");
+        assertThat(altTextOption("facebook")).isNull();
+    }
+
     // ── custom_media = true is skipped and left untouched ───────────────────────────────────────
 
     @Test

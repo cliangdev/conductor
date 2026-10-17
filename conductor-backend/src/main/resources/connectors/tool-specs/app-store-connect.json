@@ -1,6 +1,26 @@
 {
   "description": "Daily App Store impressions, page views, downloads and ratings for an iOS app, from App Store Connect",
-  "operations": [],
+  "operations": [
+    {
+      "id": "get_app_store_listing",
+      "description": "Read-only. The app's App Store listing: the live version and the newest editable draft, each with per-locale name, subtitle, keywords, promotional text and description length (not the full description); the Custom Product Pages (id, name, visible); and the Product Page Optimization tests (name, state; experimentsAvailable=false when the account cannot read them). Takes no arguments. Output is capped near 7 KB: with many locales the primary one (en-US first) is kept and the rest dropped, with truncated=true and localesIncluded/localesTotal.",
+      "params": {},
+      "outputShape": {
+        "listing": {
+          "appId": "1234567890",
+          "live": { "version": "1.4.0", "state": "READY_FOR_SALE", "locales": [
+            { "locale": "en-US", "name": "App", "subtitle": "Tagline", "keywords": "a,b,c", "promotionalText": "...", "descriptionLength": 1840 } ] },
+          "draft": null,
+          "customProductPages": [ { "id": "abc", "name": "Page", "visible": true } ],
+          "experimentsAvailable": true,
+          "experiments": [ { "name": "Icon test", "state": "COMPLETED" } ],
+          "localesTotal": 30, "localesIncluded": 12, "truncated": true
+        },
+        "listingError": null
+      },
+      "outputKeys": ["listing", "listingError"]
+    }
+  ],
   "ingest": [
     {
       "id": "channel_metrics",

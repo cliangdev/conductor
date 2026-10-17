@@ -2,6 +2,8 @@ package com.conductor.integration.ingest;
 
 import com.conductor.entity.Connection;
 import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsPull;
+import com.conductor.integration.MetricDefinition;
 import com.conductor.integration.ChannelMetricsSource;
 import com.conductor.integration.ChannelMetricsSourceException;
 import com.conductor.integration.ConnectionContext;
@@ -49,6 +51,7 @@ class ChannelMetricsFeedPullerTest {
     private ConnectorRegistry registry;
     private ConnectionService connectionService;
     private ChannelMetricDailyStore store;
+    private ChannelMetricDefinitionStore definitionStore;
     private OAuthFlowService oAuthFlowService;
     private ChannelMetricsSource source;
     private ChannelMetricsFeedPuller puller;
@@ -65,6 +68,7 @@ class ChannelMetricsFeedPullerTest {
         registry = mock(ConnectorRegistry.class);
         connectionService = mock(ConnectionService.class);
         store = mock(ChannelMetricDailyStore.class);
+        definitionStore = mock(ChannelMetricDefinitionStore.class);
         oAuthFlowService = mock(OAuthFlowService.class);
         when(oAuthFlowService.withFreshToken(any(), any())).thenAnswer(inv -> inv.getArgument(1));
         Connector connector = mock(Connector.class, withSettings().extraInterfaces(ChannelMetricsSource.class));
@@ -74,6 +78,8 @@ class ChannelMetricsFeedPullerTest {
         when(source.trailingDays()).thenReturn(4);
         when(source.prunesMissingDimensions()).thenReturn(true);
         when(source.maxDaysPerPull()).thenReturn(Integer.MAX_VALUE);
+        when(source.pull(any(), any(), any())).thenCallRealMethod();
+        when(source.trailingDays(any())).thenCallRealMethod();
         when(registry.getById("gsc")).thenReturn(Optional.of(connector));
 
         connection = new Connection();
@@ -104,8 +110,12 @@ class ChannelMetricsFeedPullerTest {
                     return ((List<?>) inv.getArgument(7)).size();
                 });
 
-        puller = new ChannelMetricsFeedPuller(registry, connectionService, store, new ObjectMapper(),
-                oAuthFlowService, Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
+        puller = new ChannelMetricsFeedPuller(registry, connectionService, store, definitionStore,
+                new ObjectMapper(), oAuthFlowService, Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private void stubPull(ChannelMetricsPull pulled) {
+        org.mockito.Mockito.doReturn(pulled).when(source).pull(any(), any(), any());
     }
 
     private IngestBatch pull(String cursor) {
@@ -282,6 +292,88 @@ class ChannelMetricsFeedPullerTest {
 
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
                 eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true), any());
+    }
+
+    // ---- source-declared provisional boundary, trailing hint and definitions ----
+
+    @Test
+    void aSourceProvisionalFromOverridesTheGenericTrailingWindow() {
+        // generic rule: trailing 4 => provisional from Oct 10; the source says only Oct 13 onwards is
+        stubPull(new ChannelMetricsPull(List.of(
+                point("opens", TODAY.minusDays(3), 1), point("opens", TODAY.minusDays(2), 2),
+                point("opens", TODAY.minusDays(1), 3), point("opens", TODAY, 4)),
+                TODAY.minusDays(1), null, null, java.util.Set.of()));
+
+        pull("{\"lastDay\":\"2026-10-13\"}");
+
+        assertThat(upserts).extracting(Upsert::day, Upsert::provisional).containsExactly(
+                org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(3), false),
+                org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(2), false),
+                org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(1), true),
+                org.assertj.core.groups.Tuple.tuple(TODAY, true));
+        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), eq(TODAY.minusDays(1)), any(),
+                anyBoolean(), any());
+    }
+
+    @Test
+    void aSourceCanDeclareSnapshotMetricsForOnePull() {
+        stubPull(new ChannelMetricsPull(List.of(
+                point("subscribers", TODAY, 50), point("opens", TODAY, 4)),
+                null, null, null, java.util.Set.of("subscribers")));
+
+        pull(null);
+
+        assertThat(upserts).extracting(Upsert::metric, Upsert::provisional).containsExactlyInAnyOrder(
+                org.assertj.core.groups.Tuple.tuple("subscribers", false),
+                org.assertj.core.groups.Tuple.tuple("opens", true));
+    }
+
+    @Test
+    void theTrailingWindowFollowsTheHintStoredInTheCursorAndTheCursorKeepsCarryingIt() {
+        org.mockito.Mockito.doAnswer(inv -> inv.getArgument(0) == null ? 4 : inv.getArgument(0)).when(source).trailingDays(any(Integer.class));
+        stubPull(ChannelMetricsPull.of(List.of()));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"trailingDays\":7}");
+
+        verify(source).pull(any(), eq(TODAY.minusDays(7)), eq(TODAY));
+        assertThat(batch.nextCursor()).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":7}");
+    }
+
+    @Test
+    void aNewHintFromThePullReplacesTheOneInTheCursor() {
+        org.mockito.Mockito.doAnswer(inv -> inv.getArgument(0) == null ? 4 : inv.getArgument(0)).when(source).trailingDays(any(Integer.class));
+        stubPull(new ChannelMetricsPull(List.of(), null, null, 3,
+                java.util.Set.of()));
+
+        IngestBatch first = pull(null);
+        IngestBatch second = pull(first.nextCursor());
+
+        assertThat(first.nextCursor()).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":3}");
+        verify(source).pull(any(), eq(TODAY.minusDays(3)), eq(TODAY));
+        assertThat(second.nextCursor()).contains("\"trailingDays\":3");
+    }
+
+    @Test
+    void definitionsAFeedDeclaresAreHandedToTheDefinitionStoreAfterTheWindowIsWritten() {
+        List<MetricDefinition> definitions = List.of(new MetricDefinition("opens", "Opens", "COUNT", "SUM", null, null,
+                "UP", 1, null, null, null));
+        stubPull(new ChannelMetricsPull(List.of(point("opens", TODAY, 1)),
+                null, definitions, null, java.util.Set.of()));
+
+        pull(null);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(store, definitionStore);
+        order.verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
+        order.verify(definitionStore).replace("proj-1", "conn-1", definitions);
+    }
+
+    @Test
+    void aSourceWithoutDefinitionsNeverTouchesTheDefinitionStore() {
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+
+        pull(null);
+
+        verify(definitionStore, never()).replace(any(), any(), any());
     }
 
     // ---- chunked backfill ----

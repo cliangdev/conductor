@@ -1,0 +1,14 @@
+{
+  "description": "In-app funnel and acquisition numbers from a product backend that serves the product metrics contract",
+  "operations": [],
+  "ingest": [
+    {
+      "id": "channel_metrics",
+      "label": "Daily product metrics",
+      "description": "The product's own daily numbers (first opens, trials, paid and so on), in total and by source, kept for the in-app channel of the overview",
+      "mode": "SNAPSHOT",
+      "sink": "CHANNEL_METRICS",
+      "defaultIntervalMinutes": 360
+    }
+  ]
+}
