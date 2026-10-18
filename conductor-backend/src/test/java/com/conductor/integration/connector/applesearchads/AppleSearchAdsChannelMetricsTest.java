@@ -82,6 +82,7 @@ class AppleSearchAdsChannelMetricsTest {
                 .andExpect(header("Authorization", "Bearer bearer-token"))
                 .andExpect(header("X-AP-Context", "orgId=999"))
                 .andExpect(jsonPath("$.granularity").value("DAILY"))
+                .andExpect(jsonPath("$.timeZone").value("UTC"))
                 .andExpect(jsonPath("$.startTime").value("2026-10-01"))
                 .andExpect(jsonPath("$.endTime").value("2026-10-02"))
                 .andRespond(withSuccess(REPORT, MediaType.APPLICATION_JSON));

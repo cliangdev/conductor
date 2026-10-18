@@ -181,12 +181,16 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
 
     // ── Report request bodies ───────────────────────────────────────────────
 
+    /**
+     * UTC days, like every other channel and the product backend's feed: the overview compares ad spend by day.
+     * (Only the search-term report is ORTZ-only.)
+     */
     private Map<String, Object> campaignReportBody(LocalDate start, LocalDate end) {
         return Map.of(
             "startTime", start.format(DATE),
             "endTime", end.format(DATE),
             "granularity", "DAILY",
-            "timeZone", "ORTZ",
+            "timeZone", "UTC",
             "selector", Map.of(
                 "orderBy", List.of(Map.of("field", "impressions", "sortOrder", "DESCENDING")),
                 "pagination", Map.of("offset", 0, "limit", 1000)
