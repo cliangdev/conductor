@@ -81,6 +81,12 @@ public class MarketingOverviewQueryService {
     static final double MISMATCH_THRESHOLD = 0.01;
     /** Reference values a product feed sends are stored as PRODUCT rows under this metric prefix. */
     static final String REFERENCE_PREFIX = "ref_";
+    /**
+     * A channel whose data ends more than this many days before the freshest channel's is lagging: it is marked
+     * stale and no longer holds the funnel window back. Well above the normal 2-3 day lag of Search Console or
+     * the App Store.
+     */
+    static final int LAGGING_DAYS = 7;
     /** How many earlier windows feed the noise baseline, bounded by {@link #MAX_HISTORY_DAYS}. */
     private static final int HISTORY_PERIODS = 5;
     private static final int MAX_HISTORY_DAYS = 180;
@@ -206,10 +212,13 @@ public class MarketingOverviewQueryService {
         }
         // One window for every funnel stage: a conversion between stages of different channels is only meaningful
         // over the same days, so it ends at the earliest data-complete day of the channels that contribute stages.
-        Window funnelWindow = funnelWindow(ctx, builds);
+        // A channel whose data stopped long before the others' must not drag every other stage back in time.
+        Set<MetricChannel> lagging = markLagging(ctx, builds);
+        Window funnelWindow = funnelWindow(ctx, builds, lagging);
         List<FunnelStageView> stages = new ArrayList<>();
         for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel(ctx.productChannel)) {
-            stages.add(funnelStage(stage, builds.get(stage.channel()), funnelWindow));
+            stages.add(funnelStage(stage, builds.get(stage.channel()), funnelWindow,
+                    lagging.contains(stage.channel())));
         }
         List<FunnelStageView> funnel = withConversions(stages);
         List<ChannelView> channels = builds.values().stream()
@@ -244,6 +253,14 @@ public class MarketingOverviewQueryService {
         Context ctx = context(projectId, days, today, now);
         channel = ctx.resolve(channel);
         ChannelBuild build = build(ctx, channel);
+        if (build.live() && build.hasData()) {
+            // same rule as the overview: compare this channel's data end with the other connected channels'
+            Map<MetricChannel, ChannelBuild> builds = new LinkedHashMap<>();
+            for (MetricCatalog.Channel other : MetricCatalog.channels()) {
+                builds.put(other.channel(), other.channel() == channel.channel() ? build : build(ctx, other));
+            }
+            markLagging(ctx, builds);
+        }
         List<DimensionTable> dimensions = build.live() ? dimensions(ctx, channel, build) : List.of();
         List<MarketingInsightsQueryService.Post> topPosts = channel.channel() == MetricChannel.SOCIAL
                 ? insightsQueryService.topPosts(projectId, days, TOP_POSTS)
@@ -434,7 +451,7 @@ public class MarketingOverviewQueryService {
 
     private final class ChannelBuild {
         final MetricCatalog.Channel channel;
-        final String status;
+        String status;
         final OffsetDateTime lastFetchedAt;
         final List<ConnectionView> connections;
         final ConnectHint connectHint;
@@ -972,31 +989,91 @@ public class MarketingOverviewQueryService {
      * The window every funnel stage is computed over: it ends at the earliest data-complete day of the channels that
      * contribute an available stage (or, when none does, of the channels that have any data).
      */
-    private Window funnelWindow(Context ctx, Map<MetricChannel, ChannelBuild> builds) {
+    private Window funnelWindow(Context ctx, Map<MetricChannel, ChannelBuild> builds, Set<MetricChannel> lagging) {
         Set<MetricChannel> contributing = new HashSet<>();
         for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel(ctx.productChannel)) {
             ChannelBuild build = builds.get(stage.channel());
-            if (build != null && build.hasData() && build.metric(stage.metric())
+            if (build != null && build.hasData() && !lagging.contains(stage.channel()) && build.metric(stage.metric())
                     .filter(m -> m.value() != null || m.previous() != null).isPresent()) {
                 contributing.add(stage.channel());
             }
         }
         List<ChannelBuild> sources = contributing.isEmpty()
-                ? builds.values().stream().filter(ChannelBuild::hasData).toList()
+                ? builds.values().stream()
+                        .filter(b -> b.hasData() && !lagging.contains(b.channel.channel())).toList()
                 : contributing.stream().map(builds::get).toList();
         LocalDate end = sources.stream().map(b -> b.window.to()).min(Comparator.naturalOrder())
                 .orElse(ctx.fallbackEnd);
         return windowEnding(ctx, end);
     }
 
-    private FunnelStageView funnelStage(MetricCatalog.FunnelStage stage, ChannelBuild build, Window w) {
+    /**
+     * Finds the lagging channels and marks each STALE. Lagging wins over MISMATCH: the mismatch compares settled
+     * days that the channel no longer reports.
+     */
+    private Set<MetricChannel> markLagging(Context ctx, Map<MetricChannel, ChannelBuild> builds) {
+        Set<MetricChannel> lagging = laggingChannels(ctx, builds);
+        lagging.forEach(c -> builds.get(c).status = "STALE");
+        return lagging;
+    }
+
+    /**
+     * The channels whose data ends more than {@link #LAGGING_DAYS} days before the freshest channel's. Only
+     * channels that are connected and have data count, so a channel nobody connected is not "behind".
+     */
+    private Set<MetricChannel> laggingChannels(Context ctx, Map<MetricChannel, ChannelBuild> builds) {
+        Map<MetricChannel, LocalDate> ends = new LinkedHashMap<>();
+        for (ChannelBuild b : builds.values()) {
+            if (b.live() && b.hasData()) {
+                // a snapshot-only channel is "complete through today": cap at yesterday like the flows
+                LocalDate end = b.window.to().isAfter(ctx.yesterday) ? ctx.yesterday : b.window.to();
+                ends.put(b.channel.channel(), end);
+            }
+        }
+        Set<MetricChannel> lagging = new HashSet<>();
+        ends.values().stream().max(Comparator.naturalOrder()).ifPresent(freshest ->
+                ends.forEach((channel, end) -> {
+                    if (end.isBefore(freshest.minusDays(LAGGING_DAYS))) {
+                        lagging.add(channel);
+                    }
+                }));
+        return lagging;
+    }
+
+    private static final java.time.format.DateTimeFormatter DAY_LABEL =
+            java.time.format.DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
+
+    private static String noDataFor(ChannelBuild build, Window w) {
+        return "No " + build.channel.label() + " data for " + dayLabel(w.from()) + " \u2013 " + dayLabel(w.to());
+    }
+
+    private static String dayLabel(LocalDate day) {
+        return DAY_LABEL.format(day);
+    }
+
+    private FunnelStageView funnelStage(MetricCatalog.FunnelStage stage, ChannelBuild build, Window w,
+                                        boolean lagging) {
         Optional<MetricView> shown = build == null ? Optional.empty() : build.metric(stage.metric());
         Optional<Metric> catalogMetric = build == null ? Optional.empty() : build.channel.metric(stage.metric());
-        if (shown.isEmpty() || catalogMetric.isEmpty() || build.data == null
-                || (shown.get().value() == null && shown.get().previous() == null)) {
+        if (build == null || build.data == null) {
+            // not connected: tell them to connect
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
                     stage.unavailableReason(), build == null ? null : build.window.to(), stage.channel().name(),
                     stage.conversionFrom());
+        }
+        if (lagging) {
+            return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
+                    "No " + build.channel.label() + " data since " + dayLabel(build.window.to()),
+                    build.window.to(), stage.channel().name(), stage.conversionFrom());
+        }
+        if (shown.isEmpty() || catalogMetric.isEmpty()
+                || (shown.get().value() == null && shown.get().previous() == null)) {
+            // Connected and reporting something else: a "Connect ..." hint would be wrong, so say there is no data.
+            // Other hints (e.g. set a conversion event) are about setup and stay.
+            String reason = build.hasData() && stage.unavailableReason().startsWith("Connect")
+                    ? noDataFor(build, w) : stage.unavailableReason();
+            return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
+                    reason, build.window.to(), stage.channel().name(), stage.conversionFrom());
         }
         Metric metric = catalogMetric.get();
         Double value = build.data.periodValue(metric, w.from(), w.to());
@@ -1007,8 +1084,9 @@ public class MarketingOverviewQueryService {
             previous = null; // only partly covered by history: no comparison
         }
         if (value == null && previous == null) {
+            // connected, with data, just none in these days: say so rather than telling them to connect
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
-                    stage.unavailableReason(), w.to(), stage.channel().name(), stage.conversionFrom());
+                    noDataFor(build, w), w.to(), stage.channel().name(), stage.conversionFrom());
         }
         Double change = value != null && previous != null ? value - previous : null;
         return new FunnelStageView(stage.key(), stage.label(), value, previous, change,

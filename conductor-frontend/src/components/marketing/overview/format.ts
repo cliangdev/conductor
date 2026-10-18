@@ -111,8 +111,12 @@ export function dataThroughLabel(min: string | null | undefined, to: string | nu
  * named so a range explains itself: "Oct 11 (App Store) – Oct 15".
  */
 export function dataThroughSummary(channels: OverviewChannel[], fallbackTo: string | null | undefined): string | null {
-  const reporting = channels
+  const reportingAll = channels
     .filter((c) => (c.status === 'LIVE' || c.status === 'STALE' || c.status === 'MISMATCH') && c.dataCompleteThrough)
+  // A stale channel is left out of the funnel window, so it must not set the header's earliest day either
+  // (unless every reporting channel is stale).
+  const current = reportingAll.filter((c) => c.status !== 'STALE')
+  const reporting = (current.length > 0 ? current : reportingAll)
     .sort((a, b) => (a.dataCompleteThrough as string).localeCompare(b.dataCompleteThrough as string))
   if (reporting.length === 0) return dataThroughLabel(null, fallbackTo)
   const first = reporting[0]
