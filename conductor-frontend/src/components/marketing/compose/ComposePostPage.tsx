@@ -332,10 +332,10 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                   {previews.map(({ file, url }, index) => (
                     <div key={`${file.name}-${index}`} className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-md bg-surface-3">
                       {isVideoContentType(file.type) ? (
-                        <video preload="metadata" src={url} className="h-full w-full object-cover" aria-label={`Video ${index + 1}`} />
+                        <video src={url} className="h-full w-full object-cover" aria-label={`Video ${index + 1}`} />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img loading="lazy" decoding="async" src={url} alt={`Image ${index + 1}`} className="h-full w-full object-cover" />
+                        <img src={url} alt={`Image ${index + 1}`} className="h-full w-full object-cover" />
                       )}
                       <span className="absolute bottom-1 left-1 inline-flex items-center gap-1 rounded bg-foreground/70 px-1 py-0.5 text-[10px] text-background">
                         {isVideoContentType(file.type) ? <Film className="h-3 w-3" aria-hidden /> : <ImageIcon className="h-3 w-3" aria-hidden />}
