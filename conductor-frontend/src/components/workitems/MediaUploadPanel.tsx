@@ -513,7 +513,7 @@ export function MediaUploadPanel({
               <li key={asset.id} className="overflow-hidden rounded-md border border-border">
                 {asset.previewUrl ? (
                   isVideoContentType(asset.contentType) ? (
-                    <video
+                    <video preload="metadata"
                       controls
                       src={asset.previewUrl}
                       className="block max-h-80 w-full bg-surface-3"
@@ -521,7 +521,7 @@ export function MediaUploadPanel({
                     />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img
+                    <img loading="lazy" decoding="async"
                       src={asset.previewUrl}
                       alt={asset.label || asset.type}
                       className="block max-h-80 w-full bg-surface-3 object-contain"

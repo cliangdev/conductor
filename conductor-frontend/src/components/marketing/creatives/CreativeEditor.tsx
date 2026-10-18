@@ -544,7 +544,7 @@ function ClipMediaRow({
       </div>
       {media ? (
         <div className="space-y-1">
-          <video
+          <video preload="metadata"
             controls
             muted
             playsInline
@@ -1150,7 +1150,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                   >
                     {photo?.url ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={photo.url} alt="" className="h-8 w-8 rounded object-cover" />
+                      <img loading="lazy" decoding="async" src={photo.url} alt="" className="h-8 w-8 rounded object-cover" />
                     ) : (
                       <span className="h-8 w-8 rounded bg-surface-3" />
                     )}
@@ -1423,7 +1423,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                   >
                     {motionClip?.posterUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={motionClip.posterUrl} alt="" className="h-8 w-8 rounded object-cover" />
+                      <img loading="lazy" decoding="async" src={motionClip.posterUrl} alt="" className="h-8 w-8 rounded object-cover" />
                     ) : (
                       <span className="h-8 w-8 rounded bg-surface-3" />
                     )}
@@ -1593,7 +1593,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                       >
                         {beatPhoto?.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={beatPhoto.url} alt="" className="h-full w-full object-cover" />
+                          <img loading="lazy" decoding="async" src={beatPhoto.url} alt="" className="h-full w-full object-cover" />
                         ) : (
                           <span className="sr-only">Choose a photo for this beat</span>
                         )}

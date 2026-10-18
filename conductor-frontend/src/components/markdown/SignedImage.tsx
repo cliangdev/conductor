@@ -20,7 +20,7 @@ export function SignedImage({ src, alt }: Props) {
   const { label, width } = parseAlt(alt)
   // eslint-disable-next-line @next/next/no-img-element
   return (
-    <img
+    <img loading="lazy" decoding="async"
       src={resolvedSrc}
       alt={label}
       className="rounded"

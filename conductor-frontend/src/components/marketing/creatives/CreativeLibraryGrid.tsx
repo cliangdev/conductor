@@ -103,12 +103,18 @@ function CreativeThumb({
     return () => observer.disconnect()
   }, [thumbnailUrl])
 
+  // Only the clip this tile's background uses matters; depend on its identity, not the whole media map,
+  // so an unrelated media list arriving later doesn't tear this tile down and redraw it.
+  const clipMediaId =
+    isMotion && creative.motion?.background?.source === 'clip' ? creative.motion.background.clipMediaId : undefined
+  const clipMedia = clipMediaId ? mediaById.get(clipMediaId) : undefined
+  const clipMediaKey = clipMedia ? `${clipMedia.id}|${clipMedia.url ?? ''}|${clipMedia.posterUrl ?? ''}` : ''
+  const creativeKey = JSON.stringify(creative)
+  // The parent rebuilds `brand` on every render; compare by content so identical branding keeps the tile.
+  const brandKey = JSON.stringify(brand)
+
   useEffect(() => {
     if (thumbnailUrl || !visible || !containerRef.current) return
-    const clipMedia =
-      isMotion && creative.motion?.background?.source === 'clip' && creative.motion.background.clipMediaId
-        ? mediaById.get(creative.motion.background.clipMediaId)
-        : undefined
     const handle = mountBoard(containerRef.current, {
       creative: creativeToRenderCreative(creative, undefined, { clipMedia }),
       brand,
@@ -120,13 +126,13 @@ function CreativeThumb({
     }
     return () => handle.destroy()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-mount only when the rendered fields change
-  }, [thumbnailUrl, visible, creative.headline, creative.body, creative.layout, creative.theme, creative.photoUrl, creative.kind, creative.motion, brand, isMotion, mediaById, creative])
+  }, [thumbnailUrl, visible, creative.headline, creative.body, creative.layout, creative.theme, creative.photoUrl, creativeKey, clipMediaKey, brandKey, isMotion])
 
   return (
     <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
       {thumbnailUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
+        <img loading="lazy" decoding="async" src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
       ) : (
         <div ref={containerRef} className="h-full w-full" />
       )}
@@ -203,10 +209,22 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       .catch(() => setImageMedia([]))
   }, [projectId, accessToken, needsImages])
 
+  // Referentially stable across list arrivals that add nothing a tile can see: a new Map is only
+  // returned when an id or its url/poster changed, so memoised tiles aren't re-drawn needlessly.
+  const mediaByIdRef = useRef<Map<string, CreativePhoto>>(new Map())
   const mediaById = useMemo(() => {
     const map = new Map<string, CreativePhoto>()
     for (const m of media) map.set(m.id, m)
     for (const m of imageMedia) map.set(m.id, m)
+    const prev = mediaByIdRef.current
+    const same =
+      prev.size === map.size &&
+      Array.from(map).every(([id, m]) => {
+        const p = prev.get(id)
+        return p !== undefined && p.url === m.url && p.posterUrl === m.posterUrl
+      })
+    if (same) return prev
+    mediaByIdRef.current = map
     return map
   }, [media, imageMedia])
 

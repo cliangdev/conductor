@@ -86,7 +86,7 @@ function Thumb({ item }: { item: CreativePhoto }) {
     <>
       {src && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <img loading="lazy" decoding="async"
           src={src}
           alt={item.label || 'Media'}
           onError={() => setFailed(true)}
@@ -257,7 +257,7 @@ function LibraryTab({
       >
         {viewing &&
           (viewing.mediaKind === 'VIDEO' ? (
-            <video src={viewing.url ?? undefined} poster={viewing.posterUrl ?? undefined} controls className="max-h-[70vh] max-w-full" />
+            <video preload="metadata" src={viewing.url ?? undefined} poster={viewing.posterUrl ?? undefined} controls className="max-h-[70vh] max-w-full" />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={viewing.url ?? undefined} alt={viewing.label || 'Media'} className="max-h-[70vh] max-w-full object-contain" />

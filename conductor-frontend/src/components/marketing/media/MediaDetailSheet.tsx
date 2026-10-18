@@ -63,7 +63,7 @@ function TextField({
 function Preview({ item }: { item: CreativePhoto }) {
   const kind = item.mediaKind ?? 'IMAGE'
   if (kind === 'VIDEO' && item.url) {
-    return <video src={item.url} poster={item.posterUrl ?? undefined} controls playsInline className="max-h-80 w-full rounded-md bg-surface-3" />
+    return <video preload="metadata" src={item.url} poster={item.posterUrl ?? undefined} controls playsInline className="max-h-80 w-full rounded-md bg-surface-3" />
   }
   if (kind === 'AUDIO' && item.url) {
     return <audio src={item.url} controls className="w-full" />

@@ -101,7 +101,7 @@ export function MakeCarouselDialog({ open, onOpenChange, projectId, token, selec
                   <li key={item.id} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border bg-surface-3">
                     {item.url && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.url} alt={item.label || `Slide ${i + 1}`} className="h-full w-full object-cover" />
+                      <img loading="lazy" decoding="async" src={item.url} alt={item.label || `Slide ${i + 1}`} className="h-full w-full object-cover" />
                     )}
                     <span className="absolute left-0.5 top-0.5 rounded bg-foreground/70 px-1 text-[10px] text-background">{i + 1}</span>
                   </li>

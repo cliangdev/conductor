@@ -553,12 +553,12 @@ class AssetUploadServiceTest {
     }
 
     @Test
-    void previewUrlIsSignedForFifteenMinutes() {
+    void previewUrlIsSignedForSixtyMinutes() {
         when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("APPROVED")));
         Asset uploaded = pendingAsset("video/mp4");
         uploaded.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
         when(assetRepository.findByIdAndWorkItemId("asset-1", ITEM_ID)).thenReturn(Optional.of(uploaded));
-        when(storageService.generateSignedUrl(uploaded.getGcsPath(), 15)).thenReturn("https://storage/read");
+        when(storageService.generateSignedUrl(uploaded.getGcsPath(), 60)).thenReturn("https://storage/read");
 
         assertThat(service.resolvePreviewUrl(PROJECT_ID, ITEM_ID, "asset-1", caller()))
                 .isEqualTo("https://storage/read");

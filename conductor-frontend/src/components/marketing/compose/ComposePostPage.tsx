@@ -283,7 +283,7 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                   >
                     {creativeChoice.creative.latestRenderThumbnailUrl && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <img loading="lazy" decoding="async"
                         src={creativeChoice.creative.latestRenderThumbnailUrl}
                         alt=""
                         className="h-16 w-14 shrink-0 rounded-md object-cover"
@@ -332,10 +332,10 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                   {previews.map(({ file, url }, index) => (
                     <div key={`${file.name}-${index}`} className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-md bg-surface-3">
                       {isVideoContentType(file.type) ? (
-                        <video src={url} className="h-full w-full object-cover" aria-label={`Video ${index + 1}`} />
+                        <video preload="metadata" src={url} className="h-full w-full object-cover" aria-label={`Video ${index + 1}`} />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={url} alt={`Image ${index + 1}`} className="h-full w-full object-cover" />
+                        <img loading="lazy" decoding="async" src={url} alt={`Image ${index + 1}`} className="h-full w-full object-cover" />
                       )}
                       <span className="absolute bottom-1 left-1 inline-flex items-center gap-1 rounded bg-foreground/70 px-1 py-0.5 text-[10px] text-background">
                         {isVideoContentType(file.type) ? <Film className="h-3 w-3" aria-hidden /> : <ImageIcon className="h-3 w-3" aria-hidden />}
@@ -355,10 +355,10 @@ export function ComposePostPage({ projectId, workflowSlug, workflowView, detailA
                   {pickedMedia.map((m, index) => (
                     <div key={m.id} data-testid={`compose-picked-${m.id}`} className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-md bg-surface-3">
                       {m.mediaKind === 'VIDEO' ? (
-                        <video src={m.url ?? undefined} poster={m.posterUrl ?? undefined} className="h-full w-full object-cover" aria-label={m.label || `Video ${index + 1}`} />
+                        <video preload="metadata" src={m.url ?? undefined} poster={m.posterUrl ?? undefined} className="h-full w-full object-cover" aria-label={m.label || `Video ${index + 1}`} />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={m.url ?? undefined} alt={m.label || `Media ${index + 1}`} className="h-full w-full object-cover" />
+                        <img loading="lazy" decoding="async" src={m.url ?? undefined} alt={m.label || `Media ${index + 1}`} className="h-full w-full object-cover" />
                       )}
                       <button
                         type="button"

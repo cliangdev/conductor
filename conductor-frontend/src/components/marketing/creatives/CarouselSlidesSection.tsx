@@ -214,7 +214,7 @@ export function CarouselSlidesSection({
                   >
                     {media?.url && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={media.url} alt="" draggable={false} className="h-full w-full object-cover" />
+                      <img loading="lazy" decoding="async" src={media.url} alt="" draggable={false} className="h-full w-full object-cover" />
                     )}
                   </button>
                   <span className="min-w-0 flex-1 truncate text-sm" title={media?.label ?? undefined}>

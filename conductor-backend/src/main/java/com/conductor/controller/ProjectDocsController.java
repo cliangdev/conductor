@@ -69,6 +69,9 @@ public class ProjectDocsController implements ProjectDocsApi {
     private final DocCommentReplyRepository docCommentReplyRepository;
     private final StorageService storageService;
     private final ProjectSecurityService projectSecurityService;
+    /** Doc images are display-only and embedded in Markdown; a longer, stable URL keeps them browser-cacheable. */
+    private static final int DOC_IMAGE_URL_EXPIRY_MINUTES = 60;
+
     private final int signedUrlExpiryMinutes;
 
     public ProjectDocsController(
@@ -315,7 +318,7 @@ public class ProjectDocsController implements ProjectDocsApi {
             throw new StorageUploadException("Storage upload failed — try again", e);
         }
 
-        String signedUrl = storageService.generateSignedUrl(gcsPath, signedUrlExpiryMinutes);
+        String signedUrl = storageService.generateSignedUrl(gcsPath, DOC_IMAGE_URL_EXPIRY_MINUTES);
         String originalName = image.getOriginalFilename() != null ? image.getOriginalFilename() : filename;
         String markdownSnippet = "![" + originalName + "](" + signedUrl + ")";
 
@@ -467,7 +470,7 @@ public class ProjectDocsController implements ProjectDocsApi {
      */
     private String renderImages(String content, String projectId) {
         return DocImageMarkers.render(content, projectId,
-                path -> storageService.generateSignedUrl(path, signedUrlExpiryMinutes));
+                path -> storageService.generateSignedUrl(path, DOC_IMAGE_URL_EXPIRY_MINUTES));
     }
 
     /** Null for machine-authored rows — clients keying off it must tolerate that. */

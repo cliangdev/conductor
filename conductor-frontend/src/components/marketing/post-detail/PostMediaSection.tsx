@@ -99,7 +99,7 @@ function Thumb({
           <video src={asset.previewUrl} preload="metadata" muted className="h-full w-full object-cover" />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={asset.previewUrl} alt={assetDisplayLabel(asset)} className="h-full w-full object-cover" />
+          <img loading="lazy" decoding="async" src={asset.previewUrl} alt={assetDisplayLabel(asset)} className="h-full w-full object-cover" />
         )
       ) : null}
       {badge != null && (
@@ -506,10 +506,10 @@ export function PostMediaSection({
       >
         {current?.previewUrl &&
           (isVideoContentType(current.contentType) ? (
-            <video src={current.previewUrl} controls className="max-h-[75vh] max-w-full rounded-md" />
+            <video preload="metadata" src={current.previewUrl} controls className="max-h-[75vh] max-w-full rounded-md" />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <img loading="lazy" decoding="async"
               src={current.previewUrl}
               alt={current.label || current.type}
               className="max-h-[75vh] max-w-full rounded-md object-contain"

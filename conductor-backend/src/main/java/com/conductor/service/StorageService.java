@@ -20,6 +20,14 @@ public interface StorageService {
     boolean isHealthy();
 
     /**
+     * Best-effort: marks an object (typically one a browser just PUT to a signed URL, which carries no
+     * Cache-Control) as privately browser-cacheable. Never throws; the default is a no-op for backends
+     * with nothing to mark.
+     */
+    default void markCacheable(String gcsPath) {
+    }
+
+    /**
      * Generates a time-limited signed URL a caller can {@code PUT} raw bytes to directly, without the
      * backend ever handling the payload — used for workflow-artifact uploads.
      *

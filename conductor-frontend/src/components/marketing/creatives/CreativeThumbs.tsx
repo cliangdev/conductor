@@ -21,7 +21,7 @@ export function ClipThumb({ creative, mediaById }: { creative: Creative; mediaBy
     <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
       {posterUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={posterUrl} alt="" className="h-full w-full object-cover" />
+        <img loading="lazy" decoding="async" src={posterUrl} alt="" className="h-full w-full object-cover" />
       ) : (
         <span className="flex h-full items-center justify-center text-muted-foreground">
           <FilmIcon className="h-6 w-6" aria-hidden />
@@ -51,7 +51,7 @@ export function CarouselThumb({ creative, mediaById }: { creative: Creative; med
     <div data-testid={`creative-thumb-${creative.id}`} className="relative aspect-[4/5] w-full overflow-hidden bg-surface-3">
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" className="h-full w-full object-cover" />
+        <img loading="lazy" decoding="async" src={url} alt="" className="h-full w-full object-cover" />
       ) : (
         <span className="flex h-full items-center justify-center text-muted-foreground">
           <ImagesIcon className="h-6 w-6" aria-hidden />

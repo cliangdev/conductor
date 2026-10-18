@@ -183,4 +183,92 @@ class GcpStorageServiceTest {
                 any(Storage.SignUrlOption.class)
         );
     }
+
+    // ---- signed URL cache, Cache-Control ----
+
+    private static final class MutableClock extends java.time.Clock {
+        long now = 1_000_000L;
+        @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+        @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+        @Override public java.time.Instant instant() { return java.time.Instant.ofEpochMilli(now); }
+    }
+
+    private void stubSignUrlDistinctPerCall() throws MalformedURLException {
+        java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.lenient().when(storage.signUrl(any(BlobInfo.class), any(Long.class), eq(TimeUnit.MINUTES), any(Storage.SignUrlOption[].class)))
+                .thenAnswer(inv -> new URL("https://storage.googleapis.com/b/o?sig=" + n.incrementAndGet()));
+    }
+
+    @Test
+    void generateSignedUrl_reusesUrlWithinWindowAndResignsAfterIt() throws MalformedURLException {
+        MutableClock clock = new MutableClock();
+        GcpStorageService svc = new GcpStorageService(storage, BUCKET_NAME, clock);
+        stubSignUrlDistinctPerCall();
+
+        String first = svc.generateSignedUrl("a/b.png", 60);
+        clock.now += 44 * 60_000L; // under 75% of 60 minutes
+        assertThat(svc.generateSignedUrl("a/b.png", 60)).isEqualTo(first);
+        verify(storage, times(1)).signUrl(any(BlobInfo.class), any(Long.class), any(TimeUnit.class), any(Storage.SignUrlOption.class));
+
+        clock.now += 2 * 60_000L; // past 45 minutes
+        assertThat(svc.generateSignedUrl("a/b.png", 60)).isNotEqualTo(first);
+    }
+
+    @Test
+    void generateSignedUrl_keysOnPathAndExpiry() throws MalformedURLException {
+        GcpStorageService svc = new GcpStorageService(storage, BUCKET_NAME, new MutableClock());
+        stubSignUrlDistinctPerCall();
+
+        String a = svc.generateSignedUrl("a.png", 60);
+        assertThat(svc.generateSignedUrl("b.png", 60)).isNotEqualTo(a);
+        assertThat(svc.generateSignedUrl("a.png", 90)).isNotEqualTo(a);
+    }
+
+    @Test
+    void generateSignedUploadUrl_isNeverCached() throws MalformedURLException {
+        GcpStorageService svc = new GcpStorageService(storage, BUCKET_NAME, new MutableClock());
+        stubSignUrlDistinctPerCall();
+
+        String first = svc.generateSignedUploadUrl("a.png", "image/png", 60);
+        String second = svc.generateSignedUploadUrl("a.png", "image/png", 60);
+
+        assertThat(second).isNotEqualTo(first);
+    }
+
+    @Test
+    void delete_evictsCachedSignedUrls() throws MalformedURLException {
+        GcpStorageService svc = new GcpStorageService(storage, BUCKET_NAME, new MutableClock());
+        stubSignUrlDistinctPerCall();
+
+        String first = svc.generateSignedUrl("a.png", 60);
+        svc.delete("a.png");
+
+        assertThat(svc.generateSignedUrl("a.png", 60)).isNotEqualTo(first);
+    }
+
+    @Test
+    void upload_setsPrivateCacheControl() {
+        gcpStorageService.upload("a.png", new byte[]{1}, "image/png");
+
+        ArgumentCaptor<BlobInfo> captor = ArgumentCaptor.forClass(BlobInfo.class);
+        verify(storage).create(captor.capture(), any(byte[].class));
+        assertThat(captor.getValue().getCacheControl()).isEqualTo("private, max-age=86400");
+    }
+
+    @Test
+    void markCacheable_updatesBlobMetadata() {
+        gcpStorageService.markCacheable("a.png");
+
+        ArgumentCaptor<BlobInfo> captor = ArgumentCaptor.forClass(BlobInfo.class);
+        verify(storage).update(captor.capture());
+        assertThat(captor.getValue().getName()).isEqualTo("a.png");
+        assertThat(captor.getValue().getCacheControl()).isEqualTo("private, max-age=86400");
+    }
+
+    @Test
+    void markCacheable_swallowsFailures() {
+        when(storage.update(any(BlobInfo.class))).thenThrow(new RuntimeException("boom"));
+
+        assertThatCode(() -> gcpStorageService.markCacheable("a.png")).doesNotThrowAnyException();
+    }
 }

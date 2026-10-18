@@ -52,7 +52,7 @@ public class CreativePhotoService {
     static final int MIN_LONG_EDGE_PX = 2160;
     /** Advisory only (never a refusal): most platforms cap short-form video well under this. */
     static final int VIDEO_DURATION_WARNING_SECONDS = 180;
-    private static final int URL_EXPIRY_MINUTES = 15;
+    private static final int URL_EXPIRY_MINUTES = 60;
     private static final int UPLOAD_URL_EXPIRY_MINUTES = 60;
     private static final long MAX_UPLOAD_BYTES_IMAGE = 100L * 1024 * 1024;
     private static final long MAX_UPLOAD_BYTES_VIDEO = 1024L * 1024 * 1024;
@@ -476,6 +476,7 @@ public class CreativePhotoService {
         }
         photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
         photo = photoRepository.save(photo);
+        storageService.markCacheable(photo.getGcsPath());
         return toView(photo);
     }
 
@@ -549,6 +550,7 @@ public class CreativePhotoService {
         }
         photo.setPosterGcsPath(gcsPath);
         photo = photoRepository.save(photo);
+        storageService.markCacheable(gcsPath);
         return toView(photo);
     }
 
