@@ -47,6 +47,20 @@ describe('dataThroughSummary', () => {
     expect(dataThroughSummary(channels, null)).toBe('Oct 15')
   })
 
+  it('leaves a stale channel out of the earliest day', () => {
+    const channels = [
+      channel({ label: 'Web', status: 'STALE', dataCompleteThrough: '2026-09-18' }),
+      channel({ label: 'App Store', dataCompleteThrough: '2026-10-14' }),
+      channel({ label: 'In-app', dataCompleteThrough: '2026-10-17' }),
+    ]
+    expect(dataThroughSummary(channels, '2026-10-14')).toBe('Oct 14 (App Store) – Oct 17')
+  })
+
+  it('keeps stale channels when every reporting channel is stale', () => {
+    const channels = [channel({ label: 'Web', status: 'STALE', dataCompleteThrough: '2026-09-18' })]
+    expect(dataThroughSummary(channels, null)).toBe('Sep 18')
+  })
+
   it('falls back to the window end with nothing reporting', () => {
     expect(dataThroughSummary([], '2026-10-14')).toBe('Oct 14')
   })

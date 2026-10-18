@@ -21,6 +21,16 @@ describe('ChannelCard', () => {
     expect(screen.getByText('Stale')).toBeInTheDocument()
   })
 
+  it('says when a stale channel last had data', () => {
+    renderCard(channel({ status: 'STALE', dataCompleteThrough: '2026-09-18' }))
+    expect(screen.getByText('No new data since Sep 18')).toBeInTheDocument()
+  })
+
+  it('has no stale line on a live channel', () => {
+    renderCard(channel({ status: 'LIVE', dataCompleteThrough: '2026-09-18' }))
+    expect(screen.queryByText(/No new data since/)).not.toBeInTheDocument()
+  })
+
   it('offers a connect button for a not-connected channel', () => {
     renderCard(channel({ channel: 'ADS', label: 'Apple Ads', status: 'NOT_CONNECTED', metrics: [], connectHint: { connectors: [{ connectorId: 'apple-search-ads', name: 'Apple Search Ads' }] } }))
     expect(screen.getByText('Not connected')).toBeInTheDocument()

@@ -98,6 +98,9 @@ export function ChannelCard({
           {channel.lastFetchedAt && (
             <p className="mb-3 text-xs text-muted-foreground">Last updated {timeAgo(channel.lastFetchedAt)}</p>
           )}
+          {channel.status === 'STALE' && channel.dataCompleteThrough && (
+            <p className="mb-3 text-xs text-muted-foreground">No new data since {shortDate(channel.dataCompleteThrough)}</p>
+          )}
           {channel.status === 'MISMATCH' && channel.mismatch && (
             <p className="mb-3 text-xs text-status-failed">
               {mismatchCardLine(channel.mismatch)}
