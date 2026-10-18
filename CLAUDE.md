@@ -180,3 +180,4 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/dev-workflow.md`](docs/dev-workflow.md) — PR branch deploy/test/debug loop: deploy labels, skip-tests, live MCP testing, log access.
 - [`docs/cli-assets.md`](docs/cli-assets.md) — Naming/lifecycle for CLI-distributed Claude assets, plus a domain-agnostic-guidance principle (Conductor spans engineering/marketing/knowledge, not just GitHub). **Read before adding, renaming, or editing any asset under `conductor-tools/assets/claude/`.**
 - [`docs/testing-guidelines.md`](docs/testing-guidelines.md) — Backend test conventions: pick the lightest context, share one Postgres container, protect the context cache. **Read before adding a `@SpringBootTest`/Testcontainers test.**
+- [`docs/performance.md`](docs/performance.md) — Request/page timing: `http_request`/`slow_request` logs, Server-Timing, frontend telemetry, `scripts/perf-report.sh`.

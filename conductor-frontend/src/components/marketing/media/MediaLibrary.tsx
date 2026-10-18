@@ -5,6 +5,7 @@
 // "Make carousel" from the selected images.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { markPageReady } from '@/lib/perf'
 import { FilmIcon, UploadCloudIcon, XIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -53,6 +54,8 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
   const [reloadKey, setReloadKey] = useState(0)
   const filters = useMediaFilters(items)
   const showBlocked = filters.chips.blocked
+
+  useEffect(() => { if (items !== null) markPageReady('media-library') }, [items])
 
   useEffect(() => {
     if (!projectId || !accessToken) return

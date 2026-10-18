@@ -7,10 +7,12 @@ import { Navbar } from '@/components/layout/Navbar'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { CommandPalette } from '@/components/layout/CommandPalette'
 import { AppPermissionsProvider } from '@/components/layout/AppPermissionsProvider'
+import { PerfReporter } from '@/components/layout/PerfReporter'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <ProjectProvider>
+      <PerfReporter />
       <SidebarProvider>
         <EditorChromeProvider>
           <AppPermissionsProvider>

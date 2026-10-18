@@ -36,7 +36,22 @@ done
 echo "▶ Fetching logs for $SERVICE ($PROJECT / $REGION)"
 echo ""
 
-LOG_FORMAT='value(timestamp, textPayload, jsonPayload.message)'
+# The backend writes structured JSON (jsonPayload.message, plus fields such as route/ms for the
+# http_request lines); older entries and the frontend's Next.js output are plain textPayload.
+# With jq we print `timestamp severity message [route ms]`, falling back to textPayload; without it
+# gcloud's value() prints the raw columns.
+if command -v jq >/dev/null 2>&1; then
+  LOG_FORMAT='json'
+  render() {
+    jq -r '.[] | [.timestamp, (.jsonPayload.severity // .severity // ""),
+      (.jsonPayload.message // .textPayload // ""),
+      (if .jsonPayload.route then "route=\(.jsonPayload.route) status=\(.jsonPayload.status // "") ms=\(.jsonPayload.ms // "")" else "" end)]
+      | map(select(. != "")) | join("  ")'
+  }
+else
+  LOG_FORMAT='value(timestamp, textPayload, jsonPayload.message)'
+  render() { cat; }
+fi
 
 since_timestamp() {
   local since="$1"
@@ -61,7 +76,8 @@ elif [[ -n "$SINCE" ]]; then
     "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE AND timestamp>=\"$TS\"" \
     --project="$PROJECT" \
     --format="$LOG_FORMAT" \
-    --order=asc
+    --order=asc \
+  | render
 else
   gcloud logging read \
     "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE" \
@@ -69,5 +85,5 @@ else
     --limit="$LINES" \
     --format="$LOG_FORMAT" \
     --order=desc \
-  | tac
+  | render | tac
 fi

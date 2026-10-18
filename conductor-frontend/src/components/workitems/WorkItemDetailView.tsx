@@ -10,6 +10,7 @@
 // batch model — see ReviewBar and the pending-comment state below.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { markPageReady } from '@/lib/perf'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
@@ -241,6 +242,7 @@ export function WorkItemDetailView({
   const [comments, setComments] = useState<Comment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (!loading && !error && issue) markPageReady('work-item-detail') }, [loading, error, issue])
 
   // ── Batch review mode (COND-22) ────────────────────────────────────────────
   const [reviewMode, setReviewMode] = useState(false)

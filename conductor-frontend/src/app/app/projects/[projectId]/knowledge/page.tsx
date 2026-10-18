@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { markPageReady } from '@/lib/perf'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { CheckIcon, SparklesIcon, type LucideIcon } from 'lucide-react'
@@ -179,6 +180,7 @@ export default function KnowledgeIndexPage() {
   const [page, setPage] = useState<KnowledgePageView | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (!loading && !error) markPageReady('knowledge-home') }, [loading, error])
   const [enabling, setEnabling] = useState(false)
   const [librarianAgent, setLibrarianAgent] = useState<Agent | null>(null)
   // Whether the librarian-agent lookup below has resolved — while false, the empty state defaults to

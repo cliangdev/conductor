@@ -8,6 +8,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { markPageReady } from '@/lib/perf'
 import { useRouter } from 'next/navigation'
 import { ImagesIcon, LayersIcon, PlayIcon } from 'lucide-react'
 import { mountBoard } from '@cliangdev/creative-render/mount'
@@ -271,6 +272,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
   }
 
   const loading = creatives === null
+  useEffect(() => { if (!loading) markPageReady('creatives-library') }, [loading])
   const filtered = Boolean(stateFilter || kitFilter)
 
   return (

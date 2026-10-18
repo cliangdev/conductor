@@ -1,3 +1,5 @@
+import { nowMs, recordApiCall } from '@/lib/telemetry'
+
 let onUnauthorized: (() => void) | null = null
 export function setOnUnauthorized(cb: () => void) {
   onUnauthorized = cb
@@ -457,10 +459,27 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
   return fallback
 }
 
+/**
+ * `fetch` against the backend that also records an `api_call` telemetry sample (client latency plus
+ * the backend's Server-Timing breakdown). Telemetry is best-effort and never alters the result.
+ */
+async function timedFetch(path: string, init: RequestInit): Promise<Response> {
+  const start = nowMs()
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, init)
+  recordApiCall({
+    path,
+    method: init.method ?? 'GET',
+    status: res.status,
+    clientMs: nowMs() - start,
+    serverTiming: res.headers?.get?.('server-timing'),
+  })
+  return res
+}
+
 export async function apiGet<T>(path: string, token: string): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    res = await timedFetch(path, {
       headers: { Authorization: `Bearer ${token}` },
     })
   } catch { networkError() }
@@ -474,7 +493,7 @@ export async function apiGet<T>(path: string, token: string): Promise<T> {
 export async function apiPost<T>(path: string, body: unknown, token?: string): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    res = await timedFetch(path, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -493,7 +512,7 @@ export async function apiPost<T>(path: string, body: unknown, token?: string): P
 export async function apiPatch<T>(path: string, body: unknown, token: string): Promise<T | undefined> {
   let res: Response
   try {
-    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    res = await timedFetch(path, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -512,7 +531,7 @@ export async function apiPatch<T>(path: string, body: unknown, token: string): P
 export async function apiPut<T>(path: string, body: unknown, token: string): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    res = await timedFetch(path, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -531,7 +550,7 @@ export async function apiPut<T>(path: string, body: unknown, token: string): Pro
 export async function apiDelete(path: string, token: string): Promise<void> {
   let res: Response
   try {
-    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    res = await timedFetch(path, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })

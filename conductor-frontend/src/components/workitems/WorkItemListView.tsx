@@ -14,6 +14,7 @@ import Link from 'next/link'
 import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, Plus, SearchX } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
+import { markPageReady } from '@/lib/perf'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { CommentCount } from '@/components/ui/comment-count'
@@ -117,6 +118,7 @@ export function WorkItemListView({
   const [creating, setCreating] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (!loading && !error) markPageReady('work-item-list') }, [loading, error])
 
   // The bound Workflow's display metadata — the single source of status labels/colors/categories and
   // the allowed status/type option lists.

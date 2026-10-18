@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.exception.StorageUploadException;
+import com.conductor.observability.RequestStats;
 import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
 import com.google.cloud.storage.HttpMethod;
@@ -34,6 +35,15 @@ public class GcpStorageService implements StorageService {
     }
 
     public void upload(String gcsPath, byte[] content, String contentType) {
+        long startNanos = System.nanoTime();
+        try {
+            doUpload(gcsPath, content, contentType);
+        } finally {
+            RequestStats.recordGcsCall(System.nanoTime() - startNanos);
+        }
+    }
+
+    private void doUpload(String gcsPath, byte[] content, String contentType) {
         int maxAttempts = 3;
         Exception lastEx = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -60,7 +70,13 @@ public class GcpStorageService implements StorageService {
     }
 
     public byte[] download(String gcsPath) {
-        byte[] content = storage.readAllBytes(BlobId.of(bucketName, gcsPath));
+        long startNanos = System.nanoTime();
+        byte[] content;
+        try {
+            content = storage.readAllBytes(BlobId.of(bucketName, gcsPath));
+        } finally {
+            RequestStats.recordGcsCall(System.nanoTime() - startNanos);
+        }
         if (content == null) {
             throw new jakarta.persistence.EntityNotFoundException("Storage object not found: " + gcsPath);
         }
@@ -69,13 +85,19 @@ public class GcpStorageService implements StorageService {
 
     @Override
     public void copy(String sourceGcsPath, String destinationGcsPath) {
-        storage.copy(com.google.cloud.storage.Storage.CopyRequest.newBuilder()
-                .setSource(BlobId.of(bucketName, sourceGcsPath))
-                .setTarget(BlobId.of(bucketName, destinationGcsPath))
-                .build()).getResult();
+        long startNanos = System.nanoTime();
+        try {
+            storage.copy(com.google.cloud.storage.Storage.CopyRequest.newBuilder()
+                    .setSource(BlobId.of(bucketName, sourceGcsPath))
+                    .setTarget(BlobId.of(bucketName, destinationGcsPath))
+                    .build()).getResult();
+        } finally {
+            RequestStats.recordGcsCall(System.nanoTime() - startNanos);
+        }
     }
 
     public boolean isHealthy() {
+        long startNanos = System.nanoTime();
         try {
             // Probe an OBJECT-level operation the app actually relies on (storage.objects.list), not a
             // bucket-metadata read (storage.buckets.get). The runtime service account is granted
@@ -86,6 +108,8 @@ public class GcpStorageService implements StorageService {
         } catch (Exception e) {
             log.warn("GCS health check failed: {}", e.getMessage());
             return false;
+        } finally {
+            RequestStats.recordGcsCall(System.nanoTime() - startNanos);
         }
     }
 
@@ -93,14 +117,24 @@ public class GcpStorageService implements StorageService {
         // Returns false when the object doesn't exist — that's success for an idempotent delete.
         // Real failures (auth, network) throw StorageException and propagate per the interface
         // contract, so callers keep their reference and retry instead of orphaning the object.
-        storage.delete(BlobId.of(bucketName, gcsPath));
+        long startNanos = System.nanoTime();
+        try {
+            storage.delete(BlobId.of(bucketName, gcsPath));
+        } finally {
+            RequestStats.recordGcsCall(System.nanoTime() - startNanos);
+        }
     }
 
     public String generateSignedUrl(String gcsPath, int expiryMinutes) {
-        BlobInfo blobInfo = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath)).build();
-        URL url = storage.signUrl(blobInfo, expiryMinutes, TimeUnit.MINUTES,
-                Storage.SignUrlOption.withV4Signature());
-        return url.toString();
+        long startNanos = System.nanoTime();
+        try {
+            BlobInfo blobInfo = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath)).build();
+            URL url = storage.signUrl(blobInfo, expiryMinutes, TimeUnit.MINUTES,
+                    Storage.SignUrlOption.withV4Signature());
+            return url.toString();
+        } finally {
+            RequestStats.recordSignedUrl(System.nanoTime() - startNanos);
+        }
     }
 
     @Override
@@ -117,8 +151,13 @@ public class GcpStorageService implements StorageService {
             // Bakes the Content-Type into the signature so the PUT must send the same header value.
             options.add(Storage.SignUrlOption.withContentType());
         }
-        URL url = storage.signUrl(blobInfoBuilder.build(), expiryMinutes, TimeUnit.MINUTES,
-                options.toArray(new Storage.SignUrlOption[0]));
-        return url.toString();
+        long startNanos = System.nanoTime();
+        try {
+            URL url = storage.signUrl(blobInfoBuilder.build(), expiryMinutes, TimeUnit.MINUTES,
+                    options.toArray(new Storage.SignUrlOption[0]));
+            return url.toString();
+        } finally {
+            RequestStats.recordSignedUrl(System.nanoTime() - startNanos);
+        }
     }
 }
