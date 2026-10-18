@@ -500,30 +500,70 @@ function saveSidebarToStorage(projectId: string, list: WorkflowDefinitionDto[]):
   }
 }
 
-/**
- * Fetch (and cache) the sidebar workflow list for a project. Always makes a network request —
- * concurrent callers share one in-flight Promise so there is exactly one request per project at
- * a time. When resolved, the result is written to the module cache and localStorage so that
- * {@link getSidebarCacheEntry} can serve synchronous initial renders on the next mount.
- */
-export function fetchSidebarWorkflows(
-  projectId: string,
-  token: string,
-): Promise<WorkflowDefinitionDto[]> {
+// How long a network-fresh sidebar list is trusted outright. Past this the cached list is still served
+// immediately (stale-while-revalidate) and one background request refreshes it.
+export const SIDEBAR_REVALIDATE_MS = 60_000
+const sidebarFetchedAt = new Map<string, number>()
+const sidebarListeners = new Map<string, Set<() => void>>()
+
+/** Subscribe to background refreshes of a project's sidebar list. Returns the unsubscribe. */
+export function subscribeSidebarCache(projectId: string, listener: () => void): () => void {
+  let set = sidebarListeners.get(projectId)
+  if (!set) {
+    set = new Set()
+    sidebarListeners.set(projectId, set)
+  }
+  set.add(listener)
+  return () => {
+    set!.delete(listener)
+  }
+}
+
+function requestSidebarWorkflows(projectId: string, token: string): Promise<WorkflowDefinitionDto[]> {
   const pending = sidebarListInFlight.get(projectId)
   if (pending) return pending
 
   const promise = listSidebarWorkflows(projectId, token)
     .then((list) => {
+      const previous = sidebarListCache.get(projectId)
       sidebarListCache.set(projectId, list)
+      sidebarFetchedAt.set(projectId, Date.now())
       saveSidebarToStorage(projectId, list)
+      if (previous && JSON.stringify(previous) !== JSON.stringify(list)) {
+        sidebarListeners.get(projectId)?.forEach((fn) => fn())
+      }
       return list
     })
     .finally(() => {
-      sidebarListInFlight.delete(projectId)
+      if (sidebarListInFlight.get(projectId) === promise) sidebarListInFlight.delete(projectId)
     })
   sidebarListInFlight.set(projectId, promise)
   return promise
+}
+
+/**
+ * Fetch (and cache) the sidebar workflow list for a project, stale-while-revalidate. Every list, detail
+ * and new-item navigation asks for this, and the list changes only when a Workflow is created, edited
+ * or published, so:
+ * - a list fetched from the network in the last {@link SIDEBAR_REVALIDATE_MS} is returned with no request;
+ * - an older (or localStorage-only) list is returned immediately and refreshed by one background request,
+ *   whose changes reach {@link subscribeSidebarCache} listeners;
+ * - with nothing cached the caller waits on the network.
+ * Concurrent callers share one in-flight request. Writers call {@link invalidateSidebarCache}.
+ */
+export function fetchSidebarWorkflows(
+  projectId: string,
+  token: string,
+): Promise<WorkflowDefinitionDto[]> {
+  const cached = getSidebarCacheEntry(projectId)
+  if (cached) {
+    const age = Date.now() - (sidebarFetchedAt.get(projectId) ?? 0)
+    if (age >= SIDEBAR_REVALIDATE_MS) {
+      requestSidebarWorkflows(projectId, token).catch(() => { /* keep serving the stale list */ })
+    }
+    return Promise.resolve(cached)
+  }
+  return requestSidebarWorkflows(projectId, token)
 }
 
 /**
@@ -604,7 +644,12 @@ export function useSidebarWorkNav(
         }
       })
       .catch(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+    // A background revalidation that changed the list.
+    const unsubscribe = subscribeSidebarCache(projectId, () => {
+      const fresh = getSidebarCacheEntry(projectId)
+      if (!cancelled && fresh) setEntries(toWorkNav(fresh))
+    })
+    return () => { cancelled = true; unsubscribe() }
   }, [projectId, token])
 
   return { entries, loading }
@@ -614,13 +659,25 @@ export function useSidebarWorkNav(
 export function invalidateSidebarCache(projectId: string): void {
   sidebarListCache.delete(projectId)
   sidebarListInFlight.delete(projectId)
+  sidebarFetchedAt.delete(projectId)
   try { localStorage.removeItem(sidebarLsKey(projectId)) } catch { /* */ }
+}
+
+/**
+ * A Workflow was created, edited, published, enabled or disabled: drop the cached sidebar list so no
+ * navigation serves the old one, and refetch in the background so the nav picks the change up.
+ */
+function refreshSidebarAfterWrite<T>(projectId: string, token: string, result: T): T {
+  invalidateSidebarCache(projectId)
+  fetchSidebarWorkflows(projectId, token).catch(() => { /* the next navigation retries */ })
+  return result
 }
 
 /** Clear all sidebar caches including localStorage (used in tests to prevent cross-test contamination). */
 export function clearAllSidebarCaches(): void {
   sidebarListCache.clear()
   sidebarListInFlight.clear()
+  sidebarFetchedAt.clear()
   try {
     const keysToRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
@@ -694,8 +751,20 @@ export function useWorkflowByAreaNoun(
       .catch(() => {
         if (!cancelled) setResolution({ status: 'notfound' })
       })
+    // A background revalidation that changed the list can add, rename or remove this Workflow.
+    const unsubscribe = subscribeSidebarCache(projectId, () => {
+      const fresh = getSidebarCacheEntry(projectId)
+      if (cancelled || !fresh) return
+      const wf = fresh.find(
+        (w) =>
+          w.area?.toLowerCase() === area.toLowerCase() &&
+          pluralizeNoun(w.noun ?? w.name).toLowerCase() === noun.toLowerCase(),
+      )
+      setResolution(wf ? { status: 'ready', workflow: wf } : { status: 'notfound' })
+    })
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [projectId, area, noun, token]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -755,7 +824,7 @@ export function disableWorkflow(
     `/api/v1/projects/${projectId}/workflows/${workflowId}/disable`,
     {},
     token,
-  )
+  ).then((wf) => refreshSidebarAfterWrite(projectId, token, wf))
 }
 
 /** Re-enable a DISABLED lifecycle Workflow so new Work Items can bind to it again. */
@@ -768,7 +837,7 @@ export function enableWorkflow(
     `/api/v1/projects/${projectId}/workflows/${workflowId}/enable`,
     {},
     token,
-  )
+  ).then((wf) => refreshSidebarAfterWrite(projectId, token, wf))
 }
 
 /** Create a lifecycle (statechart) Workflow. Returns the saved workflow + any validation warnings. */
@@ -777,7 +846,9 @@ export function createLifecycleWorkflow(
   body: { name: string; area?: string; tag?: string; definition: StatechartDefinition },
   token: string,
 ): Promise<WorkflowCreateResponse> {
-  return apiPost<WorkflowCreateResponse>(`/api/v1/projects/${projectId}/workflows`, body, token)
+  return apiPost<WorkflowCreateResponse>(`/api/v1/projects/${projectId}/workflows`, body, token).then((res) =>
+    refreshSidebarAfterWrite(projectId, token, res),
+  )
 }
 
 /** Update a lifecycle Workflow's definition (re-validated server-side). */
@@ -791,7 +862,7 @@ export function updateLifecycleWorkflow(
     `/api/v1/projects/${projectId}/workflows/${workflowId}`,
     body,
     token,
-  )
+  ).then((res) => refreshSidebarAfterWrite(projectId, token, res))
 }
 
 /** Promote a DRAFT Workflow to PUBLISHED (403 if not ADMIN/CREATOR, 422 if invalid). */
@@ -804,7 +875,7 @@ export function publishWorkflow(
     `/api/v1/projects/${projectId}/workflows/${workflowId}/publish`,
     {},
     token,
-  )
+  ).then((wf) => refreshSidebarAfterWrite(projectId, token, wf))
 }
 
 // ── Project members cache ────────────────────────────────────────────────────

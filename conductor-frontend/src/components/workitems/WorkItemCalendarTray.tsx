@@ -97,7 +97,7 @@ export function WorkItemCalendarTray({
               const meta = statusMeta(workflowView, issue.status)
               const hue = statusHueClasses(statusHue(issue.status, meta.category))
               return (
-                <Link
+                <Link prefetch={false}
                   key={issue.id}
                   data-testid={`tray-item-${issue.id}`}
                   href={workItemDetailPath(projectId, area, noun, issue.displayId ?? '')}

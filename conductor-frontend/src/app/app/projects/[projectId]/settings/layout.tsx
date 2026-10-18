@@ -29,7 +29,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
           const href = path(projectId);
           const isActive = pathname === href;
           return (
-            <Link
+            <Link prefetch={false}
               key={key}
               href={href}
               aria-current={isActive ? 'page' : undefined}

@@ -208,8 +208,15 @@ const PUBLISH_OPTIONS = [
 let PUBLISH_SELECTION: unknown[] = []
 let PREFLIGHT: Record<string, unknown> = {}
 
+// Secondary sections held back to prove the page does not wait on them; every GET is recorded.
+let holdSecondary = false
+const getUrls: string[] = []
+const NEVER = new Promise<never>(() => {})
+
 vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
+    getUrls.push(url)
+    if (holdSecondary && /\/(documents|comments|reviews|assets|members)(\?|$)/.test(url)) return NEVER
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
     if (url.includes('/documents')) return Promise.resolve(DOCS)
     if (url.includes('/comments')) return Promise.resolve(COMMENTS)
@@ -232,6 +239,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import { WorkItemDetailView } from './WorkItemDetailView'
+import { invalidateMembersCache } from '@/lib/workflows'
 
 function resetFixtures() {
   ISSUE = {
@@ -262,6 +270,7 @@ function resetFixtures() {
     review: { gated: false, assignedReviewers: 0, satisfied: false },
   }
   localStorage.clear()
+  invalidateMembersCache('proj-1')
 }
 
 async function renderView() {
@@ -276,6 +285,50 @@ describe('WorkItemDetailView', () => {
     resetFixtures()
     failMembers = false
     failReviews = false
+    holdSecondary = false
+    getUrls.length = 0
+  })
+
+  it('renders the item as soon as it and its reviewers are in, without waiting on the other sections', async () => {
+    holdSecondary = true
+    render(<WorkItemDetailView projectId="proj-1" workItemId="wi-1" slug="ENGINEERING" />)
+    expect(await screen.findByText('My PRD')).toBeInTheDocument()
+    // The documents section shows its own placeholder rather than blocking the page.
+    expect(screen.getByLabelText('Loading documents')).toBeInTheDocument()
+    expect(screen.queryByText('No documents attached yet')).not.toBeInTheDocument()
+  })
+
+  it('does not fetch the item a second time when the route hands it over', async () => {
+    render(
+      <WorkItemDetailView
+        projectId="proj-1"
+        workItemId="wi-1"
+        slug="ENGINEERING"
+        initialItem={ISSUE as never}
+      />
+    )
+    expect(await screen.findByText('My PRD')).toBeInTheDocument()
+    await waitFor(() => expect(getUrls.some((u) => u.endsWith('/documents'))).toBe(true))
+    expect(getUrls.filter((u) => /\/work-items\/wi-1$/.test(u))).toHaveLength(0)
+  })
+
+  it('loads the project-wide tag suggestions only when the tag input is used', async () => {
+    await renderView()
+    expect(getUrls.filter((u) => /\/work-items$/.test(u))).toHaveLength(0)
+    await userEvent.click(screen.getByLabelText('Add a tag'))
+    await waitFor(() => expect(getUrls.filter((u) => /\/work-items$/.test(u))).toHaveLength(1))
+  })
+
+  it('asks for available-transitions once for a Post, though two controls show them', async () => {
+    viewOverride = MARKETING
+    ISSUE = { ...ISSUE, status: 'DRAFT', workflow: 'MARKETING' }
+    await renderView()
+    await waitFor(() => expect(getUrls.some((u) => u.includes('/available-transitions'))).toBe(true))
+    expect(getUrls.filter((u) => u.includes('/available-transitions'))).toHaveLength(1)
+    // Settled: the readiness check and the destinations read are not re-asked on mount either.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(getUrls.filter((u) => u.includes('/publish-preflight'))).toHaveLength(1)
+    expect(getUrls.filter((u) => u.endsWith('/work-items/wi-1/publish-targets'))).toHaveLength(1)
   })
 
   it('deletes the item after a confirmation that says what it means, then returns to the list', async () => {

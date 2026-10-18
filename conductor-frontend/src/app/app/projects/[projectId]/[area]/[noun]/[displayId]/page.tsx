@@ -11,15 +11,14 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiGet } from '@/lib/api'
 import { useWorkflowByAreaNoun } from '@/lib/workflows'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
+import type { DetailIssue } from '@/components/workitems/detailTypes'
 import { WorkItemDetailView } from '@/components/workitems/WorkItemDetailView'
 
 export const dynamic = 'force-dynamic'
 
-interface WorkItemResolved {
-  id: string
-  workflow?: string
-  displayId: string
-}
+// The by-display response is the same Work Item view the by-id endpoint returns, so it is handed to the
+// detail view as its initial item instead of being fetched a second time.
+type WorkItemResolved = DetailIssue
 
 type LoadState = 'loading' | 'ready' | 'notfound'
 
@@ -34,7 +33,7 @@ export default function WorkItemAreaNounDetailPage() {
 
   const { status: workflowStatus, workflow } = useWorkflowByAreaNoun(projectId, area, noun, accessToken)
 
-  const [workItemId, setWorkItemId] = useState<string | null>(null)
+  const [item, setItem] = useState<WorkItemResolved | null>(null)
   const [state, setState] = useState<LoadState>('loading')
 
   useEffect(() => {
@@ -48,7 +47,7 @@ export default function WorkItemAreaNounDetailPage() {
           accessToken
         )
         if (!cancelled) {
-          setWorkItemId(resolved.id)
+          setItem(resolved)
           setState('ready')
         }
       } catch {
@@ -65,7 +64,7 @@ export default function WorkItemAreaNounDetailPage() {
     return <WorkItemDetailSkeleton />
   }
 
-  if (state === 'notfound' || !workItemId || workflowStatus === 'notfound' || !workflow) {
+  if (state === 'notfound' || !item || workflowStatus === 'notfound' || !workflow) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-1 text-muted-foreground">
         <span className="font-medium">Work Item not found</span>
@@ -77,7 +76,8 @@ export default function WorkItemAreaNounDetailPage() {
   return (
     <WorkItemDetailView
       projectId={projectId}
-      workItemId={workItemId}
+      workItemId={item.id}
+      initialItem={item}
       slug={workflow.slug ?? workflow.name}
     />
   )

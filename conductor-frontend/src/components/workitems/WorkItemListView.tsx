@@ -437,7 +437,7 @@ export function WorkItemListView({
             description="Connect a Facebook Page, Instagram account or TikTok creator, then write your first post."
             action={
               <div className="flex items-center gap-2">
-                <Link
+                <Link prefetch={false}
                   href={`/app/projects/${projectId}/integrations`}
                   className={buttonVariants({ variant: 'outline', size: 'sm' })}
                 >
@@ -497,7 +497,7 @@ export function WorkItemListView({
           {/* Mobile card list */}
           <div className="md:hidden space-y-2">
             {listState.groups.flatMap((g) => g.items).map((issue) => (
-              <Link
+              <Link prefetch={false}
                 key={issue.id}
                 href={workItemDetailPath(projectId, detailArea, noun, issue.displayId ?? '')}
                 className="block bg-card border border-border rounded-lg p-4 hover:border-border-strong transition-colors"

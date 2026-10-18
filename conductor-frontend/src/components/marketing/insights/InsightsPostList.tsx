@@ -17,7 +17,7 @@ function PostTitle({ post, href }: { post: InsightsPost; href: string | null }) 
   const title = postTitle(post)
   if (!href) return <span className="text-foreground">{title}</span>
   return (
-    <Link href={href} className="text-foreground hover:underline">
+    <Link prefetch={false} href={href} className="text-foreground hover:underline">
       {title}
     </Link>
   )

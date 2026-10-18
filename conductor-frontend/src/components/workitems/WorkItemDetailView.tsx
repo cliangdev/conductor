@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
@@ -53,6 +54,8 @@ import {
   reviewGateForStatus,
   statusHasReviewGate,
   statusMeta,
+  fetchMembersFresh,
+  getMembersCacheEntry,
   useWorkflowView,
   workItemListPath,
 } from '@/lib/workflows'
@@ -77,12 +80,6 @@ function isHtml(doc: DetailDocument): boolean {
     doc.filename.endsWith('.html') ||
     doc.filename.endsWith('.htm')
   )
-}
-
-function isExpiringSoon(doc: DetailDocument): boolean {
-  if (!doc.storageUrlExpiresAt) return false
-  const expiresAt = new Date(doc.storageUrlExpiresAt).getTime()
-  return expiresAt - Date.now() < 60_000
 }
 
 // Scoped to both the Work Item and the signed-in user — a shared browser (or a handoff between
@@ -204,16 +201,23 @@ export function WorkItemDetailView({
   projectId,
   workItemId,
   slug,
+  initialItem,
 }: {
   projectId: string
   workItemId: string
   slug: string
+  /**
+   * The Work Item as the route already fetched it (by-display returns the same view as by-id). When it
+   * is for this `workItemId`, the item is not fetched a second time; edits still re-read it.
+   */
+  initialItem?: DetailIssue | null
 }) {
   // Keep the legacy internal name — all /api/v1 sub-resource fetches are UUID-keyed on this id.
   const issueId = workItemId
   const { accessToken, user } = useAuth()
 
-  const [issue, setIssue] = useState<DetailIssue | null>(null)
+  const seedItem = initialItem && initialItem.id === workItemId ? initialItem : null
+  const [issue, setIssue] = useState<DetailIssue | null>(seedItem)
   const [documents, setDocuments] = useState<DetailDocument[]>([])
   const [assets, setAssets] = useState<MediaAsset[]>([])
   // Bumped on every bundle-affecting change so the readiness card re-asks the server. The card reads a
@@ -230,17 +234,26 @@ export function WorkItemDetailView({
   const [knownTags, setKnownTags] = useState<string[]>([])
   const [reviewers, setReviewers] = useState<DetailReviewer[]>([])
   const [reviews, setReviews] = useState<DetailReview[]>([])
-  const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
+  const [userRole, setUserRole] = useState<MemberRole>(
+    () => getMembersCacheEntry(projectId)?.find((m) => m.userId === user?.id)?.role ?? 'REVIEWER'
+  )
   // Non-fatal on their own — the page still renders — but a role read that silently fell back to
   // REVIEWER, or a reviews list that silently stayed empty, would hide actions with no visible reason.
   // Both get a quiet inline notice at the top of the reading column instead.
   const [roleLoadError, setRoleLoadError] = useState(false)
   const [reviewsLoadError, setReviewsLoadError] = useState(false)
-  const [allMembers, setAllMembers] = useState<Member[]>([])
+  // Seeded from the shared members cache (module -> localStorage) so the role and names are there on
+  // revisit without waiting; the fetch below is the same in-flight request PermissionsProvider makes.
+  const [allMembers, setAllMembers] = useState<Member[]>(() => (getMembersCacheEntry(projectId) as Member[] | undefined) ?? [])
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<string>('')
   const [comments, setComments] = useState<Comment[]>([])
+  // Only the item and its reviewers gate the page. Everything else fills in per section as it lands.
   const [loading, setLoading] = useState(true)
+  const [documentsLoading, setDocumentsLoading] = useState(true)
+  const [documentsError, setDocumentsError] = useState(false)
+  const [commentsLoading, setCommentsLoading] = useState(true)
+  const [membersLoading, setMembersLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => { if (!loading && !error && issue) markPageReady('work-item-detail') }, [loading, error, issue])
 
@@ -304,8 +317,11 @@ export function WorkItemDetailView({
 
   // Suggestions come from what the project already uses, so tagging converges on a vocabulary rather
   // than accumulating near-duplicates nobody can filter by. Non-fatal: no suggestions is a fine state.
+  // Downloads the project's whole Work Item list, so it runs only when the tag input is first used.
+  const knownTagsRequested = useRef(false)
   const fetchKnownTags = useCallback(async () => {
-    if (!accessToken) return
+    if (!accessToken || knownTagsRequested.current) return
+    knownTagsRequested.current = true
     try {
       const items = await apiGet<{ tags?: string[] }[]>(
         `/api/v2/projects/${projectId}/work-items`,
@@ -314,6 +330,7 @@ export function WorkItemDetailView({
       setKnownTags([...new Set(items.flatMap((i) => i.tags ?? []))].sort())
     } catch {
       // Non-fatal — the field still accepts anything typed.
+      knownTagsRequested.current = false
     }
   }, [accessToken, projectId])
 
@@ -349,12 +366,20 @@ export function WorkItemDetailView({
         `/api/v2/projects/${projectId}/work-items/${issueId}/assets`,
         accessToken
       )
+      // Not a readiness signal on its own: the first load of the list changes nothing the preflight
+      // reads, and bumping the key here made it (and the destinations) refetch right after mounting.
       setAssets(data)
-      setPreflightVersion((v) => v + 1)
     } catch {
       // Non-fatal — the assets list simply renders nothing.
     }
   }, [accessToken, projectId, issueId])
+
+  // The list changed because someone uploaded, removed or replaced media: that is a bundle edit, so the
+  // readiness card has to re-ask the server.
+  const reloadAssetsAfterEdit = useCallback(async () => {
+    await fetchAssets()
+    setPreflightVersion((v) => v + 1)
+  }, [fetchAssets])
 
   // Editing a Post's publish bundle can revert it out of Approved (PublishBundleGuard), so the status
   // chip and the review panel have to be re-read after the picker saves rather than assumed unchanged.
@@ -373,62 +398,71 @@ export function WorkItemDetailView({
     setPreflightVersion((v) => v + 1)
   }, [accessToken, projectId, issueId, fetchReviews])
 
-  // Also the retry target for the "Couldn't load your role" notice — pulled out of the mount effect so
-  // it can be re-run on its own without re-fetching everything else.
+  // Also the retry target for the "Couldn't load your role" notice - pulled out of the mount effect so
+  // it can be re-run on its own without re-fetching everything else. Goes through the shared members
+  // request (one GET /members for this page and PermissionsProvider together).
   const fetchMemberRole = useCallback(async () => {
     if (!accessToken) return
     try {
-      const members = await apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken)
+      const members = (await fetchMembersFresh(projectId, accessToken)) as Member[]
       setAllMembers(members)
       const currentMember = members.find((m) => m.userId === user?.id)
       if (currentMember) setUserRole(currentMember.role)
       setRoleLoadError(false)
     } catch {
-      // Defaults to REVIEWER — the narrowest role — but that fallback hides actions with no visible
+      // Defaults to REVIEWER - the narrowest role - but that fallback hides actions with no visible
       // reason unless it is said out loud.
       setRoleLoadError(true)
+    } finally {
+      setMembersLoading(false)
     }
   }, [accessToken, projectId, user?.id])
 
+  // Primary load: the item (skipped when the route handed it over) and its reviewers gate the page.
   useEffect(() => {
     if (!accessToken) return
-
-    async function fetchAll() {
+    let cancelled = false
+    async function loadPrimary() {
       try {
         const [issueData, reviewerData] = await Promise.all([
-          apiGet<DetailIssue>(`/api/v2/projects/${projectId}/work-items/${issueId}`, accessToken!),
+          seedItem
+            ? Promise.resolve(seedItem)
+            : apiGet<DetailIssue>(`/api/v2/projects/${projectId}/work-items/${issueId}`, accessToken!),
           apiGet<DetailReviewer[]>(
             `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
             accessToken!
           ),
         ])
+        if (cancelled) return
         setIssue(issueData)
         setReviewers(reviewerData)
-
-        await Promise.all([
-          fetchDocuments(),
-          fetchComments(),
-          fetchReviews(),
-          fetchAssets(),
-          fetchKnownTags(),
-          fetchMemberRole(),
-        ])
       } catch (err) {
-        setError(apiErrorMessage(err, 'Failed to load work item'))
+        if (!cancelled) setError(apiErrorMessage(err, 'Failed to load work item'))
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
+    void loadPrimary()
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, projectId, issueId, seedItem])
 
-    fetchAll()
-  }, [accessToken, projectId, issueId, fetchDocuments, fetchComments, fetchReviews, fetchAssets, fetchMemberRole, user?.id])
-
+  // Secondary sections start in parallel with the primary load - none waits on another or gates the page.
   useEffect(() => {
-    if (documents.length === 0) return
-    const expiring = documents.filter(isExpiringSoon)
-    if (expiring.length === 0) return
-    fetchDocuments().catch(() => {})
-  }, [documents, fetchDocuments])
+    if (!accessToken) return
+    setDocumentsLoading(true)
+    setCommentsLoading(true)
+    setMembersLoading(true)
+    fetchDocuments()
+      .then(() => setDocumentsError(false))
+      .catch(() => setDocumentsError(true))
+      .finally(() => setDocumentsLoading(false))
+    void fetchComments().finally(() => setCommentsLoading(false))
+    void fetchReviews()
+    void fetchAssets()
+    void fetchMemberRole()
+  }, [accessToken, fetchDocuments, fetchComments, fetchReviews, fetchAssets, fetchMemberRole])
 
   // Default the active tab to the initially-selected document, once — doesn't fight the user's own
   // later tab clicks (activeTab is only empty before the first load).
@@ -517,7 +551,9 @@ export function WorkItemDetailView({
     status: issue?.status ?? '',
     userRole,
     workflowView,
-    enabled: publishing,
+    // Not before the item is in: its status is an input, and asking with an empty one then again with
+    // the real one doubled the request on mount.
+    enabled: publishing && issue !== null,
     refreshKey: preflightVersion,
     onStatusChanged: (s) => {
       setIssue((prev) => (prev ? { ...prev, status: s } : prev))
@@ -539,7 +575,7 @@ export function WorkItemDetailView({
     projectId,
     workItemId: issueId,
     token: accessToken ?? '',
-    enabled: publishing,
+    enabled: publishing && issue !== null,
     status: issue?.status ?? '',
     workflowView,
     assets: mediaAssets,
@@ -560,7 +596,7 @@ export function WorkItemDetailView({
   // this one-time read.
   useEffect(() => {
     if (hydratedDraftRef.current) return
-    if (loading || !workflowView || !draftKey) return
+    if (loading || documentsLoading || !workflowView || !draftKey) return
     hydratedDraftRef.current = true
 
     const draft = readPersistedJSON<ReviewDraft>(draftKey, EMPTY_REVIEW_DRAFT, isValidReviewDraft)
@@ -581,7 +617,7 @@ export function WorkItemDetailView({
     setReviewMode(draft.active)
     setPendingComments(valid)
     persistReviewDraft(draftKey, draft.active, valid)
-  }, [loading, workflowView, draftKey, isAssignedReviewer, reviewActive, documents])
+  }, [loading, documentsLoading, workflowView, draftKey, isAssignedReviewer, reviewActive, documents])
 
   async function handleUnassignReviewer(userId: string) {
     if (!accessToken) return
@@ -794,7 +830,45 @@ export function WorkItemDetailView({
 
   let mainContent: React.ReactNode
   if (activeTab === 'activity') {
-    mainContent = <ActivityTab comments={comments} reviews={reviews} />
+    mainContent = commentsLoading ? (
+      <div className="space-y-3" aria-busy="true" aria-label="Loading activity">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-16 w-full" />
+      </div>
+    ) : (
+      <ActivityTab comments={comments} reviews={reviews} />
+    )
+  } else if (documentsLoading) {
+    mainContent = (
+      <div className="space-y-3" aria-busy="true" aria-label="Loading documents">
+        <Skeleton className="h-4 w-2/3" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6" />
+        <Skeleton className="h-4 w-1/2" />
+      </div>
+    )
+  } else if (documentsError) {
+    mainContent = (
+      <Alert variant="warning">
+        <div className="flex items-center justify-between gap-3">
+          <span>Couldn&rsquo;t load the documents.</span>
+          <Button
+            variant="link"
+            size="sm"
+            className="h-auto p-0"
+            onClick={() => {
+              setDocumentsLoading(true)
+              fetchDocuments()
+                .then(() => setDocumentsError(false))
+                .catch(() => setDocumentsError(true))
+                .finally(() => setDocumentsLoading(false))
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      </Alert>
+    )
   } else if (documents.length === 0) {
     // On a publishing Workflow the caption card below is the content; a document placeholder above it
     // would be announcing the absence of something a Post never has.
@@ -847,7 +921,7 @@ export function WorkItemDetailView({
   // and clicking it was a dead end: the media, caption and accounts all hide on Activity, and there was
   // nothing left to click to bring them back. A content tab stands in for the documents that are not
   // there yet, so the bar always offers a way back.
-  const showContentTab = documents.length === 0
+  const showContentTab = documents.length === 0 && !documentsLoading
   const tabIds = [
     ...(showContentTab ? [CONTENT_TAB] : []),
     ...documents.map((d) => d.id),
@@ -993,6 +1067,7 @@ export function WorkItemDetailView({
               {workflowView?.noun ?? 'Content'}
             </button>
           )}
+          {documentsLoading && <Skeleton className="h-5 w-24 mx-3 my-2.5" aria-hidden="true" />}
           {documents.map((doc) => {
             const binary = !isMarkdown(doc) && !isHtml(doc)
             const active = activeTab === doc.id
@@ -1117,7 +1192,7 @@ export function WorkItemDetailView({
                     // revoked a hand-off. Re-read rather than assume.
                     void refreshIssueStatus()
                   }}
-                  onAssetsChanged={fetchAssets}
+                  onAssetsChanged={reloadAssetsAfterEdit}
                   onScheduleChanged={(scheduledFor, scheduleTimezone, publishOnApproval) => {
                     setIssue((prev) =>
                       prev
@@ -1158,7 +1233,7 @@ export function WorkItemDetailView({
                       status={issue.status}
                       workflowView={workflowView}
                       assets={assets}
-                      onUploaded={fetchAssets}
+                      onUploaded={reloadAssetsAfterEdit}
                     />
                   )}
                 </>
@@ -1202,6 +1277,7 @@ export function WorkItemDetailView({
               canManage={canManage}
               tags={issue.tags ?? []}
               knownTags={knownTags}
+              onKnownTagsNeeded={() => void fetchKnownTags()}
               onTagsChanged={(tags) => setIssue((prev) => (prev ? { ...prev, tags } : prev))}
               scheduledFor={issue.scheduledFor}
               scheduleTimezone={issue.scheduleTimezone}

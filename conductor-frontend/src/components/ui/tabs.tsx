@@ -93,7 +93,7 @@ export function Tabs({
 
         if (item.href) {
           return (
-            <Link
+            <Link prefetch={false}
               key={item.value}
               href={item.href}
               role="tab"

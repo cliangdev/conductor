@@ -234,7 +234,7 @@ export default function IntegrationsPage() {
                   key={item.connectorId}
                   className="relative bg-card rounded-lg border border-border p-4 flex items-center gap-4 hover:border-primary/50 transition-colors"
                 >
-                  <Link
+                  <Link prefetch={false}
                     href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
                     className="absolute inset-0 rounded-lg"
                     aria-label={`View ${item.name}`}

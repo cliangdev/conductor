@@ -292,7 +292,7 @@ export function WorkItemCalendarView({
                           // another <a>: nested, it renders under React but the HTML parser hoists it out
                           // of the server-rendered markup, and hydration then disagrees with the DOM.
                           <div key={issue.id} className="flex min-w-0 items-center gap-1">
-                            <Link
+                            <Link prefetch={false}
                               data-testid={`calendar-chip-${issue.id}`}
                               href={workItemDetailPath(projectId, area, noun, issue.displayId ?? '')}
                               title={[

@@ -81,6 +81,9 @@ export function usePostDestinations({
   const [selected, setSelected] = useState<SelectedPublishTarget[]>([])
   const [draft, setDraft] = useState<DestinationDraft>(EMPTY_DRAFT)
   const [loading, setLoading] = useState(enabled)
+  // `enabled` can turn on after mount (the page waits for the item); until the first read lands the
+  // panel is still loading, not empty.
+  const [fetchedOnce, setFetchedOnce] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [retrying, setRetrying] = useState(false)
@@ -148,7 +151,10 @@ export function usePostDestinations({
         setLoadError(apiErrorMessage(err, 'Could not load publishing accounts'))
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+          setFetchedOnce(true)
+        }
       })
     return () => {
       cancelled = true
@@ -362,7 +368,7 @@ export function usePostDestinations({
     mode,
     rows,
     summary,
-    loading,
+    loading: loading || (enabled && !fetchedOnce),
     loadError,
     saving,
     retrying,

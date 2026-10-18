@@ -62,7 +62,7 @@ export function ConnectorCard({
 
   if (href) {
     return (
-      <Link href={href} className={className}>
+      <Link prefetch={false} href={href} className={className}>
         {content}
       </Link>
     );

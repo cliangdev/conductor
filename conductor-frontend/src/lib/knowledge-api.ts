@@ -47,8 +47,37 @@ export interface KnowledgePageRevisionView {
   sourceRefs?: string[]
 }
 
+// The Knowledge layout (rail) and the Home page both read the index, and the rail footer and Home both
+// read the domains list, in the same navigation. Sharing one request per project for a few seconds
+// turns each pair into a single call; a failed read is never kept, and any write below drops them.
+const SHARED_READ_TTL_MS = 5_000
+const sharedReads = new Map<string, { at: number; promise: Promise<unknown> }>()
+
+function sharedRead<T>(key: string, load: () => Promise<T>): Promise<T> {
+  const hit = sharedReads.get(key)
+  if (hit && Date.now() - hit.at < SHARED_READ_TTL_MS) return hit.promise as Promise<T>
+  const promise = load()
+  const entry = { at: Date.now(), promise }
+  sharedReads.set(key, entry)
+  promise.catch(() => {
+    if (sharedReads.get(key) === entry) sharedReads.delete(key)
+  })
+  return promise
+}
+
+function dropSharedReads(projectId: string): void {
+  for (const key of [...sharedReads.keys()]) if (key.startsWith(`${projectId}|`)) sharedReads.delete(key)
+}
+
+/** Test seam: forget every shared read. */
+export function resetKnowledgeSharedReads(): void {
+  sharedReads.clear()
+}
+
 export function getKnowledgeIndex(projectId: string, token: string): Promise<KnowledgePageView> {
-  return apiGet<KnowledgePageView>(`/api/v1/projects/${projectId}/knowledge/index`, token)
+  return sharedRead(`${projectId}|index`, () =>
+    apiGet<KnowledgePageView>(`/api/v1/projects/${projectId}/knowledge/index`, token),
+  )
 }
 
 export function getKnowledgePages(
@@ -85,11 +114,12 @@ export function searchKnowledge(
 
 /** Admin-only: turns on the Knowledge Center ingestion pipeline for this workspace. */
 export function enableKnowledge(projectId: string, token: string): Promise<{ knowledgeEnabled: boolean }> {
+  dropSharedReads(projectId)
   return apiPatch<{ knowledgeEnabled: boolean }>(
     `/api/v1/projects/${projectId}/settings`,
     { knowledgeEnabled: true },
     token,
-  ) as Promise<{ knowledgeEnabled: boolean }>
+  ).finally(() => dropSharedReads(projectId)) as Promise<{ knowledgeEnabled: boolean }>
 }
 
 /** Admin-only: how long a lane accumulates sources before KnowledgeIngestScheduler dispatches it. */
@@ -239,7 +269,9 @@ export interface KnowledgeDomainDto {
 
 /** Every domain row (ACTIVE, plus any SUGGESTED gap report or DISMISSED past suggestion), slug-ordered. */
 export function listKnowledgeDomains(projectId: string, token: string): Promise<KnowledgeDomainDto[]> {
-  return apiGet<KnowledgeDomainDto[]>(`/api/v1/projects/${projectId}/knowledge/domains`, token)
+  return sharedRead(`${projectId}|domains`, () =>
+    apiGet<KnowledgeDomainDto[]>(`/api/v1/projects/${projectId}/knowledge/domains`, token),
+  )
 }
 
 export interface UpdateKnowledgeDomainRequest {
@@ -260,11 +292,12 @@ export function updateKnowledgeDomain(
   request: UpdateKnowledgeDomainRequest,
   token: string,
 ): Promise<KnowledgeDomainDto> {
+  dropSharedReads(projectId)
   return apiPatch<KnowledgeDomainDto>(
     `/api/v1/projects/${projectId}/knowledge/domains/${encodeURIComponent(slug)}`,
     request,
     token,
-  ) as Promise<KnowledgeDomainDto>
+  ).finally(() => dropSharedReads(projectId)) as Promise<KnowledgeDomainDto>
 }
 
 /**
@@ -276,11 +309,12 @@ export function createKnowledgeDomainSpecialist(
   slug: string,
   token: string,
 ): Promise<KnowledgeDomainDto> {
+  dropSharedReads(projectId)
   return apiPost<KnowledgeDomainDto>(
     `/api/v1/projects/${projectId}/knowledge/domains/${encodeURIComponent(slug)}/specialist`,
     {},
     token,
-  )
+  ).finally(() => dropSharedReads(projectId))
 }
 
 export interface CreateKnowledgeDomainRequest {
@@ -297,7 +331,10 @@ export function createKnowledgeDomain(
   request: CreateKnowledgeDomainRequest,
   token: string,
 ): Promise<KnowledgeDomainDto> {
-  return apiPost<KnowledgeDomainDto>(`/api/v1/projects/${projectId}/knowledge/domains`, request, token)
+  dropSharedReads(projectId)
+  return apiPost<KnowledgeDomainDto>(`/api/v1/projects/${projectId}/knowledge/domains`, request, token).finally(
+    () => dropSharedReads(projectId),
+  )
 }
 
 // ── Pipeline (issue #342) ────────────────────────────────────────────────────

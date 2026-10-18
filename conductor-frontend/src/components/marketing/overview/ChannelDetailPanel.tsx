@@ -142,7 +142,7 @@ export function ChannelDetailPanel({
   }
 
   const backLink = (
-    <Link
+    <Link prefetch={false}
       href={overviewHref}
       className="inline-flex items-center gap-1 rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
@@ -248,7 +248,7 @@ export function ChannelDetailPanel({
                   <li>{channel.connections.length > 1 ? "Sources:" : "Source:"}</li>
                   {channel.connections.map((c) => (
                     <li key={c.id}>
-                      <Link
+                      <Link prefetch={false}
                         href={`/app/projects/${projectId}/integrations/${c.connectorId}`}
                         className="rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
@@ -284,7 +284,7 @@ export function ChannelDetailPanel({
                   (channel.connectHint?.connectors.length ?? 0) > 0 ? (
                     <div className="flex flex-wrap justify-center gap-2">
                       {channel.connectHint!.connectors.map((c) => (
-                        <Link
+                        <Link prefetch={false}
                           key={c.connectorId}
                           href={`/app/projects/${projectId}/integrations/${c.connectorId}`}
                           className={buttonVariants({
