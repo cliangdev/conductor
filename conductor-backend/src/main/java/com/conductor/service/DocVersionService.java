@@ -21,9 +21,9 @@ public class DocVersionService {
     }
 
     @Transactional(readOnly = true)
-    public List<DocVersion> listVersions(String projectId, String docId) {
-        projectDocService.getDoc(projectId, docId);
-        return docVersionRepository.findByDocIdOrderByVersionNumberDesc(docId);
+    public List<DocVersionRepository.Summary> listVersions(String projectId, String docId) {
+        projectDocService.requireDocExists(projectId, docId);
+        return docVersionRepository.findSummariesByDocId(docId);
     }
 
     /**
@@ -37,7 +37,7 @@ public class DocVersionService {
         if (!version.getDoc().getId().equals(docId)) {
             throw new EntityNotFoundException("Version not found: " + versionId);
         }
-        projectDocService.getDoc(projectId, docId);
+        projectDocService.requireDocExists(projectId, docId);
         return version;
     }
 

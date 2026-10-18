@@ -175,7 +175,9 @@ public class CreativePhotoService {
     public PhotoView getPhoto(String projectId, String photoId, User caller) {
         requireMember(projectId, caller);
         CreativePhoto photo = findPhoto(projectId, photoId);
-        return toView(photo).withCounts(usageCounts(projectId).getOrDefault(photoId, UsageCounts.NONE));
+        // Count this one photo's usage; the project-wide scan is only for the list.
+        MediaUsage usage = usageOf(projectId, photo);
+        return toView(photo).withCounts(new UsageCounts(usage.posts().size(), usage.creatives().size()));
     }
 
     // ── Usage ────────────────────────────────────────────────────────────────────────────────────
@@ -240,14 +242,16 @@ public class CreativePhotoService {
     @Transactional(readOnly = true)
     public MediaUsage getUsage(String projectId, String photoId, User caller) {
         requireMember(projectId, caller);
-        findPhoto(projectId, photoId);
+        return usageOf(projectId, findPhoto(projectId, photoId));
+    }
+
+    private MediaUsage usageOf(String projectId, CreativePhoto photo) {
+        String photoId = photo.getId();
         List<Creative> creatives = creativesReferencing(projectId, photoId);
-        Set<String> frameIds = new HashSet<>();
-        for (Creative c : creatives) {
-            frameRepository.findAllByCreativeId(c.getId()).forEach(f -> frameIds.add(f.getId()));
-        }
-        // Frames that reuse this media's object count even when their Creative no longer references it.
-        frameRepository.findAllByGcsPath(findPhoto(projectId, photoId).getGcsPath()).forEach(f -> frameIds.add(f.getId()));
+        // Frames of those Creatives, plus frames that reuse this media's object even when their Creative
+        // no longer references it: one id query rather than one per Creative.
+        Set<String> frameIds = new HashSet<>(frameRepository.findIdsByCreativeIdInOrGcsPath(
+                creatives.stream().map(Creative::getId).toList(), photo.getGcsPath()));
         Map<String, WorkItem> posts = new java.util.LinkedHashMap<>();
         for (Asset a : assetRepository.findUsageAssets(photoId, frameIds)) {
             posts.putIfAbsent(a.getWorkItem().getId(), a.getWorkItem());

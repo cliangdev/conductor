@@ -273,7 +273,15 @@ export function WorkItemDetailView({
       `/api/v2/projects/${projectId}/work-items/${issueId}/documents`,
       accessToken
     )
-    setDocuments(docs.filter((d) => d.filename !== 'tasks.json'))
+    // The list carries summaries only (no content); keep any body already fetched for a document.
+    setDocuments((prev) => {
+      const known = new Map(prev.map((d) => [d.id, d]))
+      return docs
+        .filter((d) => d.filename !== 'tasks.json')
+        .map((d) => (known.get(d.id)?.content !== undefined && d.content === undefined
+          ? { ...d, content: known.get(d.id)!.content }
+          : d))
+    })
     setSelectedDocId((prev) => {
       if (prev) return prev
       const firstMd = docs.find(isMarkdown)
@@ -429,6 +437,27 @@ export function WorkItemDetailView({
   }, [activeTab, selectedDocId])
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null
+
+  // Content is fetched on demand for the selected document (the list endpoint omits it).
+  const requestedContentRef = useRef(new Set<string>())
+  useEffect(() => {
+    if (!accessToken || !selectedDoc) return
+    if (!(isMarkdown(selectedDoc) || isHtml(selectedDoc))) return
+    if (selectedDoc.content !== undefined && selectedDoc.content !== null) return
+    if (requestedContentRef.current.has(selectedDoc.id)) return
+    requestedContentRef.current.add(selectedDoc.id)
+    const docId = selectedDoc.id
+    apiGet<DetailDocument>(
+      `/api/v2/projects/${projectId}/work-items/${issueId}/documents/${docId}`,
+      accessToken
+    )
+      .then((full) => {
+        setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, content: full.content ?? '' } : d)))
+      })
+      .catch(() => {
+        requestedContentRef.current.delete(docId)
+      })
+  }, [accessToken, projectId, issueId, selectedDoc])
 
   function selectDocument(doc: DetailDocument) {
     if (isMarkdown(doc) || isHtml(doc)) {
@@ -798,6 +827,9 @@ export function WorkItemDetailView({
         onRemovePendingComment={removePendingComment}
       />
     )
+  } else if (selectedDoc && (isMarkdown(selectedDoc) || isHtml(selectedDoc))
+    && selectedDoc.content == null) {
+    mainContent = <p className="text-sm text-muted-foreground">Loading document…</p>
   } else if (selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content) {
     mainContent = <p className="text-sm text-muted-foreground">Document content is empty.</p>
   } else if (selectedDoc && isHtml(selectedDoc) && selectedDoc.content) {

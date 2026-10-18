@@ -45,6 +45,31 @@ public interface KnowledgePageRevisionRepository extends JpaRepository<Knowledge
             + "WHERE rs.revision_id IN :revisionIds", nativeQuery = true)
     List<RevisionSourceRef> findSourceRefsByRevisionIds(@Param("revisionIds") Collection<String> revisionIds);
 
+    /** Revision metadata for the log view: no body, no frontmatter. */
+    interface LogRow {
+        String getId();
+        KnowledgePageRevision.ChangeKind getChangeKind();
+        OffsetDateTime getCreatedAt();
+        String getPagePath();
+    }
+
+    @Query("SELECT r.id AS id, r.changeKind AS changeKind, r.createdAt AS createdAt, p.path AS pagePath "
+            + "FROM KnowledgePageRevision r JOIN r.page p WHERE p.projectId = :projectId ORDER BY r.createdAt DESC")
+    List<LogRow> findLogRowsByProjectId(@Param("projectId") String projectId, Pageable pageable);
+
+    /** Revision metadata for the history list: everything but {@code body}/{@code frontmatter}. */
+    interface HistoryRow {
+        String getId();
+        int getVersion();
+        KnowledgePageRevision.ChangeKind getChangeKind();
+        java.util.Map<String, Object> getActor();
+        OffsetDateTime getCreatedAt();
+    }
+
+    @Query("SELECT r.id AS id, r.version AS version, r.changeKind AS changeKind, r.actor AS actor, "
+            + "r.createdAt AS createdAt FROM KnowledgePageRevision r WHERE r.page.id = :pageId ORDER BY r.version DESC")
+    List<HistoryRow> findHistoryByPageId(@Param("pageId") String pageId);
+
     interface RevisionSourceRef {
         String getRevisionId();
         String getSourceRef();

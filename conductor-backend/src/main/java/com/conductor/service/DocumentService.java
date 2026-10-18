@@ -84,8 +84,10 @@ public class DocumentService {
     @Transactional(readOnly = true)
     public List<DocumentView> listDocuments(String projectId, String workItemId) {
         findWorkItemInProject(projectId, workItemId);
-        return documentRepository.findByWorkItemId(workItemId).stream()
-                .map(this::toDocumentView)
+        // Summaries only: documents.content can be large and the list never displays it.
+        return documentRepository.findSummariesByWorkItemId(workItemId).stream()
+                .map(d -> new DocumentView(d.getId(), d.getWorkItemId(), d.getFilename(), d.getContentType(),
+                        d.getCreatedAt(), null, d.getStoragePath(), null, null, d.getUpdatedAt()))
                 .toList();
     }
 

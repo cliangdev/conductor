@@ -24,4 +24,14 @@ public interface DocCommentReplyRepository extends JpaRepository<DocCommentReply
             ORDER BY r.createdAt ASC
             """)
     List<DocCommentReply> findByCommentIdOrderByCreatedAtAsc(@Param("commentId") String commentId);
+
+    /** Batched form of {@link #findByCommentIdOrderByCreatedAtAsc}: one query for a whole doc's threads. */
+    @Query("""
+            SELECT r FROM DocCommentReply r
+            LEFT JOIN FETCH r.author
+            LEFT JOIN FETCH r.comment
+            WHERE r.comment.id IN :commentIds
+            ORDER BY r.createdAt ASC
+            """)
+    List<DocCommentReply> findByCommentIdInOrderByCreatedAtAsc(@Param("commentIds") java.util.Collection<String> commentIds);
 }

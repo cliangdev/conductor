@@ -21,6 +21,18 @@ public interface KnowledgePageRepository extends JpaRepository<KnowledgePage, St
 
     List<KnowledgePage> findByProjectIdAndDeletedFalseOrderByPath(String projectId);
 
+    /** What the virtual index lists about a page: never the body or frontmatter. */
+    interface IndexRow {
+        String getPath();
+        String getTitle();
+        String getDescription();
+        String getPageType();
+    }
+
+    @org.springframework.data.jpa.repository.Query("SELECT p.path AS path, p.title AS title, p.description AS description, "
+            + "p.pageType AS pageType FROM KnowledgePage p WHERE p.projectId = :projectId AND p.deleted = false ORDER BY p.path")
+    List<IndexRow> findIndexRowsByProjectId(@org.springframework.data.repository.query.Param("projectId") String projectId);
+
     List<KnowledgePage> findByProjectIdAndPageTypeAndDeletedFalseOrderByPath(String projectId, String pageType);
 
     /**

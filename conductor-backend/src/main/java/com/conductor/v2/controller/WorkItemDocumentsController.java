@@ -3,6 +3,7 @@ package com.conductor.v2.controller;
 import com.conductor.generated.v2.api.WorkItemDocumentsApi;
 import com.conductor.generated.v2.model.CreateDocumentRequest;
 import com.conductor.generated.v2.model.DocumentResponse;
+import com.conductor.generated.v2.model.DocumentSummaryResponse;
 import com.conductor.generated.v2.model.UpsertDocumentByFilenameRequest;
 import com.conductor.service.DocumentService;
 import com.conductor.service.view.DocumentView;
@@ -41,9 +42,9 @@ public class WorkItemDocumentsController implements WorkItemDocumentsApi {
     }
 
     @Override
-    public ResponseEntity<List<DocumentResponse>> listWorkItemDocuments(String projectId, String workItemId) {
-        List<DocumentResponse> documents = documentService.listDocuments(projectId, workItemId).stream()
-                .map(WorkItemDocumentsController::toV2)
+    public ResponseEntity<List<DocumentSummaryResponse>> listWorkItemDocuments(String projectId, String workItemId) {
+        List<DocumentSummaryResponse> documents = documentService.listDocuments(projectId, workItemId).stream()
+                .map(WorkItemDocumentsController::toV2Summary)
                 .toList();
         return ResponseEntity.ok(documents);
     }
@@ -75,6 +76,12 @@ public class WorkItemDocumentsController implements WorkItemDocumentsApi {
                                                                  String filename) {
         documentService.deleteDocumentByFilename(projectId, workItemId, filename);
         return ResponseEntity.noContent().build();
+    }
+
+    private static DocumentSummaryResponse toV2Summary(DocumentView v) {
+        return new DocumentSummaryResponse(v.id(), v.workItemId(), v.filename(), v.contentType(), v.createdAt())
+                .storagePath(v.storagePath())
+                .updatedAt(v.updatedAt());
     }
 
     /** Map the service's document view to the v2 response, field-for-field. */
