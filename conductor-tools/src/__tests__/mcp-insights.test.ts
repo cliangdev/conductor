@@ -245,21 +245,37 @@ describe('get_marketing_insights include channels', () => {
         stage('paid', 'Paid', 5, { insufficientData: true, noise: true }),
         { metric: 'cost_per_trial', label: 'Cost per trial', unit: 'CURRENCY', value: 4.2, previous: 4.8, changePct: -0.125, noise: false, series: [] },
         stage('trial_started', 'Trials started', 4, {
-          provisionalDays: 2, target: { value: 200, direction: 'UP', readOnly: true, source: 'Set in Rexipe backend' },
+          // the two trailing provisional days are after dataCompleteThrough: not part of the value
+          provisionalDays: 2,
+          series: [
+            { day: '2026-10-12', value: 1, provisional: false },
+            { day: '2026-10-13', value: 1, provisional: false },
+            { day: '2026-10-14', value: 1, provisional: true },
+            { day: '2026-10-15', value: 1, provisional: true },
+          ],
+          target: { value: 200, direction: 'UP', readOnly: true, source: 'Set in Rexipe backend' },
+        }),
+        stage('first_open', 'First opens', 1, {
+          // a restated day inside the window does make the value provisional
+          series: [
+            { day: '2026-10-12', value: 1, provisional: true },
+            { day: '2026-10-13', value: 1, provisional: false },
+          ],
         }),
       ],
     } as never)
     mocked(apiGet).mockResolvedValue(o)
     const result = await getMarketingInsights(config, { include: ['channels'], window: '7d' })
     const product = (result['marketing'] as Record<string, any>).channels[2]
-    expect(product.stages.map((s: any) => s.metric)).toEqual(['trial_started', 'paid'])
-    expect(product.stages[0]).toMatchObject({
-      provisional: true,
+    expect(product.stages.map((s: any) => s.metric)).toEqual(['first_open', 'trial_started', 'paid'])
+    expect(product.stages[0]).toMatchObject({ provisional: true })
+    expect(product.stages[1]).not.toHaveProperty('provisional')
+    expect(product.stages[1]).toMatchObject({
       target: { value: 200, direction: 'UP', readOnly: true, setIn: 'Set in Rexipe backend' },
     })
-    expect(product.stages[0]).not.toHaveProperty('smallSample')
-    expect(product.stages[1]).toMatchObject({ smallSample: true, noise: true })
-    expect(product.stages[1]).not.toHaveProperty('provisional')
+    expect(product.stages[1]).not.toHaveProperty('smallSample')
+    expect(product.stages[2]).toMatchObject({ smallSample: true, noise: true })
+    expect(product.stages[2]).not.toHaveProperty('provisional')
     expect(product.metrics.map((m: any) => m.metric)).toEqual(['cost_per_trial'])
     // other channels keep their shape: no stages, no flags
     const web = (result['marketing'] as Record<string, any>).channels[0]

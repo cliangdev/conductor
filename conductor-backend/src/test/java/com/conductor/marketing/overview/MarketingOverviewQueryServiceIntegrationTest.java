@@ -455,6 +455,67 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void aChannelWhoseDataStoppedLongAgoIsStaleAndDoesNotHoldTheFunnelBack() {
+        String web = connectFresh("posthog");
+        String store = connectFresh("app-store-connect");
+        for (int d = 1; d <= 10; d++) {
+            put(web, "posthog", "WEB", "visitors", LocalDate.of(2026, 9, d), 5);
+        }
+        for (int d = 1; d <= 13; d++) {
+            put(store, "app-store-connect", "STORE", "impressions", day(d), 100);
+            put(store, "app-store-connect", "STORE", "page_views", day(d), 10);
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 1);
+        }
+
+        Overview overview = overview7();
+
+        // the funnel and the overall range end at STORE's last settled day, not WEB's Sep 10
+        assertThat(overview.window().to()).isEqualTo(day(13));
+        assertThat(overview.window().from()).isEqualTo(day(7));
+        var downloads = overview.funnel().stream().filter(s -> s.key().equals("store_downloads")).findFirst().orElseThrow();
+        assertThat(downloads.available()).isTrue();
+        assertThat(downloads.value()).isEqualTo(7.0);
+        var visitors = overview.funnel().stream().filter(s -> s.key().equals("web_visitors")).findFirst().orElseThrow();
+        assertThat(visitors.available()).isFalse();
+        assertThat(visitors.unavailableReason()).isEqualTo("No Web data since Sep 10");
+        assertThat(visitors.dataCompleteThrough()).isEqualTo(LocalDate.of(2026, 9, 10));
+        assertThat(channel(overview, "WEB").status()).isEqualTo("STALE");
+        assertThat(channel(overview, "STORE").status()).isEqualTo("LIVE");
+    }
+
+    @Test
+    void channelsWithinAWeekOfEachOtherKeepTheCommonWindowAndStayLive() {
+        String web = connectFresh("posthog");
+        String store = connectFresh("app-store-connect");
+        put(web, "posthog", "WEB", "visitors", day(7), 5);
+        put(store, "app-store-connect", "STORE", "downloads", day(13), 1);
+
+        Overview overview = overview7();
+
+        assertThat(overview.window().to()).isEqualTo(day(7));
+        assertThat(channel(overview, "WEB").status()).isEqualTo("LIVE");
+        assertThat(channel(overview, "STORE").status()).isEqualTo("LIVE");
+    }
+
+    @Test
+    void aConnectedChannelWithNoDataInTheFunnelWindowSaysSoInsteadOfAskingToConnect() {
+        String web = connectFresh("posthog");
+        String store = connectFresh("app-store-connect");
+        put(web, "posthog", "WEB", "visitors", day(7), 5);
+        for (int d = 10; d <= 13; d++) {
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 1);
+        }
+
+        Overview overview = overview7();
+
+        // funnel window is Oct 1-7 (WEB's end); STORE only has Oct 10-13
+        var downloads = overview.funnel().stream().filter(s -> s.key().equals("store_downloads")).findFirst().orElseThrow();
+        assertThat(downloads.available()).isFalse();
+        assertThat(downloads.unavailableReason()).isEqualTo("No App Store data for Oct 1 \u2013 Oct 7");
+        assertThat(channel(overview, "STORE").status()).isEqualTo("LIVE");
+    }
+
+    @Test
     void multipleConnectionsForOneChannelAreSummed() {
         String a = connectFresh("posthog");
         String b = connectFresh("posthog");

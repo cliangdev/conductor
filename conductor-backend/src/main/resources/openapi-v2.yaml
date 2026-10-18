@@ -6171,7 +6171,7 @@ components:
         status:
           type: string
           enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH]
-          description: MISMATCH means the product metrics feed's reference figure (store downloads, ad spend) disagrees with this channel's own connector by more than 1%; see `mismatch`.
+          description: MISMATCH means the product metrics feed's reference figure (store downloads, ad spend) disagrees with this channel's own connector by more than 1%; see `mismatch`. STALE also covers a feed that keeps running while this channel's data ends more than 7 days before the freshest channel's; such a channel no longer holds the funnel window back and its funnel stages are unavailable ("No Web data since Sep 10").
         lastFetchedAt: {type: string, format: date-time, nullable: true}
         targetsEditable:
           type: boolean

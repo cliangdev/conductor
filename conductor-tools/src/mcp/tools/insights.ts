@@ -310,7 +310,21 @@ function trimTarget(t: NonNullable<OverviewMetric['target']>): Record<string, un
   })
 }
 
-function trimMetric(m: OverviewMetric, withSeries: boolean, flags = false): Record<string, unknown> {
+/**
+ * True only when a day inside the metric's reported window is provisional. The backend's `provisionalDays`
+ * counts the trailing days AFTER the window (past `dataCompleteThrough`), which never enter the value, so it
+ * cannot be used on its own: a window with no provisional day must not read as provisional.
+ */
+export function windowHasProvisionalDay(m: OverviewMetric, dataCompleteThrough?: string | null): boolean {
+  return (m.series ?? []).some((p) => p.provisional === true && (!dataCompleteThrough || p.day <= dataCompleteThrough))
+}
+
+function trimMetric(
+  m: OverviewMetric,
+  withSeries: boolean,
+  flags = false,
+  dataCompleteThrough?: string | null,
+): Record<string, unknown> {
   return omitNulls({
     metric: m.metric,
     label: m.label,
@@ -324,7 +338,7 @@ function trimMetric(m: OverviewMetric, withSeries: boolean, flags = false): Reco
     noise: m.noise,
     // In-app data-quality flags (PRODUCT only, omitted when false): the newest days may still change, and the value
     // rests on too few users or events to read as a real change.
-    provisional: flags && (m.provisionalDays ?? 0) > 0 ? true : null,
+    provisional: flags && windowHasProvisionalDay(m, dataCompleteThrough) ? true : null,
     smallSample: flags && m.insufficientData ? true : null,
     target: m.target ? trimTarget(m.target) : null,
     series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,
@@ -358,8 +372,8 @@ function trimChannel(c: OverviewChannel, withSeries: boolean): Record<string, un
           to: c.mismatch.to,
         })
       : null,
-    stages: stages.length > 0 ? stages.map((m) => trimMetric(m, withSeries, true)) : null,
-    metrics: hasData ? c.metrics.filter((m) => !isStage(m)).map((m) => trimMetric(m, withSeries, c.channel === 'PRODUCT')) : null,
+    stages: stages.length > 0 ? stages.map((m) => trimMetric(m, withSeries, true, c.dataCompleteThrough)) : null,
+    metrics: hasData ? c.metrics.filter((m) => !isStage(m)).map((m) => trimMetric(m, withSeries, c.channel === 'PRODUCT', c.dataCompleteThrough)) : null,
   })
 }
 
