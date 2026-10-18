@@ -1,5 +1,7 @@
 package com.conductor.config;
 
+import com.google.api.gax.retrying.RetrySettings;
+import com.google.api.gax.rpc.StatusCode;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.kms.v1.KeyManagementServiceClient;
 import com.google.cloud.kms.v1.KeyManagementServiceSettings;
@@ -13,7 +15,9 @@ import org.springframework.context.annotation.Profile;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Base64;
+import java.util.Set;
 
 @Configuration
 @Profile("!local")
@@ -52,7 +56,25 @@ public class GcpStorageConfig {
     // Application default credentials (GCP_SERVICE_ACCOUNT_KEY env var) are picked up automatically.
     @Bean(destroyMethod = "close")
     public KeyManagementServiceClient kmsClient() throws Exception {
-        KeyManagementServiceSettings settings = KeyManagementServiceSettings.newHttpJsonBuilder().build();
-        return KeyManagementServiceClient.create(settings);
+        return KeyManagementServiceClient.create(kmsSettings());
+    }
+
+    // The defaults give one attempt the whole 60s budget and don't retry UNKNOWN, which is how a
+    // dropped pooled connection surfaces ("Error writing request body to server"). Scheduled feed
+    // pulls hit both on a CPU-throttled instance, so: short per-attempt timeouts, and retry UNKNOWN.
+    // Retrying encrypt is safe: a repeat only yields a different ciphertext for the same DEK.
+    static KeyManagementServiceSettings kmsSettings() throws IOException {
+        KeyManagementServiceSettings.Builder builder = KeyManagementServiceSettings.newHttpJsonBuilder();
+        Set<StatusCode.Code> retryable = Set.of(
+                StatusCode.Code.UNAVAILABLE, StatusCode.Code.DEADLINE_EXCEEDED, StatusCode.Code.UNKNOWN);
+        RetrySettings retry = builder.decryptSettings().getRetrySettings().toBuilder()
+                .setInitialRpcTimeoutDuration(Duration.ofSeconds(10))
+                .setMaxRpcTimeoutDuration(Duration.ofSeconds(20))
+                .setRpcTimeoutMultiplier(1.5)
+                .setTotalTimeoutDuration(Duration.ofSeconds(60))
+                .build();
+        builder.decryptSettings().setRetryableCodes(retryable).setRetrySettings(retry);
+        builder.encryptSettings().setRetryableCodes(retryable).setRetrySettings(retry);
+        return builder.build();
     }
 }
