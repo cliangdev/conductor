@@ -3,6 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.Document;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.FileTooLargeException;
+import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.StorageUploadException;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
@@ -31,17 +32,20 @@ public class DocumentService {
     private final WorkItemRepository workItemRepository;
     private final StorageService gcpStorageService;
     private final CommentRepository commentRepository;
+    private final ProjectSecurityService projectSecurityService;
     private final int signedUrlExpiryMinutes;
 
     public DocumentService(DocumentRepository documentRepository,
                            WorkItemRepository workItemRepository,
                            StorageService gcpStorageService,
                            CommentRepository commentRepository,
+                           ProjectSecurityService projectSecurityService,
                            @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
         this.documentRepository = documentRepository;
         this.workItemRepository = workItemRepository;
         this.gcpStorageService = gcpStorageService;
         this.commentRepository = commentRepository;
+        this.projectSecurityService = projectSecurityService;
         this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
     }
 
@@ -193,7 +197,16 @@ public class DocumentService {
         return projectId + "/issues/" + workItemId + "/" + documentId + "/" + filename;
     }
 
+    /**
+     * Every document operation resolves its Work Item here, so this is also where the caller must prove
+     * access to the project in the path. A non-member gets the same not-found a missing item gets.
+     */
     private WorkItem findWorkItemInProject(String projectId, String workItemId) {
+        try {
+            projectSecurityService.requireProjectAccess(projectId);
+        } catch (ForbiddenException e) {
+            throw new EntityNotFoundException("Work Item not found");
+        }
         WorkItem workItem = workItemRepository.findById(workItemId)
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
         if (!workItem.getProject().getId().equals(projectId)) {

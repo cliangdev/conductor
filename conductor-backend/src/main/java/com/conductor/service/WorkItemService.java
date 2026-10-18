@@ -838,17 +838,15 @@ public class WorkItemService {
     }
 
     @Transactional
-    public void saveWorkItemTasks(String workItemId, JsonNode tasks) {
-        WorkItem workItem = workItemRepository.findById(workItemId)
-                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+    public void saveWorkItemTasks(String projectId, String workItemId, JsonNode tasks) {
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         workItem.setWorkItemTasks(tasks);
         workItemRepository.save(workItem);
     }
 
     @Transactional(readOnly = true)
-    public JsonNode getWorkItemTasks(String workItemId) {
-        WorkItem workItem = workItemRepository.findById(workItemId)
-                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+    public JsonNode getWorkItemTasks(String projectId, String workItemId) {
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         JsonNode tasks = workItem.getWorkItemTasks();
         if (tasks == null) {
             throw new EntityNotFoundException("No tasks found for Work Item " + workItemId);
@@ -899,7 +897,8 @@ public class WorkItemService {
     }
 
     @Transactional
-    public void deleteWorkItem(String projectId, String workItemId) {
+    public void deleteWorkItem(String projectId, String workItemId, User caller) {
+        verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         // Deleting a scheduled Post must not leave a live post behind on the platform.
         nativeHandoffService.unschedule(workItem);

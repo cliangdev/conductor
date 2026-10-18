@@ -126,6 +126,7 @@ public class CommentService {
     @Transactional(readOnly = true)
     public List<CommentWithRepliesView> listComments(String projectId, String workItemId, Boolean resolved, User caller) {
         verifyReadAccess(projectId, caller.getId());
+        findWorkItemInProject(projectId, workItemId);
 
         List<Comment> comments;
         if (resolved == null) {
@@ -163,6 +164,7 @@ public class CommentService {
     @Transactional
     public CommentReplyView addReply(String projectId, String workItemId, String commentId, String content, User caller) {
         verifyMembership(projectId, caller.getId());
+        findWorkItemInProject(projectId, workItemId);
 
         Comment comment = findCommentInWorkItem(workItemId, commentId);
 
@@ -195,6 +197,7 @@ public class CommentService {
     @Transactional
     public Comment resolveComment(String projectId, String workItemId, String commentId, User caller) {
         verifyMembership(projectId, caller.getId());
+        findWorkItemInProject(projectId, workItemId);
 
         Comment comment = findCommentInWorkItem(workItemId, commentId);
         comment.setResolvedAt(OffsetDateTime.now());
@@ -206,6 +209,8 @@ public class CommentService {
 
     @Transactional
     public void deleteComment(String projectId, String workItemId, String commentId, User caller) {
+        verifyMembership(projectId, caller.getId());
+        findWorkItemInProject(projectId, workItemId);
         Comment comment = findCommentInWorkItem(workItemId, commentId);
 
         boolean isAuthor = comment.getAuthor().getId().equals(caller.getId());

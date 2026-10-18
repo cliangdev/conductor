@@ -7794,6 +7794,9 @@ components:
             Workflow; toggled live via PATCH .../workflows/{id}/sidebar without republishing. (COND-22)
         webhookToken:
           type: string
+          description: >-
+            Secret token in the workflow's inbound webhook URL. Returned only to ADMIN and CREATOR
+            members; omitted for other roles.
         version:
           type: integer
           description: Monotonic version; in-flight Work Items pin to their version. (COND-18)

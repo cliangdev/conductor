@@ -83,6 +83,76 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import({SecurityConfig.class, GlobalExceptionHandler.class, WorkflowRunQueryService.class})
 class WorkflowControllerTest {
 
+    // ── Access: membership + webhook token visibility ────────────────────────
+
+    @Test
+    void listWorkflows_rejectsNonMember() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
+        org.mockito.Mockito.verifyNoInteractions(workflowService);
+    }
+
+    @Test
+    void getWorkflow_rejectsNonMember() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
+        org.mockito.Mockito.verifyNoInteractions(workflowService);
+    }
+
+    @Test
+    void listWorkflows_includesWebhookTokenForAdminOrCreator() throws Exception {
+        WorkflowDefinition wf = automationWorkflow();
+        wf.setWebhookToken("secret-token");
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.listWorkflows(PROJECT_ID, null, null, null)).thenReturn(List.of(wf));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].webhookToken").value("secret-token"));
+    }
+
+    @Test
+    void listWorkflows_omitsWebhookTokenForOtherRoles() throws Exception {
+        WorkflowDefinition wf = automationWorkflow();
+        wf.setWebhookToken("secret-token");
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(false);
+        when(workflowService.listWorkflows(PROJECT_ID, null, null, null)).thenReturn(List.of(wf));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].webhookToken").doesNotExist());
+    }
+
+    @Test
+    void getWorkflow_webhookTokenOnlyForAdminOrCreator() throws Exception {
+        WorkflowDefinition wf = automationWorkflow();
+        wf.setWebhookToken("secret-token");
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(wf);
+
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.webhookToken").value("secret-token"));
+
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(false);
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.webhookToken").doesNotExist());
+    }
+
     @TestConfiguration
     static class ObjectMapperConfig {
         // The @WebMvcTest slice does not expose an injectable ObjectMapper for the controller's
@@ -200,6 +270,7 @@ class WorkflowControllerTest {
 
     @Test
     void listWorkflowsMapsKindSlugNounAndNullsDefinitionForAutomation() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workflowService.listWorkflows(PROJECT_ID, null, null, null))
                 .thenReturn(List.of(lifecycleWorkflow(), automationWorkflow()));
 
@@ -220,6 +291,7 @@ class WorkflowControllerTest {
     @Test
     void listWorkflowsDelegatesFiltersToService() throws Exception {
         // Filtering lives in the service now; the controller must pass the query params straight through.
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workflowService.listWorkflows(PROJECT_ID, true, "PUBLISHED", true))
                 .thenReturn(List.of(lifecycleWorkflow()));
 

@@ -116,7 +116,10 @@ public class ReviewService {
             throw new ForbiddenException("You are not an assigned reviewer");
         }
 
-        WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
+        // The path's project is what the role check above ran against, so the item must live in it.
+        WorkItem workItem = workItemRepository.findById(workItemId)
+                .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
 
         Review review = reviewRepository.findByWorkItemIdAndReviewerId(workItemId, currentUser.getId())
                 .orElseGet(() -> {
@@ -243,6 +246,7 @@ public class ReviewService {
         }
 
         WorkItem workItem = workItemRepository.findById(workItemId)
+                .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
         List<Review> reviews = reviewRepository.findAllByWorkItemId(workItemId);
         // Hashed at most once for the whole listing, and keyed on whether the ITEM has a bundle — not on

@@ -131,6 +131,8 @@ class CommentServiceTest {
 
         // author is a project member by default; lenient to avoid UnnecessaryStubbing in read-only tests
         lenient().when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        lenient().when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-2")).thenReturn(true);
+        lenient().when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
     }
 
     @Test
