@@ -213,12 +213,7 @@ public class MarketingOverviewQueryService {
         // One window for every funnel stage: a conversion between stages of different channels is only meaningful
         // over the same days, so it ends at the earliest data-complete day of the channels that contribute stages.
         // A channel whose data stopped long before the others' must not drag every other stage back in time.
-        Set<MetricChannel> lagging = laggingChannels(ctx, builds);
-        lagging.forEach(c -> {
-            if (builds.get(c).status.equals("LIVE")) {
-                builds.get(c).status = "STALE";
-            }
-        });
+        Set<MetricChannel> lagging = markLagging(ctx, builds);
         Window funnelWindow = funnelWindow(ctx, builds, lagging);
         List<FunnelStageView> stages = new ArrayList<>();
         for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel(ctx.productChannel)) {
@@ -258,6 +253,14 @@ public class MarketingOverviewQueryService {
         Context ctx = context(projectId, days, today, now);
         channel = ctx.resolve(channel);
         ChannelBuild build = build(ctx, channel);
+        if (build.live() && build.hasData()) {
+            // same rule as the overview: compare this channel's data end with the other connected channels'
+            Map<MetricChannel, ChannelBuild> builds = new LinkedHashMap<>();
+            for (MetricCatalog.Channel other : MetricCatalog.channels()) {
+                builds.put(other.channel(), other.channel() == channel.channel() ? build : build(ctx, other));
+            }
+            markLagging(ctx, builds);
+        }
         List<DimensionTable> dimensions = build.live() ? dimensions(ctx, channel, build) : List.of();
         List<MarketingInsightsQueryService.Post> topPosts = channel.channel() == MetricChannel.SOCIAL
                 ? insightsQueryService.topPosts(projectId, days, TOP_POSTS)
@@ -1005,6 +1008,16 @@ public class MarketingOverviewQueryService {
     }
 
     /**
+     * Finds the lagging channels and marks each STALE. Lagging wins over MISMATCH: the mismatch compares settled
+     * days that the channel no longer reports.
+     */
+    private Set<MetricChannel> markLagging(Context ctx, Map<MetricChannel, ChannelBuild> builds) {
+        Set<MetricChannel> lagging = laggingChannels(ctx, builds);
+        lagging.forEach(c -> builds.get(c).status = "STALE");
+        return lagging;
+    }
+
+    /**
      * The channels whose data ends more than {@link #LAGGING_DAYS} days before the freshest channel's. Only
      * channels that are connected and have data count, so a channel nobody connected is not "behind".
      */
@@ -1030,6 +1043,10 @@ public class MarketingOverviewQueryService {
     private static final java.time.format.DateTimeFormatter DAY_LABEL =
             java.time.format.DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
 
+    private static String noDataFor(ChannelBuild build, Window w) {
+        return "No " + build.channel.label() + " data for " + dayLabel(w.from()) + " \u2013 " + dayLabel(w.to());
+    }
+
     private static String dayLabel(LocalDate day) {
         return DAY_LABEL.format(day);
     }
@@ -1038,8 +1055,8 @@ public class MarketingOverviewQueryService {
                                         boolean lagging) {
         Optional<MetricView> shown = build == null ? Optional.empty() : build.metric(stage.metric());
         Optional<Metric> catalogMetric = build == null ? Optional.empty() : build.channel.metric(stage.metric());
-        if (shown.isEmpty() || catalogMetric.isEmpty() || build.data == null
-                || (shown.get().value() == null && shown.get().previous() == null)) {
+        if (build == null || build.data == null) {
+            // not connected: tell them to connect
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
                     stage.unavailableReason(), build == null ? null : build.window.to(), stage.channel().name(),
                     stage.conversionFrom());
@@ -1048,6 +1065,15 @@ public class MarketingOverviewQueryService {
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
                     "No " + build.channel.label() + " data since " + dayLabel(build.window.to()),
                     build.window.to(), stage.channel().name(), stage.conversionFrom());
+        }
+        if (shown.isEmpty() || catalogMetric.isEmpty()
+                || (shown.get().value() == null && shown.get().previous() == null)) {
+            // Connected and reporting something else: a "Connect ..." hint would be wrong, so say there is no data.
+            // Other hints (e.g. set a conversion event) are about setup and stay.
+            String reason = build.hasData() && stage.unavailableReason().startsWith("Connect")
+                    ? noDataFor(build, w) : stage.unavailableReason();
+            return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
+                    reason, build.window.to(), stage.channel().name(), stage.conversionFrom());
         }
         Metric metric = catalogMetric.get();
         Double value = build.data.periodValue(metric, w.from(), w.to());
@@ -1060,8 +1086,7 @@ public class MarketingOverviewQueryService {
         if (value == null && previous == null) {
             // connected, with data, just none in these days: say so rather than telling them to connect
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
-                    "No " + build.channel.label() + " data for " + dayLabel(w.from()) + " \u2013 " + dayLabel(w.to()),
-                    w.to(), stage.channel().name(), stage.conversionFrom());
+                    noDataFor(build, w), w.to(), stage.channel().name(), stage.conversionFrom());
         }
         Double change = value != null && previous != null ? value - previous : null;
         return new FunnelStageView(stage.key(), stage.label(), value, previous, change,

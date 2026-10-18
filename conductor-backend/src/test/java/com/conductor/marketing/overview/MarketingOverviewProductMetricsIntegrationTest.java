@@ -263,6 +263,23 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
     }
 
     @Test
+    void aLaggingChannelIsStaleEvenWhenItsReferenceDisagrees() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        String ads = connect("apple-search-ads", "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        for (int d = 8; d <= 14; d++) {
+            put(pm, "first_open", day(d), 5);
+        }
+        for (int d = 1; d <= 10; d++) {
+            LocalDate sep = LocalDate.of(2026, 9, d);
+            put(ads, "apple-search-ads", "ADS", "spend", sep, 100, null, false);
+            put(pm, CONNECTOR, "PRODUCT", "ref_ads_spend", sep, 120, null, false);
+        }
+
+        assertThat(channel(overview7(), "ADS").status()).isEqualTo("STALE");
+    }
+
+    @Test
     void referenceSpendThatDisagreesWithTheAdsConnectorMarksTheAdsChannelAsAMismatch() {
         String pm = connect(CONNECTOR, "API_KEY");
         String ads = connect("apple-search-ads", "API_KEY");

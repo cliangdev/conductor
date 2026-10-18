@@ -516,6 +516,44 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void theChannelDetailAppliesTheSameLagRuleAsTheOverview() {
+        String web = connectFresh("posthog");
+        String store = connectFresh("app-store-connect");
+        for (int d = 1; d <= 10; d++) {
+            put(web, "posthog", "WEB", "visitors", LocalDate.of(2026, 9, d), 5);
+        }
+        for (int d = 1; d <= 13; d++) {
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 1);
+        }
+
+        var webDetail = service.channel(project.getId(), MetricCatalog.channel("WEB").orElseThrow(), 7, TODAY, NOW);
+        var storeDetail = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        assertThat(webDetail.channel().status()).isEqualTo("STALE");
+        assertThat(storeDetail.channel().status()).isEqualTo("LIVE");
+    }
+
+    @Test
+    void aConnectedChannelMissingOneFunnelMetricSaysNoDataNotConnect() {
+        String web = connectFresh("posthog");
+        String store = connectFresh("app-store-connect");
+        put(web, "posthog", "WEB", "visitors", day(10), 5);
+        // STORE reports downloads and page views but never impressions
+        for (int d = 5; d <= 13; d++) {
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 1);
+            put(store, "app-store-connect", "STORE", "page_views", day(d), 3);
+        }
+
+        Overview overview = overview7();
+
+        var impressions = overview.funnel().stream().filter(s -> s.key().equals("store_impressions")).findFirst().orElseThrow();
+        assertThat(impressions.available()).isFalse();
+        assertThat(impressions.unavailableReason()).startsWith("No App Store data for ");
+        assertThat(overview.funnel().stream().filter(s -> s.key().equals("ads_taps")).findFirst().orElseThrow()
+                .unavailableReason()).isEqualTo("Connect an ads account");
+    }
+
+    @Test
     void multipleConnectionsForOneChannelAreSummed() {
         String a = connectFresh("posthog");
         String b = connectFresh("posthog");
