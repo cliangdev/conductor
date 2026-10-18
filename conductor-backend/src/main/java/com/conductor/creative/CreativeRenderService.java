@@ -619,10 +619,45 @@ public class CreativeRenderService {
         List<CreativeRender> renders = renderRepository.findAllByCreativeIdOrderByRequestedAtDesc(
                 creativeId, PageRequest.of(0, MAX_RENDERS_LISTED));
         renders.forEach(this::applyLazyTimeout);
+        Map<String, List<CreativeRenderFrame>> frames = framesByRender(renders);
         List<RenderView> views = new ArrayList<>();
         for (CreativeRender render : renders) {
-            views.add(new RenderView(render, frameRepository.findAllByRenderIdOrdered(render.getId())));
+            views.add(new RenderView(render, frames.getOrDefault(render.getId(), List.of())));
         }
+        return views;
+    }
+
+    /** All frames of several renders in one query, grouped by render id (each list in display order). */
+    private Map<String, List<CreativeRenderFrame>> framesByRender(List<CreativeRender> renders) {
+        if (renders.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<CreativeRenderFrame>> grouped = new java.util.HashMap<>();
+        for (CreativeRenderFrame frame : frameRepository.findAllByRenderIdInOrdered(
+                renders.stream().map(CreativeRender::getId).toList())) {
+            grouped.computeIfAbsent(frame.getRenderId(), k -> new ArrayList<>()).add(frame);
+        }
+        return grouped;
+    }
+
+    /**
+     * {@link #latestSucceededRender} for many Creatives: renders in one query, their frames in a second,
+     * keyed by creative id. A Creative with no succeeded render is absent from the map.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, RenderView> latestSucceededRenders(java.util.Collection<String> creativeIds) {
+        if (creativeIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, CreativeRender> latest = new LinkedHashMap<>();
+        for (CreativeRender render : renderRepository.findLatestByCreativeIdsAndState(
+                creativeIds, CreativeRender.STATE_SUCCEEDED)) {
+            latest.putIfAbsent(render.getCreativeId(), render);
+        }
+        Map<String, List<CreativeRenderFrame>> frames = framesByRender(new ArrayList<>(latest.values()));
+        Map<String, RenderView> views = new LinkedHashMap<>();
+        latest.forEach((creativeId, render) ->
+                views.put(creativeId, new RenderView(render, frames.getOrDefault(render.getId(), List.of()))));
         return views;
     }
 

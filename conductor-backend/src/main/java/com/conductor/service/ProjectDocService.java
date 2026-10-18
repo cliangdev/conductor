@@ -69,6 +69,30 @@ public class ProjectDocService {
         return projectDocRepository.findByProjectIdAndFolderId(projectId, folderId);
     }
 
+    /** Same listing as {@link #getDocs} but without loading any doc {@code content}. */
+    @Transactional(readOnly = true)
+    public List<ProjectDocRepository.Summary> getDocSummaries(String projectId, String folderId, boolean recursive) {
+        if (recursive) {
+            return projectDocRepository.findSummariesByProjectId(projectId);
+        }
+        if (folderId == null) {
+            return projectDocRepository.findSummariesByProjectIdAndFolderIsNull(projectId);
+        }
+        docFolderService.getFolder(projectId, folderId);
+        return projectDocRepository.findSummariesByProjectIdAndFolderId(projectId, folderId);
+    }
+
+    /**
+     * Existence-only twin of {@link #getDoc}: same project assertion and the same 404, but one cheap
+     * query that never loads the doc's {@code content}.
+     */
+    @Transactional(readOnly = true)
+    public void requireDocExists(String projectId, String docId) {
+        if (!projectDocRepository.existsByIdAndProjectId(docId, projectId)) {
+            throw new EntityNotFoundException("Document not found: " + docId);
+        }
+    }
+
     @Transactional
     public ProjectDoc createDoc(String projectId, String folderId, String title, String content, ProjectActor actor) {
         Project project = projectRepository.findById(projectId)

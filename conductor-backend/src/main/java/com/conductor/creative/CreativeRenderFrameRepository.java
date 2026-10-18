@@ -17,12 +17,22 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
             + "ORDER BY f.sequenceIndex ASC NULLS FIRST, f.placementKey ASC")
     List<CreativeRenderFrame> findAllByRenderIdOrdered(@Param("renderId") String renderId);
 
+    /** {@link #findAllByRenderIdOrdered} for several renders at once; callers group by {@code renderId}. */
+    @Query("SELECT f FROM CreativeRenderFrame f WHERE f.renderId IN :renderIds "
+            + "ORDER BY f.sequenceIndex ASC NULLS FIRST, f.placementKey ASC")
+    List<CreativeRenderFrame> findAllByRenderIdInOrdered(@Param("renderIds") java.util.Collection<String> renderIds);
+
     List<CreativeRenderFrame> findAllByRenderId(String renderId);
 
     /** Every frame this Creative has ever produced, across every render — COND-24 T5 attribution reads
      *  this rather than following {@code CreativeRenderRepository}'s "latest succeeded" view because a
      *  Post can be attached from an older render whose frames are still the ones actually published. */
     List<CreativeRenderFrame> findAllByCreativeId(String creativeId);
+
+    /** Ids of every frame produced by any of these Creatives or reusing this stored object. */
+    @Query("SELECT f.id FROM CreativeRenderFrame f WHERE f.creativeId IN :creativeIds OR f.gcsPath = :gcsPath")
+    List<String> findIdsByCreativeIdInOrGcsPath(@Param("creativeIds") java.util.Collection<String> creativeIds,
+                                                @Param("gcsPath") String gcsPath);
 
     /** Every frame whose stored object is this path (frames reuse the Media item's object). */
     List<CreativeRenderFrame> findAllByGcsPath(String gcsPath);

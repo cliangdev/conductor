@@ -255,12 +255,15 @@ class DocumentServiceTest {
     @Test
     void listDocumentsReturnsAllForIssue() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemId("issue-1")).thenReturn(List.of(testDocument));
+        DocumentRepository.Summary summary = org.mockito.Mockito.mock(DocumentRepository.Summary.class);
+        when(summary.getId()).thenReturn("doc-1");
+        when(documentRepository.findSummariesByWorkItemId("issue-1")).thenReturn(List.of(summary));
 
         List<DocumentView> results = documentService.listDocuments("proj-1", "issue-1");
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).id()).isEqualTo("doc-1");
+        assertThat(results.get(0).content()).isNull();
     }
 
     @Test

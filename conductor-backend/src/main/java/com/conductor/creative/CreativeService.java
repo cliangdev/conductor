@@ -163,7 +163,24 @@ public class CreativeService {
             creatives = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
         }
         Map<String, CreativePhoto> photos = loadPhotos(creatives);
-        return creatives.stream().map(c -> toView(projectId, c, photos)).toList();
+        // Three batched reads for the whole list instead of two per Creative: latest renders, their
+        // frames, and the running experiments of every family involved.
+        Map<String, CreativeRenderService.RenderView> renders = renderService.latestSucceededRenders(
+                creatives.stream().map(Creative::getId).toList());
+        Set<String> rootIds = new HashSet<>();
+        for (Creative c : creatives) {
+            rootIds.add(rootIdOf(c));
+        }
+        Map<String, String> experiments = new HashMap<>();
+        if (!rootIds.isEmpty()) {
+            for (CreativeExperiment e : experimentRepository.findAllByProjectIdAndParentCreativeIdInAndState(
+                    projectId, rootIds, CreativeExperiment.STATE_RUNNING)) {
+                experiments.putIfAbsent(e.getParentCreativeId(), e.getId());
+            }
+        }
+        return creatives.stream()
+                .map(c -> toView(c, photos, renders.get(c.getId()), experiments.get(rootIdOf(c))))
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -1230,6 +1247,20 @@ public class CreativeService {
                 : null;
         CreativeRenderService.RenderView summary = renderService.latestSucceededRender(creative.getId()).orElse(null);
         return new CreativeView(creative, url, summary, null, activeExperimentId(projectId, creative));
+    }
+
+    /** List-path twin of {@link #toView(String, Creative, Map)}: the render and experiment are already loaded. */
+    private CreativeView toView(Creative creative, Map<String, CreativePhoto> photos,
+                                CreativeRenderService.RenderView summary, String activeExperimentId) {
+        CreativePhoto photo = creative.getPhotoId() != null ? photos.get(creative.getPhotoId()) : null;
+        String url = photo != null && photo.isUploaded()
+                ? storageService.generateSignedUrl(photo.getGcsPath(), PHOTO_URL_EXPIRY_MINUTES)
+                : null;
+        return new CreativeView(creative, url, summary, null, activeExperimentId);
+    }
+
+    private static String rootIdOf(Creative creative) {
+        return creative.getParentCreativeId() != null ? creative.getParentCreativeId() : creative.getId();
     }
 
     /** The family's RUNNING experiment id, if any — no extra fetch needed since the root id is either

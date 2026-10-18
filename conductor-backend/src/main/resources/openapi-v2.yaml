@@ -581,13 +581,14 @@ paths:
             type: string
       responses:
         "200":
-          description: List of documents
+          description: >-
+            Document summaries. `content` is deliberately absent; fetch a single document for its body.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/DocumentResponse"
+                  $ref: "#/components/schemas/DocumentSummaryResponse"
         "401":
           description: Not authenticated
           content:
@@ -5228,6 +5229,33 @@ components:
           type: string
           format: date-time
           description: ISO timestamp when the signed URL expires
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    DocumentSummaryResponse:
+      type: object
+      description: A document without its body, as returned by the list endpoint.
+      required:
+        - id
+        - workItemId
+        - filename
+        - contentType
+        - createdAt
+      properties:
+        id:
+          type: string
+        workItemId:
+          type: string
+        filename:
+          type: string
+        contentType:
+          type: string
+        storagePath:
+          type: string
         createdAt:
           type: string
           format: date-time

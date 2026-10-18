@@ -27,6 +27,8 @@ import com.conductor.generated.model.RenameFolderRequest;
 import com.conductor.generated.model.SetDocTaskStateRequest;
 import com.conductor.generated.model.UpdateDocRequest;
 import com.conductor.repository.DocCommentReplyRepository;
+import com.conductor.repository.DocVersionRepository;
+import com.conductor.repository.ProjectDocRepository;
 import com.conductor.service.ProjectActor;
 import com.conductor.service.DocCommentService;
 import com.conductor.service.DocImageMarkers;
@@ -137,7 +139,8 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<List<ProjectDocSummaryResponse>> listProjectDocs(String projectId, String folderId, Boolean recursive) {
         requireDocAccess(projectId);
-        List<ProjectDoc> docs = projectDocService.getDocs(projectId, folderId, Boolean.TRUE.equals(recursive));
+        List<ProjectDocRepository.Summary> docs =
+                projectDocService.getDocSummaries(projectId, folderId, Boolean.TRUE.equals(recursive));
         List<ProjectDocSummaryResponse> response = docs.stream()
                 .map(this::toDocSummaryResponse)
                 .collect(Collectors.toList());
@@ -218,7 +221,7 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<List<DocVersionSummaryResponse>> listDocVersions(String projectId, String docId) {
         requireDocAccess(projectId);
-        List<DocVersion> versions = docVersionService.listVersions(projectId, docId);
+        List<DocVersionRepository.Summary> versions = docVersionService.listVersions(projectId, docId);
         List<DocVersionSummaryResponse> response = versions.stream()
                 .map(this::toVersionSummaryResponse)
                 .collect(Collectors.toList());
@@ -244,9 +247,8 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<List<DocCommentResponse>> listDocComments(String projectId, String docId) {
         requireDocAccess(projectId);
-        List<DocComment> comments = docCommentService.listComments(projectId, docId);
-        List<DocCommentResponse> response = comments.stream()
-                .map(this::toCommentResponse)
+        List<DocCommentResponse> response = docCommentService.listThreads(projectId, docId).stream()
+                .map(t -> toCommentResponse(t.comment(), t.replies()))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(response);
     }
@@ -371,16 +373,18 @@ public class ProjectDocsController implements ProjectDocsApi {
         return response;
     }
 
-    private ProjectDocSummaryResponse toDocSummaryResponse(ProjectDoc doc) {
+    private ProjectDocSummaryResponse toDocSummaryResponse(ProjectDocRepository.Summary doc) {
         ProjectDocSummaryResponse response = new ProjectDocSummaryResponse();
         response.setId(doc.getId());
-        response.setProjectId(doc.getProject().getId());
-        response.setFolderId(doc.getFolder() != null ? doc.getFolder().getId() : null);
+        response.setProjectId(doc.getProjectId());
+        response.setFolderId(doc.getFolderId());
         response.setTitle(doc.getTitle());
         response.setCreatedAt(doc.getCreatedAt());
         response.setUpdatedAt(doc.getUpdatedAt());
-        response.setCreatedByName(displayName(doc.getCreatedBy(), doc.getCreatedByLabel()));
-        response.setUpdatedByName(displayName(doc.getUpdatedBy(), doc.getUpdatedByLabel()));
+        response.setCreatedByName(displayName(doc.getCreatedByLabel(), doc.getCreatedByDisplayName(),
+                doc.getCreatedByName(), doc.getCreatedByEmail()));
+        response.setUpdatedByName(displayName(doc.getUpdatedByLabel(), doc.getUpdatedByDisplayName(),
+                doc.getUpdatedByName(), doc.getUpdatedByEmail()));
         return response;
     }
 
@@ -405,19 +409,23 @@ public class ProjectDocsController implements ProjectDocsApi {
         return response;
     }
 
-    private DocVersionSummaryResponse toVersionSummaryResponse(DocVersion version) {
+    private DocVersionSummaryResponse toVersionSummaryResponse(DocVersionRepository.Summary version) {
         DocVersionSummaryResponse response = new DocVersionSummaryResponse();
         response.setId(version.getId());
-        response.setDocId(version.getDoc().getId());
+        response.setDocId(version.getDocId());
         response.setVersionNumber(version.getVersionNumber());
-        response.setAuthorId(authorId(version.getAuthor()));
-        response.setAuthorName(displayName(version.getAuthor(), version.getAuthorLabel()));
+        response.setAuthorId(version.getAuthorId());
+        response.setAuthorName(displayName(version.getAuthorLabel(), version.getAuthorDisplayName(),
+                version.getAuthorName(), version.getAuthorEmail()));
         response.setCreatedAt(version.getCreatedAt());
         return response;
     }
 
     private DocCommentResponse toCommentResponse(DocComment comment) {
-        List<DocCommentReply> replies = docCommentReplyRepository.findByCommentIdOrderByCreatedAtAsc(comment.getId());
+        return toCommentResponse(comment, docCommentReplyRepository.findByCommentIdOrderByCreatedAtAsc(comment.getId()));
+    }
+
+    private DocCommentResponse toCommentResponse(DocComment comment, List<DocCommentReply> replies) {
         List<DocCommentReplyResponse> replyResponses = replies.stream()
                 .map(this::toReplyResponse)
                 .collect(Collectors.toList());
@@ -471,6 +479,20 @@ public class ProjectDocsController implements ProjectDocsApi {
      * A byline is always present: a human's name, or the machine actor's label when there is no user.
      * The {@code chk_*_attribution} constraints added in {@code V109} guarantee one of the two.
      */
+    /** Projection twin of {@link #displayName(User, String)}; a null {@code email} means there was no user row. */
+    private String displayName(String label, String displayName, String name, String email) {
+        if (email == null) {
+            return label != null ? label : "Unknown";
+        }
+        if (displayName != null && !displayName.isBlank()) {
+            return displayName;
+        }
+        if (name != null && !name.isBlank()) {
+            return name;
+        }
+        return email;
+    }
+
     private String displayName(User user, String label) {
         if (user == null) {
             return label != null ? label : "Unknown";

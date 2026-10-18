@@ -69,8 +69,9 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
         User caller = currentUser();
         List<Asset> assets = assetService.listAssets(projectId, workItemId, caller);
         Map<String, AssetCreativeOriginResolver.Origin> origins = originResolver.resolve(assets);
+        Map<String, String> previews = assetService.resolvePreviewUrls(projectId, workItemId, assets);
         List<AssetResponse> body = assets.stream()
-                .map(asset -> toV2(projectId, workItemId, asset, caller, origins))
+                .map(asset -> toV2(asset, origins, previews))
                 .toList();
         return ResponseEntity.ok(body);
     }
@@ -83,7 +84,7 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
                 request.getRef(), request.getDone());
         User caller = currentUser();
         Asset created = assetService.createAsset(projectId, workItemId, input, caller);
-        return ResponseEntity.status(201).body(toV2(projectId, workItemId, created, caller, originResolver.resolve(List.of(created))));
+        return ResponseEntity.status(201).body(toV2(created, originResolver.resolve(List.of(created)), assetService.resolvePreviewUrls(projectId, workItemId, List.of(created))));
     }
 
     @Override
@@ -110,8 +111,9 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
         User caller = currentUser();
         List<Asset> added = assetService.addFromMedia(projectId, workItemId, request.getMediaIds(), caller);
         Map<String, AssetCreativeOriginResolver.Origin> origins = originResolver.resolve(added);
+        Map<String, String> previews = assetService.resolvePreviewUrls(projectId, workItemId, added);
         List<AssetResponse> body = added.stream()
-                .map(asset -> toV2(projectId, workItemId, asset, caller, origins)).toList();
+                .map(asset -> toV2(asset, origins, previews)).toList();
         return ResponseEntity.status(201).body(body);
     }
 
@@ -129,7 +131,7 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
         AssetPatch patch = new AssetPatch(request.getLabel(), request.getRef(), request.getDone());
         User caller = currentUser();
         Asset updated = assetService.patchAsset(projectId, workItemId, assetId, patch, caller);
-        return ResponseEntity.ok(toV2(projectId, workItemId, updated, caller, originResolver.resolve(List.of(updated))));
+        return ResponseEntity.ok(toV2(updated, originResolver.resolve(List.of(updated)), assetService.resolvePreviewUrls(projectId, workItemId, List.of(updated))));
     }
 
     @Override
@@ -143,8 +145,8 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
      * actually there — {@code AssetService#resolvePreviewUrl} refuses a PENDING row, so the status check here is
      * the precondition, not an optimization.
      */
-    private AssetResponse toV2(String projectId, String workItemId, Asset asset, User caller,
-                               Map<String, AssetCreativeOriginResolver.Origin> origins) {
+    private AssetResponse toV2(Asset asset, Map<String, AssetCreativeOriginResolver.Origin> origins,
+                               Map<String, String> previews) {
         AssetResponse response = new AssetResponse(
                 asset.getId(),
                 asset.getWorkItem().getId(),
@@ -173,9 +175,9 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
                     .creativeDisplayId(origin.creativeDisplayId())
                     .creativeName(origin.creativeName());
         }
-        if (AssetService.KIND_FILE.equals(asset.getKind())
-                && AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())) {
-            response.previewUrl(assetService.resolvePreviewUrl(projectId, workItemId, asset.getId(), caller));
+        String preview = previews.get(asset.getId());
+        if (preview != null) {
+            response.previewUrl(preview);
         }
         return response;
     }

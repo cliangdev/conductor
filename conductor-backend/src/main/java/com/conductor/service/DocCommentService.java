@@ -12,6 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class DocCommentService {
@@ -50,8 +52,31 @@ public class DocCommentService {
 
     @Transactional(readOnly = true)
     public List<DocComment> listComments(String projectId, String docId) {
-        projectDocService.getDoc(projectId, docId);
+        projectDocService.requireDocExists(projectId, docId);
         return docCommentRepository.findByDocIdOrderByCreatedAtAsc(docId);
+    }
+
+    /** A comment with its replies, oldest first. */
+    public record Thread(DocComment comment, List<DocCommentReply> replies) {
+    }
+
+    /**
+     * Every comment on a doc with its replies: existence check, comments and all replies in one
+     * read-only transaction and a constant number of queries however many comments there are.
+     */
+    @Transactional(readOnly = true)
+    public List<Thread> listThreads(String projectId, String docId) {
+        List<DocComment> comments = listComments(projectId, docId);
+        if (comments.isEmpty()) {
+            return List.of();
+        }
+        Map<String, List<DocCommentReply>> byComment = docCommentReplyRepository
+                .findByCommentIdInOrderByCreatedAtAsc(comments.stream().map(DocComment::getId).toList())
+                .stream()
+                .collect(Collectors.groupingBy(r -> r.getComment().getId()));
+        return comments.stream()
+                .map(c -> new Thread(c, byComment.getOrDefault(c.getId(), List.of())))
+                .toList();
     }
 
     /**
@@ -129,6 +154,6 @@ public class DocCommentService {
         if (!comment.getDoc().getId().equals(docId)) {
             throw new EntityNotFoundException("Comment not found: " + comment.getId());
         }
-        projectDocService.getDoc(projectId, docId);
+        projectDocService.requireDocExists(projectId, docId);
     }
 }

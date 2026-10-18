@@ -28,6 +28,8 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -437,6 +439,26 @@ public class AssetService {
             throw new BusinessException("Asset upload has not been confirmed yet");
         }
         return storageService.generateSignedUrl(asset.getGcsPath(), PREVIEW_URL_EXPIRY_MINUTES);
+    }
+
+    /**
+     * {@link #resolvePreviewUrl} for assets the caller already holds. The membership and Work Item checks
+     * ran when those assets were loaded ({@link #listAssets}, {@link #createAsset}, ...), and each file
+     * Asset carries its own storage path, so this touches no tables: it only signs. Keyed by asset id;
+     * link, PENDING and path-less assets are simply absent.
+     */
+    public Map<String, String> resolvePreviewUrls(String projectId, String workItemId, Collection<Asset> assets) {
+        Map<String, String> urls = new HashMap<>();
+        for (Asset asset : assets) {
+            if (asset.getWorkItem() == null || !workItemId.equals(asset.getWorkItem().getId())) {
+                continue;
+            }
+            if (KIND_FILE.equals(asset.getKind()) && UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())
+                    && asset.getGcsPath() != null) {
+                urls.put(asset.getId(), storageService.generateSignedUrl(asset.getGcsPath(), PREVIEW_URL_EXPIRY_MINUTES));
+            }
+        }
+        return urls;
     }
 
     @Transactional

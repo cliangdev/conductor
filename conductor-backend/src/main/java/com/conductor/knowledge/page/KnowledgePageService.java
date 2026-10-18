@@ -632,16 +632,16 @@ public class KnowledgePageService {
     }
 
     private PageView buildVirtualIndex(String projectId) {
-        List<KnowledgePage> pages = pageRepository.findByProjectIdAndDeletedFalseOrderByPath(projectId);
-        Map<String, List<KnowledgePage>> byDir = new LinkedHashMap<>();
-        for (KnowledgePage page : pages) {
+        List<KnowledgePageRepository.IndexRow> pages = pageRepository.findIndexRowsByProjectId(projectId);
+        Map<String, List<KnowledgePageRepository.IndexRow>> byDir = new LinkedHashMap<>();
+        for (KnowledgePageRepository.IndexRow page : pages) {
             byDir.computeIfAbsent(dirOf(page.getPath()), d -> new ArrayList<>()).add(page);
         }
 
         StringBuilder sb = new StringBuilder("# Index\n\n");
-        for (Map.Entry<String, List<KnowledgePage>> entry : byDir.entrySet()) {
+        for (Map.Entry<String, List<KnowledgePageRepository.IndexRow>> entry : byDir.entrySet()) {
             sb.append("## ").append(entry.getKey().isEmpty() ? "/" : "/" + entry.getKey()).append("\n\n");
-            for (KnowledgePage page : entry.getValue()) {
+            for (KnowledgePageRepository.IndexRow page : entry.getValue()) {
                 String title = page.getTitle() != null ? page.getTitle() : page.getPath();
                 String desc = page.getDescription() != null ? " — " + page.getDescription() : "";
                 sb.append("* [").append(title).append("](/").append(page.getPath()).append(")")
@@ -653,18 +653,18 @@ public class KnowledgePageService {
     }
 
     private PageView buildVirtualLog(String projectId) {
-        List<KnowledgePageRevision> revisions =
-                revisionRepository.findByPage_ProjectIdOrderByCreatedAtDesc(projectId, PageRequest.of(0, LOG_REVISION_LIMIT));
-        Map<String, List<String>> refsByRevisionId = groupSourceRefs(revisions);
-        Map<LocalDate, List<KnowledgePageRevision>> byDate = new LinkedHashMap<>();
-        for (KnowledgePageRevision revision : revisions) {
+        List<KnowledgePageRevisionRepository.LogRow> revisions =
+                revisionRepository.findLogRowsByProjectId(projectId, PageRequest.of(0, LOG_REVISION_LIMIT));
+        Map<String, List<String>> refsByRevisionId = groupSourceRefs(revisions.stream().map(KnowledgePageRevisionRepository.LogRow::getId).toList());
+        Map<LocalDate, List<KnowledgePageRevisionRepository.LogRow>> byDate = new LinkedHashMap<>();
+        for (KnowledgePageRevisionRepository.LogRow revision : revisions) {
             byDate.computeIfAbsent(revision.getCreatedAt().toLocalDate(), d -> new ArrayList<>()).add(revision);
         }
 
         StringBuilder sb = new StringBuilder("# Log\n\n");
-        for (Map.Entry<LocalDate, List<KnowledgePageRevision>> entry : byDate.entrySet()) {
+        for (Map.Entry<LocalDate, List<KnowledgePageRevisionRepository.LogRow>> entry : byDate.entrySet()) {
             sb.append("## ").append(entry.getKey()).append("\n\n");
-            for (KnowledgePageRevision revision : entry.getValue()) {
+            for (KnowledgePageRevisionRepository.LogRow revision : entry.getValue()) {
                 List<String> refs = refsByRevisionId.getOrDefault(revision.getId(), List.of());
                 String suffix = refs.isEmpty() ? "" : " ← " + String.join(", ", refs);
                 // The day heading above is the finest grouping a human needs, but "last updated X ago"
@@ -674,7 +674,7 @@ public class KnowledgePageService {
                 // it instead (see conductor-frontend/src/lib/knowledgeLog.ts).
                 sb.append("* **").append(changeLabel(revision.getChangeKind())).append("** (")
                         .append(revision.getCreatedAt().toInstant()).append("): ")
-                        .append(revision.getPage().getPath()).append(suffix).append("\n");
+                        .append(revision.getPagePath()).append(suffix).append("\n");
             }
             sb.append('\n');
         }
@@ -696,10 +696,10 @@ public class KnowledgePageService {
         if (page == null) {
             return List.of();
         }
-        List<KnowledgePageRevision> revisions = revisionRepository.findByPage_IdOrderByVersionDesc(page.getId());
-        Map<String, List<String>> refsByRevisionId = groupSourceRefs(revisions);
+        List<KnowledgePageRevisionRepository.HistoryRow> revisions = revisionRepository.findHistoryByPageId(page.getId());
+        Map<String, List<String>> refsByRevisionId = groupSourceRefs(revisions.stream().map(KnowledgePageRevisionRepository.HistoryRow::getId).toList());
         List<RevisionView> views = new ArrayList<>();
-        for (KnowledgePageRevision revision : revisions) {
+        for (KnowledgePageRevisionRepository.HistoryRow revision : revisions) {
             List<String> refs = refsByRevisionId.getOrDefault(revision.getId(), List.of());
             Actor actor = revision.getActor() == null ? null : objectMapper.convertValue(revision.getActor(), Actor.class);
             views.add(new RevisionView(revision.getVersion(), revision.getChangeKind(), actor, revision.getCreatedAt(), refs));
@@ -709,11 +709,10 @@ public class KnowledgePageService {
 
     /** One query for every revision's source refs, grouped by revision id -- instead of one query per
      *  revision (see {@link KnowledgePageRevisionRepository#findSourceRefsByRevisionIds}). */
-    private Map<String, List<String>> groupSourceRefs(List<KnowledgePageRevision> revisions) {
-        if (revisions.isEmpty()) {
+    private Map<String, List<String>> groupSourceRefs(List<String> ids) {
+        if (ids.isEmpty()) {
             return Map.of();
         }
-        List<String> ids = revisions.stream().map(KnowledgePageRevision::getId).toList();
         Map<String, List<String>> refsByRevisionId = new HashMap<>();
         for (KnowledgePageRevisionRepository.RevisionSourceRef row : revisionRepository.findSourceRefsByRevisionIds(ids)) {
             refsByRevisionId.computeIfAbsent(row.getRevisionId(), k -> new ArrayList<>()).add(row.getSourceRef());

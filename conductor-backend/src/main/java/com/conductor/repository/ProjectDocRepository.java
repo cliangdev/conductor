@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,6 +23,45 @@ public interface ProjectDocRepository extends JpaRepository<ProjectDoc, String> 
 
     @Query("SELECT DISTINCT d FROM ProjectDoc d LEFT JOIN FETCH d.createdBy LEFT JOIN FETCH d.updatedBy WHERE d.project.id = :projectId")
     List<ProjectDoc> findAllByProjectId(@Param("projectId") String projectId);
+
+    /** A project doc without its {@code content}, plus the author names the list shows. */
+    interface Summary {
+        String getId();
+        String getProjectId();
+        String getFolderId();
+        String getTitle();
+        OffsetDateTime getCreatedAt();
+        OffsetDateTime getUpdatedAt();
+        String getCreatedByLabel();
+        String getCreatedByDisplayName();
+        String getCreatedByName();
+        String getCreatedByEmail();
+        String getUpdatedByLabel();
+        String getUpdatedByDisplayName();
+        String getUpdatedByName();
+        String getUpdatedByEmail();
+    }
+
+    String SUMMARY_SELECT = """
+            SELECT d.id AS id, d.project.id AS projectId, f.id AS folderId, d.title AS title,
+                   d.createdAt AS createdAt, d.updatedAt AS updatedAt,
+                   d.createdByLabel AS createdByLabel, cb.displayName AS createdByDisplayName,
+                   cb.name AS createdByName, cb.email AS createdByEmail,
+                   d.updatedByLabel AS updatedByLabel, ub.displayName AS updatedByDisplayName,
+                   ub.name AS updatedByName, ub.email AS updatedByEmail
+            FROM ProjectDoc d LEFT JOIN d.folder f LEFT JOIN d.createdBy cb LEFT JOIN d.updatedBy ub
+            """;
+
+    @Query(SUMMARY_SELECT + " WHERE d.project.id = :projectId AND d.folder IS NULL")
+    List<Summary> findSummariesByProjectIdAndFolderIsNull(@Param("projectId") String projectId);
+
+    @Query(SUMMARY_SELECT + " WHERE d.project.id = :projectId AND d.folder.id = :folderId")
+    List<Summary> findSummariesByProjectIdAndFolderId(@Param("projectId") String projectId, @Param("folderId") String folderId);
+
+    @Query(SUMMARY_SELECT + " WHERE d.project.id = :projectId")
+    List<Summary> findSummariesByProjectId(@Param("projectId") String projectId);
+
+    boolean existsByIdAndProjectId(String id, String projectId);
 
     boolean existsByProjectIdAndFolderIsNullAndTitle(String projectId, String title);
 
