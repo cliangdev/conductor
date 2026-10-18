@@ -209,24 +209,20 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       .catch(() => setImageMedia([]))
   }, [projectId, accessToken, needsImages])
 
-  // Referentially stable across list arrivals that add nothing a tile can see: a new Map is only
-  // returned when an id or its url/poster changed, so memoised tiles aren't re-drawn needlessly.
-  const mediaByIdRef = useRef<Map<string, CreativePhoto>>(new Map())
+  // Referentially stable across list arrivals that add nothing a tile can see: the map is keyed on
+  // each id with its url/poster, so a new Map only appears when one of those changed and memoised
+  // tiles aren't re-drawn needlessly.
+  const mediaKey = useMemo(
+    () => [...media, ...imageMedia].map((m) => `${m.id}|${m.url ?? ''}|${m.posterUrl ?? ''}`).join('\n'),
+    [media, imageMedia]
+  )
   const mediaById = useMemo(() => {
     const map = new Map<string, CreativePhoto>()
     for (const m of media) map.set(m.id, m)
     for (const m of imageMedia) map.set(m.id, m)
-    const prev = mediaByIdRef.current
-    const same =
-      prev.size === map.size &&
-      Array.from(map).every(([id, m]) => {
-        const p = prev.get(id)
-        return p !== undefined && p.url === m.url && p.posterUrl === m.posterUrl
-      })
-    if (same) return prev
-    mediaByIdRef.current = map
     return map
-  }, [media, imageMedia])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuilt only when what a tile can see changes
+  }, [mediaKey])
 
   useEffect(() => {
     if (!projectId || !accessToken) return
