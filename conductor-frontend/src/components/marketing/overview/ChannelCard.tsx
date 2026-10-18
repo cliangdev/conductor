@@ -86,7 +86,7 @@ export function ChannelCard({
     >
       <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-foreground">
-          <Link href={detailHref} className="outline-none after:absolute after:inset-0 after:content-['']">
+          <Link prefetch={false} href={detailHref} className="outline-none after:absolute after:inset-0 after:content-['']">
             {channel.label}
           </Link>
         </h2>
@@ -105,7 +105,7 @@ export function ChannelCard({
             <p className="mb-3 text-xs text-status-failed">
               {mismatchCardLine(channel.mismatch)}
               {' · '}
-              <Link
+              <Link prefetch={false}
                 href={`${detailHref}#mismatch`}
                 className="relative z-10 rounded-sm font-medium underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
@@ -143,7 +143,7 @@ export function ChannelCard({
           {connectors.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {connectors.map((c) => (
-                <Link
+                <Link prefetch={false}
                   key={c.connectorId}
                   href={`/app/projects/${projectId}/integrations/${c.connectorId}`}
                   className={`${buttonVariants({ variant: 'outline', size: 'sm' })} relative z-10`}

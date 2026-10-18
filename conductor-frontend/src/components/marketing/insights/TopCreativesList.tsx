@@ -36,7 +36,7 @@ export function TopCreativesList({
             {creatives.map((creative) => (
               <tr key={creative.creativeId} className="border-t border-border">
                 <td className="py-1.5 pr-3">
-                  <Link href={hrefFor(creative)} className="font-mono text-foreground hover:underline">
+                  <Link prefetch={false} href={hrefFor(creative)} className="font-mono text-foreground hover:underline">
                     {creative.label}
                   </Link>
                 </td>

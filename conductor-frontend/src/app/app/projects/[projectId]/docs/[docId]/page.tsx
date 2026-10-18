@@ -5,9 +5,10 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { markPageReady } from '@/lib/perf'
-import { getDoc, setDocTaskState } from '@/lib/docs-api'
-import type { ProjectDoc } from '@/lib/docs-api'
-import { apiErrorMessage, apiGet } from '@/lib/api'
+import { getDoc, getDocComments, setDocTaskState } from '@/lib/docs-api'
+import type { DocComment, ProjectDoc } from '@/lib/docs-api'
+import { apiErrorMessage } from '@/lib/api'
+import { fetchMembersCached } from '@/lib/workflows'
 import { DocViewer } from '@/components/docs/DocViewer'
 import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -36,9 +37,15 @@ export default function DocDetailPage() {
 
   useEffect(() => { if (!loading && doc) markPageReady('project-doc') }, [loading, doc])
 
+  // Started together with the doc, not after it renders: the viewer adopts this request.
+  const [commentsRequest, setCommentsRequest] = useState<Promise<DocComment[]> | null>(null)
+
   useEffect(() => {
     if (!accessToken) return
 
+    const comments = getDocComments(projectId, docId, accessToken)
+    comments.catch(() => {}) // the viewer reports a failure; this only keeps it from going unhandled
+    setCommentsRequest(comments)
     getDoc(projectId, docId, accessToken)
       .then(setDoc)
       .catch((err) => setError(apiErrorMessage(err, 'Failed to load doc')))
@@ -50,8 +57,9 @@ export default function DocDetailPage() {
   useEffect(() => {
     if (!accessToken || !user) return
 
-    apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken)
-      .then((members) => {
+    fetchMembersCached(projectId, accessToken)
+      .then((m) => {
+        const members = m as Member[]
         const me = members.find((m) => m.userId === user.id)
         if (me) setUserRole(me.role)
       })
@@ -143,7 +151,9 @@ export default function DocDetailPage() {
           <div className="max-w-6xl mx-auto">
             {doc.content ? (
               <DocViewer
+                key={doc.id}
                 doc={doc}
+                initialComments={commentsRequest ?? undefined}
                 projectId={projectId}
                 token={accessToken!}
                 currentUserId={user?.id ?? ''}

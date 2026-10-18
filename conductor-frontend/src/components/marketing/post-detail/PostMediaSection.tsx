@@ -236,7 +236,7 @@ export function PostMediaSection({
                 {asset.sequenceIndex != null ? ` · slide ${asset.sequenceIndex + 1}` : ''}
               </p>
               {asset.creativeId && (
-                <Link
+                <Link prefetch={false}
                   href={creativeHref(asset.creativeId)}
                   className="inline-flex items-center gap-1 text-primary hover:underline"
                 >
@@ -448,7 +448,7 @@ export function PostMediaSection({
               {g.creativeId && (
                 <>
                   <span aria-hidden>·</span>
-                  <Link href={creativeHref(g.creativeId)} className="shrink-0 text-primary hover:underline">
+                  <Link prefetch={false} href={creativeHref(g.creativeId)} className="shrink-0 text-primary hover:underline">
                     Open Creative
                   </Link>
                 </>

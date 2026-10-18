@@ -189,7 +189,7 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
           description="Once a Post publishes and Conductor reads its counters, its performance shows up here."
           action={
             postWorkflow && (
-              <Link
+              <Link prefetch={false}
                 href={workItemListPath(projectId, postWorkflow.area, postWorkflow.noun)}
                 className="text-sm font-medium text-primary hover:underline"
               >

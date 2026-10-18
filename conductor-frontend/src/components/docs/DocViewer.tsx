@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { getDocComments } from '@/lib/docs-api'
 import { apiErrorMessage } from '@/lib/api'
@@ -16,6 +16,11 @@ export interface DocViewerProps {
   /** Checkbox toggling. The owning page holds the handler, since it owns `doc`. */
   onToggleTask?: (lineNumber: number, checked: boolean) => void
   tasksReadOnly?: boolean
+  /**
+   * The doc's comments request, already in flight (the owning page starts it alongside the doc fetch
+   * so the comments don't wait for the content to render). Used for the first load only.
+   */
+  initialComments?: Promise<DocComment[]>
 }
 
 function mapReply(reply: DocCommentReply): CommentReply {
@@ -51,12 +56,13 @@ export function DocViewer({
   currentUserId,
   onToggleTask,
   tasksReadOnly,
+  initialComments,
 }: DocViewerProps) {
   const [comments, setComments] = useState<Comment[]>([])
 
-  const fetchComments = useCallback(async () => {
+  const fetchComments = useCallback(async (request?: Promise<DocComment[]>) => {
     try {
-      const raw = await getDocComments(projectId, doc.id, token)
+      const raw = await (request ?? getDocComments(projectId, doc.id, token))
       setComments(raw.map((c) => mapComment(c, doc.id)))
     } catch (err) {
       // Still non-fatal — an unreachable comments API shouldn't stop you reading the doc. But it is no
@@ -67,8 +73,12 @@ export function DocViewer({
     }
   }, [projectId, doc.id, token])
 
+  // The first load adopts the request the page already started; later reloads (a comment added) re-ask.
+  const initialRef = useRef(initialComments)
   useEffect(() => {
-    fetchComments()
+    const request = initialRef.current
+    initialRef.current = undefined
+    void fetchComments(request)
   }, [fetchComments])
 
   const commentApiBasePath = `/api/v1/projects/${projectId}/docs/${doc.id}/comments`
@@ -80,7 +90,7 @@ export function DocViewer({
       issueId={doc.id}
       projectId={projectId}
       comments={comments}
-      onCommentAdded={fetchComments}
+      onCommentAdded={() => fetchComments()}
       token={token}
       currentUserId={currentUserId}
       commentApiBasePath={commentApiBasePath}

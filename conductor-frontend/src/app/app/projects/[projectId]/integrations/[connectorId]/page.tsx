@@ -1,15 +1,30 @@
 'use client';
 export const dynamic = 'force-dynamic';
 
+import nextDynamic from 'next/dynamic';
 import { useParams } from 'next/navigation';
-import PostHogConnectorPage from '@/components/integrations/PostHogConnectorPage';
-import GcpBillingConnectorPage from '@/components/integrations/GcpBillingConnectorPage';
-import GitHubConnectorPage from '@/components/integrations/GitHubConnectorPage';
-import RevenueCatConnectorPage from '@/components/integrations/RevenueCatConnectorPage';
-import GscConnectorPage from '@/components/integrations/GscConnectorPage';
-import AppleSearchAdsConnectorPage from '@/components/integrations/AppleSearchAdsConnectorPage';
-import GcpConnectorPage from '@/components/integrations/GcpConnectorPage';
-import GenericConnectorPage from '@/components/integrations/GenericConnectorPage';
+import { Skeleton } from '@/components/ui/skeleton';
+
+// Only one connector's page is ever on screen, and several pull in recharts, so each is its own chunk
+// loaded when that connector is opened instead of all eight (and recharts) riding in this route's bundle.
+function ConnectorPageSkeleton() {
+  return (
+    <div className="space-y-3" aria-busy="true" aria-label="Loading">
+      <Skeleton className="h-6 w-56" />
+      <Skeleton className="h-4 w-80" />
+      <Skeleton className="h-40 w-full" />
+    </div>
+  );
+}
+
+const PostHogConnectorPage = nextDynamic(() => import('@/components/integrations/PostHogConnectorPage'), { loading: ConnectorPageSkeleton });
+const GcpBillingConnectorPage = nextDynamic(() => import('@/components/integrations/GcpBillingConnectorPage'), { loading: ConnectorPageSkeleton });
+const GitHubConnectorPage = nextDynamic(() => import('@/components/integrations/GitHubConnectorPage'), { loading: ConnectorPageSkeleton });
+const RevenueCatConnectorPage = nextDynamic(() => import('@/components/integrations/RevenueCatConnectorPage'), { loading: ConnectorPageSkeleton });
+const GscConnectorPage = nextDynamic(() => import('@/components/integrations/GscConnectorPage'), { loading: ConnectorPageSkeleton });
+const AppleSearchAdsConnectorPage = nextDynamic(() => import('@/components/integrations/AppleSearchAdsConnectorPage'), { loading: ConnectorPageSkeleton });
+const GcpConnectorPage = nextDynamic(() => import('@/components/integrations/GcpConnectorPage'), { loading: ConnectorPageSkeleton });
+const GenericConnectorPage = nextDynamic(() => import('@/components/integrations/GenericConnectorPage'), { loading: ConnectorPageSkeleton });
 
 // The breadcrumb lives in the persistent layout; this page only renders the
 // per-connector body, which is the part that re-renders on connector switch.

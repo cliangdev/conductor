@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
 import { DocTree } from '@/components/docs/DocTree'
 import { DocSearch } from '@/components/docs/DocSearch'
-import { apiGet } from '@/lib/api'
+import { fetchMembersCached } from '@/lib/workflows'
 import type { MemberRole } from '@/types'
 import { ChevronRightIcon, ChevronLeftIcon } from 'lucide-react'
 
@@ -31,10 +31,8 @@ export default function DocsLayout({
 
     async function fetchRole() {
       try {
-        const members = await apiGet<Member[]>(
-          `/api/v1/projects/${projectId}/members`,
-          accessToken!
-        )
+        // The shared members cache: one request for the whole project area, not one per page.
+        const members = (await fetchMembersCached(projectId, accessToken!)) as Member[]
         const me = members.find((m) => m.userId === user!.id)
         if (me) setUserRole(me.role)
       } catch {

@@ -118,6 +118,7 @@ export function WorkItemPropertiesPanel({
   onScheduleChanged,
   tags,
   knownTags,
+  onKnownTagsNeeded,
   onTagsChanged,
   onDelete,
   noun = 'item',
@@ -160,6 +161,8 @@ export function WorkItemPropertiesPanel({
   tags: string[]
   /** Tags already in use in this project, offered as suggestions so a vocabulary converges. */
   knownTags: string[]
+  /** Called when the tag input is first used, so the suggestions can load lazily. */
+  onKnownTagsNeeded?: () => void
   onTagsChanged: (tags: string[]) => void
   /** Offered at the foot of the panel, to anyone who may change the item. The confirmation is the caller's. */
   onDelete?: () => void
@@ -212,6 +215,7 @@ export function WorkItemPropertiesPanel({
           token={token}
           tags={tags}
           known={knownTags}
+          onKnownTagsNeeded={onKnownTagsNeeded}
           canEdit={userRole !== 'REVIEWER'}
           onChanged={onTagsChanged}
         />

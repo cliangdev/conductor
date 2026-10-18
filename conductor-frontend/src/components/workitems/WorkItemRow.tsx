@@ -93,7 +93,7 @@ export function WorkItemRow({
         />
       </span>
 
-      <Link
+      <Link prefetch={false}
         ref={rowLinkRef}
         href={workItemDetailPath(projectId, detailArea, noun, issue.displayId ?? '')}
         data-row-id={issue.id}

@@ -3,16 +3,34 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import type { User, AuthResponse } from '@/types'
 import { apiPost, setOnUnauthorized } from '@/lib/api'
-import { getFirebaseAuth } from '@/lib/firebase'
-import {
-  createEmailAccount,
-  exchangeFirebaseUser,
-  resendVerificationEmail as resendFirebaseVerificationEmail,
-  sendPasswordReset as sendFirebasePasswordReset,
-  signInWithEmailExchange,
-} from '@/lib/firebase-auth-flow'
 import { authErrorMessage, isEmailNotVerifiedError } from '@/lib/auth-errors'
-import { GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth'
+
+// The Firebase SDK is large and only the sign-in, sign-up and sign-out paths touch it, so it is loaded
+// on demand instead of riding in the bundle every signed-in page ships. One shared promise: the first
+// caller starts the download, the rest reuse it. It is also started early for a signed-out visitor (see
+// the mount effect), so by the time they press "Sign in with Google" the SDK is already here and the
+// popup still opens inside the click's user activation.
+let firebaseModules: Promise<{
+  auth: typeof import('firebase/auth')
+  app: typeof import('@/lib/firebase')
+  flow: typeof import('@/lib/firebase-auth-flow')
+}> | null = null
+
+function loadFirebase() {
+  if (!firebaseModules) {
+    firebaseModules = Promise.all([
+      import('firebase/auth'),
+      import('@/lib/firebase'),
+      import('@/lib/firebase-auth-flow'),
+    ])
+      .then(([auth, app, flow]) => ({ auth, app, flow }))
+      .catch((err) => {
+        firebaseModules = null // let the next attempt retry the download
+        throw err
+      })
+  }
+  return firebaseModules
+}
 
 interface AuthContextValue {
   user: User | null
@@ -71,6 +89,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
 
     const storedToken = localStorage.getItem('access_token')
+    if (!storedToken && process.env.NEXT_PUBLIC_AUTH_MODE !== 'local') {
+      loadFirebase().catch(() => { /* surfaced when a sign-in is actually attempted */ })
+    }
     const storedUser = localStorage.getItem('user')
     if (storedToken) {
       setAccessToken(storedToken)
@@ -98,10 +119,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signInWithGoogle(): Promise<void> {
     setSignInError(null)
     try {
-      const provider = new GoogleAuthProvider()
+      const { auth, app, flow } = await loadFirebase()
+      const provider = new auth.GoogleAuthProvider()
       provider.setCustomParameters({ prompt: 'select_account' })
-      const result = await signInWithPopup(getFirebaseAuth(), provider)
-      storeSession(await exchangeFirebaseUser(result.user))
+      const result = await auth.signInWithPopup(app.getFirebaseAuth(), provider)
+      storeSession(await flow.exchangeFirebaseUser(result.user))
     } catch (err) {
       const code = (err as { code?: string })?.code
       if (isEmailNotVerifiedError(err)) {
@@ -119,19 +141,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       storeSession(response)
       return
     }
-    storeSession(await signInWithEmailExchange(email, password))
+    const { flow } = await loadFirebase()
+    storeSession(await flow.signInWithEmailExchange(email, password))
   }
 
   async function signUpWithEmail(name: string, email: string, password: string): Promise<void> {
-    await createEmailAccount(name, email, password)
+    const { flow } = await loadFirebase()
+    await flow.createEmailAccount(name, email, password)
   }
 
   async function resendVerificationEmail(): Promise<void> {
-    await resendFirebaseVerificationEmail()
+    const { flow } = await loadFirebase()
+    await flow.resendVerificationEmail()
   }
 
   async function sendPasswordReset(email: string): Promise<void> {
-    await sendFirebasePasswordReset(email)
+    const { flow } = await loadFirebase()
+    await flow.sendPasswordReset(email)
   }
 
   async function signOut(): Promise<void> {
@@ -146,7 +172,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
     if (!isLocalMode) {
-      await firebaseSignOut(getFirebaseAuth())
+      const { auth, app } = await loadFirebase()
+      await auth.signOut(app.getFirebaseAuth())
     }
 
     setUser(null)

@@ -19,7 +19,9 @@ type HealthState = 'needs-attention' | 'working' | 'up-to-date' | 'waiting-for-s
 // pipeline it's summarizing — this component lives in the persistent Knowledge layout and, absent
 // polling, would otherwise show whatever was true at the moment the user first opened the section
 // for the rest of that browser session.
-const HEALTH_POLL_INTERVAL_MS = 30_000
+// Backed off from the scheduler's own tick: a chip a minute late costs nothing, and the section's
+// persistent rail otherwise issued 2-3 requests every 30s for as long as the tab was open.
+const HEALTH_POLL_INTERVAL_MS = 60_000
 
 interface HealthData {
   counts: KnowledgeSourceCounts
@@ -52,19 +54,23 @@ export function KnowledgeRailFooter({
   const [suggestedCount, setSuggestedCount] = useState(0)
 
   const loadHealth = useCallback(async (): Promise<HealthData> => {
-    const counts = await getKnowledgeSourceCounts(projectId, token)
-
-    let lastRunFailed = false
-    try {
-      const workflows = await listWorkflows(projectId, token)
-      const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
-      if (librarian) {
+    // The counts and the librarian's last run are independent, so they are asked together.
+    const lastRunFailedPromise = (async () => {
+      try {
+        const workflows = await listWorkflows(projectId, token)
+        const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
+        if (!librarian) return false
         const runs = await listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
-        lastRunFailed = runs[0]?.status === 'FAILED'
+        return runs[0]?.status === 'FAILED'
+      } catch {
+        // Run history is a nice-to-have for the health chip — fall back to counts-only.
+        return false
       }
-    } catch {
-      // Run history is a nice-to-have for the health chip — fall back to counts-only.
-    }
+    })()
+    const [counts, lastRunFailed] = await Promise.all([
+      getKnowledgeSourceCounts(projectId, token),
+      lastRunFailedPromise,
+    ])
 
     return { counts, lastRunFailed }
   }, [projectId, token])
@@ -83,11 +89,19 @@ export function KnowledgeRailFooter({
     }
 
     refresh()
-    const interval = setInterval(refresh, HEALTH_POLL_INTERVAL_MS)
+    // No point polling a tab nobody is looking at: skip while hidden, and catch up on return.
+    const interval = setInterval(() => {
+      if (!document.hidden) refresh()
+    }, HEALTH_POLL_INTERVAL_MS)
+    function onVisible() {
+      if (!document.hidden) refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
 
     return () => {
       cancelled = true
       clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [loadHealth])
 

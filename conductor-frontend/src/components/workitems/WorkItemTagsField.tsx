@@ -21,6 +21,8 @@ export interface WorkItemTagsFieldProps {
   tags: string[]
   /** Tags already in use elsewhere, offered as suggestions. */
   known?: string[]
+  /** Fired when the input gains focus, so the caller can load `known` lazily. */
+  onKnownTagsNeeded?: () => void
   canEdit: boolean
   onChanged: (tags: string[]) => void
 }
@@ -36,6 +38,7 @@ export function WorkItemTagsField({
   token,
   tags,
   known = [],
+  onKnownTagsNeeded,
   canEdit,
   onChanged,
 }: WorkItemTagsFieldProps) {
@@ -109,6 +112,7 @@ export function WorkItemTagsField({
             value={draft}
             disabled={saving}
             placeholder="Add a tag…"
+            onFocus={onKnownTagsNeeded}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               // Enter and comma both commit — people type one or the other without thinking about it.

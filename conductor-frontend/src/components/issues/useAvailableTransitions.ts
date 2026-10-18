@@ -21,6 +21,30 @@ interface AvailableTransitionsResponse {
   transitions: AvailableTransition[]
 }
 
+// The status control in the properties panel and the header's More menu both ask for the same item's
+// moves in the same render. Sharing the in-flight request (keyed by item + status, dropped once it
+// settles) turns the two identical GETs into one, while a later status change still re-reads.
+const transitionsInFlight = new Map<string, Promise<AvailableTransitionsResponse>>()
+
+function fetchAvailableTransitions(
+  projectId: string,
+  issueId: string,
+  currentStatus: string,
+  token: string
+): Promise<AvailableTransitionsResponse> {
+  const key = `${projectId}|${issueId}|${currentStatus}`
+  const pending = transitionsInFlight.get(key)
+  if (pending) return pending
+  const promise = apiGet<AvailableTransitionsResponse>(
+    `/api/v2/projects/${projectId}/work-items/${issueId}/available-transitions`,
+    token
+  ).finally(() => {
+    if (transitionsInFlight.get(key) === promise) transitionsInFlight.delete(key)
+  })
+  transitionsInFlight.set(key, promise)
+  return promise
+}
+
 /**
  * The valid next moves for a Work Item, computed server-side from the active Workflow definition
  * (GET .../available-transitions) — never a hardcoded table — so a review-gated transition stays hidden
@@ -39,10 +63,7 @@ export function useAvailableTransitions(
   useEffect(() => {
     if (userRole === 'REVIEWER' || !token) return
     let cancelled = false
-    apiGet<AvailableTransitionsResponse>(
-      `/api/v2/projects/${projectId}/work-items/${issueId}/available-transitions`,
-      token
-    )
+    fetchAvailableTransitions(projectId, issueId, currentStatus, token)
       .then((res) => {
         if (!cancelled) setTransitions(res.transitions ?? [])
       })
