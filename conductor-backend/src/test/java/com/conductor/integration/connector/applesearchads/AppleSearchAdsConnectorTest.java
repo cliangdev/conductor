@@ -44,7 +44,7 @@ class AppleSearchAdsConnectorTest {
         Map<String, Object> day1 = Map.of(
                 "date", "2026-06-01",
                 "newDownloads", 30,
-                "installs", 35,
+                "tapInstalls", 35,
                 "localSpend", Map.of("amount", "120.50", "currency", "USD"),
                 "avgCPA", Map.of("amount", "4.00", "currency", "USD"),
                 "avgCPT", Map.of("amount", "1.50", "currency", "USD"),
@@ -52,7 +52,7 @@ class AppleSearchAdsConnectorTest {
         Map<String, Object> day2 = Map.of(
                 "date", "2026-06-02",
                 "newDownloads", 50,
-                "installs", 55,
+                "tapInstalls", 55,
                 "localSpend", Map.of("amount", "200.00", "currency", "USD"),
                 "avgCPA", Map.of("amount", "4.00", "currency", "USD"),
                 "avgCPT", Map.of("amount", "1.60", "currency", "USD"),
@@ -83,6 +83,9 @@ class AppleSearchAdsConnectorTest {
         assertThat(installs).hasSize(2);
         assertThat(((Number) installs.get(0).get("newDownloads")).doubleValue()).isEqualTo(30.0);
         assertThat(((Number) installs.get(1).get("newDownloads")).doubleValue()).isEqualTo(50.0);
+        // v5 reports tapInstalls (the legacy `installs` field is gone)
+        assertThat(((Number) installs.get(0).get("installs")).doubleValue()).isEqualTo(35.0);
+        assertThat(((Number) installs.get(1).get("installs")).doubleValue()).isEqualTo(55.0);
 
         List<Map<String, Object>> spend = (List<Map<String, Object>>) result.data().get("spendSeries");
         // localSpend {amount:"120.50"} extracted to a double.

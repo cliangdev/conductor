@@ -61,8 +61,8 @@ class AppleSearchAdsChannelMetricsTest {
             {"data":{"reportingDataResponse":{"row":[
               {"metadata":{"campaignId":1001,"campaignName":"Brand"},
                "granularity":[
-                 {"date":"2026-10-01","impressions":1000,"taps":70,"installs":20,"localSpend":{"amount":"50.50","currency":"USD"}},
-                 {"date":"2026-10-02","impressions":800,"taps":50,"installs":10,"localSpend":{"amount":"40.00","currency":"USD"}}]},
+                 {"date":"2026-10-01","impressions":1000,"taps":70,"tapInstalls":20,"localSpend":{"amount":"50.50","currency":"USD"}},
+                 {"date":"2026-10-02","impressions":800,"taps":50,"tapInstalls":10,"localSpend":{"amount":"40.00","currency":"USD"}}]},
               {"metadata":{"campaignId":1002,"campaignName":"Discovery: US"},
                "granularity":[
                  {"date":"2026-10-01","impressions":500,"taps":30,"installs":5,"localSpend":{"amount":"20.00","currency":"USD"}}]}
@@ -93,6 +93,9 @@ class AppleSearchAdsChannelMetricsTest {
         assertThat(value(points, "taps", "", "2026-10-01")).isEqualByComparingTo("100");
         assertThat(value(points, "installs", "", "2026-10-02")).isEqualByComparingTo("10");
         assertThat(value(points, "installs", "campaign:1001:Brand", "2026-10-01")).isEqualByComparingTo("20");
+        // tapInstalls is read (Brand); the legacy `installs` field is the fallback (Discovery)
+        assertThat(value(points, "installs", "campaign:1002:Discovery: US", "2026-10-01")).isEqualByComparingTo("5");
+        assertThat(value(points, "installs", "", "2026-10-01")).isEqualByComparingTo("25");
         assertThat(value(points, "spend", "campaign:1002:Discovery: US", "2026-10-01")).isEqualByComparingTo("20.00");
         server.verify();
     }

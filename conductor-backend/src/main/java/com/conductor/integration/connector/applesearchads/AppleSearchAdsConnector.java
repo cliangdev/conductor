@@ -235,7 +235,7 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                 if (isBlank(date)) continue;
                 double[] acc = byDate.computeIfAbsent(date, k -> new double[7]);
                 acc[0] += num(bucket.get("newDownloads"));
-                acc[1] += num(bucket.get("installs"));
+                acc[1] += installs(bucket);
                 acc[2] += money(bucket.get("localSpend"));
                 acc[3] += money(bucket.get("avgCPA"));
                 acc[4] += money(bucket.get("avgCPT"));
@@ -460,6 +460,16 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         return points;
     }
 
+    /**
+     * Installs for one report bucket. Apple Ads API v5 replaced {@code installs} with {@code tapInstalls},
+     * {@code viewInstalls} and {@code totalInstalls}; tap installs are the installs (as the product backend
+     * counts them), so they win, and the legacy {@code installs} field is the fallback.
+     */
+    private static double installs(Map<String, Object> bucket) {
+        Object tap = bucket.get("tapInstalls");
+        return num(tap != null ? tap : bucket.get("installs"));
+    }
+
     @SuppressWarnings("unchecked")
     private void collect(Map<String, Object> report, Map<LocalDate, Map<String, Double>> totals,
                          List<ChannelMetricPoint> points) {
@@ -485,7 +495,7 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                 dayTotals.merge("spend", spend, Double::sum);
                 points.add(ChannelMetricPoint.of("spend", dimension, day, spend));
                 for (String metric : DAILY_METRICS) {
-                    double v = num(bucket.get(metric));
+                    double v = metric.equals("installs") ? installs(bucket) : num(bucket.get(metric));
                     dayTotals.merge(metric, v, Double::sum);
                     points.add(ChannelMetricPoint.of(metric, dimension, day, v));
                 }
