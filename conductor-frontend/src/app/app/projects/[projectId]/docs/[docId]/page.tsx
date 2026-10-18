@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { markPageReady } from '@/lib/perf'
 import { getDoc, setDocTaskState } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
 import { apiErrorMessage, apiGet } from '@/lib/api'
@@ -32,6 +33,8 @@ export default function DocDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+
+  useEffect(() => { if (!loading && doc) markPageReady('project-doc') }, [loading, doc])
 
   useEffect(() => {
     if (!accessToken) return

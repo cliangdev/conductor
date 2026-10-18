@@ -63,6 +63,8 @@ public class SecurityConfig {
         config.setAllowedOrigins(allowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
+        // Lets the browser (fetch) read the per-request timing breakdown from RequestMetricsFilter.
+        config.setExposedHeaders(List.of("Server-Timing"));
         config.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
