@@ -182,14 +182,23 @@ public class PublishConsentService {
      */
     @Transactional(readOnly = true)
     public Verdict verdict(WorkItem workItem) {
-        if (workItem == null || workItem.getId() == null || !requiresConsent(workItem.getId())) {
+        if (workItem == null || workItem.getId() == null) {
+            return Verdict.NOT_REQUIRED;
+        }
+        return verdict(workItem, targetRepository.findAllByWorkItemId(workItem.getId()));
+    }
+
+    /** As {@link #verdict(WorkItem)}, for a caller that already holds the item's publish targets. */
+    @Transactional(readOnly = true)
+    public Verdict verdict(WorkItem workItem, List<PostPublishTarget> targets) {
+        if (workItem == null || workItem.getId() == null || !requiresConsent(targets)) {
             return Verdict.NOT_REQUIRED;
         }
         Optional<PublishConsent> consent = consentRepository.findByWorkItemId(workItem.getId());
         if (consent.isEmpty()) {
             return Verdict.NEVER_GIVEN;
         }
-        return consentSubjectHash(workItem).equals(consent.get().getConsentHash())
+        return consentSubjectHash(workItem, targets).equals(consent.get().getConsentHash())
                 ? Verdict.VALID : Verdict.SUPERSEDED;
     }
 
@@ -205,7 +214,11 @@ public class PublishConsentService {
      * ever disagreed, the UI would ask for a consent the gate does not want or hide one the gate demands.
      */
     private boolean requiresConsent(String workItemId) {
-        return targetRepository.findAllByWorkItemId(workItemId).stream()
+        return requiresConsent(targetRepository.findAllByWorkItemId(workItemId));
+    }
+
+    private boolean requiresConsent(List<PostPublishTarget> allTargets) {
+        return allTargets.stream()
                 .filter(target -> target.getLane() != PublishLane.MANUAL)
                 .anyMatch(target -> PLATFORM_TIKTOK.equals(normalized(target.getPlatform())));
     }
@@ -237,14 +250,17 @@ public class PublishConsentService {
      * identical selection hashes identically and cannot spuriously withdraw consent.
      */
     String consentSubjectHash(WorkItem workItem) {
+        return consentSubjectHash(workItem, targetRepository.findAllByWorkItemId(workItem.getId()));
+    }
+
+    String consentSubjectHash(WorkItem workItem, List<PostPublishTarget> loadedTargets) {
         Map<String, Object> subject = new TreeMap<>();
-        subject.put("targets", targets(workItem.getId()));
+        subject.put("targets", targets(loadedTargets));
         subject.put("assets", assets(workItem.getId()));
         return sha256(canonicalJson(subject));
     }
 
-    private List<Map<String, Object>> targets(String workItemId) {
-        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItemId);
+    private List<Map<String, Object>> targets(List<PostPublishTarget> targets) {
         Map<String, List<String>> selections = selectionsByTarget(targets);
         return canonicalOrder(targets.stream()
                 // Only a custom-media target has a selection to look up, and an unsaved target has no id

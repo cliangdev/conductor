@@ -155,25 +155,13 @@ export function WorkItemListView({
         // Shared cache: deduplicates the concurrent fetch from PermissionsContext.
         fetchMembersCached(projectId, accessToken),
       ])
-      setIssues(issueData)
       setMembers(memberData)
       const currentMember = memberData.find((m) => m.userId === user?.id)
       if (currentMember) setUserRole(currentMember.role)
-      // Show the list immediately — reviewer cells fill in after the second round.
+      // Reviewers come embedded in each list row (one batched read server-side), so there is no
+      // per-row follow-up call.
+      setIssues(issueData.map((issue) => ({ ...issue, reviewers: issue.reviewers ?? [] })))
       setLoading(false)
-
-      // Fetch reviewers for all issues in parallel (second round, non-blocking)
-      const reviewerResults = await Promise.allSettled(
-        issueData.map((issue) =>
-          apiGet<IssueReviewer[]>(`/api/v2/projects/${projectId}/work-items/${issue.id}/reviewers`, accessToken)
-        )
-      )
-      setIssues(
-        issueData.map((issue, i) => ({
-          ...issue,
-          reviewers: reviewerResults[i].status === 'fulfilled' ? reviewerResults[i].value : [],
-        }))
-      )
     } catch (err) {
       setError(apiErrorMessage(err, `Failed to load ${title.toLowerCase()}`))
       setLoading(false)

@@ -117,7 +117,6 @@ class ProjectSecurityServiceTest {
     @Test
     void editorGateAdmitsAdminsAndCreatorsButNotReviewers() {
         authenticateUser();
-        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
 
         memberWithRole(MemberRole.CREATOR);
         assertThat(service().requireProjectEditor(PROJECT_ID).userId()).isEqualTo("user-1");

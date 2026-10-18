@@ -292,8 +292,34 @@ class WorkflowControllerTest {
     void listWorkflowsDelegatesFiltersToService() throws Exception {
         // Filtering lives in the service now; the controller must pass the query params straight through.
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(workflowService.listWorkflows(PROJECT_ID, true, "PUBLISHED", true))
+        when(workflowService.listWorkflows(PROJECT_ID, true, "PUBLISHED", false))
                 .thenReturn(List.of(lifecycleWorkflow()));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
+                        .param("lifecycle", "true")
+                        .param("state", "PUBLISHED")
+                        .param("sidebar", "false")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].slug").value("ENGINEERING"));
+
+        verify(workflowService).listWorkflows(PROJECT_ID, true, "PUBLISHED", false);
+    }
+
+    @Test
+    void sidebarListIsSlimAndSkipsTheFullListPath() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        var row = org.mockito.Mockito.mock(com.conductor.repository.WorkflowDefinitionRepository.SidebarRow.class);
+        when(row.getId()).thenReturn("wf-1");
+        when(row.getName()).thenReturn("Engineering");
+        when(row.getSlug()).thenReturn("ENGINEERING");
+        when(row.getNoun()).thenReturn(null);
+        when(row.getArea()).thenReturn("ENGINEERING");
+        when(row.getState()).thenReturn("PUBLISHED");
+        when(row.getSidebarEnabled()).thenReturn(true);
+        when(row.getCreatedAt()).thenReturn(java.time.Instant.parse("2026-01-01T00:00:00Z"));
+        when(workflowService.listSidebarRows(PROJECT_ID, "PUBLISHED")).thenReturn(List.of(row));
 
         mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
                         .param("lifecycle", "true")
@@ -302,9 +328,16 @@ class WorkflowControllerTest {
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].slug").value("ENGINEERING"));
+                .andExpect(jsonPath("$[0].slug").value("ENGINEERING"))
+                .andExpect(jsonPath("$[0].noun").value("Work Item"))
+                .andExpect(jsonPath("$[0].kind").value("LIFECYCLE"))
+                .andExpect(jsonPath("$[0].yaml").doesNotExist())
+                .andExpect(jsonPath("$[0].webhookToken").doesNotExist())
+                .andExpect(jsonPath("$[0].definition").doesNotExist());
 
-        verify(workflowService).listWorkflows(PROJECT_ID, true, "PUBLISHED", true);
+        verify(workflowService, org.mockito.Mockito.never()).listWorkflows(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test

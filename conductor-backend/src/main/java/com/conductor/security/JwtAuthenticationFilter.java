@@ -8,6 +8,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.cache.Cache;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
@@ -22,9 +23,35 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserRepository userRepository;
 
+    /** Authenticated users by id (60s TTL, bounded); null disables caching. */
+    private final Cache userCache;
+
     public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository) {
+        this(jwtService, userRepository, null);
+    }
+
+    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository, Cache userCache) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
+        this.userCache = userCache;
+    }
+
+    /**
+     * The user for a token's id. A hit costs nothing; a miss is a pooled-connection checkout plus a round
+     * trip to a remote database, which every authenticated request used to pay. The cached entity is only
+     * ever read (it is detached either way, since open-in-view is off), and a missing user is not cached.
+     */
+    private Optional<User> loadUser(String userId) {
+        if (userCache == null) {
+            return userRepository.findById(userId);
+        }
+        User cached = userCache.get(userId, User.class);
+        if (cached != null) {
+            return Optional.of(cached);
+        }
+        Optional<User> loaded = userRepository.findById(userId);
+        loaded.ifPresent(u -> userCache.put(userId, u));
+        return loaded;
     }
 
     @Override
@@ -45,7 +72,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         if (token != null && jwtService.validateToken(token)) {
             String userId = jwtService.getUserIdFromToken(token);
-            Optional<User> userOpt = userRepository.findById(userId);
+            Optional<User> userOpt = loadUser(userId);
 
             if (userOpt.isPresent()) {
                 User user = userOpt.get();

@@ -142,6 +142,7 @@ public class WorkItem {
      * tag rather than two that look identical in a filter list.
      */
     @ElementCollection(fetch = FetchType.EAGER)
+    @org.hibernate.annotations.BatchSize(size = 50)
     @CollectionTable(name = "work_item_tag", joinColumns = @JoinColumn(name = "work_item_id"))
     @Column(name = "tag", length = 64, nullable = false)
     private Set<String> tags = new LinkedHashSet<>();

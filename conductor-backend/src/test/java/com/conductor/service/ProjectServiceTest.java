@@ -109,9 +109,10 @@ class ProjectServiceTest {
     @Test
     void listProjectsReturnsOnlyCallerProjects() {
         when(projectRepository.findProjectsByMemberUserId("creator-id")).thenReturn(List.of(testProject));
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
-                .thenReturn(Optional.of(adminMember));
-        when(projectMemberRepository.findByProjectId("proj-1")).thenReturn(List.of(adminMember));
+        adminMember.setProject(testProject);
+        when(projectMemberRepository.findByUserId("creator-id")).thenReturn(List.of(adminMember));
+        when(projectMemberRepository.countGroupedByProjectIds(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(java.util.Collections.singletonList(new Object[]{"proj-1", 1L}));
 
         List<ProjectSummary> projects = projectService.listProjects(creator);
 

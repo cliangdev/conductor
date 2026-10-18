@@ -147,7 +147,7 @@ public class PublishPreflightService {
                 publishGateEvaluator.evaluate(workItem), workItem, statechart);
         List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItem.getId());
 
-        PublishConsentService.Verdict verdict = publishConsentService.verdict(workItem);
+        PublishConsentService.Verdict verdict = publishConsentService.verdict(workItem, targets);
         ConsentSummary consent = new ConsentSummary(
                 verdict != PublishConsentService.Verdict.NOT_REQUIRED, verdict);
 

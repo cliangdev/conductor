@@ -257,8 +257,13 @@ public class ReviewService {
         String currentBundleHash = publishBundleHasher.appliesTo(workItem)
                 ? publishBundleHasher.hash(workItem)
                 : null;
+        // One user query for every reviewer, not one per review.
+        Map<String, User> usersById = new java.util.HashMap<>();
+        userRepository.findAllById(reviews.stream().map(Review::getReviewerId).distinct().toList())
+                .forEach(u -> usersById.put(u.getId(), u));
         return reviews.stream()
-                .map(review -> toReviewWithUser(review, workItem.getCurrentReviewRound(), currentBundleHash))
+                .map(review -> toReviewWithUser(review, workItem.getCurrentReviewRound(), currentBundleHash,
+                        usersById.get(review.getReviewerId())))
                 .toList();
     }
 
@@ -285,8 +290,7 @@ public class ReviewService {
         return review.getReviewRound() == null || currentBundleHash == null;
     }
 
-    private ReviewWithUser toReviewWithUser(Review review, int currentRound, String currentBundleHash) {
-        User user = userRepository.findById(review.getReviewerId()).orElse(null);
+    private ReviewWithUser toReviewWithUser(Review review, int currentRound, String currentBundleHash, User user) {
         return new ReviewWithUser(
                 review.getReviewerId(),
                 review.getVerdict(),

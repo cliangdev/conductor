@@ -38,6 +38,13 @@ public class AuthService {
         this.projectService = projectService;
     }
 
+    private org.springframework.cache.Cache authUsers;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheManager(org.springframework.cache.CacheManager cacheManager) {
+        this.authUsers = cacheManager.getCache(com.conductor.config.CacheConfig.AUTH_USERS);
+    }
+
     public AuthResponse authenticateWithFirebase(String idToken) throws FirebaseAuthException {
         FirebaseToken firebaseToken = firebaseTokenVerifier.verifyToken(idToken);
 
@@ -52,6 +59,10 @@ public class AuthService {
             syncProfile(u, firebaseToken);
             return userRepository.save(u);
         });
+        if (authUsers != null) {
+            // The JWT filter caches the user for 60s; a profile sync must show up immediately.
+            authUsers.evict(user.getId());
+        }
 
         try {
             projectService.ensureDefaultWorkspace(user);

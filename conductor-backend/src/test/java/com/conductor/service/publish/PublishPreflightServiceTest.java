@@ -96,7 +96,7 @@ class PublishPreflightServiceTest {
         when(resolver.resolveRequired(PROJECT, "MARKETING", 1)).thenReturn(marketing);
         when(targetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of());
         when(reviewerRepository.findAllByWorkItemId("post-1")).thenReturn(List.of());
-        when(consentService.verdict(post)).thenReturn(PublishConsentService.Verdict.NOT_REQUIRED);
+        when(consentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.anyList())).thenReturn(PublishConsentService.Verdict.NOT_REQUIRED);
         when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(List.of(), List.of()));
         when(postScheduleValidator.earliestFireTime(anyList()))
                 .thenReturn(OffsetDateTime.parse("2026-09-04T12:10:00Z"));
@@ -217,7 +217,7 @@ class PublishPreflightServiceTest {
     void anApprovedPostsNextGateMoveIsScheduling() {
         post.setCurrentStatus("APPROVED");
         when(workflowService.isReviewSatisfied(eq(PROJECT), eq(post), any())).thenReturn(true);
-        when(consentService.verdict(post)).thenReturn(PublishConsentService.Verdict.SUPERSEDED);
+        when(consentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.anyList())).thenReturn(PublishConsentService.Verdict.SUPERSEDED);
         PostPublishTarget target = new PostPublishTarget();
         target.setId("t-1");
         when(targetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(target));
@@ -245,6 +245,7 @@ class PublishPreflightServiceTest {
         ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
         PublishConsentService realConsentService = mock(PublishConsentService.class);
         when(realConsentService.verdict(post)).thenReturn(PublishConsentService.Verdict.VALID);
+        when(realConsentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.anyList())).thenReturn(PublishConsentService.Verdict.VALID);
 
         PublishPlatformRegistry registry = new PublishPlatformRegistry();
         PublishTargetMediaResolver mediaResolver =

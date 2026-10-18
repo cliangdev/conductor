@@ -177,10 +177,17 @@ public class WorkflowController implements WorkflowsApi {
                                                                      String state, Boolean sidebar) {
         String userId = currentUserId();
         requireMemberOrNotFound(projectId, userId);
+        // The sidebar nav (lifecycle=true & sidebar=true) gets a slim, SQL-filtered projection: no yaml,
+        // definition or webhook token, no statechart parsing, no per-workflow Work Item counts.
+        if (Boolean.TRUE.equals(lifecycle) && Boolean.TRUE.equals(sidebar)) {
+            return ResponseEntity.ok(workflowService.listSidebarRows(projectId, state).stream()
+                    .map(this::toSidebarDto)
+                    .collect(Collectors.toList()));
+        }
         boolean canSeeToken = projectSecurityService.isAdminOrCreator(projectId, userId);
         // Filtering is domain/query logic and lives in the service; the controller stays a thin adapter.
         List<WorkflowDefinition> defs = workflowService.listWorkflows(projectId, lifecycle, state, sidebar);
-        Map<String, Long> wiCounts = workflowViewService.workItemCountsBySlug(defs);
+        Map<String, Long> wiCounts = workflowViewService.workItemCountsBySlug(projectId, defs);
         List<WorkflowDefinitionDto> dtos = defs.stream()
                 .map(d -> {
                     WorkflowDefinitionDto dto = toDto(d);
@@ -576,6 +583,32 @@ public class WorkflowController implements WorkflowsApi {
             log.warn("Failed to parse event payload JSON for run DTO: {}", e.getMessage());
             return null;
         }
+    }
+
+    private static java.time.OffsetDateTime utc(java.time.Instant instant) {
+        return instant == null ? null : java.time.OffsetDateTime.ofInstant(instant, java.time.ZoneOffset.UTC);
+    }
+
+    private WorkflowDefinitionDto toSidebarDto(com.conductor.repository.WorkflowDefinitionRepository.SidebarRow row) {
+        WorkflowDefinitionDto dto = new WorkflowDefinitionDto();
+        dto.setId(row.getId());
+        dto.setName(row.getName());
+        dto.setSlug(row.getSlug());
+        // Same default Statechart#noun applies.
+        dto.setNoun(row.getNoun() == null ? "Work Item" : row.getNoun());
+        dto.setEnabled(Boolean.TRUE.equals(row.getEnabled()));
+        dto.setKind(WorkflowKind.LIFECYCLE);
+        dto.setSidebarEnabled(Boolean.TRUE.equals(row.getSidebarEnabled()));
+        dto.setVersion(row.getVersion());
+        dto.setState(row.getState() == null ? null : WorkflowState.fromValue(row.getState()));
+        dto.setArea(row.getArea());
+        dto.setTag(row.getTag());
+        dto.setSchemaVersion(row.getSchemaVersion());
+        dto.setDefinition(null);
+        dto.setCreatedAt(utc(row.getCreatedAt()));
+        dto.setUpdatedAt(utc(row.getUpdatedAt()));
+        dto.setConsecutiveFailures(row.getConsecutiveFailures() == null ? 0 : row.getConsecutiveFailures());
+        return dto;
     }
 
     private WorkflowDefinitionDto toDto(WorkflowDefinition def) {

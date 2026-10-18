@@ -133,6 +133,8 @@ class CommentServiceTest {
         lenient().when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
         lenient().when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-2")).thenReturn(true);
         lenient().when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
+        lenient().when(commentRepository.findDocumentFilenames(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(java.util.Collections.singletonList(new Object[]{document.getId(), document.getFilename()}));
     }
 
     @Test
@@ -140,8 +142,7 @@ class CommentServiceTest {
         String docContent = "line one\nline two\nline three";
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
-        when(storageService.download(document.getStoragePath()))
-                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        document.setContent(docContent);
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
             if (c.getId() == null) c.setId("new-comment-id");
@@ -162,8 +163,7 @@ class CommentServiceTest {
         String docContent = "# Introduction\nThis is the summary\nMore details here";
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
-        when(storageService.download(document.getStoragePath()))
-                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        document.setContent(docContent);
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
             if (c.getId() == null) c.setId("new-comment-id");
@@ -184,8 +184,7 @@ class CommentServiceTest {
         String docContent = "First line\nSecond line";
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
-        when(storageService.download(document.getStoragePath()))
-                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        document.setContent(docContent);
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
             if (c.getId() == null) c.setId("new-comment-id");
@@ -206,8 +205,7 @@ class CommentServiceTest {
         String docContent = "Only one line";
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
-        when(storageService.download(document.getStoragePath()))
-                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        document.setContent(docContent);
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
             if (c.getId() == null) c.setId("new-comment-id");
@@ -253,8 +251,8 @@ class CommentServiceTest {
 
     @Test
     void listCommentsReturnsRepliesNested() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
+        when(commentRepository.findListByWorkItemId("issue-1")).thenReturn(List.of(comment));
 
         CommentReply reply = new CommentReply();
         reply.setId("reply-1");
@@ -263,7 +261,7 @@ class CommentServiceTest {
         reply.setContent("Agreed");
         reply.setCreatedAt(OffsetDateTime.now());
 
-        when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of(reply));
+        when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(reply));
 
         List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
 
@@ -342,13 +340,13 @@ class CommentServiceTest {
 
     @Test
     void listCommentsNullResolvedReturnsAll() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
-        when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
+        when(commentRepository.findListByWorkItemId("issue-1")).thenReturn(List.of(comment));
+        when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
         List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
 
-        verify(commentRepository).findAllByWorkItemId("issue-1");
+        verify(commentRepository).findListByWorkItemId("issue-1");
         assertThat(results).hasSize(1);
     }
 
@@ -365,27 +363,27 @@ class CommentServiceTest {
         resolvedComment.setCreatedAt(OffsetDateTime.now());
         resolvedComment.setUpdatedAt(OffsetDateTime.now());
 
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByWorkItemIdAndResolvedAtIsNotNull("issue-1"))
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
+        when(commentRepository.findListByWorkItemIdResolved("issue-1"))
                 .thenReturn(List.of(resolvedComment));
-        when(commentReplyRepository.findAllByCommentId("comment-resolved")).thenReturn(List.of());
+        when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
         List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", true, author);
 
-        verify(commentRepository).findAllByWorkItemIdAndResolvedAtIsNotNull("issue-1");
+        verify(commentRepository).findListByWorkItemIdResolved("issue-1");
         assertThat(results).hasSize(1);
         assertThat(results.get(0).resolvedAt()).isNotNull();
     }
 
     @Test
     void listCommentsResolvedFalseReturnsOnlyUnresolvedComments() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByWorkItemIdAndResolvedAtIsNull("issue-1")).thenReturn(List.of(comment));
-        when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
+        when(commentRepository.findListByWorkItemIdUnresolved("issue-1")).thenReturn(List.of(comment));
+        when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
         List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", false, author);
 
-        verify(commentRepository).findAllByWorkItemIdAndResolvedAtIsNull("issue-1");
+        verify(commentRepository).findListByWorkItemIdUnresolved("issue-1");
         assertThat(results).hasSize(1);
         assertThat(results.get(0).resolvedAt()).isNull();
     }
@@ -396,9 +394,9 @@ class CommentServiceTest {
         comment.setQuotedText("The quoted line text");
         comment.setLineStale(true);
 
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
-        when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
+        when(commentRepository.findListByWorkItemId("issue-1")).thenReturn(List.of(comment));
+        when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
         List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
 
@@ -417,8 +415,7 @@ class CommentServiceTest {
         Document doc = new Document();
         doc.setStoragePath("some/path.md");
         String content = "alpha\nbeta\ngamma";
-        when(storageService.download("some/path.md"))
-                .thenReturn(content.getBytes(StandardCharsets.UTF_8));
+        doc.setContent(content);
 
         assertThat(commentService.extractLineFromDocument(doc, 2)).isEqualTo("beta");
     }
@@ -428,18 +425,19 @@ class CommentServiceTest {
         Document doc = new Document();
         doc.setStoragePath("some/path.md");
         String content = "only one line";
-        when(storageService.download("some/path.md"))
-                .thenReturn(content.getBytes(StandardCharsets.UTF_8));
+        doc.setContent(content);
 
         assertThat(commentService.extractLineFromDocument(doc, 5)).isEqualTo("");
     }
 
     @Test
-    void extractLineFromDocumentNullStoragePathReturnsEmpty() {
+    void extractLineFromDocumentNullContentReturnsEmptyWithoutTouchingStorage() {
         Document doc = new Document();
-        doc.setStoragePath(null);
+        doc.setStoragePath("some/path.md");
+        doc.setContent(null);
 
         assertThat(commentService.extractLineFromDocument(doc, 1)).isEqualTo("");
+        org.mockito.Mockito.verifyNoInteractions(storageService);
     }
 
     @Test
@@ -448,8 +446,7 @@ class CommentServiceTest {
         doc.setStoragePath("some/path.md");
         // Windows line endings: \r\n — split on \n leaves \r on each line
         String content = "line one\r\nline two\r\nline three";
-        when(storageService.download("some/path.md"))
-                .thenReturn(content.getBytes(StandardCharsets.UTF_8));
+        doc.setContent(content);
 
         // line 2 will be "line two\r" — acceptable, document is stored as-is
         String result = commentService.extractLineFromDocument(doc, 2);
@@ -484,8 +481,7 @@ class CommentServiceTest {
         String docContent = "line one\nline two";
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
-        when(storageService.download(document.getStoragePath()))
-                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        document.setContent(docContent);
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
             if (c.getId() == null) c.setId("new-comment-id");

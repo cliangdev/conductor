@@ -15,6 +15,8 @@ public interface WorkItemReviewerRepository extends JpaRepository<WorkItemReview
 
     List<WorkItemReviewer> findAllByWorkItemId(String workItemId);
 
+    List<WorkItemReviewer> findAllByWorkItemIdIn(java.util.Collection<String> workItemIds);
+
     @Transactional
     void deleteByWorkItemIdAndUserId(String workItemId, String userId);
 }

@@ -66,6 +66,8 @@ public class SecurityConfig {
         // Lets the browser (fetch) read the per-request timing breakdown from RequestMetricsFilter.
         config.setExposedHeaders(List.of("Server-Timing"));
         config.setAllowCredentials(true);
+        // Cache the preflight for an hour, so the browser does not repeat an OPTIONS round trip before each call.
+        config.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
         return source;
@@ -85,7 +87,8 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   org.springframework.beans.factory.ObjectProvider<org.springframework.cache.CacheManager> cacheManager) throws Exception {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(AbstractHttpConfigurer::disable)
@@ -109,7 +112,8 @@ public class SecurityConfig {
             )
             .addFilterBefore(new RunMcpTokenAuthenticationFilter(runTokenService), UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(new ApiKeyAuthenticationFilter(projectApiKeyRepository, userApiKeyRepository), UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(new JwtAuthenticationFilter(jwtService, userRepository), UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(new JwtAuthenticationFilter(jwtService, userRepository,
+                    cacheManager.stream().findFirst().map(m -> m.getCache(CacheConfig.AUTH_USERS)).orElse(null)), UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, authException) ->
                     response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")));

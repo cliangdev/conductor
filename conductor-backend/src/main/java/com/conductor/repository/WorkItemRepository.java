@@ -21,6 +21,8 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
      */
     @Query("""
             SELECT i FROM WorkItem i
+            JOIN FETCH i.project
+            LEFT JOIN FETCH i.assignee
             WHERE i.project.id = :projectId
               AND (:type IS NULL OR i.type = :type)
               AND (:status IS NULL OR i.currentStatus = :status)
@@ -68,13 +70,18 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
      * derived property path is valid on {@link WorkItem}: {@code project} (ManyToOne) → {@code project.id}
      * plus {@code sequenceNumber}.
      */
-    Optional<WorkItem> findByProjectIdAndSequenceNumber(String projectId, Integer sequenceNumber);
+    @Query("SELECT i FROM WorkItem i JOIN FETCH i.project LEFT JOIN FETCH i.assignee "
+            + "WHERE i.project.id = :projectId AND i.sequenceNumber = :sequenceNumber")
+    Optional<WorkItem> findByProjectIdAndSequenceNumber(@Param("projectId") String projectId,
+                                                        @Param("sequenceNumber") Integer sequenceNumber);
 
     @Query("SELECT COUNT(i) FROM WorkItem i WHERE i.workflow = :slug")
     long countByWorkflowSlug(@Param("slug") String slug);
 
-    @Query("SELECT i.workflow, COUNT(i) FROM WorkItem i WHERE i.workflow IN :slugs GROUP BY i.workflow")
-    List<Object[]> countGroupedByWorkflowSlug(@Param("slugs") Collection<String> slugs);
+    @Query("SELECT i.workflow, COUNT(i) FROM WorkItem i WHERE i.project.id = :projectId "
+            + "AND i.workflow IN :slugs GROUP BY i.workflow")
+    List<Object[]> countGroupedByWorkflowSlug(@Param("projectId") String projectId,
+                                              @Param("slugs") Collection<String> slugs);
 
     @Query("SELECT COUNT(i) FROM WorkItem i WHERE i.workflow = :slug AND i.workflowVersion = :version")
     long countByWorkflowSlugAndVersion(@Param("slug") String slug, @Param("version") int version);
