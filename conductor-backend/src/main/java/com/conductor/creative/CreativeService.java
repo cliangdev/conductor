@@ -59,7 +59,7 @@ import java.util.stream.Collectors;
 @Service
 public class CreativeService {
 
-    private static final int PHOTO_URL_EXPIRY_MINUTES = 15;
+    private static final int PHOTO_URL_EXPIRY_MINUTES = 60;
     private static final Logger log = LoggerFactory.getLogger(CreativeService.class);
 
     private final CreativeRepository creativeRepository;

@@ -316,7 +316,7 @@ export function CreativesTab({
                           <span className="relative block aspect-[4/5] w-full bg-surface-3">
                             {c.latestRenderThumbnailUrl && (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={c.latestRenderThumbnailUrl} alt="" className="h-full w-full object-cover" />
+                              <img loading="lazy" decoding="async" src={c.latestRenderThumbnailUrl} alt="" className="h-full w-full object-cover" />
                             )}
                             {!rendered && (
                               <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
@@ -531,7 +531,7 @@ export function FrameStrip({ frames }: { frames: CreativeRenderFrame[] }) {
           >
             {src && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={src} alt="" className="h-full w-full object-cover" />
+              <img loading="lazy" decoding="async" src={src} alt="" className="h-full w-full object-cover" />
             )}
           </span>
         )

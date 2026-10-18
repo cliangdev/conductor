@@ -249,7 +249,7 @@ export function RendersPanel({
                         aria-label={`View ${frameLabel(frame)} full size`}
                         className="block w-full"
                       >
-                        <video
+                        <video preload="metadata"
                           controls
                           poster={frame.posterUrl ?? undefined}
                           src={frame.url}
@@ -265,7 +265,7 @@ export function RendersPanel({
                         className="block w-full"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
+                        <img loading="lazy" decoding="async"
                           src={frame.url}
                           alt={frameLabel(frame)}
                           className="aspect-square w-full bg-surface-3 object-contain"
@@ -314,7 +314,7 @@ export function RendersPanel({
               onNext={viewerFrameIndex < frames.length - 1 ? () => setViewerFrameIndex(viewerFrameIndex + 1) : undefined}
             >
               {isVideoFrame(frames[viewerFrameIndex]) ? (
-                <video
+                <video preload="metadata"
                   controls
                   poster={frames[viewerFrameIndex].posterUrl ?? undefined}
                   src={frames[viewerFrameIndex].url}
@@ -322,7 +322,7 @@ export function RendersPanel({
                 />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img
+                <img loading="lazy" decoding="async"
                   src={frames[viewerFrameIndex].url}
                   alt={frameLabel(frames[viewerFrameIndex])}
                   className="max-h-[90vh] max-w-[85vw] object-contain"

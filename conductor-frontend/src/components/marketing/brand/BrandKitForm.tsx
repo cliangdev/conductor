@@ -433,7 +433,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
                       <div className="flex aspect-square items-center justify-center overflow-hidden rounded-md border border-dashed border-border bg-surface-3">
                         {url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={url} alt={label} className="max-h-full max-w-full object-contain" />
+                          <img loading="lazy" decoding="async" src={url} alt={label} className="max-h-full max-w-full object-contain" />
                         ) : (
                           <UploadCloudIcon className="h-4 w-4 text-muted-foreground" aria-hidden />
                         )}

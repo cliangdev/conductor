@@ -27,10 +27,10 @@ export function MediaThumb({
     return <span className={base} aria-hidden />
   }
   if (isVideoContentType(asset.contentType)) {
-    return <video src={asset.previewUrl} className={base} aria-label={asset.label || asset.type} />
+    return <video preload="metadata" src={asset.previewUrl} className={base} aria-label={asset.label || asset.type} />
   }
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={asset.previewUrl} alt={asset.label || asset.type} className={base} />
+    <img loading="lazy" decoding="async" src={asset.previewUrl} alt={asset.label || asset.type} className={base} />
   )
 }

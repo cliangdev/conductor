@@ -92,7 +92,7 @@ public class AssetService {
 
     static final String GCS_PREFIX = "marketing-assets";
     private static final int UPLOAD_URL_EXPIRY_MINUTES = 60;
-    private static final int PREVIEW_URL_EXPIRY_MINUTES = 15;
+    private static final int PREVIEW_URL_EXPIRY_MINUTES = 60;
 
     private final AssetRepository assetRepository;
     private final WorkItemRepository workItemRepository;
@@ -378,6 +378,7 @@ public class AssetService {
         asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
         asset.setDone(true);
         assetRepository.save(asset);
+        storageService.markCacheable(asset.getGcsPath());
         if (asset.getMediaId() != null) {
             photoService.confirmForPostUpload(asset.getMediaId(), asset.getSizeBytes(), asset.getWidth(), asset.getHeight());
         }
@@ -428,7 +429,7 @@ public class AssetService {
         return value != null && value.signum() > 0 ? value : null;
     }
 
-    /** Short-lived (15 minute) signed GET for previewing an uploaded file Asset. Reads are never gated by status. */
+    /** Short-lived (60 minute) signed GET for previewing an uploaded file Asset. Reads are never gated by status. */
     @Transactional(readOnly = true)
     public String resolvePreviewUrl(String projectId, String workItemId, String assetId, User caller) {
         verifyMembership(projectId, caller.getId());

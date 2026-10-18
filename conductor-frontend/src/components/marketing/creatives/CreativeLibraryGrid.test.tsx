@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({
@@ -21,6 +21,11 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   useCan: (cap: string) => mockCan(cap),
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
+
+const { mountBoardSpy } = vi.hoisted(() => ({
+  mountBoardSpy: vi.fn(() => ({ ready: Promise.resolve(), seek: vi.fn(), destroy: vi.fn() })),
+}))
+vi.mock('@cliangdev/creative-render/mount', () => ({ mountBoard: mountBoardSpy }))
 
 Object.assign(navigator, {
   clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -340,5 +345,32 @@ describe('CreativeLibraryGrid', () => {
       expect(thumb).not.toHaveTextContent('1 slides')
       expect(screen.getByText('Image')).toBeInTheDocument()
     })
+  })
+
+  it('does not redraw a live-board tile when an unrelated media list arrives', async () => {
+    let resolveMedia: (rows: CreativePhoto[]) => void = () => {}
+    const mediaPromise = new Promise<CreativePhoto[]>((r) => {
+      resolveMedia = r
+    })
+    ;(apiGet as Mock).mockImplementation((path: string) => {
+      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
+      if (path.includes('/marketing/photos')) return mediaPromise
+      if (path.includes('/creatives')) return Promise.resolve([creative()])
+      return Promise.reject(new Error(`unexpected GET ${path}`))
+    })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
+    await screen.findByText('12a')
+    await waitFor(() => expect(mountBoardSpy).toHaveBeenCalledTimes(1))
+    const handle = mountBoardSpy.mock.results[0].value as unknown as { destroy: Mock }
+
+    resolveMedia([clipMedia({ id: 'unrelated-clip' })])
+    // Let the media list land and the grid re-render.
+    await act(async () => {
+      await mediaPromise
+    })
+
+    expect(mountBoardSpy).toHaveBeenCalledTimes(1)
+    expect(handle.destroy).not.toHaveBeenCalled()
   })
 })

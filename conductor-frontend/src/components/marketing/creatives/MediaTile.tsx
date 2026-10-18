@@ -16,7 +16,7 @@ export function MediaTile({ item }: { item: CreativePhoto }) {
       <>
         {item.posterUrl && !posterFailed ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.posterUrl} alt={item.label || 'Clip'} onError={() => setPosterFailed(true)} className="h-full w-full object-cover" />
+          <img loading="lazy" decoding="async" src={item.posterUrl} alt={item.label || 'Clip'} onError={() => setPosterFailed(true)} className="h-full w-full object-cover" />
         ) : (
           <span className="flex h-full items-center justify-center text-muted-foreground">
             <FilmIcon className="h-5 w-5" aria-hidden />
@@ -43,7 +43,7 @@ export function MediaTile({ item }: { item: CreativePhoto }) {
   }
   return item.url ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={item.url} alt={item.label || 'Creative photo'} className="h-full w-full object-cover" />
+    <img loading="lazy" decoding="async" src={item.url} alt={item.label || 'Creative photo'} className="h-full w-full object-cover" />
   ) : (
     <span className="flex h-full items-center justify-center text-muted-foreground">
       <ImageOffIcon className="h-4 w-4" aria-hidden />

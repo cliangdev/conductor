@@ -64,7 +64,7 @@ public class CreativeRenderService {
     static final String CONTENT_TYPE_MP4 = "video/mp4";
     private static final Set<String> ALLOWED_FRAME_CONTENT_TYPES = Set.of(CONTENT_TYPE_JPEG, CONTENT_TYPE_PNG, CONTENT_TYPE_MP4);
     private static final int MAX_RENDERS_LISTED = 20;
-    private static final int FRAME_URL_EXPIRY_MINUTES = 15;
+    private static final int FRAME_URL_EXPIRY_MINUTES = 60;
 
     private static final Logger log = LoggerFactory.getLogger(CreativeRenderService.class);
 

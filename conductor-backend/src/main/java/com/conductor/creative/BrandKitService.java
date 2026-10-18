@@ -42,7 +42,7 @@ public class BrandKitService {
 
     public static final String DEFAULT_SLUG = "default";
     private static final String DEFAULT_KIT_NAME = "Default";
-    private static final int IMAGE_URL_EXPIRY_MINUTES = 15;
+    private static final int IMAGE_URL_EXPIRY_MINUTES = 60;
     private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
 
     private static final Map<String, String> ALLOWED_IMAGE_TYPES = Map.of(
@@ -356,7 +356,9 @@ public class BrandKitService {
             throw new BusinessException("Confirmed path does not match a minted upload for this Brand Kit image slot");
         }
         kit.setGcsPathForSlot(slot, gcsPath);
-        return brandKitRepository.save(kit);
+        BrandKit saved = brandKitRepository.save(kit);
+        storageService.markCacheable(gcsPath);
+        return saved;
     }
 
     @Transactional
