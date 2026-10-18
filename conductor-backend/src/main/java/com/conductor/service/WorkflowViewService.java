@@ -71,14 +71,14 @@ public class WorkflowViewService {
      * skipped; absent slugs simply have no entry (caller defaults to 0).
      */
     @Transactional(readOnly = true)
-    public Map<String, Long> workItemCountsBySlug(List<WorkflowDefinition> defs) {
+    public Map<String, Long> workItemCountsBySlug(String projectId, List<WorkflowDefinition> defs) {
         Set<String> slugs = defs.stream()
                 .filter(WorkflowDefinition::isLifecycle)
                 .map(this::extractSlug)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         if (slugs.isEmpty()) return Map.of();
-        return workItemRepository.countGroupedByWorkflowSlug(slugs)
+        return workItemRepository.countGroupedByWorkflowSlug(projectId, slugs)
                 .stream()
                 .collect(Collectors.toMap(r -> (String) r[0], r -> (Long) r[1]));
     }

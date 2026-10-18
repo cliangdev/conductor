@@ -880,8 +880,9 @@ public class WorkItemService {
     }
 
     private void verifyReadAccess(String projectId, String userId) {
-        projectRepository.findById(projectId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+        if (!projectRepository.existsById(projectId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new ForbiddenException("You do not have access to this project");
         }

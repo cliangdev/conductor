@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.BusinessException;
@@ -32,6 +33,21 @@ public class WorkflowDefinitionLifecycleService {
     private final WorkflowDefinitionVersionRepository versionRepository;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionValidator validator;
+
+
+    private WorkflowDefinitionResolver definitionResolver;
+
+    /** Optional (setter-injected so unit tests can construct the service directly). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDefinitionResolver(WorkflowDefinitionResolver definitionResolver) {
+        this.definitionResolver = definitionResolver;
+    }
+
+    private void evictStatechartCache() {
+        if (definitionResolver != null) {
+            definitionResolver.evictAll();
+        }
+    }
 
     public WorkflowDefinitionLifecycleService(WorkflowDefinitionRepository definitionRepository,
                                               WorkflowDefinitionVersionRepository versionRepository,
@@ -116,6 +132,7 @@ public class WorkflowDefinitionLifecycleService {
             snapshot.setPublishedBy(callerId);
             versionRepository.save(snapshot);
         }
+        evictStatechartCache();
 
         return saved;
     }
@@ -133,6 +150,7 @@ public class WorkflowDefinitionLifecycleService {
             throw new BusinessException("Only a PUBLISHED workflow can be disabled (current state: " + def.getState() + ")");
         }
         def.setState(STATE_DISABLED);
+        evictStatechartCache();
         // sidebarEnabled is NOT touched — the state=PUBLISHED filter in listSidebarWorkflows
         // already excludes DISABLED workflows. sidebarEnabled remains the user's sidebar preference.
         return definitionRepository.save(def);
@@ -147,6 +165,7 @@ public class WorkflowDefinitionLifecycleService {
             throw new BusinessException("Only a DISABLED workflow can be re-enabled (current state: " + def.getState() + ")");
         }
         def.setState(STATE_PUBLISHED);
+        evictStatechartCache();
         // sidebarEnabled preserved — if true before disabling, the workflow re-appears in sidebar.
         // If the user had explicitly hidden it (sidebarEnabled=false), that preference is kept.
         return definitionRepository.save(def);

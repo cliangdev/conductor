@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
@@ -52,6 +53,21 @@ public class WorkflowService {
     private final RuntimeTargetService runtimeTargetService;
     private final ObjectMapper objectMapper;
     private final WorkflowYamlParser yamlParser;
+
+
+    private WorkflowDefinitionResolver definitionResolver;
+
+    /** Optional (setter-injected so unit tests can construct the service directly). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDefinitionResolver(WorkflowDefinitionResolver definitionResolver) {
+        this.definitionResolver = definitionResolver;
+    }
+
+    private void evictStatechartCache() {
+        if (definitionResolver != null) {
+            definitionResolver.evictAll();
+        }
+    }
 
     public WorkflowService(WorkflowDefinitionRepository workflowRepository,
                            ProjectRepository projectRepository,
@@ -174,6 +190,7 @@ public class WorkflowService {
         if (request.getYaml() != null) def.setYaml(request.getYaml());
         if (request.getDefinition() != null) def.setDefinition(toJsonNode(request.getDefinition()));
         WorkflowDefinition updated = workflowRepository.save(def);
+        evictStatechartCache();
         if (request.getYaml() != null) {
             workflowTriggerService.upsertSchedule(updated);
         }
@@ -204,6 +221,7 @@ public class WorkflowService {
             }
         }
         workflowRepository.delete(def);
+        evictStatechartCache();
     }
 
     /** The statechart slug (its {@code definition.id}) from a persisted definition, or null if absent. */
@@ -269,6 +287,17 @@ public class WorkflowService {
                 .filter(w -> state == null || state.equalsIgnoreCase(w.getState()))
                 .filter(w -> sidebar == null || w.isSidebarEnabled() == sidebar)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * The sidebar nav's slim read: lifecycle, sidebar-enabled rows filtered in SQL, with no statechart
+     * loaded or parsed and no yaml / definition / webhook token. Same filter semantics as
+     * {@link #listWorkflows(String, Boolean, String, Boolean)} with {@code lifecycle=true, sidebar=true}.
+     */
+    @Transactional(readOnly = true)
+    public List<com.conductor.repository.WorkflowDefinitionRepository.SidebarRow> listSidebarRows(
+            String projectId, String state) {
+        return workflowRepository.findSidebarLifecycleRows(projectId, state);
     }
 
     @Transactional

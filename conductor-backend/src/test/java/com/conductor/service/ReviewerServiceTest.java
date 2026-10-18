@@ -236,8 +236,8 @@ class ReviewerServiceTest {
 
         when(workItemReviewerRepository.findAllByWorkItemId(ISSUE_ID))
                 .thenReturn(List.of(reviewer));
-        when(userRepository.findById(reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerUser));
+        when(userRepository.findAllById(org.mockito.ArgumentMatchers.<Iterable<String>>any()))
+                .thenReturn(List.of(reviewerUser));
 
         List<ReviewerView> result = reviewerService.listReviewers(PROJECT_ID, ISSUE_ID, adminUser);
 

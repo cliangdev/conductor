@@ -115,8 +115,10 @@ public class ReviewerService {
         }
         requireWorkItemInProject(projectId, workItemId);
 
-        return workItemReviewerRepository.findAllByWorkItemId(workItemId).stream()
-                .map(this::toReviewerView)
+        List<WorkItemReviewer> reviewers = workItemReviewerRepository.findAllByWorkItemId(workItemId);
+        Map<String, User> usersById = usersFor(reviewers);
+        return reviewers.stream()
+                .map(r -> toReviewerView(r, usersById.get(r.getUserId())))
                 .toList();
     }
 
@@ -126,14 +128,43 @@ public class ReviewerService {
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
     }
 
+    /**
+     * Reviewers for a whole page of Work Items, keyed by Work Item id: one query for the assignments and one
+     * for their users, however many items there are. No per-item access check; the caller has already
+     * authorised the project.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<ReviewerView>> reviewersByWorkItem(List<String> workItemIds) {
+        if (workItemIds == null || workItemIds.isEmpty()) {
+            return Map.of();
+        }
+        List<WorkItemReviewer> all = workItemReviewerRepository.findAllByWorkItemIdIn(workItemIds);
+        Map<String, User> usersById = usersFor(all);
+        Map<String, List<ReviewerView>> byItem = new java.util.HashMap<>();
+        for (WorkItemReviewer r : all) {
+            byItem.computeIfAbsent(r.getWorkItemId(), id -> new java.util.ArrayList<>())
+                    .add(toReviewerView(r, usersById.get(r.getUserId())));
+        }
+        return byItem;
+    }
+
+    /** The assigned users for a set of reviewer rows in a single query. */
+    private Map<String, User> usersFor(List<WorkItemReviewer> reviewers) {
+        Map<String, User> byId = new java.util.HashMap<>();
+        if (!reviewers.isEmpty()) {
+            userRepository.findAllById(reviewers.stream().map(WorkItemReviewer::getUserId).distinct().toList())
+                    .forEach(u -> byId.put(u.getId(), u));
+        }
+        return byId;
+    }
+
     private void verifyCallerCanManageReviewers(String projectId, String callerId) {
         if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can manage reviewers");
         }
     }
 
-    private ReviewerView toReviewerView(WorkItemReviewer reviewer) {
-        User user = userRepository.findById(reviewer.getUserId()).orElse(null);
+    private ReviewerView toReviewerView(WorkItemReviewer reviewer, User user) {
         return new ReviewerView(
                 reviewer.getUserId(),
                 user != null ? user.getName() : null,

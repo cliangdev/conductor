@@ -52,11 +52,20 @@ public class ProjectSecurityService {
      * Machine credentials pass: they are issued per project and act on its behalf.
      */
     public ProjectActor requireProjectEditor(String projectId) {
-        ProjectActor actor = requireProjectAccess(projectId);
-        if (!actor.isMachine() && !isAdminOrCreator(projectId, actor.userId())) {
-            throw new ForbiddenException("Requires ADMIN or CREATOR role");
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = auth != null ? auth.getPrincipal() : null;
+        if (principal instanceof User user) {
+            // One membership read answers both "is a member" and "has the role".
+            MemberRole role = projectMemberRepository.findByProjectIdAndUserId(projectId, user.getId())
+                    .map(member -> member.getRole())
+                    .orElseThrow(() -> new ForbiddenException("Not a member of this project"));
+            if (role != MemberRole.ADMIN && role != MemberRole.CREATOR) {
+                throw new ForbiddenException("Requires ADMIN or CREATOR role");
+            }
+            return ProjectActor.of(user);
         }
-        return actor;
+        // Machine credentials pass: they are issued per project and act on its behalf.
+        return requireProjectAccess(projectId);
     }
 
     /** Byline for a machine actor — the run id when there is one, so writes stay traceable to a run. */

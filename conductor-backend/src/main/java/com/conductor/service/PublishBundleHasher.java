@@ -81,18 +81,28 @@ public class PublishBundleHasher {
                 && !targetRepository.findAllByWorkItemId(workItem.getId()).isEmpty();
     }
 
+    /** As {@link #appliesTo(WorkItem)}, for a caller that already holds the item's targets. */
+    public boolean appliesTo(WorkItem workItem, List<PostPublishTarget> targets) {
+        return workItem != null && workItem.getId() != null && !targets.isEmpty();
+    }
+
     /** The hex SHA-256 of the Work Item's current publish bundle. */
     @Transactional(readOnly = true)
     public String hash(WorkItem workItem) {
+        return hash(workItem, targetRepository.findAllByWorkItemId(workItem.getId()));
+    }
+
+    /** As {@link #hash(WorkItem)}, for a caller that already holds the item's targets. */
+    @Transactional(readOnly = true)
+    public String hash(WorkItem workItem, List<PostPublishTarget> loadedTargets) {
         Map<String, Object> bundle = new TreeMap<>();
         bundle.put("caption", workItem.getDescription());
-        bundle.put("targets", targets(workItem.getId()));
+        bundle.put("targets", targets(loadedTargets));
         bundle.put("assets", assets(workItem.getId()));
         return sha256(canonicalJson(bundle));
     }
 
-    private List<Map<String, Object>> targets(String workItemId) {
-        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItemId);
+    private List<Map<String, Object>> targets(List<PostPublishTarget> targets) {
         Map<String, List<String>> selections = selectionsByTarget(targets);
         return canonicalOrder(targets.stream()
                 // Only a custom-media target has a selection to look up, and an unsaved target has no id

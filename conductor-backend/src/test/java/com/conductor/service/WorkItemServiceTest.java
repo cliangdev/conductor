@@ -429,7 +429,7 @@ class WorkItemServiceTest {
 
     @Test
     void listIssuesFiltersByType() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null, null))
                 .thenReturn(List.of(testIssue));
@@ -442,7 +442,7 @@ class WorkItemServiceTest {
 
     @Test
     void listIssuesFiltersByStatus() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null, null))
                 .thenReturn(List.of(testIssue));
@@ -455,7 +455,7 @@ class WorkItemServiceTest {
 
     @Test
     void listIssuesFiltersByTypeAndStatus() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null, null))
                 .thenReturn(List.of(testIssue));
@@ -467,7 +467,7 @@ class WorkItemServiceTest {
 
     @Test
     void listIssuesFiltersByWorkflow() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING", null))
                 .thenReturn(List.of(testIssue));
@@ -808,7 +808,7 @@ class WorkItemServiceTest {
 
     @Test
     void resolveByReferenceWithHumanActorEnforcesReadAccess() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
 
         assertThatThrownBy(() ->

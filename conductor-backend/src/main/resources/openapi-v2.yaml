@@ -4987,6 +4987,14 @@ components:
             in a filter list. Empty until something is tagged.
           items:
             type: string
+        reviewers:
+          type: array
+          description: >-
+            The reviewers assigned to this Work Item. Populated on the list response only (loaded in one
+            batch for the whole page, so the list never needs a per-row reviewers call); omitted on the
+            single-item reads, which have GET .../reviewers.
+          items:
+            $ref: "#/components/schemas/ReviewerResponse"
         externalLinks:
           type: array
           description: >-

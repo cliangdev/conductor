@@ -12,6 +12,9 @@ import com.conductor.generated.v2.model.CreateWorkItemRequest;
 import com.conductor.generated.v2.model.PatchWorkItemRequest;
 import com.conductor.generated.v2.model.WorkItemAssignee;
 import com.conductor.generated.v2.model.WorkItemResponse;
+import com.conductor.generated.v2.model.ReviewerResponse;
+import com.conductor.service.ReviewerService;
+import com.conductor.service.view.ReviewerView;
 import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkItemWorkflowService;
 import com.conductor.service.view.AvailableTransitionsView;
@@ -45,11 +48,14 @@ public class WorkItemController implements WorkItemsApi {
 
     private final WorkItemService workItemService;
     private final WorkItemWorkflowService workItemWorkflowService;
+    private final ReviewerService reviewerService;
 
     public WorkItemController(WorkItemService workItemService,
-                              WorkItemWorkflowService workItemWorkflowService) {
+                              WorkItemWorkflowService workItemWorkflowService,
+                              ReviewerService reviewerService) {
         this.workItemService = workItemService;
         this.workItemWorkflowService = workItemWorkflowService;
+        this.reviewerService = reviewerService;
     }
 
     // open-in-view is disabled, so the entity→DTO mapping (which touches lazy User/Project associations)
@@ -84,10 +90,20 @@ public class WorkItemController implements WorkItemsApi {
         // One query for the whole page, like the comment counts beside it — the list is exactly where an
         // N+1 would grow with the backlog.
         Map<String, List<Asset>> links = workItemService.externalLinks(ids);
+        // Reviewers for the whole page in one batched read (plus one user batch), so the list view never
+        // fans out a reviewers call per row.
+        Map<String, List<ReviewerView>> reviewers = reviewerService.reviewersByWorkItem(ids);
         List<WorkItemResponse> responses = items.stream()
                 .map(item -> toResponse(item, counts.getOrDefault(item.getId(), 0L),
                         links.getOrDefault(item.getId(), List.of()))
-                        .statusLabel(statusLabel(projectId, item)))
+                        .statusLabel(statusLabel(projectId, item))
+                        .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
+                                .map(v -> new ReviewerResponse(v.userId())
+                                        .name(v.name())
+                                        .email(v.email())
+                                        .avatarUrl(v.avatarUrl())
+                                        .reviewVerdict(v.reviewVerdict()))
+                                .toList()))
                 .toList();
         return ResponseEntity.ok(responses);
     }

@@ -110,11 +110,12 @@ public class CommentService {
     }
 
     String extractLineFromDocument(Document document, int lineNumber) {
-        if (document.getStoragePath() == null) {
+        // The text is already on the row (written alongside the stored object), so there is no
+        // storage round trip to find one line.
+        String content = document.getContent();
+        if (content == null) {
             return "";
         }
-        byte[] bytes = storageService.download(document.getStoragePath());
-        String content = new String(bytes, StandardCharsets.UTF_8);
         String[] lines = content.split("\n", -1);
         int index = lineNumber - 1;
         if (index < 0 || index >= lines.length) {
@@ -130,19 +131,33 @@ public class CommentService {
 
         List<Comment> comments;
         if (resolved == null) {
-            comments = commentRepository.findAllByWorkItemId(workItemId);
+            comments = commentRepository.findListByWorkItemId(workItemId);
         } else if (resolved) {
-            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNotNull(workItemId);
+            comments = commentRepository.findListByWorkItemIdResolved(workItemId);
         } else {
-            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNull(workItemId);
+            comments = commentRepository.findListByWorkItemIdUnresolved(workItemId);
+        }
+        if (comments.isEmpty()) {
+            return List.of();
+        }
+
+        // Constant query count: replies for every comment in one query (authors fetch-joined), and the
+        // document filenames in one query that never touches documents.content.
+        Map<String, List<CommentReplyView>> repliesByComment = new java.util.HashMap<>();
+        for (CommentReply reply : commentReplyRepository.findAllByCommentIdIn(
+                comments.stream().map(Comment::getId).toList())) {
+            repliesByComment.computeIfAbsent(reply.getComment().getId(), id -> new java.util.ArrayList<>())
+                    .add(toCommentReplyView(reply));
+        }
+        Map<String, String> filenames = new java.util.HashMap<>();
+        for (Object[] row : commentRepository.findDocumentFilenames(
+                comments.stream().map(c -> c.getDocument().getId()).distinct().toList())) {
+            filenames.put((String) row[0], (String) row[1]);
         }
 
         return comments.stream()
                 .map(comment -> {
-                    List<CommentReplyView> replies = commentReplyRepository.findAllByCommentId(comment.getId())
-                            .stream()
-                            .map(this::toCommentReplyView)
-                            .toList();
+                    List<CommentReplyView> replies = repliesByComment.getOrDefault(comment.getId(), List.of());
 
                     return new CommentWithRepliesView(
                             comment.getId(),
@@ -154,7 +169,7 @@ public class CommentService {
                             comment.getLineNumber(),
                             comment.getQuotedText(),
                             comment.isLineStale(),
-                            comment.getDocument().getFilename(),
+                            filenames.get(comment.getDocument().getId()),
                             comment.getResolvedAt(),
                             replies);
                 })
@@ -240,8 +255,9 @@ public class CommentService {
     }
 
     private void verifyReadAccess(String projectId, String userId) {
-        projectRepository.findById(projectId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+        if (!projectRepository.existsById(projectId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, userId)) {
             throw new ForbiddenException("You do not have access to this project");
         }

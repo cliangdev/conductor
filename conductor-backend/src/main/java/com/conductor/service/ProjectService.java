@@ -21,6 +21,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -94,15 +96,24 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public List<ProjectSummary> listProjects(User caller) {
-        return projectRepository.findProjectsByMemberUserId(caller.getId()).stream()
-                .map(project -> {
-                    String roleStr = projectMemberRepository
-                            .findByProjectIdAndUserId(project.getId(), caller.getId())
-                            .map(m -> m.getRole().name())
-                            .orElse(null);
-                    long memberCount = projectMemberRepository.findByProjectId(project.getId()).size();
-                    return toProjectSummary(project, roleStr, (int) memberCount);
-                })
+        List<Project> projects = projectRepository.findProjectsByMemberUserId(caller.getId());
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        // The caller's role in every project from one read of their memberships, and every member count
+        // from one grouped count: three queries in total, however many workspaces they belong to.
+        Map<String, String> roleByProject = new HashMap<>();
+        for (ProjectMember m : projectMemberRepository.findByUserId(caller.getId())) {
+            roleByProject.put(m.getProject().getId(), m.getRole().name());
+        }
+        Map<String, Long> countByProject = new HashMap<>();
+        for (Object[] row : projectMemberRepository.countGroupedByProjectIds(
+                projects.stream().map(Project::getId).toList())) {
+            countByProject.put((String) row[0], (Long) row[1]);
+        }
+        return projects.stream()
+                .map(project -> toProjectSummary(project, roleByProject.get(project.getId()),
+                        countByProject.getOrDefault(project.getId(), 0L).intValue()))
                 .toList();
     }
 
@@ -115,21 +126,22 @@ public class ProjectService {
             throw new ForbiddenException("You do not have access to this project");
         }
 
-        long memberCount = projectMemberRepository.findByProjectId(projectId).size();
+        long memberCount = projectMemberRepository.countByProjectId(projectId);
 
         return toProjectDetail(project, (int) memberCount);
     }
 
     @Transactional(readOnly = true)
     public List<MemberResponse> listMembers(String projectId, User caller) {
-        projectRepository.findById(projectId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+        if (!projectRepository.existsById(projectId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
 
         if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new ForbiddenException("You do not have access to this project");
         }
 
-        return projectMemberRepository.findByProjectId(projectId).stream()
+        return projectMemberRepository.findByProjectIdWithUser(projectId).stream()
                 .map(this::toMemberResponse)
                 .toList();
     }
