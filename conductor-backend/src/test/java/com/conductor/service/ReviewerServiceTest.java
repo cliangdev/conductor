@@ -94,6 +94,13 @@ class ReviewerServiceTest {
         reviewerMember.setProject(project);
         reviewerMember.setUser(reviewerUser);
         reviewerMember.setRole(MemberRole.REVIEWER);
+
+        // The Work Item lives in the path's project; individual tests may re-stub it with a richer item.
+        com.conductor.entity.WorkItem inProject = new com.conductor.entity.WorkItem();
+        inProject.setId(ISSUE_ID);
+        inProject.setTitle("Item");
+        inProject.setProject(project);
+        org.mockito.Mockito.lenient().when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(inProject));
     }
 
     @Test

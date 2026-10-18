@@ -326,7 +326,8 @@ class WorkItemServiceTest {
     void deletingAWorkItemRevokesAnyNativeHandoff() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
 
-        workItemService.deleteWorkItem("proj-1", "issue-1");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        workItemService.deleteWorkItem("proj-1", "issue-1", caller);
 
         InOrder inOrder = Mockito.inOrder(nativeHandoffService, publishTargetService, workItemRepository);
         inOrder.verify(nativeHandoffService).unschedule(testIssue);

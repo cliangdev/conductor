@@ -51,6 +51,9 @@ class DocumentServiceTest {
     @Mock
     private CommentRepository commentRepository;
 
+    @Mock
+    private ProjectSecurityService projectSecurityService;
+
     private DocumentService documentService;
 
     private WorkItem testIssue;
@@ -58,7 +61,7 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, workItemRepository, gcpStorageService, commentRepository, 15);
+        documentService = new DocumentService(documentRepository, workItemRepository, gcpStorageService, commentRepository, projectSecurityService, 15);
 
         org.mockito.Mockito.lenient().when(commentRepository.findAllByDocumentId(anyString())).thenReturn(List.of());
 

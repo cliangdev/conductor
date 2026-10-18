@@ -58,6 +58,7 @@ public class ReviewerService {
     @Transactional
     public WorkItemReviewer assignReviewer(String projectId, String workItemId, String targetUserId, User caller) {
         verifyCallerCanManageReviewers(projectId, caller.getId());
+        requireWorkItemInProject(projectId, workItemId);
 
         ProjectMember targetMember = projectMemberRepository.findByProjectIdAndUserId(projectId, targetUserId)
                 .orElseThrow(() -> new BusinessException("User is not a project member"));
@@ -99,6 +100,7 @@ public class ReviewerService {
     @Transactional
     public void unassignReviewer(String projectId, String workItemId, String targetUserId, User caller) {
         verifyCallerCanManageReviewers(projectId, caller.getId());
+        requireWorkItemInProject(projectId, workItemId);
 
         workItemReviewerRepository.findByWorkItemIdAndUserId(workItemId, targetUserId)
                 .orElseThrow(() -> new EntityNotFoundException("Reviewer assignment not found"));
@@ -111,10 +113,17 @@ public class ReviewerService {
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, caller.getId())) {
             throw new EntityNotFoundException("Work Item not found");
         }
+        requireWorkItemInProject(projectId, workItemId);
 
         return workItemReviewerRepository.findAllByWorkItemId(workItemId).stream()
                 .map(this::toReviewerView)
                 .toList();
+    }
+
+    private void requireWorkItemInProject(String projectId, String workItemId) {
+        workItemRepository.findById(workItemId)
+                .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
     }
 
     private void verifyCallerCanManageReviewers(String projectId, String callerId) {

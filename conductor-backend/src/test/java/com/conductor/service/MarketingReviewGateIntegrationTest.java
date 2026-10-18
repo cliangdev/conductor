@@ -365,7 +365,7 @@ class MarketingReviewGateIntegrationTest {
         String postId = reload().getId();
         assertThat(postPublishTargetRepository.findAllByWorkItemId(postId)).isNotEmpty();
 
-        workItemService.deleteWorkItem(project.getId(), postId);
+        workItemService.deleteWorkItem(project.getId(), postId, author);
 
         assertThat(workItemRepository.findById(postId)).isEmpty();
         assertThat(postPublishTargetRepository.findAllByWorkItemId(postId)).isEmpty();

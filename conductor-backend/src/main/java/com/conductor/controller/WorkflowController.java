@@ -175,12 +175,18 @@ public class WorkflowController implements WorkflowsApi {
     @Override
     public ResponseEntity<List<WorkflowDefinitionDto>> listWorkflows(String projectId, Boolean lifecycle,
                                                                      String state, Boolean sidebar) {
+        String userId = currentUserId();
+        requireMemberOrNotFound(projectId, userId);
+        boolean canSeeToken = projectSecurityService.isAdminOrCreator(projectId, userId);
         // Filtering is domain/query logic and lives in the service; the controller stays a thin adapter.
         List<WorkflowDefinition> defs = workflowService.listWorkflows(projectId, lifecycle, state, sidebar);
         Map<String, Long> wiCounts = workflowViewService.workItemCountsBySlug(defs);
         List<WorkflowDefinitionDto> dtos = defs.stream()
                 .map(d -> {
                     WorkflowDefinitionDto dto = toDto(d);
+                    if (!canSeeToken) {
+                        dto.setWebhookToken(null);
+                    }
                     if (dto.getSlug() != null) {
                         dto.setWorkItemCount(wiCounts.getOrDefault(dto.getSlug(), 0L).intValue());
                     }
@@ -205,8 +211,22 @@ public class WorkflowController implements WorkflowsApi {
 
     @Override
     public ResponseEntity<WorkflowDefinitionDto> getWorkflow(String projectId, String workflowId) {
+        String userId = currentUserId();
+        requireMemberOrNotFound(projectId, userId);
         WorkflowDefinition def = workflowService.getWorkflow(projectId, workflowId);
-        return ResponseEntity.ok(toDto(def));
+        WorkflowDefinitionDto dto = toDto(def);
+        // The webhook token is a bearer secret for triggering the run; only those who manage workflows see it.
+        if (!projectSecurityService.isAdminOrCreator(projectId, userId)) {
+            dto.setWebhookToken(null);
+        }
+        return ResponseEntity.ok(dto);
+    }
+
+    /** A non-member must not be able to tell a project apart from one that does not exist. */
+    private void requireMemberOrNotFound(String projectId, String userId) {
+        if (!projectSecurityService.isProjectMember(projectId, userId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
     }
 
     /**
