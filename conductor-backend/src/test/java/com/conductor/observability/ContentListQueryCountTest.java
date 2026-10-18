@@ -46,9 +46,12 @@ import com.conductor.service.view.DocumentView;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
 import com.conductor.v2.controller.AssetCreativeOriginResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -164,11 +167,23 @@ class ContentListQueryCountTest extends AbstractNoneWebIntegrationTest {
         return item;
     }
 
+    /** Document reads check project membership against the authenticated caller. */
+    private void signInAs(User u) {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(u, null, List.of()));
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        SecurityContextHolder.clearContext();
+    }
+
     @Test
     void documentsListIsConstantAndCarriesNoContent() {
         WorkItem one = itemWithDocs(1);
         WorkItem many = itemWithDocs(20);
+        signInAs(one.getProject().getCreatedBy());
         int q1 = queries(() -> documentService.listDocuments(one.getProject().getId(), one.getId()));
+        signInAs(many.getProject().getCreatedBy());
         int q20 = queries(() -> documentService.listDocuments(many.getProject().getId(), many.getId()));
         assertCounts(q1, q20, "documents list");
         List<DocumentView> views = documentService.listDocuments(many.getProject().getId(), many.getId());
