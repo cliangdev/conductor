@@ -43,6 +43,7 @@ import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarVie
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
+import { PendingConsentNotice } from '@/components/marketing/consent/PendingConsentNotice'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
@@ -334,6 +335,8 @@ export function WorkItemListView({
           ) : undefined
         }
       />
+
+      {opensComposePage && accessToken && <PendingConsentNotice projectId={projectId} token={accessToken} />}
 
       {!opensComposePage && (
         <CreateWorkItemModal
