@@ -133,16 +133,20 @@ public class PublishTargetController implements PublishTargetsApi {
 
     @Override
     public ResponseEntity<PublishConsentResponse> getPublishConsent(String projectId, String workItemId) {
-        return ResponseEntity.ok(toResponse(workItemId,
-                publishConsentService.readConsent(projectId, workItemId, currentUser())));
+        PublishConsentService.RecordedConsent read =
+                publishConsentService.readConsentWithEtag(projectId, workItemId, currentUser());
+        return ResponseEntity.ok(toResponse(workItemId, read.state()).etag(read.etag()));
     }
 
     @Override
     public ResponseEntity<PublishConsentResponse> recordPublishConsent(
             String projectId, String workItemId, RecordPublishConsentRequest request) {
         boolean consented = request != null && Boolean.TRUE.equals(request.getConsented());
-        return ResponseEntity.ok(toResponse(workItemId,
-                publishConsentService.recordConsent(projectId, workItemId, consented, currentUser())));
+        User caller = currentUser();
+        publishConsentService.recordConsent(projectId, workItemId, consented, caller);
+        PublishConsentService.RecordedConsent read =
+                publishConsentService.readConsentWithEtag(projectId, workItemId, caller);
+        return ResponseEntity.ok(toResponse(workItemId, read.state()).etag(read.etag()));
     }
 
     @Override
@@ -182,7 +186,7 @@ public class PublishTargetController implements PublishTargetsApi {
     @Override
     public ResponseEntity<TikTokConsentRequestStatus> getTikTokConsentRequest(String projectId, String requestId) {
         TikTokConsentRequestService.Status status = consentRequestService.status(projectId, requestId);
-        return ResponseEntity.ok(new TikTokConsentRequestStatus(status.request().getId(),
+        return ResponseEntity.ok(new TikTokConsentRequestStatus(status.request().getId(), status.consentUrl(),
                 status.request().getExpiresAt(), status.expired(), status.complete(),
                 status.items().stream().map(PublishTargetController::toItem).toList())
                 .completedAt(status.request().getCompletedAt()));

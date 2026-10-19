@@ -102,7 +102,7 @@ public class TikTokConsentRequestService {
     public record Created(TikTokConsentRequest request, String consentUrl, List<Item> items,
                           List<Skipped> skipped) {}
 
-    public record Status(TikTokConsentRequest request, boolean expired, boolean complete, List<Item> items) {}
+    public record Status(TikTokConsentRequest request, String consentUrl, boolean expired, boolean complete, List<Item> items) {}
 
     /** The stored human-only choices of one target, shown only when its Post's consent is VALID. */
     public record StoredChoice(String privacyLevel, boolean disableComment, boolean disableDuet,
@@ -197,7 +197,7 @@ public class TikTokConsentRequestService {
             request = requestRepository.save(request);
         }
         boolean expired = request.getExpiresAt().isBefore(OffsetDateTime.now());
-        return new Status(request, expired, request.getCompletedAt() != null, items);
+        return new Status(request, consentUrl(projectId, request.getId()), expired, request.getCompletedAt() != null, items);
     }
 
     /** A member user, or a machine credential scoped to this project. A non-member user gets a 404. */

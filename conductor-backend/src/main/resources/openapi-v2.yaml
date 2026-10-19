@@ -7351,8 +7351,9 @@ components:
           type: string
           nullable: true
           description: >-
-            The strong ETag of the Post's consent subject, quotes included. Populated by the
-            `tiktok-consent` write; null on the plain `publish-consent` reads.
+            The strong ETag of the Post's consent subject, quotes included — the value to send as
+            `If-Match` on `PUT .../tiktok-consent`. Populated on every `publish-consent` read and write
+            and on the `tiktok-consent` write.
 
     RecordPublishConsentRequest:
       type: object
@@ -7525,6 +7526,7 @@ components:
       type: object
       required:
         - id
+        - consentUrl
         - expiresAt
         - expired
         - complete
@@ -7532,6 +7534,9 @@ components:
       properties:
         id:
           type: string
+        consentUrl:
+          type: string
+          description: The same link the create call returned, so a client resuming with the id can show it again.
         expiresAt:
           type: string
           format: date-time

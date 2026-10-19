@@ -181,6 +181,14 @@ public class PublishConsentService {
         return state(findWorkItemInProject(projectId, workItemId));
     }
 
+    /** As {@link #readConsent}, with the ETag a client sends as {@code If-Match} on the consent write. */
+    @Transactional(readOnly = true)
+    public RecordedConsent readConsentWithEtag(String projectId, String workItemId, User caller) {
+        verifyMembership(projectId, caller);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        return new RecordedConsent(state(workItem), consentEtag(workItem));
+    }
+
     /**
      * Records the creator's consent to the Post exactly as it is now, or withdraws it.
      *

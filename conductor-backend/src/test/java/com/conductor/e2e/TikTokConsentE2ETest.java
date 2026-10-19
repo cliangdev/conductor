@@ -123,6 +123,7 @@ class TikTokConsentE2ETest extends AbstractE2ETest {
         assertThat(created.getBody().get("complete")).isEqualTo(false);
 
         assertThat(poll(requestId).get("complete")).isEqualTo(false);
+        assertThat(poll(requestId).get("consentUrl")).isEqualTo(created.getBody().get("consentUrl"));
 
         var page = rest.exchange(url(page(requestId)), HttpMethod.GET, new HttpEntity<>(owner), Map.class);
         assertThat(page.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -131,6 +132,9 @@ class TikTokConsentE2ETest extends AbstractE2ETest {
         Map<?, ?> creator = (Map<?, ?>) ((List<?>) page.getBody().get("creators")).get(0);
         assertThat(creator.get("nickname")).isEqualTo("Ada");
         assertThat(creator.get("canPost")).isEqualTo(true);
+
+        var read = rest.exchange(url(legacy()), HttpMethod.GET, new HttpEntity<>(owner), Map.class);
+        assertThat(read.getBody().get("etag")).isEqualTo(post.get("etag"));
 
         var consented = put(owner, (String) post.get("etag"), body(requestId, "BULK_PAGE"));
         assertThat(consented.getStatusCode()).isEqualTo(HttpStatus.OK);
