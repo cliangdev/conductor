@@ -200,6 +200,30 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(PreconditionFailedException.class)
+    public ProblemDetail handlePreconditionFailedException(PreconditionFailedException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.PRECONDITION_FAILED);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(PreconditionRequiredException.class)
+    public ProblemDetail handlePreconditionRequiredException(PreconditionRequiredException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.PRECONDITION_REQUIRED);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(GoneException.class)
+    public ProblemDetail handleGoneException(GoneException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.GONE);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
     @ExceptionHandler(ConversationNotFoundException.class)
     public ProblemDetail handleConversationNotFoundException(ConversationNotFoundException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
