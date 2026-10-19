@@ -419,8 +419,8 @@ public class PublishOptionsValidator {
 
         if (privacyLevel == null) {
             problems.add(describe(target) + " has no privacy level chosen, so it would publish visible only"
-                    + " to the creator — the creator has to choose one of " + describeAllowed(allowed)
-                    + " themselves on the TikTok consent page (an agent cannot set it)");
+                    + " to the creator. Choose who can see this post on the TikTok consent page"
+                    + " (options: " + describeAllowed(allowed) + ")");
         } else if (!allowed.isEmpty() && allowed.stream().noneMatch(privacyLevel::equalsIgnoreCase)) {
             problems.add(describe(target) + " has privacy level '" + privacyLevel
                     + "', which is not one this creator's account allows — choose one of "
