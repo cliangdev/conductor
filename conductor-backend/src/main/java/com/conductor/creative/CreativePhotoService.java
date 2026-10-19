@@ -188,12 +188,12 @@ public class CreativePhotoService {
      * A Post counts once per item however many of its Assets point at it, directly or through a frame.
      */
     private Map<String, UsageCounts> usageCounts(String projectId) {
-        List<Creative> creatives = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
+        // Only the five columns that name Media, not whole Creative rows (copy, overrides, motion, ...).
         Map<String, Set<String>> mediaByCreative = new HashMap<>();
         Map<String, Integer> creativeCounts = new HashMap<>();
-        for (Creative c : creatives) {
-            Set<String> ids = referencedPhotoIds(c);
-            mediaByCreative.put(c.getId(), ids);
+        for (Object[] row : creativeRepository.findMediaReferencesByProjectId(projectId)) {
+            Set<String> ids = referencedPhotoIds((String) row[1], (JsonNode) row[2], (JsonNode) row[3], (JsonNode) row[4]);
+            mediaByCreative.put((String) row[0], ids);
             ids.forEach(id -> creativeCounts.merge(id, 1, Integer::sum));
         }
 
@@ -205,15 +205,15 @@ public class CreativePhotoService {
         if (!frameLinks.isEmpty()) {
             Map<String, String> creativeByFrame = new HashMap<>();
             Map<String, String> pathByFrame = new HashMap<>();
-            frameRepository.findAllById(frameLinks.stream().map(r -> (String) r[0]).collect(java.util.stream.Collectors.toSet()))
-                    .forEach(f -> {
-                        creativeByFrame.put(f.getId(), f.getCreativeId());
-                        pathByFrame.put(f.getId(), f.getGcsPath());
-                    });
+            for (Object[] f : frameRepository.findRefsByIdIn(
+                    frameLinks.stream().map(r -> (String) r[0]).collect(java.util.stream.Collectors.toSet()))) {
+                creativeByFrame.put((String) f[0], (String) f[1]);
+                pathByFrame.put((String) f[0], (String) f[2]);
+            }
             // A frame also counts for the Media item whose object it reuses, even if its Creative dropped it.
             Map<String, List<String>> mediaIdsByPath = new HashMap<>();
-            for (CreativePhoto p : photoRepository.findAllByProjectIdOrderByCreatedAtDesc(projectId)) {
-                mediaIdsByPath.computeIfAbsent(p.getGcsPath(), k -> new ArrayList<>()).add(p.getId());
+            for (Object[] p : photoRepository.findPathsByProjectId(projectId)) {
+                mediaIdsByPath.computeIfAbsent((String) p[1], k -> new ArrayList<>()).add((String) p[0]);
             }
             for (Object[] row : frameLinks) {
                 for (String mediaId : mediaIdsByPath.getOrDefault(pathByFrame.get((String) row[0]), List.of())) {
@@ -633,28 +633,28 @@ public class CreativePhotoService {
     }
 
     /** Every Media id a Creative uses: main photo, sequence beats, clip media and carousel slides. */
-    private Set<String> referencedPhotoIds(Creative c) {
+    private Set<String> referencedPhotoIds(String photoId, JsonNode sequence, JsonNode clipMedia, JsonNode slides) {
         Set<String> ids = new HashSet<>();
-        if (c.getPhotoId() != null) {
-            ids.add(c.getPhotoId());
+        if (photoId != null) {
+            ids.add(photoId);
         }
-        if (c.getSequence() != null && c.getSequence().isArray()) {
-            for (JsonNode beat : c.getSequence()) {
+        if (sequence != null && sequence.isArray()) {
+            for (JsonNode beat : sequence) {
                 JsonNode id = beat.get("photoId");
                 if (id != null && id.isTextual()) {
                     ids.add(id.asText());
                 }
             }
         }
-        if (c.getClipMedia() != null && c.getClipMedia().isObject()) {
-            c.getClipMedia().fields().forEachRemaining(e -> {
+        if (clipMedia != null && clipMedia.isObject()) {
+            clipMedia.fields().forEachRemaining(e -> {
                 if (e.getValue() != null && e.getValue().isTextual()) {
                     ids.add(e.getValue().asText());
                 }
             });
         }
-        if (c.getSlides() != null && c.getSlides().isObject()) {
-            for (JsonNode list : c.getSlides()) {
+        if (slides != null && slides.isObject()) {
+            for (JsonNode list : slides) {
                 if (list.isArray()) {
                     for (JsonNode id : list) {
                         if (id.isTextual()) {

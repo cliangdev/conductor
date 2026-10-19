@@ -15,6 +15,13 @@ public interface CreativeRepository extends JpaRepository<Creative, String> {
 
     List<Creative> findAllByProjectIdOrderByNumberDescVariantLetterAsc(String projectId);
 
+    /**
+     * (id, photoId, sequence, clipMedia, slides) of every Creative in the project: just the columns that
+     * name Media, for the library's usage counts, instead of loading whole rows.
+     */
+    @Query("SELECT c.id, c.photoId, c.sequence, c.clipMedia, c.slides FROM Creative c WHERE c.projectId = :projectId")
+    List<Object[]> findMediaReferencesByProjectId(@Param("projectId") String projectId);
+
     List<Creative> findAllByProjectIdAndStateOrderByNumberDescVariantLetterAsc(String projectId, String state);
 
     List<Creative> findAllByProjectIdAndBrandKitIdOrderByNumberDescVariantLetterAsc(String projectId, String brandKitId);

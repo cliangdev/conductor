@@ -18,6 +18,10 @@ public interface CreativePhotoRepository extends JpaRepository<CreativePhoto, St
 
     List<CreativePhoto> findAllByProjectIdAndBlockedFalseOrderByCreatedAtDesc(String projectId);
 
+    /** (id, gcsPath) of every Media item in the project, blocked or not — a projection, not whole rows. */
+    @Query("select p.id, p.gcsPath from CreativePhoto p where p.projectId = :projectId")
+    List<Object[]> findPathsByProjectId(@Param("projectId") String projectId);
+
     List<CreativePhoto> findAllByIdIn(Collection<String> ids);
 
     /** Blocked Media whose id is in {@code ids} or whose storage path is in {@code paths} (both non-empty). */

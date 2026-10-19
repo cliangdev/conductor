@@ -15,6 +15,9 @@ public interface AssetRepository extends JpaRepository<Asset, String> {
 
     List<Asset> findAllByWorkItemId(String workItemId);
 
+    @Query("SELECT a FROM Asset a WHERE a.workItem.id IN :workItemIds")
+    List<Asset> findAllByWorkItemIdIn(@Param("workItemIds") Collection<String> workItemIds);
+
     Optional<Asset> findByIdAndWorkItemId(String id, String workItemId);
 
     /**
