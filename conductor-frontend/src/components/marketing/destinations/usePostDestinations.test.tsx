@@ -20,6 +20,8 @@ let metricsReads = 0
 let consentServed: Record<string, unknown> | null = null
 let consentFails = false
 let consentPutBodies: Array<{ consented: boolean }> = []
+let tiktokConsentPuts: Array<{ ifMatch: string | null; body: Record<string, unknown> }> = []
+let consentPageReads = 0
 
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const method = init?.method ?? 'GET'
@@ -51,6 +53,16 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     consentServed = { workItemId: WORK_ITEM, required: true, valid: body.consented, verdict: body.consented ? 'VALID' : 'NEVER_GIVEN', consentedByName: 'Bryan' }
     return jsonResponse(200, consentServed)
   }
+  if (method === 'GET' && url.endsWith(`/projects/${PROJECT}/tiktok-consent`)) {
+    consentPageReads += 1
+    return jsonResponse(200, { posts: [{ workItemId: WORK_ITEM, verdict: 'NEVER_GIVEN', etag: '"abc123"', targets: [] }], creators: [] })
+  }
+  if (method === 'PUT' && url.endsWith(`/work-items/${WORK_ITEM}/tiktok-consent`)) {
+    const headers = new Headers(init?.headers as HeadersInit)
+    tiktokConsentPuts.push({ ifMatch: headers.get('If-Match'), body: JSON.parse(String(init?.body)) })
+    consentServed = { workItemId: WORK_ITEM, required: true, valid: true, verdict: 'VALID', consentedByName: 'Bryan', etag: '"def456"' }
+    return jsonResponse(200, consentServed)
+  }
   if (method === 'POST' && url.endsWith('/publish-targets/retry')) {
     selectedTargets = selectedTargets.map((t) => (t.state === 'FAILED' ? { ...t, state: 'PENDING' } : t))
     return jsonResponse(200, { workItemId: WORK_ITEM, status: 'SCHEDULED', retriedCount: 1, targets: selectedTargets })
@@ -67,6 +79,8 @@ beforeEach(() => {
   consentServed = null
   consentFails = false
   consentPutBodies = []
+  tiktokConsentPuts = []
+  consentPageReads = 0
   fetchMock.mockClear()
   vi.stubEnv('NEXT_PUBLIC_API_URL', API)
   vi.stubGlobal('fetch', fetchMock)
@@ -114,7 +128,7 @@ describe('usePostDestinations', () => {
     const tt = result.current.rows.find((r) => r.option.platform === 'tiktok')!
     await act(async () => result.current.actions.toggle(tt))
     await waitFor(() => expect(putBodies).toHaveLength(1))
-    // Every picked target goes out; the TikTok one carries the account's default audience and nothing
+    // Every picked target goes out; the TikTok one carries NO preselected audience and nothing
     // says "inherit" — an inheriting target's caption and media are simply absent.
     expect(putBodies[0].targets).toEqual([
       { platform: 'facebook', connectionId: 'fb', format: 'feed' },
@@ -122,7 +136,7 @@ describe('usePostDestinations', () => {
         platform: 'tiktok',
         connectionId: 'rexipeio',
         format: 'feed',
-        publishOptions: expect.objectContaining({ privacyLevel: 'PUBLIC_TO_EVERYONE' }),
+        publishOptions: expect.objectContaining({ privacyLevel: null, disableComment: true }),
       },
     ])
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
@@ -159,7 +173,12 @@ describe('usePostDestinations', () => {
 
   it('reads the TikTok consent for a picked TikTok account, and recording it lifts the gate', async () => {
     availableTargets = [tiktok]
-    selectedTargets = [selection(tiktok, WORK_ITEM)]
+    selectedTargets = [
+      {
+        ...selection(tiktok, WORK_ITEM),
+        publishOptions: { privacyLevel: 'MUTUAL_FOLLOW_FRIENDS', disableComment: false } as never,
+      },
+    ]
     const onConsentChanged = vi.fn()
     const { result } = renderHook(() => usePostDestinations(args({ onConsentChanged })))
     await waitFor(() => expect(result.current.loading).toBe(false))
@@ -170,7 +189,29 @@ describe('usePostDestinations', () => {
     await act(async () => {
       await result.current.actions.setConsent(true)
     })
-    expect(consentPutBodies).toEqual([{ consented: true }])
+    // The person-only atomic write: the six choices per target, the etag as If-Match, the Post-page channel.
+    expect(consentPutBodies).toEqual([])
+    expect(consentPageReads).toBe(1)
+    expect(tiktokConsentPuts).toEqual([
+      {
+        ifMatch: '"abc123"',
+        body: {
+          targets: [
+            {
+              connectionId: 'rexipeio',
+              privacyLevel: 'MUTUAL_FOLLOW_FRIENDS',
+              disableComment: false,
+              disableDuet: true,
+              disableStitch: true,
+              brandContentToggle: false,
+              brandOrganicToggle: false,
+            },
+          ],
+          declarationVersion: 'tiktok-csg-2026-10',
+          channel: 'POST_PAGE',
+        },
+      },
+    ])
     expect(onConsentChanged).toHaveBeenCalledWith(true)
     expect(result.current.tiktokBlockedReason).toBeNull()
     expect(result.current.rows[0].consent).toMatchObject({ given: true, consentedByName: 'Bryan' })

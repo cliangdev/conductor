@@ -6,6 +6,7 @@ import type { PublishPreflight } from '@/components/marketing/publishReadiness'
 import { DestinationsPanel } from './DestinationsPanel'
 import { buildRows, summarize, type DestinationActions, type DestinationsState } from './model'
 import { EMPTY_DRAFT } from './selectionState'
+import { EMPTY_TIKTOK_OPTIONS } from '@/components/marketing/TikTokPublishOptions'
 import { targetKey } from './publishState'
 import type { SelectedPublishTarget } from './types'
 
@@ -190,7 +191,11 @@ describe('DestinationsPanel — picking', () => {
     const rows = buildRows({
       options: [tiktok],
       selected: [tt],
-      draft: { ...EMPTY_DRAFT, keys: new Set([targetKey('tiktok', 'rexipeio')]) },
+      draft: {
+        ...EMPTY_DRAFT,
+        keys: new Set([targetKey('tiktok', 'rexipeio')]),
+        tiktok: { [targetKey('tiktok', 'rexipeio')]: { ...EMPTY_TIKTOK_OPTIONS, privacyLevel: 'PUBLIC_TO_EVERYONE' } },
+      },
       preflight: null,
       metrics: null,
       consent: { state: null, given: false },

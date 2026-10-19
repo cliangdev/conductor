@@ -118,7 +118,7 @@ describe('buildRows', () => {
     expect(kept.find((r) => r.option === manualIg)?.hidden).toBe(false)
   })
 
-  it('carries consent only on a picked, non-manual TikTok row, with the options problem and the default audience', () => {
+  it('carries consent only on a picked, non-manual TikTok row, with the options problem and no preselected audience', () => {
     const tt = selection(tiktok, WORK_ITEM)
     const manualTt = manualOption('tiktok')
     const onPostByHand = selection(manualTt, WORK_ITEM)
@@ -132,8 +132,9 @@ describe('buildRows', () => {
       NOW
     )
     const ttRow = rows.find((r) => r.option === tiktok)!
-    expect(ttRow.consent).toEqual({ given: false, verdict: undefined, consentedAt: undefined, consentedByName: undefined, problem: null })
-    expect(ttRow.tiktokOptions.privacyLevel).toBe('PUBLIC_TO_EVERYONE')
+    expect(ttRow.consent).toEqual({ given: false, verdict: undefined, consentedAt: undefined, consentedByName: undefined, problem: expect.stringMatching(/choose who can see/i) })
+    expect(ttRow.tiktokOptions.privacyLevel).toBeNull()
+    expect(ttRow.tiktokOptions).toMatchObject({ disableComment: true, disableDuet: true, disableStitch: true })
     expect(ttRow.action).toBe('review-consent')
     expect(rows.find((r) => r.option === manualTt)?.consent).toBeUndefined()
     expect(rows.find((r) => r.option === facebook)?.consent).toBeUndefined()

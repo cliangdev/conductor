@@ -79,6 +79,8 @@ export interface PublishConsentState {
   consentedAt?: string | null
   consentedByUserId?: string | null
   consentedByName?: string | null
+  /** The strong ETag to send as `If-Match` on the consent write; null on a plain read. */
+  etag?: string | null
 }
 
 function consentPath(projectId: string, workItemId: string): string {
@@ -234,6 +236,34 @@ export function TikTokConsentPreview({
   )
 }
 
+const MUSIC_URL = 'https://www.tiktok.com/legal/page/global/music-usage-confirmation/en'
+const BRANDED_URL = 'https://www.tiktok.com/legal/page/global/bc-policy/en'
+const POLICY_LINK = 'font-medium text-foreground underline underline-offset-2 hover:text-primary'
+
+/**
+ * TikTok's required declaration, word for word, with each policy linked (new tab). The branded
+ * wording applies when ANY TikTok target on the Post discloses branded content.
+ */
+export function TikTokDeclaration({ branded }: { branded: boolean }) {
+  return (
+    <p className="text-sm text-muted-foreground">
+      By posting, you agree to TikTok’s{' '}
+      {branded && (
+        <>
+          <a href={BRANDED_URL} target="_blank" rel="noopener noreferrer" className={POLICY_LINK}>
+            Branded Content Policy
+          </a>{' '}
+          and{' '}
+        </>
+      )}
+      <a href={MUSIC_URL} target="_blank" rel="noopener noreferrer" className={POLICY_LINK}>
+        Music Usage Confirmation
+      </a>
+      .
+    </p>
+  )
+}
+
 /** The consent itself: the box, who ticked it and when, the policy line, and any trouble recording it. */
 export function TikTokConsentCheckbox({
   given,
@@ -279,11 +309,7 @@ export function TikTokConsentCheckbox({
         </p>
       )}
 
-      <p className="text-sm text-muted-foreground">
-        {anyPaidPartnership
-          ? 'By posting, you agree to TikTok’s Branded Content Policy and Music Usage Confirmation.'
-          : 'By posting, you agree to TikTok’s Music Usage Confirmation.'}
-      </p>
+      <TikTokDeclaration branded={anyPaidPartnership} />
 
       {error && <Alert variant="destructive">{error}</Alert>}
     </div>

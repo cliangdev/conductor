@@ -27,7 +27,6 @@ import {
   stateHue,
   stateLabelFor,
   targetKey,
-  withTikTokDefault,
 } from './publishState'
 import { effectiveAssetsFor, type DestinationDraft } from './selectionState'
 import type { PublishTargetOption, SelectedPublishTarget } from './types'
@@ -213,7 +212,7 @@ export function buildRows(args: BuildRowsArgs, now: Date = new Date()): Destinat
     const manual = isManual(option)
     const settled = checked && isSettled(target, approvedOrLater)
     const content = draft.content[key] ?? INHERITED_CONTENT
-    const tiktokOptions = withTikTokDefault(option, draft.tiktok[key] ?? EMPTY_TIKTOK_OPTIONS)
+    const tiktokOptions = draft.tiktok[key] ?? EMPTY_TIKTOK_OPTIONS
     const { note, tone } = noteFor(option, unavailable, unhealthy, settled)
     const rowConsent: RowConsent | undefined =
       option.platform === 'tiktok' && !manual && checked && consent

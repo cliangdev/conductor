@@ -93,17 +93,19 @@ describe('TikTokPublishOptions', () => {
     renderOptions({ privacyLevelOptions: ['PUBLIC_TO_EVERYONE', 'SELF_ONLY'] })
 
     const select = screen.getByLabelText(/who can view this video/i)
-    const rendered = Array.from(select.querySelectorAll('option')).map((o) => o.textContent)
+    const rendered = Array.from(select.querySelectorAll('option'))
+      .filter((o) => o.value !== '')
+      .map((o) => o.textContent)
     expect(rendered).toEqual(['Everyone', 'Only me (private)'])
     expect(screen.queryByRole('option', { name: 'Friends' })).not.toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Followers' })).not.toBeInTheDocument()
   })
 
-  it('preselects the first privacy level the account allows, without reporting it until an edit', () => {
+  it('preselects nothing: the audience shows a placeholder until the creator chooses', () => {
     const { onChange } = renderOptions()
-    expect(screen.getByLabelText(/who can view this video/i)).toHaveValue(ALL_LEVELS[0])
-    // Shown, not yet saved — the caller folds this same default into whatever save happens next
-    // (`withTikTokDefault` in destinations/publishState) rather than this component firing one itself.
+    const select = screen.getByLabelText(/who can view this video/i)
+    expect(select).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'Choose who can view' })).toBeInTheDocument()
     expect(onChange).not.toHaveBeenCalled()
   })
 
@@ -123,15 +125,42 @@ describe('TikTokPublishOptions', () => {
     expect(onChange).toHaveBeenCalledWith(values({ privacyLevel: 'SELF_ONLY' }))
   })
 
-  it('offers the comment, duet and stitch interaction toggles', () => {
-    renderOptions()
+  it('offers the comment, duet and stitch interaction toggles on a video post, all starting off', () => {
+    renderOptions({ isVideo: true })
+    for (const name of ['Comment', 'Duet', 'Stitch']) {
+      expect(screen.getByRole('switch', { name })).not.toBeChecked()
+    }
+  })
+
+  it('starts a new target with every interaction not allowed', () => {
+    expect(EMPTY_TIKTOK_OPTIONS).toMatchObject({ disableComment: true, disableDuet: true, disableStitch: true })
+    expect(normalizeTikTokOptions(null)).toMatchObject({ disableComment: true, disableDuet: true, disableStitch: true })
+  })
+
+  it('hides Duet and Stitch on a photo post', () => {
+    renderOptions({ isVideo: false })
     expect(screen.getByRole('switch', { name: 'Comment' })).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: 'Duet' })).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: 'Stitch' })).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Duet' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Stitch' })).not.toBeInTheDocument()
+  })
+
+  it('greys out and switches off an interaction the creator has disabled in TikTok', () => {
+    renderOptions({
+      isVideo: true,
+      value: values({ disableDuet: false }),
+      creatorDisabled: { duet: true },
+    })
+    const duet = screen.getByRole('switch', { name: 'Duet' })
+    expect(duet).toBeDisabled()
+    expect(duet).not.toBeChecked()
+    expect(screen.getByText(/Turned off in this account/)).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Comment' })).toBeEnabled()
   })
 
   it('renders an allowed interaction as on and turning it off sets the disable flag', async () => {
-    const { onChange } = renderOptions({ value: values({ privacyLevel: 'PUBLIC_TO_EVERYONE' }) })
+    const { onChange } = renderOptions({
+      value: values({ privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: false }),
+    })
 
     const comment = screen.getByRole('switch', { name: 'Comment' })
     expect(comment).toBeChecked()

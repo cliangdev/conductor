@@ -19,7 +19,7 @@ import {
 } from '@/components/marketing/YouTubePublishOptions'
 import type { PostFormat } from '@/components/marketing/PostFormatSelector'
 import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
-import { isManual, targetKey, withTikTokDefault } from './publishState'
+import { isManual, targetKey } from './publishState'
 import type { PublishTargetOption, PublishTargetSelectionPayload, SelectedPublishTarget } from './types'
 
 /** Everything a person can set per destination, keyed by `targetKey`. `keys` is which rows are picked. */
@@ -174,7 +174,7 @@ export function buildSelectionPayload(
     if (isManual(o)) return {}
     const key = targetKey(o.platform, o.connectionId)
     if (o.platform === 'tiktok') {
-      return { publishOptions: withTikTokDefault(o, draft.tiktok[key] ?? EMPTY_TIKTOK_OPTIONS) }
+      return { publishOptions: draft.tiktok[key] ?? EMPTY_TIKTOK_OPTIONS }
     }
     if (o.platform === 'instagram') {
       const values = draft.instagram[key]
