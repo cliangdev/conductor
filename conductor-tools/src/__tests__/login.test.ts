@@ -131,14 +131,14 @@ describe('ensureDurableApiKey', () => {
     vi.unstubAllGlobals()
   })
 
-  it('falls back to the JWT when key issuance is unavailable', async () => {
+  it('fails instead of saving the JWT when key issuance is unavailable', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('network down'))
     vi.stubGlobal('fetch', fetchMock)
 
     const { ensureDurableApiKey } = await import('../commands/login.js')
-    const key = await ensureDurableApiKey('http://localhost:8080', 'eyJ.jwt.token')
-
-    expect(key).toBe('eyJ.jwt.token')
+    await expect(ensureDurableApiKey('http://localhost:8080', 'eyJ.jwt.token')).rejects.toThrow(
+      /could not create a CLI API key/
+    )
     vi.unstubAllGlobals()
   })
 })

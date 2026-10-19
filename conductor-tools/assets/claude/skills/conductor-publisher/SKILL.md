@@ -161,8 +161,20 @@ set, such as a disclosure toggle or an AI label, whenever any were pre-filled or
 
 Under it, say in one sentence who has to act next — "waiting for a reviewer; approval schedules it
 automatically" — and, where a TikTok destination is involved, that the creator records their consent
-in the Conductor UI, which no tool can do for them. A Post ID you cannot show in this table is a Post
+in their own browser, which no tool can do for them (see "TikTok consent" below). A Post ID you cannot show in this table is a Post
 you cannot claim to have created.
+
+## TikTok consent
+
+TikTok requires the creator to consent to every Post themselves, so privacy and interaction choices
+are never set from here (`create_post` drops them with a warning). Never record consent yourself.
+When a TikTok Post is created or the gate reports consent pending:
+
+1. Call `request_tiktok_consent` once with every pending Post (omit `postIds` for all of them). It
+   returns one link where the person reviews and consents to each Post in their own browser.
+2. If the client did not open a prompt, show the link to the person. Then call
+   `request_tiktok_consent({requestId})` to wait until they finish.
+3. Continue (`submit_post`, or approve) only once every Post is `VALID`.
 
 ## Step 5 — Following up
 

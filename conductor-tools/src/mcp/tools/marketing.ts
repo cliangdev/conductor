@@ -10,11 +10,12 @@ import { apiGet, apiPost, apiPut, apiDelete, putBytes } from '../api.js'
  * publish to, which of them one Post targets and under what per-platform options, the media attached to
  * it, and where each target landed once it fired.
  *
- * Two deliberate omissions. There is no tool that records a creator's TikTok consent: TikTok's audit
- * requirement is that the *creator* sees the preview and the destination account and consents, so that
- * step stays a human action in the Conductor UI and the backend enforces it at the approval gate — an
- * agent consenting on a human's behalf would defeat the whole point. And nothing here takes a
- * credential: an account is named by its connection id, and the backend resolves the token behind it.
+ * Two deliberate omissions. No tool records a creator's TikTok consent: TikTok's audit requirement is
+ * that the *creator* sees the preview and the destination account and consents, so that step is a human
+ * action in their own browser and the backend enforces it at the approval gate — an agent consenting on
+ * a human's behalf would defeat the whole point. request_tiktok_consent only hands the person a link to
+ * do it (and waits to see that they did). And nothing here takes a credential: an account is named by
+ * its connection id, and the backend resolves the token behind it.
  *
  * The MANUAL lane runs through the same tools rather than getting its own: a manual destination is
  * selected with set_publish_targets like any other (with no connectionId), and completed with
@@ -406,4 +407,172 @@ export async function completeManualPublish(
     config
   )
   return { issueId: params.issueId, target }
+}
+
+// --- request_tiktok_consent -----------------------------------------------------------------------------
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DEFAULT_CONSENT_WAIT_SECONDS = 600
+const MAX_CONSENT_WAIT_SECONDS = 900
+const CONSENT_POLL_MS = 5_000
+
+interface ConsentItem {
+  workItemId: string
+  displayId: string
+  title?: string
+  verdict: string
+  consentedAt?: string | null
+  consentedByName?: string | null
+}
+
+interface ConsentRequestCreated {
+  id: string
+  consentUrl: string
+  expiresAt: string
+  items: ConsentItem[]
+  skipped?: Array<{ workItemId: string; reason: string }>
+  complete: boolean
+}
+
+interface ConsentRequestStatus {
+  id: string
+  expiresAt: string
+  expired: boolean
+  complete: boolean
+  completedAt?: string | null
+  items: ConsentItem[]
+}
+
+/** What the MCP server lends the tool: URL elicitation (only when the client supports it) and progress. */
+export interface ConsentHost {
+  /** Present only when the client declared `elicitation.url`. 'accept' means the person agreed to open it. */
+  elicitUrl?: (args: { message: string; url: string; elicitationId: string }) => Promise<'accept' | 'decline' | 'cancel'>
+  /** Tells the client the elicitation finished; called only if elicitUrl was used. */
+  notifyComplete?: (elicitationId: string) => Promise<void>
+  /** Called when the count of consented Posts changes; only wired when the call carries a progress token. */
+  onProgress?: (done: number, total: number, message: string) => void
+  sleep?: (ms: number) => Promise<void>
+  now?: () => number
+  pollMs?: number
+}
+
+async function resolvePostId(value: string, config: Config): Promise<string> {
+  const id = value.trim()
+  if (UUID.test(id)) return id
+  const item = await apiGet<{ id: string }>(`${V2_PROJECT(config)}/work-items/by-display/${encodeURIComponent(id)}`, config)
+  return item.id
+}
+
+const summarize = (items: ConsentItem[]) =>
+  items.map((i) => ({
+    postId: i.workItemId,
+    displayId: i.displayId,
+    verdict: i.verdict,
+    ...(i.consentedByName ? { consentedBy: i.consentedByName } : {}),
+  }))
+
+/**
+ * Hands the person one link where they review and consent to their TikTok Posts in their own browser, then
+ * waits for them to do it. It never records consent — the backend refuses that from any machine credential.
+ * With a client that supports URL elicitation the link is offered as a prompt; otherwise (common) it comes
+ * back as text for the agent to show, and a second call with `requestId` waits.
+ */
+export async function requestTikTokConsent(
+  params: { postIds?: string[]; requestId?: string; waitSeconds?: number },
+  config: Config,
+  host: ConsentHost = {}
+): Promise<Record<string, unknown>> {
+  const sleep = host.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const now = host.now ?? Date.now
+  const pollMs = host.pollMs ?? CONSENT_POLL_MS
+  const waitSeconds = Math.min(Math.max(params.waitSeconds ?? DEFAULT_CONSENT_WAIT_SECONDS, 0), MAX_CONSENT_WAIT_SECONDS)
+  const base = `${V2_PROJECT(config)}/tiktok-consent-requests`
+
+  let requestId = params.requestId
+  let skipped: Array<{ workItemId: string; reason: string }> = []
+  let items: ConsentItem[] = []
+  let elicited = false
+
+  if (!requestId) {
+    const ids = params.postIds && params.postIds.length > 0
+      ? await Promise.all(params.postIds.map((p) => resolvePostId(p, config)))
+      : undefined
+    const created = await apiPost<ConsentRequestCreated>(base, ids ? { workItemIds: ids } : {}, config)
+    requestId = created.id
+    skipped = created.skipped ?? []
+    items = created.items
+    const skippedNote = skipped.length > 0 ? { skipped } : {}
+    if (created.items.length === 0) {
+      return { requestId, status: 'nothing_to_consent', ...skippedNote, nextStep: 'No Post needs TikTok consent (skipped lists why).' }
+    }
+    if (created.complete) {
+      return { requestId, status: 'complete', posts: summarize(items), ...skippedNote, nextStep: 'Every Post is VALID. Call submit_post for each.' }
+    }
+    const pending = items.filter((i) => i.verdict !== 'VALID').length
+    const message = `Review and consent to ${pending} TikTok post${pending === 1 ? '' : 's'} in Conductor`
+    if (host.elicitUrl) {
+      const action = await host.elicitUrl({ message, url: created.consentUrl, elicitationId: created.id })
+      if (action !== 'accept') {
+        return {
+          requestId,
+          status: 'declined',
+          consentUrl: created.consentUrl,
+          posts: summarize(items),
+          ...skippedNote,
+          nextStep: 'The person declined to open the consent page. Ask whether they want it; the link stays valid for 24 hours.',
+        }
+      }
+      elicited = true
+    } else {
+      return {
+        requestId,
+        status: 'awaiting_person',
+        consentUrl: created.consentUrl,
+        posts: summarize(items),
+        ...skippedNote,
+        nextStep:
+          `Show this link to the person: ${created.consentUrl} — they consent to each Post there in their own browser (it works only for their login). ` +
+          `Then call request_tiktok_consent({requestId: "${created.id}"}) to wait until they finish.`,
+      }
+    }
+  }
+
+  const deadline = now() + waitSeconds * 1000
+  let lastDone = -1
+  for (;;) {
+    const status = await apiGet<ConsentRequestStatus>(`${base}/${requestId}`, config)
+    items = status.items
+    const done = items.filter((i) => i.verdict === 'VALID').length
+    if (done !== lastDone) {
+      lastDone = done
+      host.onProgress?.(done, items.length, `${done} of ${items.length} TikTok posts consented`)
+    }
+    if (status.complete) {
+      if (elicited) await host.notifyComplete?.(requestId).catch(() => {})
+      return {
+        requestId,
+        status: 'complete',
+        posts: summarize(items),
+        ...(skipped.length > 0 ? { skipped } : {}),
+        nextStep: 'Every Post is VALID. Call submit_post for each (or submit_review to approve), then get_post_status.',
+      }
+    }
+    if (status.expired) {
+      return {
+        requestId,
+        status: 'expired',
+        posts: summarize(items),
+        nextStep: 'The link expired. Call request_tiktok_consent again (without requestId) for a fresh one.',
+      }
+    }
+    if (now() + pollMs > deadline) {
+      return {
+        requestId,
+        status: 'waiting',
+        posts: summarize(items),
+        nextStep: `${done} of ${items.length} consented so far. Call request_tiktok_consent({requestId: "${requestId}"}) again to keep waiting, or ask the person to finish.`,
+      }
+    }
+    await sleep(pollMs)
+  }
 }
