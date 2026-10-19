@@ -133,6 +133,8 @@ class TikTokConsentE2ETest extends AbstractE2ETest {
         assertThat(creator.get("nickname")).isEqualTo("Ada");
         assertThat(creator.get("canPost")).isEqualTo(true);
 
+        assertThat(summary()).isEqualTo(1);
+
         var read = rest.exchange(url(legacy()), HttpMethod.GET, new HttpEntity<>(owner), Map.class);
         assertThat(read.getBody().get("etag")).isEqualTo(post.get("etag"));
 
@@ -150,6 +152,11 @@ class TikTokConsentE2ETest extends AbstractE2ETest {
                     assertThat(event.getCredentialType()).isEqualTo("JWT_HEADER");
                     assertThat(event.getDeclarationVersion()).isEqualTo("v1");
                 });
+
+        assertThat(summary()).isZero();
+        // The to-do list no longer shows it; the request's own page still does, collapsed by the client.
+        assertThat((List<?>) rest.exchange(url(page(null)), HttpMethod.GET, new HttpEntity<>(owner), Map.class)
+                .getBody().get("posts")).isEmpty();
 
         // Once consented, the page shows what was chosen.
         var after = rest.exchange(url(page(requestId)), HttpMethod.GET, new HttpEntity<>(owner), Map.class);
@@ -283,7 +290,42 @@ class TikTokConsentE2ETest extends AbstractE2ETest {
         assertThat((String) resp.getBody().get("detail")).contains("not one of this creator's options");
     }
 
+    @Test
+    void theTikTokTargetOptionCarriesTheCachedCreatorFlags() {
+        var options = rest.exchange(url("/api/v2/projects/" + projectId + "/publish-targets"), HttpMethod.GET,
+                new HttpEntity<>(owner), List.class);
+        Map<?, ?> tiktok = (Map<?, ?>) options.getBody().stream()
+                .filter(o -> "tiktok".equals(((Map<?, ?>) o).get("platform")) && ((Map<?, ?>) o).get("connectionId") != null)
+                .findFirst().orElseThrow();
+        assertThat(tiktok.get("maxVideoPostDurationSec")).isEqualTo(600);
+        assertThat(tiktok.get("commentDisabled")).isNull();
+
+        // The consent page refreshes creator_info and caches the switches on the connection.
+        rest.exchange(url(page(null)), HttpMethod.GET, new HttpEntity<>(owner), Map.class);
+        var after = rest.exchange(url("/api/v2/projects/" + projectId + "/publish-targets"), HttpMethod.GET,
+                new HttpEntity<>(owner), List.class);
+        Map<?, ?> refreshed = (Map<?, ?>) after.getBody().stream()
+                .filter(o -> "tiktok".equals(((Map<?, ?>) o).get("platform")) && ((Map<?, ?>) o).get("connectionId") != null)
+                .findFirst().orElseThrow();
+        assertThat(refreshed.get("commentDisabled")).isEqualTo(false);
+    }
+
+    @Test
+    void aProjectKeyMayReadTheSummary() {
+        var resp = rest.exchange(url("/api/v2/projects/" + projectId + "/tiktok-consent/summary"), HttpMethod.GET,
+                new HttpEntity<>(projectKey), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody().get("pendingCount")).isEqualTo(1);
+    }
+
     // --- helpers ---
+
+    private int summary() {
+        var resp = rest.exchange(url("/api/v2/projects/" + projectId + "/tiktok-consent/summary"), HttpMethod.GET,
+                new HttpEntity<>(userApiKey), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        return (Integer) resp.getBody().get("pendingCount");
+    }
 
     private String requests() {
         return "/api/v2/projects/" + projectId + "/tiktok-consent-requests";

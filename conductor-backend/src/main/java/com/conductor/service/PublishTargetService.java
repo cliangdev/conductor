@@ -170,7 +170,11 @@ public class PublishTargetService {
                                List<String> privacyLevelOptions,
                                String creatorNickname,
                                List<String> optionKeys,
-                               List<String> formats) {
+                               List<String> formats,
+                               Boolean commentDisabled,
+                               Boolean duetDisabled,
+                               Boolean stitchDisabled,
+                               Integer maxVideoPostDurationSec) {
 
         String key() {
             return selectionKey(platform, connectionId);
@@ -1015,7 +1019,7 @@ public class PublishTargetService {
             options.add(option(connection, platformRegistry.require(PLATFORM_TIKTOK),
                     nickname != null ? nickname : stringValue(config, CONFIG_CREATOR_USERNAME),
                     stringListValue(config, PublishOptionsValidator.CONFIG_PRIVACY_LEVEL_OPTIONS),
-                    nickname));
+                    nickname, creatorFlags(config)));
         }
         // Manual destinations last, and always, one per platform the pipeline knows. Offering them even to
         // a fully connected project is deliberate rather than a fallback: a post that has to go out
@@ -1025,22 +1029,35 @@ public class PublishTargetService {
         // connection to derive anything from.
         for (PublishPlatform platform : platformRegistry.all()) {
             options.add(new TargetOption(platform.id(), null, null, platform.manualLabel(),
-                    PublishLane.MANUAL, null, null, null, null, null, optionKeys(platform), formats(platform)));
+                    PublishLane.MANUAL, null, null, null, null, null, optionKeys(platform), formats(platform),
+                    null, null, null, null));
         }
         return List.copyOf(options);
     }
 
     private static TargetOption option(Connection connection, PublishPlatform platform, String label) {
-        return option(connection, platform, label, null, null);
+        return option(connection, platform, label, null, null, new Object[4]);
+    }
+
+    /** The creator's cached interaction switches and duration cap; null entries are unknown. */
+    private static Object[] creatorFlags(Map<String, Object> config) {
+        return new Object[] {
+                config.get("commentDisabled") instanceof Boolean flag ? flag : null,
+                config.get("duetDisabled") instanceof Boolean flag ? flag : null,
+                config.get("stitchDisabled") instanceof Boolean flag ? flag : null,
+                config.get("maxVideoPostDurationSec") instanceof Number number ? number.intValue() : null};
     }
 
     private static TargetOption option(Connection connection, PublishPlatform platform, String label,
-                                       List<String> privacyLevelOptions, String creatorNickname) {
+                                       List<String> privacyLevelOptions, String creatorNickname,
+                                       Object[] creatorFlags) {
         return new TargetOption(platform.id(), connection.getConnectorId(), connection.getId(),
                 label != null ? label : fallbackLabel(connection),
                 platform.automatedLane(), connection.getHealthStatus(), connection.getHealthMessage(),
                 connection.getHealthDetail(),
-                privacyLevelOptions, creatorNickname, optionKeys(platform), formats(platform));
+                privacyLevelOptions, creatorNickname, optionKeys(platform), formats(platform),
+                (Boolean) creatorFlags[0], (Boolean) creatorFlags[1], (Boolean) creatorFlags[2],
+                (Integer) creatorFlags[3]);
     }
 
     /** The formats this platform publishes, on the wire (feed, reel, story) in enum order. */

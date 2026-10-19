@@ -193,6 +193,13 @@ public class PublishTargetController implements PublishTargetsApi {
     }
 
     @Override
+    public ResponseEntity<com.conductor.generated.v2.model.TikTokConsentSummary> getTikTokConsentSummary(
+            String projectId) {
+        return ResponseEntity.ok(new com.conductor.generated.v2.model.TikTokConsentSummary(
+                consentRequestService.pendingCount(projectId)));
+    }
+
+    @Override
     public ResponseEntity<TikTokConsentPage> getTikTokConsentPage(String projectId, String request) {
         TikTokConsentRequestService.Page page = consentRequestService.page(projectId, request);
         TikTokConsentPage body = new TikTokConsentPage(
@@ -277,6 +284,10 @@ public class PublishTargetController implements PublishTargetsApi {
                 // picker has to tell "reconnect this account" apart from a genuinely empty set of choices.
                 .privacyLevelOptions(option.privacyLevelOptions())
                 .creatorNickname(option.creatorNickname())
+                .commentDisabled(option.commentDisabled())
+                .duetDisabled(option.duetDisabled())
+                .stitchDisabled(option.stitchDisabled())
+                .maxVideoPostDurationSec(option.maxVideoPostDurationSec())
                 .optionKeys(option.optionKeys());
     }
 

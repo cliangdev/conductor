@@ -2758,6 +2758,45 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/tiktok-consent/summary:
+    get:
+      tags:
+        - publish-targets
+      summary: How many Posts are waiting on TikTok consent
+      description: >-
+        A cheap count for "N posts need TikTok consent" badges: Posts with a TikTok target that publishes
+        through the API, has not gone out, and whose consent is not `VALID`. Database only — TikTok is
+        never called. Any member credential may read it.
+      operationId: getTikTokConsentSummary
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The pending count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TikTokConsentSummary"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/tiktok-consent:
     get:
       tags:
@@ -2766,7 +2805,9 @@ paths:
       description: >-
         The page read. With `request=<id>` it returns that request's Posts and requires the caller to be
         the user who created it (403 "This link was created for <name>" otherwise; 410 once expired).
-        Without it, every Post in the project still pending consent.
+        Without it, every Post in the project still pending consent — Posts whose consent is already
+        `VALID` are **excluded**. With it, the request's Posts are all returned, `VALID` ones included
+        (verdict `VALID`, with their stored `consented` choices), so the page can show them collapsed.
 
 
         Per Post: identity, caption, schedule, consent `verdict`, the `etag` to send as `If-Match`, and the
@@ -6267,6 +6308,25 @@ components:
             is what `PublishOptionsValidator` checks the chosen level against at the approval gate.
             Null for every non-TikTok platform, and null for a TikTok connection made before the levels
             were cached: that account has to be reconnected, not guessed for. (TIK-3.)
+        commentDisabled:
+          type: boolean
+          nullable: true
+          description: >-
+            TikTok only: the creator has switched comments off, as of the last creator_info read (the
+            consent page refreshes it). Null for other platforms and when never read.
+        duetDisabled:
+          type: boolean
+          nullable: true
+          description: As `commentDisabled`, for duets.
+        stitchDisabled:
+          type: boolean
+          nullable: true
+          description: As `commentDisabled`, for stitches.
+        maxVideoPostDurationSec:
+          type: integer
+          nullable: true
+          description: >-
+            TikTok only, the creator's video length cap in seconds; null when unknown.
         creatorNickname:
           type: string
           nullable: true
@@ -7681,6 +7741,14 @@ components:
           description: The Post's non-MANUAL TikTok targets.
           items:
             $ref: "#/components/schemas/TikTokConsentTarget"
+
+    TikTokConsentSummary:
+      type: object
+      required:
+        - pendingCount
+      properties:
+        pendingCount:
+          type: integer
 
     TikTokConsentPage:
       type: object

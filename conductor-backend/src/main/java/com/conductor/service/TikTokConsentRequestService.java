@@ -212,6 +212,22 @@ public class TikTokConsentRequestService {
         }
     }
 
+    // ── summary ───────────────────────────────────────────────────────────────────────────────────
+
+    /** Posts waiting on consent. Database only: the creator is never asked about. */
+    @Transactional(readOnly = true)
+    public int pendingCount(String projectId) {
+        requireReader(projectId);
+        return (int) pendingPostIds(projectId).stream()
+                .map(id -> workItemRepository.findById(id).orElse(null))
+                .filter(item -> item != null && !consentService.currentState(item).valid())
+                .count();
+    }
+
+    private List<String> pendingPostIds(String projectId) {
+        return targetRepository.findPendingTikTokWorkItemIds(projectId);
+    }
+
     // ── the page read ─────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -238,7 +254,8 @@ public class TikTokConsentRequestService {
         } else {
             ids = targetRepository.findPendingTikTokWorkItemIds(projectId).stream()
                     .map(id -> workItemRepository.findById(id).orElse(null))
-                    .filter(item -> item != null)
+                    // Without a request the page is the to-do list: consented Posts are not on it.
+                    .filter(item -> item != null && !consentService.currentState(item).valid())
                     .sorted(Comparator.comparing(WorkItem::getSequenceNumber,
                             Comparator.nullsLast(Comparator.naturalOrder())))
                     .map(WorkItem::getId)
