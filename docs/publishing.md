@@ -33,7 +33,7 @@ unvalidated and then sit forever, because the native hand-off refused it. Edges 
   and ten minutes while no destination is selected yet,
 - media on **every** target, which each selected platform will actually accept and can publish as one
   post (`MediaTargetValidator`),
-- for an API TikTok target: a privacy level, and the creator's recorded consent.
+- for an API TikTok target: a privacy level, and the creator's recorded consent (given by the creator themselves in their own browser; see [TikTok consent](#tiktok-consent-from-mcp)).
 
 **Approve, and the rest is automatic.** MARKETING declares `trigger: review_approved` on
 `IN_REVIEW → APPROVED` and `APPROVED → SCHEDULED`, so the moment a reviewer approves, the Post is approved
@@ -219,7 +219,30 @@ first file rather than guess a story sequence was meant, with a warning saying s
 target gets its own warning, since the platform drops it. Nothing is decided client-side that the
 server also decides: the asset type comes from the Workflow, the fire time from the preflight's
 `earliestFireTime`, the readiness from the preflight. The one thing no tool does is record TikTok
-consent — that stays a human act in the UI.
+consent — that stays a human act in the creator's own browser. `request_tiktok_consent` only hands the
+person the link (see [TikTok consent](#tiktok-consent-from-mcp)).
+
+## TikTok consent from MCP
+
+TikTok requires the creator to consent personally to each Direct Post: they see the preview and the
+destination account, pick a privacy level and the interaction switches, and confirm. No tool records
+that, and the backend refuses it from any API key, project key or run token.
+
+`request_tiktok_consent({postIds?, requestId?, waitSeconds?})` makes it one trip for many Posts. It asks
+the backend for a consent request (24 hours, bound to the user the API key belongs to) and returns
+`consentUrl`, a page that works only for that user's own login. Where the MCP client supports URL
+elicitation the link is offered as a prompt; otherwise (common) the tool returns the link as text, the
+agent shows it to the person, and a second call with `requestId` waits (polling every 5 seconds, 600 s by
+default) until every Post is `VALID`. `postIds` takes Work Item ids or display ids; omit it for every Post
+pending consent.
+
+`create_post` drops the human-only TikTok keys (`privacyLevel`, `disableComment`, `disableDuet`,
+`disableStitch`, `brandContentToggle`, `brandOrganicToggle`) with a warning, and the backend refuses them
+from a machine credential.
+
+**Open question for TikTok's audit:** nothing in TikTok's guidelines says whether consent may be given at
+schedule time rather than at the moment of posting. Ask TikTok in the audit submission whether that is
+acceptable.
 
 ## The manual lane
 
