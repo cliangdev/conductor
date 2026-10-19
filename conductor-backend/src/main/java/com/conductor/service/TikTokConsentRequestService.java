@@ -97,7 +97,7 @@ public class TikTokConsentRequestService {
     public record Item(String workItemId, String displayId, String title,
                        PublishConsentService.ConsentState consent) {}
 
-    public record Skipped(String workItemId, String reason) {}
+    public record Skipped(String workItemId, String displayId, String reason) {}
 
     public record Created(TikTokConsentRequest request, String consentUrl, List<Item> items,
                           List<Skipped> skipped) {}
@@ -140,18 +140,21 @@ public class TikTokConsentRequestService {
 
         List<Item> items = new ArrayList<>();
         List<Skipped> skipped = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
         for (String id : candidates) {
-            WorkItem workItem = workItemRepository.findById(id)
-                    .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
-                    .orElse(null);
+            WorkItem workItem = resolve(projectId, id);
             if (workItem == null) {
-                skipped.add(new Skipped(id, "NOT_FOUND"));
+                skipped.add(new Skipped(id, null, "NOT_FOUND"));
                 continue;
             }
+            if (!seen.add(workItem.getId())) {
+                continue; // the same Post named twice, e.g. by uuid and by display id
+            }
             PublishConsentService.ConsentState consent = consentService.currentState(workItem);
+            String displayId = displayIdOf(workItem);
             switch (consent.verdict()) {
-                case NOT_REQUIRED -> skipped.add(new Skipped(id, "NOT_REQUIRED"));
-                case VALID -> skipped.add(new Skipped(id, "ALREADY_VALID"));
+                case NOT_REQUIRED -> skipped.add(new Skipped(workItem.getId(), displayId, "NOT_REQUIRED"));
+                case VALID -> skipped.add(new Skipped(workItem.getId(), displayId, "ALREADY_VALID"));
                 default -> items.add(item(workItem, consent));
             }
         }
@@ -166,6 +169,37 @@ public class TikTokConsentRequestService {
         }
         request = requestRepository.save(request);
         return new Created(request, consentUrl(projectId, request.getId()), items, skipped);
+    }
+
+    /**
+     * A Post in this project by its id or its display id ({@code RE-80}); null when there is none. Never
+     * throws, so one unknown id cannot sink the rest of a request.
+     */
+    private WorkItem resolve(String projectId, String idOrDisplayId) {
+        if (idOrDisplayId == null || idOrDisplayId.isBlank()) {
+            return null;
+        }
+        String ref = idOrDisplayId.trim();
+        WorkItem byId = workItemRepository.findById(ref)
+                .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
+                .orElse(null);
+        if (byId != null) {
+            return byId;
+        }
+        int dash = ref.lastIndexOf('-');
+        if (dash <= 0 || dash == ref.length() - 1) {
+            return null;
+        }
+        try {
+            int sequence = Integer.parseInt(ref.substring(dash + 1));
+            String key = ref.substring(0, dash);
+            return workItemRepository.findByProjectIdAndSequenceNumber(projectId, sequence)
+                    .filter(item -> item.getProject().getKey() != null
+                            && item.getProject().getKey().equalsIgnoreCase(key))
+                    .orElse(null);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private String consentUrl(String projectId, String requestId) {

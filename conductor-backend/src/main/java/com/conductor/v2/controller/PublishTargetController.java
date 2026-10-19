@@ -142,11 +142,9 @@ public class PublishTargetController implements PublishTargetsApi {
     public ResponseEntity<PublishConsentResponse> recordPublishConsent(
             String projectId, String workItemId, RecordPublishConsentRequest request) {
         boolean consented = request != null && Boolean.TRUE.equals(request.getConsented());
-        User caller = currentUser();
-        publishConsentService.recordConsent(projectId, workItemId, consented, caller);
-        PublishConsentService.RecordedConsent read =
-                publishConsentService.readConsentWithEtag(projectId, workItemId, caller);
-        return ResponseEntity.ok(toResponse(workItemId, read.state()).etag(read.etag()));
+        PublishConsentService.RecordedConsent recorded =
+                publishConsentService.recordConsentForCurrentCaller(projectId, workItemId, consented);
+        return ResponseEntity.ok(toResponse(workItemId, recorded.state()).etag(recorded.etag()));
     }
 
     @Override
@@ -178,7 +176,7 @@ public class PublishTargetController implements PublishTargetsApi {
                 created.request().getId(), created.consentUrl(), created.request().getExpiresAt(),
                 created.items().stream().map(PublishTargetController::toItem).toList(),
                 created.skipped().stream().map(skipped -> new TikTokConsentSkipped(skipped.workItemId(),
-                        TikTokConsentSkipped.ReasonEnum.fromValue(skipped.reason()))).toList(),
+                        TikTokConsentSkipped.ReasonEnum.fromValue(skipped.reason())).displayId(skipped.displayId())).toList(),
                 created.items().isEmpty());
         return ResponseEntity.status(201).body(body);
     }

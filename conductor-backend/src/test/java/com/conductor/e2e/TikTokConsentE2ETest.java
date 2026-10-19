@@ -245,6 +245,36 @@ class TikTokConsentE2ETest extends AbstractE2ETest {
     }
 
     @Test
+    void aProjectKeyRefusalOnThePlainConsentPutIsAuditedWithNoUser() {
+        assertThat(legacyPut(projectKey, true).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        assertThat(eventRepository.findAllByWorkItemIdOrderByCreatedAtDesc(itemId)).singleElement().satisfies(event -> {
+            assertThat(event.getAction()).isEqualTo(PublishConsentEvent.REFUSED_MACHINE_CREDENTIAL);
+            assertThat(event.getUserId()).isNull();
+            assertThat(event.getCredentialType()).isEqualTo("PROJECT_API_KEY");
+        });
+    }
+
+    @Test
+    void unknownIdsAreSkippedAndDisplayIdsAreResolved() {
+        String displayId = (String) ((Map<?, ?>) rest.exchange(url("/api/v2/projects/" + projectId + "/work-items/"
+                + itemId), HttpMethod.GET, new HttpEntity<>(owner), Map.class).getBody()).get("displayId");
+
+        var resp = rest.exchange(url(requests()), HttpMethod.POST, new HttpEntity<>(
+                Map.of("workItemIds", List.of("CE-999", UUID.randomUUID().toString(), displayId)), userApiKey),
+                Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat((List<?>) resp.getBody().get("items")).hasSize(1);
+        List<?> skipped = (List<?>) resp.getBody().get("skipped");
+        assertThat(skipped).hasSize(2);
+        assertThat(skipped).allSatisfy(s -> {
+            assertThat(((Map<?, ?>) s).get("reason")).isEqualTo("NOT_FOUND");
+        });
+        assertThat(((Map<?, ?>) skipped.get(0)).get("workItemId")).isEqualTo("CE-999");
+    }
+
+    @Test
     void aProjectKeyGetsA403NotA500OnEveryConsentEndpoint() {
         assertThat(put(projectKey, "\"x\"", body(null, "POST_PAGE")).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(legacyPut(projectKey, true).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);

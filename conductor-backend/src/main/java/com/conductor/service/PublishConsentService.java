@@ -222,6 +222,25 @@ public class PublishConsentService {
         return state(workItem, consent);
     }
 
+    /**
+     * {@link #recordConsent} for whoever is calling. A machine credential has no {@link User}, so the
+     * controller cannot hand one over; it is refused here instead, where the refusal can be audited (with
+     * no user id), rather than failing before any audit hook runs.
+     */
+    @Transactional
+    public RecordedConsent recordConsentForCurrentCaller(String projectId, String workItemId, boolean consented) {
+        User caller = projectSecurityService.currentUserOrNull();
+        if (caller == null) {
+            WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+            if (consented) {
+                requireInteractive(projectId, workItem);
+            }
+            throw new ForbiddenException("This needs a signed-in user; project keys and run tokens cannot do it");
+        }
+        ConsentState state = recordConsent(projectId, workItemId, consented, caller);
+        return new RecordedConsent(state, consentEtag(findWorkItemInProject(projectId, workItemId)));
+    }
+
     private PublishConsent upsertConsent(WorkItem workItem, String hash, User consentedBy) {
         PublishConsent consent = consentRepository.findByWorkItemId(workItem.getId())
                 .orElseGet(PublishConsent::new);

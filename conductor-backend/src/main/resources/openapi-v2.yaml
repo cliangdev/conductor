@@ -7495,7 +7495,9 @@ components:
         workItemIds:
           type: array
           nullable: true
-          description: The Posts to ask about. Omit for every Post in the project pending TikTok consent.
+          description: >-
+            The Posts to ask about, by id or display id (e.g. `RE-80`). Unknown ids do not fail the request;
+            they come back in `skipped` as NOT_FOUND. Omit for every Post in the project pending TikTok consent.
           items:
             type: string
 
@@ -7541,6 +7543,11 @@ components:
       properties:
         workItemId:
           type: string
+          description: The id as given when it was not found, otherwise the Post's id.
+        displayId:
+          type: string
+          nullable: true
+          description: The Post's display id (e.g. `RE-80`) when it was found.
         reason:
           type: string
           enum:
