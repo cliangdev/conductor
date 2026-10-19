@@ -19,7 +19,6 @@
 // (`disableComment`, `brandContentToggle`, …) rather than a local rewording that would have to be
 // translated at the boundary.
 
-import { useState } from 'react'
 import { Alert } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -37,6 +36,12 @@ export interface TikTokPublishOptionValues {
   brandContentToggle: boolean
   /** "Your Brand" — the creator promoting their own business. */
   brandOrganicToggle: boolean
+  /**
+   * UI only, never sent to the server: "Disclose commercial content" is switched on. TikTok requires
+   * one of Your Brand / Branded Content to be chosen once it is, so this is what lets
+   * `tiktokOptionsProblem` refuse a disclosure with no type instead of silently dropping it.
+   */
+  discloseCommercial?: boolean
   /** Discloses the post as AI-generated or AI-edited content. */
   isAigc: boolean
   /** Video posts only: where TikTok freezes the cover frame, in milliseconds from the start. Omitted
@@ -86,6 +91,8 @@ export const BRANDED_PRIVATE_EXPLANATION =
 
 const NO_PRIVACY_LEVEL_EXPLANATION = 'Choose who can see this TikTok post.'
 
+export const DISCLOSURE_CHOICE_EXPLANATION = 'Choose Your Brand or Branded Content'
+
 /** Milliseconds a `videoCoverTimestampMs` value converts to/from, for a person who thinks in seconds. */
 function msToSeconds(ms: number | null | undefined): number | '' {
   return ms == null ? '' : ms / 1000
@@ -103,6 +110,9 @@ function secondsToMs(seconds: string): number | undefined {
  */
 export function tiktokOptionsProblem(options: TikTokPublishOptionValues): string | null {
   if (!options.privacyLevel) return NO_PRIVACY_LEVEL_EXPLANATION
+  if (options.discloseCommercial && !options.brandContentToggle && !options.brandOrganicToggle) {
+    return DISCLOSURE_CHOICE_EXPLANATION
+  }
   if (options.brandContentToggle && isPrivatePrivacyLevel(options.privacyLevel)) {
     return BRANDED_PRIVATE_EXPLANATION
   }
@@ -121,6 +131,7 @@ export function normalizeTikTokOptions(
     brandContentToggle: raw?.brandContentToggle ?? false,
     brandOrganicToggle: raw?.brandOrganicToggle ?? false,
     isAigc: raw?.isAigc ?? false,
+    ...(raw?.discloseCommercial ? { discloseCommercial: true } : {}),
     ...(raw?.videoCoverTimestampMs != null ? { videoCoverTimestampMs: raw.videoCoverTimestampMs } : {}),
     ...(raw?.autoAddMusic !== undefined ? { autoAddMusic: raw.autoAddMusic } : {}),
     ...(raw?.photoCoverIndex != null ? { photoCoverIndex: raw.photoCoverIndex } : {}),
@@ -199,8 +210,7 @@ export function TikTokPublishOptions({
 }: TikTokPublishOptionsProps) {
   // The disclosure section opens on its own once the Post already carries a disclosure, so a saved
   // "Paid partnership" is visible without the creator having to go looking for it.
-  const [opened, setOpened] = useState(false)
-  const disclosing = opened || value.brandContentToggle || value.brandOrganicToggle
+  const disclosing = Boolean(value.discloseCommercial) || value.brandContentToggle || value.brandOrganicToggle
   const brandedPrivately = value.brandContentToggle && isPrivatePrivacyLevel(value.privacyLevel)
 
   const set = (patch: Partial<TikTokPublishOptionValues>) => onChange({ ...value, ...patch })
@@ -209,15 +219,18 @@ export function TikTokPublishOptions({
   const displayedPrivacyLevel = value.privacyLevel ?? ''
 
   function toggleDisclosure(next: boolean) {
-    setOpened(next)
-    if (!next) set({ brandContentToggle: false, brandOrganicToggle: false })
+    set(
+      next
+        ? { discloseCommercial: true }
+        : { discloseCommercial: false, brandContentToggle: false, brandOrganicToggle: false }
+    )
   }
 
   return (
     <div className="space-y-4 border-t border-border bg-surface-raised px-4 py-3">
       <div>
         <Label htmlFor={`${idPrefix}-privacy`} className={SECTION_LABEL}>
-          Who can view this video
+          Who can view this {isVideo ? 'video' : 'post'}
         </Label>
         {privacyLevelOptions.length === 0 ? (
           <Alert variant="warning">
@@ -300,6 +313,9 @@ export function TikTokPublishOptions({
               disabled={disabled}
               onCheckedChange={(v) => set({ brandContentToggle: v })}
             />
+            {!value.brandContentToggle && !value.brandOrganicToggle && (
+              <Alert variant="warning">{DISCLOSURE_CHOICE_EXPLANATION}</Alert>
+            )}
             {brandedPrivately && <Alert variant="destructive">{BRANDED_PRIVATE_EXPLANATION}</Alert>}
           </div>
         )}

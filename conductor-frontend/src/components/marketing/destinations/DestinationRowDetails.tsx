@@ -62,6 +62,7 @@ export function DestinationRowDetails({
   // Platform options are only meaningful for an API target: they are the payload we send the
   // platform, and on the manual lane the creator sets all of it in the platform's own composer.
   const showOptions = !row.manual
+  const rowIsVideo = row.effectiveAssets.some((a) => isVideoContentType(a.contentType))
 
   if (mode === 'pick' && !row.settled) {
     return (
@@ -200,14 +201,14 @@ export function DestinationRowDetails({
             <>
               <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-done" aria-hidden />
               <span>
-                {optionsSummary(row.tiktokOptions)} · consented
+                {optionsSummary(row.tiktokOptions, rowIsVideo)} · consented
                 {row.consent.consentedByName ? ` by ${row.consent.consentedByName}` : ''}
                 {row.consent.consentedAt ? ` on ${new Date(row.consent.consentedAt).toLocaleDateString()}` : ''}.
                 Covers every TikTok destination on this post.
               </span>
             </>
           ) : (
-            <span>{optionsSummary(row.tiktokOptions)}</span>
+            <span>{optionsSummary(row.tiktokOptions, rowIsVideo)}</span>
           )}
         </p>
       )}

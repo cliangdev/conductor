@@ -72,7 +72,54 @@ describe('ConsentPageView', () => {
     render(<ConsentPageView projectId="p1" requestId="req-1" />)
     expect(await screen.findByText('0 of 2 consented')).toBeInTheDocument()
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/p1/tiktok-consent?request=req-1', 'tok')
-    expect(within(card('RE-1')).getByText(/Posting to/)).toHaveTextContent('@rexipe')
+    // The account is named once, as TikTok shows it — a nickname is not a handle, so no "@" prefix.
+    expect(within(card('RE-1')).getAllByText(/posting to/i)).toHaveLength(1)
+    expect(card('RE-1')).toHaveTextContent('rexipe')
+    expect(card('RE-1')).not.toHaveTextContent('@rexipe')
+  })
+
+  it('disables Confirm when commercial content is disclosed without Your Brand or Branded Content', async () => {
+    render(<ConsentPageView projectId="p1" requestId="req-1" />)
+    await screen.findByText('0 of 2 consented')
+    const c = within(card('RE-1'))
+    await userEvent.selectOptions(c.getByLabelText(/who can view this/i), 'PUBLIC_TO_EVERYONE')
+    expect(c.getByRole('button', { name: /confirm/i })).toBeEnabled()
+    await userEvent.click(c.getByRole('switch', { name: /disclose commercial content/i }))
+    expect(c.getByRole('button', { name: /confirm/i })).toBeDisabled()
+    expect(c.getAllByText('Choose Your Brand or Branded Content')).toHaveLength(1)
+    await userEvent.click(c.getByRole('switch', { name: 'Your Brand' }))
+    expect(c.getByRole('button', { name: /confirm/i })).toBeEnabled()
+  })
+
+  it('shows the branded-content-but-private error once', async () => {
+    render(<ConsentPageView projectId="p1" requestId="req-1" />)
+    await screen.findByText('0 of 2 consented')
+    const c = within(card('RE-1'))
+    await userEvent.selectOptions(c.getByLabelText(/who can view this/i), 'SELF_ONLY')
+    await userEvent.click(c.getByRole('switch', { name: /disclose commercial content/i }))
+    await userEvent.click(c.getByRole('switch', { name: 'Branded Content' }))
+    expect(c.getAllByText(/can.t be posted privately/i)).toHaveLength(1)
+    expect(c.getByRole('button', { name: /confirm/i })).toBeDisabled()
+  })
+
+  it('lists allowed interactions as well as the ones that are off', async () => {
+    render(<ConsentPageView projectId="p1" requestId="req-1" />)
+    await screen.findByText('0 of 2 consented')
+    const c = within(card('RE-1'))
+    await waitFor(() => expect(c.getByRole('switch', { name: 'Duet' })).toBeInTheDocument())
+    await userEvent.click(c.getByRole('switch', { name: 'Comment' }))
+    expect(c.getByText(/Comments on · Duet off · Stitch off/)).toBeInTheDocument()
+  })
+
+  it('previews several photos as a compact strip', async () => {
+    ;(apiGet as Mock).mockImplementation(async (path: string) => {
+      if (path.includes('/assets'))
+        return [1, 2, 3].map((n) => ({ id: `a-${n}`, label: `p${n}`, type: 'tiktok_post', contentType: 'image/png', previewUrl: `https://cdn.test/${n}.png` }))
+      return { ...pageData, posts: [post(1, { targets: [{ targetId: 't', connectionId: 'conn-1', effectiveAssetIds: ['a-1', 'a-2', 'a-3'] }] })] }
+    })
+    render(<ConsentPageView projectId="p1" requestId="req-1" />)
+    expect(await within(await screen.findByTestId('consent-card-RE-1')).findByRole('list', { name: 'Post images' })).toBeInTheDocument()
+    expect(within(card('RE-1')).getByLabelText('Who can view this post')).toBeInTheDocument()
   })
 
   it('keeps Confirm disabled until a privacy level is picked, with every switch off', async () => {
@@ -81,7 +128,7 @@ describe('ConsentPageView', () => {
     const c = within(card('RE-1'))
     const confirm = c.getByRole('button', { name: /confirm/i })
     expect(confirm).toBeDisabled()
-    expect(c.getByLabelText(/who can view this video/i)).toHaveValue('')
+    expect(c.getByLabelText(/who can view this/i)).toHaveValue('')
     for (const name of ['Comment', 'Stitch']) {
       expect(c.getByRole('switch', { name })).not.toBeChecked()
     }
@@ -155,7 +202,7 @@ describe('ConsentPageView', () => {
     pageData = { ...pageData, posts: [post(1, { etag: '"etag-1b"' }), post(2)] }
     await userEvent.click(c.getByRole('button', { name: /confirm/i }))
 
-    expect(await within(card('RE-1')).findByText(/changed since you opened the page/i)).toBeInTheDocument()
+    expect(await within(card('RE-1')).findByText(/your choices were cleared/i)).toBeInTheDocument()
     // Reloaded: the choice was reset, the new etag is used on the next Confirm.
     const again = within(card('RE-1'))
     expect(again.getByLabelText(/who can view this video/i)).toHaveValue('')
@@ -198,6 +245,10 @@ describe('ConsentPageView', () => {
     pageError = { status: 403, detail: 'This link was created for Rita' }
     render(<ConsentPageView projectId="p1" requestId="req-1" />)
     expect(await screen.findByText('This link was created for Rita')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /every post waiting/i })).toHaveAttribute(
+      'href',
+      '/app/projects/p1/marketing/consent'
+    )
   })
 
   it('tells the person to ask for a new link on a 410', async () => {

@@ -104,9 +104,10 @@ describe('TikTokConsentPreview', () => {
   })
 
   it('summarises the options the post will carry', () => {
-    render(<TikTokConsentPreview target={target({ options: options({ disableComment: true, brandContentToggle: true }) })} assets={[IMAGE]} />)
+    render(<TikTokConsentPreview target={target({ options: options({ disableComment: true, disableDuet: false, brandContentToggle: true }) })} assets={[VIDEO]} />)
     expect(screen.getByText(/Everyone/)).toBeInTheDocument()
     expect(screen.getByText(/Comments off/)).toBeInTheDocument()
+    expect(screen.getByText(/Duet on/)).toBeInTheDocument()
     expect(screen.getByText(/Paid partnership/)).toBeInTheDocument()
   })
 })

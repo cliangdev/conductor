@@ -19,6 +19,7 @@
 // edit (the parent bumps `refreshKey`) and after the button lands.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { Modal } from '@/components/ui/modal'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -27,6 +28,41 @@ import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPatch } from '@/lib/api'
 import { statusMeta, statusHasReviewGate } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
+
+/**
+ * The server's wording for a missing audience is written for an agent ("an agent cannot set it"). A
+ * person reading it on the Post page should be told what to do, so rewrite it before it is shown.
+ */
+export function humanizeFindingMessage(message: string): string {
+  return message.replace(
+    / — the creator has to choose one of .*? themselves on the TikTok consent page \(an agent cannot set it\)/,
+    ' — choose who can see it on the TikTok consent page'
+  )
+}
+
+/** A finding's text, with "the TikTok consent page" linked to the page when the message mentions it. */
+export function FindingMessage({ message }: { message: string }) {
+  // Read from the URL (not useParams) so this stays a plain leaf that renders anywhere. Findings only
+  // exist after a client-side fetch, so this never renders on the server.
+  const projectId =
+    typeof window === 'undefined' ? null : (window.location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null)
+  const text = humanizeFindingMessage(message)
+  const phrase = 'the TikTok consent page'
+  const at = text.indexOf(phrase)
+  if (at < 0 || !projectId) return <>{text}</>
+  return (
+    <>
+      {text.slice(0, at)}
+      <Link
+        href={`/app/projects/${projectId}/marketing/consent`}
+        className="underline underline-offset-2"
+      >
+        {phrase}
+      </Link>
+      {text.slice(at + phrase.length)}
+    </>
+  )
+}
 
 export interface PublishFinding {
   code: string
@@ -204,7 +240,7 @@ export function usePublishReadiness({
   // A review-gated move is the reviewer's to make with their verdict, not a button here — and after an
   // approval the Workflow takes it on its own. What this button offers is the author's own move.
   const offersButton = canMove && !next?.requiresReview
-  const disabledReason = preflight && !preflight.ready ? preflight.blockers?.[0]?.message : undefined
+  const disabledReason = preflight && !preflight.ready ? humanizeFindingMessage(preflight.blockers?.[0]?.message ?? '') || undefined : undefined
   // The move lands in a review-gated status and the caller gave us people to choose from: ask first.
   const asksForReviewers =
     offersButton && eligibleReviewers !== undefined && statusHasReviewGate(workflowView, next!.to)

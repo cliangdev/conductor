@@ -5,6 +5,7 @@
 // the signed-in session; the link itself carries no authority.
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { ShieldCheck } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -26,7 +27,7 @@ function loadErrorMessage(err: unknown): string {
 export function ConsentPageView({ projectId, requestId }: { projectId: string; requestId?: string | null }) {
   const { user, accessToken } = useAuth()
   const [page, setPage] = useState<TikTokConsentPage | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ message: string; status?: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [assets, setAssets] = useState<Record<string, MediaAsset[]>>({})
   const [stale, setStale] = useState<Set<string>>(new Set())
@@ -55,7 +56,7 @@ export function ConsentPageView({ projectId, requestId }: { projectId: string; r
         loadAssets(data.posts.filter((p) => p.verdict !== 'VALID').map((p) => p.workItemId))
       })
       .catch((err) => {
-        if (!cancelled) setError(loadErrorMessage(err))
+        if (!cancelled) setError({ message: loadErrorMessage(err), status: (err as { status?: number })?.status })
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -83,7 +84,7 @@ export function ConsentPageView({ projectId, requestId }: { projectId: string; r
         loadAssets([workItemId])
         setStale((current) => new Set(current).add(workItemId))
       } catch (err) {
-        setError(loadErrorMessage(err))
+        setError({ message: loadErrorMessage(err), status: (err as { status?: number })?.status })
       }
     },
     [projectId, accessToken, requestId, loadAssets]
@@ -118,7 +119,21 @@ export function ConsentPageView({ projectId, requestId }: { projectId: string; r
     [user]
   )
 
-  if (error) return <Alert variant="destructive">{error}</Alert>
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <Alert variant="destructive">{error.message}</Alert>
+        {requestId && (error.status === 403 || error.status === 410) && (
+          <Link
+            href={`/app/projects/${projectId}/marketing/consent`}
+            className="inline-block text-sm font-medium text-primary underline-offset-4 hover:underline"
+          >
+            See every post waiting for your TikTok consent
+          </Link>
+        )}
+      </div>
+    )
+  }
 
   if (loading || !page) {
     return (

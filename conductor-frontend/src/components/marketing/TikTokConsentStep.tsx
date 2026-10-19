@@ -45,6 +45,10 @@ export interface TikTokConsentTarget {
   caption?: string | null
   /** The ids of the media that will actually go out here, in order. */
   assetIds?: string[]
+  /** How to name the account when the caller knows more than a handle (nickname, @username); wins over `creatorNickname`. */
+  displayName?: string
+  /** The creator's avatar, shown beside the name when known. */
+  avatarUrl?: string | null
 }
 
 export interface TikTokPreviewAsset {
@@ -145,19 +149,23 @@ export function useTikTokPublishGate(): string | null {
 
 /** The handle a creator would recognise, with exactly one leading `@`. */
 export function destinationName(target: TikTokConsentTarget): string {
+  if (target.displayName) return target.displayName
   const nickname = target.creatorNickname?.trim()
   if (!nickname) return target.label
   return nickname.startsWith('@') ? nickname : `@${nickname}`
 }
 
 /** What the post will carry, in the same words the options panel used. */
-export function optionsSummary(options: TikTokPublishOptionValues): string {
+export function optionsSummary(options: TikTokPublishOptionValues, isVideo = true): string {
   const parts: string[] = [
     options.privacyLevel ? privacyLevelLabel(options.privacyLevel) : 'No privacy level chosen',
   ]
-  if (options.disableComment) parts.push('Comments off')
-  if (options.disableDuet) parts.push('Duet off')
-  if (options.disableStitch) parts.push('Stitch off')
+  // Every interaction is listed, allowed or not; Duet and Stitch don't exist on photo posts.
+  parts.push(options.disableComment ? 'Comments off' : 'Comments on')
+  if (isVideo) {
+    parts.push(options.disableDuet ? 'Duet off' : 'Duet on')
+    parts.push(options.disableStitch ? 'Stitch off' : 'Stitch on')
+  }
   if (options.brandOrganicToggle) parts.push('Promotional content')
   if (options.brandContentToggle) parts.push('Paid partnership')
   return parts.join(' · ')
@@ -173,9 +181,12 @@ export function optionsSummary(options: TikTokPublishOptionValues): string {
 export function TikTokConsentPreview({
   target,
   assets,
+  compact = false,
 }: {
   target: TikTokConsentTarget
   assets: TikTokPreviewAsset[]
+  /** Several images render as a horizontal thumbnail strip instead of a tall stack. */
+  compact?: boolean
 }) {
   const targetAssets = target.assetIds
     ? target.assetIds
@@ -186,11 +197,16 @@ export function TikTokConsentPreview({
     <div className="overflow-hidden rounded-md border border-border bg-surface-raised">
       <div className="px-3 py-2.5">
         <span className="flex items-center gap-2">
-          <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          {target.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={target.avatarUrl} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
+          ) : (
+            <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          )}
           <span className="text-xs text-muted-foreground">You are posting to</span>
           <span className="truncate text-sm font-semibold text-foreground">{destinationName(target)}</span>
         </span>
-        <span className="mt-1 block text-xs text-muted-foreground">{optionsSummary(target.options)}</span>
+        <span className="mt-1 block text-xs text-muted-foreground">{optionsSummary(target.options, targetAssets.some((a) => isVideoContentType(a.contentType)))}</span>
       </div>
 
       <div className="border-t border-border">
@@ -199,6 +215,25 @@ export function TikTokConsentPreview({
             <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
             No media has been chosen for this account — TikTok needs it before this post can go out.
           </p>
+        ) : compact && targetAssets.length > 1 && targetAssets.every((a) => !isVideoContentType(a.contentType)) ? (
+          <ul className="flex gap-2 overflow-x-auto p-2" aria-label="Post images">
+            {targetAssets.map((asset) => (
+              <li key={asset.id} className="shrink-0">
+                {asset.previewUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={asset.previewUrl}
+                    alt={asset.label || 'TikTok post media'}
+                    className="block h-28 w-auto rounded bg-surface-3 object-contain"
+                  />
+                ) : (
+                  <span className="block px-2 py-4 text-xs text-muted-foreground">
+                    {asset.label} is still uploading — no preview yet.
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
         ) : (
           <ul className="divide-y divide-border">
             {targetAssets.map((asset) => (

@@ -53,7 +53,9 @@ export function seedTikTokOptions(
   for (const target of targets) {
     if (target.platform !== 'tiktok') continue
     const key = targetKey(target.platform, target.connectionId)
-    seeded[key] = normalizeTikTokOptions(target.publishOptions ?? fallback[key])
+    const stored = normalizeTikTokOptions(target.publishOptions ?? fallback[key])
+    // The server never sees (or echoes) the UI-only disclosure switch; carry it over from the draft.
+    seeded[key] = fallback[key]?.discloseCommercial ? { ...stored, discloseCommercial: true } : stored
   }
   return seeded
 }
@@ -174,7 +176,9 @@ export function buildSelectionPayload(
     if (isManual(o)) return {}
     const key = targetKey(o.platform, o.connectionId)
     if (o.platform === 'tiktok') {
-      return { publishOptions: draft.tiktok[key] ?? EMPTY_TIKTOK_OPTIONS }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { discloseCommercial, ...sent } = draft.tiktok[key] ?? EMPTY_TIKTOK_OPTIONS
+      return { publishOptions: sent }
     }
     if (o.platform === 'instagram') {
       const values = draft.instagram[key]

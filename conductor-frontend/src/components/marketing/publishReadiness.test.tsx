@@ -7,6 +7,8 @@ import {
   PublishReadinessAction,
   type PublishPreflight,
   type UsePublishReadinessArgs,
+  FindingMessage,
+  humanizeFindingMessage,
 } from './publishReadiness'
 
 const { toastErrorSpy } = vi.hoisted(() => ({ toastErrorSpy: vi.fn() }))
@@ -257,5 +259,25 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
     rerender(<Harness refreshKey={2} />)
     await screen.findByText(/1 thing to fix/)
     expect(fetchMock.mock.calls.length).toBeGreaterThan(before)
+  })
+})
+
+describe('FindingMessage', () => {
+  const RAW =
+    'TikTok (@acme) has no privacy level chosen, so it would publish visible only to the creator — the creator has to choose one of Everyone, Only me themselves on the TikTok consent page (an agent cannot set it)'
+
+  it('rewrites the agent-voice copy for a person', () => {
+    const text = humanizeFindingMessage(RAW)
+    expect(text).not.toMatch(/agent/i)
+    expect(text).toMatch(/choose who can see it on the TikTok consent page$/)
+  })
+
+  it('links the consent page', async () => {
+    window.history.pushState({}, '', '/app/projects/p9/marketing/posts/x')
+    render(<p><FindingMessage message={RAW} /></p>)
+    expect(await screen.findByRole('link', { name: 'the TikTok consent page' })).toHaveAttribute(
+      'href',
+      '/app/projects/p9/marketing/consent'
+    )
   })
 })

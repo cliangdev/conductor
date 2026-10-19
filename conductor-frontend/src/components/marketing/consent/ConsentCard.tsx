@@ -7,7 +7,6 @@
 import { useState } from 'react'
 import { CheckCircle2 } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { apiErrorMessage } from '@/lib/api'
 import {
@@ -53,9 +52,12 @@ function initialChoices(post: ConsentPagePost): Record<string, TikTokPublishOpti
   return out
 }
 
+/** The nickname as TikTok shows it, plus @username when known; the nickname is never prefixed with "@". */
 function creatorName(c: ConsentPageCreator | undefined): string {
-  const name = c?.nickname || c?.username
-  return name ? (name.startsWith('@') ? name : `@${name}`) : 'this TikTok account'
+  const nickname = c?.nickname?.trim()
+  const username = c?.username?.trim().replace(/^@/, '')
+  if (nickname) return username ? `${nickname} (@${username})` : nickname
+  return username ? `@${username}` : 'this TikTok account'
 }
 
 export function ConsentCard({
@@ -109,6 +111,7 @@ export function ConsentCard({
     })
     .find(Boolean)
   const problem = post.targets.map((t) => tiktokOptionsProblem(choices[t.connectionId])).find(Boolean) ?? null
+  const needsPrivacy = post.targets.some((t) => !choices[t.connectionId]?.privacyLevel)
   const branded = post.targets.some((t) => choices[t.connectionId]?.brandContentToggle)
 
   async function confirm() {
@@ -165,7 +168,9 @@ export function ConsentCard({
       </div>
 
       {stale && (
-        <Alert variant="warning">This post changed since you opened the page. Review it again.</Alert>
+        <Alert variant="warning">
+          This post changed since you opened the page. Review it again — your choices were cleared.
+        </Alert>
       )}
 
       {post.targets.map((t) => {
@@ -176,6 +181,8 @@ export function ConsentCard({
           connectionId: t.connectionId,
           label: creatorName(creator),
           creatorNickname: creator?.nickname ?? creator?.username ?? null,
+          displayName: creatorName(creator),
+          avatarUrl: creator?.avatarUrl ?? null,
           options,
           problem: null,
           caption: t.effectiveCaption ?? t.captionOverride ?? post.caption ?? null,
@@ -183,17 +190,7 @@ export function ConsentCard({
         }
         return (
           <div key={t.connectionId} className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Avatar className="h-8 w-8">
-                {creator?.avatarUrl && <AvatarImage src={creator.avatarUrl} alt="" />}
-                <AvatarFallback>{creatorName(creator).replace('@', '').slice(0, 1).toUpperCase()}</AvatarFallback>
-              </Avatar>
-              <p className="text-sm text-foreground">
-                Posting to <span className="font-semibold">{creatorName(creator)}</span>
-              </p>
-            </div>
-
-            <TikTokConsentPreview target={previewTarget} assets={allAssets} />
+            <TikTokConsentPreview target={previewTarget} assets={allAssets} compact />
 
             {creator && creator.canPost && !creator.reconnectRequired && (
               <div className="overflow-hidden rounded-md border border-border">
@@ -223,7 +220,8 @@ export function ConsentCard({
       ) : (
         <div className="space-y-3 border-t border-border pt-3">
           <TikTokDeclaration branded={branded} />
-          {problem && <p className="text-xs text-muted-foreground">{problem}</p>}
+          {/* Only the missing audience is spelled out here; the options panel shows the other problems itself. */}
+          {problem && needsPrivacy && <p className="text-xs text-muted-foreground">{problem}</p>}
           {error && <Alert variant="destructive">{error}</Alert>}
           <Button onClick={() => void confirm()} disabled={saving || Boolean(problem)}>
             {saving ? 'Confirming…' : 'Confirm and consent'}
