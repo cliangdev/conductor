@@ -311,10 +311,10 @@ describe('set_publish_targets chooses destinations and per-target options', () =
     const stored = [
       {
         id: 't1',
-        platform: 'tiktok',
+        platform: 'instagram',
         connectionId: 'c9',
         state: 'PENDING',
-        publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: true },
+        publishOptions: { shareToFeed: 'x', disableComment: true },
       },
     ]
     mocked(apiPut).mockResolvedValue(stored)
@@ -324,9 +324,9 @@ describe('set_publish_targets chooses destinations and per-target options', () =
         issueId: 'w1',
         targets: [
           {
-            platform: 'tiktok',
+            platform: 'instagram',
             connectionId: 'c9',
-            publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: true },
+            publishOptions: { shareToFeed: 'x', disableComment: true },
           },
         ],
       },
@@ -338,9 +338,9 @@ describe('set_publish_targets chooses destinations and per-target options', () =
       {
         targets: [
           {
-            platform: 'tiktok',
+            platform: 'instagram',
             connectionId: 'c9',
-            publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: true },
+            publishOptions: { shareToFeed: 'x', disableComment: true },
           },
         ],
       },
