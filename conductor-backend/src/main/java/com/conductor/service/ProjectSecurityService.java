@@ -3,8 +3,12 @@ package com.conductor.service;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
+import jakarta.persistence.EntityNotFoundException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.security.JwtAuthenticationDetails;
 import com.conductor.security.ProjectScopedPrincipal;
+import com.conductor.security.UserApiKeyAuthenticationToken;
 import com.conductor.security.WorkflowRunAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -66,6 +70,83 @@ public class ProjectSecurityService {
         }
         // Machine credentials pass: they are issued per project and act on its behalf.
         return requireProjectAccess(projectId);
+    }
+
+    /**
+     * Whether the current request is a person acting in their own browser session: a user JWT sent in
+     * the {@code Authorization} header, and nothing else. Excluded on purpose are user API keys (a
+     * script, an agent's MCP session), project keys and run tokens (machines), and a JWT that arrived
+     * only as the {@code access_token} cookie (the browser attaches it to cross-site requests too).
+     */
+    public boolean isInteractiveRequest() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth instanceof UsernamePasswordAuthenticationToken
+                && auth.getPrincipal() instanceof User
+                && auth.getDetails() instanceof JwtAuthenticationDetails details
+                && details.isFromAuthorizationHeader();
+    }
+
+    /**
+     * Like {@link #requireProjectAccess}, but only a person in their own session passes — for actions
+     * whose whole point is that a human did them, such as a creator's posting consent. A machine
+     * credential, a user API key or a cookie-only token gets a 403; a non-member gets the same 404 a
+     * missing project gets.
+     */
+    public User requireInteractiveUser(String projectId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (!isInteractiveRequest()) {
+            throw new ForbiddenException(
+                    "This needs a person signed in to the Conductor web app; API keys and agents cannot do it");
+        }
+        User user = (User) auth.getPrincipal();
+        if (!isProjectMember(projectId, user.getId())) {
+            throw new EntityNotFoundException("Project not found");
+        }
+        return user;
+    }
+
+    /**
+     * A member <em>user</em>, however they authenticated (JWT or user API key): for actions that must be
+     * bound to a person but may be started by that person's own agent. A project key or run token has no
+     * user and gets a 403; a non-member gets the 404 a missing project gets.
+     */
+    public User requireMemberUser(String projectId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof User user)) {
+            throw new ForbiddenException("This needs a signed-in user; project keys and run tokens cannot do it");
+        }
+        if (!isProjectMember(projectId, user.getId())) {
+            throw new EntityNotFoundException("Project not found");
+        }
+        return user;
+    }
+
+    /** The authenticated user, or null for a machine credential or no authentication. */
+    public User currentUserOrNull() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getPrincipal() instanceof User user ? user : null;
+    }
+
+    /** How the current request authenticated, for the consent audit. */
+    public String credentialType() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) {
+            return "UNKNOWN";
+        }
+        if (auth instanceof UserApiKeyAuthenticationToken) {
+            return "USER_API_KEY";
+        }
+        if (auth instanceof WorkflowRunAuthenticationToken) {
+            return "RUN_TOKEN";
+        }
+        if (auth instanceof ProjectScopedPrincipal) {
+            return "PROJECT_API_KEY";
+        }
+        if (auth instanceof UsernamePasswordAuthenticationToken && auth.getPrincipal() instanceof User) {
+            return auth.getDetails() instanceof JwtAuthenticationDetails details
+                    && details.isFromAuthorizationHeader() ? "JWT_HEADER" : "JWT_COOKIE";
+        }
+        return "UNKNOWN";
     }
 
     /** Byline for a machine actor — the run id when there is one, so writes stay traceable to a run. */

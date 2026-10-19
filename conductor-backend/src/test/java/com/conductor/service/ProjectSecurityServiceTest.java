@@ -127,6 +127,80 @@ class ProjectSecurityServiceTest {
                 .hasMessageContaining("ADMIN or CREATOR");
     }
 
+    // --- interactive principal ---
+
+    private void authenticateJwt(boolean fromHeader) {
+        User user = new User();
+        user.setId("user-1");
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(user, null, List.of());
+        auth.setDetails(new com.conductor.security.JwtAuthenticationDetails(
+                new org.springframework.mock.web.MockHttpServletRequest(), fromHeader));
+        authenticate(auth);
+    }
+
+    @Test
+    void aHeaderJwtMemberIsAnInteractiveUser() {
+        authenticateJwt(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
+
+        assertThat(service().requireInteractiveUser(PROJECT_ID).getId()).isEqualTo("user-1");
+        assertThat(service().credentialType()).isEqualTo("JWT_HEADER");
+    }
+
+    @Test
+    void aCookieOnlyJwtIsNotInteractive() {
+        authenticateJwt(false);
+
+        assertThatThrownBy(() -> service().requireInteractiveUser(PROJECT_ID))
+                .isInstanceOf(ForbiddenException.class);
+        assertThat(service().credentialType()).isEqualTo("JWT_COOKIE");
+    }
+
+    @Test
+    void aUserApiKeyIsNotInteractive() {
+        User user = new User();
+        user.setId("user-1");
+        authenticate(new com.conductor.security.UserApiKeyAuthenticationToken(user));
+
+        assertThatThrownBy(() -> service().requireInteractiveUser(PROJECT_ID))
+                .isInstanceOf(ForbiddenException.class);
+        assertThat(service().credentialType()).isEqualTo("USER_API_KEY");
+    }
+
+    @Test
+    void projectKeysAndRunTokensAreNotInteractive() {
+        authenticate(new ApiKeyAuthenticationToken(PROJECT_ID));
+        assertThatThrownBy(() -> service().requireInteractiveUser(PROJECT_ID))
+                .isInstanceOf(ForbiddenException.class);
+        assertThat(service().credentialType()).isEqualTo("PROJECT_API_KEY");
+
+        authenticate(new WorkflowRunAuthenticationToken(PROJECT_ID, "run-1"));
+        assertThatThrownBy(() -> service().requireInteractiveUser(PROJECT_ID))
+                .isInstanceOf(ForbiddenException.class);
+        assertThat(service().credentialType()).isEqualTo("RUN_TOKEN");
+    }
+
+    @Test
+    void aNonMemberInteractiveUserGetsTheMissingProjectNotFound() {
+        authenticateJwt(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
+
+        assertThatThrownBy(() -> service().requireInteractiveUser(PROJECT_ID))
+                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+    }
+
+    @Test
+    void memberUserAdmitsAnApiKeyOwnerButNotAProjectKey() {
+        User user = new User();
+        user.setId("user-1");
+        authenticate(new com.conductor.security.UserApiKeyAuthenticationToken(user));
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
+        assertThat(service().requireMemberUser(PROJECT_ID).getId()).isEqualTo("user-1");
+
+        authenticate(new ApiKeyAuthenticationToken(PROJECT_ID));
+        assertThatThrownBy(() -> service().requireMemberUser(PROJECT_ID)).isInstanceOf(ForbiddenException.class);
+    }
+
     @Test
     void editorGateAdmitsAMachineCredentialWithoutARole() {
         authenticate(new ApiKeyAuthenticationToken(PROJECT_ID));

@@ -97,6 +97,16 @@ public class PublishPlatformRegistry {
                     EnumSet.of(Gate.PRIVACY_LEVEL, Gate.CREATOR_CONSENT, Gate.CREATOR_DURATION_CAP)));
 
     /**
+     * The TikTok option keys only the creator may set: who can see the post, which interactions are
+     * allowed, and the commercial disclosure. TikTok's guidelines require the creator to choose each of
+     * these personally, so a machine credential cannot change them; they arrive through the consent write
+     * ({@code PublishConsentService#recordInteractiveConsent}).
+     */
+    public static final Set<String> TIKTOK_HUMAN_ONLY_OPTION_KEYS = Set.of(
+            "privacyLevel", "disableComment", "disableDuet", "disableStitch",
+            "brandContentToggle", "brandOrganicToggle");
+
+    /**
      * TikTok's option keys, the row's own camelCase on the left and the parameter the connector's shipped
      * tool spec declares on the right (TIK-1). Insertion order is kept so the action input reads the same
      * way the spec does.

@@ -11,7 +11,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.cache.Cache;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -68,6 +67,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
+        boolean fromHeader = hasBearerHeader(request);
         String token = extractToken(request);
 
         if (token != null && jwtService.validateToken(token)) {
@@ -78,7 +78,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 User user = userOpt.get();
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(user, null, List.of());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                authentication.setDetails(new JwtAuthenticationDetails(request, fromHeader));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }
         }
@@ -86,10 +86,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private String extractToken(HttpServletRequest request) {
+    private static boolean hasBearerHeader(HttpServletRequest request) {
         String bearerHeader = request.getHeader("Authorization");
-        if (bearerHeader != null && bearerHeader.startsWith("Bearer ")) {
-            return bearerHeader.substring(7);
+        return bearerHeader != null && bearerHeader.startsWith("Bearer ");
+    }
+
+    private String extractToken(HttpServletRequest request) {
+        if (hasBearerHeader(request)) {
+            return request.getHeader("Authorization").substring(7);
         }
 
         if (request.getCookies() != null) {
