@@ -179,7 +179,7 @@ export function DestinationRow({
             <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-failed">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>
-                <FindingMessage message={f.message} />
+                <FindingMessage finding={f} isTikTokTarget={row.option.platform === 'tiktok'} />
               </span>
             </p>
           ))}
@@ -187,7 +187,7 @@ export function DestinationRow({
             <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-progress">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>
-                <FindingMessage message={f.message} />
+                <FindingMessage finding={f} isTikTokTarget={row.option.platform === 'tiktok'} />
               </span>
             </p>
           ))}

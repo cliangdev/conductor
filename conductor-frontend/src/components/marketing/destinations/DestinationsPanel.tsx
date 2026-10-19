@@ -55,6 +55,8 @@ export function DestinationsPanel({
   // A row that stops existing (unticked, revoked) simply no longer matches its key; nothing to reset.
   // Unchosen destinations are choices, so they only belong in the picker. Once the post is in review or later
   // ('outcome'), show just the ones it actually goes to, matching the "N destinations" summary.
+  const isTikTokFinding = (targetId?: string | null) =>
+    Boolean(targetId) && rows.some((r) => r.target?.id === targetId && r.option.platform === 'tiktok')
   const visible = rows.filter((r) => !r.hidden && (mode === 'pick' || r.checked))
   const lowerNoun = noun.toLowerCase()
 
@@ -98,7 +100,7 @@ export function DestinationsPanel({
                 <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-failed">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span>
-                <FindingMessage message={f.message} />
+                <FindingMessage finding={f} isTikTokTarget={isTikTokFinding(f.targetId)} />
               </span>
                 </p>
               ))}
@@ -106,7 +108,7 @@ export function DestinationsPanel({
                 <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-progress">
                   <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span>
-                <FindingMessage message={f.message} />
+                <FindingMessage finding={f} isTikTokTarget={isTikTokFinding(f.targetId)} />
               </span>
                 </p>
               ))}

@@ -8,7 +8,7 @@ import {
   type PublishPreflight,
   type UsePublishReadinessArgs,
   FindingMessage,
-  humanizeFindingMessage,
+  needsConsentLink,
 } from './publishReadiness'
 
 const { toastErrorSpy } = vi.hoisted(() => ({ toastErrorSpy: vi.fn() }))
@@ -263,21 +263,29 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
 })
 
 describe('FindingMessage', () => {
-  const RAW =
-    'TikTok (@acme) has no privacy level chosen, so it would publish visible only to the creator — the creator has to choose one of Everyone, Only me themselves on the TikTok consent page (an agent cannot set it)'
+  const finding = (code: string) => ({ code, message: 'Choose who can see this post on the TikTok consent page', targetId: 't1' })
 
-  it('rewrites the agent-voice copy for a person', () => {
-    const text = humanizeFindingMessage(RAW)
-    expect(text).not.toMatch(/agent/i)
-    expect(text).toMatch(/choose who can see it on the TikTok consent page$/)
-  })
-
-  it('links the consent page', async () => {
+  it('shows the server message as written, with a consent-page link for a consent code', async () => {
     window.history.pushState({}, '', '/app/projects/p9/marketing/posts/x')
-    render(<p><FindingMessage message={RAW} /></p>)
-    expect(await screen.findByRole('link', { name: 'the TikTok consent page' })).toHaveAttribute(
+    render(<p><FindingMessage finding={finding('CONSENT_NEVER_GIVEN')} /></p>)
+    expect(screen.getByText(/Choose who can see this post on the TikTok consent page/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open the TikTok consent page' })).toHaveAttribute(
       'href',
       '/app/projects/p9/marketing/consent'
     )
+  })
+
+  it('links by code only: consent codes, or PUBLISH_OPTIONS on a TikTok target', () => {
+    expect(needsConsentLink(finding('CONSENT_NEVER_GIVEN'), false)).toBe(true)
+    expect(needsConsentLink(finding('CONSENT_SUPERSEDED'), false)).toBe(true)
+    expect(needsConsentLink(finding('PUBLISH_OPTIONS'), true)).toBe(true)
+    expect(needsConsentLink(finding('PUBLISH_OPTIONS'), false)).toBe(false)
+    expect(needsConsentLink(finding('NO_MEDIA'), true)).toBe(false)
+  })
+
+  it('does not link a message that merely mentions the consent page', () => {
+    window.history.pushState({}, '', '/app/projects/p9/marketing/posts/x')
+    render(<p><FindingMessage finding={finding('NO_MEDIA')} /></p>)
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 })

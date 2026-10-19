@@ -29,37 +29,40 @@ import { apiErrorMessage, apiGet, apiPatch } from '@/lib/api'
 import { statusMeta, statusHasReviewGate } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
 
-/**
- * The server's wording for a missing audience is written for an agent ("an agent cannot set it"). A
- * person reading it on the Post page should be told what to do, so rewrite it before it is shown.
- */
-export function humanizeFindingMessage(message: string): string {
-  return message.replace(
-    / — the creator has to choose one of .*? themselves on the TikTok consent page \(an agent cannot set it\)/,
-    ' — choose who can see it on the TikTok consent page'
+/** Whether a blocker is about TikTok consent, so the person should be pointed at the consent page. */
+export function needsConsentLink(finding: PublishFinding, isTikTokTarget: boolean): boolean {
+  return (
+    finding.code === 'CONSENT_NEVER_GIVEN' ||
+    finding.code === 'CONSENT_SUPERSEDED' ||
+    (finding.code === 'PUBLISH_OPTIONS' && isTikTokTarget)
   )
 }
 
-/** A finding's text, with "the TikTok consent page" linked to the page when the message mentions it. */
-export function FindingMessage({ message }: { message: string }) {
+/**
+ * A finding's text exactly as the server wrote it, plus an "Open the TikTok consent page" link when its
+ * code says consent (or a TikTok target's options) is what's missing. Decided by code, never by wording.
+ */
+export function FindingMessage({
+  finding,
+  isTikTokTarget = false,
+}: {
+  finding: PublishFinding
+  isTikTokTarget?: boolean
+}) {
   // Read from the URL (not useParams) so this stays a plain leaf that renders anywhere. Findings only
   // exist after a client-side fetch, so this never renders on the server.
   const projectId =
     typeof window === 'undefined' ? null : (window.location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null)
-  const text = humanizeFindingMessage(message)
-  const phrase = 'the TikTok consent page'
-  const at = text.indexOf(phrase)
-  if (at < 0 || !projectId) return <>{text}</>
+  if (!projectId || !needsConsentLink(finding, isTikTokTarget)) return <>{finding.message}</>
   return (
     <>
-      {text.slice(0, at)}
+      {finding.message}{' '}
       <Link
         href={`/app/projects/${projectId}/marketing/consent`}
-        className="underline underline-offset-2"
+        className="whitespace-nowrap underline underline-offset-2"
       >
-        {phrase}
+        Open the TikTok consent page
       </Link>
-      {text.slice(at + phrase.length)}
     </>
   )
 }
@@ -240,7 +243,7 @@ export function usePublishReadiness({
   // A review-gated move is the reviewer's to make with their verdict, not a button here — and after an
   // approval the Workflow takes it on its own. What this button offers is the author's own move.
   const offersButton = canMove && !next?.requiresReview
-  const disabledReason = preflight && !preflight.ready ? humanizeFindingMessage(preflight.blockers?.[0]?.message ?? '') || undefined : undefined
+  const disabledReason = preflight && !preflight.ready ? preflight.blockers?.[0]?.message : undefined
   // The move lands in a review-gated status and the caller gave us people to choose from: ask first.
   const asksForReviewers =
     offersButton && eligibleReviewers !== undefined && statusHasReviewGate(workflowView, next!.to)
