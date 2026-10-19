@@ -117,4 +117,4 @@ indexes. Match them to `topSql` from `slow_request` lines.
 - `GcpStorageService.generateSignedUrl` returns the same signed URL per `(path, expiry)` until 75% of its lifetime has passed, so browsers reuse cached images across requests and polls. Upload URLs are never cached; `delete` evicts a path's entries.
 - Display-only read URLs last 60 minutes. Publish-path URLs (TikTok 90, Meta 60, YouTube 240, render specs 45) keep their own constants.
 - Objects carry `Cache-Control: private, max-age=86400`: set on server writes, and best-effort at the upload-confirm step for browser direct uploads.
-- Backfill objects uploaded before this change (run once per environment by someone with bucket access): `scripts/gcs-set-cache-control.sh --dry-run <bucket> [prefix]`, then without `--dry-run`.
+- Backfill objects uploaded before this change (run once per environment by someone with bucket access): `scripts/gcs-set-cache-control.sh --dry-run <bucket> [prefix]`, then without `--dry-run`. Production (`ai-conductor-prod-storage`) was backfilled on 2026-10-19.
