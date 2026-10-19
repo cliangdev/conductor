@@ -20,6 +20,17 @@ public interface PostPublishTargetRepository extends JpaRepository<PostPublishTa
 
     List<PostPublishTarget> findAllByWorkItemId(String workItemId);
 
+    /**
+     * Posts in a project with a TikTok target that publishes through the API and has not gone out yet —
+     * the ones that may still need the creator's consent. Manual-lane TikTok targets are excluded: the
+     * creator is in TikTok's own composer there.
+     */
+    @Query("SELECT DISTINCT t.workItem.id FROM PostPublishTarget t "
+            + "WHERE t.workItem.project.id = :projectId AND t.platform = 'tiktok' "
+            + "AND t.lane <> com.conductor.entity.PublishLane.MANUAL "
+            + "AND t.state = com.conductor.entity.PostPublishTargetState.PENDING")
+    List<String> findPendingTikTokWorkItemIds(@Param("projectId") String projectId);
+
     @Query("SELECT t FROM PostPublishTarget t WHERE t.workItem.id IN :workItemIds")
     List<PostPublishTarget> findAllByWorkItemIdIn(@Param("workItemIds") java.util.Collection<String> workItemIds);
 

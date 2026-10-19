@@ -100,6 +100,8 @@ class TikTokPublishActionTest {
         targetRepository = mock(PostPublishTargetRepository.class);
         actionInvocationService = mock(ActionInvocationService.class);
         action = newAction(client);
+        // The fire-time consent re-check reads the creator afresh; by default they still match what was consented to.
+        when(client.queryCreatorInfo(anyString())).thenReturn(creator());
 
         when(assetRepository.findById(ASSET_ID)).thenReturn(Optional.of(videoAsset(ASSET_ID, VIDEO_SIZE)));
         when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID))
@@ -300,6 +302,7 @@ class TikTokPublishActionTest {
         // The retry: a fresh action instance, as a later attempt would be, reading the same checkpoint.
         requestedRanges.clear();
         TikTokClient retryClient = mock(TikTokClient.class);
+        when(retryClient.queryCreatorInfo(anyString())).thenReturn(creator());
         when(retryClient.fetchPublishStatus(anyString(), anyString()))
                 .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280001", null, null));
         TikTokPublishAction retry = newAction(retryClient);
@@ -522,6 +525,16 @@ class TikTokPublishActionTest {
                 .thenAnswer(invocation -> {
                     URI uri = invocation.getArgument(0);
                     HttpEntity<?> entity = invocation.getArgument(2);
+                    if (uri.toString().endsWith(TikTokClient.CREATOR_INFO_PATH)) {
+                        Map<String, Object> body = new LinkedHashMap<>();
+                        body.put("error", okEnvelope());
+                        body.put("data", Map.of("creator_nickname", "Acme", "creator_username", "acme",
+                                "privacy_level_options", List.of("PUBLIC_TO_EVERYONE", "SELF_ONLY"),
+                                "max_video_post_duration_sec", 300));
+                        return new ResponseEntity(
+                                objectMapper.convertValue(body, TikTokClient.CreatorInfoResponse.class),
+                                HttpStatus.OK);
+                    }
                     sent.add(entity);
                     if (uri.toString().endsWith(TikTokClient.CONTENT_INIT_PATH)) {
                         Map<String, Object> body = new LinkedHashMap<>();
@@ -739,6 +752,10 @@ class TikTokPublishActionTest {
                 .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280001", null, null));
     }
 
+    private static TikTokClient.CreatorInfo creator() {
+        return new TikTokClient.CreatorInfo("Acme", "acme", List.of("PUBLIC_TO_EVERYONE", "SELF_ONLY"), 300);
+    }
+
     private static Map<String, String> okEnvelope() {
         return Map.of("code", "ok", "message", "");
     }
@@ -755,8 +772,19 @@ class TikTokPublishActionTest {
                 .thenAnswer(invocation -> {
                     URI uri = invocation.getArgument(0);
                     HttpEntity<?> entity = invocation.getArgument(2);
-                    sent.add(entity);
                     String path = uri.toString();
+                    // The fire-time creator_info re-check is not part of the post under test.
+                    if (path.endsWith(TikTokClient.CREATOR_INFO_PATH)) {
+                        Map<String, Object> body = new LinkedHashMap<>();
+                        body.put("error", okEnvelope());
+                        body.put("data", Map.of("creator_nickname", "Acme", "creator_username", "acme",
+                                "privacy_level_options", List.of("PUBLIC_TO_EVERYONE", "SELF_ONLY"),
+                                "max_video_post_duration_sec", 300));
+                        return new ResponseEntity(
+                                objectMapper.convertValue(body, TikTokClient.CreatorInfoResponse.class),
+                                HttpStatus.OK);
+                    }
+                    sent.add(entity);
                     if (path.endsWith(TikTokClient.VIDEO_INIT_PATH)) {
                         Map<String, Object> body = new LinkedHashMap<>();
                         body.put("error", errorEnvelope);
@@ -808,6 +836,82 @@ class TikTokPublishActionTest {
         config.put("privacyLevelOptions", options);
         config.put("maxVideoPostDurationSec", 300);
         return new ConnectionContext("proj", "tiktok", "conn-1", ACCESS_TOKEN, null, null, config, null);
+    }
+
+    // --- consent re-check at fire time ---
+
+    @Test
+    void publish_failsTheTargetWhenTheStoredPrivacyLevelIsNoLongerAllowed() {
+        stubHappyPath();
+        when(client.queryCreatorInfo(anyString())).thenReturn(new TikTokClient.CreatorInfo(
+                "Acme", "acme", List.of("SELF_ONLY"), 300));
+        Map<String, Object> input = schedulerInput();
+        input.put("privacy_level", "PUBLIC_TO_EVERYONE");
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("consent no longer holds").contains("PUBLIC_TO_EVERYONE");
+        verify(client, never()).initFileUpload(anyString(), any(), any());
+    }
+
+    @Test
+    void publish_failsTheTargetWhenAnAllowedInteractionHasSinceBeenDisabled() {
+        stubHappyPath();
+        when(client.queryCreatorInfo(anyString())).thenReturn(new TikTokClient.CreatorInfo(
+                "Acme", "acme", List.of("PUBLIC_TO_EVERYONE", "SELF_ONLY"), 300,
+                false, true, false, null, true, null));
+        Map<String, Object> input = schedulerInput();
+        input.put("privacy_level", "PUBLIC_TO_EVERYONE");
+        input.put("disable_comment", true);
+        input.put("disable_duet", false);
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("consent no longer holds").contains("duets");
+        verify(client, never()).initFileUpload(anyString(), any(), any());
+    }
+
+    @Test
+    void publish_aDisabledInteractionTheCreatorKeptOffStillPublishes() {
+        stubHappyPath();
+        when(client.queryCreatorInfo(anyString())).thenReturn(new TikTokClient.CreatorInfo(
+                "Acme", "acme", List.of("PUBLIC_TO_EVERYONE", "SELF_ONLY"), 300,
+                true, true, true, null, true, null));
+        Map<String, Object> input = schedulerInput();
+        input.put("disable_comment", true);
+        input.put("disable_duet", true);
+        input.put("disable_stitch", true);
+
+        assertThat(action.publish(input, context()).success()).isTrue();
+    }
+
+    @Test
+    void publish_failsTheTargetWhenTheVideoIsOverTheCreatorsCap() {
+        stubHappyPath();
+        Asset overlong = videoAsset(ASSET_ID, VIDEO_SIZE);
+        overlong.setDurationSeconds(new java.math.BigDecimal("301"));
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(overlong));
+
+        ActionResult result = action.publish(schedulerInput(), context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("consent no longer holds").contains("301").contains("300");
+    }
+
+    @Test
+    void publish_failsTheTargetWhenTheCreatorCanNoLongerPost() {
+        stubHappyPath();
+        when(client.queryCreatorInfo(anyString())).thenReturn(new TikTokClient.CreatorInfo(
+                "Acme", "acme", List.of(), null, false, false, false, null, false,
+                "TikTok has banned this account from posting"));
+
+        ActionResult result = action.publish(schedulerInput(), context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("banned");
+        verify(client, never()).initFileUpload(anyString(), any(), any());
     }
 
     // --- Photo posts: images are fetched from URLs, not uploaded, and never re-initialised on a retry ---

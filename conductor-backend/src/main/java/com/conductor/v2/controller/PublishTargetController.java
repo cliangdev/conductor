@@ -12,13 +12,28 @@ import com.conductor.generated.v2.model.PublishPreflightTransition;
 import com.conductor.generated.v2.model.PublishTargetOption;
 import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.generated.v2.model.PublishTargetSelection;
+import com.conductor.generated.v2.model.CreateTikTokConsentRequest;
+import com.conductor.generated.v2.model.RecordTikTokConsentRequest;
+import com.conductor.generated.v2.model.TikTokConsentChoice;
+import com.conductor.generated.v2.model.TikTokConsentCreator;
+import com.conductor.generated.v2.model.TikTokConsentPage;
+import com.conductor.generated.v2.model.TikTokConsentPost;
+import com.conductor.generated.v2.model.TikTokConsentRequestItem;
+import com.conductor.generated.v2.model.TikTokConsentRequestResponse;
+import com.conductor.generated.v2.model.TikTokConsentRequestStatus;
+import com.conductor.generated.v2.model.TikTokConsentSkipped;
+import com.conductor.generated.v2.model.TikTokConsentTarget;
 import com.conductor.generated.v2.model.RecordPublishConsentRequest;
 import com.conductor.generated.v2.model.ReplacePublishTargetsRequest;
+import com.conductor.exception.ForbiddenException;
+import com.conductor.integration.connector.tiktok.TikTokCreatorInfoService;
 import com.conductor.service.PublishConsentService;
+import com.conductor.service.TikTokConsentRequestService;
 import com.conductor.service.PublishTargetService;
 import com.conductor.service.publish.PublishFinding;
 import com.conductor.service.publish.PublishPreflightService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -46,13 +61,16 @@ public class PublishTargetController implements PublishTargetsApi {
     private final PublishTargetService publishTargetService;
     private final PublishConsentService publishConsentService;
     private final PublishPreflightService publishPreflightService;
+    private final TikTokConsentRequestService consentRequestService;
 
     public PublishTargetController(PublishTargetService publishTargetService,
                                    PublishConsentService publishConsentService,
-                                   PublishPreflightService publishPreflightService) {
+                                   PublishPreflightService publishPreflightService,
+                                   TikTokConsentRequestService consentRequestService) {
         this.publishTargetService = publishTargetService;
         this.publishConsentService = publishConsentService;
         this.publishPreflightService = publishPreflightService;
+        this.consentRequestService = consentRequestService;
     }
 
     @Override
@@ -115,16 +133,124 @@ public class PublishTargetController implements PublishTargetsApi {
 
     @Override
     public ResponseEntity<PublishConsentResponse> getPublishConsent(String projectId, String workItemId) {
-        return ResponseEntity.ok(toResponse(workItemId,
-                publishConsentService.readConsent(projectId, workItemId, currentUser())));
+        PublishConsentService.RecordedConsent read =
+                publishConsentService.readConsentWithEtag(projectId, workItemId, currentUser());
+        return ResponseEntity.ok(toResponse(workItemId, read.state()).etag(read.etag()));
     }
 
     @Override
     public ResponseEntity<PublishConsentResponse> recordPublishConsent(
             String projectId, String workItemId, RecordPublishConsentRequest request) {
         boolean consented = request != null && Boolean.TRUE.equals(request.getConsented());
-        return ResponseEntity.ok(toResponse(workItemId,
-                publishConsentService.recordConsent(projectId, workItemId, consented, currentUser())));
+        PublishConsentService.RecordedConsent recorded =
+                publishConsentService.recordConsentForCurrentCaller(projectId, workItemId, consented);
+        return ResponseEntity.ok(toResponse(workItemId, recorded.state()).etag(recorded.etag()));
+    }
+
+    @Override
+    public ResponseEntity<PublishConsentResponse> recordTikTokConsent(
+            String projectId, String workItemId, RecordTikTokConsentRequest request, String ifMatch) {
+        PublishConsentService.RecordedConsent recorded = publishConsentService.recordInteractiveConsent(
+                projectId, workItemId,
+                new PublishConsentService.ConsentWrite(
+                        request.getTargets().stream().map(PublishTargetController::toChoice).toList(),
+                        request.getDeclarationVersion(), request.getChannel().getValue(),
+                        request.getRequestId(), ifMatch));
+        return ResponseEntity.ok()
+                .eTag(recorded.etag())
+                .body(toResponse(workItemId, recorded.state()).etag(recorded.etag()));
+    }
+
+    private static PublishConsentService.ConsentChoice toChoice(TikTokConsentChoice choice) {
+        return new PublishConsentService.ConsentChoice(choice.getConnectionId(), choice.getPrivacyLevel(),
+                choice.getDisableComment(), choice.getDisableDuet(), choice.getDisableStitch(),
+                choice.getBrandContentToggle(), choice.getBrandOrganicToggle());
+    }
+
+    @Override
+    public ResponseEntity<TikTokConsentRequestResponse> createTikTokConsentRequest(
+            String projectId, CreateTikTokConsentRequest request) {
+        TikTokConsentRequestService.Created created = consentRequestService.create(projectId,
+                request == null ? null : request.getWorkItemIds());
+        TikTokConsentRequestResponse body = new TikTokConsentRequestResponse(
+                created.request().getId(), created.consentUrl(), created.request().getExpiresAt(),
+                created.items().stream().map(PublishTargetController::toItem).toList(),
+                created.skipped().stream().map(skipped -> new TikTokConsentSkipped(skipped.workItemId(),
+                        TikTokConsentSkipped.ReasonEnum.fromValue(skipped.reason())).displayId(skipped.displayId())).toList(),
+                created.items().isEmpty());
+        return ResponseEntity.status(201).body(body);
+    }
+
+    @Override
+    public ResponseEntity<TikTokConsentRequestStatus> getTikTokConsentRequest(String projectId, String requestId) {
+        TikTokConsentRequestService.Status status = consentRequestService.status(projectId, requestId);
+        return ResponseEntity.ok(new TikTokConsentRequestStatus(status.request().getId(), status.consentUrl(),
+                status.request().getExpiresAt(), status.expired(), status.complete(),
+                status.items().stream().map(PublishTargetController::toItem).toList())
+                .completedAt(status.request().getCompletedAt()));
+    }
+
+    @Override
+    public ResponseEntity<com.conductor.generated.v2.model.TikTokConsentSummary> getTikTokConsentSummary(
+            String projectId) {
+        return ResponseEntity.ok(new com.conductor.generated.v2.model.TikTokConsentSummary(
+                consentRequestService.pendingCount(projectId)));
+    }
+
+    @Override
+    public ResponseEntity<TikTokConsentPage> getTikTokConsentPage(String projectId, String request) {
+        TikTokConsentRequestService.Page page = consentRequestService.page(projectId, request);
+        TikTokConsentPage body = new TikTokConsentPage(
+                page.posts().stream().map(PublishTargetController::toPost).toList(),
+                page.creators().stream().map(PublishTargetController::toCreator).toList());
+        if (page.request() != null) {
+            body.requestId(page.request().getId()).expiresAt(page.request().getExpiresAt());
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    private static TikTokConsentRequestItem toItem(TikTokConsentRequestService.Item item) {
+        return new TikTokConsentRequestItem(item.workItemId(), item.displayId(), item.title(),
+                TikTokConsentRequestItem.VerdictEnum.fromValue(item.consent().verdict().name()))
+                .consentedAt(item.consent().consentedAt())
+                .consentedByUserId(item.consent().consentedByUserId())
+                .consentedByName(item.consent().consentedByName());
+    }
+
+    private static TikTokConsentPost toPost(TikTokConsentRequestService.PagePost post) {
+        return new TikTokConsentPost(post.workItem().getId(), post.displayId(), post.workItem().getTitle(),
+                TikTokConsentPost.VerdictEnum.fromValue(post.consent().verdict().name()), post.etag(),
+                post.targets().stream().map(PublishTargetController::toConsentTarget).toList())
+                .caption(post.workItem().getDescription())
+                .scheduledAt(post.workItem().getScheduledFor())
+                .consentedAt(post.consent().consentedAt())
+                .consentedByUserId(post.consent().consentedByUserId())
+                .consentedByName(post.consent().consentedByName());
+    }
+
+    private static TikTokConsentTarget toConsentTarget(TikTokConsentRequestService.PageTarget target) {
+        TikTokConsentTarget body = new TikTokConsentTarget(target.target().getId(),
+                target.target().getConnectionId(), target.target().getFormat(), target.effectiveAssetIds())
+                .captionOverride(target.target().getCaptionOverride())
+                .effectiveCaption(target.effectiveCaption());
+        TikTokConsentRequestService.StoredChoice stored = target.consented();
+        if (stored != null) {
+            body.consented(new TikTokConsentChoice(target.target().getConnectionId(), stored.privacyLevel(),
+                    stored.disableComment(), stored.disableDuet(), stored.disableStitch(),
+                    stored.brandContentToggle(), stored.brandOrganicToggle()));
+        }
+        return body;
+    }
+
+    private static TikTokConsentCreator toCreator(TikTokCreatorInfoService.Creator creator) {
+        return new TikTokConsentCreator(creator.connectionId(), creator.privacyLevelOptions(),
+                creator.commentDisabled(), creator.duetDisabled(), creator.stitchDisabled(), creator.canPost(),
+                creator.reconnectRequired())
+                .nickname(creator.nickname())
+                .username(creator.username())
+                .avatarUrl(creator.avatarUrl())
+                .maxVideoPostDurationSec(creator.maxVideoPostDurationSec())
+                .cannotPostReason(creator.cannotPostReason());
     }
 
     private static PublishConsentResponse toResponse(String workItemId,
@@ -156,10 +282,23 @@ public class PublishTargetController implements PublishTargetsApi {
                 // picker has to tell "reconnect this account" apart from a genuinely empty set of choices.
                 .privacyLevelOptions(option.privacyLevelOptions())
                 .creatorNickname(option.creatorNickname())
+                .commentDisabled(option.commentDisabled())
+                .duetDisabled(option.duetDisabled())
+                .stitchDisabled(option.stitchDisabled())
+                .maxVideoPostDurationSec(option.maxVideoPostDurationSec())
                 .optionKeys(option.optionKeys());
     }
 
+    /**
+     * The calling user. A project API key or run token authenticates with a project id as its principal,
+     * not a {@link User}; those used to fail here with a {@code ClassCastException} and surface as a 500.
+     * They are a credential this endpoint does not serve, which is a 403.
+     */
     private User currentUser() {
-        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof User user)) {
+            throw new ForbiddenException("This needs a signed-in user; project keys and run tokens cannot do it");
+        }
+        return user;
     }
 }

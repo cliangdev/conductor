@@ -85,6 +85,9 @@ class PublishTargetServiceTest {
         caller = new User();
         caller.setId("user-1");
         when(projectSecurityService.isProjectMember(PROJECT, "user-1")).thenReturn(true);
+        // A person in their own session, who may choose the TikTok options only a creator can; the
+        // machine-credential tests turn this off.
+        when(projectSecurityService.isInteractiveRequest()).thenReturn(true);
 
         Project project = new Project();
         project.setId(PROJECT);
@@ -886,6 +889,97 @@ class PublishTargetServiceTest {
                 assertThat(row.getPublishOptions())
                         .isEqualTo("{\"brandContentToggle\":false,\"disableComment\":true,"
                                 + "\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+    }
+
+    // ── human-only TikTok options are refused from machine credentials ───────────────────────────
+
+    @Test
+    void aMachineCredentialCannotSetTheCreatorsTikTokChoices() {
+        when(projectSecurityService.isInteractiveRequest()).thenReturn(false);
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+
+        assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        new LinkedHashMap<>(Map.of("privacyLevel", "PUBLIC_TO_EVERYONE", "disableComment", false,
+                                "isAigc", true)))),
+                caller))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("disableComment, privacyLevel")
+                .hasMessageContaining("only be chosen by the creator");
+        verify(targetRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void aMachineCredentialMayStillSetTheNonHumanOptions() {
+        when(projectSecurityService.isInteractiveRequest()).thenReturn(false);
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        new LinkedHashMap<>(Map.of("isAigc", true)))),
+                caller);
+
+        assertThat(savedRows()).singleElement().satisfies(row ->
+                assertThat(row.getPublishOptions()).isEqualTo("{\"isAigc\":true}"));
+    }
+
+    @Test
+    void aMachineCredentialReSendingTheStoredValueIsNotAChange() {
+        when(projectSecurityService.isInteractiveRequest()).thenReturn(false);
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        PostPublishTarget stored = existingTikTokTarget("{\"disableComment\":true,\"privacyLevel\":\"SELF_ONLY\"}");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(stored));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        new LinkedHashMap<>(Map.of("privacyLevel", "SELF_ONLY", "disableComment", true)))),
+                caller);
+
+        verify(targetRepository, never()).saveAll(any());
+        verify(publishBundleGuard, never()).revertForBundleEdit(any(), any());
+    }
+
+    /** An agent that never saw the creator's choices must not wipe them by leaving the keys out. */
+    @Test
+    void aMachineCredentialOmittingTheStoredChoicesKeepsThem() {
+        when(projectSecurityService.isInteractiveRequest()).thenReturn(false);
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        PostPublishTarget stored = existingTikTokTarget("{\"privacyLevel\":\"SELF_ONLY\"}");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(stored));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt")), caller);
+
+        verify(targetRepository, never()).saveAll(any());
+        assertThat(stored.getPublishOptions()).isEqualTo("{\"privacyLevel\":\"SELF_ONLY\"}");
+    }
+
+    @Test
+    void aMachineCredentialCannotChangeAStoredChoice() {
+        when(projectSecurityService.isInteractiveRequest()).thenReturn(false);
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM))
+                .thenReturn(List.of(existingTikTokTarget("{\"privacyLevel\":\"SELF_ONLY\"}")));
+
+        assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        new LinkedHashMap<>(Map.of("privacyLevel", "PUBLIC_TO_EVERYONE")))),
+                caller))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("privacyLevel");
+    }
+
+    private PostPublishTarget existingTikTokTarget(String publishOptions) {
+        PostPublishTarget target = new PostPublishTarget();
+        target.setId("target-existing");
+        target.setWorkItem(post);
+        target.setPlatform("tiktok");
+        target.setConnectorId("tiktok");
+        target.setConnectionId("conn-tt");
+        target.setLane(PublishLane.APP_MANAGED);
+        target.setState(PostPublishTargetState.PENDING);
+        target.setPublishOptions(publishOptions);
+        return target;
     }
 
     @Test

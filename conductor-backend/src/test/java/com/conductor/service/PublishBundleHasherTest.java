@@ -128,6 +128,27 @@ class PublishBundleHasherTest {
         assertThat(hasher.hash(post)).isNotEqualTo(original);
     }
 
+    /**
+     * Pinned on purpose: the TikTok consent write is allowed while a Post is frozen under review precisely
+     * because publish options are not part of what a reviewer approves. If options ever joined this hash,
+     * a creator choosing a privacy level would silently void the review, and that write would need to
+     * take the frozen-edit refusal again.
+     */
+    @Test
+    void publishOptionsAreNotPartOfTheReviewBundle() {
+        WorkItem post = post("Launch teaser");
+        givenAssets();
+        PostPublishTarget withoutOptions = target("tiktok", "conn-a", "hello", "tiktok");
+        givenTargets(withoutOptions);
+        String original = hasher.hash(post);
+
+        PostPublishTarget withOptions = target("tiktok", "conn-a", "hello", "tiktok");
+        withOptions.setPublishOptions("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\",\"disableComment\":true}");
+        givenTargets(withOptions);
+
+        assertThat(hasher.hash(post)).isEqualTo(original);
+    }
+
     @Test
     void changingTheFireTimeOrTimezoneDoesNotChangeTheHash() {
         givenTargets(target("meta", "conn-a", null));

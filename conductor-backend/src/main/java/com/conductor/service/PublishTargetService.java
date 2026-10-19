@@ -170,7 +170,11 @@ public class PublishTargetService {
                                List<String> privacyLevelOptions,
                                String creatorNickname,
                                List<String> optionKeys,
-                               List<String> formats) {
+                               List<String> formats,
+                               Boolean commentDisabled,
+                               Boolean duetDisabled,
+                               Boolean stitchDisabled,
+                               Integer maxVideoPostDurationSec) {
 
         String key() {
             return selectionKey(platform, connectionId);
@@ -593,6 +597,7 @@ public class PublishTargetService {
             existingByKey.put(selectionKey(target.getPlatform(), target.getConnectionId()), target);
         }
 
+        keepHumanOnlyTikTokOptions(desired, existingByKey);
         giveNewTargetsTheirCreativeSize(workItem, desired, existingByKey.keySet());
 
         List<PostPublishTarget> removed = existingByKey.entrySet().stream()
@@ -653,6 +658,64 @@ public class PublishTargetService {
         rewriteSelections(withContent, desired);
 
         return views(workItem, sorted(kept));
+    }
+
+    /**
+     * Stops a machine credential from choosing what only the TikTok creator may choose.
+     *
+     * <p>TikTok's guidelines require the creator to pick the privacy level, each interaction and the
+     * commercial disclosure personally ({@link PublishPlatformRegistry#TIKTOK_HUMAN_ONLY_OPTION_KEYS}), so
+     * for a caller that is not a person in their own browser session ({@link
+     * ProjectSecurityService#isInteractiveRequest}) a <em>different</em> value for one of those keys is
+     * refused, naming the keys. Re-sending what is already stored passes, and so does leaving a key out: an
+     * agent that never saw the creator's choices must not wipe them by omission, so the stored value is
+     * carried forward instead. Nothing here supplies a default — a Post with no privacy level stays one the
+     * approval gate refuses.
+     */
+    private void keepHumanOnlyTikTokOptions(Map<String, DesiredTarget> desired,
+                                            Map<String, PostPublishTarget> existingByKey) {
+        if (projectSecurityService.isInteractiveRequest()) {
+            return;
+        }
+        for (Map.Entry<String, DesiredTarget> entry : desired.entrySet()) {
+            DesiredTarget wanted = entry.getValue();
+            if (!PLATFORM_TIKTOK.equals(wanted.option().platform())) {
+                continue;
+            }
+            Map<String, Object> incoming = readOptionsMap(wanted.optionsJson());
+            PostPublishTarget stored = existingByKey.get(entry.getKey());
+            Map<String, Object> current = stored == null ? Map.of() : readOptionsMap(stored.getPublishOptions());
+
+            List<String> refused = new ArrayList<>();
+            Map<String, Object> merged = new TreeMap<>(incoming);
+            for (String key : PublishPlatformRegistry.TIKTOK_HUMAN_ONLY_OPTION_KEYS.stream().sorted().toList()) {
+                if (incoming.containsKey(key) && !Objects.equals(incoming.get(key), current.get(key))) {
+                    refused.add(key);
+                } else if (!incoming.containsKey(key) && current.containsKey(key)) {
+                    merged.put(key, current.get(key));
+                }
+            }
+            if (!refused.isEmpty()) {
+                throw new BusinessException("TikTok " + String.join(", ", refused) + " can only be chosen by the"
+                        + " creator on the TikTok consent page, not through the API — leave "
+                        + (refused.size() == 1 ? "it" : "them") + " out and ask the creator to choose there");
+            }
+            if (!merged.equals(incoming)) {
+                entry.setValue(new DesiredTarget(wanted.option(), canonicalOptions(merged),
+                        wanted.captionOverride(), wanted.assetIds(), wanted.format(), wanted.noMedia()));
+            }
+        }
+    }
+
+    private static Map<String, Object> readOptionsMap(String json) {
+        if (json == null || json.isBlank()) {
+            return new TreeMap<>();
+        }
+        try {
+            return new TreeMap<>(MAPPER.readValue(json, new TypeReference<Map<String, Object>>() { }));
+        } catch (Exception e) {
+            return new TreeMap<>();
+        }
     }
 
     /**
@@ -756,7 +819,7 @@ public class PublishTargetService {
      * verbatim so it compares unequal to anything this service would write, and is therefore rewritten
      * into a readable one on the next save rather than left to rot.
      */
-    private static String canonicalOptions(String json) {
+    static String canonicalOptions(String json) {
         if (json == null || json.isBlank()) {
             return null;
         }
@@ -956,7 +1019,7 @@ public class PublishTargetService {
             options.add(option(connection, platformRegistry.require(PLATFORM_TIKTOK),
                     nickname != null ? nickname : stringValue(config, CONFIG_CREATOR_USERNAME),
                     stringListValue(config, PublishOptionsValidator.CONFIG_PRIVACY_LEVEL_OPTIONS),
-                    nickname));
+                    nickname, creatorFlags(config)));
         }
         // Manual destinations last, and always, one per platform the pipeline knows. Offering them even to
         // a fully connected project is deliberate rather than a fallback: a post that has to go out
@@ -966,22 +1029,35 @@ public class PublishTargetService {
         // connection to derive anything from.
         for (PublishPlatform platform : platformRegistry.all()) {
             options.add(new TargetOption(platform.id(), null, null, platform.manualLabel(),
-                    PublishLane.MANUAL, null, null, null, null, null, optionKeys(platform), formats(platform)));
+                    PublishLane.MANUAL, null, null, null, null, null, optionKeys(platform), formats(platform),
+                    null, null, null, null));
         }
         return List.copyOf(options);
     }
 
     private static TargetOption option(Connection connection, PublishPlatform platform, String label) {
-        return option(connection, platform, label, null, null);
+        return option(connection, platform, label, null, null, new Object[4]);
+    }
+
+    /** The creator's cached interaction switches and duration cap; null entries are unknown. */
+    private static Object[] creatorFlags(Map<String, Object> config) {
+        return new Object[] {
+                config.get("commentDisabled") instanceof Boolean flag ? flag : null,
+                config.get("duetDisabled") instanceof Boolean flag ? flag : null,
+                config.get("stitchDisabled") instanceof Boolean flag ? flag : null,
+                config.get("maxVideoPostDurationSec") instanceof Number number ? number.intValue() : null};
     }
 
     private static TargetOption option(Connection connection, PublishPlatform platform, String label,
-                                       List<String> privacyLevelOptions, String creatorNickname) {
+                                       List<String> privacyLevelOptions, String creatorNickname,
+                                       Object[] creatorFlags) {
         return new TargetOption(platform.id(), connection.getConnectorId(), connection.getId(),
                 label != null ? label : fallbackLabel(connection),
                 platform.automatedLane(), connection.getHealthStatus(), connection.getHealthMessage(),
                 connection.getHealthDetail(),
-                privacyLevelOptions, creatorNickname, optionKeys(platform), formats(platform));
+                privacyLevelOptions, creatorNickname, optionKeys(platform), formats(platform),
+                (Boolean) creatorFlags[0], (Boolean) creatorFlags[1], (Boolean) creatorFlags[2],
+                (Integer) creatorFlags[3]);
     }
 
     /** The formats this platform publishes, on the wire (feed, reel, story) in enum order. */

@@ -71,6 +71,10 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
     static final String CONFIG_CREATOR_USERNAME = "creatorUsername";
     static final String CONFIG_PRIVACY_LEVEL_OPTIONS = "privacyLevelOptions";
     static final String CONFIG_MAX_VIDEO_DURATION_SEC = "maxVideoPostDurationSec";
+    /** The creator's interaction switches, as TikTok last reported them (creator_info refresh). */
+    static final String CONFIG_COMMENT_DISABLED = "commentDisabled";
+    static final String CONFIG_DUET_DISABLED = "duetDisabled";
+    static final String CONFIG_STITCH_DISABLED = "stitchDisabled";
 
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
     private static final String ACTION_QUERY_VIDEO_METRICS = "query_video_metrics";
@@ -233,6 +237,9 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
             throw new IllegalStateException("TikTok authorization returned no access token");
         }
         TikTokClient.CreatorInfo creatorInfo = client.queryCreatorInfo(accessToken);
+        if (!creatorInfo.canPost()) {
+            throw new IllegalStateException(creatorInfo.cannotPostReason());
+        }
 
         if (creatorInfo.privacyLevelOptions() == null || creatorInfo.privacyLevelOptions().isEmpty()) {
             throw new IllegalStateException("TikTok reported no privacy level options for this creator — "

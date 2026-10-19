@@ -2496,6 +2496,12 @@ paths:
         client never supplies it, because a client-supplied subject would let a caller consent to
         something the Post is not. Idempotent: re-recording rewrites the same single consent with the
         current subject, and withdrawing returns the Post to "never consented". (MKT-1.)
+
+
+        **Recording consent (`consented: true`) needs a person in their own signed-in session** — a user
+        JWT sent in the `Authorization` header; an API key, project key, run token or cookie-only JWT gets
+        403 (and the attempt is audited). Withdrawing stays open to any member. To record the creator's
+        choices as well, use `PUT .../tiktok-consent`.
       operationId: recordPublishConsent
       security:
         - bearerAuth: []
@@ -2530,8 +2536,330 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Recording consent from anything but a person's own session (see above)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/tiktok-consent:
+    put:
+      tags:
+        - publish-targets
+      summary: Record the creator's posting consent and TikTok choices on a Post (person only)
+      description: >-
+        The atomic consent write behind the TikTok consent page. In one transaction it checks the caller,
+        the `If-Match` ETag and the choices against TikTok's live creator options, merges the six
+        human-only publish options (`privacyLevel`, `disableComment`, `disableDuet`, `disableStitch`,
+        `brandContentToggle`, `brandOrganicToggle`) into each TikTok target, upserts the standing consent
+        and appends an audit event.
+
+
+        **Only a person in their own signed-in browser session can call this** — a user JWT sent in the
+        `Authorization` header. A user API key, a project key, a run token or a cookie-only JWT gets 403,
+        and the refusal is audited. TikTok requires the creator to choose the privacy level and each
+        interaction personally, so no agent can.
+
+
+        `If-Match` carries the Post's current consent ETag (`"<hash>"`, from `etag` in the consent page
+        read, or in this response). Missing is 428; a stale value is 412 ("This post changed — review it
+        again"). The body must hold exactly one entry per non-MANUAL TikTok target, keyed by
+        `connectionId`. Allowed while the Post is frozen under review: consent normally happens during
+        review and publish options are not part of the review bundle.
+      operationId: recordTikTokConsent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: false
+          description: >-
+            The strong ETag of the Post's consent subject. Declared optional here only so the server can
+            answer 428 itself with a problem body; a request without it is refused.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordTikTokConsentRequest"
+      responses:
+        "200":
+          description: Consent recorded; the Post's consent after the change, with its new `etag`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishConsentResponse"
+        "400":
+          description: >-
+            The choices are not valid for this creator or Post (a level the account does not offer, an
+            interaction the creator has disabled, branded content with `SELF_ONLY`, a missing or unknown
+            target) or the creator cannot post right now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Not a person in their own session (API key, project key, run token, cookie-only token), or the
+            `requestId` was created for someone else
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: The `requestId` has expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "412":
+          description: The Post changed since the ETag was read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "428":
+          description: No `If-Match` header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/tiktok-consent-requests:
+    post:
+      tags:
+        - publish-targets
+      summary: Ask a person to review and consent to TikTok Posts in their browser
+      description: >-
+        Creates a consent request: a short-lived (24 hours) pointer to a set of Posts, bound to the calling
+        user, that the consent page opens. This is how an agent gets ten Posts consented without ten
+        trips — it makes one request and hands the person the returned `consentUrl`. **The agent cannot
+        consent**; the request grants no authority, and the page works only for the user who created it.
+
+
+        `workItemIds` omitted means every Post in the project that still needs TikTok consent. Posts that
+        need no consent, already have valid consent, or do not exist are not included and are reported in
+        `skipped`. Accepts a user API key or JWT (there must be a user to bind the request to); a project
+        key or run token gets 403. Poll `GET .../tiktok-consent-requests/{requestId}` for progress.
+      operationId: createTikTokConsentRequest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTikTokConsentRequest"
+      responses:
+        "201":
+          description: The request, with the link to give the person
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TikTokConsentRequestResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is a project key or run token, which has no user to bind the request to
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/tiktok-consent-requests/{requestId}:
+    get:
+      tags:
+        - publish-targets
+      summary: Poll a TikTok consent request
+      description: >-
+        Where each Post in the request stands. Any member credential may read it. `complete` turns true
+        the first time every Post is `VALID` (and stays true); an expired request still answers, with
+        `expired: true`.
+      operationId: getTikTokConsentRequest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The request's progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TikTokConsentRequestStatus"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Request not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/tiktok-consent/summary:
+    get:
+      tags:
+        - publish-targets
+      summary: How many Posts are waiting on TikTok consent
+      description: >-
+        A cheap count for "N posts need TikTok consent" badges: Posts with a TikTok target that publishes
+        through the API, has not gone out, and whose consent is not `VALID`. Database only — TikTok is
+        never called. Any member credential may read it.
+      operationId: getTikTokConsentSummary
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The pending count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TikTokConsentSummary"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/tiktok-consent:
+    get:
+      tags:
+        - publish-targets
+      summary: Everything the TikTok consent page needs, in one read (person only)
+      description: >-
+        The page read. With `request=<id>` it returns that request's Posts and requires the caller to be
+        the user who created it (403 "This link was created for <name>" otherwise; 410 once expired).
+        Without it, every Post in the project still pending consent — Posts whose consent is already
+        `VALID` are **excluded**. With it, the request's Posts are all returned, `VALID` ones included
+        (verdict `VALID`, with their stored `consented` choices), so the page can show them collapsed.
+
+
+        Per Post: identity, caption, schedule, consent `verdict`, the `etag` to send as `If-Match`, and the
+        TikTok targets with their effective media. A target's stored human-only choices are included only
+        when the Post's verdict is `VALID`. Per distinct TikTok account: creator options queried from
+        TikTok now (nickname, avatar, privacy levels, disabled interactions, duration cap, `canPost`).
+
+
+        Like the write, this needs a person in their own signed-in session: user JWT in the
+        `Authorization` header. The Post ids always come from the stored request, never from the URL.
+      operationId: getTikTokConsentPage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: request
+          in: query
+          required: false
+          description: A consent request id. Omit for every Post pending consent.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The consent page's data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TikTokConsentPage"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a person in their own session, or the request was created for someone else
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Request not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: The request has expired
           content:
             application/json:
               schema:
@@ -5980,6 +6308,25 @@ components:
             is what `PublishOptionsValidator` checks the chosen level against at the approval gate.
             Null for every non-TikTok platform, and null for a TikTok connection made before the levels
             were cached: that account has to be reconnected, not guessed for. (TIK-3.)
+        commentDisabled:
+          type: boolean
+          nullable: true
+          description: >-
+            TikTok only: the creator has switched comments off, as of the last creator_info read (the
+            consent page refreshes it). Null for other platforms and when never read.
+        duetDisabled:
+          type: boolean
+          nullable: true
+          description: As `commentDisabled`, for duets.
+        stitchDisabled:
+          type: boolean
+          nullable: true
+          description: As `commentDisabled`, for stitches.
+        maxVideoPostDurationSec:
+          type: integer
+          nullable: true
+          description: >-
+            TikTok only, the creator's video length cap in seconds; null when unknown.
         creatorNickname:
           type: string
           nullable: true
@@ -7060,6 +7407,13 @@ components:
           type: string
           nullable: true
           description: That member's display name, so the record reads as a name rather than an id.
+        etag:
+          type: string
+          nullable: true
+          description: >-
+            The strong ETag of the Post's consent subject, quotes included — the value to send as
+            `If-Match` on `PUT .../tiktok-consent`. Populated on every `publish-consent` read and write
+            and on the `tiktok-consent` write.
 
     RecordPublishConsentRequest:
       type: object
@@ -7071,6 +7425,360 @@ components:
           description: >-
             True to consent to this Post going out to its current accounts under their current publish
             options, with its current media. False to withdraw consent.
+
+    RecordTikTokConsentRequest:
+      type: object
+      description: >-
+        What the creator chose and agreed to, for every non-MANUAL TikTok target on the Post.
+      required:
+        - targets
+        - declarationVersion
+        - channel
+      properties:
+        targets:
+          type: array
+          description: Exactly one entry per non-MANUAL TikTok target, keyed by `connectionId`.
+          items:
+            $ref: "#/components/schemas/TikTokConsentChoice"
+        declarationVersion:
+          type: string
+          maxLength: 64
+          description: Identifies the wording of the declaration the person was shown, kept in the audit.
+        channel:
+          type: string
+          description: Where the person consented — the Post's own page or the bulk consent page.
+          enum:
+            - POST_PAGE
+            - BULK_PAGE
+        requestId:
+          type: string
+          nullable: true
+          description: >-
+            The consent request being worked through (bulk page). Must belong to the caller and include
+            this Post; 410 once expired.
+
+    TikTokConsentChoice:
+      type: object
+      description: >-
+        One TikTok account's human-only choices. Every field is required so that a choice is always
+        explicit; there is no default. `disable*` true means that interaction is **not** allowed.
+      required:
+        - connectionId
+        - privacyLevel
+        - disableComment
+        - disableDuet
+        - disableStitch
+        - brandContentToggle
+        - brandOrganicToggle
+      properties:
+        connectionId:
+          type: string
+        privacyLevel:
+          type: string
+          description: One of the levels the creator's account offers (e.g. `PUBLIC_TO_EVERYONE`, `SELF_ONLY`).
+        disableComment:
+          type: boolean
+        disableDuet:
+          type: boolean
+        disableStitch:
+          type: boolean
+        brandContentToggle:
+          type: boolean
+          description: Paid-partnership disclosure. Cannot be combined with `SELF_ONLY`.
+        brandOrganicToggle:
+          type: boolean
+          description: Promotes the creator's own brand.
+
+    CreateTikTokConsentRequest:
+      type: object
+      properties:
+        workItemIds:
+          type: array
+          nullable: true
+          description: >-
+            The Posts to ask about, by id or display id (e.g. `RE-80`). Unknown ids do not fail the request;
+            they come back in `skipped` as NOT_FOUND. Omit for every Post in the project pending TikTok consent.
+          items:
+            type: string
+
+    TikTokConsentRequestItem:
+      type: object
+      required:
+        - workItemId
+        - displayId
+        - title
+        - verdict
+      properties:
+        workItemId:
+          type: string
+        displayId:
+          type: string
+          description: The human id, e.g. `RE-81`.
+        title:
+          type: string
+        verdict:
+          type: string
+          enum:
+            - NOT_REQUIRED
+            - VALID
+            - NEVER_GIVEN
+            - SUPERSEDED
+        consentedAt:
+          type: string
+          format: date-time
+          nullable: true
+        consentedByUserId:
+          type: string
+          nullable: true
+        consentedByName:
+          type: string
+          nullable: true
+
+    TikTokConsentSkipped:
+      type: object
+      description: A Post that was asked about but is not part of the request.
+      required:
+        - workItemId
+        - reason
+      properties:
+        workItemId:
+          type: string
+          description: The id as given when it was not found, otherwise the Post's id.
+        displayId:
+          type: string
+          nullable: true
+          description: The Post's display id (e.g. `RE-80`) when it was found.
+        reason:
+          type: string
+          enum:
+            - NOT_FOUND
+            - NOT_REQUIRED
+            - ALREADY_VALID
+
+    TikTokConsentRequestResponse:
+      type: object
+      required:
+        - id
+        - consentUrl
+        - expiresAt
+        - items
+        - skipped
+        - complete
+      properties:
+        id:
+          type: string
+          description: Opaque request id; also the MCP `elicitationId`.
+        consentUrl:
+          type: string
+          description: >-
+            The page to give the person: `<frontend>/app/projects/{projectId}/marketing/consent?request=<id>`.
+            Carries no other data and no credentials.
+        expiresAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          description: The Posts the person still has to consent to.
+          items:
+            $ref: "#/components/schemas/TikTokConsentRequestItem"
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/TikTokConsentSkipped"
+        complete:
+          type: boolean
+          description: True when nothing is left to consent to (`items` is empty).
+
+    TikTokConsentRequestStatus:
+      type: object
+      required:
+        - id
+        - consentUrl
+        - expiresAt
+        - expired
+        - complete
+        - items
+      properties:
+        id:
+          type: string
+        consentUrl:
+          type: string
+          description: The same link the create call returned, so a client resuming with the id can show it again.
+        expiresAt:
+          type: string
+          format: date-time
+        expired:
+          type: boolean
+        complete:
+          type: boolean
+          description: True once every Post in the request has been `VALID`; stays true after.
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TikTokConsentRequestItem"
+
+    TikTokConsentCreator:
+      type: object
+      description: >-
+        A TikTok account's creator options as TikTok reports them now (cached at most 60 seconds).
+        The avatar URL expires after about two hours.
+      required:
+        - connectionId
+        - privacyLevelOptions
+        - commentDisabled
+        - duetDisabled
+        - stitchDisabled
+        - canPost
+        - reconnectRequired
+      properties:
+        connectionId:
+          type: string
+        nickname:
+          type: string
+          nullable: true
+        username:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+        privacyLevelOptions:
+          type: array
+          items:
+            type: string
+        commentDisabled:
+          type: boolean
+          description: The creator has turned comments off; the page must not offer to allow them.
+        duetDisabled:
+          type: boolean
+        stitchDisabled:
+          type: boolean
+        maxVideoPostDurationSec:
+          type: integer
+          nullable: true
+        canPost:
+          type: boolean
+          description: False when TikTok will not accept a post from this account right now.
+        cannotPostReason:
+          type: string
+          nullable: true
+        reconnectRequired:
+          type: boolean
+
+    TikTokConsentTarget:
+      type: object
+      required:
+        - targetId
+        - connectionId
+        - format
+        - effectiveAssetIds
+      properties:
+        targetId:
+          type: string
+        connectionId:
+          type: string
+        format:
+          type: string
+        effectiveAssetIds:
+          type: array
+          description: The media this target will publish, in order (its own selection, or the Post's).
+          items:
+            type: string
+        captionOverride:
+          type: string
+          nullable: true
+        effectiveCaption:
+          type: string
+          nullable: true
+        consented:
+          nullable: true
+          description: The stored human-only choices; present only when the Post's verdict is `VALID`.
+          allOf:
+            - $ref: "#/components/schemas/TikTokConsentChoice"
+
+    TikTokConsentPost:
+      type: object
+      required:
+        - workItemId
+        - displayId
+        - title
+        - verdict
+        - etag
+        - targets
+      properties:
+        workItemId:
+          type: string
+        displayId:
+          type: string
+        title:
+          type: string
+        caption:
+          type: string
+          nullable: true
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+        verdict:
+          type: string
+          enum:
+            - NOT_REQUIRED
+            - VALID
+            - NEVER_GIVEN
+            - SUPERSEDED
+        etag:
+          type: string
+          description: The strong ETag (quotes included) to send as `If-Match` when consenting.
+        consentedAt:
+          type: string
+          format: date-time
+          nullable: true
+        consentedByUserId:
+          type: string
+          nullable: true
+        consentedByName:
+          type: string
+          nullable: true
+        targets:
+          type: array
+          description: The Post's non-MANUAL TikTok targets.
+          items:
+            $ref: "#/components/schemas/TikTokConsentTarget"
+
+    TikTokConsentSummary:
+      type: object
+      required:
+        - pendingCount
+      properties:
+        pendingCount:
+          type: integer
+
+    TikTokConsentPage:
+      type: object
+      required:
+        - posts
+        - creators
+      properties:
+        requestId:
+          type: string
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/TikTokConsentPost"
+        creators:
+          type: array
+          description: One entry per distinct TikTok connection used by `posts`.
+          items:
+            $ref: "#/components/schemas/TikTokConsentCreator"
 
     CompleteManualPublishRequest:
       type: object
