@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
 import { apiPatch, apiErrorMessage } from '@/lib/api'
-import { useAvailableTransitions, useBlockedReason } from './useAvailableTransitions'
+import { useAvailableTransitionsState, useBlockedReason } from './useAvailableTransitions'
 import { DEFAULT_WORKFLOW_SLUG, statusMeta, useWorkflowView } from '@/lib/workflows'
 
 type UserRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
@@ -47,6 +47,13 @@ interface StatusDropdownProps {
    * offered a move the readiness card beside it was saying is blocked.
    */
   blockedMoves?: Record<string, string>
+  /**
+   * List rows and board cards: don't read the item's moves until the menu is opened, so a page of N
+   * items makes no available-transitions requests on render. The trigger is always interactive (the
+   * moves are unknown until then); an item with none says so in the menu. Default false — the detail
+   * page has one item and reads eagerly, which also lets it show a read-only badge for a dead end.
+   */
+  lazy?: boolean
 }
 
 export interface ReviewVerdictOption {
@@ -76,7 +83,9 @@ export function StatusDropdown({
   triggerRef,
   reviewVerdict,
   blockedMoves,
+  lazy = false,
 }: StatusDropdownProps) {
+  const [menuOpen, setMenuOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   // What is happening while a move is in flight — some (Unschedule, Approve) call out to a platform
   // and take seconds, and a menu that just closes looks like nothing happened.
@@ -85,14 +94,18 @@ export function StatusDropdown({
   const view = useWorkflowView(projectId, workflowSlug, token)
   const { label: displayLabel, category } = statusMeta(view, currentStatus)
 
-  const transitions = useAvailableTransitions(projectId, issueId, currentStatus, userRole, token)
+  const {
+    transitions,
+    loading: transitionsLoading,
+    error: transitionsError,
+  } = useAvailableTransitionsState(projectId, issueId, currentStatus, userRole, token, !lazy || menuOpen)
   // TIK-4 and the publish gate: the one reason a move is refused, shared with every other status
   // control on the page so they all disable the same move for the same reason.
   const blockedReason = useBlockedReason(view, blockedMoves)
 
   // REVIEWERs (and any state with no available moves) see a read-only indicator — unless there is a
   // verdict of theirs to give, which is the one move a reviewer owns.
-  if ((userRole === 'REVIEWER' || transitions.length === 0) && !reviewVerdict) {
+  if ((userRole === 'REVIEWER' || (!lazy && transitions.length === 0)) && !reviewVerdict) {
     return trigger === 'ring' ? (
       <StatusRing status={currentStatus} category={category} label={displayLabel} />
     ) : (
@@ -141,7 +154,7 @@ export function StatusDropdown({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         {trigger === 'ring' ? (
           <button
@@ -191,6 +204,17 @@ export function StatusDropdown({
             />
             <span className="text-xs opacity-60">your approval</span>
           </DropdownMenuItem>
+        )}
+        {transitionsLoading && (
+          <div role="status" className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            Loading moves…
+          </div>
+        )}
+        {lazy && !transitionsLoading && transitions.length === 0 && !reviewVerdict && (
+          <div role="status" className="px-2 py-1.5 text-xs text-muted-foreground">
+            {transitionsError ? 'Could not load moves' : 'No moves available'}
+          </div>
         )}
         {transitions.map((t) => {
           const meta = statusMeta(view, t.toStatus)

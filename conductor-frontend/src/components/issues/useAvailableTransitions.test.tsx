@@ -28,4 +28,24 @@ describe('useAvailableTransitions', () => {
     expect(screen.getByTestId('b')).toHaveTextContent('DONE')
     expect(apiGet).toHaveBeenCalledTimes(1)
   })
+
+  function Lazy({ enabled, role = 'ADMIN' }: { enabled: boolean; role?: 'ADMIN' | 'REVIEWER' }) {
+    const t = useAvailableTransitions('p1', 'wi-2', 'DRAFT', role, 'tok', enabled)
+    return <span data-testid="lazy">{t.map((x) => x.toStatus).join(',')}</span>
+  }
+
+  it('does not fetch while disabled, and reads once when enabled turns on', async () => {
+    const { rerender } = render(<Lazy enabled={false} />)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(apiGet).not.toHaveBeenCalled()
+    rerender(<Lazy enabled />)
+    await waitFor(() => expect(screen.getByTestId('lazy')).toHaveTextContent('DONE'))
+    expect(apiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('never fetches for a REVIEWER, even when enabled', async () => {
+    render(<Lazy enabled role="REVIEWER" />)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(apiGet).not.toHaveBeenCalled()
+  })
 })

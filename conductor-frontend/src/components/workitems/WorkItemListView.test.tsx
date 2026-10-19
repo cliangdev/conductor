@@ -41,6 +41,7 @@ let issues: MockIssue[] = []
 const apiPatch = vi.fn().mockResolvedValue(undefined)
 const apiPost = vi.fn().mockResolvedValue(undefined)
 const apiDelete = vi.fn().mockResolvedValue(undefined)
+const transitionCalls: string[] = []
 
 const MEMBERS = [
   { userId: 'user-1', name: 'Ada Admin', email: 'ada@x.com', role: 'ADMIN' },
@@ -58,6 +59,7 @@ vi.mock('@/lib/api', () => ({
     if (url.includes('/work-items?workflow=')) return Promise.resolve(issues)
     if (url.includes('/members')) return Promise.resolve(MEMBERS)
     if (url.includes('/available-transitions')) {
+      transitionCalls.push(url)
       const issueId = url.match(/work-items\/([^/]+)\/available-transitions/)?.[1]
       const issue = issues.find((i) => i.id === issueId)
       return Promise.resolve({ workflow: 'ENGINEERING', currentStatus: issue?.status, transitions: TRANSITIONS[issue?.status ?? ''] ?? [] })
@@ -161,10 +163,37 @@ function rowIdOf(link: Element): string | null {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  transitionCalls.length = 0
   localStorage.clear()
   issues = baseIssues()
   searchParamsValue = new URLSearchParams()
   VIEW = BASE_VIEW
+})
+
+describe('lazy status moves', () => {
+  it('makes no available-transitions calls on render, and one when a row status menu opens', async () => {
+    await renderList()
+    // Let any effect-driven fetch settle before asserting there were none.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
+    expect(transitionCalls).toHaveLength(0)
+
+    const trigger = within(rowFor('i1')).getByRole('button', { name: /Change status \(currently Draft\)/ })
+    await userEvent.click(trigger)
+
+    expect(await screen.findByText('Start')).toBeInTheDocument()
+    expect(transitionCalls).toHaveLength(1)
+    expect(transitionCalls[0]).toContain('/work-items/i1/available-transitions')
+  })
+
+  it('reads only the opened row, offering the moves for that row status', async () => {
+    issues = baseIssues().map((i) => ({ ...i, status: 'IN_PROGRESS' }))
+    await renderList()
+    await userEvent.click(within(rowFor('i1')).getByRole('button', { name: /Change status \(currently In Progress\)/ }))
+    expect(await screen.findByText('Finish')).toBeInTheDocument()
+    expect(transitionCalls).toHaveLength(1)
+  })
 })
 
 describe('WorkItemListView links', () => {

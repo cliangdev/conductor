@@ -131,6 +131,7 @@ export function WorkItemBoardView({
                             className="text-muted-foreground"
                           />
                           <StatusDropdown
+                            lazy
                             projectId={projectId}
                             issueId={issue.id}
                             currentStatus={issue.status}

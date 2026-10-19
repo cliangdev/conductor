@@ -81,6 +81,7 @@ export function WorkItemRow({
     >
       <span className="shrink-0 flex items-center">
         <StatusDropdown
+          lazy
           projectId={projectId}
           issueId={issue.id}
           currentStatus={issue.status}

@@ -364,3 +364,30 @@ describe('StatusDropdown (TIK-4 TikTok consent gate)', () => {
     expect(toastError).not.toHaveBeenCalled()
   })
 })
+
+describe('StatusDropdown lazy (list rows and board cards)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockView = ENGINEERING_VIEW
+  })
+
+  it('does not read the moves until the menu opens, and keeps an interactive trigger', async () => {
+    render(<StatusDropdown {...baseProps} userRole="CREATOR" lazy />)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(screen.getByRole('button')).toBeInTheDocument()
+  })
+
+  it('never reads the moves for a REVIEWER', async () => {
+    render(<StatusDropdown {...baseProps} userRole="REVIEWER" lazy />)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('still reads eagerly when not lazy', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue({ workflow: 'ENGINEERING', transitions: [] })
+    render(<StatusDropdown {...baseProps} userRole="CREATOR" />)
+    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1))
+  })
+})

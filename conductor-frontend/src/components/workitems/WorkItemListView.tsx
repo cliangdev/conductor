@@ -521,6 +521,7 @@ export function WorkItemListView({
                   >
                     {accessToken && (
                       <StatusDropdown
+                        lazy
                         projectId={projectId}
                         issueId={issue.id}
                         currentStatus={issue.status}
