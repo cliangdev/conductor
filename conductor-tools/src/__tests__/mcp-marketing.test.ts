@@ -683,20 +683,25 @@ describe('requestTikTokConsent', () => {
 
   it('returns the link as text when the client has no URL elicitation, without polling', async () => {
     mocked(apiPost).mockResolvedValue(created())
-    const result = await requestTikTokConsent({ postIds: ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'] }, config, fastHost())
+    const result = await requestTikTokConsent({ postIds: ['w1', 'w2'] }, config, fastHost())
     expect(result['status']).toBe('awaiting_person')
     expect(result['consentUrl']).toBe('https://app.test/consent?request=req-1')
     expect(String(result['nextStep'])).toMatch(/requestId: "req-1"/)
-    expect(result['skipped']).toEqual([{ workItemId: 'w9', reason: 'ALREADY_VALID' }])
+    expect(result['skipped']).toEqual([{ post: 'w9', reason: 'ALREADY_VALID' }])
     expect(apiGet).not.toHaveBeenCalled()
   })
 
-  it('resolves display ids before creating the request', async () => {
-    mocked(apiGet).mockResolvedValue({ id: 'uuid-80' })
-    mocked(apiPost).mockResolvedValue(created())
-    await requestTikTokConsent({ postIds: ['RE-80'] }, config, fastHost())
-    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/by-display/RE-80', config)
-    expect(apiPost).toHaveBeenCalledWith('/api/v2/projects/proj-1/tiktok-consent-requests', { workItemIds: ['uuid-80'] }, config)
+  it('passes ids to the backend as given and lists skipped Posts by display id', async () => {
+    mocked(apiPost).mockResolvedValue(
+      created({ skipped: [{ workItemId: 'w9', displayId: 'RE-9', reason: 'NOT_FOUND' }, { workItemId: 'RE-404', reason: 'NOT_FOUND' }] })
+    )
+    const result = await requestTikTokConsent({ postIds: ['RE-80', 'RE-404'] }, config, fastHost())
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(apiPost).toHaveBeenCalledWith('/api/v2/projects/proj-1/tiktok-consent-requests', { workItemIds: ['RE-80', 'RE-404'] }, config)
+    expect(result['skipped']).toEqual([
+      { post: 'RE-9', reason: 'NOT_FOUND' },
+      { post: 'RE-404', reason: 'NOT_FOUND' },
+    ])
   })
 
   it('on accept polls until complete, reports progress and sends the completion notice', async () => {

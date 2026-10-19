@@ -451,7 +451,6 @@ export async function completeManualPublish(
 
 // --- request_tiktok_consent -----------------------------------------------------------------------------
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_CONSENT_WAIT_SECONDS = 600
 const MAX_CONSENT_WAIT_SECONDS = 900
 const CONSENT_POLL_MS = 5_000
@@ -470,7 +469,7 @@ interface ConsentRequestCreated {
   consentUrl: string
   expiresAt: string
   items: ConsentItem[]
-  skipped?: Array<{ workItemId: string; reason: string }>
+  skipped?: Array<{ workItemId: string; displayId?: string | null; reason: string }>
   complete: boolean
 }
 
@@ -495,13 +494,6 @@ export interface ConsentHost {
   sleep?: (ms: number) => Promise<void>
   now?: () => number
   pollMs?: number
-}
-
-async function resolvePostId(value: string, config: Config): Promise<string> {
-  const id = value.trim()
-  if (UUID.test(id)) return id
-  const item = await apiGet<{ id: string }>(`${V2_PROJECT(config)}/work-items/by-display/${encodeURIComponent(id)}`, config)
-  return item.id
 }
 
 const summarize = (items: ConsentItem[]) =>
@@ -530,17 +522,16 @@ export async function requestTikTokConsent(
   const base = `${V2_PROJECT(config)}/tiktok-consent-requests`
 
   let requestId = params.requestId
-  let skipped: Array<{ workItemId: string; reason: string }> = []
+  let skipped: Array<{ post: string; reason: string }> = []
   let items: ConsentItem[] = []
   let elicited = false
 
   if (!requestId) {
-    const ids = params.postIds && params.postIds.length > 0
-      ? await Promise.all(params.postIds.map((p) => resolvePostId(p, config)))
-      : undefined
+    // The backend takes Work Item ids or display ids and reports an unknown one as skipped NOT_FOUND.
+    const ids = params.postIds && params.postIds.length > 0 ? params.postIds : undefined
     const created = await apiPost<ConsentRequestCreated>(base, ids ? { workItemIds: ids } : {}, config)
     requestId = created.id
-    skipped = created.skipped ?? []
+    skipped = (created.skipped ?? []).map((k) => ({ post: k.displayId ?? k.workItemId, reason: k.reason }))
     items = created.items
     const skippedNote = skipped.length > 0 ? { skipped } : {}
     if (created.items.length === 0) {

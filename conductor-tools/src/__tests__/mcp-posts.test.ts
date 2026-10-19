@@ -77,6 +77,31 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+describe('consent in nextStep', () => {
+  const route = (preflight: unknown) =>
+    serve({
+      '/api/v2/projects/proj-1/work-items/w1/publish-preflight': preflight,
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets': [],
+      '/api/v2/projects/proj-1/work-items/w1/assets': [],
+      '/api/v2/projects/proj-1/work-items/w1': { id: 'w1', displayId: 'MK-8', status: 'IN_REVIEW' },
+    })
+  const gated = { nextTransition: { to: 'APPROVED', requiresReview: true }, review: { gated: true, assignedReviewers: 1, satisfied: false } }
+
+  it('names request_tiktok_consent when a blocked Post still needs consent', async () => {
+    route(readyPreflight({ ready: false, consent: { required: true, verdict: 'MISSING' } }))
+    const result = await getPostStatus({ postId: 'w1' }, config)
+    expect(String(result['nextStep'])).toContain('Fix the blockers')
+    expect(String(result['nextStep'])).toContain('request_tiktok_consent({postIds:["w1"]})')
+  })
+
+  it('names it while waiting for review with consent pending, but not once consent is VALID', async () => {
+    route(readyPreflight({ ...gated, consent: { required: true, verdict: 'MISSING' } }))
+    expect(String((await getPostStatus({ postId: 'w1' }, config))['nextStep'])).toContain('request_tiktok_consent')
+    route(readyPreflight({ ...gated, consent: { required: true, verdict: 'VALID' } }))
+    expect(String((await getPostStatus({ postId: 'w1' }, config))['nextStep'])).not.toContain('request_tiktok_consent')
+  })
+})
+
 describe('create_post', () => {
   it('creates, uploads, targets, schedules and submits in one call, and returns the confirmation table', async () => {
     let status = 'DRAFT'
