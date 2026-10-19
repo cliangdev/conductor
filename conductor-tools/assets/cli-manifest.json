@@ -799,6 +799,22 @@
       ]
     },
     {
+      "name": "delete_media",
+      "description": "Permanently delete a Media item (and its stored file) only when no Creative or Post uses it.",
+      "category": "marketing",
+      "requiredParams": [
+        "mediaId"
+      ]
+    },
+    {
+      "name": "delete_creative",
+      "description": "Permanently delete a Creative and its renders; refused while a render is on a Post or other lettered variants exist.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId"
+      ]
+    },
+    {
       "name": "create_creative",
       "description": "Create a Creative, or with variantOf cut a lettered variant of an existing one. Refused with the failing rule's message on a validation or readiness error.",
       "category": "marketing"
