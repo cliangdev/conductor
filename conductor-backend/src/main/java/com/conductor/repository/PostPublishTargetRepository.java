@@ -20,6 +20,9 @@ public interface PostPublishTargetRepository extends JpaRepository<PostPublishTa
 
     List<PostPublishTarget> findAllByWorkItemId(String workItemId);
 
+    @Query("SELECT t FROM PostPublishTarget t WHERE t.workItem.id IN :workItemIds")
+    List<PostPublishTarget> findAllByWorkItemIdIn(@Param("workItemIds") java.util.Collection<String> workItemIds);
+
     /** The row's resume checkpoint alone, so a connector can read its progress without loading the entity. */
     @Query("SELECT t.resumeCheckpoint FROM PostPublishTarget t WHERE t.id = :id")
     Optional<String> findResumeCheckpointById(@Param("id") String id);

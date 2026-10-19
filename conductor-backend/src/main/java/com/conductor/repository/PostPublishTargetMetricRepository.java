@@ -74,6 +74,23 @@ public interface PostPublishTargetMetricRepository extends JpaRepository<PostPub
                                                                   @Param("at") OffsetDateTime at);
 
     /**
+     * {@link #findFirstAvailableAtOrAfter} for many targets at once, with each target's own threshold
+     * {@code fire_time + hours}: one row per target that has a fire time and a qualifying snapshot.
+     */
+    @Query(value = """
+            SELECT DISTINCT ON (m.target_id) m.*
+              FROM post_publish_target_metric m
+              JOIN post_publish_target t ON t.id = m.target_id
+             WHERE m.target_id IN (:targetIds)
+               AND m.unavailable = false
+               AND t.fire_time IS NOT NULL
+               AND m.observed_at >= t.fire_time + make_interval(hours => :hours)
+             ORDER BY m.target_id, m.observed_at ASC
+            """, nativeQuery = true)
+    List<PostPublishTargetMetric> findFirstAvailableAfterFireTimePlusHours(@Param("targetIds") List<String> targetIds,
+                                                                           @Param("hours") int hours);
+
+    /**
      * Whether this project has at least one PUBLISHED destination that has reported at least one
      * metric snapshot (available or not) — the "what works" weekly connector's health gate. One
      * native join rather than pulling target ids back into Java just to ask "is there any overlap".

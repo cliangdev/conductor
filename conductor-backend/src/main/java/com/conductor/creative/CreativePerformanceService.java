@@ -16,7 +16,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Per-creative and per-variant performance roll-ups (COND-24 T5): attribution through {@link
@@ -63,8 +62,7 @@ public class CreativePerformanceService {
         Creative root = rootOf(projectId, creative);
         List<Creative> family = new ArrayList<>(creativeRepository.findAllByNumberAndProjectId(root.getNumber(), projectId));
         family.sort(Comparator.comparing(Creative::getVariantLetter));
-        List<VariantPerformance> perf = family.stream().map(c -> variantPerformance(c, null, null)).toList();
-        return new FamilyPerformance(creativeId, perf);
+        return new FamilyPerformance(creativeId, variantPerformances(family, null, null));
     }
 
     /**
@@ -75,8 +73,7 @@ public class CreativePerformanceService {
     @Transactional(readOnly = true)
     public List<VariantPerformance> topCreatives(String projectId, OffsetDateTime from, OffsetDateTime to, int limit) {
         List<Creative> creatives = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
-        return creatives.stream()
-                .map(c -> variantPerformance(c, from, to))
+        return variantPerformances(creatives, from, to).stream()
                 .filter(p -> p.posts() > 0)
                 .sorted(Comparator.comparingLong(VariantPerformance::views).reversed())
                 .limit(limit)
@@ -88,21 +85,51 @@ public class CreativePerformanceService {
         return creative.getParentCreativeId() != null ? findCreative(projectId, creative.getParentCreativeId()) : creative;
     }
 
-    private VariantPerformance variantPerformance(Creative creative, OffsetDateTime from, OffsetDateTime to) {
-        List<PostPublishTarget> targets = attributionResolver.resolvePublishedTargets(creative.getId());
-        if (from != null) {
-            targets = targets.stream()
-                    .filter(t -> t.getFireTime() != null && !t.getFireTime().isBefore(from) && t.getFireTime().isBefore(to))
-                    .toList();
-        }
-        if (targets.isEmpty()) {
-            return empty(creative);
+    /**
+     * One roll-up per Creative, in input order, in a constant number of queries: attribution, the latest
+     * snapshots and the 72h snapshots are each loaded once for every Creative's destinations together.
+     */
+    private List<VariantPerformance> variantPerformances(List<Creative> creatives, OffsetDateTime from, OffsetDateTime to) {
+        Map<String, List<PostPublishTarget>> attributed = attributionResolver.resolvePublishedTargetsByCreative(
+                creatives.stream().map(Creative::getId).toList());
+
+        Map<String, List<PostPublishTarget>> targetsByCreative = new LinkedHashMap<>();
+        Map<String, PostPublishTarget> allTargets = new LinkedHashMap<>();
+        for (Creative creative : creatives) {
+            List<PostPublishTarget> targets = attributed.getOrDefault(creative.getId(), List.of());
+            if (from != null) {
+                targets = targets.stream()
+                        .filter(t -> t.getFireTime() != null && !t.getFireTime().isBefore(from) && t.getFireTime().isBefore(to))
+                        .toList();
+            }
+            targetsByCreative.put(creative.getId(), targets);
+            targets.forEach(t -> allTargets.putIfAbsent(t.getId(), t));
         }
 
-        List<String> targetIds = targets.stream().map(PostPublishTarget::getId).toList();
         Map<String, PostPublishTargetMetric> latestByTarget = new LinkedHashMap<>();
-        for (PostPublishTargetMetric m : metricRepository.findLatestAvailableForTargets(targetIds)) {
-            latestByTarget.put(m.getTargetId(), m);
+        Map<String, PostPublishTargetMetric> at72hByTarget = new LinkedHashMap<>();
+        if (!allTargets.isEmpty()) {
+            List<String> targetIds = List.copyOf(allTargets.keySet());
+            for (PostPublishTargetMetric m : metricRepository.findLatestAvailableForTargets(targetIds)) {
+                latestByTarget.put(m.getTargetId(), m);
+            }
+            for (PostPublishTargetMetric m : metricRepository.findFirstAvailableAfterFireTimePlusHours(targetIds, VIEWS_72H_HOURS)) {
+                at72hByTarget.put(m.getTargetId(), m);
+            }
+        }
+
+        List<VariantPerformance> result = new ArrayList<>(creatives.size());
+        for (Creative creative : creatives) {
+            result.add(variantPerformance(creative, targetsByCreative.get(creative.getId()), latestByTarget, at72hByTarget));
+        }
+        return result;
+    }
+
+    private VariantPerformance variantPerformance(Creative creative, List<PostPublishTarget> targets,
+                                                  Map<String, PostPublishTargetMetric> latestByTarget,
+                                                  Map<String, PostPublishTargetMetric> at72hByTarget) {
+        if (targets.isEmpty()) {
+            return empty(creative);
         }
 
         int posts = 0;
@@ -135,10 +162,9 @@ public class CreativePerformanceService {
             bucket[2] += engagement;
 
             if (target.getFireTime() != null) {
-                OffsetDateTime windowAt = target.getFireTime().plusHours(VIEWS_72H_HOURS);
-                Optional<PostPublishTargetMetric> at72h = metricRepository.findFirstAvailableAtOrAfter(target.getId(), windowAt);
-                if (at72h.isPresent()) {
-                    views72hSum += orZero(at72h.get().getViews());
+                PostPublishTargetMetric at72h = at72hByTarget.get(target.getId());
+                if (at72h != null) {
+                    views72hSum += orZero(at72h.getViews());
                     any72h = true;
                 }
             }

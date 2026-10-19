@@ -24,10 +24,17 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
 
     List<CreativeRenderFrame> findAllByRenderId(String renderId);
 
+    /** (id, creativeId, gcsPath) of the given frames — the columns Media usage counting needs. */
+    @Query("SELECT f.id, f.creativeId, f.gcsPath FROM CreativeRenderFrame f WHERE f.id IN :ids")
+    List<Object[]> findRefsByIdIn(@Param("ids") java.util.Collection<String> ids);
+
     /** Every frame this Creative has ever produced, across every render — COND-24 T5 attribution reads
      *  this rather than following {@code CreativeRenderRepository}'s "latest succeeded" view because a
      *  Post can be attached from an older render whose frames are still the ones actually published. */
     List<CreativeRenderFrame> findAllByCreativeId(String creativeId);
+
+    /** {@link #findAllByCreativeId} for several Creatives at once; callers group by {@code creativeId}. */
+    List<CreativeRenderFrame> findAllByCreativeIdIn(java.util.Collection<String> creativeIds);
 
     /** Ids of every frame produced by any of these Creatives or reusing this stored object. */
     @Query("SELECT f.id FROM CreativeRenderFrame f WHERE f.creativeId IN :creativeIds OR f.gcsPath = :gcsPath")

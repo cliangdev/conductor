@@ -86,9 +86,33 @@ public class PublishTargetMediaResolver {
         if (targets == null || targets.isEmpty()) {
             return Map.of();
         }
-        List<Asset> shared = sharedMedia(workItemId);
+        return resolve(targets, Map.of(workItemId, sharedMedia(workItemId)), t -> workItemId);
+    }
+
+    /**
+     * {@link #effectiveMediaByTarget} for the targets of many Work Items at once, in a constant number of
+     * queries (one for all the Posts' assets, one for all explicit selections) instead of two or three
+     * per Post. Each target is resolved against its own Work Item's media.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, EffectiveMedia> effectiveMediaForTargets(Collection<PostPublishTarget> targets) {
+        if (targets == null || targets.isEmpty()) {
+            return Map.of();
+        }
+        List<String> workItemIds = targets.stream().map(t -> t.getWorkItem().getId()).distinct().toList();
+        Map<String, List<Asset>> sharedByWorkItem = new LinkedHashMap<>();
+        assetRepository.findAllByWorkItemIdIn(workItemIds).stream()
+                .filter(AssetService::isUploadedFile)
+                .sorted(AssetService.PUBLISH_ORDER)
+                .forEach(a -> sharedByWorkItem.computeIfAbsent(a.getWorkItem().getId(), k -> new ArrayList<>()).add(a));
+        return resolve(targets, sharedByWorkItem, t -> t.getWorkItem().getId());
+    }
+
+    private Map<String, EffectiveMedia> resolve(Collection<PostPublishTarget> targets,
+                                                Map<String, List<Asset>> sharedByWorkItem,
+                                                java.util.function.Function<PostPublishTarget, String> workItemIdOf) {
         Map<String, Asset> byId = new LinkedHashMap<>();
-        shared.forEach(asset -> byId.put(asset.getId(), asset));
+        sharedByWorkItem.values().forEach(list -> list.forEach(asset -> byId.put(asset.getId(), asset)));
 
         List<String> customTargetIds = targets.stream()
                 .filter(PostPublishTarget::isCustomMedia)
@@ -111,7 +135,8 @@ public class PublishTargetMediaResolver {
         for (PostPublishTarget target : targets) {
             resolved.put(target.getId(), target.isCustomMedia()
                     ? new EffectiveMedia(selectionsByTarget.getOrDefault(target.getId(), List.of()), true)
-                    : new EffectiveMedia(inherited(target, shared), false));
+                    : new EffectiveMedia(inherited(target,
+                            sharedByWorkItem.getOrDefault(workItemIdOf.apply(target), List.of())), false));
         }
         return resolved;
     }
