@@ -7,7 +7,7 @@
 // bumps the key, which re-reads both the preflight and this hook's selection.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchConsentPage, recordTikTokConsent } from '@/components/marketing/consent/api'
+import { recordTikTokConsent } from '@/components/marketing/consent/api'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPost, apiPut } from '@/lib/api'
 import { statusMeta } from '@/lib/workflows'
@@ -237,8 +237,7 @@ export function usePostDestinations({
   }, [consentRequired, projectId, workItemId, token, consentSubject, refreshKey])
 
   // The consent write is a person-only, atomic PUT carrying the six choices for every TikTok target
-  // and the Post's consent ETag as If-Match. GET publish-consent doesn't return the etag (only the
-  // write and the consent page read do), so when the cached state has none, read it from the page read.
+  // and the Post's consent ETag (from GET publish-consent, or the last write) as If-Match.
   const giveConsent = useCallback(async (): Promise<PublishConsentState> => {
     const targets = tiktokTargets.map((t) => {
       const o = t.options
@@ -253,11 +252,7 @@ export function usePostDestinations({
         brandOrganicToggle: o.brandOrganicToggle,
       }
     })
-    let etag = consentServer?.etag ?? null
-    if (!etag) {
-      const page = await fetchConsentPage(projectId, token)
-      etag = page.posts.find((p) => p.workItemId === workItemId)?.etag ?? null
-    }
+    const etag = consentServer?.etag ?? null
     if (!etag) throw new Error('Could not read this post’s TikTok consent. Reload the page and try again.')
     return recordTikTokConsent(projectId, workItemId, etag, { targets, channel: 'POST_PAGE' }, token)
   }, [tiktokTargets, consentServer, projectId, workItemId, token])

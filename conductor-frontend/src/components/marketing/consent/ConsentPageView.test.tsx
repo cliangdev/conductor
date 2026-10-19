@@ -209,7 +209,10 @@ describe('ConsentPageView', () => {
 
 describe('PendingConsentNotice', () => {
   it('links to the consent page with the count of posts not yet consented', async () => {
-    pageData = { posts: [post(1), post(2, { verdict: 'VALID' }), post(3, { verdict: 'SUPERSEDED' })], creators: [] }
+    ;(apiGet as Mock).mockImplementation(async (path: string) => {
+      expect(path).toBe('/api/v2/projects/p1/tiktok-consent/summary')
+      return { pendingCount: 2 }
+    })
     render(<PendingConsentNotice projectId="p1" token="tok" />)
     const link = await screen.findByRole('link', { name: '2 posts need TikTok consent' })
     expect(link).toHaveAttribute('href', '/app/projects/p1/marketing/consent')

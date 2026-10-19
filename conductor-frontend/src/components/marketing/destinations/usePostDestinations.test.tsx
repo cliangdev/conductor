@@ -45,17 +45,13 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   }
   if (method === 'GET' && url.endsWith('/publish-consent')) {
     if (consentFails) return jsonResponse(500, { detail: 'boom' })
-    return jsonResponse(200, consentServed ?? { workItemId: WORK_ITEM, required: true, valid: false, verdict: 'NEVER_GIVEN' })
+    return jsonResponse(200, consentServed ?? { workItemId: WORK_ITEM, required: true, valid: false, verdict: 'NEVER_GIVEN', etag: '"abc123"' })
   }
   if (method === 'PUT' && url.endsWith('/publish-consent')) {
     const body = JSON.parse(String(init?.body)) as { consented: boolean }
     consentPutBodies.push(body)
     consentServed = { workItemId: WORK_ITEM, required: true, valid: body.consented, verdict: body.consented ? 'VALID' : 'NEVER_GIVEN', consentedByName: 'Bryan' }
     return jsonResponse(200, consentServed)
-  }
-  if (method === 'GET' && url.endsWith(`/projects/${PROJECT}/tiktok-consent`)) {
-    consentPageReads += 1
-    return jsonResponse(200, { posts: [{ workItemId: WORK_ITEM, verdict: 'NEVER_GIVEN', etag: '"abc123"', targets: [] }], creators: [] })
   }
   if (method === 'PUT' && url.endsWith(`/work-items/${WORK_ITEM}/tiktok-consent`)) {
     const headers = new Headers(init?.headers as HeadersInit)
@@ -191,7 +187,7 @@ describe('usePostDestinations', () => {
     })
     // The person-only atomic write: the six choices per target, the etag as If-Match, the Post-page channel.
     expect(consentPutBodies).toEqual([])
-    expect(consentPageReads).toBe(1)
+    expect(consentPageReads).toBe(0)
     expect(tiktokConsentPuts).toEqual([
       {
         ifMatch: '"abc123"',

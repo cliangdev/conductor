@@ -80,6 +80,10 @@ export function fetchConsentPage(
   return apiGet<TikTokConsentPage>(consentPagePath(projectId, requestId), token)
 }
 
+export function fetchConsentSummary(projectId: string, token: string): Promise<{ pendingCount: number }> {
+  return apiGet<{ pendingCount: number }>(`/api/v2/projects/${projectId}/tiktok-consent/summary`, token)
+}
+
 export interface RecordTikTokConsentBody {
   targets: Array<TikTokConsentChoices & { connectionId: string }>
   channel: ConsentChannel

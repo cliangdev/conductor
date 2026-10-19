@@ -81,6 +81,11 @@ export function DestinationRowDetails({
             privacyLevelOptions={option.privacyLevelOptions ?? []}
             isVideo={row.effectiveAssets.some((a) => isVideoContentType(a.contentType))}
             images={row.effectiveAssets.filter((a) => !isVideoContentType(a.contentType))}
+            creatorDisabled={{
+              comment: option.commentDisabled === true,
+              duet: option.duetDisabled === true,
+              stitch: option.stitchDisabled === true,
+            }}
             value={row.tiktokOptions}
             disabled={saving || locked}
             onChange={(next) => actions.setTikTokOptions(row, next)}

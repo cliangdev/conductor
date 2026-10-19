@@ -1,23 +1,23 @@
 'use client'
 
 // "N posts need TikTok consent" — a link on the Posts list to the bulk consent page. The count comes from
-// the same page read the consent page uses (no `request`: every pending Post). It is a nicety, so any
-// failure — including a 403 for a credential that isn't a person — leaves the list without it.
+// the database-only summary endpoint (TikTok is never called). It is a nicety, so any failure leaves
+// the list without it.
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ShieldCheck } from 'lucide-react'
-import { fetchConsentPage } from './api'
+import { fetchConsentSummary } from './api'
 
 export function PendingConsentNotice({ projectId, token }: { projectId: string; token: string }) {
   const [count, setCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    fetchConsentPage(projectId, token)
-      .then((page) => {
-        if (cancelled || !Array.isArray(page?.posts)) return
-        setCount(page.posts.filter((p) => p.verdict !== 'VALID').length)
+    fetchConsentSummary(projectId, token)
+      .then((summary) => {
+        if (cancelled || typeof summary?.pendingCount !== 'number') return
+        setCount(summary.pendingCount)
       })
       .catch(() => {
         if (!cancelled) setCount(0)

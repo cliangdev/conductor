@@ -35,6 +35,11 @@ export interface PublishTargetOption {
    * permission to guess.
    */
   privacyLevelOptions?: string[] | null
+  /** Interactions the creator switched off in TikTok; null/absent = unknown (treated as enabled). */
+  commentDisabled?: boolean | null
+  duetDisabled?: boolean | null
+  stitchDisabled?: boolean | null
+  maxVideoPostDurationSec?: number | null
   /** The handle the creator would recognise, for the consent step's "you are posting to @…". */
   creatorNickname?: string | null
   /** The `publishOptions` keys a target on this platform accepts, from the server's platform registry. */
