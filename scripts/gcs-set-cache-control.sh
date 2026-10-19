@@ -33,8 +33,8 @@ if [[ -z "$BUCKET" ]]; then
   echo "error: bucket name required (argument or \$BUCKET)" >&2
   exit 2
 fi
-if ! command -v gsutil >/dev/null 2>&1; then
-  echo "error: gsutil not found; install the Google Cloud SDK" >&2
+if ! command -v gcloud >/dev/null 2>&1; then
+  echo "error: gcloud not found; install the Google Cloud SDK" >&2
   exit 2
 fi
 
@@ -43,9 +43,10 @@ TARGET="gs://${BUCKET}/${PREFIX}**"
 
 if $DRY_RUN; then
   echo "Dry run: objects matching ${TARGET} that would get 'Cache-Control: ${CACHE_CONTROL}':"
-  gsutil ls "$TARGET"
+  gcloud storage ls "$TARGET"
   exit 0
 fi
 
 echo "Setting 'Cache-Control: ${CACHE_CONTROL}' on ${TARGET}"
-gsutil -m setmeta -h "Cache-Control:${CACHE_CONTROL}" "$TARGET"
+# gcloud storage patches in parallel; gsutil -m runs one object at a time on macOS (~12s each).
+gcloud storage objects update "$TARGET" --cache-control="${CACHE_CONTROL}"
