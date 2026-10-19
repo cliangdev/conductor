@@ -1,5 +1,6 @@
 'use client'
 
+import { loginUrlFor } from '@/lib/safe-next'
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import type { User, AuthResponse } from '@/types'
 import { apiPost, setOnUnauthorized } from '@/lib/api'
@@ -85,7 +86,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setOnUnauthorized(() => {
       clearLocalAuth()
-      window.location.href = '/login'
+      // Come back to the same page (query string included) after signing in again.
+      const here = window.location.pathname + window.location.search
+      window.location.href = here.startsWith('/app') ? loginUrlFor(here) : '/login'
     })
 
     const storedToken = localStorage.getItem('access_token')

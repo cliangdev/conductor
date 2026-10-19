@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { safeNext } from '@/lib/safe-next'
 
 /**
  * Route gating. Only `/app/**` requires a session.
@@ -11,17 +12,17 @@ import type { NextRequest } from 'next/server'
  */
 export function middleware(request: NextRequest) {
   const token = request.cookies.get('access_token')?.value
-  const { pathname } = request.nextUrl
+  const { pathname, search } = request.nextUrl
 
   if (pathname.startsWith('/app') && !token) {
     const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('next', pathname)
+    // Keep the query string: a deep link such as /marketing/consent?request=<id> must survive login.
+    loginUrl.searchParams.set('next', pathname + search)
     return NextResponse.redirect(loginUrl)
   }
 
   if (pathname === '/login' && token) {
-    const next = request.nextUrl.searchParams.get('next')
-    const target = new URL(next && next.startsWith('/') ? next : '/app/projects', request.url)
+    const target = new URL(safeNext(request.nextUrl.searchParams.get('next')), request.url)
     return NextResponse.redirect(target)
   }
 
