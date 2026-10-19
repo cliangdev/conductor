@@ -733,6 +733,13 @@ describe('requestTikTokConsent', () => {
     expect(clock).toBeLessThanOrEqual(12_000)
   })
 
+  it('includes the link on a timed-out resume when the status carries consentUrl', async () => {
+    mocked(apiGet).mockResolvedValue(status(['MISSING'], { consentUrl: 'https://app.test/consent?request=req-1' }))
+    const result = await requestTikTokConsent({ requestId: 'req-1', waitSeconds: 0 }, config, fastHost())
+    expect(result['status']).toBe('waiting')
+    expect(result['consentUrl']).toBe('https://app.test/consent?request=req-1')
+  })
+
   it('resumes to complete without a completion notice when URL elicitation was not used', async () => {
     mocked(apiGet).mockResolvedValue(status(['VALID', 'VALID']))
     const notifyComplete = vi.fn()
@@ -751,5 +758,39 @@ describe('requestTikTokConsent', () => {
     mocked(apiPost).mockResolvedValue(created({ items: [], skipped: [{ workItemId: 'w1', reason: 'NOT_REQUIRED' }] }))
     const result = await requestTikTokConsent({}, config, fastHost())
     expect(result['status']).toBe('nothing_to_consent')
+  })
+})
+
+describe('human-only TikTok option keys', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mocked(apiPut).mockResolvedValue([])
+  })
+
+  it('are stripped from an API TikTok target by set_publish_targets, with a warning', async () => {
+    const result = await setPublishTargets(
+      {
+        issueId: 'w1',
+        targets: [
+          { platform: 'tiktok', connectionId: 'c-tt', publishOptions: { privacyLevel: 'SELF_ONLY', disableComment: true, isAigc: true } },
+        ],
+      },
+      config
+    )
+    expect(mocked(apiPut).mock.calls[0]![1]).toEqual({
+      targets: [{ platform: 'tiktok', connectionId: 'c-tt', publishOptions: { isAigc: true } }],
+    })
+    expect(JSON.stringify(result['warnings'])).toMatch(/ignored privacyLevel, disableComment.*request_tiktok_consent/)
+  })
+
+  it('are kept on a MANUAL TikTok target', async () => {
+    const result = await setPublishTargets(
+      { issueId: 'w1', targets: [{ platform: 'tiktok', connectionId: null, publishOptions: { privacyLevel: 'SELF_ONLY' } }] },
+      config
+    )
+    expect(mocked(apiPut).mock.calls[0]![1]).toEqual({
+      targets: [{ platform: 'tiktok', connectionId: null, publishOptions: { privacyLevel: 'SELF_ONLY' } }],
+    })
+    expect(result['warnings']).toBeUndefined()
   })
 })

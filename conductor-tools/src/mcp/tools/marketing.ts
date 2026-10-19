@@ -188,12 +188,52 @@ export async function setPublishTargets(
       'targets is required — pass the complete selection, or an empty array to clear every target'
     )
   }
+  const warnings: string[] = []
+  const selection = params.targets.map((target) => {
+    const { target: cleaned, warning } = stripHumanOnlyTikTokOptions(target)
+    if (warning) warnings.push(warning)
+    return cleaned
+  })
   const targets = await apiPut<unknown[]>(
     `${workItemBase(config, params.issueId)}/publish-targets`,
-    { targets: params.targets },
+    { targets: selection },
     config
   )
-  return { issueId: params.issueId, targets }
+  return { issueId: params.issueId, targets, ...(warnings.length > 0 ? { warnings } : {}) }
+}
+
+/**
+ * TikTok's audit requires the creator to choose these themselves while consenting, so the backend refuses
+ * them from a machine credential. Dropped here, with a warning, rather than failing the whole Post. Only
+ * for an API (connection-backed) TikTok target: the MANUAL lane has no consent step and keeps its options.
+ */
+const HUMAN_ONLY_TIKTOK_KEYS = [
+  'privacyLevel',
+  'disableComment',
+  'disableDuet',
+  'disableStitch',
+  'brandContentToggle',
+  'brandOrganicToggle',
+] as const
+
+export function stripHumanOnlyTikTokOptions(target: PublishTargetSelection): {
+  target: PublishTargetSelection
+  warning?: string
+} {
+  if (target.platform.toLowerCase() !== 'tiktok' || !target.connectionId || !target.publishOptions) {
+    return { target }
+  }
+  const kept: Record<string, unknown> = {}
+  const stripped: string[] = []
+  for (const [key, value] of Object.entries(target.publishOptions)) {
+    if ((HUMAN_ONLY_TIKTOK_KEYS as readonly string[]).includes(key)) stripped.push(key)
+    else kept[key] = value
+  }
+  if (stripped.length === 0) return { target }
+  return {
+    target: { ...target, publishOptions: kept },
+    warning: `tiktok: ignored ${stripped.join(', ')} — the creator chooses these themselves when they consent in their browser (request_tiktok_consent).`,
+  }
 }
 
 /**
@@ -439,6 +479,7 @@ interface ConsentRequestStatus {
   expiresAt: string
   expired: boolean
   complete: boolean
+  consentUrl?: string
   completedAt?: string | null
   items: ConsentItem[]
 }
@@ -570,7 +611,8 @@ export async function requestTikTokConsent(
         requestId,
         status: 'waiting',
         posts: summarize(items),
-        nextStep: `${done} of ${items.length} consented so far. Call request_tiktok_consent({requestId: "${requestId}"}) again to keep waiting, or ask the person to finish.`,
+        ...(status.consentUrl ? { consentUrl: status.consentUrl } : {}),
+        nextStep: `${done} of ${items.length} consented so far.${status.consentUrl ? ` Link for the person: ${status.consentUrl}.` : ''} Call request_tiktok_consent({requestId: "${requestId}"}) again to keep waiting, or ask the person to finish.`,
       }
     }
     await sleep(pollMs)

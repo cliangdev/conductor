@@ -306,32 +306,6 @@ function nextStep(status: string | undefined, preflight: Preflight, submitted: b
   return `Ready for "${preflight.nextTransition.label ?? preflight.nextTransition.to}"; a status move will take it.`
 }
 
-/**
- * TikTok's audit requires the creator to choose these themselves while consenting, so the backend refuses
- * them from a machine credential. Dropped here, with a warning, rather than failing the whole Post.
- */
-const HUMAN_ONLY_TIKTOK_KEYS = [
-  'privacyLevel',
-  'disableComment',
-  'disableDuet',
-  'disableStitch',
-  'brandContentToggle',
-  'brandOrganicToggle',
-] as const
-
-function stripHumanOnlyTikTokOptions(options: Record<string, unknown>): {
-  kept: Record<string, unknown>
-  stripped: string[]
-} {
-  const kept: Record<string, unknown> = {}
-  const stripped: string[] = []
-  for (const [key, value] of Object.entries(options)) {
-    if ((HUMAN_ONLY_TIKTOK_KEYS as readonly string[]).includes(key)) stripped.push(key)
-    else kept[key] = value
-  }
-  return { kept, stripped }
-}
-
 /** The most library ids one from-media request may carry. */
 const MAX_FROM_MEDIA_IDS = 35
 
@@ -430,27 +404,17 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
       warnings.push(`${account.platform}: a story has no caption — ${account.platform} drops it.`)
     }
 
-    let publishOptions = input.options
-    if (account.platform.toLowerCase() === 'tiktok' && publishOptions) {
-      const { kept, stripped } = stripHumanOnlyTikTokOptions(publishOptions)
-      if (stripped.length > 0) {
-        warnings.push(
-          `tiktok: ignored ${stripped.join(', ')} — the creator chooses these themselves when they consent in their browser (request_tiktok_consent).`
-        )
-      }
-      publishOptions = kept
-    }
-
     return {
       platform: account.platform,
       connectionId: account.lane === 'MANUAL' ? null : account.connectionId,
       format: input.format,
       captionOverride: input.captionOverride ?? null,
       assetIds,
-      publishOptions,
+      publishOptions: input.options,
     }
   })
-  await setPublishTargets({ issueId: postId, targets: selection }, config)
+  const applied = await setPublishTargets({ issueId: postId, targets: selection }, config)
+  warnings.push(...((applied['warnings'] as string[] | undefined) ?? []))
 
   // Schedule: the server knows what the chosen destinations can accept; nothing here guesses a lead time.
   let preflight = await getPreflight(config, postId)

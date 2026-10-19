@@ -115,7 +115,7 @@ describe('create_post', () => {
         media: [{ path: '/tmp/clip.mp4' }],
         targets: [
           { platform: 'instagram', account: '@ACME', assetIds: [0] },
-          { platform: 'tiktok', options: { privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: false, musicConfirmed: true } },
+          { platform: 'tiktok', options: { privacyLevel: 'PUBLIC_TO_EVERYONE' } },
         ],
         timezone: 'Europe/Berlin',
         reviewers: ['rita reviewer'],
@@ -131,7 +131,7 @@ describe('create_post', () => {
     expect(mocked(apiPut).mock.calls[0]![1]).toEqual({
       targets: [
         { platform: 'instagram', connectionId: 'c-ig', captionOverride: null, assetIds: ['a1'], publishOptions: undefined },
-        { platform: 'tiktok', connectionId: null, captionOverride: null, assetIds: [], publishOptions: { musicConfirmed: true } },
+        { platform: 'tiktok', connectionId: null, captionOverride: null, assetIds: [], publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE' } },
       ],
     })
     // Scheduled on the five-minute mark at or after the server's earliest, in the given zone.
@@ -149,8 +149,6 @@ describe('create_post', () => {
       { targetId: 't-ig', platform: 'instagram', account: '@acme', lane: 'APP_MANAGED', state: 'PENDING', stateLabel: 'Waiting', permalink: null, errorMessage: null },
       { targetId: 't-tt', platform: 'tiktok', account: 'manual', lane: 'MANUAL', state: 'PENDING', stateLabel: 'Waiting', permalink: null, errorMessage: null },
     ])
-    // Human-only TikTok keys are stripped, with a warning that names them and the consent tool.
-    expect(JSON.stringify(result['warnings'])).toMatch(/tiktok: ignored privacyLevel, disableComment.*request_tiktok_consent/)
     expect(result['reviewers']).toEqual([{ userId: 'u-rev', name: 'Rita Reviewer' }])
     expect(String(result['nextStep'])).toContain('Waiting for a reviewer')
     expect(preflightCalls).toBeGreaterThanOrEqual(2)
