@@ -212,7 +212,8 @@ public class TikTokPublishAction {
     }
 
     /** The video this publish is about, once resolved from the Post's own uploaded media. */
-    record ResolvedVideo(String assetId, String gcsPath, long sizeBytes, String contentType) {}
+    record ResolvedVideo(String assetId, String gcsPath, long sizeBytes, String contentType,
+                         java.math.BigDecimal durationSeconds) {}
 
     /**
      * Resume state for one logical publish. Serialised into the invocation's checkpoint after every
@@ -283,10 +284,12 @@ public class TikTokPublishAction {
         // The approval gate has already refused a mix, so this is a clean either/or.
         List<Asset> photos = resolvePhotos(input);
         if (!photos.isEmpty()) {
+            requireConsentStillHolds(accessToken, input, false, null);
             return publishPhotoPost(accessToken, input, ctx, photos);
         }
 
         ResolvedVideo video = resolveVideo(input);
+        requireConsentStillHolds(accessToken, input, true, video.durationSeconds());
         ChunkPlan plan = TikTokClient.planChunks(video.sizeBytes());
         String idempotencyKey = resolveIdempotencyKey(input);
 
@@ -327,6 +330,49 @@ public class TikTokPublishAction {
 
         PublishStatus status = awaitPublish(accessToken, checkpoint.publishId());
         return ActionResult.ok(publishOutput(checkpoint.publishId(), status, ctx));
+    }
+
+    /**
+     * Re-reads the creator's options from TikTok at fire time and refuses the post when the choices the
+     * creator consented to no longer describe what TikTok would accept. A post is routinely scheduled days
+     * after the creator consented, and in between they can make the account private, switch comments off,
+     * or hit a posting hold; publishing anyway would put something out under settings they never saw.
+     * Permanent on purpose: a retry reads the same answer, and the fix is a person re-consenting.
+     *
+     * <p>Duet and stitch are video-only concepts, so a photo post is not held to them.
+     */
+    private void requireConsentStillHolds(String accessToken, Map<String, Object> input, boolean video,
+                                          java.math.BigDecimal durationSeconds) {
+        TikTokClient.CreatorInfo creator = client.queryCreatorInfo(accessToken);
+        String prefix = "TikTok consent no longer holds: ";
+        String fix = " — the creator needs to review this post and consent again.";
+        if (!creator.canPost()) {
+            throw new PermanentPublishException(prefix + creator.cannotPostReason() + fix);
+        }
+        String level = text(input.get(INPUT_PRIVACY_LEVEL));
+        if (level != null && creator.privacyLevelOptions().stream().noneMatch(level::equalsIgnoreCase)) {
+            throw new PermanentPublishException(prefix + "visibility '" + level
+                    + "' is no longer one of this creator's options " + creator.privacyLevelOptions() + fix);
+        }
+        if (creator.commentDisabled() && !flag(input.get("disable_comment"))) {
+            throw new PermanentPublishException(prefix + "comments were allowed, but the creator has since"
+                    + " turned comments off on TikTok" + fix);
+        }
+        if (video && creator.duetDisabled() && !flag(input.get("disable_duet"))) {
+            throw new PermanentPublishException(prefix + "duets were allowed, but the creator has since"
+                    + " turned duets off on TikTok" + fix);
+        }
+        if (video && creator.stitchDisabled() && !flag(input.get("disable_stitch"))) {
+            throw new PermanentPublishException(prefix + "stitches were allowed, but the creator has since"
+                    + " turned stitches off on TikTok" + fix);
+        }
+        Integer cap = creator.maxVideoPostDurationSec();
+        if (durationSeconds != null && cap != null && cap > 0
+                && durationSeconds.compareTo(java.math.BigDecimal.valueOf(cap)) > 0) {
+            throw new PermanentPublishException(prefix + "the video is "
+                    + durationSeconds.stripTrailingZeros().toPlainString() + " seconds but this creator's limit is "
+                    + cap + " seconds" + fix);
+        }
     }
 
     private void uploadChunk(String uploadUrl, ResolvedVideo video, ChunkPlan plan, int index) {
@@ -651,7 +697,8 @@ public class TikTokPublishAction {
             throw new PermanentPublishException("Asset " + asset.getId() + " is " + size
                     + " bytes, over TikTok's " + TikTokClient.MAX_VIDEO_BYTES + "-byte (4 GB) ceiling");
         }
-        return new ResolvedVideo(asset.getId(), asset.getGcsPath(), size, asset.getContentType());
+        return new ResolvedVideo(asset.getId(), asset.getGcsPath(), size, asset.getContentType(),
+                asset.getDurationSeconds());
     }
 
     private static boolean isUploadedVideo(Asset asset) {

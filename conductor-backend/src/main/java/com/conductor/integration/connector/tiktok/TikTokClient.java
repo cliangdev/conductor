@@ -178,7 +178,41 @@ public class TikTokClient {
      * assumed to be the same for everyone.
      */
     public record CreatorInfo(String nickname, String username, List<String> privacyLevelOptions,
-                              Integer maxVideoPostDurationSec) {}
+                              Integer maxVideoPostDurationSec,
+                              boolean commentDisabled, boolean duetDisabled, boolean stitchDisabled,
+                              String avatarUrl, boolean canPost, String cannotPostReason) {
+
+        /** A creator who can post and has every interaction available, as connect-time callers saw them. */
+        public CreatorInfo(String nickname, String username, List<String> privacyLevelOptions,
+                           Integer maxVideoPostDurationSec) {
+            this(nickname, username, privacyLevelOptions, maxVideoPostDurationSec,
+                    false, false, false, null, true, null);
+        }
+    }
+
+    /**
+     * creator_info error codes that mean this creator cannot post right now, as opposed to the request being
+     * wrong: TikTok's anti-spam holds ({@code spam_risk_*}) and the app's active-user cap. The creator page
+     * stops on these rather than letting someone consent to a post that cannot go out.
+     */
+    static boolean isCannotPostCode(String code) {
+        if (code == null) {
+            return false;
+        }
+        String lower = code.toLowerCase(Locale.ROOT);
+        return lower.startsWith("spam_risk") || lower.equals("reached_active_user_cap");
+    }
+
+    private static String cannotPostReason(String code) {
+        return switch (code.toLowerCase(Locale.ROOT)) {
+            case "reached_active_user_cap" ->
+                    "TikTok has reached this app's daily limit of posting users — try again tomorrow";
+            case "spam_risk_too_many_posts" ->
+                    "This TikTok account has reached its daily post limit — try again tomorrow";
+            case "spam_risk_user_banned_from_posting" -> "TikTok has banned this account from posting";
+            default -> "TikTok will not let this account post right now (" + code + ")";
+        };
+    }
 
     /**
      * Everything TikTok needs to know about the post itself, independent of how the bytes arrive.
@@ -283,14 +317,25 @@ public class TikTokClient {
                 new HttpEntity<>(jsonHeaders(accessToken)), CreatorInfoResponse.class);
 
         CreatorInfoResponse body = response.getBody();
-        requireOk("creator_info query", body != null ? body.error() : null);
+        ErrorEnvelope error = body != null ? body.error() : null;
+        // A creator who cannot post is an answer, not a failure: the caller shows the reason.
+        if (error != null && isCannotPostCode(error.code())) {
+            CreatorInfoData partial = body.data();
+            return new CreatorInfo(partial == null ? null : partial.creatorNickname(),
+                    partial == null ? null : partial.creatorUsername(), List.of(), null,
+                    false, false, false, partial == null ? null : partial.creatorAvatarUrl(),
+                    false, cannotPostReason(error.code()));
+        }
+        requireOk("creator_info query", error);
         if (body == null || body.data() == null) {
             throw new TikTokApiException("TikTok creator_info query returned no creator data", null, false);
         }
         CreatorInfoData data = body.data();
         return new CreatorInfo(data.creatorNickname(), data.creatorUsername(),
                 data.privacyLevelOptions() != null ? List.copyOf(data.privacyLevelOptions()) : List.of(),
-                data.maxVideoPostDurationSec());
+                data.maxVideoPostDurationSec(),
+                Boolean.TRUE.equals(data.commentDisabled()), Boolean.TRUE.equals(data.duetDisabled()),
+                Boolean.TRUE.equals(data.stitchDisabled()), data.creatorAvatarUrl(), true, null);
     }
 
     /**
@@ -662,7 +707,11 @@ public class TikTokClient {
     record CreatorInfoData(@JsonProperty("creator_nickname") String creatorNickname,
                            @JsonProperty("creator_username") String creatorUsername,
                            @JsonProperty("privacy_level_options") List<String> privacyLevelOptions,
-                           @JsonProperty("max_video_post_duration_sec") Integer maxVideoPostDurationSec) {}
+                           @JsonProperty("max_video_post_duration_sec") Integer maxVideoPostDurationSec,
+                           @JsonProperty("comment_disabled") Boolean commentDisabled,
+                           @JsonProperty("duet_disabled") Boolean duetDisabled,
+                           @JsonProperty("stitch_disabled") Boolean stitchDisabled,
+                           @JsonProperty("creator_avatar_url") String creatorAvatarUrl) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ErrorEnvelope(@JsonProperty("code") String code,
