@@ -45,37 +45,72 @@ function fetchAvailableTransitions(
   return promise
 }
 
+export interface AvailableTransitionsState {
+  transitions: AvailableTransition[]
+  /** True while a read for the current status is in flight and no result is held yet. */
+  loading: boolean
+  /** True when the last read failed. */
+  error: boolean
+}
+
+interface Loaded {
+  status: string
+  transitions: AvailableTransition[]
+  error: boolean
+}
+
 /**
  * The valid next moves for a Work Item, computed server-side from the active Workflow definition
  * (GET .../available-transitions) — never a hardcoded table — so a review-gated transition stays hidden
  * until its Review is satisfied. REVIEWERs never fetch: they have no moves of their own to make.
- * Re-reads whenever the item's status changes.
+ * Re-reads whenever the item's status changes. `enabled` (default true) defers the read: list rows and
+ * board cards pass their menu's open state so a page of N items makes no requests until one is opened.
+ * Each time `enabled` turns on the moves are re-read, so a gate satisfied meanwhile is picked up.
  */
+export function useAvailableTransitionsState(
+  projectId: string,
+  issueId: string,
+  currentStatus: string,
+  userRole: UserRole,
+  token: string,
+  enabled = true
+): AvailableTransitionsState {
+  const [loaded, setLoaded] = useState<Loaded | null>(null)
+  const active = enabled && userRole !== 'REVIEWER' && !!token
+
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    fetchAvailableTransitions(projectId, issueId, currentStatus, token)
+      .then((res) => {
+        if (!cancelled) setLoaded({ status: currentStatus, transitions: res.transitions ?? [], error: false })
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded({ status: currentStatus, transitions: [], error: true })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, issueId, currentStatus, active, token])
+
+  // A result for an earlier status is never shown for the current one.
+  const current = loaded && loaded.status === currentStatus ? loaded : null
+  return {
+    transitions: current?.transitions ?? [],
+    loading: active && !current,
+    error: current?.error ?? false,
+  }
+}
+
 export function useAvailableTransitions(
   projectId: string,
   issueId: string,
   currentStatus: string,
   userRole: UserRole,
-  token: string
+  token: string,
+  enabled = true
 ): AvailableTransition[] {
-  const [transitions, setTransitions] = useState<AvailableTransition[]>([])
-
-  useEffect(() => {
-    if (userRole === 'REVIEWER' || !token) return
-    let cancelled = false
-    fetchAvailableTransitions(projectId, issueId, currentStatus, token)
-      .then((res) => {
-        if (!cancelled) setTransitions(res.transitions ?? [])
-      })
-      .catch(() => {
-        if (!cancelled) setTransitions([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, issueId, currentStatus, userRole, token])
-
-  return transitions
+  return useAvailableTransitionsState(projectId, issueId, currentStatus, userRole, token, enabled).transitions
 }
 
 /**
