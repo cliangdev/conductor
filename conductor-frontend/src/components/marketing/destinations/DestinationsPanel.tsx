@@ -17,7 +17,7 @@ import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { DestinationTotals } from './DestinationMetrics'
 import { DestinationRow } from './DestinationRow'
 import { DestinationRowDetails, rowHasDetails } from './DestinationRowDetails'
-import { FindingMessage, dedupeFindings } from '@/components/marketing/publishReadiness'
+import { FindingMessage, dedupeFindings, needsConsentLink } from '@/components/marketing/publishReadiness'
 import type { DestinationRowModel, DestinationsState } from './model'
 
 export interface DestinationsPanelProps {
@@ -58,6 +58,11 @@ export function DestinationsPanel({
   const isTikTokFinding = (targetId?: string | null) =>
     Boolean(targetId) && rows.some((r) => r.target?.id === targetId && r.option.platform === 'tiktok')
   const visible = rows.filter((r) => !r.hidden && (mode === 'pick' || r.checked))
+  // One consent-page link per Post: the destination row is closest to the TikTok target, so the
+  // post-level findings only carry it when no row does.
+  const rowHasConsentLink = visible.some((r) =>
+    [...r.blockers, ...r.warnings].some((f) => needsConsentLink(f, r.option.platform === 'tiktok'))
+  )
   const lowerNoun = noun.toLowerCase()
 
   const notices: React.ReactNode[] = []
@@ -100,7 +105,7 @@ export function DestinationsPanel({
                 <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-failed">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span>
-                <FindingMessage finding={f} isTikTokTarget={isTikTokFinding(f.targetId)} />
+                <FindingMessage finding={f} isTikTokTarget={isTikTokFinding(f.targetId)} showLink={!rowHasConsentLink} />
               </span>
                 </p>
               ))}
@@ -108,7 +113,7 @@ export function DestinationsPanel({
                 <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-progress">
                   <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span>
-                <FindingMessage finding={f} isTikTokTarget={isTikTokFinding(f.targetId)} />
+                <FindingMessage finding={f} isTikTokTarget={isTikTokFinding(f.targetId)} showLink={!rowHasConsentLink} />
               </span>
                 </p>
               ))}

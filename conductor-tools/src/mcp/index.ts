@@ -1339,12 +1339,12 @@ export const TOOLS = [
   },
   {
     name: 'update_creative',
-    description: "Patch a Creative's fields. version must equal its current value (from get_creative) or the write is refused with a 409 conflict — reread and reapply on top of the newer version rather than retrying blind. A failing structural or readiness rule is refused with the rule's own message. Call get_creative after to verify.",
+    description: "Patch a Creative's fields. version is optional: omitted, the Creative's current version is read first (one extra call); pass the version from get_creative to guard against edits made since you read it — a stale version is refused with a conflict, so reread and reapply rather than retrying blind. A failing structural or readiness rule is refused with the rule's own message. Call get_creative after to verify.",
     inputSchema: {
       type: 'object',
       properties: {
         creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
-        version: { type: 'number', description: "The Creative's current version, from get_creative" },
+        version: { type: 'number', description: "Optional. The Creative's version from get_creative, for optimistic locking; omit to patch against its current version" },
         brandKitId: { type: 'string' },
         name: { type: 'string' },
         state: { type: 'string', enum: ['DRAFT', 'READY', 'ARCHIVED'] },

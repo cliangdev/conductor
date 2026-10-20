@@ -344,12 +344,29 @@ export async function createCreative(params: CreateCreativeParams, config: Confi
 
 export interface UpdateCreativeParams extends CreativeFields {
   creativeId: string
-  version: number
+  /** Optional: when omitted, the Creative's current version is read first. */
+  version?: number
 }
 
 export async function updateCreative(params: UpdateCreativeParams, config: Config): Promise<Record<string, unknown>> {
   const { creativeId, ...patch } = params
-  return withCreativeErrors(() => apiPatch(`${creativesBase(config)}/${creativeId}`, patch, config))
+  const url = `${creativesBase(config)}/${creativeId}`
+  try {
+    return await withCreativeErrors(async () => {
+      let version = patch.version
+      if (version === undefined || version === null) {
+        const current = await apiGet<{ version?: number }>(url, config)
+        version = current.version
+      }
+      return apiPatch(url, { ...patch, version }, config)
+    })
+  } catch (err) {
+    // A 409 carrying violations is a readiness/structural rule (already formatted above); a bare 409 is a stale version.
+    if (err instanceof ApiError && err.status === 409 && !err.violations?.length) {
+      throw new Error('This Creative changed since you read it — get_creative and retry')
+    }
+    throw err
+  }
 }
 
 // --- Media (photo library: photos, video, audio) -----------------------------
