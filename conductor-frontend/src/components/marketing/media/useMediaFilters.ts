@@ -30,14 +30,16 @@ const NO_CHIPS: Record<MediaChip, boolean> = { unchecked: false, blocked: false,
 
 export function filterAndSortMedia(
   items: CreativePhoto[],
-  f: { kind: KindTab; query: string; sort: MediaSort; chips: Record<MediaChip, boolean> },
+  f: { kind: KindTab; query: string; sort: MediaSort; chips: Record<MediaChip, boolean>; serverOrder?: boolean },
 ): CreativePhoto[] {
   const q = f.query.trim().toLowerCase()
   const { chips } = f
   const sorted =
     f.sort === 'name'
       ? sortNatural(items)
-      : [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
+      : f.serverOrder
+        ? items // already newest-first from the server; a string re-sort could reorder paged rows
+        : [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
   return sorted.filter(
     (i) =>
       (f.kind === 'ALL' || (i.mediaKind ?? 'IMAGE') === f.kind) &&
@@ -50,13 +52,13 @@ export function filterAndSortMedia(
   )
 }
 
-export function useMediaFilters(items: CreativePhoto[] | null, initial: { sort?: MediaSort; kind?: KindTab } = {}): MediaFilters {
+export function useMediaFilters(items: CreativePhoto[] | null, initial: { sort?: MediaSort; kind?: KindTab; serverOrder?: boolean } = {}): MediaFilters {
   const [kind, setKind] = useState<KindTab>(initial.kind ?? 'ALL')
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<MediaSort>(initial.sort ?? 'name')
   const [chips, setChips] = useState(NO_CHIPS)
 
-  const visible = useMemo(() => filterAndSortMedia(items ?? [], { kind, query, sort, chips }), [items, kind, query, sort, chips])
+  const visible = useMemo(() => filterAndSortMedia(items ?? [], { kind, query, sort, chips, serverOrder: initial.serverOrder }), [items, kind, query, sort, chips, initial.serverOrder])
   const filtering = query.trim() !== '' || kind !== 'ALL' || chips.unchecked || chips.ai || chips.onPosts || chips.unused
 
   return {

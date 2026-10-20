@@ -3,6 +3,12 @@
 // The Media library page body: a browsable grid of the project's creative media (images, video,
 // audio) with kind tabs, label search, filters, upload, a detail panel, multi-select and
 // "Make carousel" from the selected images.
+//
+// The list is keyset-paged: the first MEDIA_PAGE_SIZE items (newest first) load and render, the rest load
+// as the sentinel below the grid nears the viewport (or via "Load more"). Kind, search, Unchecked, AI and
+// Blocked are server-side filters, so a page is always a full page of matches. Sorting by Name and the
+// "On posts" / "Unused" chips need the whole library (name order and usage counts are not keyset
+// columns), so those load everything unpaged, exactly like the page used to.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { markPageReady } from '@/lib/perf'
@@ -23,15 +29,19 @@ import {
   uploadMediaFile,
 } from '@/components/marketing/creatives/mediaUpload'
 import {
-  listCreativePhotos,
+  listCreativePhotosPage,
   patchCreativePhoto,
   type CreativePhoto,
+  type MediaPageQuery,
 } from '@/components/marketing/creatives/types'
 import { MakeCarouselDialog } from './MakeCarouselDialog'
 import { MediaDetailSheet } from './MediaDetailSheet'
 import { inSet, setPrefix } from './mediaSets'
 import { MediaFilterBar } from './MediaFilterBar'
 import { useMediaFilters } from './useMediaFilters'
+
+/** Items per page; the backend caps `limit` at 200. */
+export const MEDIA_PAGE_SIZE = 60
 
 const ACCEPT = Object.values(ALLOWED_CONTENT_TYPES).flat().join(',')
 
@@ -52,33 +62,126 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
   const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const [reloadKey, setReloadKey] = useState(0)
-  const filters = useMediaFilters(items)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const filters = useMediaFilters(items, { sort: 'newest', serverOrder: true })
   const showBlocked = filters.chips.blocked
+  const sentinel = useRef<HTMLDivElement>(null)
+  // Bumped whenever the first page is (re)requested: a slower response for an older filter is dropped.
+  const generation = useRef(0)
+  const loadingMoreRef = useRef(false)
+
+  // Debounced so typing in the search box doesn't fire a request per keystroke.
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(filters.query.trim()), 250)
+    return () => clearTimeout(t)
+  }, [filters.query])
+
+  const { kind, chips, sort } = filters
+  const paged = sort === 'newest' && !chips.onPosts && !chips.unused
+  const baseQuery = useMemo<MediaPageQuery>(
+    () => ({
+      includeBlocked: showBlocked,
+      mediaKind: kind === 'ALL' ? undefined : kind,
+      q: debouncedQuery || undefined,
+      unchecked: chips.unchecked,
+      aiGenerated: chips.ai,
+    }),
+    [showBlocked, kind, debouncedQuery, chips.unchecked, chips.ai],
+  )
 
   useEffect(() => { if (items !== null) markPageReady('media-library') }, [items])
 
   useEffect(() => {
     if (!projectId || !accessToken) return
-    let cancelled = false
+    const mine = ++generation.current
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+    setNextCursor(null)
     ;(async () => {
       try {
-        // The whole library, searched client-side by substring. The server's labelPrefix filter can't
-        // serve a substring search: "slide 03" must match "01-import 4x5 slide 03" even when some other
-        // label starts with "slide 03", and the list endpoint isn't paged, so the prefix saves nothing.
-        const rows = await listCreativePhotos(projectId, accessToken, showBlocked)
-        if (cancelled) return
-        setItems(rows)
+        const page = await listCreativePhotosPage(projectId, accessToken, {
+          ...baseQuery,
+          limit: paged ? MEDIA_PAGE_SIZE : undefined,
+        })
+        if (generation.current !== mine) return
+        setItems(page.items)
+        setNextCursor(page.nextCursor)
         setError(null)
       } catch (err) {
-        if (cancelled) return
+        if (generation.current !== mine) return
         setItems((prev) => prev ?? [])
         setError(apiErrorMessage(err, 'Could not load media — please try again.'))
       }
     })()
     return () => {
-      cancelled = true
+      // A superseded request must not land.
+      generation.current++
     }
-  }, [projectId, accessToken, showBlocked, reloadKey])
+  }, [projectId, accessToken, baseQuery, paged, reloadKey])
+
+  /** Fetches the page after `cursor` and returns it, or null when the filters changed meanwhile. */
+  const fetchAfter = useCallback(
+    async (cursor: string) => {
+      const mine = generation.current
+      const page = await listCreativePhotosPage(projectId, token, { ...baseQuery, limit: MEDIA_PAGE_SIZE, cursor })
+      return generation.current === mine ? page : null
+    },
+    [projectId, token, baseQuery],
+  )
+
+  const append = (prev: CreativePhoto[] | null, more: CreativePhoto[]) => {
+    const seen = new Set((prev ?? []).map((i) => i.id))
+    return [...(prev ?? []), ...more.filter((i) => !seen.has(i.id))]
+  }
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    try {
+      const page = await fetchAfter(nextCursor)
+      if (!page) return
+      setItems((prev) => append(prev, page.items))
+      setNextCursor(page.nextCursor)
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load more media — please try again.'))
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [nextCursor, fetchAfter])
+
+  // Load the next page as the sentinel nears the viewport; each page re-arms the observer, so a tall
+  // viewport keeps filling until it is full or the list ends.
+  useEffect(() => {
+    const el = sentinel.current
+    if (!nextCursor || !el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore()
+      },
+      { rootMargin: '800px 0px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [nextCursor, loadMore, items])
+
+  /** Every remaining page (for "Select set", which needs the whole library). Returns the full list. */
+  async function loadRemaining(): Promise<CreativePhoto[]> {
+    let all = items ?? []
+    let cursor = nextCursor
+    while (cursor) {
+      const page = await fetchAfter(cursor)
+      if (!page) break
+      all = append(all, page.items)
+      cursor = page.nextCursor
+    }
+    setItems(all)
+    setNextCursor(null)
+    return all
+  }
 
   const { visible, filtering } = filters
 
@@ -124,9 +227,21 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
     else setNotice(`Marked ${todo.length} checked.`)
   }
 
-  function selectSet() {
+  async function selectSet() {
+    let pool = items ?? []
+    if (nextCursor) {
+      setBusy(true)
+      try {
+        pool = await loadRemaining()
+      } catch (err) {
+        setError(apiErrorMessage(err, 'Could not load the rest of the library — please try again.'))
+        return
+      } finally {
+        setBusy(false)
+      }
+    }
     const prefixes = new Set(selectedItems.map((i) => setPrefix(i.label)).filter(Boolean))
-    const ids = (items ?? []).filter((i) => [...prefixes].some((p) => inSet(i.label, p))).map((i) => i.id)
+    const ids = pool.filter((i) => [...prefixes].some((p) => inSet(i.label, p))).map((i) => i.id)
     setSelected((prev) => [...new Set([...prev, ...ids])])
   }
 
@@ -160,6 +275,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
         filters={filters}
         chips={['unchecked', 'blocked', 'ai', 'onPosts', 'unused']}
         kinds={['ALL', 'IMAGE', 'VIDEO', 'AUDIO']}
+        sortable
         trailing={
           canManage && (
             <>
@@ -262,6 +378,14 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
         </ul>
       )}
 
+      {nextCursor && (
+        <div ref={sentinel} className="flex justify-center py-2">
+          <Button type="button" variant="outline" size="sm" disabled={loadingMore} onClick={() => void loadMore()}>
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      )}
+
       {canManage && selected.length > 0 && (
         <div
           role="toolbar"
@@ -279,7 +403,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
           >
             Mark checked
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={selectSet}>
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void selectSet()}>
             Select set
           </Button>
           <Button

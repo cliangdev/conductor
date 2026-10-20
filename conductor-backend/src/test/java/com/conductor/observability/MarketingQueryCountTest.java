@@ -283,4 +283,25 @@ class MarketingQueryCountTest extends AbstractNoneWebIntegrationTest {
             assertThat(v.postCount()).isEqualTo(1);
         });
     }
+
+    @Test
+    void photosPageIsConstantInItemsOnThePage() {
+        User u = user();
+        Project p1 = project(u);
+        Project p20 = project(u);
+        postWithFrames(p1, u, 1, creative(p1, u, photo(p1, u), 1));
+        for (int i = 1; i <= 25; i++) {
+            CreativePhoto ph = photo(p20, u);
+            postWithFrames(p20, u, i, creative(p20, u, ph, i));
+        }
+
+        int q1 = queries(() -> photoService.listPhotosPage(p1.getId(), false, null, null, null, false, false, 1, null, u));
+        int q20 = queries(() -> photoService.listPhotosPage(p20.getId(), false, null, null, null, false, false, 20, null, u));
+        assertCounts(q1, q20, "photos page");
+
+        var page = photoService.listPhotosPage(p20.getId(), false, null, null, null, false, false, 20, null, u);
+        assertThat(page.items()).hasSize(20);
+        assertThat(page.nextCursor()).isNotNull();
+        assertThat(page.items()).allSatisfy(v -> assertThat(v.postCount()).isEqualTo(1));
+    }
 }
