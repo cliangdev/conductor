@@ -15,7 +15,7 @@ import { FormatBadge } from '@/components/marketing/PostFormatSelector'
 import { cn } from '@/lib/utils'
 import { DestinationMetrics } from './DestinationMetrics'
 import { PlatformIcon } from './PlatformIcon'
-import { FindingMessage, dedupeFindings } from '@/components/marketing/publishReadiness'
+import { FindingMessage, dedupeFindings, needsConsentLink } from '@/components/marketing/publishReadiness'
 import type { DestinationMode, DestinationRowModel } from './model'
 import { permalinkText } from './publishState'
 
@@ -58,6 +58,11 @@ export function DestinationRow({
   // Post stays actionable, or a human could never take it back off.
   const disabled = row.unhealthy && !row.checked
   const noteId = `${detailsId}-note`
+  const isTikTok = option.platform === 'tiktok'
+  const blockers = dedupeFindings(row.blockers)
+  const warnings = dedupeFindings(row.warnings)
+  // Only the first finding that wants the consent-page link shows it, so a row never links twice.
+  const linkFinding = [...blockers, ...warnings].find((f) => needsConsentLink(f, isTikTok))
 
   const hasMeta =
     (row.settled && !!row.stateLabel) ||
@@ -175,19 +180,19 @@ export function DestinationRow({
               <ShowDetails detail={row.noteDetail} message={row.note} />
             </div>
           )}
-          {dedupeFindings(row.blockers).map((f) => (
+          {blockers.map((f) => (
             <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-failed">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>
-                <FindingMessage finding={f} isTikTokTarget={row.option.platform === 'tiktok'} />
+                <FindingMessage finding={f} isTikTokTarget={isTikTok} showLink={f === linkFinding} />
               </span>
             </p>
           ))}
-          {dedupeFindings(row.warnings).map((f) => (
+          {warnings.map((f) => (
             <p key={f.code + f.message} className="flex items-start gap-1.5 text-sm text-status-progress">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               <span>
-                <FindingMessage finding={f} isTikTokTarget={row.option.platform === 'tiktok'} />
+                <FindingMessage finding={f} isTikTokTarget={isTikTok} showLink={f === linkFinding} />
               </span>
             </p>
           ))}
