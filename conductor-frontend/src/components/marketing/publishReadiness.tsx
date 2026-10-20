@@ -45,15 +45,18 @@ export function needsConsentLink(finding: PublishFinding, isTikTokTarget: boolea
 export function FindingMessage({
   finding,
   isTikTokTarget = false,
+  showLink = true,
 }: {
   finding: PublishFinding
   isTikTokTarget?: boolean
+  /** False when another finding on the same Post already carries the consent-page link. */
+  showLink?: boolean
 }) {
   // Read from the URL (not useParams) so this stays a plain leaf that renders anywhere. Findings only
   // exist after a client-side fetch, so this never renders on the server.
   const projectId =
     typeof window === 'undefined' ? null : (window.location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null)
-  if (!projectId || !needsConsentLink(finding, isTikTokTarget)) return <>{finding.message}</>
+  if (!showLink || !projectId || !needsConsentLink(finding, isTikTokTarget)) return <>{finding.message}</>
   return (
     <>
       {finding.message}{' '}
