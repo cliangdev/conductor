@@ -734,11 +734,30 @@ describe('update_creative', () => {
     )
   })
 
-  it('passes a plain-text 409 conflict message through unchanged', async () => {
+  it('turns a bare 409 into a clear stale-version message', async () => {
     mocked(apiPatch).mockRejectedValue(new ApiError(409, 'stale version: expected 2, was 3'))
     await expect(updateCreative({ creativeId: 'c1', version: 2 }, config)).rejects.toThrow(
-      'stale version: expected 2, was 3'
+      'This Creative changed since you read it — get_creative and retry'
     )
+  })
+
+  it('reads the current version first when none is given', async () => {
+    mocked(apiGet).mockResolvedValue({ id: 'c1', version: 7 })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 8 })
+    await updateCreative({ creativeId: 'c1', name: 'New' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/creatives/c1', config)
+    expect(apiPatch).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives/c1',
+      { name: 'New', version: 7 },
+      config
+    )
+  })
+
+  it('does not read when the caller passes a version', async () => {
+    mocked(apiGet).mockClear()
+    mocked(apiPatch).mockResolvedValue({ id: 'c1' })
+    await updateCreative({ creativeId: 'c1', version: 3, name: 'New' }, config)
+    expect(apiGet).not.toHaveBeenCalled()
   })
 })
 
