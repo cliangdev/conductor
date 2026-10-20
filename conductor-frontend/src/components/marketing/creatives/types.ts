@@ -646,6 +646,8 @@ export interface MediaPageQuery {
   /** Opt in to paging (1-200). Omitted, the whole list comes back and `nextCursor` is null. */
   limit?: number
   cursor?: string | null
+  /** Only these photos (at most 200), subject to the other filters. */
+  ids?: string[]
 }
 
 /** The Media list with server-side filters and optional keyset paging (`limit` + `cursor`), newest first. */
@@ -663,8 +665,26 @@ export async function listCreativePhotosPage(
   if (query.aiGenerated) params.set('aiGenerated', 'true')
   if (query.limit != null) params.set('limit', String(query.limit))
   if (query.cursor) params.set('cursor', query.cursor)
+  if (query.ids?.length) params.set('ids', query.ids.join(','))
   const { data, nextCursor } = await apiGetPage<CreativePhoto[]>(`${photosBase(projectId)}?${params.toString()}`, token)
   return { items: data, nextCursor }
+}
+
+const IDS_PER_REQUEST = 100
+
+/** Just the named media items (blocked ones included) — for a tile that needs its poster, not the library. */
+export async function listCreativePhotosByIds(
+  projectId: string,
+  token: string,
+  ids: string[],
+): Promise<CreativePhoto[]> {
+  const unique = [...new Set(ids)]
+  const chunks: string[][] = []
+  for (let i = 0; i < unique.length; i += IDS_PER_REQUEST) chunks.push(unique.slice(i, i + IDS_PER_REQUEST))
+  const pages = await Promise.all(
+    chunks.map((chunk) => listCreativePhotosPage(projectId, token, { includeBlocked: true, ids: chunk })),
+  )
+  return pages.flatMap((p) => p.items)
 }
 
 export function getCreativePhoto(

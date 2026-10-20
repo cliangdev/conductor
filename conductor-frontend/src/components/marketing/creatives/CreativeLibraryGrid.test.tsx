@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
+  apiGetPage: vi.fn(),
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiPut: vi.fn(),
@@ -31,7 +32,7 @@ Object.assign(navigator, {
   clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
 })
 
-import { apiGet, apiPost } from '@/lib/api'
+import { apiGet, apiGetPage, apiPost } from '@/lib/api'
 import { CreativeLibraryGrid } from './CreativeLibraryGrid'
 import type { Creative, CreativePhoto } from './types'
 import type { BrandKit } from '@/components/marketing/brand/types'
@@ -131,11 +132,17 @@ function mockGets({
 }) {
   ;(apiGet as Mock).mockImplementation((path: string) => {
     if (path.includes('/brand-kits')) return Promise.resolve(kits)
-    if (path.includes('/marketing/photos')) return Promise.resolve(media)
     if (path.includes('/creatives')) return Promise.resolve(creatives)
     return Promise.reject(new Error(`unexpected GET ${path}`))
   })
+  // Tiles resolve their media by id, never by listing the library.
+  ;(apiGetPage as Mock).mockImplementation(async (path: string) => {
+    const ids = new URL(`http://x${path}`).searchParams.get('ids')?.split(',')
+    return { data: ids ? media.filter((m) => ids.includes(m.id)) : [], nextCursor: null }
+  })
 }
+
+const photoRequests = () => (apiGetPage as Mock).mock.calls.map((c) => new URL(`http://x${c[0] as string}`).searchParams)
 
 describe('CreativeLibraryGrid', () => {
   beforeEach(() => {
@@ -244,7 +251,9 @@ describe('CreativeLibraryGrid', () => {
     render(<CreativeLibraryGrid projectId="proj-1" />)
 
     const thumb = await screen.findByTestId('creative-thumb-cr-1')
-    expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/media-1-poster.jpg')
+    await waitFor(() =>
+      expect(thumb.querySelector('img')).toHaveAttribute('src', 'https://storage.example/media-1-poster.jpg'),
+    )
     expect(thumb).toHaveTextContent('13s')
   })
 
@@ -347,30 +356,30 @@ describe('CreativeLibraryGrid', () => {
     })
   })
 
-  it('does not redraw a live-board tile when an unrelated media list arrives', async () => {
-    let resolveMedia: (rows: CreativePhoto[]) => void = () => {}
-    const mediaPromise = new Promise<CreativePhoto[]>((r) => {
-      resolveMedia = r
-    })
-    ;(apiGet as Mock).mockImplementation((path: string) => {
-      if (path.includes('/brand-kits')) return Promise.resolve([KIT])
-      if (path.includes('/marketing/photos')) return mediaPromise
-      if (path.includes('/creatives')) return Promise.resolve([creative()])
-      return Promise.reject(new Error(`unexpected GET ${path}`))
+  it('never lists the library: only the media a tile needs is requested, by id', async () => {
+    mockGets({
+      creatives: [
+        creative({ id: 'c-clip', displayId: '1a', kind: 'CLIP', latestRenderThumbnailUrl: null, clipMedia: { default: 'clip-1' } }),
+        creative({ id: 'c-car', displayId: '2a', kind: 'CAROUSEL', layout: '', slides: { '4x5': ['img-1', 'img-2'] }, latestRenderThumbnailUrl: null }),
+        creative({ id: 'c-done', displayId: '3a', kind: 'CLIP', latestRenderThumbnailUrl: 'https://storage.example/r.jpg', clipMedia: { default: 'clip-rendered' } }),
+      ],
+      media: [clipMedia({ id: 'clip-1' })],
     })
 
     render(<CreativeLibraryGrid projectId="proj-1" />)
+    await screen.findByText('1a')
+    await waitFor(() => expect(photoRequests()).toHaveLength(1))
+    const q = photoRequests()[0]
+    expect(q.get('ids')).toBe('clip-1,img-1')
+    expect(q.get('mediaKind')).toBeNull()
+    expect(q.get('limit')).toBeNull()
+  })
+
+  it('makes no media request when every tile already has a render thumbnail', async () => {
+    mockGets({ creatives: [creative({ latestRenderThumbnailUrl: 'https://storage.example/t.jpg' })] })
+
+    render(<CreativeLibraryGrid projectId="proj-1" />)
     await screen.findByText('12a')
-    await waitFor(() => expect(mountBoardSpy).toHaveBeenCalledTimes(1))
-    const handle = mountBoardSpy.mock.results[0].value as unknown as { destroy: Mock }
-
-    resolveMedia([clipMedia({ id: 'unrelated-clip' })])
-    // Let the media list land and the grid re-render.
-    await act(async () => {
-      await mediaPromise
-    })
-
-    expect(mountBoardSpy).toHaveBeenCalledTimes(1)
-    expect(handle.destroy).not.toHaveBeenCalled()
+    expect(apiGetPage).not.toHaveBeenCalled()
   })
 })

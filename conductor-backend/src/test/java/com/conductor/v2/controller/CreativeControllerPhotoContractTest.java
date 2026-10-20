@@ -122,7 +122,7 @@ class CreativeControllerPhotoContractTest {
     @Test
     void listWithoutPagingParamsIsUnpagedAndHasNoCursorHeader() throws Exception {
         when(photoService.listPhotosPage(eq("proj-1"), eq(false), any(), any(), any(), eq(false), eq(false),
-                eq(null), eq(null), any()))
+                eq(null), eq(null), any(), any()))
                 .thenReturn(new CreativePhotoService.PhotoPage(List.of(), null));
         mockMvc.perform(get(URL))
                 .andExpect(status().isOk())
@@ -133,7 +133,7 @@ class CreativeControllerPhotoContractTest {
     @Test
     void listWithLimitPassesPagingParamsAndExposesTheNextCursorHeader() throws Exception {
         when(photoService.listPhotosPage(eq("proj-1"), eq(false), any(), any(), eq("beach"), eq(true), eq(false),
-                eq(60), eq("abc"), any()))
+                eq(60), eq("abc"), any(), any()))
                 .thenReturn(new CreativePhotoService.PhotoPage(List.of(), "next-1"));
         mockMvc.perform(get(URL).param("limit", "60").param("cursor", "abc").param("q", "beach").param("unchecked", "true"))
                 .andExpect(status().isOk())
@@ -149,7 +149,7 @@ class CreativeControllerPhotoContractTest {
 
     @Test
     void invalidCursorFromTheServiceIsA400() throws Exception {
-        when(photoService.listPhotosPage(any(), eq(false), any(), any(), any(), eq(false), eq(false), eq(10), eq("bad"), any()))
+        when(photoService.listPhotosPage(any(), eq(false), any(), any(), any(), eq(false), eq(false), eq(10), eq("bad"), any(), any()))
                 .thenThrow(new com.conductor.exception.BusinessException("Invalid cursor"));
         mockMvc.perform(get(URL).param("limit", "10").param("cursor", "bad"))
                 .andExpect(status().isBadRequest());

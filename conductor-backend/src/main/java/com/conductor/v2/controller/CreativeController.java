@@ -113,7 +113,10 @@ public class CreativeController implements CreativesApi {
     public ResponseEntity<List<CreativePhotoResponse>> listCreativePhotos(String projectId, Boolean includeBlocked,
                                                                           List<MediaKind> mediaKind, String labelPrefix,
                                                                           String q, Boolean unchecked, Boolean aiGenerated,
-                                                                          Integer limit, String cursor) {
+                                                                          Integer limit, String cursor, List<String> ids) {
+        if (ids != null && ids.size() > 200) {
+            throw new BusinessException("ids accepts at most 200 values");
+        }
         if (cursor != null && !cursor.isBlank() && limit == null) {
             throw new BusinessException("cursor requires limit");
         }
@@ -122,7 +125,8 @@ public class CreativeController implements CreativesApi {
         }
         CreativePhotoService.PhotoPage page = photoService.listPhotosPage(projectId, Boolean.TRUE.equals(includeBlocked),
                 CreativePhotoService.mediaKindValues(mediaKind), labelPrefix, q, Boolean.TRUE.equals(unchecked),
-                Boolean.TRUE.equals(aiGenerated), limit, cursor, currentUser());
+                Boolean.TRUE.equals(aiGenerated), limit, cursor,
+                ids == null ? null : new java.util.LinkedHashSet<>(ids), currentUser());
         List<CreativePhotoResponse> body = page.items().stream().map(this::toResponse).toList();
         ResponseEntity.BodyBuilder response = ResponseEntity.ok();
         if (page.nextCursor() != null) {
