@@ -40,6 +40,7 @@ import { ResizableSplit } from '@/components/ui/ResizableSplit'
 import { updateDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
 import { apiErrorMessage } from '@/lib/api'
+import { getApiBase } from '@/lib/apiBase'
 import type { MemberRole } from '@/types'
 
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
@@ -306,7 +307,7 @@ export function DocEditor({
     try {
       const formData = new FormData()
       formData.append('image', file)
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? ''
+      const apiUrl = getApiBase()
       const res = await fetch(
         `${apiUrl}/api/v1/projects/${projectId}/docs/${doc.id}/images`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData },
