@@ -29,8 +29,10 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -115,5 +117,41 @@ class CreativeControllerPhotoContractTest {
                 .andExpect(status().isCreated())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.id").value("photo-1"));
+    }
+
+    @Test
+    void listWithoutPagingParamsIsUnpagedAndHasNoCursorHeader() throws Exception {
+        when(photoService.listPhotosPage(eq("proj-1"), eq(false), any(), any(), any(), eq(false), eq(false),
+                eq(null), eq(null), any()))
+                .thenReturn(new CreativePhotoService.PhotoPage(List.of(), null));
+        mockMvc.perform(get(URL))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("X-Next-Cursor"))
+                .andExpect(content().json("[]"));
+    }
+
+    @Test
+    void listWithLimitPassesPagingParamsAndExposesTheNextCursorHeader() throws Exception {
+        when(photoService.listPhotosPage(eq("proj-1"), eq(false), any(), any(), eq("beach"), eq(true), eq(false),
+                eq(60), eq("abc"), any()))
+                .thenReturn(new CreativePhotoService.PhotoPage(List.of(), "next-1"));
+        mockMvc.perform(get(URL).param("limit", "60").param("cursor", "abc").param("q", "beach").param("unchecked", "true"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Next-Cursor", "next-1"));
+    }
+
+    @Test
+    void cursorWithoutLimitAndOutOfRangeLimitAreBadRequests() throws Exception {
+        mockMvc.perform(get(URL).param("cursor", "abc")).andExpect(status().isBadRequest());
+        mockMvc.perform(get(URL).param("limit", "0")).andExpect(status().isBadRequest());
+        mockMvc.perform(get(URL).param("limit", "201")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void invalidCursorFromTheServiceIsA400() throws Exception {
+        when(photoService.listPhotosPage(any(), eq(false), any(), any(), any(), eq(false), eq(false), eq(10), eq("bad"), any()))
+                .thenThrow(new com.conductor.exception.BusinessException("Invalid cursor"));
+        mockMvc.perform(get(URL).param("limit", "10").param("cursor", "bad"))
+                .andExpect(status().isBadRequest());
     }
 }

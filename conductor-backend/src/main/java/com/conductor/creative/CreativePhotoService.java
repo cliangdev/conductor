@@ -16,13 +16,22 @@ import com.conductor.service.StorageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.criteria.Expression;
+import jakarta.persistence.criteria.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Base64;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -154,21 +163,102 @@ public class CreativePhotoService {
     @Transactional(readOnly = true)
     public List<PhotoView> listPhotos(String projectId, boolean includeBlocked, Set<String> mediaKinds,
                                       String labelPrefix, User caller) {
+        return listPhotosPage(projectId, includeBlocked, mediaKinds, labelPrefix, null, false, false, null, null, caller)
+                .items();
+    }
+
+    /** One page of the Media list; {@code nextCursor} is null on the last page (and always when unpaged). */
+    public record PhotoPage(List<PhotoView> items, String nextCursor) {
+    }
+
+    /**
+     * The Media list, newest first (created_at DESC, id DESC). Every filter is applied in SQL before the
+     * page is cut. {@code limit} null means unpaged (the whole list, as before); with a limit the page is
+     * keyset-paged after {@code cursor} (null = first page). Usage counts are returned only for the items
+     * on the page.
+     *
+     * @param labelContains case-insensitive substring match on the label (null/blank = no filter)
+     * @param uncheckedOnly only items a human has not yet checked
+     * @param aiGeneratedOnly only AI-generated items
+     */
+    @Transactional(readOnly = true)
+    public PhotoPage listPhotosPage(String projectId, boolean includeBlocked, Set<String> mediaKinds,
+                                    String labelPrefix, String labelContains, boolean uncheckedOnly,
+                                    boolean aiGeneratedOnly, Integer limit, String cursor, User caller) {
         requireMember(projectId, caller);
-        List<CreativePhoto> photos = includeBlocked
-                ? photoRepository.findAllByProjectIdOrderByCreatedAtDesc(projectId)
-                : photoRepository.findAllByProjectIdAndBlockedFalseOrderByCreatedAtDesc(projectId);
-        if (mediaKinds != null && !mediaKinds.isEmpty()) {
-            photos = photos.stream().filter(p -> mediaKinds.contains(p.getMediaKind())).toList();
+        Cursor after = cursor == null || cursor.isBlank() ? null : Cursor.decode(cursor);
+        Specification<CreativePhoto> spec = (root, query, cb) -> {
+            List<Predicate> where = new ArrayList<>();
+            where.add(cb.equal(root.get("projectId"), projectId));
+            if (!includeBlocked) {
+                where.add(cb.isFalse(root.get("blocked")));
+            }
+            if (mediaKinds != null && !mediaKinds.isEmpty()) {
+                where.add(root.get("mediaKind").in(mediaKinds));
+            }
+            if (labelPrefix != null && !labelPrefix.isEmpty()) {
+                where.add(cb.like(cb.lower(root.get("label")), likeEscape(labelPrefix) + "%", '\\'));
+            }
+            if (labelContains != null && !labelContains.isBlank()) {
+                where.add(cb.like(cb.lower(root.get("label")), "%" + likeEscape(labelContains.trim()) + "%", '\\'));
+            }
+            if (uncheckedOnly) {
+                where.add(cb.isFalse(root.get("checked")));
+            }
+            if (aiGeneratedOnly) {
+                where.add(cb.isTrue(root.get("aiGenerated")));
+            }
+            if (after != null) {
+                Expression<OffsetDateTime> created = root.get("createdAt");
+                where.add(cb.or(
+                        cb.lessThan(created, after.createdAt()),
+                        cb.and(cb.equal(created, after.createdAt()), cb.lessThan(root.<String>get("id"), after.id()))));
+            }
+            return cb.and(where.toArray(new Predicate[0]));
+        };
+        Sort order = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+        List<CreativePhoto> photos = photoRepository.findBy(spec, q -> {
+            var sorted = q.sortBy(order);
+            return limit == null ? sorted.all() : sorted.limit(limit + 1).all();
+        });
+        String next = null;
+        if (limit != null && photos.size() > limit) {
+            photos = photos.subList(0, limit);
+            CreativePhoto last = photos.get(photos.size() - 1);
+            next = new Cursor(last.getCreatedAt(), last.getId()).encode();
         }
-        if (labelPrefix != null && !labelPrefix.isEmpty()) {
-            String prefix = labelPrefix.toLowerCase(Locale.ROOT);
-            photos = photos.stream()
-                    .filter(p -> p.getLabel() != null && p.getLabel().toLowerCase(Locale.ROOT).startsWith(prefix))
-                    .toList();
+        Set<String> pageIds = new HashSet<>();
+        photos.forEach(p -> pageIds.add(p.getId()));
+        Map<String, UsageCounts> counts = usageCounts(projectId, pageIds);
+        return new PhotoPage(photos.stream()
+                .map(p -> toView(p).withCounts(counts.getOrDefault(p.getId(), UsageCounts.NONE))).toList(), next);
+    }
+
+    private static String likeEscape(String s) {
+        return s.toLowerCase(Locale.ROOT).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    /** Opaque keyset position: the last item's created_at (microsecond-exact) and id. */
+    record Cursor(OffsetDateTime createdAt, String id) {
+        String encode() {
+            Instant at = createdAt.toInstant();
+            String raw = at.getEpochSecond() + ":" + at.getNano() / 1000 + ":" + id;
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
         }
-        Map<String, UsageCounts> counts = usageCounts(projectId);
-        return photos.stream().map(p -> toView(p).withCounts(counts.getOrDefault(p.getId(), UsageCounts.NONE))).toList();
+
+        static Cursor decode(String cursor) {
+            try {
+                String raw = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+                String[] parts = raw.split(":", 3);
+                if (parts.length != 3 || parts[2].isEmpty()) {
+                    throw new IllegalArgumentException();
+                }
+                Instant at = Instant.ofEpochSecond(Long.parseLong(parts[0]), Long.parseLong(parts[1]) * 1000L);
+                return new Cursor(at.atOffset(ZoneOffset.UTC), parts[2]);
+            } catch (RuntimeException e) {
+                throw new BusinessException("Invalid cursor");
+            }
+        }
     }
 
     @Transactional(readOnly = true)
@@ -187,7 +277,7 @@ public class CreativePhotoService {
      * queries (project Creatives, direct links, frame links, the frames' Creatives) plus an in-memory scan.
      * A Post counts once per item however many of its Assets point at it, directly or through a frame.
      */
-    private Map<String, UsageCounts> usageCounts(String projectId) {
+    private Map<String, UsageCounts> usageCounts(String projectId, Set<String> onlyIds) {
         // Only the five columns that name Media, not whole Creative rows (copy, overrides, motion, ...).
         Map<String, Set<String>> mediaByCreative = new HashMap<>();
         Map<String, Integer> creativeCounts = new HashMap<>();
@@ -233,6 +323,9 @@ public class CreativePhotoService {
         Set<String> all = new HashSet<>(creativeCounts.keySet());
         all.addAll(postsByMedia.keySet());
         for (String id : all) {
+            if (!onlyIds.contains(id)) {
+                continue;
+            }
             out.put(id, new UsageCounts(postsByMedia.getOrDefault(id, Set.of()).size(), creativeCounts.getOrDefault(id, 0)));
         }
         return out;

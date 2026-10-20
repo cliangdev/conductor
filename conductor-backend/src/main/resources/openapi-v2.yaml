@@ -3404,9 +3404,56 @@ paths:
           schema:
             type: string
           description: Case-insensitive prefix match on the photo's label.
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Case-insensitive substring match on the photo's label.
+        - name: unchecked
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, only photos a human has not yet checked.
+        - name: aiGenerated
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, only AI-generated photos.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+          description: >-
+            Opt in to paging: at most this many photos (1-200), newest first. Omit it (and `cursor`) to get
+            the whole list as before. All filters are applied before the page is cut.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Opaque cursor from a previous page's `X-Next-Cursor` header; returns the page after it. Requires
+            `limit`. An unparseable cursor is a 400.
       responses:
         "200":
-          description: The project's photos, newest first
+          description: >-
+            The project's photos, newest first (created_at DESC, id DESC). When `limit` is set and more
+            photos follow, the `X-Next-Cursor` response header carries the cursor for the next page; it is
+            absent on the last page and on unpaged requests. Usage counts are computed for the returned
+            items only.
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when there is no next page.
+              schema:
+                type: string
           content:
             application/json:
               schema:

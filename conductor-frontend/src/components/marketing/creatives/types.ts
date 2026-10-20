@@ -5,7 +5,7 @@
 // conductor-creative/README.md's "The creative shape" — so `creativeToRenderCreative` below is a
 // near pass-through, not a real transform.
 
-import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
+import { apiDelete, apiGet, apiGetPage, apiPatch, apiPost } from '@/lib/api'
 import type { RenderCreative } from './renderTypes'
 
 export type CreativeState = 'DRAFT' | 'READY' | 'ARCHIVED'
@@ -633,6 +633,38 @@ export function listCreativePhotos(
   if (kinds.length) params.set('mediaKind', kinds.join(','))
   if (labelPrefix) params.set('labelPrefix', labelPrefix)
   return apiGet<CreativePhoto[]>(`${photosBase(projectId)}?${params.toString()}`, token)
+}
+
+export interface MediaPageQuery {
+  includeBlocked?: boolean
+  mediaKind?: MediaKind | MediaKind[]
+  /** Case-insensitive label substring. */
+  q?: string
+  labelPrefix?: string
+  unchecked?: boolean
+  aiGenerated?: boolean
+  /** Opt in to paging (1-200). Omitted, the whole list comes back and `nextCursor` is null. */
+  limit?: number
+  cursor?: string | null
+}
+
+/** The Media list with server-side filters and optional keyset paging (`limit` + `cursor`), newest first. */
+export async function listCreativePhotosPage(
+  projectId: string,
+  token: string,
+  query: MediaPageQuery = {},
+): Promise<{ items: CreativePhoto[]; nextCursor: string | null }> {
+  const params = new URLSearchParams({ includeBlocked: String(query.includeBlocked ?? false) })
+  const kinds = query.mediaKind == null ? [] : Array.isArray(query.mediaKind) ? query.mediaKind : [query.mediaKind]
+  if (kinds.length) params.set('mediaKind', kinds.join(','))
+  if (query.q) params.set('q', query.q)
+  if (query.labelPrefix) params.set('labelPrefix', query.labelPrefix)
+  if (query.unchecked) params.set('unchecked', 'true')
+  if (query.aiGenerated) params.set('aiGenerated', 'true')
+  if (query.limit != null) params.set('limit', String(query.limit))
+  if (query.cursor) params.set('cursor', query.cursor)
+  const { data, nextCursor } = await apiGetPage<CreativePhoto[]>(`${photosBase(projectId)}?${params.toString()}`, token)
+  return { items: data, nextCursor }
 }
 
 export function getCreativePhoto(
