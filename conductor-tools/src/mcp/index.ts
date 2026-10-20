@@ -53,6 +53,7 @@ import {
   retryFailedPublishTargets,
   type PublishTargetSelection,
   completeManualPublish,
+  requestTikTokConsent,
 } from './tools/marketing.js'
 import {
   createPost,
@@ -982,7 +983,7 @@ export const TOOLS = [
               publishOptions: {
                 type: 'object',
                 additionalProperties: true,
-                description: 'Per-platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key — read optionKeys first. Unknown keys are dropped.',
+                description: 'Per-platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key — read optionKeys first. Unknown keys are dropped. TikTok privacy and interaction keys are the creator\'s own choice in their browser at consent; the server refuses them from an API key.',
               },
             },
             required: ['platform'],
@@ -1082,7 +1083,7 @@ export const TOOLS = [
               format: { type: 'string', enum: ['feed', 'reel', 'story'], description: 'The surface this destination publishes to (default feed). Must be one of that platform\'s formats in list_publish_targets.' },
               captionOverride: { type: 'string', description: 'Copy for this destination alone (optional). Ignored by a story.' },
               assetIds: { type: 'array', items: { type: ['string', 'number'] }, description: 'Ordered subset of media for this destination: 0-based indexes into `media`, or asset ids. Omit to inherit all; a story keeps only the first.' },
-              options: { type: 'object', additionalProperties: true, description: 'Platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key.' },
+              options: { type: 'object', additionalProperties: true, description: 'Platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key. TikTok privacy/interaction keys are ignored: the creator picks them in their browser when consenting.' },
             },
             required: ['platform'],
           },
@@ -1119,6 +1120,18 @@ export const TOOLS = [
         reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (optional)' },
       },
       required: ['postId'],
+    },
+  },
+  {
+    name: 'request_tiktok_consent',
+    description: 'Get TikTok consent for Posts: returns one link where the person consents to each Post in their own browser, then waits until they have. No tool records consent; only the person can, and the backend refuses it from an API key. Omit postIds for every Post pending consent. If it returns a link, show it to the person and call again with requestId to wait. Returns each Post\'s verdict; continue with submit_post once VALID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        postIds: { type: 'array', items: { type: 'string' }, description: 'Posts to cover, by Work Item ID or display ID (e.g. RE-80). Omit for every Post awaiting the person\'s consent in their browser.' },
+        requestId: { type: 'string', description: 'Resume waiting on a request from an earlier call instead of creating one' },
+        waitSeconds: { type: 'number', description: 'How long to wait for the person (default 600, max 900)' },
+      },
     },
   },
   {
@@ -1175,7 +1188,7 @@ export const TOOLS = [
   },
   {
     name: 'submit_review',
-    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned REVIEWER or ADMIN. Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step, done in the Conductor UI, not this tool. Returns the confirmation table.',
+    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned REVIEWER or ADMIN. Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2238,6 +2251,40 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'get_post_status': {
           return successResponse(await getPostStatus({ postId: params['postId'] as string }, config))
+        }
+        case 'request_tiktok_consent': {
+          const progressToken = request.params._meta?.progressToken
+          const canElicit = Boolean(server.getClientCapabilities()?.elicitation?.url)
+          return successResponse(
+            await requestTikTokConsent(
+              {
+                postIds: params['postIds'] as string[] | undefined,
+                requestId: params['requestId'] as string | undefined,
+                waitSeconds: params['waitSeconds'] as number | undefined,
+              },
+              config,
+              {
+                elicitUrl: canElicit
+                  ? async ({ message, url, elicitationId }) =>
+                      (await server.elicitInput({ mode: 'url', message, url, elicitationId })).action
+                  : undefined,
+                notifyComplete: canElicit
+                  ? (elicitationId) => server.createElicitationCompletionNotifier(elicitationId)()
+                  : undefined,
+                onProgress:
+                  progressToken === undefined
+                    ? undefined
+                    : (done, total, message) => {
+                        void extra
+                          .sendNotification({
+                            method: 'notifications/progress',
+                            params: { progressToken, progress: done, total, message },
+                          })
+                          .catch(() => {})
+                      },
+              }
+            )
+          )
         }
         case 'submit_post': {
           return successResponse(

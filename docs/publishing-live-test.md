@@ -129,7 +129,7 @@ the Post reaching Published or Failed.
 | 6 | 2–10 mixed JPEG/MP4 | Instagram, feed | Carousel, cropped to the first item's aspect (warning at preflight if they differ) |
 | 7 | One vertical MP4 + `coverAssetId`, `shareToFeed`, up to 3 `collaborators`, `audioName` | Instagram, reel | Reel with the chosen cover; collaborators receive invites |
 | 8 | One 9:16 JPEG | Instagram, story | Story appears; the caption is dropped (preflight warns) |
-| 9 | One MP4 ≤ creator cap, `privacyLevel: SELF_ONLY`, toggles, `isAigc`, `videoCoverTimestampMs` | TikTok | Consent recorded by the creator in the UI first (the gate blocks without it), post appears privately with the AI label and chosen cover frame |
+| 9 | One MP4 ≤ creator cap, `privacyLevel: SELF_ONLY`, toggles, `isAigc`, `videoCoverTimestampMs` | TikTok | Consent given by the creator in their own browser first (the gate blocks without it); an agent run gets the link from `request_tiktok_consent`, post appears privately with the AI label and chosen cover frame |
 | 10 | 2–35 JPEG/WEBP, `photoCoverIndex`, `autoAddMusic` | TikTok photo post | Needs the verified URL prefix; cover from the chosen index |
 | 11 | Any of 1–3 | Unschedule from Scheduled | Native post disappears from the Page's scheduled posts (`REVOKED`), Post back to Approved |
 | 12 | Any failed row | **Retry** on the Post | Row back to `PENDING` with a fresh idempotency key, fires again |

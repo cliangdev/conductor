@@ -54,7 +54,8 @@ export function buildRefreshedConfig(existing: Config | null, auth: AuthResult):
  * Exchange a short-lived app JWT for a durable user API key (`uk_…`). The JWT
  * expires (default 24h) — storing it as the CLI credential makes the daemon's
  * writes start 401ing once it lapses. Mirrors the browser cli-login flow.
- * Falls back to the JWT if key issuance is unavailable, so login never hard-fails.
+ * Throws if no key can be issued: the JWT is not a usable CLI credential (the backend treats a
+ * JWT as an interactive session, and it lapses), so saving it would only fail later and confusingly.
  */
 export async function ensureDurableApiKey(apiUrl: string, accessToken: string): Promise<string> {
   const auth = { Authorization: `Bearer ${accessToken}` }
@@ -75,9 +76,11 @@ export async function ensureDurableApiKey(apiUrl: string, accessToken: string): 
       if (created.key) return created.key
     }
   } catch {
-    // Network/endpoint issue — fall through to the JWT below.
+    // Network/endpoint issue — reported below.
   }
-  return accessToken
+  throw new Error(
+    'Logged in, but could not create a CLI API key. Check your connection and run `conductor login` again.'
+  )
 }
 
 function resolveApiUrl(): string {
@@ -161,7 +164,13 @@ async function loginLocal(apiUrl: string): Promise<void> {
 
   const project = projects[0]!
   // Store a durable user API key, not the 24h JWT we just received.
-  const apiKey = await ensureDurableApiKey(apiUrl, accessToken)
+  let apiKey: string
+  try {
+    apiKey = await ensureDurableApiKey(apiUrl, accessToken)
+  } catch (err) {
+    spinner.fail(chalk.red((err as Error).message))
+    process.exit(1)
+  }
   const config = buildRefreshedConfig(readConfig(), {
     apiKey,
     email: user?.email ?? email,

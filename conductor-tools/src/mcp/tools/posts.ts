@@ -284,10 +284,14 @@ async function takeNextMove(
   return { moved: true, toStatus: next.to }
 }
 
-function nextStep(status: string | undefined, preflight: Preflight, submitted: boolean): string {
+function nextStep(status: string | undefined, preflight: Preflight, submitted: boolean, postId: string): string {
   if (!preflight.publishing) return 'This Work Item is not on a publishing Workflow.'
+  const consentPending = preflight.consent.required && preflight.consent.verdict !== 'VALID'
   if (!preflight.ready) {
-    return 'Fix the blockers, then call submit_post({postId}). Nothing has been submitted.'
+    const consent = consentPending
+      ? ` TikTok consent is pending: call request_tiktok_consent({postIds:["${postId}"]}) to hand the person the link to consent in their own browser.`
+      : ''
+    return `Fix the blockers, then call submit_post({postId}). Nothing has been submitted.${consent}`
   }
   if (!submitted) return 'Ready but not submitted. Call submit_post({postId}) to hand it to review.'
   if (preflight.nextTransition == null) {
@@ -298,8 +302,8 @@ function nextStep(status: string | undefined, preflight: Preflight, submitted: b
       preflight.review.assignedReviewers > 0
         ? `${preflight.review.assignedReviewers} reviewer(s) assigned`
         : 'no reviewer assigned yet — call submit_post with `reviewers`'
-    const consent = preflight.consent.required
-      ? ' TikTok consent is recorded by the creator in the Conductor UI; no tool can do it.'
+    const consent = consentPending
+      ? ` TikTok consent is given by the creator in their own browser; no tool can record it. Call request_tiktok_consent({postIds:["${postId}"]}) to hand them the link.`
       : ''
     return `Waiting for a reviewer to approve (${who}). Approval schedules it automatically.${consent}`
   }
@@ -413,7 +417,8 @@ export async function createPost(params: CreatePostParams, config: Config): Prom
       publishOptions: input.options,
     }
   })
-  await setPublishTargets({ issueId: postId, targets: selection }, config)
+  const applied = await setPublishTargets({ issueId: postId, targets: selection }, config)
+  warnings.push(...((applied['warnings'] as string[] | undefined) ?? []))
 
   // Schedule: the server knows what the chosen destinations can accept; nothing here guesses a lead time.
   let preflight = await getPreflight(config, postId)
@@ -504,7 +509,7 @@ async function confirmation(
     consent: preflight.consent,
     nextStep: extra.refusal
       ? `The move was refused: ${extra.refusal}`
-      : nextStep(item.status, preflight, extra.submitted),
+      : nextStep(item.status, preflight, extra.submitted, postId),
   }
   if (extra.reviewers && extra.reviewers.length > 0) result['reviewers'] = extra.reviewers
   return result

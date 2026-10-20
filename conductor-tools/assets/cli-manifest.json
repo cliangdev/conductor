@@ -671,6 +671,12 @@
       ]
     },
     {
+      "name": "request_tiktok_consent",
+      "description": "Hand the person one link to consent to their TikTok Posts in their own browser, then wait until they have.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "complete_manual_publish",
       "description": "Record that a MANUAL publish target was published by hand, storing the live URL.",
       "category": "marketing",

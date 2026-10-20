@@ -30,6 +30,8 @@ import {
   uploadAsset,
   retryFailedPublishTargets,
   completeManualPublish,
+  requestTikTokConsent,
+  type ConsentHost,
 } from '../mcp/tools/marketing.js'
 import { updateWorkItem } from '../mcp/tools/issues.js'
 
@@ -309,10 +311,10 @@ describe('set_publish_targets chooses destinations and per-target options', () =
     const stored = [
       {
         id: 't1',
-        platform: 'tiktok',
+        platform: 'instagram',
         connectionId: 'c9',
         state: 'PENDING',
-        publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: true },
+        publishOptions: { shareToFeed: 'x', disableComment: true },
       },
     ]
     mocked(apiPut).mockResolvedValue(stored)
@@ -322,9 +324,9 @@ describe('set_publish_targets chooses destinations and per-target options', () =
         issueId: 'w1',
         targets: [
           {
-            platform: 'tiktok',
+            platform: 'instagram',
             connectionId: 'c9',
-            publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: true },
+            publishOptions: { shareToFeed: 'x', disableComment: true },
           },
         ],
       },
@@ -336,9 +338,9 @@ describe('set_publish_targets chooses destinations and per-target options', () =
       {
         targets: [
           {
-            platform: 'tiktok',
+            platform: 'instagram',
             connectionId: 'c9',
-            publishOptions: { privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: true },
+            publishOptions: { shareToFeed: 'x', disableComment: true },
           },
         ],
       },
@@ -617,23 +619,183 @@ describe('no MCP tool records TikTok consent or offers a way around it', () => {
   const registrySrc = fs.readFileSync(path.join(__dirname, '..', 'mcp', 'index.ts'), 'utf8')
   const toolsSrc = registrySrc.match(/const TOOLS = \[([\s\S]*?)\n\]\n/)![1]!
 
-  it('registers no tool whose name mentions consent', () => {
+  it('registers only request_tiktok_consent among tools whose name mentions consent', () => {
     const names = [...toolsSrc.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]!)
-    expect(names.filter((n) => /consent/i.test(n))).toEqual([])
+    expect(names.filter((n) => /consent/i.test(n))).toEqual(['request_tiktok_consent'])
   })
 
   it('accepts no consent parameter anywhere in the tool schemas', () => {
     expect(toolsSrc.match(/\w*consent\w*:\s*\{/gi) ?? []).toEqual([])
   })
 
-  it('mentions consent only to say a human records it in the UI', () => {
-    const consentLines = toolsSrc.split('\n').filter((line) => /consent/i.test(line))
+  it('says the person consents in their own browser and that no tool records consent', () => {
+    const line = toolsSrc.split('\n').find((l) => /name:\s*'request_tiktok_consent'/.test(l)) ?? ''
+    const description = toolsSrc.slice(toolsSrc.indexOf("name: 'request_tiktok_consent'")).split('\n')[1]!
+    expect(line + description).toMatch(/own browser/)
+    expect(description).toMatch(/No tool records consent/)
+  })
+
+  it('mentions consent only to say a human records it in the UI or their browser', () => {
+    // The request_tiktok_consent name line is the one allowed exception; its description is checked above.
+    const consentLines = toolsSrc
+      .split('\n')
+      .filter((line) => /consent/i.test(line) && !/^\s*name:\s*'request_tiktok_consent',?\s*$/.test(line))
     expect(consentLines.length).toBeGreaterThan(0)
     for (const line of consentLines) {
-      expect(line, `consent mentioned without pointing at the human UI step: ${line}`).toMatch(
-        /human/i
-      )
-      expect(line).toMatch(/UI/)
+      expect(line, `consent mentioned without pointing at the human step: ${line}`).toMatch(/human|person|creator/i)
+      expect(line).toMatch(/UI|browser|request_tiktok_consent/)
     }
+  })
+})
+
+describe('requestTikTokConsent', () => {
+  const ITEM = (id: string, verdict: string) => ({ workItemId: id, displayId: id.toUpperCase(), title: 't', verdict })
+  const created = (over: Record<string, unknown> = {}) => ({
+    id: 'req-1',
+    consentUrl: 'https://app.test/consent?request=req-1',
+    expiresAt: 'x',
+    items: [ITEM('w1', 'MISSING'), ITEM('w2', 'MISSING')],
+    skipped: [{ workItemId: 'w9', reason: 'ALREADY_VALID' }],
+    complete: false,
+    ...over,
+  })
+  const status = (verdicts: string[], over: Record<string, unknown> = {}) => ({
+    id: 'req-1',
+    expired: false,
+    complete: verdicts.every((v) => v === 'VALID'),
+    items: verdicts.map((v, i) => ITEM(`w${i + 1}`, v)),
+    ...over,
+  })
+  let clock: number
+  const fastHost = (extra: Partial<ConsentHost> = {}): ConsentHost => ({
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms
+    },
+    pollMs: 5000,
+    ...extra,
+  })
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    clock = 0
+  })
+
+  it('returns the link as text when the client has no URL elicitation, without polling', async () => {
+    mocked(apiPost).mockResolvedValue(created())
+    const result = await requestTikTokConsent({ postIds: ['w1', 'w2'] }, config, fastHost())
+    expect(result['status']).toBe('awaiting_person')
+    expect(result['consentUrl']).toBe('https://app.test/consent?request=req-1')
+    expect(String(result['nextStep'])).toMatch(/requestId: "req-1"/)
+    expect(result['skipped']).toEqual([{ post: 'w9', reason: 'ALREADY_VALID' }])
+    expect(apiGet).not.toHaveBeenCalled()
+  })
+
+  it('passes ids to the backend as given and lists skipped Posts by display id', async () => {
+    mocked(apiPost).mockResolvedValue(
+      created({ skipped: [{ workItemId: 'w9', displayId: 'RE-9', reason: 'NOT_FOUND' }, { workItemId: 'RE-404', reason: 'NOT_FOUND' }] })
+    )
+    const result = await requestTikTokConsent({ postIds: ['RE-80', 'RE-404'] }, config, fastHost())
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(apiPost).toHaveBeenCalledWith('/api/v2/projects/proj-1/tiktok-consent-requests', { workItemIds: ['RE-80', 'RE-404'] }, config)
+    expect(result['skipped']).toEqual([
+      { post: 'RE-9', reason: 'NOT_FOUND' },
+      { post: 'RE-404', reason: 'NOT_FOUND' },
+    ])
+  })
+
+  it('on accept polls until complete, reports progress and sends the completion notice', async () => {
+    mocked(apiPost).mockResolvedValue(created())
+    mocked(apiGet)
+      .mockResolvedValueOnce(status(['MISSING', 'MISSING']))
+      .mockResolvedValueOnce(status(['VALID', 'MISSING']))
+      .mockResolvedValueOnce(status(['VALID', 'VALID']))
+    const elicitUrl = vi.fn(async () => 'accept' as const)
+    const notifyComplete = vi.fn(async () => {})
+    const onProgress = vi.fn()
+    const result = await requestTikTokConsent({}, config, fastHost({ elicitUrl, notifyComplete, onProgress }))
+    expect(elicitUrl).toHaveBeenCalledWith(expect.objectContaining({ elicitationId: 'req-1', url: 'https://app.test/consent?request=req-1' }))
+    expect(result['status']).toBe('complete')
+    expect(notifyComplete).toHaveBeenCalledWith('req-1')
+    expect(onProgress).toHaveBeenCalledTimes(3)
+    expect(clock).toBe(10_000)
+  })
+
+  it('returns straight away on decline or cancel', async () => {
+    mocked(apiPost).mockResolvedValue(created())
+    const notifyComplete = vi.fn()
+    const result = await requestTikTokConsent({}, config, fastHost({ elicitUrl: async () => 'decline', notifyComplete }))
+    expect(result['status']).toBe('declined')
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(notifyComplete).not.toHaveBeenCalled()
+  })
+
+  it('resumes with requestId without creating a new request, and stops waiting at the deadline', async () => {
+    mocked(apiGet).mockResolvedValue(status(['VALID', 'MISSING']))
+    const result = await requestTikTokConsent({ requestId: 'req-1', waitSeconds: 12 }, config, fastHost())
+    expect(apiPost).not.toHaveBeenCalled()
+    expect(result['status']).toBe('waiting')
+    expect(clock).toBeLessThanOrEqual(12_000)
+  })
+
+  it('includes the link on a timed-out resume when the status carries consentUrl', async () => {
+    mocked(apiGet).mockResolvedValue(status(['MISSING'], { consentUrl: 'https://app.test/consent?request=req-1' }))
+    const result = await requestTikTokConsent({ requestId: 'req-1', waitSeconds: 0 }, config, fastHost())
+    expect(result['status']).toBe('waiting')
+    expect(result['consentUrl']).toBe('https://app.test/consent?request=req-1')
+  })
+
+  it('resumes to complete without a completion notice when URL elicitation was not used', async () => {
+    mocked(apiGet).mockResolvedValue(status(['VALID', 'VALID']))
+    const notifyComplete = vi.fn()
+    const result = await requestTikTokConsent({ requestId: 'req-1' }, config, fastHost({ notifyComplete }))
+    expect(result['status']).toBe('complete')
+    expect(notifyComplete).not.toHaveBeenCalled()
+  })
+
+  it('reports an expired request', async () => {
+    mocked(apiGet).mockResolvedValue(status(['MISSING'], { expired: true }))
+    const result = await requestTikTokConsent({ requestId: 'req-1' }, config, fastHost())
+    expect(result['status']).toBe('expired')
+  })
+
+  it('says so when nothing needs consent', async () => {
+    mocked(apiPost).mockResolvedValue(created({ items: [], skipped: [{ workItemId: 'w1', reason: 'NOT_REQUIRED' }] }))
+    const result = await requestTikTokConsent({}, config, fastHost())
+    expect(result['status']).toBe('nothing_to_consent')
+  })
+})
+
+describe('human-only TikTok option keys', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mocked(apiPut).mockResolvedValue([])
+  })
+
+  it('are stripped from an API TikTok target by set_publish_targets, with a warning', async () => {
+    const result = await setPublishTargets(
+      {
+        issueId: 'w1',
+        targets: [
+          { platform: 'tiktok', connectionId: 'c-tt', publishOptions: { privacyLevel: 'SELF_ONLY', disableComment: true, isAigc: true } },
+        ],
+      },
+      config
+    )
+    expect(mocked(apiPut).mock.calls[0]![1]).toEqual({
+      targets: [{ platform: 'tiktok', connectionId: 'c-tt', publishOptions: { isAigc: true } }],
+    })
+    expect(JSON.stringify(result['warnings'])).toMatch(/ignored privacyLevel, disableComment.*request_tiktok_consent/)
+  })
+
+  it('are kept on a MANUAL TikTok target', async () => {
+    const result = await setPublishTargets(
+      { issueId: 'w1', targets: [{ platform: 'tiktok', connectionId: null, publishOptions: { privacyLevel: 'SELF_ONLY' } }] },
+      config
+    )
+    expect(mocked(apiPut).mock.calls[0]![1]).toEqual({
+      targets: [{ platform: 'tiktok', connectionId: null, publishOptions: { privacyLevel: 'SELF_ONLY' } }],
+    })
+    expect(result['warnings']).toBeUndefined()
   })
 })
