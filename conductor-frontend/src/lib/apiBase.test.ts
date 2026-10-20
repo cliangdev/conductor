@@ -84,6 +84,13 @@ describe('getApiVia', () => {
     expect(getApiVia()).toBe('direct')
   })
 
+  it('is direct on the server (no window), even if a proxy choice exists', () => {
+    window.localStorage.setItem(API_VIA_STORAGE_KEY, 'proxy')
+    vi.stubGlobal('window', undefined)
+    expect(getApiVia()).toBe('direct')
+    expect(getApiBase()).toBe(BACKEND)
+  })
+
   it('stays direct when the build has no absolute backend URL', () => {
     vi.stubEnv('NEXT_PUBLIC_API_URL', '')
     setUrl('?api=proxy')

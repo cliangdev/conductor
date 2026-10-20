@@ -100,6 +100,12 @@ every deployment but nothing uses it until a browser opts in, so both modes run 
   `Server-Timing`, `Content-Disposition` and binary bodies. Request bodies are buffered by Next because
   `src/middleware.ts` exists; `experimental.proxyClientMaxBodySize` is set to 50 MB (the backend's multipart
   request cap) because the 10 MB default truncates bigger bodies and the proxied call fails.
+- Auth: the web client authenticates every call with an `Authorization: Bearer` header, which the proxy
+  forwards untouched, so login, `/auth/me` and logout work the same in both modes. The `access_token` cookie
+  is set by the frontend on its own origin (for `src/middleware.ts`); through the proxy the browser also sends
+  it to the backend, which ignores it when a Bearer header is present (header wins, and only the header counts
+  as an interactive action). Backend `Set-Cookie` (logout clears `access_token`) now lands on the app origin,
+  which is harmless. Direct mode sends no credentials cross-origin, exactly as before.
 - Cost: every proxied call is an extra request through the frontend Cloud Run service (CPU, request count,
   and a second hop to the backend). Keep it an experiment for a few browsers, not a default, until the
   numbers justify it.
