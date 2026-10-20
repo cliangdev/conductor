@@ -142,22 +142,30 @@ public class CreativeAttachService {
             if (existing.getCreativeFrameId() != null) alreadyAttached.putIfAbsent(existing.getCreativeFrameId(), existing);
         }
 
+        // Frames not yet on the Post become Assets in ONE call (one set of workflow checks, one batched
+        // insert); the response and the placement map are then built in render order, as before.
+        List<CreativeRenderFrame> toCreate = new ArrayList<>();
+        List<AssetService.StoredObjectInput> inputs = new ArrayList<>();
         for (CreativeRenderFrame frame : frames) {
-            Asset reused = alreadyAttached.get(frame.getId());
-            if (reused != null) {
-                attachedAssets.add(new AttachedAsset(reused.getId(), frame.getId(), frame.getPlacementKey(), frame.getSequenceIndex()));
-                placements.add(frame, reused.getId());
+            if (alreadyAttached.containsKey(frame.getId())) {
                 continue;
             }
             // The Asset links the frame's own stored object: nothing is copied. A succeeded render's frames are
             // deleted only with the Creative, which refuses while a frame is on a Post.
-            String destPath = frame.getGcsPath();
-
-            Asset asset = assetService.createFromStoredObject(projectId, workItemId, new AssetService.StoredObjectInput(
-                    assetType, "Creative " + creative.displayId() + " " + frame.getPlacementKey(), destPath,
+            toCreate.add(frame);
+            inputs.add(new AssetService.StoredObjectInput(
+                    assetType, "Creative " + creative.displayId() + " " + frame.getPlacementKey(), frame.getGcsPath(),
                     frame.getContentType(), frame.getSizeBytes(), frame.getWidth(), frame.getHeight(), frame.getId(),
                     frame.getDurationSeconds()));
-
+        }
+        Map<String, Asset> created = new LinkedHashMap<>();
+        List<Asset> createdAssets = assetService.createAllFromStoredObjects(projectId, workItemId, inputs);
+        for (int i = 0; i < toCreate.size(); i++) {
+            created.put(toCreate.get(i).getId(), createdAssets.get(i));
+        }
+        for (CreativeRenderFrame frame : frames) {
+            Asset asset = alreadyAttached.containsKey(frame.getId())
+                    ? alreadyAttached.get(frame.getId()) : created.get(frame.getId());
             attachedAssets.add(new AttachedAsset(asset.getId(), frame.getId(), frame.getPlacementKey(), frame.getSequenceIndex()));
             placements.add(frame, asset.getId());
         }
@@ -166,8 +174,11 @@ public class CreativeAttachService {
         List<TargetSkip> skipped = new ArrayList<>();
         List<PublishTargetService.TargetSelection> selections = new ArrayList<>();
 
-        for (PostPublishTarget target : targetRepository.findAllByWorkItemId(workItemId)) {
-            List<String> ownAssetIds = target.isCustomMedia() ? currentCustomAssetIds(target) : List.of();
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItemId);
+        Map<String, List<String>> customAssetIds = currentCustomAssetIds(targets);
+        for (PostPublishTarget target : targets) {
+            List<String> ownAssetIds = target.isCustomMedia()
+                    ? customAssetIds.getOrDefault(target.getId(), List.of()) : List.of();
             // Explicitly media-less (custom, no rows — left by an earlier carousel attach or a deselect)
             // has made no choice of its own to protect, so it is eligible like an inheriting one.
             boolean explicitlyEmpty = target.isCustomMedia() && ownAssetIds.isEmpty();
@@ -212,10 +223,17 @@ public class CreativeAttachService {
         return new AttachResult(attachedAssets, updates, skipped);
     }
 
-    private List<String> currentCustomAssetIds(PostPublishTarget target) {
-        return targetAssetRepository.findAllByTargetId(target.getId()).stream()
-                .map(PostPublishTargetAsset::getAssetId)
-                .toList();
+    /** Every custom-media target's stored selection, in order, read in one query. */
+    private Map<String, List<String>> currentCustomAssetIds(List<PostPublishTarget> targets) {
+        List<String> ids = targets.stream().filter(PostPublishTarget::isCustomMedia).map(PostPublishTarget::getId).toList();
+        Map<String, List<String>> byTarget = new LinkedHashMap<>();
+        if (ids.isEmpty()) {
+            return byTarget;
+        }
+        for (PostPublishTargetAsset row : targetAssetRepository.findAllByTargetIdIn(ids)) {
+            byTarget.computeIfAbsent(row.getTargetId(), key -> new ArrayList<>()).add(row.getAssetId());
+        }
+        return byTarget;
     }
 
     /**

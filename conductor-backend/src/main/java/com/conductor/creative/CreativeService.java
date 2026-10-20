@@ -345,6 +345,7 @@ public class CreativeService {
         }
 
         MediaResolver media = new MediaResolver(projectId, null);
+        media.preload(referencedMediaIds(photoId, sequence, clipMedia, slides, motionRequest, audioRequest));
         if (Creative.KIND_CAROUSEL.equals(kind) && request.getPlacements() == null
                 && (request.getSlides() != null || placements.isEmpty() || kindChanging)) {
             List<String> derived = deriveCarouselPlacements(media, slides);
@@ -481,11 +482,33 @@ public class CreativeService {
         return toView(projectId, variant, loadPhotos(List.of(variant)));
     }
 
+    /** Every library media id a Creative's fields name, for one batched read. */
+    private static List<String> referencedMediaIds(String photoId, List<SequenceBeat> sequence,
+                                                   Map<String, String> clipMedia, Map<String, List<String>> slides,
+                                                   CreativeMotion motion, CreativeAudio audio) {
+        List<String> ids = new ArrayList<>();
+        ids.add(photoId);
+        sequence.forEach(beat -> ids.add(beat.getPhotoId()));
+        ids.addAll(clipMedia.values());
+        slides.values().forEach(ids::addAll);
+        if (motion != null && motion.getBackground() != null) {
+            ids.add(motion.getBackground().getClipMediaId());
+        }
+        if (audio != null) {
+            ids.add(audio.getTrackId());
+        }
+        return ids;
+    }
+
     @Transactional(readOnly = true)
     public Readiness readiness(String projectId, String creativeId, User caller) {
         requireMember(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
-        return computeReadiness(creative, new MediaResolver(projectId, null));
+        MediaResolver media = new MediaResolver(projectId, null);
+        media.preload(referencedMediaIds(creative.getPhotoId(), toSequenceBeats(creative.getSequence()),
+                toClipMediaMap(creative.getClipMedia()), toSlidesMap(creative.getSlides()),
+                toMotion(creative.getMotion()), toAudio(creative.getAudio())));
+        return computeReadiness(creative, media);
     }
 
     /**
@@ -887,6 +910,7 @@ public class CreativeService {
         private final Map<String, LocalMediaInfo> localMedia;
         private final Map<String, MediaFacts> resolved = new HashMap<>();
         private final Set<String> missing = new HashSet<>();
+        private final Set<String> preloaded = new HashSet<>();
         private final List<Violation> violations = new ArrayList<>();
 
         MediaResolver(String projectId, Map<String, LocalMediaInfo> localMedia) {
@@ -904,6 +928,15 @@ public class CreativeService {
 
         String projectId() {
             return projectId;
+        }
+
+        /** Loads every library item in {@code ids} in one query so {@link #findLibrary} answers from memory. */
+        void preload(java.util.Collection<String> ids) {
+            List<String> wanted = ids.stream().filter(id -> id != null && !isLocalRef(id)).distinct().toList();
+            if (!wanted.isEmpty()) {
+                photoRepository.findAllByIdIn(wanted);
+                preloaded.addAll(wanted);
+            }
         }
 
         List<Violation> violations() {
@@ -931,7 +964,10 @@ public class CreativeService {
             if (cached != null) {
                 return cached;
             }
-            MediaFacts found = photoRepository.findByIdAndProjectId(id, projectId).map(MediaFacts::of).orElse(null);
+            // An id that was preloaded is answered from the persistence context; any other id is looked up.
+            MediaFacts found = (preloaded.contains(id)
+                    ? photoRepository.findById(id).filter(photo -> projectId.equals(photo.getProjectId()))
+                    : photoRepository.findByIdAndProjectId(id, projectId)).map(MediaFacts::of).orElse(null);
             if (found == null) {
                 missing.add(id);
             } else {

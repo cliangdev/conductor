@@ -5,7 +5,11 @@ import jakarta.persistence.Embeddable;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Index;
+import jakarta.persistence.PostLoad;
+import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import org.springframework.data.domain.Persistable;
 
 import java.io.Serializable;
 import java.util.Objects;
@@ -30,7 +34,7 @@ import java.util.Objects;
 @Entity
 @Table(name = "post_publish_target_asset",
        indexes = @Index(name = "idx_post_publish_target_asset_asset", columnList = "asset_id"))
-public class PostPublishTargetAsset {
+public class PostPublishTargetAsset implements Persistable<PostPublishTargetAsset.Id> {
 
     /** The (target, asset) pair, which is the row's identity: an asset appears at most once per target. */
     @Embeddable
@@ -76,12 +80,33 @@ public class PostPublishTargetAsset {
     @Column(name = "position", nullable = false)
     private int position;
 
+    /**
+     * True until the row is loaded or persisted. The id is assigned (a composite of two foreign keys), so
+     * Spring Data cannot tell a new row from an existing one and {@code save()} would {@code merge}, which
+     * SELECTs the row before every INSERT. Declaring newness here makes {@code save()} a plain {@code persist}.
+     */
+    @Transient
+    private boolean fresh = true;
+
     protected PostPublishTargetAsset() {
+        this.fresh = false;
     }
 
     public PostPublishTargetAsset(String targetId, String assetId, int position) {
         this.id = new Id(targetId, assetId);
         this.position = position;
+        this.fresh = true;
+    }
+
+    @Override
+    public boolean isNew() {
+        return fresh;
+    }
+
+    @PostLoad
+    @PostPersist
+    void markNotNew() {
+        this.fresh = false;
     }
 
     public Id getId() { return id; }

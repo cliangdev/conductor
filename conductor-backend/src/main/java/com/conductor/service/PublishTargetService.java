@@ -2,7 +2,6 @@ package com.conductor.service;
 
 import com.conductor.creative.CreativePlacementMedia;
 import com.conductor.entity.Asset;
-import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetAsset;
 import com.conductor.entity.PostPublishTargetState;
@@ -26,6 +25,9 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -235,6 +237,10 @@ public class PublishTargetService {
     private final PublishBundleGuard publishBundleGuard;
     private final PublishTargetMediaResolver mediaResolver;
     private final CreativePlacementMedia creativePlacementMedia;
+
+    /** Field-injected so the constructor (and the unit tests that build this service) stay as they were. */
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public PublishTargetService(PublishPlatformRegistry platformRegistry,
                                 ConnectionRepository connectionRepository,
@@ -577,6 +583,14 @@ public class PublishTargetService {
             available.put(option.key(), option);
         }
 
+        // The Post's assets are read once for the whole request: validating each destination's selection and
+        // sizing a new destination's media both need them, and used to re-read them per destination.
+        List<Asset> postAssets = assetRepository.findAllByWorkItemId(workItem.getId());
+        Set<String> postFileAssetIds = postAssets.stream()
+                .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
+                .map(Asset::getId)
+                .collect(Collectors.toSet());
+
         Map<String, DesiredTarget> desired = new LinkedHashMap<>();
         for (TargetSelection selection : selections == null ? List.<TargetSelection>of() : selections) {
             String key = selectionKey(selection.platform(), selection.connectionId());
@@ -586,7 +600,7 @@ public class PublishTargetService {
             }
             desired.put(key, new DesiredTarget(option, canonicalOptions(selection.publishOptions()),
                     blankToNull(selection.captionOverride()),
-                    resolveAssetIds(workItem.getId(), selection.assetIds()),
+                    resolveAssetIds(postFileAssetIds, selection.assetIds()),
                     resolveFormat(option, selection.format()),
                     selection.noMedia()));
         }
@@ -597,8 +611,19 @@ public class PublishTargetService {
             existingByKey.put(selectionKey(target.getPlatform(), target.getConnectionId()), target);
         }
 
+        // Every existing target's stored selection in ONE query (it used to be one per target), kept as the
+        // loaded rows so the rewrite below can detach exactly the instances this request may hold.
+        List<PostPublishTargetAsset> storedRows = existing.stream().anyMatch(PostPublishTarget::isCustomMedia)
+                ? targetAssetRepository.findAllByTargetIdIn(existing.stream()
+                        .filter(PostPublishTarget::isCustomMedia).map(PostPublishTarget::getId).toList())
+                : List.of();
+        Map<String, List<String>> storedAssetIds = new LinkedHashMap<>();
+        for (PostPublishTargetAsset row : storedRows) {
+            storedAssetIds.computeIfAbsent(row.getTargetId(), key -> new ArrayList<>()).add(row.getAssetId());
+        }
+
         keepHumanOnlyTikTokOptions(desired, existingByKey);
-        giveNewTargetsTheirCreativeSize(workItem, desired, existingByKey.keySet());
+        giveNewTargetsTheirCreativeSize(postAssets, desired, existingByKey.keySet());
 
         List<PostPublishTarget> removed = existingByKey.entrySet().stream()
                 .filter(entry -> !desired.containsKey(entry.getKey()))
@@ -614,7 +639,7 @@ public class PublishTargetService {
         // media all count: each of them changes what a reviewer would be approving.
         List<PostPublishTarget> changed = existingByKey.entrySet().stream()
                 .filter(entry -> desired.containsKey(entry.getKey()))
-                .filter(entry -> hasContentChanged(entry.getValue(), desired.get(entry.getKey())))
+                .filter(entry -> hasContentChanged(entry.getValue(), desired.get(entry.getKey()), storedAssetIds))
                 .map(Map.Entry::getValue)
                 .toList();
 
@@ -655,7 +680,7 @@ public class PublishTargetService {
         // rows were updated in place, and a delete-then-insert has no such intermediate state.
         List<PostPublishTarget> withContent = new ArrayList<>(changed);
         withContent.addAll(saved.subList(Math.min(changed.size(), saved.size()), saved.size()));
-        rewriteSelections(withContent, desired);
+        rewriteSelections(changed, withContent, storedRows, desired);
 
         return views(workItem, sorted(kept));
     }
@@ -725,7 +750,7 @@ public class PublishTargetService {
      * choices (including explicit emptiness) are left alone, and a destination no placement matches keeps
      * inheriting.
      */
-    private void giveNewTargetsTheirCreativeSize(WorkItem workItem, Map<String, DesiredTarget> desired,
+    private void giveNewTargetsTheirCreativeSize(List<Asset> postAssets, Map<String, DesiredTarget> desired,
                                                  Set<String> existingKeys) {
         List<CreativePlacementMedia.Placements> placements = null;
         for (Map.Entry<String, DesiredTarget> entry : desired.entrySet()) {
@@ -734,7 +759,7 @@ public class PublishTargetService {
                 continue;
             }
             if (placements == null) {
-                placements = creativePlacementMedia.forPostAssets(assetRepository.findAllByWorkItemId(workItem.getId()).stream()
+                placements = creativePlacementMedia.forPostAssets(postAssets.stream()
                         .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
                         .toList());
             }
@@ -880,7 +905,8 @@ public class PublishTargetService {
      * comparison has to be exact in both directions — a client re-sending identical choices must not knock
      * a Post out of Approved, and a real edit must never slip through as a no-op.
      */
-    private boolean hasContentChanged(PostPublishTarget existing, DesiredTarget desired) {
+    private boolean hasContentChanged(PostPublishTarget existing, DesiredTarget desired,
+                                      Map<String, List<String>> storedAssetIds) {
         if (!Objects.equals(canonicalOptions(existing.getPublishOptions()), desired.optionsJson())) {
             return true;
         }
@@ -895,35 +921,44 @@ public class PublishTargetService {
         }
         // Only an explicit selection has stored rows to compare; two inheriting targets are equal by
         // definition and need no query.
-        return desired.customMedia() && !storedAssetIds(existing.getId()).equals(desired.assetIds());
+        return desired.customMedia()
+                && !storedAssetIds.getOrDefault(existing.getId(), List.of()).equals(desired.assetIds());
     }
 
-    /** This target's stored selection, in order. Empty for an inheriting target. */
-    private List<String> storedAssetIds(String targetId) {
-        return targetAssetRepository.findAllByTargetId(targetId).stream()
-                .map(PostPublishTargetAsset::getAssetId)
-                .toList();
-    }
-
-    /** Replaces each target's stored selection with the one it was just given. */
-    private void rewriteSelections(List<PostPublishTarget> targets, Map<String, DesiredTarget> desired) {
+    /**
+     * Replaces each target's stored selection with the one it was just given, in a fixed number of statements:
+     * one bulk DELETE for every re-written target, then one batched INSERT for all the new rows.
+     *
+     * <p>Delete-then-insert is deliberate (see the unique position constraint: a reorder that swaps two
+     * positions would collide if rows were updated in place). The rows this request already loaded are
+     * detached before the insert, since the bulk delete leaves them stale in the persistence context and an
+     * insert of the same (target, asset) key would otherwise collide with, or be merged into, the stale copy.
+     * Both flushes are explicit: the delete must land before the insert, and the insert after the target
+     * rows it references.
+     */
+    private void rewriteSelections(List<PostPublishTarget> existingTargets, List<PostPublishTarget> targets,
+                                   List<PostPublishTargetAsset> loadedRows, Map<String, DesiredTarget> desired) {
+        List<String> clear = existingTargets.stream().map(PostPublishTarget::getId).toList();
+        if (!clear.isEmpty()) {
+            targetAssetRepository.flush();
+            if (entityManager != null) {
+                loadedRows.forEach(entityManager::detach);
+            }
+            targetAssetRepository.deleteAllByTargetIdIn(clear);
+        }
+        List<PostPublishTargetAsset> rows = new ArrayList<>();
         for (PostPublishTarget target : targets) {
             DesiredTarget wanted = desired.get(selectionKey(target.getPlatform(), target.getConnectionId()));
-            if (wanted == null) {
+            if (wanted == null || !wanted.customMedia()) {
                 continue;
             }
-            targetAssetRepository.deleteAllByTargetId(target.getId());
-            if (!wanted.customMedia()) {
-                continue;
-            }
-            // Flushed before the insert so the delete lands first: without it Hibernate is free to order
-            // the insert before the delete and collide on the position uniqueness constraint.
-            targetAssetRepository.flush();
-            List<PostPublishTargetAsset> rows = new ArrayList<>();
             List<String> assetIds = wanted.assetIds();
             for (int position = 0; position < assetIds.size(); position++) {
                 rows.add(new PostPublishTargetAsset(target.getId(), assetIds.get(position), position));
             }
+        }
+        if (!rows.isEmpty()) {
+            targetAssetRepository.flush();
             targetAssetRepository.saveAll(rows);
         }
     }
@@ -935,14 +970,10 @@ public class PublishTargetService {
      *                           the destination check gives, so the endpoint cannot be used to probe which
      *                           assets exist on someone else's Post
      */
-    private List<String> resolveAssetIds(String workItemId, List<String> requested) {
+    private List<String> resolveAssetIds(Set<String> selectable, List<String> requested) {
         if (requested == null || requested.isEmpty()) {
             return List.of();
         }
-        Set<String> selectable = assetRepository.findAllByWorkItemId(workItemId).stream()
-                .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
-                .map(Asset::getId)
-                .collect(Collectors.toSet());
         List<String> resolved = new ArrayList<>();
         for (String assetId : requested) {
             if (assetId == null || assetId.isBlank()) {
@@ -992,7 +1023,10 @@ public class PublishTargetService {
 
     private List<TargetOption> deriveOptions(String projectId) {
         List<TargetOption> options = new ArrayList<>();
-        for (Connection connection : activeConnections(projectId, CONNECTOR_META)) {
+        // ONE query for all three connectors, selecting only the columns a picker needs: the full rows carry
+        // the encrypted access, refresh and webhook tokens, which nothing here reads.
+        Map<String, List<ConnectionRepository.PublishableConnection>> connections = activeConnections(projectId);
+        for (ConnectionRepository.PublishableConnection connection : connections.getOrDefault(CONNECTOR_META, List.of())) {
             Map<String, Object> config = parseConfig(connection.getConfigJson());
             if (stringValue(config, CONFIG_PAGE_ID) == null) {
                 continue;
@@ -1007,13 +1041,13 @@ public class PublishTargetService {
                         username != null ? "@" + username : stringValue(config, CONFIG_IG_ACCOUNT_ID)));
             }
         }
-        for (Connection connection : activeConnections(projectId, CONNECTOR_YOUTUBE)) {
+        for (ConnectionRepository.PublishableConnection connection : connections.getOrDefault(CONNECTOR_YOUTUBE, List.of())) {
             Map<String, Object> config = parseConfig(connection.getConfigJson());
             String title = stringValue(config, CONFIG_CHANNEL_TITLE);
             options.add(option(connection, platformRegistry.require(PLATFORM_YOUTUBE),
                     title != null ? title : stringValue(config, CONFIG_CHANNEL_ID)));
         }
-        for (Connection connection : activeConnections(projectId, CONNECTOR_TIKTOK)) {
+        for (ConnectionRepository.PublishableConnection connection : connections.getOrDefault(CONNECTOR_TIKTOK, List.of())) {
             Map<String, Object> config = parseConfig(connection.getConfigJson());
             String nickname = stringValue(config, CONFIG_CREATOR_NICKNAME);
             options.add(option(connection, platformRegistry.require(PLATFORM_TIKTOK),
@@ -1035,7 +1069,8 @@ public class PublishTargetService {
         return List.copyOf(options);
     }
 
-    private static TargetOption option(Connection connection, PublishPlatform platform, String label) {
+    private static TargetOption option(ConnectionRepository.PublishableConnection connection, PublishPlatform platform,
+                                       String label) {
         return option(connection, platform, label, null, null, new Object[4]);
     }
 
@@ -1048,8 +1083,8 @@ public class PublishTargetService {
                 config.get("maxVideoPostDurationSec") instanceof Number number ? number.intValue() : null};
     }
 
-    private static TargetOption option(Connection connection, PublishPlatform platform, String label,
-                                       List<String> privacyLevelOptions, String creatorNickname,
+    private static TargetOption option(ConnectionRepository.PublishableConnection connection, PublishPlatform platform,
+                                       String label, List<String> privacyLevelOptions, String creatorNickname,
                                        Object[] creatorFlags) {
         return new TargetOption(platform.id(), connection.getConnectorId(), connection.getId(),
                 label != null ? label : fallbackLabel(connection),
@@ -1070,7 +1105,7 @@ public class PublishTargetService {
     }
 
     /** Never leave a row unlabelled: an account with no name still has to be pickable. */
-    private static String fallbackLabel(Connection connection) {
+    private static String fallbackLabel(ConnectionRepository.PublishableConnection connection) {
         String displayLabel = connection.getDisplayLabel();
         return displayLabel != null && !displayLabel.isBlank() ? displayLabel : connection.getId();
     }
@@ -1079,11 +1114,13 @@ public class PublishTargetService {
      * ACTIVE rows only, in a stable order. The DB returns rows in no defined order, and an unstable order
      * would reshuffle a picker's rows between renders.
      */
-    private List<Connection> activeConnections(String projectId, String connectorId) {
-        return connectionRepository.findByProjectIdAndConnectorId(projectId, connectorId).stream()
+    private Map<String, List<ConnectionRepository.PublishableConnection>> activeConnections(String projectId) {
+        return connectionRepository.findPublishableByProjectIdAndConnectorIdIn(projectId,
+                        List.of(CONNECTOR_META, CONNECTOR_YOUTUBE, CONNECTOR_TIKTOK)).stream()
                 .filter(c -> ACTIVE.equals(c.getStatus()))
-                .sorted(Comparator.comparing(Connection::getId))
-                .toList();
+                .sorted(Comparator.comparing(ConnectionRepository.PublishableConnection::getId))
+                .collect(Collectors.groupingBy(ConnectionRepository.PublishableConnection::getConnectorId,
+                        LinkedHashMap::new, Collectors.toList()));
     }
 
     /**
