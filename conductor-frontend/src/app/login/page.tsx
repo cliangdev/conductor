@@ -12,11 +12,10 @@ import { AuthCard, AuthDivider, GoogleSignInButton } from '@/components/auth/Aut
 import { EmailPasswordForm } from '@/components/auth/EmailPasswordForm'
 import { useAuth } from '@/contexts/AuthContext'
 import { REPO_URL } from '@/components/site/SiteChrome'
+import { safeNext } from '@/lib/safe-next'
 import { ConductorLogo } from '@/components/brand/ConductorLogo'
 
-function resolveNext(next: string | null): string {
-  return next && next.startsWith('/') ? next : '/app/projects'
-}
+const resolveNext = safeNext
 
 function Header() {
   return (

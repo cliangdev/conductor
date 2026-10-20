@@ -7,6 +7,9 @@
 //   * the privacy level is the creator's own choice out of the list TikTok reports for *that*
 //     account — a private account and a public one are offered different sets, so nothing here is
 //     hardcoded and nothing is preselected (a silent default is how every post ends up SELF_ONLY);
+//   * Comment, Duet and Stitch start switched off (not allowed) until the creator allows them, and
+//     are greyed out when the creator's own TikTok settings disable them. Duet and Stitch don't
+//     exist on photo posts, so they aren't shown there;
 //   * commercial content is disclosed through two distinct toggles, "Your Brand" and
 //     "Branded Content", which TikTok renders as *Promotional content* and *Paid partnership*;
 //   * branded content and a private privacy level is a combination TikTok rejects outright, so the
@@ -16,7 +19,6 @@
 // (`disableComment`, `brandContentToggle`, …) rather than a local rewording that would have to be
 // translated at the boundary.
 
-import { useState } from 'react'
 import { Alert } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,6 +36,12 @@ export interface TikTokPublishOptionValues {
   brandContentToggle: boolean
   /** "Your Brand" — the creator promoting their own business. */
   brandOrganicToggle: boolean
+  /**
+   * UI only, never sent to the server: "Disclose commercial content" is switched on. TikTok requires
+   * one of Your Brand / Branded Content to be chosen once it is, so this is what lets
+   * `tiktokOptionsProblem` refuse a disclosure with no type instead of silently dropping it.
+   */
+  discloseCommercial?: boolean
   /** Discloses the post as AI-generated or AI-edited content. */
   isAigc: boolean
   /** Video posts only: where TikTok freezes the cover frame, in milliseconds from the start. Omitted
@@ -45,11 +53,12 @@ export interface TikTokPublishOptionValues {
   photoCoverIndex?: number | null
 }
 
+/** A new target: no privacy level, and every interaction NOT allowed until the creator allows it. */
 export const EMPTY_TIKTOK_OPTIONS: TikTokPublishOptionValues = {
   privacyLevel: null,
-  disableComment: false,
-  disableDuet: false,
-  disableStitch: false,
+  disableComment: true,
+  disableDuet: true,
+  disableStitch: true,
   brandContentToggle: false,
   brandOrganicToggle: false,
   isAigc: false,
@@ -82,6 +91,8 @@ export const BRANDED_PRIVATE_EXPLANATION =
 
 const NO_PRIVACY_LEVEL_EXPLANATION = 'Choose who can see this TikTok post.'
 
+export const DISCLOSURE_CHOICE_EXPLANATION = 'Choose Your Brand or Branded Content'
+
 /** Milliseconds a `videoCoverTimestampMs` value converts to/from, for a person who thinks in seconds. */
 function msToSeconds(ms: number | null | undefined): number | '' {
   return ms == null ? '' : ms / 1000
@@ -99,6 +110,9 @@ function secondsToMs(seconds: string): number | undefined {
  */
 export function tiktokOptionsProblem(options: TikTokPublishOptionValues): string | null {
   if (!options.privacyLevel) return NO_PRIVACY_LEVEL_EXPLANATION
+  if (options.discloseCommercial && !options.brandContentToggle && !options.brandOrganicToggle) {
+    return DISCLOSURE_CHOICE_EXPLANATION
+  }
   if (options.brandContentToggle && isPrivatePrivacyLevel(options.privacyLevel)) {
     return BRANDED_PRIVATE_EXPLANATION
   }
@@ -111,17 +125,20 @@ export function normalizeTikTokOptions(
 ): TikTokPublishOptionValues {
   return {
     privacyLevel: raw?.privacyLevel ?? null,
-    disableComment: raw?.disableComment ?? false,
-    disableDuet: raw?.disableDuet ?? false,
-    disableStitch: raw?.disableStitch ?? false,
+    disableComment: raw?.disableComment ?? true,
+    disableDuet: raw?.disableDuet ?? true,
+    disableStitch: raw?.disableStitch ?? true,
     brandContentToggle: raw?.brandContentToggle ?? false,
     brandOrganicToggle: raw?.brandOrganicToggle ?? false,
     isAigc: raw?.isAigc ?? false,
+    ...(raw?.discloseCommercial ? { discloseCommercial: true } : {}),
     ...(raw?.videoCoverTimestampMs != null ? { videoCoverTimestampMs: raw.videoCoverTimestampMs } : {}),
     ...(raw?.autoAddMusic !== undefined ? { autoAddMusic: raw.autoAddMusic } : {}),
     ...(raw?.photoCoverIndex != null ? { photoCoverIndex: raw.photoCoverIndex } : {}),
   }
 }
+
+const OFF_IN_TIKTOK = 'Turned off in this account’s TikTok settings.'
 
 const SECTION_LABEL =
   'text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground'
@@ -173,6 +190,10 @@ interface TikTokPublishOptionsProps {
   value: TikTokPublishOptionValues
   onChange: (next: TikTokPublishOptionValues) => void
   disabled?: boolean
+  /** Interactions the creator has switched off in their own TikTok settings; shown greyed and off. */
+  creatorDisabled?: { comment?: boolean; duet?: boolean; stitch?: boolean }
+  /** Only the choices the creator must make personally (audience, interactions, disclosure) — no AI label, cover or music. */
+  choicesOnly?: boolean
 }
 
 export function TikTokPublishOptions({
@@ -184,34 +205,32 @@ export function TikTokPublishOptions({
   value,
   onChange,
   disabled,
+  creatorDisabled,
+  choicesOnly = false,
 }: TikTokPublishOptionsProps) {
   // The disclosure section opens on its own once the Post already carries a disclosure, so a saved
   // "Paid partnership" is visible without the creator having to go looking for it.
-  const [opened, setOpened] = useState(false)
-  const disclosing = opened || value.brandContentToggle || value.brandOrganicToggle
+  const disclosing = Boolean(value.discloseCommercial) || value.brandContentToggle || value.brandOrganicToggle
   const brandedPrivately = value.brandContentToggle && isPrivatePrivacyLevel(value.privacyLevel)
 
   const set = (patch: Partial<TikTokPublishOptionValues>) => onChange({ ...value, ...patch })
 
-  // Nobody has to make an audience choice before they even see the field: shown pre-selected on the
-  // first level TikTok allows this account, rather than a "Select who can view…" placeholder that
-  // reads as nothing having been decided yet. The choice is only actually reported (and saved) once
-  // the row is next saved — see `buildSelectionPayload` in destinations/selectionState, which folds this same
-  // default into whatever save happens to fire next, rather than firing one here per row on mount and
-  // racing every other TikTok row doing the same thing in the same tick.
-  const firstAllowed = privacyLevelOptions[0]
-  const displayedPrivacyLevel = value.privacyLevel ?? firstAllowed ?? ''
+  // Nothing is preselected: TikTok requires the creator to choose the audience themselves.
+  const displayedPrivacyLevel = value.privacyLevel ?? ''
 
   function toggleDisclosure(next: boolean) {
-    setOpened(next)
-    if (!next) set({ brandContentToggle: false, brandOrganicToggle: false })
+    set(
+      next
+        ? { discloseCommercial: true }
+        : { discloseCommercial: false, brandContentToggle: false, brandOrganicToggle: false }
+    )
   }
 
   return (
     <div className="space-y-4 border-t border-border bg-surface-raised px-4 py-3">
       <div>
         <Label htmlFor={`${idPrefix}-privacy`} className={SECTION_LABEL}>
-          Who can view this video
+          Who can view this {isVideo ? 'video' : 'post'}
         </Label>
         {privacyLevelOptions.length === 0 ? (
           <Alert variant="warning">
@@ -225,6 +244,7 @@ export function TikTokPublishOptions({
             disabled={disabled}
             onChange={(e) => set({ privacyLevel: e.target.value || null })}
           >
+            <option value="">Choose who can view</option>
             {privacyLevelOptions.map((level) => (
               <option key={level} value={level}>
                 {privacyLevelLabel(level)}
@@ -239,24 +259,31 @@ export function TikTokPublishOptions({
         <SwitchRow
           id={`${idPrefix}-comment`}
           label="Comment"
-          checked={!value.disableComment}
-          disabled={disabled}
+          description={creatorDisabled?.comment ? OFF_IN_TIKTOK : undefined}
+          checked={!value.disableComment && !creatorDisabled?.comment}
+          disabled={disabled || creatorDisabled?.comment}
           onCheckedChange={(allowed) => set({ disableComment: !allowed })}
         />
-        <SwitchRow
-          id={`${idPrefix}-duet`}
-          label="Duet"
-          checked={!value.disableDuet}
-          disabled={disabled}
-          onCheckedChange={(allowed) => set({ disableDuet: !allowed })}
-        />
-        <SwitchRow
-          id={`${idPrefix}-stitch`}
-          label="Stitch"
-          checked={!value.disableStitch}
-          disabled={disabled}
-          onCheckedChange={(allowed) => set({ disableStitch: !allowed })}
-        />
+        {isVideo && (
+          <SwitchRow
+            id={`${idPrefix}-duet`}
+            label="Duet"
+            description={creatorDisabled?.duet ? OFF_IN_TIKTOK : undefined}
+            checked={!value.disableDuet && !creatorDisabled?.duet}
+            disabled={disabled || creatorDisabled?.duet}
+            onCheckedChange={(allowed) => set({ disableDuet: !allowed })}
+          />
+        )}
+        {isVideo && (
+          <SwitchRow
+            id={`${idPrefix}-stitch`}
+            label="Stitch"
+            description={creatorDisabled?.stitch ? OFF_IN_TIKTOK : undefined}
+            checked={!value.disableStitch && !creatorDisabled?.stitch}
+            disabled={disabled || creatorDisabled?.stitch}
+            onCheckedChange={(allowed) => set({ disableStitch: !allowed })}
+          />
+        )}
       </div>
 
       <div className="space-y-2">
@@ -286,21 +313,26 @@ export function TikTokPublishOptions({
               disabled={disabled}
               onCheckedChange={(v) => set({ brandContentToggle: v })}
             />
+            {!value.brandContentToggle && !value.brandOrganicToggle && (
+              <Alert variant="warning">{DISCLOSURE_CHOICE_EXPLANATION}</Alert>
+            )}
             {brandedPrivately && <Alert variant="destructive">{BRANDED_PRIVATE_EXPLANATION}</Alert>}
           </div>
         )}
       </div>
 
-      <SwitchRow
-        id={`${idPrefix}-aigc`}
-        label="AI-generated or AI-edited content"
-        description="Discloses that this post was made or altered with AI."
-        checked={value.isAigc}
-        disabled={disabled}
-        onCheckedChange={(checked) => set({ isAigc: checked })}
-      />
+      {!choicesOnly && (
+        <SwitchRow
+          id={`${idPrefix}-aigc`}
+          label="AI-generated or AI-edited content"
+          description="Discloses that this post was made or altered with AI."
+          checked={value.isAigc}
+          disabled={disabled}
+          onCheckedChange={(checked) => set({ isAigc: checked })}
+        />
+      )}
 
-      {isVideo ? (
+      {choicesOnly ? null : isVideo ? (
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-cover-timestamp`}>Cover frame</Label>
           <Input

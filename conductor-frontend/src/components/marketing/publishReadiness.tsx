@@ -19,6 +19,7 @@
 // edit (the parent bumps `refreshKey`) and after the button lands.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { Modal } from '@/components/ui/modal'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -27,6 +28,44 @@ import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPatch } from '@/lib/api'
 import { statusMeta, statusHasReviewGate } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
+
+/** Whether a blocker is about TikTok consent, so the person should be pointed at the consent page. */
+export function needsConsentLink(finding: PublishFinding, isTikTokTarget: boolean): boolean {
+  return (
+    finding.code === 'CONSENT_NEVER_GIVEN' ||
+    finding.code === 'CONSENT_SUPERSEDED' ||
+    (finding.code === 'PUBLISH_OPTIONS' && isTikTokTarget)
+  )
+}
+
+/**
+ * A finding's text exactly as the server wrote it, plus an "Open the TikTok consent page" link when its
+ * code says consent (or a TikTok target's options) is what's missing. Decided by code, never by wording.
+ */
+export function FindingMessage({
+  finding,
+  isTikTokTarget = false,
+}: {
+  finding: PublishFinding
+  isTikTokTarget?: boolean
+}) {
+  // Read from the URL (not useParams) so this stays a plain leaf that renders anywhere. Findings only
+  // exist after a client-side fetch, so this never renders on the server.
+  const projectId =
+    typeof window === 'undefined' ? null : (window.location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null)
+  if (!projectId || !needsConsentLink(finding, isTikTokTarget)) return <>{finding.message}</>
+  return (
+    <>
+      {finding.message}{' '}
+      <Link
+        href={`/app/projects/${projectId}/marketing/consent`}
+        className="whitespace-nowrap underline underline-offset-2"
+      >
+        Open the TikTok consent page
+      </Link>
+    </>
+  )
+}
 
 export interface PublishFinding {
   code: string

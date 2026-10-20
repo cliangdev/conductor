@@ -108,4 +108,36 @@ describe('middleware', () => {
     expect(response.status).toBe(307)
     expect(response.headers.get('location')).toBe('http://localhost/app/projects')
   })
+
+  it('keeps the query string in next so a deep link survives login', () => {
+    const req = makeRequest('/app/projects/p1/marketing/consent?request=abc-123')
+    const response = middleware(req)
+
+    expect(response.status).toBe(307)
+    const location = new URL(response.headers.get('location')!)
+    expect(location.pathname).toBe('/login')
+    expect(location.searchParams.get('next')).toBe('/app/projects/p1/marketing/consent?request=abc-123')
+  })
+
+  it('returns to the deep link, query included, when an authenticated /login has next', () => {
+    const req = makeRequest(
+      '/login?next=%2Fapp%2Fprojects%2Fp1%2Fmarketing%2Fconsent%3Frequest%3Dabc-123',
+      { access_token: 'valid-token' },
+    )
+    const response = middleware(req)
+
+    expect(response.headers.get('location')).toBe(
+      'http://localhost/app/projects/p1/marketing/consent?request=abc-123',
+    )
+  })
+
+  it.each(['//evil.example.com', '/\\evil.example.com'])(
+    'rejects the protocol-relative next %s when redirecting authenticated /login',
+    (next) => {
+      const req = makeRequest(`/login?next=${encodeURIComponent(next)}`, { access_token: 'valid-token' })
+      const response = middleware(req)
+
+      expect(response.headers.get('location')).toBe('http://localhost/app/projects')
+    },
+  )
 })

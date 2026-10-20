@@ -528,7 +528,12 @@ export async function apiPatch<T>(path: string, body: unknown, token: string): P
   return parseBody<T>(res!)
 }
 
-export async function apiPut<T>(path: string, body: unknown, token: string): Promise<T> {
+export async function apiPut<T>(
+  path: string,
+  body: unknown,
+  token: string,
+  extraHeaders?: Record<string, string>
+): Promise<T> {
   let res: Response
   try {
     res = await timedFetch(path, {
@@ -536,6 +541,7 @@ export async function apiPut<T>(path: string, body: unknown, token: string): Pro
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
+        ...extraHeaders,
       },
       body: JSON.stringify(body),
     })

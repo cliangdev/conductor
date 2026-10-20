@@ -92,24 +92,26 @@ describe('TikTokPublishOptions', () => {
   it('lists exactly the privacy levels the creator reported and nothing more', () => {
     renderOptions({ privacyLevelOptions: ['PUBLIC_TO_EVERYONE', 'SELF_ONLY'] })
 
-    const select = screen.getByLabelText(/who can view this video/i)
-    const rendered = Array.from(select.querySelectorAll('option')).map((o) => o.textContent)
+    const select = screen.getByLabelText(/who can view this/i)
+    const rendered = Array.from(select.querySelectorAll('option'))
+      .filter((o) => o.value !== '')
+      .map((o) => o.textContent)
     expect(rendered).toEqual(['Everyone', 'Only me (private)'])
     expect(screen.queryByRole('option', { name: 'Friends' })).not.toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Followers' })).not.toBeInTheDocument()
   })
 
-  it('preselects the first privacy level the account allows, without reporting it until an edit', () => {
+  it('preselects nothing: the audience shows a placeholder until the creator chooses', () => {
     const { onChange } = renderOptions()
-    expect(screen.getByLabelText(/who can view this video/i)).toHaveValue(ALL_LEVELS[0])
-    // Shown, not yet saved — the caller folds this same default into whatever save happens next
-    // (`withTikTokDefault` in destinations/publishState) rather than this component firing one itself.
+    const select = screen.getByLabelText(/who can view this/i)
+    expect(select).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'Choose who can view' })).toBeInTheDocument()
     expect(onChange).not.toHaveBeenCalled()
   })
 
   it('shows a privacy level already saved on the target rather than the default', () => {
     renderOptions({ value: values({ privacyLevel: 'SELF_ONLY' }) })
-    expect(screen.getByLabelText(/who can view this video/i)).toHaveValue('SELF_ONLY')
+    expect(screen.getByLabelText(/who can view this/i)).toHaveValue('SELF_ONLY')
   })
 
   it('says so when TikTok reported no privacy options for this account', () => {
@@ -119,19 +121,46 @@ describe('TikTokPublishOptions', () => {
 
   it('reports the chosen privacy level upward', async () => {
     const { onChange } = renderOptions()
-    await userEvent.selectOptions(screen.getByLabelText(/who can view this video/i), 'SELF_ONLY')
+    await userEvent.selectOptions(screen.getByLabelText(/who can view this/i), 'SELF_ONLY')
     expect(onChange).toHaveBeenCalledWith(values({ privacyLevel: 'SELF_ONLY' }))
   })
 
-  it('offers the comment, duet and stitch interaction toggles', () => {
-    renderOptions()
+  it('offers the comment, duet and stitch interaction toggles on a video post, all starting off', () => {
+    renderOptions({ isVideo: true })
+    for (const name of ['Comment', 'Duet', 'Stitch']) {
+      expect(screen.getByRole('switch', { name })).not.toBeChecked()
+    }
+  })
+
+  it('starts a new target with every interaction not allowed', () => {
+    expect(EMPTY_TIKTOK_OPTIONS).toMatchObject({ disableComment: true, disableDuet: true, disableStitch: true })
+    expect(normalizeTikTokOptions(null)).toMatchObject({ disableComment: true, disableDuet: true, disableStitch: true })
+  })
+
+  it('hides Duet and Stitch on a photo post', () => {
+    renderOptions({ isVideo: false })
     expect(screen.getByRole('switch', { name: 'Comment' })).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: 'Duet' })).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: 'Stitch' })).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Duet' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Stitch' })).not.toBeInTheDocument()
+  })
+
+  it('greys out and switches off an interaction the creator has disabled in TikTok', () => {
+    renderOptions({
+      isVideo: true,
+      value: values({ disableDuet: false }),
+      creatorDisabled: { duet: true },
+    })
+    const duet = screen.getByRole('switch', { name: 'Duet' })
+    expect(duet).toBeDisabled()
+    expect(duet).not.toBeChecked()
+    expect(screen.getByText(/Turned off in this account/)).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Comment' })).toBeEnabled()
   })
 
   it('renders an allowed interaction as on and turning it off sets the disable flag', async () => {
-    const { onChange } = renderOptions({ value: values({ privacyLevel: 'PUBLIC_TO_EVERYONE' }) })
+    const { onChange } = renderOptions({
+      value: values({ privacyLevel: 'PUBLIC_TO_EVERYONE', disableComment: false }),
+    })
 
     const comment = screen.getByRole('switch', { name: 'Comment' })
     expect(comment).toBeChecked()
@@ -148,7 +177,10 @@ describe('TikTokPublishOptions', () => {
     expect(screen.queryByRole('switch', { name: 'Branded Content' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('switch', { name: /disclose commercial content/i }))
+  })
 
+  it('shows the two disclosure toggles once commercial content is disclosed', () => {
+    renderOptions({ value: values({ discloseCommercial: true }) })
     expect(screen.getByRole('switch', { name: 'Your Brand' })).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Branded Content' })).toBeInTheDocument()
   })
@@ -180,7 +212,40 @@ describe('TikTokPublishOptions', () => {
 
     await userEvent.click(screen.getByRole('switch', { name: /disclose commercial content/i }))
 
-    expect(onChange).toHaveBeenCalledWith(values({ privacyLevel: 'PUBLIC_TO_EVERYONE' }))
+    expect(onChange).toHaveBeenCalledWith(
+      values({ privacyLevel: 'PUBLIC_TO_EVERYONE', discloseCommercial: false })
+    )
+  })
+
+  it('turning disclosure on reports it, and asks for Your Brand or Branded Content', async () => {
+    const { onChange, rerender } = renderOptions({ value: values({ privacyLevel: 'PUBLIC_TO_EVERYONE' }) })
+    await userEvent.click(screen.getByRole('switch', { name: /disclose commercial content/i }))
+    expect(onChange).toHaveBeenCalledWith(
+      values({ privacyLevel: 'PUBLIC_TO_EVERYONE', discloseCommercial: true })
+    )
+    rerender(
+      <TikTokPublishOptions
+        idPrefix="tiktok-conn-a"
+        accountLabel="@acme"
+        privacyLevelOptions={ALL_LEVELS}
+        value={values({ privacyLevel: 'PUBLIC_TO_EVERYONE', discloseCommercial: true })}
+        onChange={onChange}
+      />
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose Your Brand or Branded Content')
+  })
+
+  it('treats a disclosure with neither type chosen as a problem, and not once one is', () => {
+    const base = values({ privacyLevel: 'PUBLIC_TO_EVERYONE', discloseCommercial: true })
+    expect(tiktokOptionsProblem(base)).toBe('Choose Your Brand or Branded Content')
+    expect(tiktokOptionsProblem({ ...base, brandOrganicToggle: true })).toBeNull()
+    expect(tiktokOptionsProblem({ ...base, brandContentToggle: true })).toBeNull()
+    expect(tiktokOptionsProblem({ ...base, discloseCommercial: false })).toBeNull()
+  })
+
+  it('says “post” rather than “video” for a photo post', () => {
+    renderOptions({ isVideo: false })
+    expect(screen.getByLabelText('Who can view this post')).toBeInTheDocument()
   })
 
   it('explains why branded content cannot be posted privately instead of silently disabling it', async () => {
@@ -191,7 +256,7 @@ describe('TikTokPublishOptions', () => {
     expect(alert).toHaveTextContent(/can.t be posted privately/i)
     // The toggle stays reachable so the creator can resolve it either way.
     expect(screen.getByRole('switch', { name: 'Branded Content' })).toBeEnabled()
-    expect(screen.getByLabelText(/who can view this video/i)).toBeEnabled()
+    expect(screen.getByLabelText(/who can view this/i)).toBeEnabled()
   })
 
   it('does not complain about a private post with no branded content', () => {
@@ -201,16 +266,16 @@ describe('TikTokPublishOptions', () => {
 
   it('scopes its control ids to the target so two accounts do not collide', () => {
     const { unmount } = renderOptions({ idPrefix: 'tiktok-conn-a' })
-    expect(screen.getByLabelText(/who can view this video/i).id).toBe('tiktok-conn-a-privacy')
+    expect(screen.getByLabelText(/who can view this/i).id).toBe('tiktok-conn-a-privacy')
     unmount()
 
     renderOptions({ idPrefix: 'tiktok-conn-b' })
-    expect(screen.getByLabelText(/who can view this video/i).id).toBe('tiktok-conn-b-privacy')
+    expect(screen.getByLabelText(/who can view this/i).id).toBe('tiktok-conn-b-privacy')
   })
 
   it('disables every control while a save is in flight', () => {
     renderOptions({ disabled: true, value: values({ brandContentToggle: true }) })
-    expect(screen.getByLabelText(/who can view this video/i)).toBeDisabled()
+    expect(screen.getByLabelText(/who can view this/i)).toBeDisabled()
     expect(screen.getByRole('switch', { name: 'Comment' })).toBeDisabled()
     expect(screen.getByRole('switch', { name: 'Branded Content' })).toBeDisabled()
   })

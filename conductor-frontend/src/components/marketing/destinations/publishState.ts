@@ -3,7 +3,6 @@
 // Workflow publish at all?). No React, no fetches — everything here is unit-testable on its own.
 
 import { statusHue, type StatusHue } from '@/components/ui/status-badge'
-import type { TikTokPublishOptionValues } from '@/components/marketing/TikTokPublishOptions'
 import type { WorkflowView } from '@/types/workItem'
 import type { PublishPlatform, PublishTargetOption, SelectedPublishTarget } from './types'
 
@@ -104,22 +103,6 @@ export function hasAccount(targets: PublishTargetOption[]): boolean {
 
 export function isUnhealthy(option: PublishTargetOption): boolean {
   return option.healthStatus === 'UNHEALTHY'
-}
-
-/**
- * A TikTok target's options, with a missing privacy level backfilled from the account's own first
- * allowed level — the same default TikTokPublishOptions shows pre-selected, so the picker never saves
- * (or gates approval on) "no privacy level chosen" for a row the audience select already shows as
- * decided. Applied at save time, in one place, rather than as a per-row effect on mount: two TikTok
- * rows defaulting in the same tick would otherwise race each other's save.
- */
-export function withTikTokDefault(
-  option: PublishTargetOption,
-  values: TikTokPublishOptionValues
-): TikTokPublishOptionValues {
-  if (values.privacyLevel) return values
-  const fallback = option.privacyLevelOptions?.[0]
-  return fallback ? { ...values, privacyLevel: fallback } : values
 }
 
 /**

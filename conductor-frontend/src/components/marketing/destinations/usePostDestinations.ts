@@ -7,6 +7,7 @@
 // bumps the key, which re-reads both the preflight and this hook's selection.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { recordTikTokConsent } from '@/components/marketing/consent/api'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPost, apiPut } from '@/lib/api'
 import { statusMeta } from '@/lib/workflows'
@@ -235,6 +236,27 @@ export function usePostDestinations({
     }
   }, [consentRequired, projectId, workItemId, token, consentSubject, refreshKey])
 
+  // The consent write is a person-only, atomic PUT carrying the six choices for every TikTok target
+  // and the Post's consent ETag (from GET publish-consent, or the last write) as If-Match.
+  const giveConsent = useCallback(async (): Promise<PublishConsentState> => {
+    const targets = tiktokTargets.map((t) => {
+      const o = t.options
+      if (!o.privacyLevel) throw new Error('Choose who can view each TikTok post before you consent.')
+      return {
+        connectionId: t.connectionId,
+        privacyLevel: o.privacyLevel,
+        disableComment: o.disableComment,
+        disableDuet: o.disableDuet,
+        disableStitch: o.disableStitch,
+        brandContentToggle: o.brandContentToggle,
+        brandOrganicToggle: o.brandOrganicToggle,
+      }
+    })
+    const etag = consentServer?.etag ?? null
+    if (!etag) throw new Error('Could not read this post’s TikTok consent. Reload the page and try again.')
+    return recordTikTokConsent(projectId, workItemId, etag, { targets, channel: 'POST_PAGE' }, token)
+  }, [tiktokTargets, consentServer, projectId, workItemId, token])
+
   const consentGiven = Boolean(consentServer?.valid)
   const tiktokBlockedReason = tiktokSubmissionBlockedReason(tiktokTargets, consentGiven, consentServer?.verdict)
 
@@ -315,19 +337,23 @@ export function usePostDestinations({
       setConsent: async (next) => {
         setConsentSaving(true)
         try {
-          const state = await recordPublishConsent(projectId, workItemId, next, token)
+          const state = next ? await giveConsent() : await recordPublishConsent(projectId, workItemId, false, token)
           setConsentServer(state)
           setConsentError(null)
           onConsentChangedRef.current?.(Boolean(state.valid))
         } catch (err) {
-          setConsentError(apiErrorMessage(err, 'Could not record your TikTok consent.'))
+          setConsentError(
+            err instanceof Error && !('status' in err)
+              ? err.message
+              : apiErrorMessage(err, 'Could not record your TikTok consent.')
+          )
         } finally {
           setConsentSaving(false)
         }
       },
       editDestinations: () => setEditingStatus(status),
     }),
-    [save, projectId, workItemId, token, status]
+    [save, giveConsent, projectId, workItemId, token, status]
   )
 
   const rows = useMemo(

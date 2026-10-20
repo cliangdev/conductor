@@ -7,6 +7,8 @@ import {
   PublishReadinessAction,
   type PublishPreflight,
   type UsePublishReadinessArgs,
+  FindingMessage,
+  needsConsentLink,
 } from './publishReadiness'
 
 const { toastErrorSpy } = vi.hoisted(() => ({ toastErrorSpy: vi.fn() }))
@@ -257,5 +259,33 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
     rerender(<Harness refreshKey={2} />)
     await screen.findByText(/1 thing to fix/)
     expect(fetchMock.mock.calls.length).toBeGreaterThan(before)
+  })
+})
+
+describe('FindingMessage', () => {
+  const finding = (code: string) => ({ code, message: 'Choose who can see this post on the TikTok consent page', targetId: 't1' })
+
+  it('shows the server message as written, with a consent-page link for a consent code', async () => {
+    window.history.pushState({}, '', '/app/projects/p9/marketing/posts/x')
+    render(<p><FindingMessage finding={finding('CONSENT_NEVER_GIVEN')} /></p>)
+    expect(screen.getByText(/Choose who can see this post on the TikTok consent page/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open the TikTok consent page' })).toHaveAttribute(
+      'href',
+      '/app/projects/p9/marketing/consent'
+    )
+  })
+
+  it('links by code only: consent codes, or PUBLISH_OPTIONS on a TikTok target', () => {
+    expect(needsConsentLink(finding('CONSENT_NEVER_GIVEN'), false)).toBe(true)
+    expect(needsConsentLink(finding('CONSENT_SUPERSEDED'), false)).toBe(true)
+    expect(needsConsentLink(finding('PUBLISH_OPTIONS'), true)).toBe(true)
+    expect(needsConsentLink(finding('PUBLISH_OPTIONS'), false)).toBe(false)
+    expect(needsConsentLink(finding('NO_MEDIA'), true)).toBe(false)
+  })
+
+  it('does not link a message that merely mentions the consent page', () => {
+    window.history.pushState({}, '', '/app/projects/p9/marketing/posts/x')
+    render(<p><FindingMessage finding={finding('NO_MEDIA')} /></p>)
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 })
