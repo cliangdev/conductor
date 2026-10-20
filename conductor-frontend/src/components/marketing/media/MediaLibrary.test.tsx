@@ -468,4 +468,109 @@ describe('MediaLibrary paging', () => {
     await waitFor(() => expect(screen.getByText('73 selected')).toBeInTheDocument())
     expect(tileIds()).toHaveLength(73)
   })
+  it('"On posts" and "Unused" load the whole library unpaged, and leaving them pages again', async () => {
+    const user = userEvent.setup()
+    setup(many(130).map((r, i) => ({ ...r, postCount: i === 100 ? 1 : 0, creativeCount: 0 })))
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Unused' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(129))
+    expect(lastListPath()).not.toContain('limit=')
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Unused' }))
+    await user.click(screen.getByRole('button', { name: 'On posts' }))
+    await waitFor(() => expect(tileIds()).toEqual(['m100']))
+    expect(lastListPath()).not.toContain('limit=')
+    await user.click(screen.getByRole('button', { name: 'On posts' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(60))
+    expect(lastListPath()).toContain('limit=60')
+    expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument()
+  })
+
+  it('discards a slow first-page response that arrives after a filter change', async () => {
+    const user = userEvent.setup()
+    const rows = many(130).map((r, i) => (i < 30 ? { ...r, checked: true } : r))
+    all = rows
+    load(rows)
+    const fast = (apiGetPage as Mock).getMockImplementation()!
+    let releaseSlow!: () => void
+    ;(apiGetPage as Mock).mockImplementation(async (path: string, ...rest: unknown[]) => {
+      const res = await fast(path, ...rest)
+      if (path.includes('limit=60') && !path.includes('unchecked') && !path.includes('cursor') && !releaseSlow) {
+        await new Promise<void>((r) => { releaseSlow = r })
+      }
+      return res
+    })
+    render(<MediaLibrary projectId="proj-1" />)
+    await waitFor(() => expect(releaseSlow).toBeDefined())
+    // Filter while the unfiltered first page is still in flight.
+    await user.click(screen.getByRole('button', { name: 'Unchecked' }))
+    await waitFor(() => expect(lastListPath()).toContain('unchecked=true'))
+    await waitFor(() => expect(tileIds()).toHaveLength(60))
+    const before = tileIds()
+    expect(before).not.toContain('m000')
+    // Now the stale response lands; it must not replace the filtered list or its cursor.
+    act(() => releaseSlow())
+    await new Promise((r) => setTimeout(r, 20))
+    expect(tileIds()).toEqual(before)
+    expect(listPaths().filter((p) => p.includes('limit=60'))).toHaveLength(2)
+  })
+
+  it('discards a slow "Load more" page that arrives after a filter change', async () => {
+    const user = userEvent.setup()
+    const rows = many(130).map((r, i) => (i % 3 !== 2 ? { ...r, aiGenerated: true } : r))
+    all = rows
+    load(rows)
+    const fast = (apiGetPage as Mock).getMockImplementation()!
+    let release!: () => void
+    ;(apiGetPage as Mock).mockImplementation(async (path: string, ...rest: unknown[]) => {
+      const res = await fast(path, ...rest)
+      if (path.includes('cursor=') && !release) await new Promise<void>((r) => { release = r })
+      return res
+    })
+    render(<MediaLibrary projectId="proj-1" />)
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(release).toBeDefined())
+    await user.click(screen.getByRole('button', { name: 'AI-generated' }))
+    await waitFor(() => expect(lastListPath()).toContain('aiGenerated=true'))
+    await waitFor(() => expect(tileIds()).toHaveLength(60))
+    const before = tileIds()
+    act(() => release())
+    await new Promise((r) => setTimeout(r, 20))
+    expect(tileIds()).toEqual(before)
+    expect(tileIds().every((id) => rows.find((r) => r.id === id)!.aiGenerated)).toBe(true)
+    // The cursor still belongs to the filtered list: the next page completes it.
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(87))
+  })
+
+  it('shows an error and keeps the loaded tiles when loading the next page fails', async () => {
+    const user = userEvent.setup()
+    setup(many(100))
+    await screen.findByTestId('media-grid')
+    const ok = (apiGetPage as Mock).getMockImplementation()!
+    ;(apiGetPage as Mock).mockRejectedValueOnce({ status: 500, detail: 'boom' })
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('boom')).toBeInTheDocument()
+    expect(tileIds()).toHaveLength(60)
+    ;(apiGetPage as Mock).mockImplementation(ok)
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(100))
+  })
+
+  it('deleting an item removes its tile and keeps paging from the same cursor', async () => {
+    const user = userEvent.setup()
+    ;(apiDelete as Mock).mockResolvedValue(undefined)
+    setup(many(100))
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Open item 0' }))
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('alertdialog').catch(() => screen.getByRole('dialog', { name: /Delete this media/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(59))
+    expect(tileIds()).not.toContain('m000')
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(99))
+    expect(new Set(tileIds()).size).toBe(99)
+  })
 })

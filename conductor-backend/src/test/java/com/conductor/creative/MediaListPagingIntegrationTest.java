@@ -197,4 +197,118 @@ class MediaListPagingIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(page.items().get(0).postCount()).isZero();
         assertThat(page.items().get(0).creativeCount()).isZero();
     }
+
+    @Test
+    void searchTreatsLikeWildcardsAndBackslashesAsLiterals() {
+        OffsetDateTime base = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        photo("100% real", base);
+        photo("1000 real", base.minusSeconds(1));
+        photo("a_b", base.minusSeconds(2));
+        photo("axb", base.minusSeconds(3));
+        photo("back\\slash", base.minusSeconds(4));
+        assertThat(page(null, "%", false, false, false, 10, null).items()).hasSize(1);
+        assertThat(page(null, "0% r", false, false, false, 10, null).items()).hasSize(1);
+        assertThat(page(null, "_", false, false, false, 10, null).items()).hasSize(1);
+        assertThat(page(null, "a_b", false, false, false, 10, null).items()).hasSize(1);
+        assertThat(page(null, "\\", false, false, false, 10, null).items()).hasSize(1);
+        // Blank search is no filter; surrounding whitespace is trimmed.
+        assertThat(page(null, "   ", false, false, false, 10, null).items()).hasSize(5);
+        assertThat(page(null, "  AXB ", false, false, false, 10, null).items()).hasSize(1);
+    }
+
+    @Test
+    void searchAndFiltersStayConsistentAcrossPages() {
+        OffsetDateTime base = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        for (int i = 0; i < 12; i++) {
+            // Pairs share created_at; every third is unchecked, every other is AI, a few labels do not match.
+            photo((i % 4 == 3 ? "other " : "Beach ") + i, base.minusSeconds(i / 2),
+                    CreativePhoto.MEDIA_KIND_IMAGE, i % 3 != 0, i % 2 == 0, false);
+        }
+        for (boolean unchecked : new boolean[] {false, true}) {
+            for (boolean ai : new boolean[] {false, true}) {
+                List<String> whole = page(null, "beach", unchecked, ai, false, null, null).items().stream()
+                        .map(v -> v.photo().getId()).toList();
+                for (int limit : new int[] {1, 2, 3}) {
+                    List<String> ids = new ArrayList<>();
+                    String cursor = null;
+                    do {
+                        var pg = page(null, "beach", unchecked, ai, false, limit, cursor);
+                        pg.items().forEach(v -> ids.add(v.photo().getId()));
+                        cursor = pg.nextCursor();
+                    } while (cursor != null);
+                    assertThat(ids).as("unchecked=%s ai=%s limit=%d", unchecked, ai, limit).containsExactlyElementsOf(whole);
+                }
+            }
+        }
+    }
+
+    @Test
+    void aCursorStaysValidWhenItsRowIsDeletedOrNewerRowsArrive() {
+        OffsetDateTime base = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        for (int i = 0; i < 6; i++) {
+            photo("p" + i, base.minusSeconds(i));
+        }
+        var first = page(null, null, false, false, false, 2, null);
+        photoRepository.deleteById(first.items().get(1).photo().getId());
+        photo("brand new", base.plusSeconds(60));
+        var second = page(null, null, false, false, false, 2, first.nextCursor());
+        assertThat(second.items()).extracting(v -> v.photo().getLabel()).containsExactly("p2", "p3");
+    }
+
+    @Test
+    void microsecondTimestampsSurviveTheCursorRoundTrip() {
+        OffsetDateTime at = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS).withNano(123_456_000);
+        photo("a", at);
+        photo("b", at);
+        photo("c", at.minusNanos(1_000));
+        assertThat(walk(1)).hasSize(3).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void tamperedCursorsAreRejectedNotServerErrors() {
+        photo("a", OffsetDateTime.now());
+        java.util.function.Function<String, String> enc = raw -> java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        for (String bad : new String[] {"", "   ", "1:2", "x:y:z", "1:2:", "99999999999999999999:0:id",
+                "99999999999999:0:id", "-99999999999999:0:id", "1:-9999999999999999:id"}) {
+            String cursor = bad.isBlank() ? bad : enc.apply(bad);
+            if (bad.isBlank()) {
+                // A blank cursor means "first page".
+                assertThat(page(null, null, false, false, false, 5, cursor).items()).hasSize(1);
+            } else {
+                assertThatThrownBy(() -> page(null, null, false, false, false, 5, cursor)).as(bad)
+                        .isInstanceOf(BusinessException.class);
+            }
+        }
+    }
+
+    @Test
+    void aNonMemberGetsNotFoundOnThePagedPath() {
+        photo("a", OffsetDateTime.now());
+        User stranger = new User();
+        stranger.setFirebaseUid("uid-" + UUID.randomUUID());
+        stranger.setEmail(UUID.randomUUID() + "@example.com");
+        stranger.setName("Stranger");
+        User saved = userRepository.save(stranger);
+        assertThatThrownBy(() -> photoService.listPhotosPage(project.getId(), false, null, null, null, false, false, 5, null, saved))
+                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+        assertThatThrownBy(() -> photoService.listPhotosPage(project.getId(), false, null, null, null, false, false, null, null, saved))
+                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+    }
+
+    @Test
+    void otherProjectsMediaNeverLeaksIntoAPage() {
+        OffsetDateTime base = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        photo("mine", base);
+        Project other = new Project();
+        other.setName("Other");
+        other.setKey("OT" + UUID.randomUUID().toString().substring(0, 6).toUpperCase());
+        other.setCreatedBy(user);
+        other = projectRepository.save(other);
+        CreativePhoto foreign = photo("theirs", base.plusSeconds(1));
+        foreign.setProjectId(other.getId());
+        photoRepository.save(foreign);
+        var all = page(null, null, false, false, false, 10, null);
+        assertThat(all.items()).extracting(v -> v.photo().getLabel()).containsExactly("mine");
+    }
 }

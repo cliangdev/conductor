@@ -253,7 +253,13 @@ public class CreativePhotoService {
                 if (parts.length != 3 || parts[2].isEmpty()) {
                     throw new IllegalArgumentException();
                 }
-                Instant at = Instant.ofEpochSecond(Long.parseLong(parts[0]), Long.parseLong(parts[1]) * 1000L);
+                long seconds = Long.parseLong(parts[0]);
+                long micros = Long.parseLong(parts[1]);
+                // Bounded to years Postgres timestamptz can hold; a tampered value must be a 400, not a SQL error.
+                if (seconds < 0 || seconds > 253_402_300_799L || micros < 0 || micros > 999_999L) {
+                    throw new IllegalArgumentException();
+                }
+                Instant at = Instant.ofEpochSecond(seconds, micros * 1000L);
                 return new Cursor(at.atOffset(ZoneOffset.UTC), parts[2]);
             } catch (RuntimeException e) {
                 throw new BusinessException("Invalid cursor");
