@@ -419,6 +419,8 @@ describe('MediaLibrary paging', () => {
       setup(many(100))
       await screen.findByTestId('media-grid')
       expect(listPaths()).toHaveLength(1)
+      // The grid can paint before the effect that attaches the sentinel observer runs.
+      await waitFor(() => expect(observers.length).toBeGreaterThan(0))
       act(() => observers[observers.length - 1]([{ isIntersecting: true }]))
       await waitFor(() => expect(tileIds()).toHaveLength(100))
       expect(listPaths()).toHaveLength(2)

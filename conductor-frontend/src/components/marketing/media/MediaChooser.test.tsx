@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
+  apiGetPage: vi.fn(),
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiPut: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock('@/components/marketing/creatives/mediaUpload', async (importOriginal) =
   uploadMediaFile: vi.fn(),
 }))
 
-import { apiGet } from '@/lib/api'
+import { apiGetPage } from '@/lib/api'
 import { uploadMediaFile } from '@/components/marketing/creatives/mediaUpload'
 import { MediaChooser } from './MediaChooser'
 import { photo } from './testFixtures'
@@ -33,8 +34,37 @@ const rows: CreativePhoto[] = [
   photo('e', 'Track', 1, 1, { mediaKind: 'AUDIO', checked: true }),
 ]
 
+/** A fake server: applies includeBlocked / mediaKind / q / limit / cursor like the real list endpoint. */
+function serve(all: CreativePhoto[]) {
+  ;(apiGetPage as Mock).mockImplementation(async (path: string) => {
+    const q = new URL(`http://x${path}`).searchParams
+    const kinds = q.get('mediaKind')?.split(',')
+    const needle = q.get('q')?.toLowerCase()
+    let list = all
+      .filter((r) => q.get('includeBlocked') === 'true' || !r.blocked)
+      .filter((r) => !kinds || kinds.includes(r.mediaKind ?? 'IMAGE'))
+      .filter((r) => !needle || (r.label ?? '').toLowerCase().includes(needle))
+      .filter((r) => q.get('aiGenerated') !== 'true' || r.aiGenerated)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+    const cursor = q.get('cursor')
+    if (cursor) list = list.slice(list.findIndex((r) => r.id === cursor.replace('after:', '')) + 1)
+    const limit = q.get('limit') ? Number(q.get('limit')) : null
+    const page = limit == null ? list : list.slice(0, limit)
+    const next = limit != null && list.length > limit ? `after:${page[page.length - 1].id}` : null
+    return { data: page, nextCursor: next }
+  })
+}
+
+const paths = () => (apiGetPage as Mock).mock.calls.map((c) => new URL(`http://x${c[0] as string}`).searchParams)
+
+function manyImages(n: number): CreativePhoto[] {
+  return Array.from({ length: n }, (_, i) =>
+    photo(`m${String(i).padStart(3, '0')}`, `Shot ${i}`, 10, 10, { checked: true, createdAt: `2026-02-01T00:${String(59 - Math.floor(i / 60)).padStart(2, '0')}:${String(59 - (i % 60)).padStart(2, '0')}Z` }),
+  )
+}
+
 function setup(props: Partial<React.ComponentProps<typeof MediaChooser>> = {}) {
-  ;(apiGet as Mock).mockResolvedValue(rows)
+  serve(rows)
   const onPicked = vi.fn()
   const onOpenChange = vi.fn()
   render(<MediaChooser open onOpenChange={onOpenChange} projectId="proj-1" token="tok" onPicked={onPicked} {...props} />)
@@ -57,7 +87,7 @@ describe('MediaChooser', () => {
   })
 
   it('shows a skeleton while loading', () => {
-    ;(apiGet as Mock).mockReturnValue(new Promise(() => {}))
+    ;(apiGetPage as Mock).mockReturnValue(new Promise(() => {}))
     render(<MediaChooser open onOpenChange={vi.fn()} projectId="proj-1" token="tok" onPicked={vi.fn()} />)
     expect(screen.getByTestId('chooser-skeleton')).toBeInTheDocument()
   })
@@ -136,16 +166,98 @@ describe('MediaChooser', () => {
   })
 
   it('sorting by name groups set members under the set name', async () => {
-    ;(apiGet as Mock).mockResolvedValue([
-      photo('s1', '01-import 4x5 slide 01'),
-      photo('s2', '01-import 4x5 slide 02'),
-      photo('x', 'Lone photo'),
-    ])
+    serve([photo('s1', '01-import 4x5 slide 01'), photo('s2', '01-import 4x5 slide 02'), photo('x', 'Lone photo')])
     render(<MediaChooser open onOpenChange={vi.fn()} projectId="proj-1" token="tok" onPicked={vi.fn()} />)
     await screen.findByTestId('chooser-tile-s1')
     expect(screen.queryByRole('heading', { name: '01-import' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Name' }))
     expect(screen.getByRole('heading', { name: '01-import' })).toBeInTheDocument()
+  })
+
+  it('asks for the first page only, without blocked items, scoped to the chooser kinds', async () => {
+    setup()
+    await screen.findByTestId('chooser-tile-a')
+    expect(apiGetPage).toHaveBeenCalledTimes(1)
+    const q = paths()[0]
+    expect(q.get('limit')).toBe('60')
+    expect(q.get('includeBlocked')).toBe('false')
+    expect(q.get('mediaKind')).toBe('IMAGE,VIDEO')
+    expect(q.get('cursor')).toBeNull()
+  })
+
+  it('a single-kind chooser sends just that kind', async () => {
+    setup({ kinds: ['VIDEO'] })
+    await screen.findByTestId('chooser-tile-d')
+    expect(paths()[0].get('mediaKind')).toBe('VIDEO')
+  })
+
+  it('loads the next page on "Load more", appends it, and drops the button on the last page', async () => {
+    serve(manyImages(130))
+    render(<MediaChooser open onOpenChange={vi.fn()} projectId="proj-1" token="tok" onPicked={vi.fn()} />)
+    await screen.findByTestId('chooser-tile-m000')
+    expect(screen.getAllByTestId(/^chooser-tile-/)).toHaveLength(60)
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(screen.getAllByTestId(/^chooser-tile-/)).toHaveLength(120))
+    expect(paths()[1].get('cursor')).toBe('after:m059')
+    expect(paths()[1].get('limit')).toBe('60')
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(screen.getAllByTestId(/^chooser-tile-/)).toHaveLength(130))
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  it('search is sent to the server and restarts from the first page', async () => {
+    serve(manyImages(130))
+    render(<MediaChooser open onOpenChange={vi.fn()} projectId="proj-1" token="tok" onPicked={vi.fn()} />)
+    await screen.findByTestId('chooser-tile-m000')
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(screen.getAllByTestId(/^chooser-tile-/)).toHaveLength(120))
+    await userEvent.type(screen.getByLabelText('Search by label'), 'Shot 12')
+    await waitFor(() => expect(paths().some((q) => q.get('q') === 'Shot 12')).toBe(true))
+    const search = paths().filter((q) => q.get('q') === 'Shot 12')
+    expect(search.every((q) => q.get('cursor') == null)).toBe(true)
+    // "Shot 12", "Shot 120".."Shot 129" = 11 matches, all on one page.
+    await waitFor(() => expect(screen.getAllByTestId(/^chooser-tile-/)).toHaveLength(11))
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  it('switching the kind tab re-queries the first page for that kind', async () => {
+    setup()
+    await screen.findByTestId('chooser-tile-a')
+    await userEvent.click(screen.getByRole('tab', { name: 'Video' }))
+    await waitFor(() => expect(paths().at(-1)!.get('mediaKind')).toBe('VIDEO'))
+    expect(paths().at(-1)!.get('cursor')).toBeNull()
+  })
+
+  it('discards a slow response for an older query', async () => {
+    serve(rows)
+    const impl = (apiGetPage as Mock).getMockImplementation()!
+    let releaseFirst!: () => void
+    const gate = new Promise<void>((r) => (releaseFirst = r))
+    ;(apiGetPage as Mock).mockImplementation(async (path: string, ...rest: unknown[]) => {
+      if (!new URL(`http://x${path}`).searchParams.get('q')) {
+        await gate // the unfiltered request is slow
+      }
+      return impl(path, ...rest)
+    })
+    render(<MediaChooser open onOpenChange={vi.fn()} projectId="proj-1" token="tok" onPicked={vi.fn()} />)
+    await userEvent.type(screen.getByLabelText('Search by label'), 'City')
+    await screen.findByTestId('chooser-tile-b')
+    expect(screen.queryByTestId('chooser-tile-a')).not.toBeInTheDocument()
+    releaseFirst()
+    await new Promise((r) => setTimeout(r, 20))
+    // The older, unfiltered page must not overwrite the search results.
+    expect(screen.queryByTestId('chooser-tile-a')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chooser-tile-b')).toBeInTheDocument()
+  })
+
+  it('shows a load error without losing what is on screen', async () => {
+    serve(manyImages(130))
+    render(<MediaChooser open onOpenChange={vi.fn()} projectId="proj-1" token="tok" onPicked={vi.fn()} />)
+    await screen.findByTestId('chooser-tile-m000')
+    ;(apiGetPage as Mock).mockRejectedValueOnce({})
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('Could not load more media — please try again.')).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^chooser-tile-/)).toHaveLength(60)
   })
 
   it('upload tab saves files to the library, selects them and returns to Library', async () => {

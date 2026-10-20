@@ -304,4 +304,19 @@ class MarketingQueryCountTest extends AbstractNoneWebIntegrationTest {
         assertThat(page.nextCursor()).isNotNull();
         assertThat(page.items()).allSatisfy(v -> assertThat(v.postCount()).isEqualTo(1));
     }
+
+    @Test
+    void photosPageWithIncludeBlockedAndMediaKindIsConstantInItems() {
+        User u = user();
+        Project p1 = project(u);
+        Project p20 = project(u);
+        photo(p1, u);
+        for (int i = 1; i <= 25; i++) {
+            photo(p20, u);
+        }
+        var images = java.util.Set.of(CreativePhoto.MEDIA_KIND_IMAGE);
+        int q1 = queries(() -> photoService.listPhotosPage(p1.getId(), true, images, null, null, false, false, 1, null, u));
+        int q20 = queries(() -> photoService.listPhotosPage(p20.getId(), true, images, null, null, false, false, 20, null, u));
+        assertCounts(q1, q20, "photos page includeBlocked+mediaKind");
+    }
 }

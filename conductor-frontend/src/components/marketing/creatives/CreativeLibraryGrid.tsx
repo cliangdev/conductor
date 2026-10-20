@@ -32,13 +32,13 @@ import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/mark
 import {
   creativeToRenderCreative,
   createCreative,
-  listCreativePhotos,
   listCreatives,
   type Creative,
   type CreativePhoto,
   type CreativeState,
 } from '@/components/marketing/creatives/types'
 import type { RenderBrand } from '@/components/marketing/creatives/renderTypes'
+import { tileMediaIds, useMediaByIds } from '@/components/marketing/media/useMediaByIds'
 
 const STATE_HUE: Record<CreativeState, 'gray' | 'teal' | 'slate'> = {
   DRAFT: 'gray',
@@ -176,7 +176,6 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
   const [kits, setKits] = useState<BrandKit[] | null>(null)
   const [creatives, setCreatives] = useState<Creative[] | null>(null)
-  const [media, setMedia] = useState<CreativePhoto[]>([])
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -190,39 +189,9 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       .catch(() => setKits([]))
   }, [projectId, accessToken])
 
-  // Only CLIP tiles need this — see ClipThumb's fallback to the default clip media's own poster,
-  // for a Clip that hasn't been rendered yet.
-  useEffect(() => {
-    if (!projectId || !accessToken) return
-    listCreativePhotos(projectId, accessToken, true, 'VIDEO')
-      .then(setMedia)
-      .catch(() => setMedia([]))
-  }, [projectId, accessToken])
-
-  // CAROUSEL tiles without a render fall back to slide 1 — load IMAGE media only when one needs it.
-  const [imageMedia, setImageMedia] = useState<CreativePhoto[]>([])
-  const needsImages = (creatives ?? []).some((c) => c.kind === 'CAROUSEL' && !c.latestRenderThumbnailUrl)
-  useEffect(() => {
-    if (!projectId || !accessToken || !needsImages) return
-    listCreativePhotos(projectId, accessToken, true, 'IMAGE')
-      .then(setImageMedia)
-      .catch(() => setImageMedia([]))
-  }, [projectId, accessToken, needsImages])
-
-  // Referentially stable across list arrivals that add nothing a tile can see: the map is keyed on
-  // each id with its url/poster, so a new Map only appears when one of those changed and memoised
-  // tiles aren't re-drawn needlessly.
-  const mediaKey = useMemo(
-    () => [...media, ...imageMedia].map((m) => `${m.id}|${m.url ?? ''}|${m.posterUrl ?? ''}`).join('\n'),
-    [media, imageMedia]
-  )
-  const mediaById = useMemo(() => {
-    const map = new Map<string, CreativePhoto>()
-    for (const m of media) map.set(m.id, m)
-    for (const m of imageMedia) map.set(m.id, m)
-    return map
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuilt only when what a tile can see changes
-  }, [mediaKey])
+  // Tiles fall back to their media's poster / slide 1 / background clip; resolve just those items by id.
+  const tileIds = useMemo(() => tileMediaIds(creatives ?? [], { motion: true }), [creatives])
+  const mediaById = useMediaByIds(projectId, accessToken, tileIds)
 
   useEffect(() => {
     if (!projectId || !accessToken) return

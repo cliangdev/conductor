@@ -185,6 +185,19 @@ public class CreativePhotoService {
     public PhotoPage listPhotosPage(String projectId, boolean includeBlocked, Set<String> mediaKinds,
                                     String labelPrefix, String labelContains, boolean uncheckedOnly,
                                     boolean aiGeneratedOnly, Integer limit, String cursor, User caller) {
+        return listPhotosPage(projectId, includeBlocked, mediaKinds, labelPrefix, labelContains, uncheckedOnly,
+                aiGeneratedOnly, limit, cursor, null, caller);
+    }
+
+    /**
+     * As above, optionally narrowed to {@code ids} (null/empty = no id filter). Lets a caller that only
+     * needs a handful of known items (a tile resolving its poster) fetch and sign just those.
+     */
+    @Transactional(readOnly = true)
+    public PhotoPage listPhotosPage(String projectId, boolean includeBlocked, Set<String> mediaKinds,
+                                    String labelPrefix, String labelContains, boolean uncheckedOnly,
+                                    boolean aiGeneratedOnly, Integer limit, String cursor, Set<String> ids,
+                                    User caller) {
         requireMember(projectId, caller);
         Cursor after = cursor == null || cursor.isBlank() ? null : Cursor.decode(cursor);
         Specification<CreativePhoto> spec = (root, query, cb) -> {
@@ -195,6 +208,9 @@ public class CreativePhotoService {
             }
             if (mediaKinds != null && !mediaKinds.isEmpty()) {
                 where.add(root.get("mediaKind").in(mediaKinds));
+            }
+            if (ids != null && !ids.isEmpty()) {
+                where.add(root.get("id").in(ids));
             }
             if (labelPrefix != null && !labelPrefix.isEmpty()) {
                 where.add(cb.like(cb.lower(root.get("label")), likeEscape(labelPrefix) + "%", '\\'));

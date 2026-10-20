@@ -36,7 +36,6 @@ import {
 } from '@/components/marketing/creatives/placementMap'
 import {
   getCreative,
-  listCreativePhotos,
   listCreatives,
   requestCreativeRender,
   type Creative,
@@ -45,6 +44,7 @@ import {
 } from '@/components/marketing/creatives/types'
 import { CarouselThumb, ClipThumb } from '@/components/marketing/creatives/CreativeThumbs'
 import { FilterChip } from './MediaFilterBar'
+import { tileMediaIds, useMediaByIds } from './useMediaByIds'
 
 /** A destination the caller has picked, as the preview needs it. */
 export interface ChooserDestination {
@@ -173,25 +173,10 @@ export function CreativesTab({
     [creatives, readyOnly, kinds, query],
   )
 
-  // Clip and Carousel tiles without a render thumbnail fall back to media posters; load each list once.
-  const needsVideoMedia = (creatives ?? []).some((c) => c.kind === 'CLIP' && !c.latestRenderThumbnailUrl)
-  const needsImageMedia = (creatives ?? []).some((c) => c.kind === 'CAROUSEL' && !c.latestRenderThumbnailUrl)
-  const [videoMedia, setVideoMedia] = useState<CreativePhoto[]>([])
-  const [imageMedia, setImageMedia] = useState<CreativePhoto[]>([])
-  useEffect(() => {
-    if (!token || !needsVideoMedia) return
-    listCreativePhotos(projectId, token, true, 'VIDEO').then(setVideoMedia).catch(() => setVideoMedia([]))
-  }, [projectId, token, needsVideoMedia])
-  useEffect(() => {
-    if (!token || !needsImageMedia) return
-    listCreativePhotos(projectId, token, true, 'IMAGE').then(setImageMedia).catch(() => setImageMedia([]))
-  }, [projectId, token, needsImageMedia])
-  const mediaById = useMemo(() => {
-    const map = new Map<string, CreativePhoto>()
-    for (const m of videoMedia) map.set(m.id, m)
-    for (const m of imageMedia) map.set(m.id, m)
-    return map
-  }, [videoMedia, imageMedia])
+  // Clip and Carousel tiles without a render thumbnail fall back to their media's poster / slide 1;
+  // resolve just those items by id rather than loading the whole library.
+  const tileIds = useMemo(() => tileMediaIds(creatives ?? []), [creatives])
+  const mediaById = useMediaByIds(projectId, token, tileIds)
 
   const selected = (creatives ?? []).find((c) => c.id === selectedId) ?? null
   const detail = selected ? details[selected.id] : undefined

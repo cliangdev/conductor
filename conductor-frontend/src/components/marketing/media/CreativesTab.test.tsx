@@ -6,11 +6,11 @@ vi.mock('@/components/marketing/creatives/types', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/components/marketing/creatives/types')>()),
   getCreative: vi.fn(),
   listCreatives: vi.fn(),
-  listCreativePhotos: vi.fn(),
+  listCreativePhotosByIds: vi.fn(),
   requestCreativeRender: vi.fn(),
 }))
 
-import { getCreative, listCreativePhotos, requestCreativeRender } from '@/components/marketing/creatives/types'
+import { getCreative, listCreativePhotosByIds, requestCreativeRender } from '@/components/marketing/creatives/types'
 import { CreativesTab, type ChooserDestination } from './CreativesTab'
 import { CAROUSEL_FRAMES, creative, frame, render } from './creativeFixtures'
 
@@ -43,7 +43,7 @@ function setup(props: Partial<React.ComponentProps<typeof CreativesTab>> = {}) {
     const frames = c.kind === 'CAROUSEL' ? CAROUSEL_FRAMES : [frame('9x16', null), frame('4x5', null), frame('1x1', null)]
     return { ...c, latestRender: render(`render-${c.displayId}`, frames) }
   })
-  ;(listCreativePhotos as Mock).mockResolvedValue([
+  ;(listCreativePhotosByIds as Mock).mockResolvedValue([
     { id: 'm-clip', url: 'https://storage.example/clip.mp4', posterUrl: 'https://storage.example/clip-poster.jpg', durationSeconds: 12 },
   ])
   ;(requestCreativeRender as Mock).mockResolvedValue(
@@ -135,6 +135,14 @@ describe('CreativesTab', () => {
     expect(within(kept).queryByTestId('frame-strip')).not.toBeInTheDocument()
     expect(within(panel).queryByTestId('creative-warning')).not.toBeInTheDocument()
     expect(within(panel).getAllByTestId('frame-strip')).toHaveLength(1)
+  })
+
+  it('resolves tile posters by id for just the thumbnail-less Clip and Carousel, in one request', async () => {
+    setup()
+    await waitFor(() => expect(listCreativePhotosByIds).toHaveBeenCalled())
+    // Only 22a (a Clip with no render thumbnail) needs its media; rendered tiles need nothing.
+    expect(listCreativePhotosByIds).toHaveBeenCalledTimes(1)
+    expect((listCreativePhotosByIds as Mock).mock.calls[0][2]).toEqual(['m-clip'])
   })
 
   it('lists the Creative’s sizes when no destination is picked yet', async () => {

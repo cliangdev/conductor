@@ -3442,6 +3442,18 @@ paths:
           description: >-
             Opaque cursor from a previous page's `X-Next-Cursor` header; returns the page after it. Requires
             `limit`. An unparseable cursor is a 400.
+        - name: ids
+          in: query
+          required: false
+          explode: false
+          schema:
+            type: array
+            maxItems: 200
+            items:
+              type: string
+          description: >-
+            Comma-separated photo ids (at most 200): only these photos, subject to the other filters. For
+            callers that need a few known items (e.g. a tile's poster) rather than the whole library.
       responses:
         "200":
           description: >-

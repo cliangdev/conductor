@@ -32,10 +32,11 @@ import {
   stripExtension,
   uploadMediaFile,
 } from '@/components/marketing/creatives/mediaUpload'
-import { listCreativePhotos, type CreativePhoto } from '@/components/marketing/creatives/types'
+import type { CreativePhoto, MediaPageQuery } from '@/components/marketing/creatives/types'
 import { MediaFilterBar } from './MediaFilterBar'
 import { setPrefix } from './mediaSets'
 import { useMediaFilters, type KindTab } from './useMediaFilters'
+import { usePagedMedia } from './usePagedMedia'
 
 type ChooserKind = 'IMAGE' | 'VIDEO'
 
@@ -136,22 +137,66 @@ function sectionsFor(items: CreativePhoto[], bySet: boolean): Section[] {
 }
 
 function LibraryTab({
-  items,
-  loadError,
+  projectId,
+  token,
+  uploaded,
   kinds,
   selected,
   multiple,
   onToggle,
 }: {
-  items: CreativePhoto[] | null
-  loadError: string | null
+  projectId: string
+  token: string
+  /** Items uploaded from the Upload tab this session; shown first even before a reload would list them. */
+  uploaded: CreativePhoto[]
   kinds: ChooserKind[]
   selected: CreativePhoto[]
   multiple: boolean
   onToggle: (item: CreativePhoto) => void
 }) {
-  const filters = useMediaFilters(items, { sort: 'newest', kind: kinds.length === 1 ? kinds[0] : 'ALL' })
+  // The filters need the loaded items and the loader needs the filters: `items` closes the loop.
+  const [items, setItems] = useState<CreativePhoto[] | null>(null)
+  const filters = useMediaFilters(items, { sort: 'newest', kind: kinds.length === 1 ? kinds[0] : 'ALL', serverOrder: true })
   const { visible } = filters
+  const { kind, chips, sort } = filters
+
+  // Debounced so typing in the search box doesn't fire a request per keystroke.
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(filters.query.trim()), 250)
+    return () => clearTimeout(t)
+  }, [filters.query])
+
+  // "Unused" and "On posts" depend on usage counts the server can't filter by, and "Name" order is a
+  // client-side natural sort: those need the whole list, everything else pages.
+  const paged = sort === 'newest' && !chips.onPosts && !chips.unused
+  const kindsKey = kinds.join(',')
+  const query = useMemo<MediaPageQuery>(
+    () => ({
+      includeBlocked: false,
+      mediaKind: kind === 'IMAGE' || kind === 'VIDEO' ? kind : (kindsKey.split(',') as ChooserKind[]),
+      q: debouncedQuery || undefined,
+      aiGenerated: chips.ai || undefined,
+    }),
+    [kind, kindsKey, debouncedQuery, chips.ai],
+  )
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const loaded = usePagedMedia(projectId, token, query, paged, sentinelRef)
+  const loadError = loaded.error
+
+  useEffect(() => {
+    if (loaded.items == null) {
+      setItems(null)
+      return
+    }
+    const fresh = uploaded.filter((u) => !loaded.items!.some((l) => l.id === u.id))
+    setItems(
+      [...fresh, ...loaded.items].filter(
+        (m) => m.uploadStatus === 'UPLOADED' && !m.blocked && (kinds as string[]).includes(m.mediaKind ?? 'IMAGE'),
+      ),
+    )
+  }, [loaded.items, uploaded, kindsKey]) // eslint-disable-line react-hooks/exhaustive-deps -- kinds compared by content
+
   const [viewerIndex, setViewerIndex] = useState<number | null>(null)
   const viewing = viewerIndex != null ? visible[viewerIndex] : null
   const kindTabs: KindTab[] = kinds.length === 1 ? kinds : ['ALL', ...kinds]
@@ -241,6 +286,13 @@ function LibraryTab({
                 </ul>
               </section>
             ))}
+            {loaded.hasMore && (
+              <div ref={sentinelRef} className="flex justify-center pb-2">
+                <Button type="button" variant="outline" size="sm" disabled={loaded.loadingMore} onClick={loaded.loadMore}>
+                  {loaded.loadingMore ? 'Loading…' : 'Load more'}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -442,36 +494,10 @@ function ChooserBody({
   const canManage = useCan('creative.manage')
   const deferred = onFilesChosen != null
   const showUpload = canManage || deferred
-  const [items, setItems] = useState<CreativePhoto[] | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const [uploadedItems, setUploadedItems] = useState<CreativePhoto[]>([])
   const [selected, setSelected] = useState<CreativePhoto[]>([])
   const firstTab = defaultTab ?? 'library'
   const [tab, setTab] = useState(firstTab)
-
-  // The body only exists while the dialog is open, so mounting is "opened": load fresh, start clean.
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const rows = await listCreativePhotos(projectId, token, false)
-        if (cancelled) return
-        setItems(rows.filter((m) => m.uploadStatus === 'UPLOADED' && !m.blocked))
-        setLoadError(null)
-      } catch (err) {
-        if (cancelled) return
-        setItems((prev) => prev ?? [])
-        setLoadError(apiErrorMessage(err, 'Could not load media — please try again.'))
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, token])
-
-  const scoped = useMemo(
-    () => (items == null ? null : items.filter((m) => (kinds as string[]).includes(m.mediaKind ?? 'IMAGE'))),
-    [items, kinds],
-  )
 
   const toggle = (item: CreativePhoto) =>
     setSelected((prev) => {
@@ -488,7 +514,7 @@ function ChooserBody({
   const extra = (extraTabs ?? []).find((t) => t.value === activeTab)
 
   function uploaded(done: CreativePhoto[]) {
-    setItems((prev) => [...done.filter((d) => !(prev ?? []).some((p) => p.id === d.id)), ...(prev ?? [])])
+    setUploadedItems((prev) => [...done.filter((d) => !prev.some((p) => p.id === d.id)), ...prev])
     setSelected((prev) => {
       const next = [...prev, ...done.filter((d) => !prev.some((p) => p.id === d.id))]
       return multiple ? next : next.slice(-1)
@@ -531,8 +557,9 @@ function ChooserBody({
         />
       ) : (
         <LibraryTab
-          items={scoped}
-          loadError={loadError}
+          projectId={projectId}
+          token={token}
+          uploaded={uploadedItems}
           kinds={kinds}
           selected={selected}
           multiple={multiple}

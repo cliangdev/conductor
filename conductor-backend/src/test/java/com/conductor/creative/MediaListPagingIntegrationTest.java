@@ -168,6 +168,47 @@ class MediaListPagingIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void includeBlockedWithMediaKindPagesAndWalksEveryMatchingItemOnce() {
+        OffsetDateTime base = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        List<String> expected = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            // Every third image is blocked; videos interleave and must never leak in.
+            var img = photo("img " + i, base.minusSeconds(2L * i), CreativePhoto.MEDIA_KIND_IMAGE, true, false, i % 3 == 0);
+            expected.add(img.getId());
+            photo("vid " + i, base.minusSeconds(2L * i + 1), CreativePhoto.MEDIA_KIND_VIDEO, true, false, false);
+        }
+        List<String> walked = new ArrayList<>();
+        String cursor = null;
+        do {
+            var pg = page(Set.of(CreativePhoto.MEDIA_KIND_IMAGE), null, false, false, true, 4, cursor);
+            assertThat(pg.items()).hasSizeLessThanOrEqualTo(4);
+            pg.items().forEach(v -> {
+                assertThat(v.photo().getMediaKind()).isEqualTo(CreativePhoto.MEDIA_KIND_IMAGE);
+                walked.add(v.photo().getId());
+            });
+            cursor = pg.nextCursor();
+        } while (cursor != null);
+        assertThat(walked).containsExactlyElementsOf(expected);
+
+        // Without includeBlocked the three blocked images drop out, still paged and complete.
+        assertThat(page(Set.of(CreativePhoto.MEDIA_KIND_IMAGE), null, false, false, false, 50, null).items()).hasSize(6);
+    }
+
+    @Test
+    void idsNarrowTheListToTheNamedItemsAndComposeWithOtherFilters() {
+        OffsetDateTime base = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        var a = photo("a", base);
+        var b = photo("b", base.minusSeconds(1), CreativePhoto.MEDIA_KIND_VIDEO, true, false, false);
+        photo("c", base.minusSeconds(2));
+        var other = photoService.listPhotosPage(project.getId(), false, null, null, null, false, false, null, null,
+                Set.of(a.getId(), b.getId(), "no-such-id"), user);
+        assertThat(other.items()).extracting(v -> v.photo().getId()).containsExactly(a.getId(), b.getId());
+        var imagesOnly = photoService.listPhotosPage(project.getId(), false, Set.of(CreativePhoto.MEDIA_KIND_IMAGE), null,
+                null, false, false, null, null, Set.of(a.getId(), b.getId()), user);
+        assertThat(imagesOnly.items()).extracting(v -> v.photo().getId()).containsExactly(a.getId());
+    }
+
+    @Test
     void invalidCursorIsABusinessException() {
         photo("a", OffsetDateTime.now());
         for (String bad : new String[] {"not a cursor", "!!!", "YWJj", "MToyOg"}) {
