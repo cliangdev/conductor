@@ -252,10 +252,9 @@ public class TikTokConsentRequestService {
     @Transactional(readOnly = true)
     public int pendingCount(String projectId) {
         requireReader(projectId);
-        return (int) pendingPostIds(projectId).stream()
-                .map(id -> workItemRepository.findById(id).orElse(null))
-                .filter(item -> item != null && !consentService.currentState(item).valid())
-                .count();
+        // Set-based: one query for the pending Posts, then four for every Post's consent state at once.
+        List<String> pending = pendingPostIds(projectId).stream().distinct().toList();
+        return pending.size() - consentService.validWorkItemIds(pending).size();
     }
 
     private List<String> pendingPostIds(String projectId) {

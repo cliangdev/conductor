@@ -613,14 +613,55 @@ public class PublishConsentService {
     }
 
     String consentSubjectHash(WorkItem workItem, List<PostPublishTarget> loadedTargets) {
+        return subjectHash(loadedTargets, selectionsByTarget(loadedTargets), assetRepository.findAllByWorkItemId(workItem.getId()));
+    }
+
+    private String subjectHash(List<PostPublishTarget> targets, Map<String, List<String>> selections,
+                               List<Asset> workItemAssets) {
         Map<String, Object> subject = new TreeMap<>();
-        subject.put("targets", targets(loadedTargets));
-        subject.put("assets", assets(workItem.getId()));
+        subject.put("targets", targets(targets, selections));
+        subject.put("assets", assets(workItemAssets));
         return sha256(canonicalJson(subject));
     }
 
-    private List<Map<String, Object>> targets(List<PostPublishTarget> targets) {
-        Map<String, List<String>> selections = selectionsByTarget(targets);
+    /**
+     * Which of these Posts have consent that stands right now, for many Posts in a fixed number of queries
+     * (targets, consents, per-target media, assets) however many Posts there are. Same verdict as
+     * {@link #verdict(WorkItem)} == VALID: a Post with no API-lane TikTok target, no consent row, or a
+     * stale hash is not in the result.
+     */
+    @Transactional(readOnly = true)
+    public Set<String> validWorkItemIds(java.util.Collection<String> workItemIds) {
+        if (workItemIds == null || workItemIds.isEmpty()) {
+            return Set.of();
+        }
+        Map<String, List<PostPublishTarget>> targetsByPost = new LinkedHashMap<>();
+        List<PostPublishTarget> all = targetRepository.findAllByWorkItemIdIn(workItemIds);
+        for (PostPublishTarget target : all) {
+            targetsByPost.computeIfAbsent(target.getWorkItem().getId(), key -> new ArrayList<>()).add(target);
+        }
+        Map<String, String> hashes = new java.util.HashMap<>();
+        for (Object[] row : consentRepository.findHashesByWorkItemIdIn(workItemIds)) {
+            hashes.put((String) row[0], (String) row[1]);
+        }
+        Map<String, List<String>> selections = selectionsByTarget(all);
+        Map<String, List<Asset>> assetsByPost = new java.util.HashMap<>();
+        for (Asset asset : assetRepository.findAllByWorkItemIdIn(workItemIds)) {
+            assetsByPost.computeIfAbsent(asset.getWorkItem().getId(), key -> new ArrayList<>()).add(asset);
+        }
+        Set<String> valid = new java.util.HashSet<>();
+        for (String id : workItemIds) {
+            List<PostPublishTarget> targets = targetsByPost.getOrDefault(id, List.of());
+            String stored = hashes.get(id);
+            if (stored != null && requiresConsent(targets)
+                    && subjectHash(targets, selections, assetsByPost.getOrDefault(id, List.of())).equals(stored)) {
+                valid.add(id);
+            }
+        }
+        return valid;
+    }
+
+    private List<Map<String, Object>> targets(List<PostPublishTarget> targets, Map<String, List<String>> selections) {
         return canonicalOrder(targets.stream()
                 // Only a custom-media target has a selection to look up, and an unsaved target has no id
                 // yet — so the lookup is guarded rather than unconditional.
@@ -646,8 +687,8 @@ public class PublishConsentService {
         return byTarget;
     }
 
-    private List<Map<String, Object>> assets(String workItemId) {
-        return canonicalOrder(assetRepository.findAllByWorkItemId(workItemId).stream()
+    private List<Map<String, Object>> assets(List<Asset> workItemAssets) {
+        return canonicalOrder(workItemAssets.stream()
                 .filter(asset -> UPLOADED.equals(asset.getUploadStatus()))
                 .map(PublishConsentService::assetTuple)
                 .toList());
