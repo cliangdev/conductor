@@ -86,7 +86,35 @@ public class PublishTargetMediaResolver {
         if (targets == null || targets.isEmpty()) {
             return Map.of();
         }
-        return resolve(targets, Map.of(workItemId, sharedMedia(workItemId)), t -> workItemId);
+        return resolve(targets, Map.of(workItemId, sharedMedia(workItemId)), null, t -> workItemId);
+    }
+
+    /**
+     * {@link #effectiveMediaByTarget} over what the request has already loaded: no query here beyond the
+     * context's own once-per-request reads of the Post's assets and the targets' media selections.
+     */
+    public Map<String, EffectiveMedia> effectiveMediaByTarget(PublishCheckContext ctx) {
+        List<PostPublishTarget> targets = ctx.targets();
+        if (targets.isEmpty()) {
+            return Map.of();
+        }
+        String workItemId = ctx.workItem().getId();
+        return resolve(targets, Map.of(workItemId, ctx.sharedMedia()), ctx.selectionRows(), t -> workItemId);
+    }
+
+    /**
+     * A {@link PublishCheckContext} that reads the Post's assets and media selections through this
+     * resolver's repositories and everything else through the loaders given - for a validator that was
+     * called without one and so has to build its own.
+     */
+    public PublishCheckContext contextFor(
+            WorkItem workItem,
+            java.util.function.Supplier<List<PostPublishTarget>> targets,
+            java.util.function.Supplier<java.util.Optional<com.conductor.entity.PublishConsent>> consent,
+            java.util.function.Function<Collection<String>, List<com.conductor.entity.Connection>> connections) {
+        return new PublishCheckContext(workItem, targets,
+                () -> assetRepository.findAllByWorkItemId(workItem.getId()),
+                targetAssetRepository::findAllByTargetIdIn, consent, connections);
     }
 
     /**
@@ -105,11 +133,12 @@ public class PublishTargetMediaResolver {
                 .filter(AssetService::isUploadedFile)
                 .sorted(AssetService.PUBLISH_ORDER)
                 .forEach(a -> sharedByWorkItem.computeIfAbsent(a.getWorkItem().getId(), k -> new ArrayList<>()).add(a));
-        return resolve(targets, sharedByWorkItem, t -> t.getWorkItem().getId());
+        return resolve(targets, sharedByWorkItem, null, t -> t.getWorkItem().getId());
     }
 
     private Map<String, EffectiveMedia> resolve(Collection<PostPublishTarget> targets,
                                                 Map<String, List<Asset>> sharedByWorkItem,
+                                                List<PostPublishTargetAsset> loadedRows,
                                                 java.util.function.Function<PostPublishTarget, String> workItemIdOf) {
         Map<String, Asset> byId = new LinkedHashMap<>();
         sharedByWorkItem.values().forEach(list -> list.forEach(asset -> byId.put(asset.getId(), asset)));
@@ -120,7 +149,9 @@ public class PublishTargetMediaResolver {
                 .toList();
         Map<String, List<Asset>> selectionsByTarget = new LinkedHashMap<>();
         if (!customTargetIds.isEmpty()) {
-            for (PostPublishTargetAsset row : targetAssetRepository.findAllByTargetIdIn(customTargetIds)) {
+            List<PostPublishTargetAsset> rows = loadedRows != null
+                    ? loadedRows : targetAssetRepository.findAllByTargetIdIn(customTargetIds);
+            for (PostPublishTargetAsset row : rows) {
                 Asset asset = byId.get(row.getAssetId());
                 // An id with no matching Asset means the row references something that is no longer a
                 // publishable file on this Post. Dropping it is the same outcome as the cascade that

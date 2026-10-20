@@ -244,18 +244,28 @@ public class WorkItemWorkflowService {
      * original path and nothing else, so its gating is byte-for-byte what it was.
      */
     public boolean isReviewSatisfied(String projectId, WorkItem workItem, StatechartTransition transition) {
+        return isReviewSatisfied(projectId, workItem, transition, null);
+    }
+
+    /**
+     * As {@link #isReviewSatisfied(String, WorkItem, StatechartTransition)}, reading the Post's publish
+     * targets and media from {@code ctx} (when given) instead of loading them again.
+     */
+    public boolean isReviewSatisfied(String projectId, WorkItem workItem, StatechartTransition transition,
+                                     PublishCheckContext ctx) {
         if (!hasApprovedReview(projectId, workItem, transition)) {
             return false;
         }
-        if (!isApprovalBound(workItem)) {
+        if (!isApprovalBound(workItem, ctx)) {
             return true;
         }
-        return hasCurrentApprovedReview(projectId, workItem, transition);
+        return hasCurrentApprovedReview(projectId, workItem, transition, ctx);
     }
 
     /** Whether anything binds approvals on this item beyond the plain "an APPROVED review exists" check. */
-    private boolean isApprovalBound(WorkItem workItem) {
-        return workItem.getCurrentReviewRound() > 0 || publishBundleHasher.appliesTo(workItem);
+    private boolean isApprovalBound(WorkItem workItem, PublishCheckContext ctx) {
+        return workItem.getCurrentReviewRound() > 0
+                || (ctx != null ? publishBundleHasher.appliesTo(workItem, ctx) : publishBundleHasher.appliesTo(workItem));
     }
 
     /**
@@ -263,7 +273,8 @@ public class WorkItemWorkflowService {
      * round and was cast against the bundle the item currently hashes to. A review predating V115 carries a
      * null round and a null hash and skips both tests, so it satisfies the gate exactly as it always did.
      */
-    private boolean hasCurrentApprovedReview(String projectId, WorkItem workItem, StatechartTransition transition) {
+    private boolean hasCurrentApprovedReview(String projectId, WorkItem workItem, StatechartTransition transition,
+                                             PublishCheckContext ctx) {
         int currentRound = workItem.getCurrentReviewRound();
         String currentBundleHash = null;
         List<Review> reviews = reviewRepository.findAllByWorkItemId(workItem.getId());
@@ -279,7 +290,7 @@ public class WorkItemWorkflowService {
             if (review.getBundleHash() != null) {
                 // Computed at most once per gate check, and only when some approval is actually hash-bound.
                 if (currentBundleHash == null) {
-                    currentBundleHash = publishBundleHasher.hash(workItem);
+                    currentBundleHash = ctx != null ? publishBundleHasher.hash(workItem, ctx) : publishBundleHasher.hash(workItem);
                 }
                 if (!review.getBundleHash().equals(currentBundleHash)) {
                     continue;
