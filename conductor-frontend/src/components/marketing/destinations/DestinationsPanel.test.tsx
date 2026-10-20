@@ -186,6 +186,27 @@ describe('DestinationsPanel — picking', () => {
     expect(within(igRow).getByText('Instagram (@rexipeio) needs at least one image')).toBeInTheDocument()
   })
 
+  it('shows the TikTok consent-page link once per Post, on the destination row', () => {
+    window.history.pushState({}, '', '/app/projects/p9/marketing/posts/x')
+    const tt = selection(tiktok, WORK_ITEM, 'tt-target')
+    const preflight = {
+      publishing: true,
+      ready: false,
+      blockers: [
+        { code: 'CONSENT_NEVER_GIVEN', message: 'TikTok consent has not been given', targetId: null },
+        { code: 'PUBLISH_OPTIONS', message: 'TikTok (rexipeio) has no privacy level chosen', targetId: 'tt-target' },
+      ],
+      warnings: [],
+      consent: { required: true, verdict: 'NEVER_GIVEN' },
+      review: { gated: false, assignedReviewers: 0, satisfied: false },
+    } as PublishPreflight
+    renderPanel(state([tt], { mode: 'pick', approvedOrLater: false, preflight }))
+    const links = screen.getAllByRole('link', { name: 'Open the TikTok consent page' })
+    expect(links).toHaveLength(1)
+    expect(within(screen.getByTestId('destination-row-tiktok-rexipeio')).getByRole('link', { name: 'Open the TikTok consent page' })).toBeInTheDocument()
+    expect(screen.getByTestId('publish-readiness')).toHaveTextContent('TikTok consent has not been given')
+  })
+
   it('offers Review & consent on a TikTok row until the creator has consented', async () => {
     const tt = selection(tiktok, WORK_ITEM)
     const rows = buildRows({
