@@ -40,7 +40,7 @@ How it works: `RequestStats` is a ThreadLocal accumulator opened by `RequestMetr
 precedence, so it wraps the Spring Security filters) and by `ScheduledJobMetrics` (a wrapper around the
 scheduling `TaskScheduler`). `QueryStatsDataSourcePostProcessor` wraps the Hikari `DataSource` with `datasource-proxy`
 and records every statement plus `getConnection()` time into whichever scope is open on the calling thread.
-SQL is normalized (literals become `?`, `IN` lists collapse, whitespace is squeezed, 300 chars max, 200
+A JDBC batch (Hibernate `jdbc.batch_size=50`) counts as ONE in `dbQueries` - it is one round trip - and appears once in `topSql`. SQL is normalized (literals become `?`, `IN` lists collapse, whitespace is squeezed, 300 chars max, 200
 distinct statements per request). Work done on other threads (`@Async`, executors) is not attributed.
 
 Switches (all default `true`): `observability.request-metrics.enabled`, `observability.datasource-proxy.enabled`,

@@ -13,6 +13,13 @@ import com.conductor.security.WorkflowRunAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class ProjectSecurityService {
@@ -158,19 +165,74 @@ public class ProjectSecurityService {
         return "Agent";
     }
 
+    /**
+     * Membership answers are remembered for the rest of the current HTTP request: a publishing request asks
+     * "is this user a member / an editor" from the controller's service, then again from every service it
+     * calls, and each ask is a round trip to the database. Only a <em>positive</em> answer is remembered, and
+     * only on a thread that has a request bound (outside one - a scheduler, a test - nothing is cached), so a
+     * membership granted mid-request is seen at once and the cache never outlives the request that read it.
+     */
+    private static final String MEMBERSHIP_ATTRIBUTE = ProjectSecurityService.class.getName() + ".memberships";
+
+    private static final class Memberships {
+        final Set<String> members = ConcurrentHashMap.newKeySet();
+        final Map<String, MemberRole> roles = new ConcurrentHashMap<>();
+    }
+
+    private static Memberships requestMemberships() {
+        RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+        if (attributes == null) {
+            return null;
+        }
+        Object cached = attributes.getAttribute(MEMBERSHIP_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
+        if (cached instanceof Memberships memberships) {
+            return memberships;
+        }
+        Memberships memberships = new Memberships();
+        attributes.setAttribute(MEMBERSHIP_ATTRIBUTE, memberships, RequestAttributes.SCOPE_REQUEST);
+        return memberships;
+    }
+
+    private static String membershipKey(String projectId, String userId) {
+        return projectId + "|" + userId;
+    }
+
     public boolean isProjectMember(String projectId, String userId) {
-        return projectMemberRepository.existsByProjectIdAndUserId(projectId, userId);
+        Memberships cache = requestMemberships();
+        String key = membershipKey(projectId, userId);
+        if (cache != null && cache.members.contains(key)) {
+            return true;
+        }
+        boolean member = projectMemberRepository.existsByProjectIdAndUserId(projectId, userId);
+        if (member && cache != null) {
+            cache.members.add(key);
+        }
+        return member;
     }
 
     public boolean isProjectAdmin(String projectId, String userId) {
-        return projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
-                .map(member -> member.getRole() == MemberRole.ADMIN)
-                .orElse(false);
+        return memberRole(projectId, userId).map(role -> role == MemberRole.ADMIN).orElse(false);
     }
 
     public boolean isAdminOrCreator(String projectId, String userId) {
-        return projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
-                .map(member -> member.getRole() == MemberRole.ADMIN || member.getRole() == MemberRole.CREATOR)
+        return memberRole(projectId, userId)
+                .map(role -> role == MemberRole.ADMIN || role == MemberRole.CREATOR)
                 .orElse(false);
+    }
+
+    private Optional<MemberRole> memberRole(String projectId, String userId) {
+        Memberships cache = requestMemberships();
+        String key = membershipKey(projectId, userId);
+        MemberRole known = cache == null ? null : cache.roles.get(key);
+        if (known != null) {
+            return Optional.of(known);
+        }
+        Optional<MemberRole> role = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
+                .map(member -> member.getRole());
+        if (role.isPresent() && cache != null) {
+            cache.roles.put(key, role.get());
+            cache.members.add(key);
+        }
+        return role;
     }
 }
