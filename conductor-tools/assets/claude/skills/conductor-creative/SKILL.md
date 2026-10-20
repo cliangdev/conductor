@@ -357,6 +357,10 @@ A library music track's `licence` has to be recorded on upload (same as a photo'
 readiness checklist blocks a MOTION Creative on it whenever `audio.source` is `"track"`. A reel or
 other vertical placement takes exactly one video, same as a CLIP.
 
+## Cleaning up
+
+`delete_creative` and `delete_media` are permanent. Never call them unless the person asked or confirmed that exact item; the server refuses a Creative still on a Post or with other variants, and Media still in use.
+
 ## Failures that are silent (carried over from this skill's predecessor)
 
 Automated checks are real but incomplete. These are the ones worth remembering to look for by eye:

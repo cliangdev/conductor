@@ -95,6 +95,7 @@ import {
   type PreviewCreativeDraftParams,
 } from './tools/creative-drafts.js'
 import { resolveCreativeId } from '../lib/creative-id.js'
+import { deleteMedia, deleteCreative } from './tools/creative-delete.js'
 
 const CREATIVE_TOOLS = [
   'get_creative',
@@ -105,6 +106,7 @@ const CREATIVE_TOOLS = [
   'preview_creative_draft',
   'attach_creative_to_post',
   'create_experiment',
+  'delete_creative',
 ] as const
 import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
@@ -1292,6 +1294,28 @@ export const TOOLS = [
     },
   },
   {
+    name: 'delete_media',
+    description: "Permanently delete a Media item from the library, and its stored file, only when nothing links to it. Refused (naming the Creatives and Posts) while any Creative or Post uses it; remove it there first. Never delete unless the person asked. Verified after.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mediaId: { type: 'string', description: 'Media library id, from list_creative_media' },
+      },
+      required: ['mediaId'],
+    },
+  },
+  {
+    name: 'delete_creative',
+    description: "Permanently delete a Creative with its renders, frames and experiments. Never deletes the Media it used. Refused while any of its renders is on a Post, or while other lettered variants exist (delete those first). Never delete unless the person asked. Verified after.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+      },
+      required: ['creativeId'],
+    },
+  },
+  {
     name: 'get_creative',
     description: "One Creative in full: its fields, its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
     inputSchema: {
@@ -2403,6 +2427,12 @@ export async function runMcpServer(): Promise<void> {
               config
             )
           )
+        }
+        case 'delete_media': {
+          return successResponse(await deleteMedia({ mediaId: params['mediaId'] as string }, config))
+        }
+        case 'delete_creative': {
+          return successResponse(await deleteCreative({ creativeId: params['creativeId'] as string }, config))
         }
         case 'get_creative': {
           return successResponse(await getCreative({ creativeId: params['creativeId'] as string }, config))
