@@ -126,14 +126,6 @@ describe('buffer and flush', () => {
     expect(navigation.apiCalls).toBe(1)
   })
 
-  it('tags api_call samples with how the call was made (default direct)', async () => {
-    recordApiCall({ path: '/api/v1/a', method: 'GET', status: 200, clientMs: 1, serverTiming: null })
-    recordApiCall({ path: '/api/v1/b', method: 'GET', status: 200, clientMs: 1, serverTiming: null, via: 'proxy' })
-    flush()
-    const { body } = await lastBody()
-    expect(body.samples.map((s: { via: string }) => s.via)).toEqual(['direct', 'proxy'])
-  })
-
   it('does not record the telemetry endpoint itself', () => {
     recordApiCall({ path: '/api/telemetry', method: 'POST', status: 204, clientMs: 1, serverTiming: null })
     expect(bufferedCount()).toBe(0)

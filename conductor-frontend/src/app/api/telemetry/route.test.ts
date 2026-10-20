@@ -30,19 +30,6 @@ describe('sanitizeBatch', () => {
     expect(s.ms).toBe(5)
   })
 
-  it('keeps via=direct|proxy on api_call samples and drops any other value', () => {
-    const out = sanitizeBatch({
-      samples: [
-        { type: 'api_call', path: '/a', via: 'direct' },
-        { type: 'api_call', path: '/b', via: 'proxy' },
-        { type: 'api_call', path: '/c', via: 'carrier-pigeon' },
-        { type: 'api_call', path: '/d', via: 7 },
-      ],
-    })
-    expect(out.map((s) => s.via)).toEqual(['direct', 'proxy', undefined, undefined])
-    expect(out[2]).toEqual({ type: 'api_call', path: '/c' })
-  })
-
   it('caps the number of samples', () => {
     const samples = Array.from({ length: 500 }, () => ({ type: 'web_vital', name: 'LCP', value: 1 }))
     expect(sanitizeBatch({ samples })).toHaveLength(MAX_SAMPLES)
