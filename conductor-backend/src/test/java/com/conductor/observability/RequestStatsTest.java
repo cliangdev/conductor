@@ -70,4 +70,44 @@ class RequestStatsTest {
                     .containsExactly("select * from b where id = ?", "select * from a where id = ?");
         }
     }
+
+    @Test
+    void aJdbcBatchCountsAsOneQueryButListsEveryRow() {
+        try (RequestStats.Scope scope = RequestStats.start()) {
+            // What StatsListener does for a 3-row batch: the first row is the round trip, the rest are rows only.
+            RequestStats.recordQuery("insert into t (a) values (1)", 1_000, 1);
+            RequestStats.recordBatchedRow("insert into t (a) values (2)");
+            RequestStats.recordBatchedRow("insert into t (a) values (3)");
+            assertThat(scope.stats().dbQueries()).isEqualTo(1);
+            assertThat(scope.stats().sqlCounts()).containsEntry("insert into t (a) values (?)", 3);
+        }
+    }
+
+    @Test
+    void recordingABatchedRowWithoutAScopeIsANoOp() {
+        RequestStats.clear();
+        RequestStats.recordBatchedRow("insert into t (a) values (1)");
+        assertThat(RequestStats.get()).isNull();
+    }
+
+    @Test
+    void theStatsListenerChargesABatchOfRowsAsOneRoundTrip() {
+        QueryStatsDataSourcePostProcessor.StatsListener listener = new QueryStatsDataSourcePostProcessor.StatsListener();
+        java.util.List<net.ttddyy.dsproxy.QueryInfo> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            net.ttddyy.dsproxy.QueryInfo info = new net.ttddyy.dsproxy.QueryInfo();
+            info.setQuery("insert into t (a) values (?)");
+            rows.add(info);
+        }
+        try (RequestStats.Scope scope = RequestStats.start()) {
+            listener.beforeQuery(new net.ttddyy.dsproxy.ExecutionInfo(), rows);
+            listener.afterQuery(new net.ttddyy.dsproxy.ExecutionInfo(), rows);
+            assertThat(scope.stats().dbQueries()).isEqualTo(1);
+            assertThat(scope.stats().sqlCounts()).containsEntry("insert into t (a) values (?)", 4);
+
+            // A plain (non-batch) statement is still one.
+            listener.afterQuery(new net.ttddyy.dsproxy.ExecutionInfo(), rows.subList(0, 1));
+            assertThat(scope.stats().dbQueries()).isEqualTo(2);
+        }
+    }
 }

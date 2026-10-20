@@ -71,6 +71,15 @@ public final class RequestStats {
         s.countSql(normalizeSql(sql), statements);
     }
 
+    /** A further row of a JDBC batch already counted as one query: listed in the SQL counts, not in dbQueries. */
+    public static void recordBatchedRow(String sql) {
+        RequestStats s = CURRENT.get();
+        if (s == null) {
+            return;
+        }
+        s.countSql(normalizeSql(sql), 1);
+    }
+
     public static void recordConnectionCheckout(long nanos) {
         RequestStats s = CURRENT.get();
         if (s == null) {

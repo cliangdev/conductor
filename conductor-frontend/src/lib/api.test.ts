@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiErrorMessage, type ApiError } from './api'
+import { apiDelete, apiGet, apiGetPage, apiPatch, apiPost, apiPut, apiErrorMessage, type ApiError } from './api'
 
 function problemResponse(status: number, body: unknown) {
   return {
@@ -131,5 +131,18 @@ describe('empty-body (204) responses', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(noContentResponse()))
 
     await expect(apiDelete('/x', 'tok')).resolves.toBeUndefined()
+  })
+
+  it('apiGetPage returns the body and the X-Next-Cursor header', async () => {
+    const res = { ...jsonResponse(200, [{ id: 'a' }]), headers: { get: (n: string) => (n.toLowerCase() === 'x-next-cursor' ? 'cur-1' : 'application/json') } }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res))
+    await expect(apiGetPage('/x', 'tok')).resolves.toEqual({ data: [{ id: 'a' }], nextCursor: 'cur-1' })
+  })
+
+  it('apiGetPage has a null cursor on the last page and rejects on errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ...jsonResponse(200, []), headers: { get: (n: string) => (n.toLowerCase() === 'content-type' ? 'application/json' : null) } }))
+    await expect(apiGetPage('/x', 'tok')).resolves.toEqual({ data: [], nextCursor: null })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(problemResponse(400, { detail: 'Invalid cursor' })))
+    await expect(apiGetPage('/x', 'tok')).rejects.toMatchObject({ status: 400 })
   })
 })

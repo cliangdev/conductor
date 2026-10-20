@@ -15,12 +15,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -41,6 +47,7 @@ class ProjectSecurityServiceTest {
     @AfterEach
     void clearContext() {
         SecurityContextHolder.clearContext();
+        RequestContextHolder.resetRequestAttributes();
     }
 
     private User authenticateUser() {
@@ -53,6 +60,111 @@ class ProjectSecurityServiceTest {
 
     private void authenticate(Authentication auth) {
         SecurityContextHolder.getContext().setAuthentication(auth);
+    }
+
+    // ── per-request membership cache ──────────────────────────────────────────────────────────
+
+    private void bindRequest() {
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
+    }
+
+    @Test
+    void withARequestBoundAPositiveMembershipIsAskedOnce() {
+        bindRequest();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
+        ProjectSecurityService service = service();
+
+        assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isTrue();
+
+        verify(projectMemberRepository, times(1)).existsByProjectIdAndUserId(PROJECT_ID, "user-1");
+    }
+
+    @Test
+    void withARequestBoundARoleIsLoadedOnceAndAnswersMembershipToo() {
+        bindRequest();
+        memberWithRole(MemberRole.CREATOR);
+        ProjectSecurityService service = service();
+
+        assertThat(service.isAdminOrCreator(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isProjectAdmin(PROJECT_ID, "user-1")).isFalse();
+        assertThat(service.isAdminOrCreator(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isTrue();
+
+        verify(projectMemberRepository, times(1)).findByProjectIdAndUserId(PROJECT_ID, "user-1");
+        verify(projectMemberRepository, never()).existsByProjectIdAndUserId(PROJECT_ID, "user-1");
+    }
+
+    @Test
+    void withNoRequestBoundNothingIsCached() {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
+        memberWithRole(MemberRole.ADMIN);
+        ProjectSecurityService service = service();
+
+        service.isProjectMember(PROJECT_ID, "user-1");
+        service.isProjectMember(PROJECT_ID, "user-1");
+        service.isProjectAdmin(PROJECT_ID, "user-1");
+        service.isProjectAdmin(PROJECT_ID, "user-1");
+
+        verify(projectMemberRepository, times(2)).existsByProjectIdAndUserId(PROJECT_ID, "user-1");
+        verify(projectMemberRepository, times(2)).findByProjectIdAndUserId(PROJECT_ID, "user-1");
+    }
+
+    @Test
+    void aNegativeAnswerIsNeverCachedSoAMidRequestGrantIsSeen() {
+        bindRequest();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false, true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.empty());
+        ProjectSecurityService service = service();
+
+        assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isFalse();
+        assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isProjectAdmin(PROJECT_ID, "user-1")).isFalse();
+        assertThat(service.isProjectAdmin(PROJECT_ID, "user-1")).isFalse();
+
+        verify(projectMemberRepository, times(2)).existsByProjectIdAndUserId(PROJECT_ID, "user-1");
+        // The admin check asked twice: the empty answer was not remembered.
+        verify(projectMemberRepository, times(2)).findByProjectIdAndUserId(PROJECT_ID, "user-1");
+    }
+
+    @Test
+    void theCacheIsKeyedByProjectAndUserSoNothingLeaksToAnotherPair() {
+        bindRequest();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-2")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-2", "user-1")).thenReturn(false);
+        ProjectSecurityService service = service();
+
+        assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isProjectMember(PROJECT_ID, "user-2")).isFalse();
+        assertThat(service.isProjectMember("proj-2", "user-1")).isFalse();
+    }
+
+    @Test
+    void aMemberRoleIsNotLeakedToAnotherProjectOrUser() {
+        bindRequest();
+        memberWithRole(MemberRole.ADMIN);
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-2", "user-1")).thenReturn(Optional.empty());
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-2")).thenReturn(Optional.empty());
+        ProjectSecurityService service = service();
+
+        assertThat(service.isProjectAdmin(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isProjectAdmin("proj-2", "user-1")).isFalse();
+        assertThat(service.isProjectAdmin(PROJECT_ID, "user-2")).isFalse();
+    }
+
+    @Test
+    void aSecondRequestStartsWithAnEmptyCache() {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
+        ProjectSecurityService service = service();
+
+        bindRequest();
+        service.isProjectMember(PROJECT_ID, "user-1");
+        bindRequest();
+        service.isProjectMember(PROJECT_ID, "user-1");
+
+        verify(projectMemberRepository, times(2)).existsByProjectIdAndUserId(PROJECT_ID, "user-1");
     }
 
     private void memberWithRole(MemberRole role) {

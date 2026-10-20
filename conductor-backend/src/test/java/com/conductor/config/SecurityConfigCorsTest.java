@@ -68,4 +68,13 @@ class SecurityConfigCorsTest {
 
         assertThat(origins).isUnmodifiable();
     }
+
+    @Test
+    @DisplayName("the browser can read Server-Timing and the paged lists' X-Next-Cursor")
+    void exposesTheCursorAndTimingHeaders() {
+        var config = configWith("https://conductor.rexipe.io", "").corsConfigurationSource()
+                .getCorsConfiguration(new org.springframework.mock.web.MockHttpServletRequest("GET", "/api/v2/anything"));
+
+        assertThat(config.getExposedHeaders()).contains("X-Next-Cursor", "Server-Timing");
+    }
 }

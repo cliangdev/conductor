@@ -493,6 +493,24 @@ export async function apiGet<T>(path: string, token: string): Promise<T> {
   return parseBody<T>(res!)
 }
 
+/**
+ * GET a paged list: the JSON body plus the backend's `X-Next-Cursor` response header (null on the last
+ * page and on unpaged requests). The array body is unchanged from the unpaged call.
+ */
+export async function apiGetPage<T>(path: string, token: string): Promise<{ data: T; nextCursor: string | null }> {
+  let res: Response
+  try {
+    res = await timedFetch(path, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  } catch { networkError() }
+  if (!res!.ok) {
+    if (res!.status === 401) onUnauthorized?.()
+    await throwApiError(res!)
+  }
+  return { data: await parseBody<T>(res!), nextCursor: res!.headers?.get?.('x-next-cursor') ?? null }
+}
+
 export async function apiPost<T>(path: string, body: unknown, token?: string): Promise<T> {
   let res: Response
   try {

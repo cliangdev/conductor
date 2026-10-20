@@ -63,8 +63,9 @@ public class SecurityConfig {
         config.setAllowedOrigins(allowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
-        // Lets the browser (fetch) read the per-request timing breakdown from RequestMetricsFilter.
-        config.setExposedHeaders(List.of("Server-Timing"));
+        // Lets the browser (fetch) read the per-request timing breakdown from RequestMetricsFilter and the
+        // next-page cursor of paged lists (X-Next-Cursor).
+        config.setExposedHeaders(List.of("Server-Timing", "X-Next-Cursor"));
         config.setAllowCredentials(true);
         // Cache the preflight for an hour, so the browser does not repeat an OPTIONS round trip before each call.
         config.setMaxAge(3600L);

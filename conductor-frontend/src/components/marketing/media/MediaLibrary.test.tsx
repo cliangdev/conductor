@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
+  apiGetPage: vi.fn(),
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiPut: vi.fn(),
@@ -20,7 +21,9 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: () => true, refresh: vi.fn() }),
 }))
 
-import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
+const { markPageReady } = vi.hoisted(() => ({ markPageReady: vi.fn() }))
+vi.mock('@/lib/perf', () => ({ markPageReady }))
+import { apiDelete, apiGet, apiGetPage, apiPatch, apiPost } from '@/lib/api'
 vi.mock('@/lib/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/workflows')>()),
   useSidebarWorkNav: () => ({
@@ -33,13 +36,35 @@ import { MediaLibrary } from './MediaLibrary'
 import { photo, slides } from './testFixtures'
 import type { CreativePhoto } from '@/components/marketing/creatives/types'
 
+/** A fake of the paged list endpoint: server-side filters, newest first (createdAt, id desc), keyset cursor. */
 function load(rows: CreativePhoto[]) {
   ;(apiGet as Mock).mockImplementation(async (path: string) => {
     if (path.endsWith('/usage')) return usage
-    const prefix = new URL(`http://x${path}`).searchParams.get('labelPrefix')
-    return prefix ? rows.filter((r) => r.label?.startsWith(prefix)) : rows
+    return rows
+  })
+  ;(apiGetPage as Mock).mockImplementation(async (path: string) => {
+    const q = new URL(`http://x${path}`).searchParams
+    const kinds = q.get('mediaKind')?.split(',')
+    const needle = q.get('q')?.toLowerCase()
+    let list = rows
+      .filter((r) => q.get('includeBlocked') === 'true' || !r.blocked)
+      .filter((r) => !kinds || kinds.includes(r.mediaKind ?? 'IMAGE'))
+      .filter((r) => !needle || (r.label ?? '').toLowerCase().includes(needle))
+      .filter((r) => q.get('unchecked') !== 'true' || !r.checked)
+      .filter((r) => q.get('aiGenerated') !== 'true' || r.aiGenerated)
+      .filter((r) => !q.get('labelPrefix') || r.label?.startsWith(q.get('labelPrefix')!))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+    const cursor = q.get('cursor')
+    if (cursor) list = list.slice(list.findIndex((r) => r.id === cursor.replace('after:', '')) + 1)
+    const limit = q.get('limit') ? Number(q.get('limit')) : null
+    const page = limit == null ? list : list.slice(0, limit)
+    const next = limit != null && list.length > limit ? `after:${page[page.length - 1].id}` : null
+    return { data: page, nextCursor: next }
   })
 }
+
+const listPaths = () => (apiGetPage as Mock).mock.calls.map((c) => c[0] as string)
+const lastListPath = () => listPaths()[listPaths().length - 1]
 
 const tileIds = () =>
   within(screen.getByTestId('media-grid'))
@@ -63,11 +88,24 @@ function setup(rows: CreativePhoto[]) {
 }
 
 describe('MediaLibrary grid', () => {
-  it('shows a skeleton, then tiles in natural label order', async () => {
-    setup([photo('a', 'slide 10'), photo('b', 'slide 2'), photo('c', 'slide 1')])
+  it('shows a skeleton, then tiles newest first', async () => {
+    setup([
+      photo('a', 'slide 10', 1, 1, { createdAt: '2026-01-01T00:00:00Z' }),
+      photo('b', 'slide 2', 1, 1, { createdAt: '2026-01-03T00:00:00Z' }),
+      photo('c', 'slide 1', 1, 1, { createdAt: '2026-01-02T00:00:00Z' }),
+    ])
     expect(screen.getByTestId('media-grid-skeleton')).toBeInTheDocument()
     await screen.findByTestId('media-grid')
-    expect(tileIds()).toEqual(['c', 'b', 'a'])
+    expect(tileIds()).toEqual(['b', 'c', 'a'])
+  })
+
+  it('sorts by name naturally on request, loading the whole library unpaged', async () => {
+    const user = userEvent.setup()
+    setup([photo('a', 'slide 10'), photo('b', 'slide 2'), photo('c', 'slide 1')])
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Name' }))
+    await waitFor(() => expect(tileIds()).toEqual(['c', 'b', 'a']))
+    expect(lastListPath()).not.toContain('limit=')
   })
 
   it('filters by kind tab and shows the empty state', async () => {
@@ -88,7 +126,7 @@ describe('MediaLibrary grid', () => {
     await screen.findByTestId('media-grid')
     await user.type(screen.getByLabelText('Search by label'), 'slide 03')
     await new Promise((r) => setTimeout(r, 400))
-    await waitFor(() => expect(tileIds()).toEqual(['4x5-3', 'cover']))
+    await waitFor(() => expect(tileIds().sort()).toEqual(['4x5-3', 'cover']))
   })
 
   it('filters Unchecked and AI-generated', async () => {
@@ -154,7 +192,7 @@ describe('selection and bulk actions', () => {
     expect(screen.getByText('3 selected')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Mark checked' }))
     await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(3))
-    expect((apiPatch as Mock).mock.calls.map((c) => c[0].split('/').pop())).toEqual(['4x5-2', '4x5-3', '4x5-4'])
+    expect((apiPatch as Mock).mock.calls.map((c) => c[0].split('/').pop()).sort()).toEqual(['4x5-2', '4x5-3', '4x5-4'])
     expect((apiPatch as Mock).mock.calls[0][1]).toEqual({ checked: true })
   })
 
@@ -332,5 +370,207 @@ describe('MediaLibrary usage', () => {
     const dialog = await screen.findByRole('alertdialog').catch(() => screen.getByRole('dialog', { name: /Delete this media/ }))
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     expect(await screen.findByText(detail)).toBeInTheDocument()
+  })
+})
+
+describe('MediaLibrary paging', () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      photo(`m${String(i).padStart(3, '0')}`, `item ${i}`, 1, 1, {
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, n - i)).toISOString(),
+      }),
+    )
+
+  it('renders the first page, marks the page ready, then loads the next page with the cursor', async () => {
+    const user = userEvent.setup()
+    setup(many(130))
+    await screen.findByTestId('media-grid')
+    expect(markPageReady).toHaveBeenCalledWith('media-library')
+    expect(tileIds()).toHaveLength(60)
+    expect(listPaths()).toHaveLength(1)
+    expect(listPaths()[0]).toContain('limit=60')
+    expect(listPaths()[0]).not.toContain('cursor=')
+
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(120))
+    expect(listPaths()[1]).toContain('cursor=after%3Am059')
+    expect(new Set(tileIds()).size).toBe(120)
+
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(130))
+    // Last page: no more control and no further fetch.
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(listPaths()).toHaveLength(3)
+  })
+
+  it('loads the next page when the sentinel scrolls into view', async () => {
+    const observers: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = []
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) {
+          observers.push(cb)
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    try {
+      setup(many(100))
+      await screen.findByTestId('media-grid')
+      expect(listPaths()).toHaveLength(1)
+      act(() => observers[observers.length - 1]([{ isIntersecting: true }]))
+      await waitFor(() => expect(tileIds()).toHaveLength(100))
+      expect(listPaths()).toHaveLength(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('a filter change resets to page 1 with the filter sent to the server', async () => {
+    const user = userEvent.setup()
+    setup(many(130))
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(120))
+    await user.click(screen.getByRole('button', { name: 'Unchecked' }))
+    await waitFor(() => expect(lastListPath()).toContain('unchecked=true'))
+    expect(lastListPath()).toContain('limit=60')
+    expect(lastListPath()).not.toContain('cursor=')
+    await waitFor(() => expect(tileIds()).toHaveLength(60))
+  })
+
+  it('search resets to page 1 with q sent to the server', async () => {
+    const user = userEvent.setup()
+    setup(many(130))
+    await screen.findByTestId('media-grid')
+    await user.type(screen.getByLabelText('Search by label'), 'item 12')
+    await waitFor(() => expect(lastListPath()).toContain('q=item+12'))
+    expect(lastListPath()).not.toContain('cursor=')
+  })
+
+  it('does not fetch again once the list fits one page', async () => {
+    setup(many(10))
+    await screen.findByTestId('media-grid')
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(listPaths()).toHaveLength(1)
+  })
+
+  it('Select set pulls in the rest of the library before selecting', async () => {
+    const user = userEvent.setup()
+    const newer = many(70).map((r, i) => ({ ...r, label: `01-import 9x16 slide ${String(i + 1).padStart(2, '0')}` }))
+    const older = slides('4x5', 3).map((r) => ({ ...r, createdAt: '2025-01-01T00:00:00Z' }))
+    setup([...newer, ...older])
+    await screen.findByTestId('media-grid')
+    expect(tileIds()).toHaveLength(60)
+    await user.click(screen.getByLabelText('Select 01-import 9x16 slide 01'))
+    await user.click(screen.getByRole('button', { name: 'Select set' }))
+    await waitFor(() => expect(screen.getByText('73 selected')).toBeInTheDocument())
+    expect(tileIds()).toHaveLength(73)
+  })
+  it('"On posts" and "Unused" load the whole library unpaged, and leaving them pages again', async () => {
+    const user = userEvent.setup()
+    setup(many(130).map((r, i) => ({ ...r, postCount: i === 100 ? 1 : 0, creativeCount: 0 })))
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Unused' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(129))
+    expect(lastListPath()).not.toContain('limit=')
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Unused' }))
+    await user.click(screen.getByRole('button', { name: 'On posts' }))
+    await waitFor(() => expect(tileIds()).toEqual(['m100']))
+    expect(lastListPath()).not.toContain('limit=')
+    await user.click(screen.getByRole('button', { name: 'On posts' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(60))
+    expect(lastListPath()).toContain('limit=60')
+    expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument()
+  })
+
+  it('discards a slow first-page response that arrives after a filter change', async () => {
+    const user = userEvent.setup()
+    const rows = many(130).map((r, i) => (i < 30 ? { ...r, checked: true } : r))
+    all = rows
+    load(rows)
+    const fast = (apiGetPage as Mock).getMockImplementation()!
+    let releaseSlow!: () => void
+    ;(apiGetPage as Mock).mockImplementation(async (path: string, ...rest: unknown[]) => {
+      const res = await fast(path, ...rest)
+      if (path.includes('limit=60') && !path.includes('unchecked') && !path.includes('cursor') && !releaseSlow) {
+        await new Promise<void>((r) => { releaseSlow = r })
+      }
+      return res
+    })
+    render(<MediaLibrary projectId="proj-1" />)
+    await waitFor(() => expect(releaseSlow).toBeDefined())
+    // Filter while the unfiltered first page is still in flight.
+    await user.click(screen.getByRole('button', { name: 'Unchecked' }))
+    await waitFor(() => expect(lastListPath()).toContain('unchecked=true'))
+    await waitFor(() => expect(tileIds()).toHaveLength(60))
+    const before = tileIds()
+    expect(before).not.toContain('m000')
+    // Now the stale response lands; it must not replace the filtered list or its cursor.
+    act(() => releaseSlow())
+    await new Promise((r) => setTimeout(r, 20))
+    expect(tileIds()).toEqual(before)
+    expect(listPaths().filter((p) => p.includes('limit=60'))).toHaveLength(2)
+  })
+
+  it('discards a slow "Load more" page that arrives after a filter change', async () => {
+    const user = userEvent.setup()
+    const rows = many(130).map((r, i) => (i % 3 !== 2 ? { ...r, aiGenerated: true } : r))
+    all = rows
+    load(rows)
+    const fast = (apiGetPage as Mock).getMockImplementation()!
+    let release!: () => void
+    ;(apiGetPage as Mock).mockImplementation(async (path: string, ...rest: unknown[]) => {
+      const res = await fast(path, ...rest)
+      if (path.includes('cursor=') && !release) await new Promise<void>((r) => { release = r })
+      return res
+    })
+    render(<MediaLibrary projectId="proj-1" />)
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(release).toBeDefined())
+    await user.click(screen.getByRole('button', { name: 'AI-generated' }))
+    await waitFor(() => expect(lastListPath()).toContain('aiGenerated=true'))
+    await waitFor(() => expect(tileIds()).toHaveLength(60))
+    const before = tileIds()
+    act(() => release())
+    await new Promise((r) => setTimeout(r, 20))
+    expect(tileIds()).toEqual(before)
+    expect(tileIds().every((id) => rows.find((r) => r.id === id)!.aiGenerated)).toBe(true)
+    // The cursor still belongs to the filtered list: the next page completes it.
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(87))
+  })
+
+  it('shows an error and keeps the loaded tiles when loading the next page fails', async () => {
+    const user = userEvent.setup()
+    setup(many(100))
+    await screen.findByTestId('media-grid')
+    const ok = (apiGetPage as Mock).getMockImplementation()!
+    ;(apiGetPage as Mock).mockRejectedValueOnce({ status: 500, detail: 'boom' })
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('boom')).toBeInTheDocument()
+    expect(tileIds()).toHaveLength(60)
+    ;(apiGetPage as Mock).mockImplementation(ok)
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(100))
+  })
+
+  it('deleting an item removes its tile and keeps paging from the same cursor', async () => {
+    const user = userEvent.setup()
+    ;(apiDelete as Mock).mockResolvedValue(undefined)
+    setup(many(100))
+    await screen.findByTestId('media-grid')
+    await user.click(screen.getByRole('button', { name: 'Open item 0' }))
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('alertdialog').catch(() => screen.getByRole('dialog', { name: /Delete this media/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(59))
+    expect(tileIds()).not.toContain('m000')
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(tileIds()).toHaveLength(99))
+    expect(new Set(tileIds()).size).toBe(99)
   })
 })

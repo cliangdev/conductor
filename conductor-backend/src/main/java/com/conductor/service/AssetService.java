@@ -183,30 +183,50 @@ public class AssetService {
      */
     @Transactional
     public Asset createFromStoredObject(String projectId, String workItemId, StoredObjectInput input) {
+        return createAllFromStoredObjects(projectId, workItemId, List.of(input)).get(0);
+    }
+
+    /**
+     * {@link #createFromStoredObject} for several objects at once: the Work Item, the workflow's asset types
+     * and the "is it frozen" guard are resolved ONCE, and the new rows are saved together so Hibernate sends
+     * them as one JDBC batch. Attaching a ten-slide carousel used to cost the same checks ten times over.
+     */
+    @Transactional
+    public List<Asset> createAllFromStoredObjects(String projectId, String workItemId, List<StoredObjectInput> inputs) {
+        if (inputs.isEmpty()) {
+            return List.of();
+        }
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
-        validateAssetType(projectId, workItem, input.type());
+        for (String type : inputs.stream().map(StoredObjectInput::type).distinct().toList()) {
+            validateAssetType(projectId, workItem, type);
+        }
         guardFileAssetMutable(projectId, workItem);
 
-        Asset asset = new Asset();
-        asset.setWorkItem(workItem);
-        asset.setType(input.type());
-        asset.setLabel(input.label());
-        asset.setKind(KIND_FILE);
-        asset.setRef(input.gcsPath());
-        asset.setGcsPath(input.gcsPath());
-        asset.setContentType(input.contentType());
-        asset.setSizeBytes(input.sizeBytes());
-        asset.setWidth(positiveOrNull(input.width()));
-        asset.setHeight(positiveOrNull(input.height()));
-        asset.setDurationSeconds(input.durationSeconds());
-        asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
-        asset.setDone(true);
-        asset.setCreativeFrameId(input.creativeFrameId());
-        asset.setMediaId(input.mediaId());
-        assetRepository.save(asset);
-
-        publishAssetAdded(projectId, workItem, asset);
-        return asset;
+        List<Asset> assets = new ArrayList<>();
+        for (StoredObjectInput input : inputs) {
+            Asset asset = new Asset();
+            asset.setWorkItem(workItem);
+            asset.setType(input.type());
+            asset.setLabel(input.label());
+            asset.setKind(KIND_FILE);
+            asset.setRef(input.gcsPath());
+            asset.setGcsPath(input.gcsPath());
+            asset.setContentType(input.contentType());
+            asset.setSizeBytes(input.sizeBytes());
+            asset.setWidth(positiveOrNull(input.width()));
+            asset.setHeight(positiveOrNull(input.height()));
+            asset.setDurationSeconds(input.durationSeconds());
+            asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
+            asset.setDone(true);
+            asset.setCreativeFrameId(input.creativeFrameId());
+            asset.setMediaId(input.mediaId());
+            assets.add(asset);
+        }
+        assetRepository.saveAll(assets);
+        for (Asset asset : assets) {
+            publishAssetAdded(projectId, workItem, asset);
+        }
+        return assets;
     }
 
     /** The most Media items one add-from-media request may link — the OpenAPI {@code maxItems}. */

@@ -50,6 +50,7 @@ import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.FailCreativeRenderRequest;
 import com.conductor.generated.v2.model.MediaKind;
+import com.conductor.exception.BusinessException;
 import com.conductor.generated.v2.model.MediaUsageCreative;
 import com.conductor.generated.v2.model.MediaUsagePost;
 import com.conductor.generated.v2.model.MediaUsageResponse;
@@ -110,11 +111,24 @@ public class CreativeController implements CreativesApi {
 
     @Override
     public ResponseEntity<List<CreativePhotoResponse>> listCreativePhotos(String projectId, Boolean includeBlocked,
-                                                                          List<MediaKind> mediaKind, String labelPrefix) {
-        List<CreativePhotoResponse> body = photoService.listPhotos(projectId, Boolean.TRUE.equals(includeBlocked),
-                        CreativePhotoService.mediaKindValues(mediaKind), labelPrefix, currentUser())
-                .stream().map(this::toResponse).toList();
-        return ResponseEntity.ok(body);
+                                                                          List<MediaKind> mediaKind, String labelPrefix,
+                                                                          String q, Boolean unchecked, Boolean aiGenerated,
+                                                                          Integer limit, String cursor) {
+        if (cursor != null && !cursor.isBlank() && limit == null) {
+            throw new BusinessException("cursor requires limit");
+        }
+        if (limit != null && (limit < 1 || limit > 200)) {
+            throw new BusinessException("limit must be between 1 and 200");
+        }
+        CreativePhotoService.PhotoPage page = photoService.listPhotosPage(projectId, Boolean.TRUE.equals(includeBlocked),
+                CreativePhotoService.mediaKindValues(mediaKind), labelPrefix, q, Boolean.TRUE.equals(unchecked),
+                Boolean.TRUE.equals(aiGenerated), limit, cursor, currentUser());
+        List<CreativePhotoResponse> body = page.items().stream().map(this::toResponse).toList();
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (page.nextCursor() != null) {
+            response.header("X-Next-Cursor", page.nextCursor());
+        }
+        return response.body(body);
     }
 
     @Override
