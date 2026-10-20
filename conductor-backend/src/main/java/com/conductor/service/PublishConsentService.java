@@ -186,7 +186,17 @@ public class PublishConsentService {
     public RecordedConsent readConsentWithEtag(String projectId, String workItemId, User caller) {
         verifyMembership(projectId, caller);
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
-        return new RecordedConsent(state(workItem), consentEtag(workItem));
+        // One context for both answers: the state and the ETag are the same subject hash, so the Post's
+        // targets, media and consent row are read once and the hash is computed once.
+        PublishCheckContext ctx = openContext(workItem);
+        String hash = consentSubjectHash(workItem, ctx);
+        return new RecordedConsent(state(workItem, ctx, hash), etagOf(hash));
+    }
+
+    /** A fresh once-per-request view of the Post's targets, media and consent row. */
+    public PublishCheckContext openContext(WorkItem workItem) {
+        return PublishCheckContext.of(workItem, targetRepository, assetRepository, targetAssetRepository,
+                consentRepository, connectionRepository);
     }
 
     /**
@@ -565,6 +575,20 @@ public class PublishConsentService {
         return requiresConsent(targetRepository.findAllByWorkItemId(workItemId));
     }
 
+    /** As {@link #verdict(WorkItem, List)}, over what the request has already loaded. */
+    @Transactional(readOnly = true)
+    public Verdict verdict(WorkItem workItem, PublishCheckContext ctx) {
+        if (workItem == null || workItem.getId() == null || !requiresConsent(ctx.targets())) {
+            return Verdict.NOT_REQUIRED;
+        }
+        Optional<PublishConsent> consent = ctx.consent();
+        if (consent.isEmpty()) {
+            return Verdict.NEVER_GIVEN;
+        }
+        return consentSubjectHash(workItem, ctx).equals(consent.get().getConsentHash())
+                ? Verdict.VALID : Verdict.SUPERSEDED;
+    }
+
     private boolean requiresConsent(List<PostPublishTarget> allTargets) {
         return allTargets.stream()
                 .filter(target -> target.getLane() != PublishLane.MANUAL)
@@ -584,6 +608,19 @@ public class PublishConsentService {
     /** The Post's TikTok targets that publish through the API — the ones a creator consents for. */
     public List<PostPublishTarget> consentTargetsOf(WorkItem workItem) {
         return consentTargets(workItem.getId());
+    }
+
+    /** The state for a Post whose subject hash the caller has already computed from {@code ctx}. */
+    private ConsentState state(WorkItem workItem, PublishCheckContext ctx, String subjectHash) {
+        PublishConsent consent = ctx.consent().orElse(null);
+        if (!requiresConsent(ctx.targets())) {
+            return ConsentState.of(Verdict.NOT_REQUIRED, consent);
+        }
+        if (consent == null) {
+            return ConsentState.of(Verdict.NEVER_GIVEN, null);
+        }
+        return ConsentState.of(subjectHash.equals(consent.getConsentHash()) ? Verdict.VALID : Verdict.SUPERSEDED,
+                consent);
     }
 
     private ConsentState state(WorkItem workItem, PublishConsent consent) {
@@ -613,14 +650,19 @@ public class PublishConsentService {
     }
 
     String consentSubjectHash(WorkItem workItem, List<PostPublishTarget> loadedTargets) {
-        return subjectHash(loadedTargets, selectionsByTarget(loadedTargets), assetRepository.findAllByWorkItemId(workItem.getId()));
+        return subjectHash(targets(loadedTargets, selectionsByTarget(loadedTargets)),
+                assets(workItem.getId()));
     }
 
-    private String subjectHash(List<PostPublishTarget> targets, Map<String, List<String>> selections,
-                               List<Asset> workItemAssets) {
+    /** As {@link #consentSubjectHash(WorkItem)}, from what the request has already loaded. */
+    String consentSubjectHash(WorkItem workItem, PublishCheckContext ctx) {
+        return subjectHash(targets(ctx.targets(), ctx.selectionsByTarget()), assetTuples(ctx.assets()));
+    }
+
+    private static String subjectHash(List<Map<String, Object>> targetTuples, List<Map<String, Object>> assetTuples) {
         Map<String, Object> subject = new TreeMap<>();
-        subject.put("targets", targets(targets, selections));
-        subject.put("assets", assets(workItemAssets));
+        subject.put("targets", targetTuples);
+        subject.put("assets", assetTuples);
         return sha256(canonicalJson(subject));
     }
 
@@ -654,14 +696,15 @@ public class PublishConsentService {
             List<PostPublishTarget> targets = targetsByPost.getOrDefault(id, List.of());
             String stored = hashes.get(id);
             if (stored != null && requiresConsent(targets)
-                    && subjectHash(targets, selections, assetsByPost.getOrDefault(id, List.of())).equals(stored)) {
+                    && subjectHash(targets(targets, selections), assetTuples(assetsByPost.getOrDefault(id, List.of()))).equals(stored)) {
                 valid.add(id);
             }
         }
         return valid;
     }
 
-    private List<Map<String, Object>> targets(List<PostPublishTarget> targets, Map<String, List<String>> selections) {
+    private List<Map<String, Object>> targets(List<PostPublishTarget> targets,
+                                              Map<String, List<String>> selections) {
         return canonicalOrder(targets.stream()
                 // Only a custom-media target has a selection to look up, and an unsaved target has no id
                 // yet — so the lookup is guarded rather than unconditional.
@@ -687,8 +730,12 @@ public class PublishConsentService {
         return byTarget;
     }
 
-    private List<Map<String, Object>> assets(List<Asset> workItemAssets) {
-        return canonicalOrder(workItemAssets.stream()
+    private List<Map<String, Object>> assets(String workItemId) {
+        return assetTuples(assetRepository.findAllByWorkItemId(workItemId));
+    }
+
+    private static List<Map<String, Object>> assetTuples(List<Asset> assets) {
+        return canonicalOrder(assets.stream()
                 .filter(asset -> UPLOADED.equals(asset.getUploadStatus()))
                 .map(PublishConsentService::assetTuple)
                 .toList());

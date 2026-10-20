@@ -555,6 +555,30 @@ class PublishConsentServiceTest {
         return service.recordConsent(PROJECT, WORK_ITEM, consented, creator);
     }
 
+    /**
+     * The consent subject hash is stored on rows already in production, so reading it from a once-loaded
+     * context must keep producing the exact bytes the per-call queries did. Pinned as a literal, produced
+     * by the pre-context implementation, for a Post with an inheriting and a custom-media target.
+     */
+    @Test
+    void theSubjectHashOfAFixedPostIsByteForByteWhatItAlwaysWas() {
+        PostPublishTarget inheriting = tiktokTarget("conn-tiktok", "{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
+        PostPublishTarget custom = target("instagram", "conn-meta", null);
+        custom.setCustomMedia(true);
+        givenTargets(inheriting, custom);
+        givenUploadedAssets("asset-1", "asset-2");
+        when(targetAssetRepository.findAllByTargetIdIn(List.of(custom.getId()))).thenReturn(List.of(
+                new com.conductor.entity.PostPublishTargetAsset(custom.getId(), "asset-2", 0),
+                new com.conductor.entity.PostPublishTargetAsset(custom.getId(), "asset-1", 1)));
+
+        String legacy = service.consentEtag(post);
+        PublishConsentService.RecordedConsent viaContext = service.readConsentWithEtag(PROJECT, WORK_ITEM, creator);
+
+        assertThat(legacy).isEqualTo("\"8bfa2dd6d2889549071b667cf277473b639e0d1e7f1005902db2c88bff9fcdf9\"");
+        assertThat(viaContext.etag()).isEqualTo(legacy);
+        assertThat(viaContext.state().verdict()).isEqualTo(PublishConsentService.Verdict.NEVER_GIVEN);
+    }
+
     private PublishConsentService.ConsentState read() {
         return service.readConsent(PROJECT, WORK_ITEM, creator);
     }

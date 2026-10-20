@@ -8,6 +8,7 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.service.AssetUploadPolicy;
 import com.conductor.service.PostScheduleValidator;
+import com.conductor.service.PublishCheckContext;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.PublishConsentService;
 import com.conductor.service.WorkItemWorkflowService;
@@ -143,11 +144,13 @@ public class PublishPreflightService {
         if (!publishingWorkflow.declaresPublishing(statechart)) {
             return Preflight.notPublishing();
         }
+        // Everything the checks below need about the Post is read once, here, and handed to each of them.
+        PublishCheckContext ctx = publishConsentService.openContext(workItem);
         PublishGateEvaluator.Evaluation evaluation = withoutCommittedLeadTime(
-                publishGateEvaluator.evaluate(workItem), workItem, statechart);
-        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItem.getId());
+                publishGateEvaluator.evaluate(workItem, ctx), workItem, statechart);
+        List<PostPublishTarget> targets = ctx.targets();
 
-        PublishConsentService.Verdict verdict = publishConsentService.verdict(workItem, targets);
+        PublishConsentService.Verdict verdict = publishConsentService.verdict(workItem, ctx);
         ConsentSummary consent = new ConsentSummary(
                 verdict != PublishConsentService.Verdict.NOT_REQUIRED, verdict);
 
@@ -155,7 +158,7 @@ public class PublishPreflightService {
         ReviewSummary review = new ReviewSummary(
                 gate.isPresent(),
                 reviewerRepository.findAllByWorkItemId(workItem.getId()).size(),
-                gate.isPresent() && workItemWorkflowService.isReviewSatisfied(projectId, workItem, gate.get()),
+                gate.isPresent() && workItemWorkflowService.isReviewSatisfied(projectId, workItem, gate.get(), ctx),
                 gate.map(StatechartTransition::reviewerRole).orElse(null));
 
         // The move a ready item takes next: a gate edge out of the current status when there is one, else

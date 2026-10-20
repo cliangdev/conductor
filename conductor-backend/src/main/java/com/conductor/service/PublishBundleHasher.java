@@ -95,15 +95,31 @@ public class PublishBundleHasher {
     /** As {@link #hash(WorkItem)}, for a caller that already holds the item's targets. */
     @Transactional(readOnly = true)
     public String hash(WorkItem workItem, List<PostPublishTarget> loadedTargets) {
+        return bundleHash(workItem, targets(loadedTargets, selectionsByTarget(loadedTargets)),
+                assets(assetRepository.findAllByWorkItemId(workItem.getId())));
+    }
+
+    /** As {@link #hash(WorkItem)}, from what the request has already loaded - no query of its own. */
+    public String hash(WorkItem workItem, PublishCheckContext ctx) {
+        return bundleHash(workItem, targets(ctx.targets(), ctx.selectionsByTarget()), assets(ctx.assets()));
+    }
+
+    /** As {@link #appliesTo(WorkItem)}, from what the request has already loaded. */
+    public boolean appliesTo(WorkItem workItem, PublishCheckContext ctx) {
+        return appliesTo(workItem, ctx.targets());
+    }
+
+    private static String bundleHash(WorkItem workItem, List<Map<String, Object>> targetTuples,
+                                     List<Map<String, Object>> assetTuples) {
         Map<String, Object> bundle = new TreeMap<>();
         bundle.put("caption", workItem.getDescription());
-        bundle.put("targets", targets(loadedTargets));
-        bundle.put("assets", assets(workItem.getId()));
+        bundle.put("targets", targetTuples);
+        bundle.put("assets", assetTuples);
         return sha256(canonicalJson(bundle));
     }
 
-    private List<Map<String, Object>> targets(List<PostPublishTarget> targets) {
-        Map<String, List<String>> selections = selectionsByTarget(targets);
+    private List<Map<String, Object>> targets(List<PostPublishTarget> targets,
+                                              Map<String, List<String>> selections) {
         return canonicalOrder(targets.stream()
                 // Only a custom-media target has a selection to look up, and an unsaved target has no id
                 // yet — so the lookup is guarded rather than unconditional.
@@ -132,8 +148,8 @@ public class PublishBundleHasher {
         return byTarget;
     }
 
-    private List<Map<String, Object>> assets(String workItemId) {
-        return canonicalOrder(assetRepository.findAllByWorkItemId(workItemId).stream()
+    private static List<Map<String, Object>> assets(List<Asset> assets) {
+        return canonicalOrder(assets.stream()
                 .filter(asset -> UPLOADED.equals(asset.getUploadStatus()))
                 .map(PublishBundleHasher::assetTuple)
                 .toList());

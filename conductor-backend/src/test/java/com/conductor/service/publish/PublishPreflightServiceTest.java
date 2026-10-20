@@ -95,9 +95,12 @@ class PublishPreflightServiceTest {
         when(workItemRepository.findById("post-1")).thenReturn(Optional.of(post));
         when(resolver.resolveRequired(PROJECT, "MARKETING", 1)).thenReturn(marketing);
         when(targetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of());
+        when(consentService.openContext(post)).thenAnswer(invocation -> new com.conductor.service.PublishCheckContext(
+                post, () -> targetRepository.findAllByWorkItemId("post-1"), List::of, ids -> List.of(),
+                Optional::empty, ids -> List.of()));
         when(reviewerRepository.findAllByWorkItemId("post-1")).thenReturn(List.of());
-        when(consentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.anyList())).thenReturn(PublishConsentService.Verdict.NOT_REQUIRED);
-        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(List.of(), List.of()));
+        when(consentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.any(com.conductor.service.PublishCheckContext.class))).thenReturn(PublishConsentService.Verdict.NOT_REQUIRED);
+        when(evaluator.evaluate(eq(post), any(com.conductor.service.PublishCheckContext.class))).thenReturn(new PublishGateEvaluator.Evaluation(List.of(), List.of()));
         when(postScheduleValidator.earliestFireTime(anyList()))
                 .thenReturn(OffsetDateTime.parse("2026-09-04T12:10:00Z"));
     }
@@ -133,12 +136,12 @@ class PublishPreflightServiceTest {
 
     @Test
     void aDraftReportsBlockersAndTheReviewGateAsItsNextGateMove() {
-        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(
+        when(evaluator.evaluate(eq(post), any(com.conductor.service.PublishCheckContext.class))).thenReturn(new PublishGateEvaluator.Evaluation(
                 List.of(PublishFinding.blocker(PostScheduleValidator.NO_FIRE_TIME, "no fire time is set")),
                 List.of(PublishFinding.warning(MediaTargetValidator.MEDIA_ADVISORY, "a Short", "t-1"))));
         post.setCurrentStatus("IN_REVIEW");
         when(reviewerRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(new WorkItemReviewer()));
-        when(workflowService.isReviewSatisfied(eq(PROJECT), eq(post), any())).thenReturn(false);
+        when(workflowService.isReviewSatisfied(eq(PROJECT), eq(post), any(), any())).thenReturn(false);
 
         PublishPreflightService.Preflight preflight = service.preflight(PROJECT, "post-1", caller);
 
@@ -177,7 +180,7 @@ class PublishPreflightServiceTest {
     void aScheduledPostIsNotToldItsArmedTimeIsTooSoonInTheFinalMinute() {
         post.setCurrentStatus("SCHEDULED");
         post.setScheduledFor(OffsetDateTime.now().plusSeconds(30));
-        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(
+        when(evaluator.evaluate(eq(post), any(com.conductor.service.PublishCheckContext.class))).thenReturn(new PublishGateEvaluator.Evaluation(
                 List.of(PublishFinding.blocker(PostScheduleValidator.FIRE_TIME_TOO_SOON,
                         "6:25 PM is too soon: Instagram needs at least 1 minute's notice. Move it later.")),
                 List.of()));
@@ -191,7 +194,7 @@ class PublishPreflightServiceTest {
     void aScheduledPostWhoseTimeHasPassedStillSaysSo() {
         post.setCurrentStatus("SCHEDULED");
         post.setScheduledFor(OffsetDateTime.now().minusMinutes(5));
-        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(
+        when(evaluator.evaluate(eq(post), any(com.conductor.service.PublishCheckContext.class))).thenReturn(new PublishGateEvaluator.Evaluation(
                 List.of(PublishFinding.blocker(PostScheduleValidator.FIRE_TIME_TOO_SOON,
                         "6:25 PM is in the past. Move it to a future time.")),
                 List.of()));
@@ -204,7 +207,7 @@ class PublishPreflightServiceTest {
     @Test
     void aDraftChoosingATimeTooSoonIsStillTold() {
         post.setScheduledFor(OffsetDateTime.now().plusSeconds(30));
-        when(evaluator.evaluate(post)).thenReturn(new PublishGateEvaluator.Evaluation(
+        when(evaluator.evaluate(eq(post), any(com.conductor.service.PublishCheckContext.class))).thenReturn(new PublishGateEvaluator.Evaluation(
                 List.of(PublishFinding.blocker(PostScheduleValidator.FIRE_TIME_TOO_SOON, "too soon")),
                 List.of()));
 
@@ -216,8 +219,8 @@ class PublishPreflightServiceTest {
     @Test
     void anApprovedPostsNextGateMoveIsScheduling() {
         post.setCurrentStatus("APPROVED");
-        when(workflowService.isReviewSatisfied(eq(PROJECT), eq(post), any())).thenReturn(true);
-        when(consentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.anyList())).thenReturn(PublishConsentService.Verdict.SUPERSEDED);
+        when(workflowService.isReviewSatisfied(eq(PROJECT), eq(post), any(), any())).thenReturn(true);
+        when(consentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.any(com.conductor.service.PublishCheckContext.class))).thenReturn(PublishConsentService.Verdict.SUPERSEDED);
         PostPublishTarget target = new PostPublishTarget();
         target.setId("t-1");
         when(targetRepository.findAllByWorkItemId("post-1")).thenReturn(List.of(target));
@@ -245,7 +248,10 @@ class PublishPreflightServiceTest {
         ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
         PublishConsentService realConsentService = mock(PublishConsentService.class);
         when(realConsentService.verdict(post)).thenReturn(PublishConsentService.Verdict.VALID);
-        when(realConsentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.anyList())).thenReturn(PublishConsentService.Verdict.VALID);
+        when(realConsentService.openContext(post)).thenAnswer(invocation -> com.conductor.service.PublishCheckContext.of(
+                post, realTargetRepository, assetRepository, targetAssetRepository,
+                mock(com.conductor.repository.PublishConsentRepository.class), connectionRepository));
+        when(realConsentService.verdict(org.mockito.ArgumentMatchers.eq(post), org.mockito.ArgumentMatchers.any(com.conductor.service.PublishCheckContext.class))).thenReturn(PublishConsentService.Verdict.VALID);
 
         PublishPlatformRegistry registry = new PublishPlatformRegistry();
         PublishTargetMediaResolver mediaResolver =

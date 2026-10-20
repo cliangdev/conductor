@@ -1,6 +1,7 @@
 package com.conductor.repository;
 
 import com.conductor.entity.PublishConsent;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -18,6 +19,8 @@ import java.util.Optional;
 @Repository
 public interface PublishConsentRepository extends JpaRepository<PublishConsent, String> {
 
+    /** Fetches the consenting user in the same statement: every reader shows who consented. */
+    @EntityGraph(attributePaths = "consentedBy")
     Optional<PublishConsent> findByWorkItemId(String workItemId);
 
     /** {@code [workItemId, consentHash]} rows, without loading the entity or its consenting user. */

@@ -272,13 +272,20 @@ public class MediaTargetValidator {
      * file rules, then its composition, then its copy.
      */
     public List<PublishFinding> inspect(WorkItem workItem) {
-        List<PostPublishTarget> targets = postPublishTargetRepository.findAllByWorkItemId(workItem.getId());
+        return inspect(workItem, mediaResolver.contextFor(workItem,
+                () -> postPublishTargetRepository.findAllByWorkItemId(workItem.getId()),
+                Optional::empty, ids -> List.of()));
+    }
+
+    /** As {@link #inspect(WorkItem)}, over what the request has already loaded. */
+    public List<PublishFinding> inspect(WorkItem workItem, PublishCheckContext ctx) {
+        List<PostPublishTarget> targets = ctx.targets();
         if (targets.isEmpty()) {
             // PostScheduleValidator owns "you must pick a target"; there is nothing here to check against.
             return List.of();
         }
         Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
-                mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
+                mediaResolver.effectiveMediaByTarget(ctx);
 
         List<Asset> allMedia = new ArrayList<>();
         mediaByTarget.values().forEach(m -> allMedia.addAll(m.assets()));
@@ -298,7 +305,7 @@ public class MediaTargetValidator {
                     // Explicitly media-less: what attaching a carousel leaves on a destination that cannot
                     // take one. Only worth a message when the Post does carry a multi-image set.
                     if (postHasCarouselImages == null) {
-                        postHasCarouselImages = assetRepository.findAllByWorkItemId(workItem.getId()).stream()
+                        postHasCarouselImages = ctx.assets().stream()
                                 .filter(a -> a.getCreativeFrameId() != null && isImage(a)).count() > 1;
                     }
                     multiImage = postHasCarouselImages;

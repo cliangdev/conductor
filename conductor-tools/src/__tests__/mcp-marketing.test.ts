@@ -721,13 +721,59 @@ describe('requestTikTokConsent', () => {
     expect(clock).toBe(10_000)
   })
 
-  it('returns straight away on decline or cancel', async () => {
+  it('returns declined, with the link and requestId, when the person declines while pending', async () => {
     mocked(apiPost).mockResolvedValue(created())
+    mocked(apiGet).mockResolvedValue(status(['MISSING', 'MISSING']))
     const notifyComplete = vi.fn()
     const result = await requestTikTokConsent({}, config, fastHost({ elicitUrl: async () => 'decline', notifyComplete }))
     expect(result['status']).toBe('declined')
-    expect(apiGet).not.toHaveBeenCalled()
+    expect(result['requestId']).toBe('req-1')
+    expect(result['consentUrl']).toBe('https://app.test/consent?request=req-1')
     expect(notifyComplete).not.toHaveBeenCalled()
+  })
+
+  it('keeps polling while the elicitation never resolves, then completes and notifies once', async () => {
+    mocked(apiPost).mockResolvedValue(created())
+    mocked(apiGet)
+      .mockResolvedValueOnce(status(['MISSING', 'MISSING']))
+      .mockResolvedValueOnce(status(['VALID', 'MISSING']))
+      .mockResolvedValueOnce(status(['VALID', 'VALID']))
+    const elicitUrl = vi.fn(() => new Promise<'accept'>(() => {}))
+    const notifyComplete = vi.fn(async () => {})
+    const result = await requestTikTokConsent({}, config, fastHost({ elicitUrl, notifyComplete }))
+    expect(result['status']).toBe('complete')
+    expect(notifyComplete).toHaveBeenCalledTimes(1)
+    expect(notifyComplete).toHaveBeenCalledWith('req-1')
+    expect(elicitUrl.mock.calls[0][0].signal.aborted).toBe(true)
+  })
+
+  it('does not fail when the elicitation rejects with a timeout; it keeps polling', async () => {
+    mocked(apiPost).mockResolvedValue(created())
+    mocked(apiGet).mockResolvedValueOnce(status(['MISSING', 'MISSING'])).mockResolvedValueOnce(status(['VALID', 'VALID']))
+    const elicitUrl = vi.fn(async () => {
+      throw new Error('MCP error -32001: Request timed out')
+    })
+    const result = await requestTikTokConsent({}, config, fastHost({ elicitUrl, notifyComplete: vi.fn(async () => {}) }))
+    expect(result['status']).toBe('complete')
+  })
+
+  it('at the deadline returns waiting with the link and aborts the elicitation', async () => {
+    mocked(apiPost).mockResolvedValue(created())
+    mocked(apiGet).mockResolvedValue(status(['MISSING', 'MISSING']))
+    const elicitUrl = vi.fn(() => new Promise<'accept'>(() => {}))
+    const result = await requestTikTokConsent({ waitSeconds: 12 }, config, fastHost({ elicitUrl }))
+    expect(result['status']).toBe('waiting')
+    expect(result['consentUrl']).toBe('https://app.test/consent?request=req-1')
+    expect(String(result['nextStep'])).toMatch(/requestId: "req-1"/)
+    expect(elicitUrl.mock.calls[0][0].signal.aborted).toBe(true)
+  })
+
+  it('gives the elicitation a timeout well above the SDK 60s default', async () => {
+    mocked(apiPost).mockResolvedValue(created())
+    mocked(apiGet).mockResolvedValue(status(['VALID', 'VALID']))
+    const elicitUrl = vi.fn(async () => 'accept' as const)
+    await requestTikTokConsent({ waitSeconds: 600 }, config, fastHost({ elicitUrl }))
+    expect(elicitUrl.mock.calls[0][0].timeoutMs).toBeGreaterThanOrEqual(600_000)
   })
 
   it('resumes with requestId without creating a new request, and stops waiting at the deadline', async () => {

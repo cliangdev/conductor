@@ -29,6 +29,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Guards the approval gate of a <em>publishing</em> Workflow (COND-23): a Post may not be approved until it
@@ -157,14 +158,21 @@ public class PostScheduleValidator {
      * throws are the same list.
      */
     public List<PublishFinding> inspect(WorkItem workItem) {
+        return inspect(workItem, mediaResolver.contextFor(workItem,
+                () -> postPublishTargetRepository.findAllByWorkItemId(workItem.getId()),
+                Optional::empty, ids -> List.of()));
+    }
+
+    /** As {@link #inspect(WorkItem)}, over what the request has already loaded. */
+    public List<PublishFinding> inspect(WorkItem workItem, PublishCheckContext ctx) {
         List<PublishFinding> findings = new ArrayList<>();
-        List<PostPublishTarget> targets = postPublishTargetRepository.findAllByWorkItemId(workItem.getId());
+        List<PostPublishTarget> targets = ctx.targets();
         appendScheduleProblems(workItem, targets, findings);
         if (targets.isEmpty()) {
             findings.add(PublishFinding.blocker(NO_TARGETS,
                     "This post has no destinations. Pick at least one account to publish to."));
         }
-        appendMediaProblems(workItem, targets, findings);
+        appendMediaProblems(workItem, targets, findings, ctx);
         return findings;
     }
 
@@ -202,8 +210,8 @@ public class PostScheduleValidator {
      * media" there would be wrong — there is media, it just is not selected here any more.
      */
     private void appendMediaProblems(WorkItem workItem, List<PostPublishTarget> targets,
-                                     List<PublishFinding> findings) {
-        if (!hasUploadedFileAsset(workItem)) {
+                                     List<PublishFinding> findings, PublishCheckContext ctx) {
+        if (!hasUploadedFileAsset(ctx)) {
             findings.add(PublishFinding.blocker(NO_MEDIA,
                     "This post has no uploaded media. Add at least one image or video."));
             return;
@@ -212,7 +220,7 @@ public class PostScheduleValidator {
             return;
         }
         Map<String, PublishTargetMediaResolver.EffectiveMedia> byTarget =
-                mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
+                mediaResolver.effectiveMediaByTarget(ctx);
         for (PostPublishTarget target : targets) {
             PublishTargetMediaResolver.EffectiveMedia media = byTarget.getOrDefault(
                     target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
@@ -309,8 +317,8 @@ public class PostScheduleValidator {
         }
     }
 
-    private boolean hasUploadedFileAsset(WorkItem workItem) {
-        return assetRepository.findAllByWorkItemId(workItem.getId()).stream()
+    private boolean hasUploadedFileAsset(PublishCheckContext ctx) {
+        return ctx.assets().stream()
                 .anyMatch(PostScheduleValidator::isUploadedFile);
     }
 
