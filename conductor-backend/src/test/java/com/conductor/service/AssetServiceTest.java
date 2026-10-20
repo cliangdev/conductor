@@ -62,6 +62,7 @@ class AssetServiceTest {
         service = new AssetService(assetRepository, workItemRepository, projectSecurityService, resolver,
                 signalBus, storageService, photoService, "http://localhost:8080");
         when(assetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(assetRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
 
@@ -105,6 +106,61 @@ class AssetServiceTest {
         ArgumentCaptor<Signal> signal = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signal.capture());
         assertThat(signal.getValue().type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED);
+    }
+
+    private static AssetService.StoredObjectInput stored(String type, String label, String frameId) {
+        return new AssetService.StoredObjectInput(type, label, "frames/" + label + ".png", "image/png", 10L, 1080, 1350,
+                frameId);
+    }
+
+    @Test
+    void createsEveryStoredObjectInOrderWithOneSaveAndOneSignalEach() {
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem()));
+
+        java.util.List<Asset> created = service.createAllFromStoredObjects(PROJECT_ID, ISSUE_ID, java.util.List.of(
+                stored("github_pr", "one", "f1"), stored("github_pr", "two", "f2"), stored("github_pr", "three", "f3")));
+
+        assertThat(created).extracting(Asset::getLabel).containsExactly("one", "two", "three");
+        assertThat(created).extracting(Asset::getCreativeFrameId).containsExactly("f1", "f2", "f3");
+        assertThat(created).allSatisfy(a -> {
+            assertThat(a.getKind()).isEqualTo(AssetService.KIND_FILE);
+            assertThat(a.getUploadStatus()).isEqualTo(AssetService.UPLOAD_STATUS_UPLOADED);
+            assertThat(a.getGcsPath()).isEqualTo(a.getRef());
+        });
+        verify(assetRepository, Mockito.times(1)).saveAll(any());
+        verify(signalBus, Mockito.times(3)).publish(any(Signal.class));
+        // The workflow is resolved once for the whole batch, not once per object.
+        verify(workItemRepository, Mockito.times(1)).findById(ISSUE_ID);
+    }
+
+    @Test
+    void createsNothingAndTouchesNothingForNoObjects() {
+        assertThat(service.createAllFromStoredObjects(PROJECT_ID, ISSUE_ID, java.util.List.of())).isEmpty();
+
+        verify(assetRepository, never()).saveAll(any());
+        verify(workItemRepository, never()).findById(any());
+    }
+
+    @Test
+    void oneDisallowedTypeRejectsTheWholeBatchBeforeAnythingIsSaved() {
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem()));
+
+        assertThatThrownBy(() -> service.createAllFromStoredObjects(PROJECT_ID, ISSUE_ID, java.util.List.of(
+                stored("github_pr", "ok", "f1"), stored("published_url", "nope", "f2"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("not allowed by workflow ENGINEERING");
+        verify(assetRepository, never()).saveAll(any());
+        verify(signalBus, never()).publish(any(Signal.class));
+    }
+
+    @Test
+    void createFromStoredObjectReturnsTheSingleAsset() {
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem()));
+
+        Asset one = service.createFromStoredObject(PROJECT_ID, ISSUE_ID, stored("github_pr", "solo", "f1"));
+
+        assertThat(one.getLabel()).isEqualTo("solo");
+        verify(signalBus, Mockito.times(1)).publish(any(Signal.class));
     }
 
     @Test

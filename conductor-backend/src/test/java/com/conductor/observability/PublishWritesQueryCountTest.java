@@ -344,6 +344,217 @@ class PublishWritesQueryCountTest extends AbstractNoneWebIntegrationTest {
         }
     }
 
+    // ── behaviour: what the batched writes leave in the database ───────────────────────────────────
+
+    /** Every stored selection of the Post, as platform+connection -> ordered asset ids. */
+    private Map<String, List<String>> storedSelections(WorkItem post) {
+        Map<String, List<String>> stored = new java.util.TreeMap<>();
+        for (var target : targetRepository.findAllByWorkItemId(post.getId())) {
+            stored.put(target.getPlatform() + "/" + target.getConnectionId(),
+                    targetAssetRepository.findAllByTargetId(target.getId()).stream()
+                            .map(PostPublishTargetAsset::getAssetId).toList());
+        }
+        return stored;
+    }
+
+    private void replace(Fixture f, WorkItem post, List<PublishTargetService.TargetSelection> selections) {
+        publishTargetService.replaceSelection(f.project().getId(), post.getId(), selections, f.admin());
+    }
+
+    private List<PublishTargetService.TargetSelection> facebookOnly(Fixture f, List<String> assetIds) {
+        return f.connectionIds().stream()
+                .map(id -> new PublishTargetService.TargetSelection("facebook", id, null, null, assetIds, null))
+                .toList();
+    }
+
+    @Test
+    void replacingMediaLeavesExactlyTheRequestedRowsForFewerMoreSameAndReordered() {
+        Fixture f = fixture(2);
+        WorkItem post = post(f);
+        List<String> ids = assets(post, 4).stream().map(Asset::getId).toList();
+        String a = ids.get(0), b = ids.get(1), c = ids.get(2), d = ids.get(3);
+
+        for (List<String> wanted : List.of(
+                List.of(a, b, c),          // create
+                List.of(a, b, c),          // same: no change
+                List.of(a, c),             // fewer
+                List.of(a, c, b, d),       // more, new order
+                List.of(d, c, b, a),       // reversed
+                List.of(b, d, a, c),       // shuffled
+                List.of(c))) {             // down to one
+            replace(f, post, selections(f, wanted));
+            Map<String, List<String>> stored = storedSelections(post);
+            assertThat(stored).hasSize(4);
+            assertThat(stored.values()).allSatisfy(rows -> assertThat(rows).containsExactlyElementsOf(wanted));
+            // Positions are dense and zero-based, whatever the history.
+            for (var target : targetRepository.findAllByWorkItemId(post.getId())) {
+                assertThat(targetAssetRepository.findAllByTargetId(target.getId()))
+                        .extracting(PostPublishTargetAsset::getPosition)
+                        .containsExactlyElementsOf(java.util.stream.IntStream.range(0, wanted.size()).boxed().toList());
+            }
+        }
+    }
+
+    @Test
+    void swappingTwoPositionsDoesNotCollideOnTheUniquePositionConstraint() {
+        Fixture f = fixture(1);
+        WorkItem post = post(f);
+        List<String> ids = assets(post, 2).stream().map(Asset::getId).toList();
+        replace(f, post, selections(f, ids));
+
+        replace(f, post, selections(f, List.of(ids.get(1), ids.get(0))));
+
+        assertThat(storedSelections(post).values()).allSatisfy(rows ->
+                assertThat(rows).containsExactly(ids.get(1), ids.get(0)));
+    }
+
+    @Test
+    void removingADestinationDropsItsRowsAndLeavesTheOthersAlone() {
+        Fixture f = fixture(1);
+        WorkItem post = post(f);
+        List<String> ids = assets(post, 2).stream().map(Asset::getId).toList();
+        replace(f, post, selections(f, ids));
+        String connectionId = f.connectionIds().get(0);
+        var instagram = targetRepository.findAllByWorkItemId(post.getId()).stream()
+                .filter(t -> "instagram".equals(t.getPlatform())).findFirst().orElseThrow();
+
+        replace(f, post, facebookOnly(f, ids));
+
+        assertThat(storedSelections(post)).containsOnlyKeys("facebook/" + connectionId);
+        assertThat(storedSelections(post).get("facebook/" + connectionId)).containsExactlyElementsOf(ids);
+        assertThat(targetAssetRepository.findAllByTargetId(instagram.getId())).isEmpty();
+    }
+
+    @Test
+    void goingBackToInheritingClearsTheStoredRowsAndKeepsOthersUntouched() {
+        Fixture f = fixture(1);
+        WorkItem post = post(f);
+        List<String> ids = assets(post, 2).stream().map(Asset::getId).toList();
+        replace(f, post, selections(f, ids));
+        String connectionId = f.connectionIds().get(0);
+
+        replace(f, post, List.of(
+                new PublishTargetService.TargetSelection("facebook", connectionId),
+                new PublishTargetService.TargetSelection("instagram", connectionId, null, null, ids, null)));
+
+        Map<String, List<String>> stored = storedSelections(post);
+        assertThat(stored.get("facebook/" + connectionId)).isEmpty();
+        assertThat(stored.get("instagram/" + connectionId)).containsExactlyElementsOf(ids);
+    }
+
+    @Test
+    void addingADestinationInsertsItsRowsWithoutDisturbingTheExistingOnes() {
+        Fixture f = fixture(1);
+        WorkItem post = post(f);
+        List<String> ids = assets(post, 3).stream().map(Asset::getId).toList();
+        String connectionId = f.connectionIds().get(0);
+        replace(f, post, facebookOnly(f, ids));
+
+        replace(f, post, List.of(
+                new PublishTargetService.TargetSelection("facebook", connectionId, null, null, ids, null),
+                new PublishTargetService.TargetSelection("instagram", connectionId, null, null, List.of(ids.get(2)), null)));
+
+        Map<String, List<String>> stored = storedSelections(post);
+        assertThat(stored.get("facebook/" + connectionId)).containsExactlyElementsOf(ids);
+        assertThat(stored.get("instagram/" + connectionId)).containsExactly(ids.get(2));
+    }
+
+    @Test
+    void aSavedRowIsNotNewSoReSavingItUpdatesInPlaceInsteadOfInsertingOrSelecting() {
+        Fixture f = fixture(1);
+        WorkItem post = post(f);
+        List<Asset> posted = assets(post, 2);
+        replace(f, post, facebookOnly(f, List.of(posted.get(0).getId())));
+        var target = targetRepository.findAllByWorkItemId(post.getId()).get(0);
+
+        // Loaded: not new, so save() is a merge of a managed/detached row, i.e. an UPDATE, never a second INSERT.
+        PostPublishTargetAsset loaded = targetAssetRepository.findById(
+                new PostPublishTargetAsset.Id(target.getId(), posted.get(0).getId())).orElseThrow();
+        assertThat(loaded.isNew()).isFalse();
+        loaded.setPosition(7);
+        try (RequestStats.Scope scope = RequestStats.start()) {
+            targetAssetRepository.saveAndFlush(loaded);
+            assertThat(scope.stats().sqlCounts().keySet()).noneMatch(sql -> sql.toLowerCase().startsWith("insert"));
+        }
+        assertThat(targetAssetRepository.findAllByTargetId(target.getId()))
+                .extracting(PostPublishTargetAsset::getPosition).containsExactly(7);
+
+        // Fresh: new, so save() persists without first SELECTing the row; afterwards it is no longer new.
+        PostPublishTargetAsset added = new PostPublishTargetAsset(target.getId(), posted.get(1).getId(), 8);
+        assertThat(added.isNew()).isTrue();
+        try (RequestStats.Scope scope = RequestStats.start()) {
+            targetAssetRepository.saveAndFlush(added);
+            assertThat(scope.stats().sqlCounts().keySet())
+                    .noneMatch(sql -> sql.toLowerCase().startsWith("select") && sql.contains("post_publish_target_asset"));
+        }
+        assertThat(added.isNew()).isFalse();
+        assertThat(targetAssetRepository.findAllByTargetId(target.getId())).hasSize(2);
+
+        // Re-saving the persisted instance (now not new) with a change is an update, not a duplicate key.
+        added.setPosition(9);
+        targetAssetRepository.saveAndFlush(added);
+        assertThat(targetAssetRepository.findAllByTargetId(target.getId()))
+                .extracting(PostPublishTargetAsset::getPosition).containsExactly(7, 9);
+    }
+
+    @Test
+    void attachingACarouselCreatesOneAssetPerFrameInOrderAndReattachingReusesThem() {
+        Fixture f = fixture(1);
+        WorkItem post = post(f);
+        replace(f, post, inheriting(f));
+        Creative c = carousel(f, 1);
+        CreativeRender r = succeededRender(f, c);
+        for (int i = 0; i < 3; i++) {
+            frame(r, c, "4x5", i, "instagram");
+        }
+
+        var first = attachService.attach(f.project().getId(), c.getId(), r.getId(), post.getId(), f.admin());
+
+        assertThat(first.assets()).extracting(CreativeAttachService.AttachedAsset::sequenceIndex)
+                .containsExactly(0, 1, 2);
+        List<Asset> onPost = assetRepository.findAllByWorkItemId(post.getId());
+        assertThat(onPost).hasSize(3);
+        for (var attached : first.assets()) {
+            Asset asset = onPost.stream().filter(x -> x.getId().equals(attached.assetId())).findFirst().orElseThrow();
+            assertThat(asset.getCreativeFrameId()).isEqualTo(attached.frameId());
+            assertThat(asset.getUploadStatus()).isEqualTo("UPLOADED");
+            assertThat(asset.getKind()).isEqualTo("file");
+        }
+        List<String> orderedIds = first.assets().stream().map(CreativeAttachService.AttachedAsset::assetId).toList();
+        assertThat(storedSelections(post).get("instagram/" + f.connectionIds().get(0)))
+                .containsExactlyElementsOf(orderedIds);
+
+        var second = attachService.attach(f.project().getId(), c.getId(), r.getId(), post.getId(), f.admin());
+
+        assertThat(second.assets()).extracting(CreativeAttachService.AttachedAsset::assetId)
+                .containsExactlyElementsOf(orderedIds);
+        assertThat(assetRepository.findAllByWorkItemId(post.getId())).hasSize(3);
+    }
+
+    @Test
+    void attachingAStillCreatesOneAssetPerFrameAndFillsTheMatchingDestinations() {
+        Fixture f = fixture(1);
+        WorkItem post = post(f);
+        replace(f, post, inheriting(f));
+        Creative c = still(f);
+        CreativeRender r = succeededRender(f, c);
+        frame(r, c, "4x5", null, "instagram");
+        frame(r, c, "1x1", null, "facebook");
+
+        var result = attachService.attach(f.project().getId(), c.getId(), r.getId(), post.getId(), f.admin());
+
+        assertThat(result.assets()).hasSize(2);
+        assertThat(assetRepository.findAllByWorkItemId(post.getId())).hasSize(2);
+        Map<String, String> placementByAsset = new java.util.HashMap<>();
+        result.assets().forEach(x -> placementByAsset.put(x.assetId(), x.placementKey()));
+        Map<String, List<String>> stored = storedSelections(post);
+        String connectionId = f.connectionIds().get(0);
+        assertThat(stored.get("instagram/" + connectionId)).hasSize(1)
+                .allSatisfy(id -> assertThat(placementByAsset.get(id)).isEqualTo("4x5"));
+        assertThat(stored.get("facebook/" + connectionId)).hasSize(1)
+                .allSatisfy(id -> assertThat(placementByAsset.get(id)).isEqualTo("1x1"));
+    }
+
     @Test
     void attachingAStillRenderIsConstantInTargets() {
         assertConstant("POST creatives/{c}/attach (targets)", n -> () -> {
