@@ -200,13 +200,25 @@ public class PublishOptionsValidator {
      * verdict — the order a refused transition has always listed them in.
      */
     public List<PublishFinding> inspect(WorkItem workItem) {
-        List<PostPublishTarget> targets = postPublishTargetRepository.findAllByWorkItemId(workItem.getId());
+        return inspect(workItem, mediaResolver.contextFor(workItem,
+                () -> postPublishTargetRepository.findAllByWorkItemId(workItem.getId()),
+                Optional::empty, ids -> List.of()), publishConsentService::verdict);
+    }
+
+    /** As {@link #inspect(WorkItem)}, over what the request has already loaded. */
+    public List<PublishFinding> inspect(WorkItem workItem, PublishCheckContext ctx) {
+        return inspect(workItem, ctx, item -> publishConsentService.verdict(item, ctx));
+    }
+
+    private List<PublishFinding> inspect(WorkItem workItem, PublishCheckContext ctx,
+                                         java.util.function.Function<WorkItem, PublishConsentService.Verdict> consentVerdict) {
+        List<PostPublishTarget> targets = ctx.targets();
         if (targets.isEmpty()) {
             // PostScheduleValidator owns "you must pick a target"; there is nothing here to check.
             return List.of();
         }
         Map<String, PublishTargetMediaResolver.EffectiveMedia> mediaByTarget =
-                mediaResolver.effectiveMediaByTarget(workItem.getId(), targets);
+                mediaResolver.effectiveMediaByTarget(ctx);
 
         List<PublishFinding> findings = new ArrayList<>();
         boolean consentRequired = false;
@@ -236,10 +248,10 @@ public class PublishOptionsValidator {
             }
             List<Asset> media = mediaByTarget
                     .getOrDefault(target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE).assets();
-            inspectOptionValues(workItem, target, platform, media, findings);
+            inspectOptionValues(workItem, target, platform, media, findings, ctx);
         }
         if (consentRequired) {
-            inspectConsent(workItem).ifPresent(findings::add);
+            inspectConsent(consentVerdict.apply(workItem)).ifPresent(findings::add);
         }
         return findings;
     }
@@ -251,7 +263,8 @@ public class PublishOptionsValidator {
      * declared key with the wrong shape would be sent wrong, so it blocks.
      */
     private void inspectOptionValues(WorkItem workItem, PostPublishTarget target, PublishPlatform platform,
-                                     List<Asset> media, List<PublishFinding> findings) {
+                                     List<Asset> media, List<PublishFinding> findings,
+                                     PublishCheckContext ctx) {
         JsonNode options = readOptions(target);
         if (options == null) {
             // A corrupt bag is already reported for TikTok by inspectTikTok's own read; for every other
@@ -275,7 +288,7 @@ public class PublishOptionsValidator {
             }
             OptionType type = OPTION_TYPES.get(key);
             if (type != null) {
-                String problem = validateOptionValue(workItem, target, key, type, value, imageCount);
+                String problem = validateOptionValue(workItem, target, key, type, value, imageCount, ctx);
                 if (problem != null) {
                     findings.add(PublishFinding.blocker(OPTION_INVALID, problem, target.getId()));
                     continue;
@@ -314,7 +327,7 @@ public class PublishOptionsValidator {
      * the key and what it must be instead. {@code null} means the value is fine.
      */
     private String validateOptionValue(WorkItem workItem, PostPublishTarget target, String key, OptionType type,
-                                       JsonNode value, long imageCount) {
+                                       JsonNode value, long imageCount, PublishCheckContext ctx) {
         String where = describe(target);
         return switch (type) {
             case BOOLEAN -> isBooleanish(value) ? null
@@ -352,16 +365,16 @@ public class PublishOptionsValidator {
                                 + " image(s) are selected here"
                         : null;
             }
-            case IMAGE_ASSET_ID -> validateImageAssetId(workItem, where, key, value);
+            case IMAGE_ASSET_ID -> validateImageAssetId(ctx, where, key, value);
         };
     }
 
-    private String validateImageAssetId(WorkItem workItem, String where, String key, JsonNode value) {
+    private String validateImageAssetId(PublishCheckContext ctx, String where, String key, JsonNode value) {
         if (!value.isTextual() || value.asText().isBlank()) {
             return where + " sets '" + key + "' to something other than an asset id";
         }
         String assetId = value.asText().trim();
-        Asset asset = assetRepository.findByIdAndWorkItemId(assetId, workItem.getId()).orElse(null);
+        Asset asset = ctx.assets().stream().filter(a -> assetId.equals(a.getId())).findFirst().orElse(null);
         if (asset == null) {
             return where + " sets '" + key + "' to '" + assetId + "', which is not an asset on this Post";
         }
@@ -445,8 +458,8 @@ public class PublishOptionsValidator {
      * different things from a human, and "consent required" alone would send someone to a checkbox that
      * is already ticked.
      */
-    private Optional<PublishFinding> inspectConsent(WorkItem workItem) {
-        return switch (publishConsentService.verdict(workItem)) {
+    private Optional<PublishFinding> inspectConsent(PublishConsentService.Verdict verdict) {
+        return switch (verdict) {
             case NEVER_GIVEN -> Optional.of(PublishFinding.blocker(CONSENT_NEVER_GIVEN,
                     "this Post publishes to TikTok, and TikTok requires the"
                     + " creator's consent first — review the preview and the destination account, then"

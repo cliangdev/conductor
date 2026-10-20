@@ -82,6 +82,8 @@ class PublishWritesQueryCountTest extends AbstractNoneWebIntegrationTest {
     @Autowired private PostPublishTargetAssetRepository targetAssetRepository;
     @Autowired private PublishTargetService publishTargetService;
     @Autowired private PublishPreflightService preflightService;
+    @Autowired private com.conductor.service.PublishConsentService consentService;
+    @Autowired private com.conductor.repository.PublishConsentRepository consentRepository;
     @Autowired private CreativeAttachService attachService;
     @Autowired private CreativeRenderService renderService;
     @Autowired private CreativeService creativeService;
@@ -288,6 +290,8 @@ class PublishWritesQueryCountTest extends AbstractNoneWebIntegrationTest {
                     + rows + " statements/rows, " + stats.connCheckouts() + " connection checkouts");
             if (System.getProperty("writes.dump") != null) {
                 System.out.println("WRITES-TOP " + what + " n=" + n + " " + stats.topRepeatedSql(12));
+                stats.sqlCounts().forEach((sql, c) -> System.out.println(
+                        "WRITES-SQL " + c + "x " + sql.substring(0, Math.min(150, sql.length()))));
             }
             return stats.dbQueries();
         }
@@ -604,6 +608,102 @@ class PublishWritesQueryCountTest extends AbstractNoneWebIntegrationTest {
             publishTargetService.replaceSelection(f.project().getId(), post.getId(), selections(f, ids), f.admin());
             return () -> preflightService.preflight(f.project().getId(), post.getId(), f.admin());
         });
+    }
+
+    // ── publish-preflight / publish-consent: a Post with TikTok, custom media and carousel frames ─────
+
+    private List<String> tiktokConnections(Fixture f, int count) {
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            Connection c = new Connection();
+            c.setProjectId(f.project().getId());
+            c.setConnectorId("tiktok");
+            c.setAuthType("OAUTH2");
+            c.setStatus("ACTIVE");
+            c.setConfigJson("{\"displayName\":\"creator" + i + "\","
+                    + "\"privacyLevelOptions\":[\"PUBLIC_TO_EVERYONE\",\"SELF_ONLY\"],"
+                    + "\"maxVideoPostDurationSec\":600}");
+            c.setVisibilityPolicy("{\"minRole\":\"REVIEWER\"}");
+            ids.add(connectionRepository.saveAndFlush(c).getId());
+        }
+        return ids;
+    }
+
+    /**
+     * A Post with n Meta connections (Facebook + Instagram, own media), n TikTok accounts (privacy chosen),
+     * a carousel attached to Instagram (frame assets, per-target selections) and a standing consent.
+     */
+    private WorkItem tiktokCarouselPost(Fixture f, int n) {
+        WorkItem post = post(f);
+        List<String> ids = assets(post, 3).stream().map(Asset::getId).toList();
+        List<PublishTargetService.TargetSelection> selections = new ArrayList<>(selections(f, ids));
+        for (String connectionId : tiktokConnections(f, n)) {
+            selections.add(new PublishTargetService.TargetSelection("tiktok", connectionId));
+        }
+        publishTargetService.replaceSelection(f.project().getId(), post.getId(), selections, f.admin());
+        // The privacy choices are human-only through the API (the creator's consent page writes them), so
+        // the fixture sets them the way that page does: straight onto the target rows.
+        for (var target : targetRepository.findAllByWorkItemId(post.getId())) {
+            if ("tiktok".equals(target.getPlatform())) {
+                target.setPublishOptions("{\"brandContentToggle\":false,\"brandOrganicToggle\":false,"
+                        + "\"disableComment\":false,\"disableDuet\":false,\"disableStitch\":false,"
+                        + "\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
+                targetRepository.saveAndFlush(target);
+            }
+        }
+        Creative c = carousel(f, 1);
+        CreativeRender r = succeededRender(f, c);
+        for (int i = 0; i < 2 * n; i++) {
+            frame(r, c, "4x5", i, "instagram");
+        }
+        attachService.attach(f.project().getId(), c.getId(), r.getId(), post.getId(), f.admin());
+        recordStandingConsent(post, f);
+        return post;
+    }
+
+    private void recordStandingConsent(WorkItem post, Fixture f) {
+        String hash = consentService.consentEtag(post).replace("\"", "");
+        com.conductor.entity.PublishConsent consent = new com.conductor.entity.PublishConsent();
+        consent.setWorkItem(post);
+        consent.setConsentHash(hash);
+        consent.setConsentedBy(f.admin());
+        consent.setConsentedAt(java.time.OffsetDateTime.now());
+        consentRepository.saveAndFlush(consent);
+    }
+
+    @Test
+    void preflightWithTikTokCustomMediaAndCarouselIsConstantInTargets() {
+        assertConstant("GET publish-preflight (tiktok, custom media, carousel)", n -> () -> {
+            Fixture f = fixture(n);
+            WorkItem post = tiktokCarouselPost(f, n);
+            return () -> preflightService.preflight(f.project().getId(), post.getId(), f.admin());
+        });
+    }
+
+    @Test
+    void publishConsentWithTikTokCustomMediaAndCarouselIsConstantInTargets() {
+        assertConstant("GET publish-consent (tiktok, custom media, carousel)", n -> () -> {
+            Fixture f = fixture(n);
+            WorkItem post = tiktokCarouselPost(f, n);
+            return () -> consentService.readConsentWithEtag(f.project().getId(), post.getId(), f.admin());
+        });
+    }
+
+    @Test
+    void consentReadAgreesWithTheStandingConsentHashAndPreflightSeesItValid() {
+        Fixture f = fixture(2);
+        WorkItem post = tiktokCarouselPost(f, 2);
+
+        var read = consentService.readConsentWithEtag(f.project().getId(), post.getId(), f.admin());
+        assertThat(read.state().verdict()).isEqualTo(com.conductor.service.PublishConsentService.Verdict.VALID);
+        assertThat(read.etag()).isEqualTo(consentService.consentEtag(post));
+        assertThat(read.etag()).isEqualTo("\"" + consentRepository.findByWorkItemId(post.getId()).orElseThrow()
+                .getConsentHash() + "\"");
+
+        var preflight = preflightService.preflight(f.project().getId(), post.getId(), f.admin());
+        assertThat(preflight.consent().required()).isTrue();
+        assertThat(preflight.consent().verdict())
+                .isEqualTo(com.conductor.service.PublishConsentService.Verdict.VALID);
     }
 
     @Test

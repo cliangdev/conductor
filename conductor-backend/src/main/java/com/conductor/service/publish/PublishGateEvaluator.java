@@ -4,6 +4,7 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.service.MediaTargetValidator;
 import com.conductor.service.PostScheduleValidator;
+import com.conductor.service.PublishCheckContext;
 import com.conductor.service.PublishOptionsValidator;
 import com.conductor.workflow.lifecycle.Statechart;
 import org.springframework.stereotype.Component;
@@ -81,6 +82,20 @@ public class PublishGateEvaluator {
         List<PublishFinding> all = new ArrayList<>(postScheduleValidator.inspect(workItem));
         all.addAll(mediaTargetValidator.inspect(workItem));
         all.addAll(publishOptionsValidator.inspect(workItem));
+        return new Evaluation(
+                all.stream().filter(PublishFinding::blocks).toList(),
+                all.stream().filter(f -> !f.blocks()).toList());
+    }
+
+    /**
+     * As {@link #evaluate(WorkItem)}, with every validator reading the Post's targets, media and consent row
+     * from one {@link PublishCheckContext} - each is loaded once for the whole evaluation.
+     */
+    public Evaluation evaluate(WorkItem workItem, PublishCheckContext ctx) {
+        ctx.preloadConnections();
+        List<PublishFinding> all = new ArrayList<>(postScheduleValidator.inspect(workItem, ctx));
+        all.addAll(mediaTargetValidator.inspect(workItem, ctx));
+        all.addAll(publishOptionsValidator.inspect(workItem, ctx));
         return new Evaluation(
                 all.stream().filter(PublishFinding::blocks).toList(),
                 all.stream().filter(f -> !f.blocks()).toList());
