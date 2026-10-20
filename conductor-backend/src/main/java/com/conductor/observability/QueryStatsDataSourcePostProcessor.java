@@ -78,10 +78,11 @@ public class QueryStatsDataSourcePostProcessor implements BeanPostProcessor {
             if (queryInfoList.isEmpty()) {
                 return;
             }
-            // A batch is one round trip: its time is charged to the first statement, the rest add count only.
+            // A JDBC batch is ONE round trip, so it adds one to dbQueries (the figure that predicts latency) while
+            // every row is still listed in the per-statement counts, so topSql shows how big the batch was.
             RequestStats.recordQuery(queryInfoList.get(0).getQuery(), nanos, 1);
             for (int i = 1; i < queryInfoList.size(); i++) {
-                RequestStats.recordQuery(queryInfoList.get(i).getQuery(), 0, 1);
+                RequestStats.recordBatchedRow(queryInfoList.get(i).getQuery());
             }
         }
     }

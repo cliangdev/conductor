@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -124,6 +125,7 @@ public class CreativeRenderService {
                                             User caller) {
         requireEditor(projectId, caller);
         Creative creative = findCreative(projectId, creativeId);
+        prefetchMedia(creative);
         if (Creative.KIND_CLIP.equals(creative.getKind())) {
             return requestClipRender(projectId, creative, request, caller);
         }
@@ -200,10 +202,43 @@ public class CreativeRenderService {
         return new CreativeSpecBuilder.MotionMedia(motion, audio, clipMedia, trackMedia);
     }
 
+    /**
+     * A media item of this project by id. {@code findById} answers from the persistence context once the item
+     * is loaded, so after {@link #prefetchMedia} a Creative with many slides costs one query, not one per slide
+     * (and per use: the validator, the spec and the frames each looked every slide up again).
+     */
+    private Optional<CreativePhoto> lookupMedia(String projectId, String mediaId) {
+        return photoRepository.findById(mediaId).filter(photo -> projectId.equals(photo.getProjectId()));
+    }
+
+    /** Loads every media item a Creative references in a single query. */
+    private void prefetchMedia(Creative creative) {
+        Set<String> ids = new java.util.LinkedHashSet<>();
+        if (creative.getPhotoId() != null) {
+            ids.add(creative.getPhotoId());
+        }
+        toSequenceBeats(creative.getSequence()).forEach(beat -> {
+            if (beat.getPhotoId() != null) ids.add(beat.getPhotoId());
+        });
+        toSlidesMap(creative.getSlides()).values().forEach(list -> list.stream().filter(Objects::nonNull).forEach(ids::add));
+        toClipMediaMap(creative.getClipMedia()).values().stream().filter(Objects::nonNull).forEach(ids::add);
+        CreativeMotion motion = toMotion(creative.getMotion());
+        if (motion != null && motion.getBackground() != null && motion.getBackground().getClipMediaId() != null) {
+            ids.add(motion.getBackground().getClipMediaId());
+        }
+        CreativeAudio audio = toAudio(creative.getAudio());
+        if (audio != null && audio.getTrackId() != null) {
+            ids.add(audio.getTrackId());
+        }
+        if (!ids.isEmpty()) {
+            photoRepository.findAllByIdIn(ids);
+        }
+    }
+
     /** A library media item by id, or null when {@code mediaId} is null or names nothing in this project. */
     private MediaFacts findMedia(String projectId, String mediaId) {
         return mediaId != null
-                ? photoRepository.findByIdAndProjectId(mediaId, projectId).map(MediaFacts::of).orElse(null)
+                ? lookupMedia(projectId, mediaId).map(MediaFacts::of).orElse(null)
                 : null;
     }
 
@@ -267,7 +302,7 @@ public class CreativeRenderService {
         List<CreativeRenderFrame> frames = new ArrayList<>();
         for (Map.Entry<String, String> entry : framePlacements.entrySet()) {
             String placementKey = entry.getKey();
-            CreativePhoto media = photoRepository.findByIdAndProjectId(entry.getValue(), projectId)
+            CreativePhoto media = lookupMedia(projectId, entry.getValue())
                     .orElseThrow(() -> new BusinessException("No media with id " + entry.getValue() + " in this project"));
 
             // The frame links the media's own object (and poster): nothing is copied.
@@ -342,7 +377,7 @@ public class CreativeRenderService {
             }
             for (int i = 0; i < mediaIds.size(); i++) {
                 String mediaId = mediaIds.get(i);
-                CreativePhoto media = photoRepository.findByIdAndProjectId(mediaId, projectId)
+                CreativePhoto media = lookupMedia(projectId, mediaId)
                         .orElseThrow(() -> new BusinessException("No media with id " + mediaId + " in this project"));
                 // The frame links the slide's own object: nothing is copied.
                 String destPath = media.getGcsPath();
@@ -373,7 +408,7 @@ public class CreativeRenderService {
             List<CreativeValidator.SlideEntry> entries = new ArrayList<>();
             for (int i = 0; i < list.getValue().size(); i++) {
                 String id = list.getValue().get(i);
-                CreativePhoto media = photoRepository.findByIdAndProjectId(id, projectId).orElse(null);
+                CreativePhoto media = lookupMedia(projectId, id).orElse(null);
                 entries.add(new CreativeValidator.SlideEntry(list.getKey(), i, id, media != null,
                         media != null && CreativePhoto.MEDIA_KIND_IMAGE.equals(media.getMediaKind()),
                         media != null && media.isUploaded(), media != null && media.isBlocked(),
@@ -409,7 +444,7 @@ public class CreativeRenderService {
         }
         String defaultMediaId = clipMedia.get("default");
         if (defaultMediaId != null) {
-            CreativePhoto defaultMedia = photoRepository.findByIdAndProjectId(defaultMediaId, projectId).orElse(null);
+            CreativePhoto defaultMedia = lookupMedia(projectId, defaultMediaId).orElse(null);
             if (defaultMedia != null && defaultMedia.getWidth() != null && defaultMedia.getHeight() != null
                     && defaultMedia.getHeight() > 0) {
                 String nearest = nearestPlacementFor((double) defaultMedia.getWidth() / defaultMedia.getHeight());
@@ -433,7 +468,7 @@ public class CreativeRenderService {
         List<CreativeValidator.ClipMediaEntry> entries = new ArrayList<>();
         for (Map.Entry<String, String> entry : clipMedia.entrySet()) {
             String mediaId = entry.getValue();
-            CreativePhoto media = mediaId != null ? photoRepository.findByIdAndProjectId(mediaId, projectId).orElse(null) : null;
+            CreativePhoto media = mediaId != null ? lookupMedia(projectId, mediaId).orElse(null) : null;
             entries.add(new CreativeValidator.ClipMediaEntry(entry.getKey(), mediaId, media != null,
                     media != null && media.isVideo(), media != null && media.isUploaded(),
                     media != null && media.isBlocked()));

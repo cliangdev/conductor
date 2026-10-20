@@ -447,8 +447,28 @@ class PublishTargetServiceTest {
 
     // ── fixtures ──────────────────────────────────────────────────────────────────────────────
 
+    private final java.util.Map<String, List<Connection>> connectionRows = new java.util.HashMap<>();
+
     private void connections(String connectorId, Connection... rows) {
-        when(connectionRepository.findByProjectIdAndConnectorId(PROJECT, connectorId)).thenReturn(List.of(rows));
+        connectionRows.put(connectorId, List.of(rows));
+        when(connectionRepository.findPublishableByProjectIdAndConnectorIdIn(any(), any())).thenAnswer(inv -> {
+            List<ConnectionRepository.PublishableConnection> views = new ArrayList<>();
+            connectionRows.values().forEach(list -> list.forEach(c -> views.add(view(c))));
+            return views;
+        });
+    }
+
+    private static ConnectionRepository.PublishableConnection view(Connection c) {
+        return new ConnectionRepository.PublishableConnection() {
+            public String getId() { return c.getId(); }
+            public String getConnectorId() { return c.getConnectorId(); }
+            public String getStatus() { return c.getStatus(); }
+            public String getConfigJson() { return c.getConfigJson(); }
+            public String getDisplayLabel() { return c.getDisplayLabel(); }
+            public String getHealthStatus() { return c.getHealthStatus(); }
+            public String getHealthMessage() { return c.getHealthMessage(); }
+            public String getHealthDetail() { return c.getHealthDetail(); }
+        };
     }
 
     private static Connection connection(String id, String connectorId, String configJson) {
@@ -553,7 +573,7 @@ class PublishTargetServiceTest {
                         List.of("asset-c", "asset-a"))), caller);
 
         assertThat(existing.isCustomMedia()).isTrue();
-        verify(targetAssetRepository).deleteAllByTargetId(existing.getId());
+        verify(targetAssetRepository).deleteAllByTargetIdIn(List.of(existing.getId()));
         assertThat(savedSelectionOf(existing)).containsExactly("asset-c", "asset-a");
     }
 
@@ -563,7 +583,7 @@ class PublishTargetServiceTest {
         PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
         existing.setCustomMedia(true);
         when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
-        when(targetAssetRepository.findAllByTargetId(existing.getId()))
+        when(targetAssetRepository.findAllByTargetIdIn(List.of(existing.getId())))
                 .thenReturn(List.of(new PostPublishTargetAsset(existing.getId(), "asset-a", 0)));
         givenPostAssets("asset-a");
 
@@ -572,7 +592,7 @@ class PublishTargetServiceTest {
                         List.of())), caller);
 
         assertThat(existing.isCustomMedia()).isFalse();
-        verify(targetAssetRepository).deleteAllByTargetId(existing.getId());
+        verify(targetAssetRepository).deleteAllByTargetIdIn(List.of(existing.getId()));
     }
 
     @Test
@@ -581,7 +601,7 @@ class PublishTargetServiceTest {
         PostPublishTarget existing = existingRow("facebook", "meta", "conn-meta");
         existing.setCustomMedia(true);
         when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
-        when(targetAssetRepository.findAllByTargetId(existing.getId())).thenReturn(List.of(
+        when(targetAssetRepository.findAllByTargetIdIn(List.of(existing.getId()))).thenReturn(List.of(
                 new PostPublishTargetAsset(existing.getId(), "asset-a", 0),
                 new PostPublishTargetAsset(existing.getId(), "asset-b", 1)));
         givenPostAssets("asset-a", "asset-b");
@@ -602,7 +622,7 @@ class PublishTargetServiceTest {
         existing.setCustomMedia(true);
         existing.setCaptionOverride("Just for Facebook");
         when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
-        when(targetAssetRepository.findAllByTargetId(existing.getId())).thenReturn(List.of(
+        when(targetAssetRepository.findAllByTargetIdIn(List.of(existing.getId()))).thenReturn(List.of(
                 new PostPublishTargetAsset(existing.getId(), "asset-a", 0),
                 new PostPublishTargetAsset(existing.getId(), "asset-b", 1)));
         givenPostAssets("asset-a", "asset-b");
@@ -612,7 +632,7 @@ class PublishTargetServiceTest {
                         "Just for Facebook", List.of("asset-a", "asset-b"))), caller);
 
         verify(publishBundleGuard, never()).revertForBundleEdit(any(), any());
-        verify(targetAssetRepository, never()).deleteAllByTargetId(any());
+        verify(targetAssetRepository, never()).deleteAllByTargetIdIn(any());
     }
 
     @Test
@@ -645,7 +665,10 @@ class PublishTargetServiceTest {
     private List<String> savedSelectionOf(PostPublishTarget target) {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<PostPublishTargetAsset>> saved = ArgumentCaptor.forClass(List.class);
-        verify(targetAssetRepository).saveAll(saved.capture());
+        verify(targetAssetRepository, org.mockito.Mockito.atMost(1)).saveAll(saved.capture());
+        if (saved.getAllValues().isEmpty()) {
+            return List.of();
+        }
         return saved.getValue().stream()
                 .filter(row -> target.getId().equals(row.getTargetId()))
                 .sorted(java.util.Comparator.comparingInt(PostPublishTargetAsset::getPosition))
@@ -1371,7 +1394,7 @@ class PublishTargetServiceTest {
                         new PublishTargetService.TargetSelection("instagram", "conn-meta")), caller);
 
         assertThat(fbFeed.isCustomMedia()).isFalse();
-        verify(targetAssetRepository, never()).deleteAllByTargetId(fbFeed.getId());
+        verify(targetAssetRepository, never()).deleteAllByTargetIdIn(any());
         assertThat(savedRows()).extracting(PostPublishTarget::getPlatform).containsExactly("instagram");
     }
 
