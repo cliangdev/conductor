@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Enforces every per-target <em>publish option</em> rule at the approval gate of a publishing Workflow
@@ -422,7 +423,7 @@ public class PublishOptionsValidator {
                     + " to the creator. Choose who can see this post on the TikTok consent page"
                     + " (options: " + describeAllowed(allowed) + ")");
         } else if (!allowed.isEmpty() && allowed.stream().noneMatch(privacyLevel::equalsIgnoreCase)) {
-            problems.add(describe(target) + " has privacy level '" + privacyLevel
+            problems.add(describe(target) + " has privacy level '" + privacyLabel(privacyLevel)
                     + "', which is not one this creator's account allows — choose one of "
                     + describeAllowed(allowed));
         }
@@ -432,7 +433,7 @@ public class PublishOptionsValidator {
         if (options.path(OPTION_BRAND_CONTENT_TOGGLE).asBoolean(false)
                 && PRIVACY_SELF_ONLY.equalsIgnoreCase(privacyLevel)) {
             problems.add(describe(target) + " is marked as branded content (paid partnership) with privacy"
-                    + " level " + PRIVACY_SELF_ONLY + " — TikTok rejects that combination; either choose a"
+                    + " level '" + privacyLabel(PRIVACY_SELF_ONLY) + "' — TikTok rejects that combination; either choose a"
                     + " visible privacy level or turn the paid-partnership disclosure off");
         }
     }
@@ -514,7 +515,19 @@ public class PublishOptionsValidator {
         return allowed.isEmpty()
                 ? "this account's privacy levels, which are not cached — reconnect the account to refresh"
                         + " its creator info"
-                : allowed.toString();
+                : allowed.stream().map(PublishOptionsValidator::privacyLabel).collect(Collectors.joining(", "));
+    }
+
+    /** TikTok's own wording for a privacy level; mirrors the frontend's PRIVACY_LABELS. Unknown levels stay raw. */
+    private static final Map<String, String> PRIVACY_LABELS = Map.of(
+            "PUBLIC_TO_EVERYONE", "Everyone",
+            "MUTUAL_FOLLOW_FRIENDS", "Friends",
+            "FOLLOWER_OF_CREATOR", "Followers",
+            "SELF_ONLY", "Only me (private)");
+
+    static String privacyLabel(String level) {
+        String label = level == null ? null : PRIVACY_LABELS.get(level.toUpperCase(java.util.Locale.ROOT));
+        return label != null ? label : level;
     }
 
     private String describe(PostPublishTarget target) {

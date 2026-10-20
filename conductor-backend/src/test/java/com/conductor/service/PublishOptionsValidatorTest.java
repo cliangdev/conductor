@@ -87,9 +87,9 @@ class PublishOptionsValidatorTest {
                 .hasMessageContaining("TikTok")
                 .hasMessageContaining("@acme")
                 .hasMessageContaining("no privacy level chosen")
-                .hasMessageContaining("PUBLIC_TO_EVERYONE")
-                .hasMessageContaining("MUTUAL_FOLLOW_FRIENDS")
-                .hasMessageContaining("SELF_ONLY");
+                .hasMessageContaining("(options: Everyone, Friends, Only me (private))")
+                .hasMessageNotContaining("PUBLIC_TO_EVERYONE")
+                .hasMessageNotContaining("SELF_ONLY");
     }
 
     @Test
@@ -138,9 +138,10 @@ class PublishOptionsValidatorTest {
         assertThatThrownBy(this::approve)
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("TikTok")
-                .hasMessageContaining("PUBLIC_TO_EVERYONE")
+                .hasMessageContaining("privacy level 'Everyone'")
                 .hasMessageContaining("not one this creator's account allows")
-                .hasMessageContaining("FOLLOWER_OF_CREATOR");
+                .hasMessageContaining("Followers, Only me (private)")
+                .hasMessageNotContaining("FOLLOWER_OF_CREATOR");
     }
 
     @Test
@@ -162,7 +163,8 @@ class PublishOptionsValidatorTest {
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("TikTok")
                 .hasMessageContaining("branded content")
-                .hasMessageContaining("SELF_ONLY")
+                .hasMessageContaining("level 'Only me (private)'")
+                .hasMessageNotContaining("SELF_ONLY")
                 .hasMessageContaining("TikTok rejects that combination");
     }
 
