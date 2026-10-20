@@ -486,7 +486,15 @@ interface ConsentRequestStatus {
 /** What the MCP server lends the tool: URL elicitation (only when the client supports it) and progress. */
 export interface ConsentHost {
   /** Present only when the client declared `elicitation.url`. 'accept' means the person agreed to open it. */
-  elicitUrl?: (args: { message: string; url: string; elicitationId: string }) => Promise<'accept' | 'decline' | 'cancel'>
+  elicitUrl?: (args: {
+    message: string
+    url: string
+    elicitationId: string
+    /** How long the client may take to answer; the SDK's 60s default is far shorter than a person needs. */
+    timeoutMs: number
+    /** Aborted when the tool returns, so no elicitation request is left dangling. */
+    signal: AbortSignal
+  }) => Promise<'accept' | 'decline' | 'cancel'>
   /** Tells the client the elicitation finished; called only if elicitUrl was used. */
   notifyComplete?: (elicitationId: string) => Promise<void>
   /** Called when the count of consented Posts changes; only wired when the call carries a progress token. */
@@ -495,6 +503,9 @@ export interface ConsentHost {
   now?: () => number
   pollMs?: number
 }
+
+/** Slack on top of the wait window so the elicitation outlives the polling loop. */
+const ELICIT_TIMEOUT_MARGIN_SECONDS = 30
 
 const summarize = (items: ConsentItem[]) =>
   items.map((i) => ({
@@ -509,6 +520,8 @@ const summarize = (items: ConsentItem[]) =>
  * waits for them to do it. It never records consent — the backend refuses that from any machine credential.
  * With a client that supports URL elicitation the link is offered as a prompt; otherwise (common) it comes
  * back as text for the agent to show, and a second call with `requestId` waits.
+ * The elicitation runs alongside the polling and never gates it: a late, lost or timed-out answer must not
+ * fail the call, and completion is detected by polling the backend, not by the answer.
  */
 export async function requestTikTokConsent(
   params: { postIds?: string[]; requestId?: string; waitSeconds?: number },
@@ -525,6 +538,9 @@ export async function requestTikTokConsent(
   let skipped: Array<{ post: string; reason: string }> = []
   let items: ConsentItem[] = []
   let elicited = false
+  let declined = false
+  let consentUrl: string | undefined
+  const controller = new AbortController()
 
   if (!requestId) {
     // The backend takes Work Item ids or display ids and reports an unknown one as skipped NOT_FOUND.
@@ -542,19 +558,24 @@ export async function requestTikTokConsent(
     }
     const pending = items.filter((i) => i.verdict !== 'VALID').length
     const message = `Review and consent to ${pending} TikTok post${pending === 1 ? '' : 's'} in Conductor`
+    consentUrl = created.consentUrl
     if (host.elicitUrl) {
-      const action = await host.elicitUrl({ message, url: created.consentUrl, elicitationId: created.id })
-      if (action !== 'accept') {
-        return {
-          requestId,
-          status: 'declined',
-          consentUrl: created.consentUrl,
-          posts: summarize(items),
-          ...skippedNote,
-          nextStep: 'The person declined to open the consent page. Ask whether they want it; the link stays valid for 24 hours.',
-        }
-      }
       elicited = true
+      // Not awaited: Claude Code answers only when the person clicks, which can be minutes or never.
+      host
+        .elicitUrl({
+          message,
+          url: created.consentUrl,
+          elicitationId: created.id,
+          timeoutMs: (waitSeconds + ELICIT_TIMEOUT_MARGIN_SECONDS) * 1000,
+          signal: controller.signal,
+        })
+        .then(
+          (action) => {
+            if (action !== 'accept') declined = true
+          },
+          () => {} // timed out or errored: keep polling; the link goes back as text
+        )
     } else {
       return {
         requestId,
@@ -571,41 +592,56 @@ export async function requestTikTokConsent(
 
   const deadline = now() + waitSeconds * 1000
   let lastDone = -1
-  for (;;) {
-    const status = await apiGet<ConsentRequestStatus>(`${base}/${requestId}`, config)
-    items = status.items
-    const done = items.filter((i) => i.verdict === 'VALID').length
-    if (done !== lastDone) {
-      lastDone = done
-      host.onProgress?.(done, items.length, `${done} of ${items.length} TikTok posts consented`)
-    }
-    if (status.complete) {
-      if (elicited) await host.notifyComplete?.(requestId).catch(() => {})
-      return {
-        requestId,
-        status: 'complete',
-        posts: summarize(items),
-        ...(skipped.length > 0 ? { skipped } : {}),
-        nextStep: 'Every Post is VALID. Call submit_post for each (or submit_review to approve), then get_post_status.',
+  const declinedResult = () => ({
+    requestId,
+    status: 'declined',
+    ...(consentUrl ? { consentUrl } : {}),
+    posts: summarize(items),
+    ...(skipped.length > 0 ? { skipped } : {}),
+    nextStep: `The person declined to open the consent page. Ask whether they want it; the link stays valid for 24 hours. Call request_tiktok_consent({requestId: "${requestId}"}) to wait again.`,
+  })
+  try {
+    for (;;) {
+      const status = await apiGet<ConsentRequestStatus>(`${base}/${requestId}`, config)
+      items = status.items
+      consentUrl = status.consentUrl ?? consentUrl
+      const done = items.filter((i) => i.verdict === 'VALID').length
+      if (done !== lastDone) {
+        lastDone = done
+        host.onProgress?.(done, items.length, `${done} of ${items.length} TikTok posts consented`)
       }
-    }
-    if (status.expired) {
-      return {
-        requestId,
-        status: 'expired',
-        posts: summarize(items),
-        nextStep: 'The link expired. Call request_tiktok_consent again (without requestId) for a fresh one.',
+      if (status.complete) {
+        // Sent even if Accept never arrived: the client uses it to close its "waiting" dialog.
+        if (elicited) await host.notifyComplete?.(requestId).catch(() => {})
+        return {
+          requestId,
+          status: 'complete',
+          posts: summarize(items),
+          ...(skipped.length > 0 ? { skipped } : {}),
+          nextStep: 'Every Post is VALID. Call submit_post for each (or submit_review to approve), then get_post_status.',
+        }
       }
-    }
-    if (now() + pollMs > deadline) {
-      return {
-        requestId,
-        status: 'waiting',
-        posts: summarize(items),
-        ...(status.consentUrl ? { consentUrl: status.consentUrl } : {}),
-        nextStep: `${done} of ${items.length} consented so far.${status.consentUrl ? ` Link for the person: ${status.consentUrl}.` : ''} Call request_tiktok_consent({requestId: "${requestId}"}) again to keep waiting, or ask the person to finish.`,
+      if (status.expired) {
+        return {
+          requestId,
+          status: 'expired',
+          posts: summarize(items),
+          nextStep: 'The link expired. Call request_tiktok_consent again (without requestId) for a fresh one.',
+        }
       }
+      if (declined) return declinedResult()
+      if (now() + pollMs > deadline) {
+        return {
+          requestId,
+          status: 'waiting',
+          posts: summarize(items),
+          ...(consentUrl ? { consentUrl } : {}),
+          nextStep: `${done} of ${items.length} consented so far.${consentUrl ? ` Link for the person: ${consentUrl}.` : ''} If this call was interrupted or timed out, call request_tiktok_consent({requestId: "${requestId}"}) again to keep waiting (do not start a new request), or ask the person to finish.`,
+        }
+      }
+      await sleep(pollMs)
     }
-    await sleep(pollMs)
+  } finally {
+    controller.abort()
   }
 }
