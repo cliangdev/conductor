@@ -1126,7 +1126,7 @@ export const TOOLS = [
   },
   {
     name: 'request_tiktok_consent',
-    description: 'Get TikTok consent for Posts: returns one link where the person consents to each Post in their own browser, then waits until they have. No tool records consent; only the person can, and the backend refuses it from an API key. Omit postIds for every Post pending consent. If it returns a link, show it to the person and call again with requestId to wait. Returns each Post\'s verdict; continue with submit_post once VALID.',
+    description: 'Get TikTok consent for Posts: returns one link where the person consents to each Post in their own browser, then waits until they have. No tool records consent; only the person can, and the backend refuses it from an API key. Omit postIds for every Post pending consent. If it returns a link, show it to the person and call again with requestId to wait. If the call is interrupted or times out, call it again with requestId instead of starting a new request. Returns each Post\'s verdict; continue with submit_post once VALID.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2289,8 +2289,8 @@ export async function runMcpServer(): Promise<void> {
               config,
               {
                 elicitUrl: canElicit
-                  ? async ({ message, url, elicitationId }) =>
-                      (await server.elicitInput({ mode: 'url', message, url, elicitationId })).action
+                  ? async ({ message, url, elicitationId, timeoutMs, signal }) =>
+                      (await server.elicitInput({ mode: 'url', message, url, elicitationId }, { timeout: timeoutMs, signal })).action
                   : undefined,
                 notifyComplete: canElicit
                   ? (elicitationId) => server.createElicitationCompletionNotifier(elicitationId)()
