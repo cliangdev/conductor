@@ -17,13 +17,6 @@ const nextConfig = {
   turbopack: {
     root: path.join(__dirname, '..'),
   },
-  // Because src/middleware.ts exists, Next buffers request bodies (default cap 10MB) before they
-  // reach a rewrite; a larger body is cut at the cap and the proxied request dies with a socket hang
-  // up. Match the backend's spring.servlet.multipart.max-request-size (50MB) so a multipart call
-  // that works direct also works through the /_backend proxy.
-  experimental: {
-    proxyClientMaxBodySize: '50mb',
-  },
   async headers() {
     return [
       {
@@ -75,12 +68,6 @@ const nextConfig = {
     const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '')
     if (/^https?:\/\//.test(apiUrl)) {
       rules.push({ source: '/api/v1/oauth/callback', destination: `${apiUrl}/api/v1/oauth/callback` })
-
-      // Opt-in same-origin API proxy (per browser, `?api=proxy`; see src/lib/apiBase.ts and
-      // docs/performance.md). A same-origin call needs no CORS preflight. The prefix is deliberately
-      // outside /api/* so it can never shadow our own route handlers (/api/telemetry, /api/health).
-      // Nothing uses it unless a browser opts in, so the default path is unchanged.
-      rules.push({ source: '/_backend/:path*', destination: `${apiUrl}/:path*` })
     }
 
     return rules

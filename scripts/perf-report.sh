@@ -5,8 +5,7 @@
 #   1. per backend route (http_request + slow_request lines): n, p50/p95/max ms, and averages for
 #      DB queries, DB ms, pool wait ms, connection checkouts, response bytes - sorted by p95 desc
 #   2. per frontend page: page_ready p50/p95 and average API calls
-#   3. API calls: average (clientMs - serverMs) overhead = network + queueing + parse, split by `via`
-#      (direct cross-origin vs the opt-in same-origin proxy), overall and per path
+#   3. per API path: average (clientMs - serverMs) overhead = network + queueing + parse
 #   4. the SQL statements most repeated inside slow requests (N+1 suspects)
 #
 # Configuration:
@@ -123,22 +122,11 @@ echo
 echo "== API calls: client minus server time (network + queueing + parsing) =="
 jq -r "$JQ_LIB"'
   [ .[]? | .jsonPayload? // empty | select((.type == "api_call" or .message == "api_call") and (.serverMs != null)) ] as $r
-  | def via: .via // "direct";
-  if ($r | length) == 0 then "(no api_call entries with Server-Timing)" else
-    "-- by via: direct (cross-origin) vs proxy (same-origin /_backend); samples without via count as direct",
-    ( ["via","n","avgClientMs","avgServerMs","avgOverheadMs","p50OverheadMs","p95OverheadMs"] | tsv ),
-    ( $r | group_by(via)
-      | map( . as $g | ($g | map((.clientMs | num) - (.serverMs | num))) as $o | {
-          v: ($g[0] | via), n: ($g | length),
-          c: ($g | map(.clientMs | num) | avg | r1), s: ($g | map(.serverMs | num) | avg | r1),
-          o: ($o | avg | r1), p50: ($o | pct(0.5) | r1), p95: ($o | pct(0.95) | r1) } )
-      | .[] | [.v, .n, .c, .s, .o, .p50, .p95] | tsv ),
-    "",
-    "-- by path",
-    ( ["via method path","n","avgClientMs","avgServerMs","avgOverheadMs","avgDbQueries"] | tsv ),
-    ( $r | group_by("\(via) \(.method // "") \(.path // "?")")
+  | if ($r | length) == 0 then "(no api_call entries with Server-Timing)" else
+    ( ["method path","n","avgClientMs","avgServerMs","avgOverheadMs","avgDbQueries"] | tsv ),
+    ( $r | group_by("\(.method // "") \(.path // "?")")
       | map( . as $g | {
-          key: "\($g[0] | via) \($g[0].method // "") \($g[0].path // "?")", n: ($g | length),
+          key: "\($g[0].method // "") \($g[0].path // "?")", n: ($g | length),
           c: ($g | map(.clientMs | num) | avg | r1), s: ($g | map(.serverMs | num) | avg | r1),
           o: ($g | map((.clientMs | num) - (.serverMs | num)) | avg | r1),
           q: ($g | map(.dbQueries | num) | avg | r1) } )

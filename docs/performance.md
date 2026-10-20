@@ -70,7 +70,7 @@ line on stdout. Nothing is sent in tests or on the server; set `NEXT_PUBLIC_TELE
 
 | `message` | Fields |
 |---|---|
-| `api_call` | `path` (ids replaced with `:id`), `method`, `status`, `clientMs`, `serverMs`, `dbMs`, `dbQueries` (from Server-Timing), `via` (`direct` or `proxy`, see below), `page` |
+| `api_call` | `path` (ids replaced with `:id`), `method`, `status`, `clientMs`, `serverMs`, `dbMs`, `dbQueries` (from Server-Timing), `page` |
 | `web_vital` | `name` (LCP, INP, FCP, TTFB, CLS), `value` (ms; CLS is x1000), `rating`, `page` |
 | `page_ready` | `page` (a stable name such as `work-item-detail`), `path`, `ms` since navigation start, `apiCalls` made since then |
 
@@ -78,42 +78,6 @@ line on stdout. Nothing is sent in tests or on the server; set `NEXT_PUBLIC_TELE
 per navigation by `markPageReady(name)` (`src/lib/perf.ts`) from: work-item list and detail, project doc,
 knowledge home, media library and creatives library. To instrument another page call it from an effect once
 its primary data has rendered.
-
-### Same-origin API proxy (opt-in, per browser)
-
-By default the browser calls the backend cross-origin with an `Authorization` header, so every new URL pays a
-CORS preflight (browsers cache preflights per exact URL, and ours embed ids). To measure what that costs, the
-frontend can route API calls through itself instead: `/_backend/:path*` is a Next.js rewrite
-(`next.config.mjs`) to `${NEXT_PUBLIC_API_URL}/:path*`. Same-origin means no preflight. The rewrite exists on
-every deployment but nothing uses it until a browser opts in, so both modes run side by side on one deployment.
-
-- Enable: open any app page with `?api=proxy`. Revert: `?api=direct`. The choice is stored in
-  `localStorage` key `conductor.apiVia`, so it survives navigation and reloads. Without storage (private mode)
-  the browser stays direct unless the param is on the current URL.
-- Check: in devtools Network, API calls go to `/_backend/api/...` on the app's own host and show no OPTIONS
-  request; `Server-Timing` is still present.
-- Used by `timedFetch` in `src/lib/api.ts` and the doc image upload (multipart). Not used for the workflow log
-  `EventSource` (cookie-credentialed stream) or for the webhook URL shown in the UI; server-side code always
-  calls the backend directly. Browser-to-GCS uploads use signed URLs and never touch either path.
-- Verified through the rewrite (production build against a stub backend): method (GET/POST/PATCH/PUT/DELETE),
-  path, query string, body, `Authorization`, `Content-Type` (including multipart boundary), status codes,
-  `Server-Timing`, `Content-Disposition` and binary bodies. Request bodies are buffered by Next because
-  `src/middleware.ts` exists; `experimental.proxyClientMaxBodySize` is set to 50 MB (the backend's multipart
-  request cap) because the 10 MB default truncates bigger bodies and the proxied call fails.
-- Auth: the web client authenticates every call with an `Authorization: Bearer` header, which the proxy
-  forwards untouched, so login, `/auth/me` and logout work the same in both modes. The `access_token` cookie
-  is set by the frontend on its own origin (for `src/middleware.ts`); through the proxy the browser also sends
-  it to the backend, which ignores it when a Bearer header is present (header wins, and only the header counts
-  as an interactive action). Backend `Set-Cookie` (logout clears `access_token`) now lands on the app origin,
-  which is harmless. Direct mode sends no credentials cross-origin, exactly as before.
-- Cost: every proxied call is an extra request through the frontend Cloud Run service (CPU, request count,
-  and a second hop to the backend). Keep it an experiment for a few browsers, not a default, until the
-  numbers justify it.
-
-To compare: use the app for a while with `?api=proxy` in one browser and normally in another (or switch with
-`?api=direct`), then run `./scripts/perf-report.sh`. Section 3 reports client-minus-server overhead per `via`
-(overall with p50/p95, then per path); compare the `direct` and `proxy` rows. Samples from before this field
-existed count as `direct`. In Cloud Logging: `jsonPayload.message="api_call" jsonPayload.via="proxy"`.
 
 ## perf-report.sh
 
@@ -154,3 +118,18 @@ indexes. Match them to `topSql` from `slow_request` lines.
 - Display-only read URLs last 60 minutes. Publish-path URLs (TikTok 90, Meta 60, YouTube 240, render specs 45) keep their own constants.
 - Objects carry `Cache-Control: private, max-age=86400`: set on server writes, and best-effort at the upload-confirm step for browser direct uploads.
 - Backfill objects uploaded before this change (run once per environment by someone with bucket access): `scripts/gcs-set-cache-control.sh --dry-run <bucket> [prefix]`, then without `--dry-run`. Production (`ai-conductor-prod-storage`) was backfilled on 2026-10-19.
+
+## CORS preflights
+
+The frontend calls the backend cross-origin, so browsers send an `OPTIONS` preflight before most API calls; the
+answer is cached per exact URL, and our URLs carry ids, so `max-age` rarely helps. A same-origin proxy through
+the frontend (`/_backend/*` rewrite, #609) was measured in production on 2026-10-20 and then removed (it adds a
+hop through the frontend service to every call):
+
+| | calls | p50 overhead | p95 overhead |
+|---|---|---|---|
+| direct (cross-origin) | 27 | 205 ms | 885 ms |
+| proxy (same-origin) | 88 | 162 ms | 293 ms |
+
+"Overhead" is client time minus server time. If this is revisited, serve the API from the app's domain at the
+load balancer instead, which removes preflights without the extra hop.

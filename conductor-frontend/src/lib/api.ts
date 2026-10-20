@@ -1,4 +1,3 @@
-import { getApiBase, getApiVia } from '@/lib/apiBase'
 import { nowMs, recordApiCall } from '@/lib/telemetry'
 
 let onUnauthorized: (() => void) | null = null
@@ -465,16 +464,14 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
  * the backend's Server-Timing breakdown). Telemetry is best-effort and never alters the result.
  */
 async function timedFetch(path: string, init: RequestInit): Promise<Response> {
-  const via = getApiVia()
   const start = nowMs()
-  const res = await fetch(`${getApiBase(via)}${path}`, init)
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, init)
   recordApiCall({
     path,
     method: init.method ?? 'GET',
     status: res.status,
     clientMs: nowMs() - start,
     serverTiming: res.headers?.get?.('server-timing'),
-    via,
   })
   return res
 }

@@ -176,8 +176,6 @@ export function recordApiCall(args: {
   status: number
   clientMs: number
   serverTiming: string | null | undefined
-  /** Whether the call went cross-origin to the backend or through the same-origin proxy. */
-  via?: 'direct' | 'proxy'
 }) {
   try {
     if (!isTelemetryEnabled()) return
@@ -194,7 +192,6 @@ export function recordApiCall(args: {
       serverMs: st.serverMs,
       dbMs: st.dbMs,
       dbQueries: st.dbQueries,
-      via: args.via ?? 'direct',
       page: currentPage(),
     })
   } catch { /* telemetry must never throw */ }
