@@ -37,10 +37,27 @@ public final class MetricCatalog {
      * @param fromDimensions the rows carry their series in {@code dimension_key} (a platform), so the metric
      *                       is the sum across all dimension keys instead of the '' total row
      * @param funnelOrder    position as a stage of the in-app funnel (a PRODUCT metric a feed declared), else null
+     * @param basis          EVENT, or COHORT when each day's value counts the people who first opened that day (PRODUCT)
+     * @param area           ACQUISITION, ACTIVATION, RETENTION or REVENUE when a feed grouped it (PRODUCT), else null
+     * @param description    what the metric counts, in the feed's words (PRODUCT), else null
+     * @param headline       priority among the feed's headline metrics, 1 first (PRODUCT), else null
+     * @param watchBandPct   how close a miss counts as WATCH, in percent of the target; null means the default
      */
     public record Metric(String key, String label, Unit unit, Aggregation agg, Good good, boolean hidden,
                          boolean optional, boolean fromDimensions, String numerator, String denominator,
-                         Integer funnelOrder) {}
+                         Integer funnelOrder, String basis, String area, String description, Integer headline,
+                         Double watchBandPct) {
+        public Metric(String key, String label, Unit unit, Aggregation agg, Good good, boolean hidden,
+                      boolean optional, boolean fromDimensions, String numerator, String denominator,
+                      Integer funnelOrder) {
+            this(key, label, unit, agg, good, hidden, optional, fromDimensions, numerator, denominator, funnelOrder,
+                    "EVENT", null, null, null, null);
+        }
+
+        public boolean cohort() {
+            return "COHORT".equals(basis);
+        }
+    }
 
     /**
      * One column of a dimension table. {@code source} is the stored metric the column reads (ratio columns
@@ -333,11 +350,13 @@ public final class MetricCatalog {
                     continue;
                 }
                 metrics.add(new Metric(d.getMetric(), d.getLabel(), unit, Aggregation.DERIVED, good, false, false,
-                        false, d.getNumerator(), d.getDenominator(), d.getFunnelOrder()));
+                        false, d.getNumerator(), d.getDenominator(), d.getFunnelOrder(), d.getBasis(), d.getArea(),
+                        d.getDescription(), d.getHeadline(), watchBand(d)));
             } else {
                 Aggregation agg = d.getAggregation().equals("LEVEL") ? Aggregation.LEVEL : Aggregation.SUM;
                 metrics.add(new Metric(d.getMetric(), d.getLabel(), unit, agg, good, false, false, false, null, null,
-                        d.getFunnelOrder()));
+                        d.getFunnelOrder(), d.getBasis(), d.getArea(), d.getDescription(), d.getHeadline(),
+                        watchBand(d)));
             }
         }
         // Breakdown tables read SUM metrics (and ratios of two of them) per source and per campaign.
@@ -359,6 +378,10 @@ public final class MetricCatalog {
                 new Dimension("campaigns", "By campaign", dimensionColumns, "campaign:"));
         return new Channel(MetricChannel.PRODUCT, base.label(), base.connectorIds(), metrics, dimensions,
                 base.headline());
+    }
+
+    private static Double watchBand(ChannelMetricDefinitionRow d) {
+        return d.getWatchBandPct() == null ? null : d.getWatchBandPct().doubleValue();
     }
 
     /** The catalog channel for a caller-supplied name (case-insensitive), or empty for an unknown one. */

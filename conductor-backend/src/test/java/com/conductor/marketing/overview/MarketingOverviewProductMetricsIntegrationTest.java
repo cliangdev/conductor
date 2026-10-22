@@ -262,6 +262,163 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
                 .isInstanceOf(ConflictException.class);
     }
 
+    private static MetricDefinition cohort(String key, String label, int funnelOrder) {
+        return new MetricDefinition(key, label, "COUNT", "SUM", null, null, "UP", funnelOrder, null, null, null,
+                "COHORT", "ACTIVATION", "People who reached " + label, null, null);
+    }
+
+    @Test
+    void v2FieldsArePersistedOnTheDefinition() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(
+                new MetricDefinition("retention_d7", "Day-7 retention", "PERCENT", "RATIO", "kept", "matured", "UP",
+                        null, new BigDecimal("0.25"), "UP", "28d", "EVENT", "RETENTION", "Still active at day 7", 1,
+                        new BigDecimal("15")),
+                cohort("first_open", "First opens", 1), sum("kept", "Kept", null), sum("matured", "Matured", null)));
+
+        var rows = definitionRepository.findByConnectionId(pm);
+
+        assertThat(rows).filteredOn(r -> r.getMetric().equals("retention_d7")).singleElement().satisfies(r -> {
+            assertThat(r.getBasis()).isEqualTo("EVENT");
+            assertThat(r.getArea()).isEqualTo("RETENTION");
+            assertThat(r.getDescription()).isEqualTo("Still active at day 7");
+            assertThat(r.getHeadline()).isEqualTo(1);
+            assertThat(r.getWatchBandPct()).isEqualByComparingTo("15");
+        });
+        assertThat(rows).filteredOn(r -> r.getMetric().equals("first_open")).singleElement()
+                .satisfies(r -> assertThat(r.getBasis()).isEqualTo("COHORT"));
+        // a v1 definition lands as EVENT with nothing else
+        assertThat(rows).filteredOn(r -> r.getMetric().equals("kept")).singleElement().satisfies(r -> {
+            assertThat(r.getBasis()).isEqualTo("EVENT");
+            assertThat(r.getArea()).isNull();
+            assertThat(r.getWatchBandPct()).isNull();
+        });
+    }
+
+    @Test
+    void cohortStagesSumTheCohortDaysOfTheWindowAndSayTheirBasis() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(
+                cohort("first_open", "First opens", 1), cohort("trial_started", "Trials", 2)));
+        // cohort days Oct 8-14: 100 opens each, 10 of each cohort reached a trial by now. An older cohort (Oct 2)
+        // that matured later is outside the window and must not count.
+        for (int d = 8; d <= 14; d++) {
+            put(pm, "first_open", day(d), 100);
+            put(pm, "trial_started", day(d), 10);
+        }
+        put(pm, "trial_started", day(2), 40);
+
+        Overview overview = overview7();
+
+        assertThat(overview.funnelBasis()).isEqualTo("COHORT");
+        assertThat(overview.funnel()).filteredOn(s -> s.key().equals("product_trial_started")).singleElement()
+                .satisfies(s -> {
+                    assertThat(s.value()).isEqualTo(70.0);
+                    assertThat(s.basis()).isEqualTo("COHORT");
+                });
+        assertThat(overview.funnel()).filteredOn(s -> s.key().equals("store_downloads")).singleElement()
+                .satisfies(s -> assertThat(s.basis()).isEqualTo("EVENT"));
+        MetricView opens = metric(channel(overview, "PRODUCT"), "first_open");
+        assertThat(opens.basis()).isEqualTo("COHORT");
+        assertThat(opens.area()).isEqualTo("ACTIVATION");
+        assertThat(opens.description()).isEqualTo("People who reached First opens");
+    }
+
+    @Test
+    void anEventFunnelHasEventBasis() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        put(pm, "first_open", day(10), 5);
+
+        assertThat(overview7().funnelBasis()).isEqualTo("EVENT");
+    }
+
+    @Test
+    void headlineMetricsLeadTheInAppCardInPriorityOrder() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(
+                new MetricDefinition("b", "B", "COUNT", "SUM", null, null, "UP", null, null, null, null, "EVENT",
+                        null, null, 2, null),
+                new MetricDefinition("c", "C", "COUNT", "SUM", null, null, "UP", null, null, null, null, "EVENT",
+                        null, null, 1, null),
+                sum("a", "A", null)));
+        put(pm, "a", day(10), 1);
+        put(pm, "b", day(10), 1);
+        put(pm, "c", day(10), 1);
+
+        assertThat(channel(overview7(), "PRODUCT").metrics()).extracting(m -> m.metric())
+                .containsExactly("c", "b", "a");
+    }
+
+    @Test
+    void aFeedTargetStatedPer28DaysIsProratedToTheSevenDayWindow() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(
+                new MetricDefinition("trial_started", "Trials", "COUNT", "SUM", null, null, "UP", 1,
+                        new BigDecimal("200"), "UP", "28d")));
+        // 7 days x 7 = 49 against 200 x 7/28 = 50: a 2% miss
+        for (int d = 8; d <= 14; d++) {
+            put(pm, "trial_started", day(d), 7);
+        }
+
+        MetricView trials = metric(channel(overview7(), "PRODUCT"), "trial_started");
+
+        assertThat(trials.status()).isEqualTo("WATCH");
+        assertThat(trials.missPct()).isCloseTo(0.02, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(trials.target().window()).isEqualTo("28d");
+    }
+
+    @Test
+    void aMetricWithoutATargetIsNoTarget() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        put(pm, "first_open", day(10), 5);
+
+        MetricView opens = metric(channel(overview7(), "PRODUCT"), "first_open");
+
+        assertThat(opens.status()).isEqualTo("NO_TARGET");
+        assertThat(opens.missPct()).isNull();
+    }
+
+    @Test
+    void aWorkspaceTargetOnAnotherChannelGetsAStatusToo() {
+        String store = connect("app-store-connect", "API_KEY");
+        for (int d = 8; d <= 14; d++) {
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 10, null, false);
+        }
+        // 280 per 28 days is 70 for 7: exactly met
+        service.setTarget(project.getId(), "STORE", "downloads", 280.0, null, "u");
+
+        assertThat(metric(channel(overview7(), "STORE"), "downloads").status()).isEqualTo("ON_TRACK");
+
+        service.setTarget(project.getId(), "STORE", "downloads", 400.0, null, "u"); // 100 for 7: 30% short
+        MetricView downloads = metric(channel(overview7(), "STORE"), "downloads");
+        assertThat(downloads.status()).isEqualTo("OFF_TRACK");
+        assertThat(downloads.missPct()).isCloseTo(0.3, org.assertj.core.data.Offset.offset(1e-9));
+    }
+
+    @Test
+    void aRateOnTwentyObservationsIsJudgedButOnNineteenItIsTooEarly() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(
+                sum("kept", "Kept", null), sum("matured", "Matured", null),
+                new MetricDefinition("retention", "Retention", "PERCENT", "RATIO", "kept", "matured", "UP", null,
+                        new BigDecimal("0.25"), "UP", null)));
+        put(pm, CONNECTOR, "PRODUCT", "kept", day(8), 5, 19L, false);
+        put(pm, CONNECTOR, "PRODUCT", "matured", day(8), 19, 19L, false);
+
+        MetricView early = metric(channel(overview7(), "PRODUCT"), "retention");
+        assertThat(early.sampleSize()).isEqualTo(19L);
+        assertThat(early.status()).isEqualTo("TOO_EARLY");
+
+        put(pm, CONNECTOR, "PRODUCT", "kept", day(9), 0, 1L, false);
+        put(pm, CONNECTOR, "PRODUCT", "matured", day(9), 1, 1L, false);
+        MetricView judged = metric(channel(overview7(), "PRODUCT"), "retention");
+        assertThat(judged.sampleSize()).isEqualTo(20L);
+        assertThat(judged.value()).isEqualTo(0.25); // 5 / 20
+        assertThat(judged.status()).isEqualTo("ON_TRACK");
+    }
+
     @Test
     void aLaggingChannelIsStaleEvenWhenItsReferenceDisagrees() {
         String pm = connect(CONNECTOR, "API_KEY");

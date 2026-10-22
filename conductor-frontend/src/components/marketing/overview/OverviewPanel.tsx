@@ -152,6 +152,7 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
             <FunnelStrip
               stages={data.funnel}
               channelLabels={channelLabels}
+              basis={data.funnelBasis}
               productMetrics={channels.find((c) => c.channel === 'PRODUCT')?.metrics ?? []}
             />
           )}

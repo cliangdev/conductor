@@ -77,6 +77,10 @@ public class MarketingOverviewQueryService {
     static final int TOP_POSTS = 5;
     /** A feed-reported sample below this reads as insufficient data (and so as noise). */
     static final long MIN_SAMPLE = 20;
+    /** How close a miss counts as WATCH rather than OFF_TRACK, in percent of the target, when a target does not say. */
+    static final double DEFAULT_WATCH_BAND_PCT = 10;
+    /** The period a count or currency total target is stated for when it does not say. */
+    static final int DEFAULT_TARGET_WINDOW_DAYS = 28;
     /** A reference figure that differs from the channel's own connector by more than this is a mismatch. */
     static final double MISMATCH_THRESHOLD = 0.01;
     /** Reference values a product feed sends are stored as PRODUCT rows under this metric prefix. */
@@ -104,18 +108,37 @@ public class MarketingOverviewQueryService {
     public record Point(LocalDate day, Double value, boolean provisional) {}
 
     /** {@code readOnly} targets come from a connector feed (the product backend sets them); {@code source} says where. */
-    public record TargetView(double value, String direction, boolean readOnly, String source) {
+    public record TargetView(double value, String direction, boolean readOnly, String source, String window,
+                             Double watchBandPct) {
+        public TargetView(double value, String direction, boolean readOnly, String source) {
+            this(value, direction, readOnly, source, null, null);
+        }
+
         public TargetView(double value, String direction) {
             this(value, direction, false, null);
         }
     }
+
+    /** ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY or NO_TARGET; {@code missPct} is the shortfall as a fraction of the target. */
+    public record TargetStatus(String status, Double missPct) {}
 
     /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window.
      *  {@code funnelOrder}: the metric's place among the in-app funnel stages (PRODUCT only), else null. */
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
                              List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
-                             boolean insufficientData, Integer funnelOrder, String aggregation) {
+                             boolean insufficientData, Integer funnelOrder, String aggregation, String status,
+                             Double missPct, Long sampleSize, String area, String description, Integer headline,
+                             String basis) {
+        public MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous,
+                          Double change, Double changePct, boolean noise, int provisionalDays, TargetView target,
+                          List<Point> series, LocalDate historyStartsOn, LocalDate asOf, boolean insufficientData,
+                          Integer funnelOrder, String aggregation) {
+            this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
+                    target, series, historyStartsOn, asOf, insufficientData, funnelOrder, aggregation,
+                    null, null, null, null, null, null, "EVENT");
+        }
+
         public MetricView(String metric, String label, Unit unit, String goodDirection, Double value,
                           Double previous, Double change, Double changePct, boolean noise, int provisionalDays,
                           TargetView target, List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
@@ -155,11 +178,26 @@ public class MarketingOverviewQueryService {
         }
     }
 
+    /** {@code basis}: COHORT when the value counts people who first opened in the window, followed to now. */
     public record FunnelStageView(String key, String label, Double value, Double previous, Double change,
                                   String source, boolean available, String unavailableReason,
-                                  LocalDate dataCompleteThrough, String path, String conversionFromKey) {}
+                                  LocalDate dataCompleteThrough, String path, String conversionFromKey,
+                                  String basis) {
+        public FunnelStageView(String key, String label, Double value, Double previous, Double change,
+                               String source, boolean available, String unavailableReason,
+                               LocalDate dataCompleteThrough, String path, String conversionFromKey) {
+            this(key, label, value, previous, change, source, available, unavailableReason, dataCompleteThrough,
+                    path, conversionFromKey, "EVENT");
+        }
+    }
 
-    public record Overview(Window window, List<FunnelStageView> funnel, List<ChannelView> channels) {}
+    /** {@code funnelBasis} is COHORT when any available stage is counted by cohort, else EVENT. */
+    public record Overview(Window window, List<FunnelStageView> funnel, List<ChannelView> channels,
+                           String funnelBasis) {
+        public Overview(Window window, List<FunnelStageView> funnel, List<ChannelView> channels) {
+            this(window, funnel, channels, "EVENT");
+        }
+    }
 
     public record ColumnView(String key, String label, Unit unit) {}
 
@@ -238,7 +276,9 @@ public class MarketingOverviewQueryService {
                     funnelWindow.previousTo(),
                     withData.stream().map(b -> b.window.to()).min(Comparator.naturalOrder()).orElseThrow());
         }
-        return new Overview(overall, funnel, channels);
+        String funnelBasis = funnel.stream().anyMatch(s -> s.available() && "COHORT".equals(s.basis()))
+                ? "COHORT" : "EVENT";
+        return new Overview(overall, funnel, channels, funnelBasis);
     }
 
     @Transactional(readOnly = true)
@@ -419,7 +459,8 @@ public class MarketingOverviewQueryService {
                             : MetricCatalog.connectorName(c.getConnectorId());
                     feedTargets.put(d.getMetric(), new TargetView(d.getTargetValue().doubleValue(),
                             d.getTargetDirection() != null ? d.getTargetDirection() : d.getGood(), true,
-                            "Set in " + label));
+                            "Set in " + label, d.getTargetWindow(),
+                            d.getWatchBandPct() == null ? null : d.getWatchBandPct().doubleValue()));
                 }
             }
         }
@@ -502,6 +543,14 @@ public class MarketingOverviewQueryService {
         private List<MetricView> headlineMetrics() {
             if (channel.channel() != MetricChannel.PRODUCT) {
                 return metrics.stream().limit(channel.headline()).toList();
+            }
+            // A feed that ranks its headline metrics decides what the card leads with.
+            if (metrics.stream().anyMatch(m -> m.headline() != null)) {
+                List<MetricView> ranked = new java.util.ArrayList<>(metrics.stream()
+                        .filter(m -> m.headline() != null)
+                        .sorted(Comparator.comparing(MetricView::headline)).toList());
+                metrics.stream().filter(m -> m.headline() == null).forEach(ranked::add);
+                return ranked;
             }
             List<MetricView> stages = metrics.stream()
                     .filter(m -> channel.metric(m.metric()).map(c -> c.funnelOrder() != null).orElse(false))
@@ -943,9 +992,60 @@ public class MarketingOverviewQueryService {
         boolean noise = sample != null ? insufficient
                 : value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
         LocalDate historyStartsOn = previous == null ? firstDay : null;
+        // A rate with no reported sample is judged by how many it was divided over (its denominator's total).
+        Long statusSample = sample;
+        if (statusSample == null && metric.agg() == Aggregation.DERIVED
+                && channel.metric(metric.denominator()).filter(c -> c.unit() == Unit.COUNT).isPresent()) {
+            Double denominator = data.periodValue(channel.metric(metric.denominator()).orElseThrow(), w.from(), w.to());
+            statusSample = denominator == null ? null : Math.round(denominator);
+        }
+        TargetStatus targetStatus = targetStatus(metric, value, targetView, statusSample, ctx.days);
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
                 change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder(),
-                metric.agg().name());
+                metric.agg().name(), targetStatus.status(), targetStatus.missPct(), statusSample, metric.area(),
+                metric.description(), metric.headline(), metric.basis());
+    }
+
+    /**
+     * Where {@code value} stands against its target. NO_TARGET with none; TOO_EARLY with no value, or for a rate
+     * (a PERCENT metric or a ratio) resting on fewer than {@link #MIN_SAMPLE} observations; ON_TRACK when met in
+     * the target's direction; WATCH when it misses by no more than the watch band (default
+     * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target; otherwise OFF_TRACK. A count or currency total is compared
+     * with its target prorated from the window the target is stated for (default 28 days) to {@code windowDays}.
+     */
+    static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, int windowDays) {
+        if (target == null) {
+            return new TargetStatus("NO_TARGET", null);
+        }
+        boolean rate = metric.unit() == Unit.PERCENT || metric.agg() == Aggregation.DERIVED;
+        if (value == null || (rate && sample != null && sample < MIN_SAMPLE)) {
+            return new TargetStatus("TOO_EARLY", null);
+        }
+        double expected = target.value();
+        if (metric.agg() == Aggregation.SUM && (metric.unit() == Unit.COUNT || metric.unit() == Unit.CURRENCY)) {
+            expected = expected * windowDays / targetWindowDays(target.window());
+        }
+        boolean up = "UP".equals(target.direction());
+        if (up ? value >= expected : value <= expected) {
+            return new TargetStatus("ON_TRACK", 0.0);
+        }
+        if (expected <= 0) {
+            return new TargetStatus("OFF_TRACK", null);
+        }
+        double miss = up ? (expected - value) / expected : (value - expected) / expected;
+        double band = (target.watchBandPct() != null ? target.watchBandPct()
+                : metric.watchBandPct() != null ? metric.watchBandPct() : DEFAULT_WATCH_BAND_PCT) / 100;
+        return new TargetStatus(miss <= band + 1e-9 ? "WATCH" : "OFF_TRACK", miss);
+    }
+
+    private static int targetWindowDays(String window) {
+        if (window != null && window.matches("[0-9]{1,3}d")) {
+            int days = Integer.parseInt(window.substring(0, window.length() - 1));
+            if (days > 0) {
+                return days;
+            }
+        }
+        return DEFAULT_TARGET_WINDOW_DAYS;
     }
 
     /**
@@ -1089,8 +1189,11 @@ public class MarketingOverviewQueryService {
                     noDataFor(build, w), w.to(), stage.channel().name(), stage.conversionFrom());
         }
         Double change = value != null && previous != null ? value - previous : null;
+        // Same sum over the window's days for either basis; a cohort stage's days are cohort days, so the value is
+        // the people who first opened in the window, followed to now.
         return new FunnelStageView(stage.key(), stage.label(), value, previous, change,
-                stage.channel().name(), true, null, w.to(), stage.channel().name(), stage.conversionFrom());
+                stage.channel().name(), true, null, w.to(), stage.channel().name(), stage.conversionFrom(),
+                metric.basis());
     }
 
     /** Keeps {@code conversionFromKey} only where both the stage and the stage it converts from are available. */
@@ -1102,7 +1205,7 @@ public class MarketingOverviewQueryService {
             boolean usable = s.available() && from != null && from.available();
             return new FunnelStageView(s.key(), s.label(), s.value(), s.previous(), s.change(), s.source(),
                     s.available(), s.unavailableReason(), s.dataCompleteThrough(), s.path(),
-                    usable ? s.conversionFromKey() : null);
+                    usable ? s.conversionFromKey() : null, s.basis());
         }).toList();
     }
 

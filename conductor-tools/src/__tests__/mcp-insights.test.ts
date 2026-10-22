@@ -283,6 +283,39 @@ describe('get_marketing_insights include channels', () => {
     expect(web.metrics[0]).not.toHaveProperty('provisional')
   })
 
+  it('passes status, missPct, sampleSize, area and cohort basis through; omits NO_TARGET and EVENT', async () => {
+    const o = overview()
+    o.funnel.push({ key: 'product_first_open', label: 'First opens', value: 70, source: 'PRODUCT', path: 'PRODUCT', available: true, basis: 'COHORT' } as never)
+    ;(o as Record<string, unknown>)['funnelBasis'] = 'COHORT'
+    const m = (key: string, extra: Record<string, unknown>) => ({
+      metric: key, label: key, unit: 'COUNT', value: 10, previous: 9, changePct: 0.1, noise: false, series: [], ...extra,
+    })
+    o.channels.push({
+      channel: 'PRODUCT', label: 'In-app', status: 'LIVE', dataCompleteThrough: '2026-10-13', connections: [],
+      metrics: [
+        m('retention_d7', {
+          unit: 'PERCENT', value: 0.21, status: 'WATCH', missPct: 0.16, sampleSize: 240, area: 'RETENTION', basis: 'EVENT',
+          target: { value: 0.25, direction: 'UP', window: '28d' },
+        }),
+        m('first_open', { funnelOrder: 1, basis: 'COHORT', area: 'ACQUISITION', status: 'NO_TARGET', missPct: null }),
+      ],
+    } as never)
+    mocked(apiGet).mockResolvedValue(o)
+    const result = await getMarketingInsights(config, { include: ['channels'], window: '7d' })
+    const marketing = result['marketing'] as Record<string, any>
+    const product = marketing.channels[2]
+    expect(marketing.funnelBasis).toBe('COHORT')
+    expect(marketing.funnel.find((s: any) => s.key === 'product_first_open')).toMatchObject({ basis: 'COHORT' })
+    expect(marketing.funnel[0]).not.toHaveProperty('basis')
+    expect(product.metrics[0]).toMatchObject({
+      status: 'WATCH', missPct: 0.16, sampleSize: 240, area: 'RETENTION', target: { value: 0.25, window: '28d' },
+    })
+    expect(product.metrics[0]).not.toHaveProperty('basis')
+    expect(product.stages[0]).toMatchObject({ basis: 'COHORT', area: 'ACQUISITION' })
+    expect(product.stages[0]).not.toHaveProperty('status')
+    expect(product.stages[0]).not.toHaveProperty('missPct')
+  })
+
   it('PRODUCT not connected points at the connector to add', async () => {
     const o = overview()
     o.channels.push({

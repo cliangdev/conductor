@@ -1,6 +1,6 @@
 // Display helpers for the marketing overview: units, change direction, targets, windows.
 
-import type { MarketingTarget, MetricUnit, OverviewChannel, OverviewMetric, OverviewMismatch, TargetDirection } from './types'
+import type { MarketingTarget, MetricUnit, OverviewChannel, OverviewMetric, OverviewMismatch, TargetDirection, TargetStatus } from './types'
 
 const PLACEHOLDER = '—'
 
@@ -62,13 +62,63 @@ export function targetMet(value: number | null | undefined, target: MarketingTar
   return target.direction === 'UP' ? value >= target.value : value <= target.value
 }
 
+/** What a person reads for each standing; NO_TARGET has no label. */
+export const TARGET_STATUS_LABEL: Record<TargetStatus, string | null> = {
+  ON_TRACK: 'On target',
+  WATCH: 'Close',
+  OFF_TRACK: 'Off target',
+  TOO_EARLY: 'Too early',
+  NO_TARGET: null,
+}
+
+/** Status colour comes from the status ramp tokens (green done, amber progress, red failed); Too early stays neutral. */
+export const TARGET_STATUS_CLASS: Record<TargetStatus, string> = {
+  ON_TRACK: 'text-status-done',
+  WATCH: 'text-status-progress',
+  OFF_TRACK: 'text-status-failed',
+  TOO_EARLY: 'text-muted-foreground',
+  NO_TARGET: 'text-muted-foreground',
+}
+
+/** "Target 200" and, for a count or currency total stated per period, "Target 200 per 28d". */
+function targetText(metric: OverviewMetric, target: MarketingTarget): string {
+  const shown = formatMetricValue(target.value, metric.unit)
+  const perPeriod = target.window && metric.aggregation === 'SUM' && (metric.unit === 'COUNT' || metric.unit === 'CURRENCY')
+  return perPeriod ? `Target ${shown} per ${target.window}` : `Target ${shown}`
+}
+
+/**
+ * The target line split for display: a status label (coloured by the caller) and the detail after it. Without a
+ * `status` (an older server) it falls back to the plain met / percent-there reading.
+ */
+export function targetStatusParts(metric: OverviewMetric): { status: TargetStatus | null; label: string | null; detail: string } | null {
+  const target = metric.target
+  if (!target) return null
+  const status = metric.status
+  if (!status || status === 'NO_TARGET') {
+    if (targetMet(metric.value, target)) {
+      return { status: 'ON_TRACK', label: 'On target', detail: targetText(metric, target) }
+    }
+    const progress = targetProgress(metric.value, target)
+    return {
+      status: null,
+      label: null,
+      detail: progress === null ? targetText(metric, target) : `${targetText(metric, target)} · ${Math.round(progress * 100)}% there`,
+    }
+  }
+  const label = TARGET_STATUS_LABEL[status]
+  if ((status === 'WATCH' || status === 'OFF_TRACK') && metric.missPct !== null && metric.missPct !== undefined) {
+    const pct = Math.round(metric.missPct * 100)
+    const word = target.direction === 'UP' ? 'short of' : 'over'
+    return { status, label, detail: `${pct}% ${word} ${formatMetricValue(target.value, metric.unit)}` }
+  }
+  return { status, label, detail: targetText(metric, target) }
+}
+
 export function targetLine(metric: OverviewMetric): string | null {
-  if (!metric.target) return null
-  const shown = formatMetricValue(metric.target.value, metric.unit)
-  if (targetMet(metric.value, metric.target)) return `Target met (${shown})`
-  const progress = targetProgress(metric.value, metric.target)
-  const label = `Target ${shown}`
-  return progress === null ? label : `${label} · ${Math.round(progress * 100)}% there`
+  const parts = targetStatusParts(metric)
+  if (!parts) return null
+  return parts.label ? `${parts.label} · ${parts.detail}` : parts.detail
 }
 
 /** What a person types for a target: PERCENT is entered as 4 meaning 4%. */

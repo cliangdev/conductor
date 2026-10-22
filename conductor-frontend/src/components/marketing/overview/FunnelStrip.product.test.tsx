@@ -28,6 +28,13 @@ describe('FunnelStrip with in-app stages', () => {
     expect(screen.getByText(/Set in Rexipe backend/)).toBeInTheDocument()
   })
 
+  it('explains a cohort funnel', () => {
+    render(<FunnelStrip stages={productFunnelStages()} productMetrics={productChannel().metrics} basis="COHORT" />)
+    expect(screen.getByText(/first opened in the window, followed to now/)).toBeInTheDocument()
+    render(<FunnelStrip stages={productFunnelStages()} productMetrics={productChannel().metrics} basis="EVENT" />)
+    expect(screen.getAllByText(/first opened in the window/)).toHaveLength(1)
+  })
+
   it('shows no flags without in-app metrics', () => {
     render(<FunnelStrip stages={productFunnelStages()} />)
     expect(screen.queryByText('Provisional')).not.toBeInTheDocument()

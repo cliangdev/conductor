@@ -6549,6 +6549,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OverviewChannel"
+        funnelBasis:
+          type: string
+          enum: [EVENT, COHORT]
+          description: COHORT when the in-app stages count people who first opened in the window and followed them to now (each stage carries its own `basis`); EVENT otherwise.
 
     OverviewWindow:
       type: object
@@ -6599,6 +6603,10 @@ components:
           format: date
           nullable: true
           description: The last day included in the stage's value (its channel's dataCompleteThrough); null when the stage has no channel yet.
+        basis:
+          type: string
+          enum: [EVENT, COHORT]
+          description: EVENT counts what happened in the window. COHORT (in-app stages a product backend declares so) counts the people who first opened in the window and reached the stage by now, so a later stage can still grow as the cohort matures.
 
     OverviewChannel:
       type: object
@@ -6721,6 +6729,37 @@ components:
           type: integer
           nullable: true
           description: PRODUCT only - the metric's place among the in-app funnel stages (1 first); null for a metric that is not a stage.
+        status:
+          type: string
+          enum: [ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY, NO_TARGET]
+          description: Where the value stands against its target (Conductor-owned or declared by the product feed). TOO_EARLY - no value, or a rate resting on fewer than 20 observations. NO_TARGET - no target. ON_TRACK - target met. WATCH - missed by no more than the target's watchBandPct (default 10%). OFF_TRACK - missed by more. A count or currency total is compared with its target prorated to the requested window.
+        missPct:
+          type: number
+          format: double
+          nullable: true
+          description: How far short of the (prorated) target the value is, as a fraction of the target (0.05 is 5%); 0 when the target is met. Null with NO_TARGET, TOO_EARLY or a zero target.
+        sampleSize:
+          type: integer
+          format: int64
+          nullable: true
+          description: Observations behind the value when known (the feed's own count, or a ratio's denominator); null otherwise.
+        area:
+          type: string
+          nullable: true
+          enum: [ACQUISITION, ACTIVATION, RETENTION, REVENUE]
+          description: PRODUCT only - the part of the growth scorecard the metric belongs to, when the feed says.
+        description:
+          type: string
+          nullable: true
+          description: PRODUCT only - what the metric counts, in the feed's words (for example "Installs that started a free trial").
+        headline:
+          type: integer
+          nullable: true
+          description: PRODUCT only - the metric's priority among the feed's headline metrics (1 first); null when it is not one.
+        basis:
+          type: string
+          enum: [EVENT, COHORT]
+          description: PRODUCT only - COHORT when each day's value counts the people who first opened that day, followed to now.
         provisionalDays:
           type: integer
           description: Number of provisional days after the channel's dataCompleteThrough that appear at the end of the series. Values and changes exclude them.
@@ -6754,6 +6793,15 @@ components:
         readOnly:
           type: boolean
           description: True when a connector feed owns the target (cannot be set or cleared here).
+        window:
+          type: string
+          nullable: true
+          description: The period a count or currency total target is stated for, e.g. "28d"; the status prorates it to the requested window. Null means 28d.
+        watchBandPct:
+          type: number
+          format: double
+          nullable: true
+          description: How close a miss counts as WATCH rather than OFF_TRACK, in percent of the target. Null means 10.
         source:
           type: string
           nullable: true

@@ -7,8 +7,9 @@ import type { OverviewMetric } from './types'
 
 export const SMALL_SAMPLE_NOTE = 'Too few users or events to read this as a real change.'
 
-export function metricFlags(metric: Pick<OverviewMetric, 'insufficientData'>) {
-  return { smallSample: metric.insufficientData === true }
+/** A metric whose status already says "Too early" does not also need the chip. */
+export function metricFlags(metric: Pick<OverviewMetric, 'insufficientData' | 'status'>) {
+  return { smallSample: metric.insufficientData === true && metric.status !== 'TOO_EARLY' }
 }
 
 function Chip({ children, title }: { children: string; title: string }) {
@@ -26,7 +27,7 @@ export function MetricFlags({
   metric,
   className,
 }: {
-  metric: Pick<OverviewMetric, 'insufficientData'>
+  metric: Pick<OverviewMetric, 'insufficientData' | 'status'>
   className?: string
 }) {
   const { smallSample } = metricFlags(metric)

@@ -21,16 +21,19 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Reads a response of the product metrics contract, v1 ({@code docs/integrations-product-metrics.md},
+ * Reads a response of the product metrics contract, v1 or v2 ({@code docs/integrations-product-metrics.md},
  * {@code docs/integrations-product-metrics.schema.json}) into a {@link ChannelMetricsPull}.
  *
  * <p>Strict on purpose: a response that breaks the contract is rejected whole with a plain message, never
  * half-applied, so a mistake in the product backend shows up on the connection instead of as quietly wrong
- * numbers. Unknown extra fields are ignored.
+ * numbers. Unknown extra fields are ignored. Version 2 only adds optional fields and wider limits (cohort
+ * basis, area, description, headline, a watch band, {@code keyword:}/{@code ad:} dimensions, restatement
+ * up to 60 days); a v1 response reads exactly as before, and v2 fields on it are ignored.
  */
 public final class ProductMetricsContract {
 
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
+    public static final int MIN_VERSION = 1;
     /** Reference values are stored as PRODUCT metrics with this prefix; the overview never lists them. */
     public static final String REFERENCE_PREFIX = "ref_";
     public static final Set<String> REFERENCE_METRICS = Set.of("store_downloads", "ads_spend");
@@ -41,10 +44,17 @@ public final class ProductMetricsContract {
 
     private static final Pattern KEY = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
     private static final Pattern DIMENSION = Pattern.compile("^(source|campaign):.{1,190}$");
+    /** v2 adds {@code keyword:{id}:{text}} and {@code ad:{id}:{name}}. */
+    private static final Pattern DIMENSION_V2 = Pattern.compile("^((source|campaign):.{1,190}|(keyword|ad):[^:]{1,100}:.{1,190})$");
     private static final Pattern WINDOW = Pattern.compile("^[0-9]{1,3}d$");
     private static final Set<String> UNITS = Set.of("COUNT", "CURRENCY", "PERCENT");
     private static final Set<String> AGGREGATIONS = Set.of("SUM", "LEVEL", "RATIO");
     private static final Set<String> DIRECTIONS = Set.of("UP", "DOWN");
+    private static final Set<String> BASES = Set.of("EVENT", "COHORT");
+    private static final Set<String> AREAS = Set.of("ACQUISITION", "ACTIVATION", "RETENTION", "REVENUE");
+    static final int MAX_DESCRIPTION = 240;
+    static final int MAX_RESTATEMENT_DAYS_V1 = 30;
+    static final int MAX_RESTATEMENT_DAYS_V2 = 60;
 
     private ProductMetricsContract() {
     }
@@ -64,12 +74,14 @@ public final class ProductMetricsContract {
         }
         JsonNode version = root.get("contractVersion");
         if (version == null || !version.isInt()) {
-            throw bad("The response has no contractVersion. Conductor reads version " + VERSION + ".");
+            throw bad("The response has no contractVersion. Conductor reads versions " + MIN_VERSION + " and "
+                    + VERSION + ".");
         }
-        if (version.asInt() != VERSION) {
+        if (version.asInt() < MIN_VERSION || version.asInt() > VERSION) {
             throw bad("The server speaks product metrics contract version " + version.asInt()
-                    + "; Conductor reads version " + VERSION + ".");
+                    + "; Conductor reads versions " + MIN_VERSION + " and " + VERSION + ".");
         }
+        boolean v2 = version.asInt() >= 2;
         String timezone = text(root, "timezone");
         if (timezone == null) {
             throw bad("The response has no timezone.");
@@ -81,11 +93,13 @@ public final class ProductMetricsContract {
         }
         LocalDate completeThrough = date(root.get("dataCompleteThrough"), "dataCompleteThrough");
         JsonNode restatement = root.get("restatementDays");
-        if (restatement == null || !restatement.isInt() || restatement.asInt() < 0 || restatement.asInt() > 30) {
-            throw bad("restatementDays must be a whole number from 0 to 30.");
+        int maxRestatement = v2 ? MAX_RESTATEMENT_DAYS_V2 : MAX_RESTATEMENT_DAYS_V1;
+        if (restatement == null || !restatement.isInt() || restatement.asInt() < 0
+                || restatement.asInt() > maxRestatement) {
+            throw bad("restatementDays must be a whole number from 0 to " + maxRestatement + ".");
         }
 
-        List<MetricDefinition> definitions = definitions(root.get("metrics"));
+        List<MetricDefinition> definitions = definitions(root.get("metrics"), v2);
         Map<String, MetricDefinition> byKey = new HashMap<>();
         definitions.forEach(d -> byKey.put(d.metric(), d));
         for (MetricDefinition d : definitions) {
@@ -121,7 +135,7 @@ public final class ProductMetricsContract {
             }
             LocalDate day = date(p.get("day"), "a point's day");
             BigDecimal value = number(p.get("value"), "The value of " + metric + " on " + day);
-            String dimension = dimension(p.get("dimension"));
+            String dimension = dimension(p.get("dimension"), v2);
             Long sampleSize = sampleSize(p.get("sampleSize"));
             if (day.isBefore(from) || day.isAfter(to)) {
                 continue;
@@ -142,7 +156,7 @@ public final class ProductMetricsContract {
                 }
                 LocalDate day = date(r.get("day"), "a reference value's day");
                 BigDecimal value = number(r.get("value"), "The reference value of " + metric + " on " + day);
-                if (dimension(r.get("dimension")).length() > 0) {
+                if (dimension(r.get("dimension"), v2).length() > 0) {
                     throw bad("Reference values are totals; leave dimension empty.");
                 }
                 if (day.isBefore(from) || day.isAfter(to)) {
@@ -165,7 +179,7 @@ public final class ProductMetricsContract {
         return new Parsed(pull, timezone, completeThrough);
     }
 
-    private static List<MetricDefinition> definitions(JsonNode nodes) {
+    private static List<MetricDefinition> definitions(JsonNode nodes, boolean v2) {
         if (nodes == null || !nodes.isArray() || nodes.isEmpty()) {
             throw bad("The response defines no metrics.");
         }
@@ -220,6 +234,36 @@ public final class ProductMetricsContract {
                 }
                 funnelOrder = order.asInt();
             }
+            String basis = "EVENT";
+            String area = null;
+            String description = null;
+            Integer headline = null;
+            BigDecimal watchBandPct = null;
+            if (v2) {
+                String rawBasis = text(m, "basis");
+                if (rawBasis != null) {
+                    if (!BASES.contains(rawBasis)) {
+                        throw bad("The metric '" + key + "' has basis '" + rawBasis + "'; expected EVENT or COHORT.");
+                    }
+                    basis = rawBasis;
+                }
+                area = text(m, "area");
+                if (area != null && !AREAS.contains(area)) {
+                    throw bad("The metric '" + key + "' has area '" + area
+                            + "'; expected ACQUISITION, ACTIVATION, RETENTION or REVENUE.");
+                }
+                description = text(m, "description");
+                if (description != null && description.length() > MAX_DESCRIPTION) {
+                    throw bad("The description of '" + key + "' is longer than " + MAX_DESCRIPTION + " characters.");
+                }
+                JsonNode head = m.get("headline");
+                if (head != null && !head.isNull()) {
+                    if (!head.isInt() || head.asInt() < 1) {
+                        throw bad("The metric '" + key + "' has a headline that is not a whole number of 1 or more.");
+                    }
+                    headline = head.asInt();
+                }
+            }
             BigDecimal targetValue = null;
             String targetDirection = null;
             String targetWindow = null;
@@ -240,20 +284,33 @@ public final class ProductMetricsContract {
                 if (targetWindow != null && !WINDOW.matcher(targetWindow).matches()) {
                     throw bad("The target window of '" + key + "' must look like 28d.");
                 }
+                JsonNode band = target.get("watchBandPct");
+                if (v2 && band != null && !band.isNull()) {
+                    watchBandPct = number(band, "The watchBandPct of the target of " + key);
+                    if (watchBandPct.signum() < 0 || watchBandPct.compareTo(BigDecimal.valueOf(100)) > 0) {
+                        throw bad("The watchBandPct of the target of '" + key + "' must be from 0 to 100.");
+                    }
+                }
             }
             out.add(new MetricDefinition(key, label, unit, aggregation, numerator, denominator, good, funnelOrder,
-                    targetValue, targetDirection, targetWindow));
+                    targetValue, targetDirection, targetWindow, basis, area, description, headline, watchBandPct));
         }
         return out;
     }
 
-    /** A dimension is absent (a total) or {@code source:<name>} / {@code campaign:<id>:<name>}. */
-    private static String dimension(JsonNode node) {
+    /**
+     * A dimension is absent (a total) or {@code source:<name>} / {@code campaign:<id>:<name>}; v2 adds
+     * {@code keyword:<id>:<text>} and {@code ad:<id>:<name>}.
+     */
+    private static String dimension(JsonNode node, boolean v2) {
         if (node == null || node.isNull()) {
             return "";
         }
-        if (!node.isTextual() || !DIMENSION.matcher(node.asText()).matches()) {
-            throw bad("A dimension must be empty or start with source: or campaign:; got '" + node.asText() + "'.");
+        Pattern allowed = v2 ? DIMENSION_V2 : DIMENSION;
+        if (!node.isTextual() || !allowed.matcher(node.asText()).matches()) {
+            throw bad("A dimension must be empty or start with "
+                    + (v2 ? "source:, campaign:, keyword: or ad:" : "source: or campaign:")
+                    + "; got '" + node.asText() + "'.");
         }
         return node.asText();
     }
