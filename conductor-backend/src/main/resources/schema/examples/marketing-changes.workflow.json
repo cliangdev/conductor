@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "MARKETING_CHANGES",
+  "area": "MARKETING_CHANGES",
+  "version": 1,
+  "state": "PUBLISHED",
+  "noun": "Change",
+  "default_view": "list",
+  "types": ["LISTING", "ADS", "PRICING", "PRODUCT", "CONTENT", "BASELINE", "OTHER"],
+  "metric": null,
+  "dueLabel": "Review on",
+  "fields": [
+    { "key": "hypothesis", "label": "Hypothesis", "type": "longtext" },
+    { "key": "baseline", "label": "Baseline", "type": "longtext" },
+    { "key": "control", "label": "Control", "type": "text" },
+    { "key": "liveSince", "label": "Live since", "type": "date", "requiredIn": ["LIVE", "REVIEWED"] },
+    { "key": "outcome", "label": "Outcome", "type": "longtext", "requiredIn": ["REVIEWED"] },
+    {
+      "key": "verdict",
+      "label": "Verdict",
+      "type": "enum",
+      "options": ["worked", "did_not_work", "inconclusive"],
+      "requiredIn": ["REVIEWED"]
+    },
+    { "key": "lesson", "label": "Lesson", "type": "longtext", "requiredIn": ["REVIEWED"] },
+    { "key": "evidence", "label": "Evidence", "type": "longtext" }
+  ],
+  "statuses": [
+    { "id": "PLANNED", "label": "Planned", "category": "open", "initial": true },
+    { "id": "LIVE", "label": "Live", "category": "in_progress" },
+    { "id": "REVIEWED", "label": "Reviewed", "category": "terminal", "terminal": true },
+    { "id": "ABANDONED", "label": "Abandoned", "category": "terminal", "terminal": true }
+  ],
+  "transitions": [
+    { "from": "PLANNED", "to": "LIVE", "label": "Mark live" },
+    { "from": "PLANNED", "to": "ABANDONED", "label": "Abandon" },
+    {
+      "from": "LIVE",
+      "to": "REVIEWED",
+      "label": "Approve verdict",
+      "requiresReview": true,
+      "reviewOutcomes": ["approve", "request_changes"],
+      "reviewerRole": "REVIEWER"
+    },
+    { "from": "LIVE", "to": "ABANDONED", "label": "Abandon" }
+  ]
+}

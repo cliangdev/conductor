@@ -7646,6 +7646,39 @@ components:
             $ref: "#/components/schemas/WorkflowTransitionView"
         metric:
           $ref: "#/components/schemas/WorkflowMetricView"
+        fields:
+          type: array
+          description: >-
+            The typed fields a Work Item on this Workflow carries, in display order. Omitted when the
+            Workflow declares none.
+          items:
+            $ref: "#/components/schemas/WorkflowFieldView"
+        dueLabel:
+          type: string
+          nullable: true
+          description: What this Workflow calls a Work Item's due date (e.g. "Review on").
+
+    WorkflowFieldView:
+      type: object
+      required: [key, label, type]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+          description: text | longtext | date | number | enum | url.
+        options:
+          type: array
+          description: Allowed values; present for enum fields.
+          items:
+            type: string
+        requiredIn:
+          type: array
+          description: Status ids a Work Item cannot move into while this field is empty.
+          items:
+            type: string
 
     WorkflowStatusView:
       type: object

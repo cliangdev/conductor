@@ -68,6 +68,18 @@
       "minLength": 2,
       "maxLength": 48
     },
+    "fields": {
+      "description": "Optional typed fields a Work Item on this Workflow carries (values live in work_items.fields). A Workflow without fields rejects any fields payload. Semantic: keys unique, requiredIn names existing statuses, options only on enum.",
+      "type": "array",
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/field" }
+    },
+    "dueLabel": {
+      "description": "What this Workflow calls a Work Item's due date (e.g. 'Review on'), so UIs can name it. Falls back to 'Due' when absent.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
     "metric": {
       "description": "Optional Outcome Metric kept as a time series. null/absent means the Workflow opts out (e.g. Engineering).",
       "oneOf": [
@@ -97,6 +109,39 @@
     }
   },
   "$defs": {
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "type"],
+      "properties": {
+        "key": {
+          "description": "Stable camelCase key the value is stored and sent under.",
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9]{0,39}$"
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "type": {
+          "description": "text/longtext = string; date = ISO yyyy-MM-dd; number; enum = one of options; url = http(s) address.",
+          "type": "string",
+          "enum": ["text", "longtext", "date", "number", "enum", "url"]
+        },
+        "options": {
+          "description": "Allowed values; only for type=enum (Java-enforced), and required there.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "requiredIn": {
+          "description": "Status ids a Work Item cannot move into while this field is empty (each must exist in statuses[], Java-enforced).",
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
+        }
+      }
+    },
     "status": {
       "type": "object",
       "additionalProperties": false,
@@ -283,6 +328,7 @@
     "Every transition.from and transition.to references an id present in statuses[].",
     "At most 5 transitions share the same from status.",
     "At most 3 transitions set requiresReview=true.",
+    "Field keys are unique; every fields[].requiredIn status exists; options appear only on (and are required for) type=enum.",
     "Every step with kind=skill references a skill id present in the skill registry.",
     "Every transition.trigger references a system trigger id registered in the SystemTriggerRegistry.",
     "Only a state=PUBLISHED version is bindable by Work Items; DRAFT is editable but not bound.",

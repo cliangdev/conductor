@@ -225,4 +225,46 @@ class WorkflowSeederTest {
         assertThat(headers.get(1).getDefinition().get("noun").asText()).isEqualTo("Post");
         verify(versionRepository, times(2)).save(any(WorkflowDefinitionVersion.class));
     }
+
+    @Test
+    void seedsMarketingChangesHeaderAndVersionSnapshot() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "MARKETING_CHANGES")).thenReturn(false);
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        seeder.seedMarketingChanges(project);
+
+        ArgumentCaptor<WorkflowDefinition> headerCaptor = ArgumentCaptor.forClass(WorkflowDefinition.class);
+        verify(workflowRepository).save(headerCaptor.capture());
+        WorkflowDefinition header = headerCaptor.getValue();
+        assertThat(header.getName()).isEqualTo("MARKETING_CHANGES");
+        assertThat(header.getArea()).isEqualTo("MARKETING_CHANGES");
+        assertThat(header.getState()).isEqualTo("PUBLISHED");
+        assertThat(header.isSidebarEnabled()).isTrue();
+        assertThat(header.getDefinition().get("noun").asText()).isEqualTo("Change");
+        verify(versionRepository).save(any(WorkflowDefinitionVersion.class));
+    }
+
+    @Test
+    void isIdempotentWhenMarketingChangesAlreadyExists() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "MARKETING_CHANGES")).thenReturn(true);
+
+        seeder.seedMarketingChanges(project);
+
+        verify(workflowRepository, never()).save(any());
+        verifyNoInteractions(versionRepository);
+    }
+
+    @Test
+    void marketingChangesRunsPlannedToLiveToReviewedWithAGatedVerdict() throws Exception {
+        Statechart chart = Statechart.parse(resource("/schema/examples/marketing-changes.workflow.json"));
+
+        assertThat(chart.initialStatus().orElseThrow().id()).isEqualTo("PLANNED");
+        assertThat(chart.isTerminal("REVIEWED")).isTrue();
+        assertThat(chart.isTerminal("ABANDONED")).isTrue();
+        assertThat(chart.transition("PLANNED", "LIVE")).isPresent();
+        assertThat(chart.transition("LIVE", "REVIEWED").orElseThrow().requiresReview()).isTrue();
+        assertThat(chart.transition("PLANNED", "REVIEWED")).isEmpty();
+        // Its area/noun route (marketing_changes/changes) must not collide with the Post pipeline's.
+        assertThat(chart.area()).isNotEqualTo(marketingStatechart().area());
+    }
 }

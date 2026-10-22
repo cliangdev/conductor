@@ -151,3 +151,59 @@ describe('tags reach the API from MCP', () => {
 })
 
 })
+
+describe('fields and due dates reach the API from MCP', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('creates a Work Item with fields and a due date', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1', displayId: 'C-1', status: 'PLANNED' })
+    await createWorkItem(
+      {
+        workflow: 'MARKETING_CHANGES',
+        type: 'LISTING',
+        title: 'Shorter title',
+        fields: { hypothesis: 'Clicks go up' },
+        dueOn: '2026-11-05',
+      },
+      config
+    )
+    const body = (apiPost as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(body.fields).toEqual({ hypothesis: 'Clicks go up' })
+    expect(body.dueOn).toBe('2026-11-05')
+  })
+
+  it('sends fields and dueOn on update, and nothing for what was omitted', async () => {
+    ;(apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1' })
+    await updateWorkItem({ issueId: 'w1', fields: { verdict: 'worked', control: null }, dueOn: '2026-12-01' }, config)
+    expect((apiPatch as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({
+      fields: { verdict: 'worked', control: null },
+      dueOn: '2026-12-01',
+    })
+
+    ;(apiPatch as ReturnType<typeof vi.fn>).mockClear()
+    await updateWorkItem({ issueId: 'w1', title: 'Renamed' }, config)
+    expect((apiPatch as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({ title: 'Renamed' })
+  })
+
+  it('clears the due date by sending an empty string for null', async () => {
+    ;(apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1' })
+    await updateWorkItem({ issueId: 'w1', dueOn: null }, config)
+    expect((apiPatch as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({ dueOn: '' })
+  })
+
+  it('surfaces a rejected fields payload as an error instead of queuing it', async () => {
+    ;(apiPatch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API error 400: Invalid fields: unknown field'))
+    const result = await updateWorkItem({ issueId: 'w1', fields: { mood: 'x' } }, config)
+    expect(result['error']).toContain('Invalid fields')
+    expect(queueChange).not.toHaveBeenCalled()
+  })
+
+  it('lists overdue items with dueBefore', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkItems({ workflow: 'MARKETING_CHANGES', dueBefore: '2026-10-22' }, config)
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/work-items?workflow=MARKETING_CHANGES&dueBefore=2026-10-22',
+      config
+    )
+  })
+})

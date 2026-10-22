@@ -97,6 +97,7 @@ export function WorkItemPropertiesPanel({
   token,
   workflowSlug,
   onStatusChanged,
+  onMissingFields,
   statusTriggerRef,
   reviewVerdict,
   blockedMoves,
@@ -131,6 +132,8 @@ export function WorkItemPropertiesPanel({
   token: string
   workflowSlug: string
   onStatusChanged: (status: string) => void
+  /** Field keys a refused status move needs filled in; see StatusDropdown. */
+  onMissingFields?: (keys: string[]) => void
   /** Forwarded to StatusDropdown's trigger — this panel is the one interactive status control on the
    * page (the page header shows a read-only StatusBadge instead), so the command palette's
    * "Change status" action opens this trigger. */
@@ -202,6 +205,7 @@ export function WorkItemPropertiesPanel({
           token={token}
           workflowSlug={workflowSlug}
           onStatusChanged={onStatusChanged}
+          onMissingFields={onMissingFields}
           triggerRef={statusTriggerRef}
           reviewVerdict={reviewVerdict}
           blockedMoves={blockedMoves}

@@ -65,6 +65,18 @@ describe('throwApiError (via apiPost)', () => {
     expect(err.fieldErrors).toEqual([{ field: 'email', message: 'must be a valid email' }])
   })
 
+  it('captures the missing Workflow field keys of a refused status move', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      problemResponse(400, {
+        detail: 'Cannot move to REVIEWED until these fields are filled in: verdict, lesson',
+        missingFields: ['verdict', 'lesson'],
+      }),
+    ))
+
+    const err = await apiPost('/x', {}, 'tok').catch((e) => e as ApiError) as ApiError
+    expect(err.missingFields).toEqual(['verdict', 'lesson'])
+  })
+
   it('falls back to an opaque message (no detail) without a leak', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       problemResponse(500, { type: 'about:blank', title: 'Internal Server Error', status: 500 }),

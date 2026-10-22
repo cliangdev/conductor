@@ -137,6 +137,9 @@ public class WorkItemWorkflowService {
             throw new BusinessException(
                     "Invalid status transition from " + workItem.getCurrentStatus() + " to " + newStatus);
         }
+        // Before the review gate: a person should hear which inputs are missing first, since an approval
+        // cannot make them appear.
+        WorkItemFields.requireFilled(statechart, workItem.getFields(), newStatus);
         if (transition.get().requiresReview() && !isReviewSatisfied(projectId, workItem, transition.get())) {
             throw new UnprocessableEntityException(
                     "Transition to " + newStatus + " requires an approved review");
@@ -206,6 +209,11 @@ public class WorkItemWorkflowService {
             return Optional.empty();
         }
         StatechartTransition t = transition.get();
+        // An automatic move never fills in fields for anyone: while the target status still needs some,
+        // the edge simply does not fire.
+        if (!WorkItemFields.missingRequired(statechart, workItem.getFields(), t.to()).isEmpty()) {
+            return Optional.empty();
+        }
         if (!systemTriggerRegistry.bypassesReviewGate(trigger)
                 && t.requiresReview() && !isReviewSatisfied(projectId, workItem, t)) {
             return Optional.empty();
@@ -217,6 +225,11 @@ public class WorkItemWorkflowService {
         publishGateEvaluator.enforce(workItem, statechart, t.to());
         workItem.setCurrentStatus(t.to());
         return transition;
+    }
+
+    /** The Workflow's current {@link Statechart}, for validating the input of a Work Item not yet created. */
+    public Statechart statechartFor(String projectId, String slug) {
+        return resolver.resolveRequired(projectId, slug);
     }
 
     /** Resolve the {@link Statechart} for the workflow a Work Item is bound to, honoring its pinned version. */

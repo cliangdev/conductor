@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.generated.model.WorkflowFieldView;
 import com.conductor.generated.model.WorkflowTransitionView;
 import com.conductor.generated.model.WorkflowView;
 import com.conductor.repository.WorkItemRepository;
@@ -45,5 +46,41 @@ class WorkflowViewServiceTest {
         WorkflowTransitionView submit = view.getTransitions().stream()
                 .filter(t -> "DRAFT".equals(t.getFrom())).findFirst().orElseThrow();
         assertThat(submit.getReviewOutcomes()).isNullOrEmpty();
+    }
+
+    @Test
+    void theViewCarriesDeclaredFieldsAndTheDueLabel() throws Exception {
+        WorkflowViewService service = serviceFor("marketing-changes", "MARKETING_CHANGES");
+
+        WorkflowView view = service.getView("p1", "MARKETING_CHANGES", null, "u1");
+
+        assertThat(view.getDueLabel()).isEqualTo("Review on");
+        assertThat(view.getFields()).extracting("key").startsWith("hypothesis", "baseline");
+        WorkflowFieldView verdict = view.getFields().stream()
+                .filter(f -> "verdict".equals(f.getKey())).findFirst().orElseThrow();
+        assertThat(verdict.getType()).isEqualTo("enum");
+        assertThat(verdict.getOptions()).containsExactly("worked", "did_not_work", "inconclusive");
+        assertThat(verdict.getRequiredIn()).containsExactly("REVIEWED");
+    }
+
+    @Test
+    void aWorkflowWithoutFieldsOmitsThem() throws Exception {
+        WorkflowView view = serviceFor("marketing", "MARKETING").getView("p1", "MARKETING", null, "u1");
+
+        assertThat(view.getFields()).isNullOrEmpty();
+        assertThat(view.getDueLabel()).isNull();
+    }
+
+    private WorkflowViewService serviceFor(String example, String slug) throws Exception {
+        WorkflowDefinitionResolver resolver = mock(WorkflowDefinitionResolver.class);
+        ProjectSecurityService security = mock(ProjectSecurityService.class);
+        when(security.isProjectMember(eq("p1"), eq("u1"))).thenReturn(true);
+        try (InputStream in = getClass().getResourceAsStream("/schema/examples/" + example + ".workflow.json")) {
+            when(resolver.resolveRequired(eq("p1"), eq(slug), any()))
+                    .thenReturn(Statechart.parse(new ObjectMapper().readTree(in)));
+        }
+        return new WorkflowViewService(resolver, security,
+                mock(WorkflowDefinitionRepository.class), mock(WorkflowDefinitionVersionRepository.class),
+                mock(WorkItemRepository.class));
     }
 }

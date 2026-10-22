@@ -47,6 +47,10 @@ export async function listWorkflows(
       // not by parsing the statechart.
       assetTypes: def?.['asset_types'] ?? [],
       publishesFrom: def?.['publishes_from'] ?? null,
+      // The valid keys for create_work_item/update_work_item `fields`, and what the due date is called.
+      // Present only on Workflows that declare them, so the common listing stays small.
+      ...(def?.['fields'] ? { fields: def['fields'] } : {}),
+      ...(def?.['dueLabel'] ? { dueLabel: def['dueLabel'] } : {}),
     }
   })
 }

@@ -5,7 +5,7 @@
 // the backend re-validates on save/publish — so this file only models the structure and provides
 // seeds/clones; it does not re-implement the semantic rules.
 
-import type { ReviewOutcome, WorkflowStatusCategory, WorkflowView } from '@/types/workItem'
+import type { ReviewOutcome, WorkflowFieldView, WorkflowStatusCategory, WorkflowView } from '@/types/workItem'
 
 export type DefaultView = 'list' | 'board' | 'calendar'
 export type ReviewerRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
@@ -59,6 +59,9 @@ export interface StatechartDefinition {
   types: string[]
   asset_types?: string[]
   metric?: StatechartMetric | null
+  /** Typed Work Item fields; the editor does not author these yet but round-trips them untouched. */
+  fields?: WorkflowFieldView[]
+  dueLabel?: string
   statuses: StatechartStatus[]
   transitions: StatechartTransition[]
 }
@@ -146,6 +149,8 @@ export function definitionFromWorkflowView(view: WorkflowView): StatechartDefini
             : 'higher_better') as MetricDirection,
         }
       : null,
+    ...(view.fields?.length ? { fields: view.fields.map((f) => ({ ...f })) } : {}),
+    ...(view.dueLabel ? { dueLabel: view.dueLabel } : {}),
     statuses: view.statuses.map((s) => ({
       id: s.id,
       label: s.label,

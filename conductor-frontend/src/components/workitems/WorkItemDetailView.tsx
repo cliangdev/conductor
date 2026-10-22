@@ -23,6 +23,7 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
+import { WorkItemFieldsCard } from '@/components/workitems/WorkItemFieldsCard'
 import { usePublishReadiness } from '@/components/marketing/publishReadiness'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { usePostDestinations } from '@/components/marketing/destinations/usePostDestinations'
@@ -218,6 +219,8 @@ export function WorkItemDetailView({
 
   const seedItem = initialItem && initialItem.id === workItemId ? initialItem : null
   const [issue, setIssue] = useState<DetailIssue | null>(seedItem)
+  // Workflow field keys the last refused status move said were empty; marked in the Details card.
+  const [missingFields, setMissingFields] = useState<string[]>([])
   const [documents, setDocuments] = useState<DetailDocument[]>([])
   const [assets, setAssets] = useState<MediaAsset[]>([])
   // Bumped on every bundle-affecting change so the readiness card re-asks the server. The card reads a
@@ -1225,6 +1228,24 @@ export function WorkItemDetailView({
                       void refreshIssueStatus()
                     }}
                   />
+                  {workflowView && ((workflowView.fields?.length ?? 0) > 0 || workflowView.dueLabel) && (
+                    <WorkItemFieldsCard
+                      projectId={projectId}
+                      workItemId={issueId}
+                      token={accessToken!}
+                      workflowView={workflowView}
+                      status={issue.status}
+                      fields={issue.fields}
+                      dueOn={issue.dueOn}
+                      canEdit={userRole !== 'REVIEWER'}
+                      missing={missingFields}
+                      onSaved={(patch) => {
+                        setIssue((prev) => (prev ? { ...prev, ...patch } : prev))
+                        // Whatever was missing may be filled now; the next refused move says so again if not.
+                        setMissingFields([])
+                      }}
+                    />
+                  )}
                   {(workflowView?.assetTypes?.length ?? 0) > 0 && (
                     <MediaUploadPanel
                       projectId={projectId}
@@ -1258,6 +1279,7 @@ export function WorkItemDetailView({
               token={accessToken!}
               workflowSlug={workflowSlug}
               onStatusChanged={(s) => setIssue((prev) => (prev ? { ...prev, status: s } : prev))}
+              onMissingFields={setMissingFields}
               blockedMoves={gateBlock}
               reviewVerdict={
                 // The reviewer's approve, where the doer's moves are. Outside review mode only: in it

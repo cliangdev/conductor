@@ -1680,6 +1680,38 @@ registered**, so for a new domain skill (e.g. `marketing:seo-report`) register i
 Registering a skill only makes the id *bindable* — the skill's behavior lives in the Claude Code skill/command the
 user installs. Only ADMIN/CREATOR can register skills or publish workflows.
 
+### Fields and due dates
+
+A lifecycle can declare typed **fields** its Work Items carry, and name the item's **due date**, so structured data
+needs no new column or component. Both are optional, top-level keys of the definition:
+
+```json
+"dueLabel": "Review on",
+"fields": [
+  { "key": "hypothesis", "label": "Hypothesis", "type": "longtext" },
+  { "key": "liveSince", "label": "Live since", "type": "date", "requiredIn": ["LIVE", "REVIEWED"] },
+  { "key": "verdict", "label": "Verdict", "type": "enum", "options": ["worked", "did_not_work", "inconclusive"], "requiredIn": ["REVIEWED"] }
+]
+```
+
+- **Types**: `text`, `longtext`, `date` (ISO `yyyy-MM-dd`), `number`, `enum` (one of `options`, which only an enum
+  may carry) and `url` (`http`/`https`). Keys are camelCase (`^[a-z][a-zA-Z0-9]{0,39}$`) and unique; at most 20 fields.
+- **`requiredIn`** lists statuses a Work Item cannot move into while the field is empty. The refusal is a 400 whose
+  `missingFields` property names the keys, and the move is not made. A patch may fill the fields and take the
+  transition together. An automatic (system-trigger) edge into such a status simply does not fire until they are filled.
+- **Writing**: `create_work_item` / `update_work_item` (and `POST`/`PATCH .../work-items`) take `fields` (an object)
+  and `dueOn` (`yyyy-MM-dd`). On update, `fields` merges key by key: a key sent as `null` clears it, a key left out is
+  untouched. `dueOn` is unchanged when omitted and cleared by an empty string (the MCP tool takes `null`). Unknown
+  keys, wrong types, and any `fields` on a Workflow that declares none are rejected with a 400 listing the valid keys.
+- **Reading**: both come back on every Work Item response. `list_workflows` shows a Workflow's `fields` and `dueLabel`.
+- **Overdue**: `GET .../work-items?dueBefore=YYYY-MM-DD` (MCP `list_work_items({dueBefore})`) returns the items
+  still open (not in a terminal status of their own Workflow) due strictly before that date, soonest first.
+
+The built-in `MARKETING_CHANGES` lifecycle ("Change": `PLANNED -> LIVE -> REVIEWED`, or `ABANDONED`) uses all of
+this as a log of changes and what came of them: hypothesis, baseline, control, live since, outcome, verdict, lesson and
+evidence, with the due date labelled "Review on". `REVIEWED` is review-gated, so a person approves the verdict. It is
+seeded into new workspaces and (migration V157) every existing one.
+
 ### System triggers (event-driven auto-transitions)
 
 A transition can declare a `trigger` so a **system event** advances a Work Item automatically, instead of a human

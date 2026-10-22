@@ -17,6 +17,10 @@ export interface DetailIssue extends Omit<Issue, 'createdAt' | 'updatedAt'> {
   createdByLabel?: string
   createdAt?: string
   updatedAt?: string
+  /** Values for the typed fields the bound Workflow declares, keyed by field key. */
+  fields?: Record<string, unknown> | null
+  /** Calendar date (yyyy-MM-dd) this item is due, or null. */
+  dueOn?: string | null
 }
 
 export interface DetailDocument {

@@ -17,6 +17,7 @@ import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -131,6 +132,18 @@ public class WorkItem {
     @Column(name = "publish_on_approval", nullable = false)
     private boolean publishOnApproval = false;
 
+    // --- Typed fields and due date (V156). Workflow-agnostic: the bound Workflow declares the keys. ---
+
+    /** Values for the fields the bound Workflow declares ({@code {key: value}}); null when none are set. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "fields", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private JsonNode fields;
+
+    /** Calendar date this item is due (e.g. a review date); null when it has none. */
+    @Column(name = "due_on")
+    private LocalDate dueOn;
+
     /**
      * Freeform labels, for grouping work across type, status and Workflow.
      *
@@ -226,6 +239,12 @@ public class WorkItem {
 
     public OffsetDateTime getScheduledFor() { return scheduledFor; }
     public void setScheduledFor(OffsetDateTime scheduledFor) { this.scheduledFor = scheduledFor; }
+
+    public JsonNode getFields() { return fields; }
+    public void setFields(JsonNode fields) { this.fields = fields; }
+
+    public LocalDate getDueOn() { return dueOn; }
+    public void setDueOn(LocalDate dueOn) { this.dueOn = dueOn; }
 
     public boolean isPublishOnApproval() { return publishOnApproval; }
     public void setPublishOnApproval(boolean publishOnApproval) { this.publishOnApproval = publishOnApproval; }

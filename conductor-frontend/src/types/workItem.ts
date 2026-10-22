@@ -54,6 +54,22 @@ export interface WorkflowView {
   statuses: WorkflowStatusView[]
   transitions: WorkflowTransitionView[]
   metric?: WorkflowMetricView | null
+  /** Typed fields a Work Item on this Workflow carries, in display order. Absent when it declares none. */
+  fields?: WorkflowFieldView[]
+  /** What the Workflow calls a Work Item's due date (e.g. "Review on"). */
+  dueLabel?: string | null
+}
+
+export type WorkflowFieldType = 'text' | 'longtext' | 'date' | 'number' | 'enum' | 'url'
+
+export interface WorkflowFieldView {
+  key: string
+  label: string
+  type: WorkflowFieldType
+  /** Allowed values; present for enum fields. */
+  options?: string[]
+  /** Status ids a Work Item cannot move into while this field is empty. */
+  requiredIn?: string[]
 }
 
 /** One published version of a Workflow (GET .../workflows/{workflowId}/versions). */

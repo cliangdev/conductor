@@ -84,6 +84,7 @@ public class ProjectService {
         // sidebar has nav entries from day one: ENGINEERING Issues (COND-22) and MARKETING Posts (COND-23).
         workflowSeeder.seedEngineering(project);
         workflowSeeder.seedMarketing(project);
+        workflowSeeder.seedMarketingChanges(project);
 
         ProjectMember adminMember = new ProjectMember();
         adminMember.setProject(project);

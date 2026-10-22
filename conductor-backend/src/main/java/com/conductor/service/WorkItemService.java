@@ -34,9 +34,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.Locale;
@@ -151,6 +154,26 @@ public class WorkItemService {
     @Transactional
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
                                    String workflowSlug, Collection<String> tags, ProjectActor actor) {
+        return createWorkItem(projectId, type, title, description, workflowSlug, tags, null, null, actor);
+    }
+
+    /** Pre-fields arity for a human caller, kept so existing callers read as they did. */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, Collection<String> tags, Map<String, Object> fields,
+                                   LocalDate dueOn, User caller) {
+        return createWorkItem(projectId, type, title, description, workflowSlug, tags, fields, dueOn,
+                ProjectActor.of(caller));
+    }
+
+    /**
+     * As above, plus the Workflow's typed {@code fields} (validated against the fields it declares; a
+     * Workflow with none rejects any) and a {@code dueOn} date.
+     */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, Collection<String> tags, Map<String, Object> fields,
+                                   LocalDate dueOn, ProjectActor actor) {
         if (!actor.isMachine()) {
             verifyMembership(projectId, actor.user().getId());
         }
@@ -175,6 +198,12 @@ public class WorkItemService {
         workItem.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
         workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
         workItem.setTags(normalizeTags(tags));
+        workItem.setDueOn(dueOn);
+        if (fields != null && !fields.isEmpty()) {
+            Statechart statechart = workItemWorkflowService.statechartFor(projectId, workflow);
+            workItem.setFields(WorkItemFields.merge(statechart, null, fields));
+            WorkItemFields.requireFilled(statechart, workItem.getFields(), workItem.getCurrentStatus());
+        }
 
         // Serialise display-id allocation per project: without the row lock, concurrent creates read the
         // same maximum and the later one fails the unique index (seen with twelve Posts created at once).
@@ -221,6 +250,21 @@ public class WorkItemService {
                                   String status, String assigneeId, OffsetDateTime scheduledFor,
                                   String scheduleTimezone, Collection<String> tags, Boolean publishOnApproval,
                                   User caller) {
+        return patchWorkItem(projectId, workItemId, title, description, status, assigneeId, scheduledFor,
+                scheduleTimezone, tags, publishOnApproval, null, null, caller);
+    }
+
+    /**
+     * {@code fields}: merged key by key into the stored values (a key sent as null clears it; null leaves
+     * all of them alone), validated against the bound Workflow. {@code dueOn}: null leaves the date
+     * unchanged, a blank string clears it, otherwise an ISO {@code yyyy-MM-dd} date. Both are applied
+     * before the status move, so one patch can fill the fields a transition requires and take it.
+     */
+    @Transactional
+    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
+                                  String status, String assigneeId, OffsetDateTime scheduledFor,
+                                  String scheduleTimezone, Collection<String> tags, Boolean publishOnApproval,
+                                  Map<String, Object> fields, String dueOn, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
@@ -287,6 +331,14 @@ public class WorkItemService {
         // buy nothing — the set is small and a client always knows the whole of it.
         if (tags != null) {
             workItem.setTags(normalizeTags(tags));
+        }
+
+        if (fields != null) {
+            workItem.setFields(WorkItemFields.merge(
+                    workItemWorkflowService.resolveFor(projectId, workItem), workItem.getFields(), fields));
+        }
+        if (dueOn != null) {
+            workItem.setDueOn(parseDueOn(dueOn));
         }
 
         if (title != null) {
@@ -375,7 +427,32 @@ public class WorkItemService {
     @Transactional(readOnly = true)
     public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
                                                String tag, User caller) {
+        return listWorkItemEntities(projectId, type, status, workflow, tag, null, caller);
+    }
+
+    /**
+     * As above, plus {@code dueBefore}: when given, only items that are still open (not in a terminal
+     * status of their own Workflow) and due strictly before that date, soonest first. Terminal is a
+     * Workflow's word, so it is judged here per item rather than in SQL.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
+                                               String tag, LocalDate dueBefore, User caller) {
         verifyReadAccess(projectId, caller.getId());
+        if (dueBefore != null) {
+            Map<String, Statechart> charts = new HashMap<>();
+            return workItemRepository.findByProjectFiltered(projectId, blankToNull(type), blankToNull(status),
+                            blankToNull(workflow), normalizeTag(tag)).stream()
+                    .filter(i -> i.getDueOn() != null && i.getDueOn().isBefore(dueBefore))
+                    .filter(i -> {
+                        Statechart chart = charts.computeIfAbsent(
+                                i.getWorkflow() + "@" + i.getWorkflowVersion(),
+                                k -> resolveStatechartOrNull(projectId, i));
+                        return chart == null || !chart.isTerminal(i.getCurrentStatus());
+                    })
+                    .sorted(Comparator.comparing(WorkItem::getDueOn))
+                    .toList();
+        }
         String typeFilter = (type != null && !type.isBlank()) ? type : null;
         String statusFilter = (status != null && !status.isBlank()) ? status : null;
         String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
@@ -384,6 +461,18 @@ public class WorkItemService {
         String tagFilter = normalizeTag(tag);
         return workItemRepository.findByProjectFiltered(
                 projectId, typeFilter, statusFilter, workflowFilter, tagFilter);
+    }
+
+    /** A blank {@code dueOn} clears the date; anything else must be an ISO {@code yyyy-MM-dd} date. */
+    private static LocalDate parseDueOn(String dueOn) {
+        if (dueOn.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(dueOn.trim());
+        } catch (DateTimeParseException e) {
+            throw new BusinessException("dueOn must be a date (yyyy-MM-dd), or empty to clear it");
+        }
     }
 
     /**

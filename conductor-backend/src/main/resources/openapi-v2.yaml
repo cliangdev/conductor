@@ -129,6 +129,15 @@ paths:
             (lower-cased) form, so a tag typed with a capital still matches.
           schema:
             type: string
+        - name: dueBefore
+          in: query
+          required: false
+          description: >-
+            Only Work Items still open (not in a terminal status of their Workflow) whose dueOn is before
+            this date (yyyy-MM-dd), soonest first. Use it to find overdue items.
+          schema:
+            type: string
+            format: date
       responses:
         "200":
           description: List of Work Items
@@ -5362,6 +5371,19 @@ components:
           description: >-
             IANA zone id the schedule was authored in (e.g. America/New_York), retained alongside the
             absolute instant so a local-wall-clock reading survives DST. Null when unscheduled.
+        fields:
+          type: object
+          additionalProperties: true
+          description: >-
+            Values for the typed fields the bound Workflow declares, keyed by field key. Absent keys are
+            empty. See the Workflow definition's `fields` for keys, types and the statuses that require them.
+        dueOn:
+          type: string
+          format: date
+          nullable: true
+          description: >-
+            Calendar date this Work Item is due (yyyy-MM-dd); the Workflow's `dueLabel` names it (e.g.
+            "Review on"). Null when it has none.
         publishOnApproval:
           type: boolean
           description: >-
@@ -5464,6 +5486,16 @@ components:
             trimmed, lower-cased and de-duplicated.
           items:
             type: string
+        fields:
+          type: object
+          additionalProperties: true
+          description: >-
+            Typed field values, keyed by the field keys the Workflow declares. Unknown keys, wrong types
+            and a Workflow that declares no fields are rejected with a 400.
+        dueOn:
+          type: string
+          format: date
+          description: Calendar date this Work Item is due (yyyy-MM-dd).
 
     PatchWorkItemRequest:
       type: object
@@ -5508,6 +5540,20 @@ components:
             trimmed, lower-cased and de-duplicated.
           items:
             type: string
+        fields:
+          type: object
+          additionalProperties: true
+          description: >-
+            Typed field values to set, merged key by key into the stored ones: a key sent with a value
+            sets it, a key sent as null (or an empty string) clears it, a key not sent is left alone.
+            Validated against the Workflow's declared fields (400 on unknown keys or wrong types). Applied
+            before `status`, so one patch can fill the fields a transition requires and take it.
+        dueOn:
+          type: string
+          description: >-
+            Calendar date this Work Item is due (yyyy-MM-dd). Omit to leave unchanged; send an empty
+            string to clear it. (A string rather than a nullable date because the generated models cannot
+            tell an omitted field from an explicit null.)
 
     AvailableTransition:
       type: object

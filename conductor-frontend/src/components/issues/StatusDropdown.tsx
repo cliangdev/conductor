@@ -24,6 +24,8 @@ interface StatusDropdownProps {
   userRole: UserRole
   token: string
   onStatusChanged: (newStatus: string) => void
+  /** Called with the field keys a refused move needs filled in first, so the page can point at them. */
+  onMissingFields?: (keys: string[]) => void
   /** Workflow the Work Item is bound to; defaults to the project's Engineering Workflow. */
   workflowSlug?: string
   /**
@@ -78,6 +80,7 @@ export function StatusDropdown({
   userRole,
   token,
   onStatusChanged,
+  onMissingFields,
   workflowSlug = DEFAULT_WORKFLOW_SLUG,
   trigger = 'badge',
   triggerRef,
@@ -143,9 +146,12 @@ export function StatusDropdown({
         token
       )
       onStatusChanged(newStatus)
+      onMissingFields?.([])
       toastSuccess(`${actionLabel}: now ${statusMeta(view, newStatus).label}`)
     } catch (err) {
       // Transition rejected (e.g. an unsatisfied gate); UI stays at the current status.
+      const missing = (err as { missingFields?: string[] })?.missingFields
+      if (missing?.length) onMissingFields?.(missing)
       toastError(apiErrorMessage(err, 'Failed to update status'))
     } finally {
       setLoading(false)
