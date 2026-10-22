@@ -261,8 +261,63 @@ public class MarketingOverviewQueryService {
 
     /** Package-visible so a test can pin "today" and "now". */
     Overview overview(String projectId, int days, LocalDate today, OffsetDateTime now) {
+        return computeOverview(context(projectId, days, today, now), new LinkedHashMap<>());
+    }
+
+    /** One channel with every metric (not just the headline ones) and the dimension tables the report reads. */
+    public record SnapshotChannel(ChannelView view, MetricCatalog.Channel catalog, List<DimensionTable> dimensions) {}
+
+    /**
+     * The overview plus, for each channel, every metric and (for STORE, ADS and PRODUCT) the dimension tables a
+     * report needs, all from one shared context so the report adds no second pass over the data. ADS keyword rows
+     * are ranked by spend and capped at {@link #REPORT_KEYWORDS}; PRODUCT keyword rows are read in full so they
+     * can be joined to the ADS ones by keyword id.
+     */
+    public record Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels) {}
+
+    static final int REPORT_KEYWORDS = 25;
+    static final int REPORT_ADS = 100;
+    static final int REPORT_PRODUCT_KEYWORDS = 5000;
+
+    @Transactional(readOnly = true)
+    public Snapshot snapshot(String projectId, String windowRaw) {
+        return snapshot(projectId, parseWindow(windowRaw, Set.of(7, 28)), LocalDate.now(ZoneOffset.UTC),
+                OffsetDateTime.now());
+    }
+
+    /** Public so the report's tests can pin "today" and "now". */
+    public Snapshot snapshot(String projectId, int days, LocalDate today, OffsetDateTime now) {
         Context ctx = context(projectId, days, today, now);
         Map<MetricChannel, ChannelBuild> builds = new LinkedHashMap<>();
+        Overview overview = computeOverview(ctx, builds);
+        Map<MetricChannel, SnapshotChannel> channels = new LinkedHashMap<>();
+        for (ChannelBuild build : builds.values()) {
+            MetricChannel id = build.channel.channel();
+            List<DimensionTable> tables = List.of();
+            if (build.live() && (id == MetricChannel.STORE || id == MetricChannel.ADS || id == MetricChannel.PRODUCT)) {
+                tables = dimensions(ctx, build.channel, build, reportTableOptions(id));
+            }
+            channels.put(id, new SnapshotChannel(build.view(false), build.channel, tables));
+        }
+        return new Snapshot(overview, channels);
+    }
+
+    private static java.util.function.Function<Dimension, TableOptions> reportTableOptions(MetricChannel channel) {
+        return dimension -> switch (channel) {
+            case ADS -> switch (dimension.key()) {
+                case "keywords" -> new TableOptions("spend", REPORT_KEYWORDS);
+                case "ads" -> new TableOptions("spend", REPORT_ADS);
+                default -> new TableOptions(null, DIMENSION_ROWS);
+            };
+            case PRODUCT -> new TableOptions(null, REPORT_PRODUCT_KEYWORDS);
+            default -> new TableOptions(null, DIMENSION_ROWS);
+        };
+    }
+
+    /** How a dimension table is ranked and capped; a null {@code sortKey} ranks by the first column. */
+    private record TableOptions(String sortKey, int limit) {}
+
+    private Overview computeOverview(Context ctx, Map<MetricChannel, ChannelBuild> builds) {
         for (MetricCatalog.Channel channel : MetricCatalog.channels()) {
             builds.put(channel.channel(), build(ctx, channel));
         }
@@ -319,7 +374,8 @@ public class MarketingOverviewQueryService {
             }
             markLagging(ctx, builds);
         }
-        List<DimensionTable> dimensions = build.live() ? dimensions(ctx, channel, build) : List.of();
+        List<DimensionTable> dimensions = build.live()
+                ? dimensions(ctx, channel, build, d -> new TableOptions(null, DIMENSION_ROWS)) : List.of();
         List<MarketingInsightsQueryService.Post> topPosts = channel.channel() == MetricChannel.SOCIAL
                 ? insightsQueryService.topPosts(projectId, days, TOP_POSTS)
                 : List.of();
@@ -1242,12 +1298,14 @@ public class MarketingOverviewQueryService {
 
     // ---- dimension tables ---------------------------------------------------------------------------
 
-    private List<DimensionTable> dimensions(Context ctx, MetricCatalog.Channel channel, ChannelBuild build) {
+    private List<DimensionTable> dimensions(Context ctx, MetricCatalog.Channel channel, ChannelBuild build,
+                                            java.util.function.Function<Dimension, TableOptions> options) {
         Set<String> connectionIds = new HashSet<>();
         build.connections.forEach(c -> connectionIds.add(c.id()));
         List<DimensionTable> tables = new ArrayList<>();
         for (Dimension dimension : channel.dimensions()) {
-            DimensionTable table = dimensionTable(ctx, channel, dimension, connectionIds, build.window);
+            DimensionTable table = dimensionTable(ctx, channel, dimension, connectionIds, build.window,
+                    options.apply(dimension));
             // the in-app tables are optional breakdowns: a feed with no sources or campaigns shows none
             if (channel.channel() != MetricChannel.PRODUCT || !table.rows().isEmpty()) {
                 tables.add(table);
@@ -1257,7 +1315,7 @@ public class MarketingOverviewQueryService {
     }
 
     private DimensionTable dimensionTable(Context ctx, MetricCatalog.Channel channel, Dimension dimension,
-                                          Set<String> connectionIds, Window w) {
+                                          Set<String> connectionIds, Window w, TableOptions options) {
         List<String> sources = dimension.columns().stream().map(Column::source).filter(s -> s != null).distinct().toList();
         List<ChannelMetricDaily> rows = dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(
                 ctx.projectId, channel.channel().name(), sources, ctx.historyStart.isBefore(w.from()) ? ctx.historyStart : w.from(),
@@ -1290,12 +1348,14 @@ public class MarketingOverviewQueryService {
 
         Map<String, Map<String, Object>> states = dimension.keyPrefix() == null
                 ? Map.of() : stateStore.find(connectionIds, dimension.keyPrefix());
-        String sortKey = dimension.columns().get(0).key();
+        String sortKey = options.sortKey() != null
+                && dimension.columns().stream().anyMatch(c -> c.key().equals(options.sortKey()))
+                ? options.sortKey() : dimension.columns().get(0).key();
         List<DimensionRowView> out = byKey.entrySet().stream()
                 .sorted(Comparator.comparing((Map.Entry<String, Map<String, Double>> e) ->
                         e.getValue().getOrDefault(sortKey, Double.NEGATIVE_INFINITY)).reversed()
                         .thenComparing(Map.Entry::getKey))
-                .limit(DIMENSION_ROWS)
+                .limit(options.limit())
                 .map(e -> toRow(channel.channel(), e.getKey(), e.getValue(), dimension, states.get(e.getKey())))
                 .toList();
         return new DimensionTable(dimension.key(), dimension.label(),
