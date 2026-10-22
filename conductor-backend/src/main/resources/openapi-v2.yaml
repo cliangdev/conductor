@@ -6877,6 +6877,13 @@ components:
           type: array
           description: One entry per column, in column order.
           items: {type: number, format: double, nullable: true}
+        state:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >-
+            The member's current state as its connector reports it (for an Apple Ads keyword: status, bidAmount,
+            matchType, adGroupName, campaignName, campaignStatus); absent when the connector reports none.
 
     MarketingInsightsResponse:
       type: object

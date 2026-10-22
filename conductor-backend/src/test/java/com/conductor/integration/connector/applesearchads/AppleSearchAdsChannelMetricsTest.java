@@ -86,6 +86,7 @@ class AppleSearchAdsChannelMetricsTest {
                 .andExpect(jsonPath("$.startTime").value("2026-10-01"))
                 .andExpect(jsonPath("$.endTime").value("2026-10-02"))
                 .andRespond(withSuccess(REPORT, MediaType.APPLICATION_JSON));
+        expectNoCampaigns();
 
         List<ChannelMetricPoint> points = connector.pullDaily(ctx(), LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 2));
 
@@ -111,6 +112,7 @@ class AppleSearchAdsChannelMetricsTest {
                 .andExpect(jsonPath("$.startTime").value("2026-04-01"))
                 .andExpect(jsonPath("$.endTime").value("2026-04-10"))
                 .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+        expectNoCampaigns();
 
         assertThat(connector.pullDaily(ctx(), LocalDate.of(2026, 1, 1), LocalDate.of(2026, 4, 10))).isEmpty();
         server.verify();
@@ -133,6 +135,12 @@ class AppleSearchAdsChannelMetricsTest {
         ConnectionContext none = new ConnectionContext("proj", "apple-search-ads", "conn", null, null, null, Map.of(), null);
         assertThatThrownBy(() -> connector.pullDaily(none, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 2)))
                 .isInstanceOf(ChannelMetricsSourceException.class);
+    }
+
+    private void expectNoCampaigns() {
+        server.expect(once(), requestTo("https://api.searchads.apple.com/api/v5/campaigns?limit=1000&offset=0"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{\"data\":[],\"pagination\":{\"totalResults\":0}}", MediaType.APPLICATION_JSON));
     }
 
     private static java.math.BigDecimal value(List<ChannelMetricPoint> points, String metric, String dimension, String day) {

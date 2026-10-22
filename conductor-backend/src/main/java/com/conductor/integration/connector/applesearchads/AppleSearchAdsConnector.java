@@ -10,7 +10,9 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
@@ -35,16 +37,24 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
 
     private final RestTemplate restTemplate;
     private final AppleAdsTokenService tokenService;
+    private final Clock clock;
 
     public AppleSearchAdsConnector() {
         this.restTemplate = ConnectorHttp.restTemplate();
         this.tokenService = new AppleAdsTokenService(this.restTemplate);
+        this.clock = Clock.systemUTC();
     }
 
     /** Test seam: inject a mock RestTemplate and a stubbed token service. */
     AppleSearchAdsConnector(RestTemplate restTemplate, AppleAdsTokenService tokenService) {
+        this(restTemplate, tokenService, Clock.systemUTC());
+    }
+
+    /** Test seam that also pins "today" (current-state reads only run on a pull that reaches today). */
+    AppleSearchAdsConnector(RestTemplate restTemplate, AppleAdsTokenService tokenService, Clock clock) {
         this.restTemplate = restTemplate;
         this.tokenService = tokenService;
+        this.clock = clock;
     }
 
     @Override
@@ -197,6 +207,23 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
             ),
             "returnRowTotals", true,
             "returnGrandTotals", true,
+            "returnRecordsWithNoMetrics", false
+        );
+    }
+
+    /** Keyword and ad reports are DAILY in UTC like the campaign rows, paged by {@code offset}. */
+    private Map<String, Object> breakdownReportBody(LocalDate start, LocalDate end, int offset) {
+        return Map.of(
+            "startTime", start.format(DATE),
+            "endTime", end.format(DATE),
+            "granularity", "DAILY",
+            "timeZone", "UTC",
+            "selector", Map.of(
+                "orderBy", List.of(Map.of("field", "impressions", "sortOrder", "DESCENDING")),
+                "pagination", Map.of("offset", offset, "limit", REPORT_PAGE)
+            ),
+            "returnRowTotals", false,
+            "returnGrandTotals", false,
             "returnRecordsWithNoMetrics", false
         );
     }
@@ -416,11 +443,24 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
     public int trailingDays() { return 3; }
 
     /**
-     * Per-day spend, impressions, taps and installs: totals across campaigns (empty dimension key) and per
-     * campaign, keyed {@code campaign:{id}:{name}} (the id never contains a colon, so split on the second one).
+     * Per-day spend, impressions, taps and installs: totals across campaigns (empty dimension key), per
+     * campaign ({@code campaign:{id}:{name}}), per keyword ({@code keyword:{id}:{text}}) and per ad
+     * ({@code ad:{id}:{name}}); the id never contains a colon, so split on the second one. Totals sum the
+     * campaign rows only. Any failing report fails the whole pull, so the store never prunes history on a
+     * partial answer.
      */
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        return pullAll(ctx, from, to, false).points();
+    }
+
+    /** As {@link #pullDaily}, plus the current bid/status of keywords and ads when the window reaches today. */
+    @Override
+    public ChannelMetricsPull pull(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        return pullAll(ctx, from, to, true);
+    }
+
+    private ChannelMetricsPull pullAll(ConnectionContext ctx, LocalDate from, LocalDate to, boolean withState) {
         AppleAdsTokenService.Credentials creds = credentials(ctx);
         String orgId = str(ctx.configValue("orgId"));
         if (!creds.complete() || isBlank(orgId)) {
@@ -437,15 +477,44 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         // date -> metric -> total
         Map<LocalDate, Map<String, Double>> totals = new TreeMap<>();
         List<ChannelMetricPoint> points = new ArrayList<>();
+        List<DimensionState> states = new ArrayList<>();
         try {
+            List<LocalDate[]> chunks = new ArrayList<>();
             LocalDate start = from;
             while (!start.isAfter(to)) {
                 LocalDate end = start.plusDays(MAX_SPAN_DAYS - 1L);
                 if (end.isAfter(to)) end = to;
-                Map<String, Object> report = postReport(API_BASE + "/reports/campaigns",
-                        campaignReportBody(start, end), headers);
-                collect(report, totals, points);
+                chunks.add(new LocalDate[]{start, end});
                 start = end.plusDays(1);
+            }
+            for (LocalDate[] chunk : chunks) {
+                Map<String, Object> report = postReport(API_BASE + "/reports/campaigns",
+                        campaignReportBody(chunk[0], chunk[1]), headers);
+                collect(report, totals, points);
+            }
+
+            List<Map<String, Object>> campaigns = new ArrayList<>();
+            for (Map<String, Object> campaign : getPaged("/campaigns", headers)) {
+                if (overlaps(campaign, from, to)) campaigns.add(campaign);
+            }
+            for (Map<String, Object> campaign : campaigns) {
+                String campaignId = str(campaign.get("id"));
+                if (isBlank(campaignId)) continue;
+                for (LocalDate[] chunk : chunks) {
+                    for (Map<String, Object> row : pagedReportRows(
+                            API_BASE + "/reports/campaigns/" + campaignId + "/keywords", chunk, headers)) {
+                        collectBreakdown(row, "keyword", "keywordId", "keyword", points);
+                    }
+                    for (Map<String, Object> row : pagedReportRows(
+                            API_BASE + "/reports/campaigns/" + campaignId + "/ads", chunk, headers)) {
+                        collectBreakdown(row, "ad", "adId", "adName", points);
+                    }
+                }
+            }
+            if (withState && !to.isBefore(LocalDate.now(clock.withZone(ZoneOffset.UTC)))) {
+                for (Map<String, Object> campaign : campaigns) {
+                    collectState(campaign, headers, states);
+                }
             }
         } catch (HttpClientErrorException e) {
             int status = e.getStatusCode().value();
@@ -461,7 +530,165 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         }
         totals.forEach((day, byMetric) -> byMetric.forEach(
                 (metric, value) -> points.add(ChannelMetricPoint.total(metric, day, value))));
-        return points;
+        return new ChannelMetricsPull(points, null, null, null, Set.of(), states);
+    }
+
+    /** Longest dimension key we store (the state table's key column). */
+    private static final int MAX_KEY = 190;
+    /** Rows per report page (Apple's maximum). */
+    private static final int REPORT_PAGE = 1000;
+    private static final int MAX_PAGES = 200;
+
+    static String dimensionKey(String prefix, String id, String name) {
+        String key = prefix + ":" + (id == null ? "" : id) + ":" + (name == null ? "" : name);
+        return key.length() > MAX_KEY ? key.substring(0, MAX_KEY) : key;
+    }
+
+    /** All rows of a keyword or ad report for one chunk, following {@code pagination.totalResults}. */
+    private List<Map<String, Object>> pagedReportRows(String url, LocalDate[] chunk, HttpHeaders headers) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        int offset = 0;
+        for (int page = 0; page < MAX_PAGES; page++) {
+            Map<String, Object> report = postReport(url, breakdownReportBody(chunk[0], chunk[1], offset), headers);
+            List<Map<String, Object>> rows = rows(report);
+            out.addAll(rows);
+            offset += rows.size();
+            long total = totalResults(report);
+            if (rows.isEmpty() || (total >= 0 ? offset >= total : rows.size() < REPORT_PAGE)) break;
+        }
+        return out;
+    }
+
+    /** Apple's {@code pagination.totalResults} (top level of the response), or -1 when absent. */
+    @SuppressWarnings("unchecked")
+    private static long totalResults(Map<String, Object> response) {
+        Object pagination = response.get("pagination");
+        if (!(pagination instanceof Map<?, ?>) && response.get("data") instanceof Map<?, ?> data) {
+            pagination = ((Map<String, Object>) data).get("pagination");
+        }
+        if (pagination instanceof Map<?, ?> p && ((Map<String, Object>) p).get("totalResults") instanceof Number n) {
+            return n.longValue();
+        }
+        return -1;
+    }
+
+    /** A GET list endpoint ({@code data: [...]}, {@code pagination}), all pages. */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> getPaged(String path, HttpHeaders headers) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        int offset = 0;
+        for (int page = 0; page < MAX_PAGES; page++) {
+            ResponseEntity<Map> resp = restTemplate.exchange(
+                    API_BASE + path + "?limit=" + REPORT_PAGE + "&offset=" + offset,
+                    HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+            Map<String, Object> body = resp.getBody() != null ? resp.getBody() : Map.of();
+            int added = 0;
+            if (body.get("data") instanceof List<?> list) {
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m) {
+                        out.add((Map<String, Object>) m);
+                        added++;
+                    }
+                }
+            }
+            offset += added;
+            long total = totalResults(body);
+            if (added == 0 || (total >= 0 ? offset >= total : added < REPORT_PAGE)) break;
+        }
+        return out;
+    }
+
+    /** False only when the campaign's own start/end dates prove it cannot have data in the window. */
+    private static boolean overlaps(Map<String, Object> campaign, LocalDate from, LocalDate to) {
+        LocalDate start = date(campaign.get("startTime"));
+        LocalDate end = date(campaign.get("endTime"));
+        return !(start != null && start.isAfter(to)) && !(end != null && end.isBefore(from));
+    }
+
+    private static LocalDate date(Object value) {
+        String s = str(value);
+        if (isBlank(s) || s.length() < 10) return null;
+        try {
+            return LocalDate.parse(s.substring(0, 10));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** One keyword or ad report row to daily points; first-time installs are {@code tapNewDownloads}. */
+    @SuppressWarnings("unchecked")
+    private void collectBreakdown(Map<String, Object> row, String prefix, String idField, String nameField,
+                                  List<ChannelMetricPoint> points) {
+        Map<String, Object> meta = metadata(row);
+        String id = str(meta.get(idField));
+        if (isBlank(id)) return;
+        String dimension = dimensionKey(prefix, id, str(meta.get(nameField)));
+        if (!(row.get("granularity") instanceof List<?> buckets)) return;
+        for (Object b : buckets) {
+            if (!(b instanceof Map<?, ?> raw)) continue;
+            Map<String, Object> bucket = (Map<String, Object>) raw;
+            LocalDate day = date(bucket.get("date"));
+            if (day == null) continue;
+            points.add(ChannelMetricPoint.of("spend", dimension, day, money(bucket.get("localSpend"))));
+            points.add(ChannelMetricPoint.of("impressions", dimension, day, num(bucket.get("impressions"))));
+            points.add(ChannelMetricPoint.of("taps", dimension, day, num(bucket.get("taps"))));
+            Object firstTime = bucket.get("tapNewDownloads");
+            points.add(ChannelMetricPoint.of("installs", dimension, day,
+                    firstTime != null ? num(firstTime) : installs(bucket)));
+            if (bucket.get("tapRedownloads") != null) {
+                points.add(ChannelMetricPoint.of("redownloads", dimension, day, num(bucket.get("tapRedownloads"))));
+            }
+        }
+    }
+
+    // ── Current state (bid, status, match type) ─────────────────────────────
+
+    /**
+     * The campaign's ad groups, and their targeting keywords and ads, as current-state rows. Best effort: a
+     * failure here leaves the previous state in place and never fails the metrics pull.
+     */
+    private void collectState(Map<String, Object> campaign, HttpHeaders headers, List<DimensionState> out) {
+        String campaignId = str(campaign.get("id"));
+        if (isBlank(campaignId)) return;
+        try {
+            for (Map<String, Object> adGroup : getPaged("/campaigns/" + campaignId + "/adgroups", headers)) {
+                String adGroupId = str(adGroup.get("id"));
+                if (isBlank(adGroupId)) continue;
+                Map<String, Object> common = new LinkedHashMap<>();
+                common.put("adGroupId", adGroupId);
+                common.put("adGroupName", adGroup.get("name"));
+                common.put("adGroupStatus", adGroup.get("status"));
+                common.put("campaignId", campaignId);
+                common.put("campaignName", campaign.get("name"));
+                common.put("campaignStatus", campaign.get("status"));
+                common.put("campaignServingStatus", campaign.get("servingStatus"));
+                String base = "/campaigns/" + campaignId + "/adgroups/" + adGroupId;
+                for (Map<String, Object> kw : getPaged(base + "/targetingkeywords", headers)) {
+                    String id = str(kw.get("id"));
+                    if (isBlank(id)) continue;
+                    Map<String, Object> state = new LinkedHashMap<>(common);
+                    state.put("status", kw.get("status"));
+                    state.put("matchType", kw.get("matchType"));
+                    if (kw.get("bidAmount") instanceof Map<?, ?> bid) {
+                        state.put("bidAmount", num(bid.get("amount")));
+                        state.put("bidCurrency", bid.get("currency"));
+                    }
+                    out.add(new DimensionState(dimensionKey("keyword", id, str(kw.get("text"))), state));
+                }
+                for (Map<String, Object> ad : getPaged(base + "/ads", headers)) {
+                    String id = str(ad.get("id"));
+                    if (isBlank(id)) continue;
+                    Map<String, Object> state = new LinkedHashMap<>(common);
+                    state.put("status", ad.get("status"));
+                    state.put("servingStatus", ad.get("servingStatus"));
+                    state.put("creativeType", ad.get("creativeType"));
+                    state.put("productPageId", ad.get("productPageId"));
+                    out.add(new DimensionState(dimensionKey("ad", id, str(ad.get("name"))), state));
+                }
+            }
+        } catch (org.springframework.web.client.RestClientException e) {
+            log.warn("Apple Search Ads state read failed for campaign {}: {}", campaignId, e.getMessage());
+        }
     }
 
     /**

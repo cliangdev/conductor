@@ -46,6 +46,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @Autowired private ChannelMetricDailyRepository dailyRepository;
     @Autowired private ConnectionRepository connectionRepository;
     @Autowired private ConnectorFeedRepository feedRepository;
+    @Autowired private com.conductor.integration.ingest.ChannelDimensionStateStore stateStore;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
 
@@ -594,6 +595,60 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         // the detail view carries every visible metric, not just the headline
         assertThat(detail.channel().metrics()).extracting(MetricView::metric)
                 .contains("tap_through_rate", "impressions");
+    }
+
+    @Test
+    void keywordAndAdTablesAreSeparateFromCampaignsAndCarryTheirCurrentState() {
+        String ads = connectFresh("apple-search-ads");
+        String kw = "keyword:77:meal planner";
+        put(ads, "apple-search-ads", "ADS", "impressions", kw, day(10), 1000, false);
+        put(ads, "apple-search-ads", "ADS", "taps", kw, day(10), 50, false);
+        put(ads, "apple-search-ads", "ADS", "installs", kw, day(10), 10, false);
+        put(ads, "apple-search-ads", "ADS", "spend", kw, day(10), 25, false);
+        put(ads, "apple-search-ads", "ADS", "impressions", "keyword:78:no state", day(10), 10, false);
+        put(ads, "apple-search-ads", "ADS", "spend", "campaign:5:Brand", day(10), 99, false);
+        put(ads, "apple-search-ads", "ADS", "impressions", "ad:9:Variant A", day(10), 400, false);
+        stateStore.upsert(ads, java.util.List.of(new com.conductor.integration.DimensionState(kw,
+                java.util.Map.of("status", "ACTIVE", "bidAmount", 1.5, "matchType", "EXACT",
+                        "adGroupName", "Core", "campaignName", "Brand"))));
+
+        MarketingOverviewQueryService.ChannelDetail detail = service.channel(project.getId(),
+                MetricCatalog.channel("ads").orElseThrow(), 28, TODAY, NOW);
+
+        assertThat(detail.dimensions()).extracting(MarketingOverviewQueryService.DimensionTable::key)
+                .containsExactly("campaigns", "keywords", "ads");
+        assertThat(detail.dimensions().get(0).rows()).extracting(MarketingOverviewQueryService.DimensionRowView::key)
+                .containsExactly("5");
+        MarketingOverviewQueryService.DimensionTable keywords = detail.dimensions().get(1);
+        assertThat(keywords.columns()).extracting(MarketingOverviewQueryService.ColumnView::key)
+                .containsExactly("impressions", "taps", "tap_through_rate", "installs", "install_rate", "spend",
+                        "cost_per_install");
+        MarketingOverviewQueryService.DimensionRowView row = keywords.rows().get(0);
+        assertThat(row.key()).isEqualTo("77");
+        assertThat(row.label()).isEqualTo("meal planner");
+        assertThat(row.values()).containsExactly(1000.0, 50.0, 0.05, 10.0, 0.2, 25.0, 2.5);
+        assertThat(row.state()).containsEntry("status", "ACTIVE").containsEntry("bidAmount", 1.5)
+                .containsEntry("matchType", "EXACT").containsEntry("adGroupName", "Core");
+        assertThat(keywords.rows().get(1).state()).isNull();
+        assertThat(detail.dimensions().get(2).rows()).extracting(MarketingOverviewQueryService.DimensionRowView::label)
+                .containsExactly("Variant A");
+        // keyword and ad rows never inflate the channel totals
+        assertThat(metric(detail.channel(), "impressions").value()).isNull();
+    }
+
+    @Test
+    void dimensionStateIsUpsertedInPlace() {
+        String ads = connectFresh("apple-search-ads");
+        stateStore.upsert(ads, java.util.List.of(new com.conductor.integration.DimensionState("keyword:1:a",
+                java.util.Map.of("status", "ACTIVE", "bidAmount", 1.0))));
+        stateStore.upsert(ads, java.util.List.of(new com.conductor.integration.DimensionState("keyword:1:a",
+                java.util.Map.of("status", "PAUSED", "bidAmount", 2.0))));
+
+        java.util.Map<String, java.util.Map<String, Object>> found = stateStore.find(java.util.List.of(ads), "keyword:");
+
+        assertThat(found).hasSize(1);
+        assertThat(found.get("keyword:1:a")).containsEntry("status", "PAUSED").containsEntry("bidAmount", 2.0);
+        assertThat(stateStore.find(java.util.List.of(ads), "ad:")).isEmpty();
     }
 
     @Test
