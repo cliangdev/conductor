@@ -79,13 +79,13 @@ class AppleSearchAdsKeywordFeedTest {
 
     private static final String KEYWORD_PAGE_1 = """
             {"data":{"reportingDataResponse":{"row":[
-              {"metadata":{"keywordId":77,"keyword":"meal planner","matchType":"EXACT"},
+              {"metadata":{"keywordId":77,"keyword":"meal planner","matchType":"EXACT","keywordStatus":"ACTIVE","adGroupId":55,"adGroupName":"Core","bidAmount":{"amount":"1.25","currency":"USD"}},
                "granularity":[
                  {"date":"2026-10-01","impressions":500,"taps":40,"tapInstalls":9,"tapNewDownloads":6,"tapRedownloads":3,
                   "localSpend":{"amount":"12.25","currency":"USD"}},
                  {"date":"2026-10-02","impressions":300,"taps":20,"tapInstalls":4,"tapNewDownloads":3,
                   "localSpend":{"amount":"6.00","currency":"USD"}}]},
-              {"metadata":{"keywordId":78,"keyword":"recipes: easy"},
+              {"metadata":{"id":78,"text":"recipes: easy"},
                "granularity":[{"date":"2026-10-01","impressions":100,"taps":5,"tapInstalls":2,
                   "localSpend":{"amount":"1.00","currency":"USD"}}]}
              ]}},"pagination":{"totalResults":3,"startIndex":0,"itemsPerPage":2}}""";
@@ -99,9 +99,19 @@ class AppleSearchAdsKeywordFeedTest {
 
     private static final String AD_REPORT = """
             {"data":{"reportingDataResponse":{"row":[
-              {"metadata":{"adId":9,"adName":"Variant A"},
+              {"metadata":{"adId":9,"adName":"Variant A","adGroupId":55,
+                           "creative":{"creativeType":"CUSTOM_PRODUCT_PAGE","destination":{"parameters":{"productPageId":"abc-123"}}}},
                "granularity":[{"date":"2026-10-01","impressions":700,"taps":50,"tapInstalls":12,"tapNewDownloads":10,
-                  "localSpend":{"amount":"20.00","currency":"USD"}}]}
+                  "localSpend":{"amount":"20.00","currency":"USD"}}]},
+              {"metadata":{"id":-1,"adGroupId":55},
+               "granularity":[{"date":"2026-10-01","impressions":300,"taps":20,"tapInstalls":5,
+                  "localSpend":{"amount":"8.00","currency":"USD"}}]},
+              {"metadata":{"adId":-1,"adGroupId":56},
+               "granularity":[{"date":"2026-10-01","impressions":90,"taps":4,"tapInstalls":1,
+                  "localSpend":{"amount":"2.00","currency":"USD"}}]},
+              {"metadata":{"adId":12,"adName":"No group"},
+               "granularity":[{"date":"2026-10-01","impressions":1,"taps":1,"tapInstalls":1,
+                  "localSpend":{"amount":"1.00","currency":"USD"}}]}
              ]}},"pagination":{"totalResults":1,"startIndex":0,"itemsPerPage":1000}}""";
 
     private void expectCampaigns() {
@@ -145,8 +155,13 @@ class AppleSearchAdsKeywordFeedTest {
         assertThat(value(points, "redownloads", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("3");
         assertThat(points).noneMatch(p -> p.metric().equals("redownloads") && p.dimensionKey().equals("keyword:77:meal planner")
                 && p.day().equals(TO));
-        assertThat(value(points, "taps", "ad:9:Variant A", "2026-10-01")).isEqualByComparingTo("50");
-        assertThat(value(points, "installs", "ad:9:Variant A", "2026-10-01")).isEqualByComparingTo("10");
+        assertThat(value(points, "taps", "ad:55:9:Variant A", "2026-10-01")).isEqualByComparingTo("50");
+        assertThat(value(points, "installs", "ad:55:9:Variant A", "2026-10-01")).isEqualByComparingTo("10");
+        // the default-page pseudo-ad (-1) is kept once per ad group, never merged, and named when Apple gives no name
+        assertThat(value(points, "impressions", "ad:55:-1:Default product page", "2026-10-01")).isEqualByComparingTo("300");
+        assertThat(value(points, "impressions", "ad:56:-1:Default product page", "2026-10-01")).isEqualByComparingTo("90");
+        // a row without an ad group is skipped
+        assertThat(points).noneMatch(p -> p.dimensionKey().contains("No group"));
         // campaign rows and the total are unchanged: tapInstalls, and keyword/ad rows are not added to the total
         assertThat(value(points, "installs", "campaign:1001:Brand", "2026-10-01")).isEqualByComparingTo("20");
         assertThat(value(points, "installs", "", "2026-10-01")).isEqualByComparingTo("20");
@@ -200,13 +215,17 @@ class AppleSearchAdsKeywordFeedTest {
 
         Map<String, Map<String, Object>> byKey = new HashMap<>();
         for (DimensionState s : pulled.dimensionStates()) byKey.put(s.dimensionKey(), s.state());
-        assertThat(byKey).containsOnlyKeys("keyword:77:meal planner", "ad:9:Variant A");
+        assertThat(byKey).containsOnlyKeys("keyword:77:meal planner", "keyword:78:recipes: easy", "keyword:79:diet",
+                "ad:55:9:Variant A", "ad:55:-1:Default product page", "ad:56:-1:Default product page");
+        // members the state read did not cover fall back to what the report row said; no matchType is Search Match
+        assertThat(byKey.get("keyword:78:recipes: easy")).containsEntry("matchType", "SEARCH_MATCH");
+        assertThat(byKey.get("ad:56:-1:Default product page")).containsEntry("adGroupId", "56");
         assertThat(byKey.get("keyword:77:meal planner"))
                 .containsEntry("status", "ACTIVE").containsEntry("matchType", "EXACT")
                 .containsEntry("bidAmount", 1.5).containsEntry("bidCurrency", "USD")
                 .containsEntry("adGroupName", "Core").containsEntry("campaignName", "Brand")
                 .containsEntry("campaignStatus", "ENABLED").containsEntry("campaignServingStatus", "RUNNING");
-        assertThat(byKey.get("ad:9:Variant A"))
+        assertThat(byKey.get("ad:55:9:Variant A"))
                 .containsEntry("servingStatus", "RUNNING").containsEntry("creativeType", "CUSTOM_PRODUCT_PAGE")
                 .containsEntry("productPageId", "abc-123").containsEntry("adGroupName", "Core");
         server.verify();
@@ -222,7 +241,13 @@ class AppleSearchAdsKeywordFeedTest {
         ChannelMetricsPull pulled = connector.pull(ctx(), FROM, TO);
 
         assertThat(pulled.points()).isNotEmpty();
-        assertThat(pulled.dimensionStates()).isEmpty();
+        // the report rows' own metadata stands in for the failed read
+        Map<String, Map<String, Object>> byKey = new HashMap<>();
+        for (DimensionState s : pulled.dimensionStates()) byKey.put(s.dimensionKey(), s.state());
+        assertThat(byKey.get("keyword:77:meal planner")).containsEntry("matchType", "EXACT")
+                .containsEntry("status", "ACTIVE").containsEntry("bidAmount", 1.25).containsEntry("adGroupName", "Core");
+        assertThat(byKey.get("ad:55:9:Variant A")).containsEntry("creativeType", "CUSTOM_PRODUCT_PAGE")
+                .containsEntry("productPageId", "abc-123");
     }
 
     @Test

@@ -478,6 +478,8 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         Map<LocalDate, Map<String, Double>> totals = new TreeMap<>();
         List<ChannelMetricPoint> points = new ArrayList<>();
         List<DimensionState> states = new ArrayList<>();
+        // what the keyword and ad report rows say about each member, used when the state read does not cover it
+        Map<String, Map<String, Object>> reportStates = new LinkedHashMap<>();
         try {
             List<LocalDate[]> chunks = new ArrayList<>();
             LocalDate start = from;
@@ -503,11 +505,11 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                 for (LocalDate[] chunk : chunks) {
                     for (Map<String, Object> row : pagedReportRows(
                             API_BASE + "/reports/campaigns/" + campaignId + "/keywords", chunk, headers)) {
-                        collectBreakdown(row, "keyword", "keywordId", "keyword", points);
+                        collectKeywordRow(row, points, reportStates);
                     }
                     for (Map<String, Object> row : pagedReportRows(
                             API_BASE + "/reports/campaigns/" + campaignId + "/ads", chunk, headers)) {
-                        collectBreakdown(row, "ad", "adId", "adName", points);
+                        collectAdRow(row, points, reportStates);
                     }
                 }
             }
@@ -515,6 +517,11 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                 for (Map<String, Object> campaign : campaigns) {
                     collectState(campaign, headers, states);
                 }
+                java.util.Set<String> read = new java.util.HashSet<>();
+                states.forEach(s -> read.add(s.dimensionKey()));
+                reportStates.forEach((key, state) -> {
+                    if (!read.contains(key)) states.add(new DimensionState(key, state));
+                });
             }
         } catch (HttpClientErrorException e) {
             int status = e.getStatusCode().value();
@@ -617,12 +624,7 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
 
     /** One keyword or ad report row to daily points; first-time installs are {@code tapNewDownloads}. */
     @SuppressWarnings("unchecked")
-    private void collectBreakdown(Map<String, Object> row, String prefix, String idField, String nameField,
-                                  List<ChannelMetricPoint> points) {
-        Map<String, Object> meta = metadata(row);
-        String id = str(meta.get(idField));
-        if (isBlank(id)) return;
-        String dimension = dimensionKey(prefix, id, str(meta.get(nameField)));
+    private void addBreakdownPoints(Map<String, Object> row, String dimension, List<ChannelMetricPoint> points) {
         if (!(row.get("granularity") instanceof List<?> buckets)) return;
         for (Object b : buckets) {
             if (!(b instanceof Map<?, ?> raw)) continue;
@@ -639,6 +641,85 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                 points.add(ChannelMetricPoint.of("redownloads", dimension, day, num(bucket.get("tapRedownloads"))));
             }
         }
+    }
+
+    /** Apple reports the default-product-page pseudo-ad as id -1 and may give it no name. */
+    private static String adName(String adId, String name) {
+        return isBlank(name) && "-1".equals(adId) ? "Default product page" : name;
+    }
+
+    /** {@code ad:{adGroupId}:{adId}:{name}}; -1 (default page) repeats in every ad group, so the group is part of the key. */
+    static String adKey(String adGroupId, String adId, String name) {
+        return dimensionKey("ad", adGroupId + ":" + adId, adName(adId, name));
+    }
+
+    /** First non-blank string among {@code fields} of {@code meta}. */
+    private static String first(Map<String, Object> meta, String... fields) {
+        for (String f : fields) {
+            String v = str(meta.get(f));
+            if (!isBlank(v)) return v;
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> map(Object o) {
+        return o instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    private static void putIfPresent(Map<String, Object> to, String key, Object value) {
+        if (value != null) to.put(key, value);
+    }
+
+    /** A keyword report row: id/text in either shape; its own matchType/bid/status serve as fallback state. */
+    private void collectKeywordRow(Map<String, Object> row, List<ChannelMetricPoint> points,
+                                   Map<String, Map<String, Object>> reportStates) {
+        Map<String, Object> meta = metadata(row);
+        String id = first(meta, "keywordId", "id");
+        if (isBlank(id)) return;
+        String key = dimensionKey("keyword", id, first(meta, "keyword", "text"));
+        addBreakdownPoints(row, key, points);
+        Map<String, Object> state = new LinkedHashMap<>();
+        // Apple omits matchType on a Search Match row
+        state.put("matchType", isBlank(first(meta, "matchType")) ? "SEARCH_MATCH" : first(meta, "matchType"));
+        putIfPresent(state, "status", first(meta, "keywordStatus", "status"));
+        Map<String, Object> bid = map(meta.get("bidAmount") != null ? meta.get("bidAmount") : meta.get("bid"));
+        if (bid.get("amount") != null) {
+            state.put("bidAmount", num(bid.get("amount")));
+            putIfPresent(state, "bidCurrency", bid.get("currency"));
+        }
+        putIfPresent(state, "adGroupId", first(meta, "adGroupId"));
+        putIfPresent(state, "adGroupName", first(meta, "adGroupName"));
+        putIfPresent(state, "campaignId", first(meta, "campaignId"));
+        putIfPresent(state, "campaignName", first(meta, "campaignName"));
+        reportStates.put(key, state);
+    }
+
+    /** An ad report row. Rows without an adGroupId are skipped: the key cannot be made unique without it. */
+    private void collectAdRow(Map<String, Object> row, List<ChannelMetricPoint> points,
+                              Map<String, Map<String, Object>> reportStates) {
+        Map<String, Object> meta = metadata(row);
+        String id = first(meta, "adId", "id");
+        String adGroupId = first(meta, "adGroupId");
+        if (isBlank(id) || isBlank(adGroupId)) return;
+        String key = adKey(adGroupId, id, first(meta, "adName", "name"));
+        addBreakdownPoints(row, key, points);
+        Map<String, Object> state = new LinkedHashMap<>();
+        putIfPresent(state, "status", first(meta, "status"));
+        putIfPresent(state, "servingStatus", first(meta, "servingStatus"));
+        Map<String, Object> creative = map(meta.get("creative"));
+        putIfPresent(state, "creativeType", firstNonNull(creative.get("creativeType"), meta.get("creativeType")));
+        putIfPresent(state, "productPageId", firstNonNull(
+                map(map(creative.get("destination")).get("parameters")).get("productPageId"), meta.get("productPageId")));
+        state.put("adGroupId", adGroupId);
+        putIfPresent(state, "adGroupName", first(meta, "adGroupName"));
+        putIfPresent(state, "campaignId", first(meta, "campaignId"));
+        putIfPresent(state, "campaignName", first(meta, "campaignName"));
+        reportStates.put(key, state);
+    }
+
+    private static Object firstNonNull(Object a, Object b) {
+        return a != null ? a : b;
     }
 
     // ── Current state (bid, status, match type) ─────────────────────────────
@@ -681,9 +762,12 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                     Map<String, Object> state = new LinkedHashMap<>(common);
                     state.put("status", ad.get("status"));
                     state.put("servingStatus", ad.get("servingStatus"));
-                    state.put("creativeType", ad.get("creativeType"));
-                    state.put("productPageId", ad.get("productPageId"));
-                    out.add(new DimensionState(dimensionKey("ad", id, str(ad.get("name"))), state));
+                    Map<String, Object> creative = map(ad.get("creative"));
+                    state.put("creativeType", firstNonNull(creative.get("creativeType"), ad.get("creativeType")));
+                    state.put("productPageId", firstNonNull(
+                            map(map(creative.get("destination")).get("parameters")).get("productPageId"),
+                            ad.get("productPageId")));
+                    out.add(new DimensionState(adKey(adGroupId, id, str(ad.get("name"))), state));
                 }
             }
         } catch (org.springframework.web.client.RestClientException e) {
