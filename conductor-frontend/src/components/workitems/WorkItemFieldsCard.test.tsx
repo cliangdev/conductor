@@ -27,7 +27,7 @@ const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
 })
 
 const CHANGES: WorkflowView = {
-  slug: 'MARKETING_CHANGES', noun: 'Change', area: 'MARKETING_CHANGES', defaultView: 'list', version: 1,
+  slug: 'MARKETING_CHANGES', noun: 'Change', area: 'MARKETING', defaultView: 'list', version: 1,
   types: ['ADS'], dueLabel: 'Review on',
   statuses: [
     { id: 'PLANNED', label: 'Planned', category: 'open', initial: true },
