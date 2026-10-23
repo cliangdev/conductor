@@ -220,6 +220,19 @@ public class MarketingReportService {
         return out;
     }
 
+    /** Sum of the ADS keyword rows' installs (first-time downloads), or null when there are none. */
+    private static Double keywordFirstTimeDownloads(SnapshotChannel ads) {
+        DimensionTable table = table(ads, "keywords");
+        if (table == null) {
+            return null;
+        }
+        Double total = null;
+        for (DimensionRowView r : table.rows()) {
+            total = sum(total, values(table, r).get("installs"));
+        }
+        return total;
+    }
+
     private static Double sum(Double a, Double b) {
         if (a == null) {
             return b;
@@ -250,13 +263,23 @@ public class MarketingReportService {
             }
             Map<String, Double> search = bySource.getOrDefault("APP_STORE_SEARCH", Map.of());
             Double searchDownloads = search.get("downloads");
-            boolean subtract = adsInstalls != null && searchDownloads != null;
+            // Apple Ads "installs" include redownloads, but store search downloads are first-time only, so subtract
+            // the first-time downloads: the per-keyword install rows are Apple's tapNewDownloads. Keyword rows miss
+            // other placements and untargeted matches, hence a lower-bound estimate.
+            Double adsFirstTime = adsLive ? keywordFirstTimeDownloads(ads) : null;
+            Double adsSubtract = adsFirstTime != null ? adsFirstTime : adsInstalls;
+            boolean subtract = adsSubtract != null && searchDownloads != null;
             Double organic = searchDownloads == null ? null
-                    : subtract ? Math.max(0, searchDownloads - adsInstalls) : searchDownloads;
+                    : subtract ? Math.max(0, searchDownloads - adsSubtract) : searchDownloads;
             String note = !subtract
                     ? "Apple Ads is not reporting, so any paid installs are counted here."
+                    : adsFirstTime != null
+                    ? "Store search downloads minus Apple Ads first-time downloads (summed from keyword rows), floored "
+                            + "at 0. A lower-bound estimate: it cannot exclude non-search ad placements, so organic "
+                            + "may be lower." + windowNote(store, ads)
                     : "Store search downloads minus Apple Ads installs, floored at 0: Apple counts an ad install as a "
-                            + "search download too." + windowNote(store, ads);
+                            + "search download too. Ad installs include redownloads, so organic may be understated."
+                            + windowNote(store, ads);
             out.add(new AcquisitionRow("app_store_search", "App Store search (organic)", status,
                     search.get("impressions"), "Impressions", search.get("page_views"), "Page views",
                     organic, null, subtract, note));
@@ -451,6 +474,10 @@ public class MarketingReportService {
         return v instanceof Number n ? n.doubleValue() : null;
     }
 
+    private static boolean productMetric(SnapshotChannel product, String key) {
+        return product != null && product.view().metrics().stream().anyMatch(m -> m.metric().equals(key));
+    }
+
     private static List<Keyword> keywords(Map<MetricChannel, SnapshotChannel> channels) {
         SnapshotChannel ads = channels.get(MetricChannel.ADS);
         DimensionTable table = table(ads, "keywords");
@@ -466,8 +493,13 @@ public class MarketingReportService {
                 outcomes.put(colon < 0 ? r.key() : r.key().substring(0, colon), values(product, r));
             }
         }
+        // Outcomes are read from these product metric keys by default; a workspace whose PRODUCT channel defines
+        // neither gets no outcome fields rather than nulls that look like "measured, unknown".
+        SnapshotChannel productChannel = channels.get(MetricChannel.PRODUCT);
+        boolean hasTrial = productMetric(productChannel, "trial_started");
+        boolean hasActivated = productMetric(productChannel, "activated");
         List<Keyword> out = new ArrayList<>();
-        for (DimensionRowView r : table.rows()) {
+        for (DimensionRowView r : table.rows().stream().limit(MarketingOverviewQueryService.REPORT_KEYWORDS).toList()) {
             Map<String, Double> v = values(table, r);
             Map<String, Object> state = r.state();
             Map<String, Double> outcome = outcomes.get(r.key());
@@ -475,8 +507,8 @@ public class MarketingReportService {
             out.add(new Keyword(r.key(), r.label(), str(state, "adGroupName"), str(state, "campaignName"),
                     str(state, "status"), str(state, "matchType"), num(state, "bidAmount"), v.get("impressions"),
                     taps, v.get("tap_through_rate"), v.get("installs"), v.get("install_rate"), v.get("spend"),
-                    v.get("cost_per_install"), outcome == null ? null : outcome.get("trial_started"),
-                    outcome == null ? null : outcome.get("activated"), taps != null && taps >= JUDGEABLE_TAPS));
+                    v.get("cost_per_install"), outcome == null || !hasTrial ? null : outcome.get("trial_started"),
+                    outcome == null || !hasActivated ? null : outcome.get("activated"), taps != null && taps >= JUDGEABLE_TAPS));
         }
         return out;
     }

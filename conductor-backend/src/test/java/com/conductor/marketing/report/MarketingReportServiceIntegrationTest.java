@@ -40,6 +40,7 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     private static final OffsetDateTime NOW = OffsetDateTime.now(ZoneOffset.UTC);
 
     @Autowired private MarketingReportService service;
+    @Autowired private com.conductor.marketing.overview.MarketingOverviewQueryService overviewService;
     @Autowired private MarketingBenchmarkRepository benchmarkRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private ProjectRepository projectRepository;
@@ -107,6 +108,46 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(row(report(), "app_store_browse").installs()).isEqualTo(14.0);
         assertThat(row(report(), "apple_ads").installs()).isEqualTo(28.0);
         assertThat(row(report(), "apple_ads").cost()).isEqualTo(35.0);
+    }
+
+    @Test
+    void organicSearchSubtractsAdsFirstTimeDownloadsNotRedownloads() {
+        // 100 search downloads; ads report 90 tap installs, 30 of them redownloads, so 60 first-time (keyword rows)
+        f.put(store, "app-store-connect", "STORE", "downloads", "source:APP_STORE_SEARCH", ago(1), 100);
+        f.put(ads, "apple-search-ads", "ADS", "installs", "", ago(1), 90);
+        f.put(ads, "apple-search-ads", "ADS", "installs", "keyword:1:alpha", ago(1), 35);
+        f.put(ads, "apple-search-ads", "ADS", "installs", "keyword:2:beta", ago(1), 25);
+
+        AcquisitionRow organic = row(report(), "app_store_search");
+
+        assertThat(organic.installs()).isEqualTo(40.0);
+        assertThat(organic.derived()).isTrue();
+        assertThat(organic.note()).contains("first-time downloads").contains("lower-bound");
+    }
+
+    @Test
+    void productKeywordTableLabelsRowsWithTheKeywordTextNotTheId() {
+        f.define(product, "trial_started", "SUM", "COUNT", null, null, null);
+        f.put(product, "product-metrics", "PRODUCT", "trial_started", "keyword:77:meal planner", ago(2), 3);
+
+        var table = overviewService.snapshot(f.project.getId(), 7, TODAY, NOW)
+                .channels().get(com.conductor.integration.MetricChannel.PRODUCT).dimensions().stream()
+                .filter(t -> t.key().equals("keywords")).findFirst().orElseThrow();
+
+        assertThat(table.rows().get(0).key()).isEqualTo("77");
+        assertThat(table.rows().get(0).label()).isEqualTo("meal planner");
+    }
+
+    @Test
+    void keywordOutcomesAreOmittedWhenProductDefinesNeitherMetric() {
+        String kw = "keyword:77:meal planner";
+        f.put(ads, "apple-search-ads", "ADS", "taps", kw, ago(2), 30);
+        f.put(ads, "apple-search-ads", "ADS", "spend", kw, ago(2), 40);
+
+        Keyword k = report().keywords().get(0);
+
+        assertThat(k.trials()).isNull();
+        assertThat(k.activations()).isNull();
     }
 
     @Test

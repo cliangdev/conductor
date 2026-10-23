@@ -270,12 +270,15 @@ public class MarketingOverviewQueryService {
     /**
      * The overview plus, for each channel, every metric and (for STORE, ADS and PRODUCT) the dimension tables a
      * report needs, all from one shared context so the report adds no second pass over the data. ADS keyword rows
-     * are ranked by spend and capped at {@link #REPORT_KEYWORDS}; PRODUCT keyword rows are read in full so they
+     * are ranked by spend and read up to {@link #REPORT_ALL_KEYWORDS} (the report lists {@link #REPORT_KEYWORDS}); PRODUCT keyword rows are read in full so they
      * can be joined to the ADS ones by keyword id.
      */
     public record Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels) {}
 
-    static final int REPORT_KEYWORDS = 25;
+    /** Keywords the report lists (top by spend). */
+    public static final int REPORT_KEYWORDS = 25;
+    /** ADS keyword rows are read in full so first-time downloads can be summed; the report trims the list itself. */
+    static final int REPORT_ALL_KEYWORDS = 5000;
     static final int REPORT_ADS = 100;
     static final int REPORT_PRODUCT_KEYWORDS = 5000;
 
@@ -305,7 +308,7 @@ public class MarketingOverviewQueryService {
     private static java.util.function.Function<Dimension, TableOptions> reportTableOptions(MetricChannel channel) {
         return dimension -> switch (channel) {
             case ADS -> switch (dimension.key()) {
-                case "keywords" -> new TableOptions("spend", REPORT_KEYWORDS);
+                case "keywords" -> new TableOptions("spend", REPORT_ALL_KEYWORDS);
                 case "ads" -> new TableOptions("spend", REPORT_ADS);
                 default -> new TableOptions(null, DIMENSION_ROWS);
             };
@@ -1386,9 +1389,9 @@ public class MarketingOverviewQueryService {
         } else if (channel == MetricChannel.SOCIAL) {
             label = platformRegistry.labelOf(dimensionKey);
         } else if (channel == MetricChannel.PRODUCT && dimension.keyPrefix() != null) {
-            // source:{name} or campaign:{id}:{name}
+            // source:{name}, campaign:{id}:{name} or keyword:{id}:{text}; the last two show the name, keyed by id
             String rest = dimensionKey.substring(dimension.keyPrefix().length());
-            if (dimension.keyPrefix().equals("campaign:")) {
+            if (dimension.keyPrefix().equals("campaign:") || dimension.keyPrefix().equals("keyword:")) {
                 String[] parts = rest.split(":", 2);
                 key = parts[0];
                 label = parts.length == 2 && !parts[1].isBlank() ? parts[1] : parts[0];
