@@ -147,6 +147,13 @@ public final class MetricCatalog {
         return new Metric(key, label, unit, Aggregation.SUM, good, false, true, fromDimensions, null, null, null);
     }
 
+    /** The same metric, grouped under a report area (ACQUISITION, ACTIVATION, RETENTION or REVENUE). */
+    private static Metric inArea(Metric m, String area) {
+        return new Metric(m.key(), m.label(), m.unit(), m.agg(), m.good(), m.hidden(), m.optional(),
+                m.fromDimensions(), m.numerator(), m.denominator(), m.funnelOrder(), m.basis(), area,
+                m.description(), m.headline(), m.watchBandPct());
+    }
+
     private static Metric hiddenSum(String key) {
         return new Metric(key, key, Unit.COUNT, Aggregation.SUM, Good.UP, true, false, false, null, null, null);
     }
@@ -225,12 +232,12 @@ public final class MetricCatalog {
                     List.of(
                             sum("impressions", "Impressions", Unit.COUNT, Good.UP),
                             sum("page_views", "Page views", Unit.COUNT, Good.UP),
-                            sum("downloads", "Downloads", Unit.COUNT, Good.UP),
+                            inArea(sum("downloads", "Downloads", Unit.COUNT, Good.UP), "ACQUISITION"),
                             // Apple's definition: first-time downloads over unique impressions
-                            derived("conversion_rate", "Conversion rate", Unit.PERCENT, Good.UP,
-                                    "downloads", "impressions_unique"),
+                            inArea(derived("conversion_rate", "Conversion rate", Unit.PERCENT, Good.UP,
+                                    "downloads", "impressions_unique"), "ACQUISITION"),
                             optionalSum("redownloads", "Redownloads", Unit.COUNT, Good.UP, false),
-                            ratingLevel("rating_count", "Ratings", Unit.COUNT),
+                            inArea(ratingLevel("rating_count", "Ratings", Unit.COUNT), "ACQUISITION"),
                             weightedRatingLevel("rating_avg", "Average rating", Unit.RATING, "rating_count"),
                             hiddenSum("impressions_unique")),
                     List.of(new Dimension("sources", "By traffic source", List.of(
@@ -244,8 +251,8 @@ public final class MetricCatalog {
                     List.of(
                             sum("spend", "Spend", Unit.CURRENCY, Good.DOWN),
                             sum("installs", "Installs", Unit.COUNT, Good.UP),
-                            derived("cost_per_install", "Cost per install", Unit.CURRENCY, Good.DOWN,
-                                    "spend", "installs"),
+                            inArea(derived("cost_per_install", "Cost per install", Unit.CURRENCY, Good.DOWN,
+                                    "spend", "installs"), "ACQUISITION"),
                             sum("taps", "Taps", Unit.COUNT, Good.UP),
                             sum("impressions", "Impressions", Unit.COUNT, Good.UP),
                             derived("tap_through_rate", "Tap-through rate", Unit.PERCENT, Good.UP,
@@ -391,7 +398,8 @@ public final class MetricCatalog {
         }
         List<Dimension> dimensions = dimensionColumns.isEmpty() ? List.of() : List.of(
                 new Dimension("sources", "By source", dimensionColumns, "source:"),
-                new Dimension("campaigns", "By campaign", dimensionColumns, "campaign:"));
+                new Dimension("campaigns", "By campaign", dimensionColumns, "campaign:"),
+                new Dimension("keywords", "By keyword", dimensionColumns, "keyword:"));
         return new Channel(MetricChannel.PRODUCT, base.label(), base.connectorIds(), metrics, dimensions,
                 base.headline());
     }

@@ -12,6 +12,8 @@ servers:
 tags:
   - name: marketing-overview
     description: Daily channel metrics, funnel and targets
+  - name: marketing-report
+    description: The one-call marketing report and the industry benchmarks it compares against
   - name: work-items
     description: Work Item management endpoints (canonical successor to v1 issues)
   - name: work-item-reviewers
@@ -2929,6 +2931,196 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/report:
+    get:
+      tags:
+        - marketing-report
+      summary: The marketing report in one call
+      description: >-
+        Everything a marketing report needs, assembled from the overview (no second set of numbers): health
+        headline metrics, acquisition by source (App Store organic search is store search downloads minus Apple
+        Ads installs, floored at 0, and flagged `derived`), the in-app funnel with its biggest drop, the daily
+        store impressions and ad spend, the scorecard of every metric that has a target or an area, the top 25
+        Apple Ads keywords by spend joined with in-app outcomes, ads, stored benchmarks against the report's
+        own values, and the marketing change log (Work Items on the MARKETING_CHANGES workflow). Windows are
+        full UTC days ending at each channel's `dataCompleteThrough`. Percent values are fractions (0.12 = 12%).
+      operationId: getMarketingReport
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            default: 28d
+          description: 7d or 28d (default).
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingReport"
+        "400":
+          description: Unknown window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/benchmarks:
+    get:
+      tags:
+        - marketing-report
+      summary: List the project's industry benchmarks
+      operationId: listMarketingBenchmarks
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The benchmarks, ordered by metric reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingBenchmarkListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/benchmarks/{metricRef}:
+    put:
+      tags:
+        - marketing-report
+      summary: Set the benchmark for a metric
+      description: >-
+        Idempotent upsert. `metricRef` is `CHANNEL.metric` (for example `STORE.conversion_rate` or
+        `ADS.tap_through_rate`), or `PRODUCT.<key>` for an in-app metric. A benchmark must name its source:
+        `sourceName`, an http(s) `sourceUrl` and `checkedOn` (not in the future). Percent values are fractions
+        (0.03 = 3%). Requires ADMIN or CREATOR.
+      operationId: setMarketingBenchmark
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metricRef
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingBenchmarkRequest"
+      responses:
+        "200":
+          description: The stored benchmark
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingBenchmark"
+        "400":
+          description: Unknown channel, invalid reference, URL or date, or a missing source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - marketing-report
+      summary: Remove the benchmark for a metric
+      description: "Idempotent: removing a benchmark that does not exist is a no-op. Requires ADMIN or CREATOR."
+      operationId: deleteMarketingBenchmark
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metricRef
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: Invalid reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
           content:
             application/json:
               schema:
@@ -6827,6 +7019,286 @@ components:
         provisional:
           type: boolean
           description: True for days the source may still restate, including every day after the channel's dataCompleteThrough. Draw them differently; they are not in the totals.
+
+    MarketingBenchmark:
+      type: object
+      required: [metricRef, value, sourceName, sourceUrl, checkedOn, updatedAt]
+      properties:
+        metricRef: {type: string, description: "CHANNEL.metric, e.g. STORE.conversion_rate, or PRODUCT.<key>."}
+        label: {type: string, nullable: true}
+        value: {type: number, format: double}
+        rangeText: {type: string, nullable: true, description: "The published range the value summarises, e.g. \"2-4%\"."}
+        segment: {type: string, nullable: true, description: "What the benchmark covers, e.g. \"Health and fitness, US\"."}
+        sourceName: {type: string}
+        sourceUrl: {type: string}
+        checkedOn: {type: string, format: date}
+        notes: {type: string, nullable: true}
+        updatedAt: {type: string, format: date-time}
+
+    MarketingBenchmarkRequest:
+      type: object
+      required: [value, sourceName, sourceUrl, checkedOn]
+      properties:
+        label: {type: string, maxLength: 200}
+        value: {type: number, format: double}
+        rangeText: {type: string, maxLength: 200}
+        segment: {type: string, maxLength: 200}
+        sourceName: {type: string, maxLength: 200}
+        sourceUrl: {type: string, maxLength: 2000}
+        checkedOn: {type: string, format: date, description: "The day the source was read; not in the future."}
+        notes: {type: string, maxLength: 2000}
+
+    MarketingBenchmarkListResponse:
+      type: object
+      required: [benchmarks]
+      properties:
+        benchmarks:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingBenchmark"
+
+    MarketingReport:
+      type: object
+      required: [window, generatedAt, sources, headline, acquisition, funnel, daily, scorecard, keywords, ads, benchmarks, changes]
+      properties:
+        window:
+          $ref: "#/components/schemas/ReportWindow"
+        generatedAt: {type: string, format: date-time}
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportSource"
+        headline:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportMetric"
+        acquisition:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportAcquisitionRow"
+        funnel:
+          $ref: "#/components/schemas/ReportFunnel"
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportDay"
+        scorecard:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportScorecardRow"
+        keywords:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportKeyword"
+        ads:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportAd"
+        benchmarks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportBenchmark"
+        changes:
+          $ref: "#/components/schemas/ReportChanges"
+
+    ReportWindow:
+      type: object
+      required: [from]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date, nullable: true, description: "Null when no channel has data."}
+
+    ReportSource:
+      type: object
+      required: [channel, status]
+      properties:
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
+        connector: {type: string, nullable: true, description: "The connected connector id(s); null when none is connected."}
+        status: {type: string, description: "LIVE, STALE, MISMATCH, NOT_CONNECTED or COMING_SOON."}
+        dataCompleteThrough: {type: string, format: date, nullable: true}
+        lastFetchedAt: {type: string, format: date-time, nullable: true}
+
+    ReportMetric:
+      type: object
+      required: [channel, key, label, unit, goodDirection, status]
+      properties:
+        channel: {type: string}
+        key: {type: string}
+        label: {type: string}
+        unit: {type: string, description: "COUNT, CURRENCY, PERCENT, POSITION or RATING."}
+        value: {type: number, format: double, nullable: true}
+        previous: {type: number, format: double, nullable: true}
+        target: {type: number, format: double, nullable: true}
+        status: {type: string, description: "ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY or NO_TARGET."}
+        missPct: {type: number, format: double, nullable: true}
+        sampleSize: {type: integer, format: int64, nullable: true}
+        goodDirection: {type: string, enum: [UP, DOWN]}
+
+    ReportAcquisitionRow:
+      type: object
+      required: [key, label, status, derived]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        status: {type: string, description: "The status of the channel the row reads from."}
+        reach: {type: number, format: double, nullable: true}
+        reachLabel: {type: string, nullable: true}
+        actions: {type: number, format: double, nullable: true}
+        actionsLabel: {type: string, nullable: true}
+        installs: {type: number, format: double, nullable: true}
+        cost: {type: number, format: double, nullable: true}
+        derived: {type: boolean, description: "True when the installs are computed from two sources rather than read."}
+        note: {type: string, nullable: true}
+
+    ReportFunnel:
+      type: object
+      required: [basis, stages]
+      properties:
+        basis: {type: string, enum: [EVENT, COHORT]}
+        stages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportFunnelStage"
+
+    ReportFunnelStage:
+      type: object
+      required: [key, label, biggestDrop]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        value: {type: number, format: double, nullable: true}
+        dropPct: {type: number, format: double, nullable: true, description: "Share lost since the previous stage (0.25 = 25% fewer)."}
+        biggestDrop: {type: boolean}
+
+    ReportDay:
+      type: object
+      required: [day, provisional]
+      properties:
+        day: {type: string, format: date}
+        storeImpressions: {type: number, format: double, nullable: true}
+        adSpend: {type: number, format: double, nullable: true}
+        provisional: {type: boolean}
+
+    ReportScorecardRow:
+      type: object
+      required: [key, label, status, source]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        area: {type: string, nullable: true, description: "ACQUISITION, ACTIVATION, RETENTION or REVENUE."}
+        value: {type: number, format: double, nullable: true}
+        target: {type: number, format: double, nullable: true}
+        targetWindow: {type: string, nullable: true, description: "The period a count or currency target is stated for, e.g. \"28d\"."}
+        status: {type: string}
+        missPct: {type: number, format: double, nullable: true}
+        basis: {type: string, nullable: true, description: "What the number counts, or \"2 of 30\" for a ratio with no description."}
+        sampleSize: {type: integer, format: int64, nullable: true}
+        source:
+          $ref: "#/components/schemas/ReportScorecardSource"
+
+    ReportScorecardSource:
+      type: object
+      required: [channel]
+      properties:
+        channel: {type: string}
+        connector: {type: string, nullable: true}
+
+    ReportKeyword:
+      type: object
+      required: [keywordId, text, judgeable]
+      properties:
+        keywordId: {type: string}
+        text: {type: string}
+        adGroup: {type: string, nullable: true}
+        campaign: {type: string, nullable: true}
+        status: {type: string, nullable: true}
+        matchType: {type: string, nullable: true}
+        bid: {type: number, format: double, nullable: true}
+        impressions: {type: number, format: double, nullable: true}
+        taps: {type: number, format: double, nullable: true}
+        tapRate: {type: number, format: double, nullable: true}
+        installs: {type: number, format: double, nullable: true}
+        installRate: {type: number, format: double, nullable: true}
+        spend: {type: number, format: double, nullable: true}
+        cpi: {type: number, format: double, nullable: true}
+        trials: {type: number, format: double, nullable: true, description: "In-app trial starts attributed to the keyword; null when the product feed has none."}
+        activations: {type: number, format: double, nullable: true}
+        judgeable: {type: boolean, description: "True with at least 20 taps; fewer is too early to judge."}
+
+    ReportAd:
+      type: object
+      required: [adId, name]
+      properties:
+        adGroup: {type: string, nullable: true}
+        adId: {type: string}
+        name: {type: string}
+        creativeType: {type: string, nullable: true}
+        productPageId: {type: string, nullable: true}
+        status: {type: string, nullable: true}
+        impressions: {type: number, format: double, nullable: true}
+        taps: {type: number, format: double, nullable: true}
+        installs: {type: number, format: double, nullable: true}
+        installRate: {type: number, format: double, nullable: true}
+        spend: {type: number, format: double, nullable: true}
+        cpi: {type: number, format: double, nullable: true}
+
+    ReportBenchmark:
+      type: object
+      required: [metricRef, value, judged, stale, benchmark, sourceName, sourceUrl, checkedOn]
+      properties:
+        metricRef: {type: string}
+        label: {type: string, nullable: true}
+        value: {type: number, format: double, nullable: true, description: "The report's own value for the metric; null when there is none."}
+        benchmark: {type: number, format: double}
+        rangeText: {type: string, nullable: true}
+        segment: {type: string, nullable: true}
+        sourceName: {type: string}
+        sourceUrl: {type: string}
+        checkedOn: {type: string, format: date}
+        ratio: {type: number, format: double, nullable: true, description: "value / benchmark."}
+        goodDirection: {type: string, enum: [UP, DOWN], nullable: true}
+        sampleSize: {type: integer, format: int64, nullable: true}
+        judged: {type: boolean, description: "False when there is no value, or a rate rests on fewer than 20 observations."}
+        stale: {type: boolean, description: "True when checkedOn is more than 90 days old."}
+
+    ReportChanges:
+      type: object
+      required: [open, dueForReview, reviewedInWindow]
+      properties:
+        open:
+          type: array
+          description: Changes still PLANNED or LIVE.
+          items:
+            $ref: "#/components/schemas/ReportChange"
+        dueForReview:
+          type: array
+          description: LIVE changes whose review date has passed.
+          items:
+            $ref: "#/components/schemas/ReportChange"
+        reviewedInWindow:
+          type: array
+          description: Changes moved to REVIEWED during the report window.
+          items:
+            $ref: "#/components/schemas/ReportChange"
+
+    ReportChange:
+      type: object
+      required: [id, displayId, title, type, status]
+      properties:
+        id: {type: string}
+        displayId: {type: string}
+        title: {type: string}
+        type: {type: string}
+        status: {type: string}
+        assignee:
+          allOf:
+            - $ref: "#/components/schemas/WorkItemAssignee"
+          nullable: true
+        dueOn: {type: string, format: date, nullable: true}
+        fields:
+          type: object
+          additionalProperties: true
+          nullable: true
 
     MarketingTarget:
       type: object

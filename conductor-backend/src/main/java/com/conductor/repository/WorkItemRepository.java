@@ -59,6 +59,27 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
                                       @Param("workflow") String workflow,
                                       @Param("limit") int limit);
 
+    /**
+     * The marketing change log behind a report, in one query: every item of the Workflow in one of the open
+     * statuses, plus those in {@code reviewedStatus} touched since {@code reviewedSince}. The project and
+     * assignee ride along so building a display id and an assignee never costs another query.
+     */
+    @Query("""
+            SELECT i FROM WorkItem i
+            JOIN FETCH i.project
+            LEFT JOIN FETCH i.assignee
+            WHERE i.project.id = :projectId
+              AND i.workflow = :workflow
+              AND (i.currentStatus IN :openStatuses
+                   OR (i.currentStatus = :reviewedStatus AND i.updatedAt >= :reviewedSince))
+            ORDER BY i.dueOn ASC NULLS LAST, i.sequenceNumber DESC
+            """)
+    List<WorkItem> findChangeLog(@Param("projectId") String projectId,
+                                 @Param("workflow") String workflow,
+                                 @Param("openStatuses") Collection<String> openStatuses,
+                                 @Param("reviewedStatus") String reviewedStatus,
+                                 @Param("reviewedSince") java.time.OffsetDateTime reviewedSince);
+
     @Query("SELECT COALESCE(MAX(i.sequenceNumber), 0) FROM WorkItem i WHERE i.project.id = :projectId")
     Integer findMaxSequenceNumberByProjectId(@Param("projectId") String projectId);
 

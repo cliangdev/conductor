@@ -97,7 +97,8 @@ class V157SeedMarketingChangesWorkflowTest {
             try (Statement forget = connection.createStatement()) {
                 forget.execute("DELETE FROM flyway_schema_history WHERE version = '157'");
             }
-            migrateToLatest(url);
+            // later migrations are already applied, so the replayed one is out of order
+            flyway(url).outOfOrder(true).load().migrate();
 
             assertThat(projectIdsWithDefinition(connection)).containsExactlyInAnyOrder(seededProject, unseededProject);
             assertThat(queryForString(connection,
