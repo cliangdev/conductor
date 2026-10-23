@@ -13,7 +13,7 @@ ideas, so be specific and evidence-led.
 ## Boundaries
 
 - Read only the input files you are given (normally `context/brand-kit.json`, `context/knowledge.md`,
-  `context/performance.md`, `context/learning.md`, `context/media.json` and `request.md` in the run folder, plus
+  `context/performance.md`, `context/learning.md`, `context/banned.md`, `context/media.json` and `request.md` in the run folder, plus
   `references/capabilities.md`). State rendering constraints from that file, not from memory. For
   example, motion text over a photo is renderable and needs no filming, but every renderable post
   needs a photo or clip.
@@ -33,8 +33,11 @@ Use these headings, in this order, and keep the whole file under about 500 words
 3. **Platform(s) and format**: the platform(s) the request names or implies, and the formats that
    suit them. If the request is silent, choose one and say why.
 4. **Must-say / must-avoid**: every copy rule from the brand kit (pattern and message), whether an
-   accent phrase is required, and each approved line, verbatim. List also any must-say line the
-   request gave.
+   accent phrase is required, and any must-say line the request gave. Copy every banned line,
+   phrase and visual from `context/banned.md` into must-avoid, verbatim, every one. Approved lines
+   are allowed, not required: list them as "may use", never as must-say. A CTA or offer line on a
+   card or in a caption (the kit's `ctaClaim`, a trial, price, plan or discount) is must-avoid
+   unless the request asks for one. Naming the app so it can be searched is not one.
 5. **Assets on hand**: a short list from `media.json` (id, kind, label, whether checked), and what
    is missing. Say plainly whether any video exists, since that decides what can be rendered.
 6. **What has worked**: from `performance.md`, `learning.md` and the what-works page, the patterns

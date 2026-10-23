@@ -20,6 +20,9 @@ beforeEach(() => {
     revisedPrompt: 'rp',
     outDir: '/x',
     generator: { route: 'openai-api', model: 'gpt-image-2.5-sunburst' },
+    size: '1024x1536',
+    sizeNote: 'fell back',
+    placementFit: { '9x16': { scale: 1.25, videoScale: 1.4, ok: false, videoOk: false } },
     quality: 'high',
     model: 'gpt-image-2.5-sunburst',
     preview: { data: Buffer.from('jpg'), mimeType: 'image/jpeg' },
@@ -31,6 +34,7 @@ describe('generateCreativeImage', () => {
   it('validates the params', async () => {
     await expect(generateCreativeImage({ prompt: '  ' }, { outDir: tmp })).rejects.toThrow(/prompt is required/)
     await expect(generateCreativeImage({ prompt: 'a', aspect: 'wide' }, { outDir: tmp })).rejects.toThrow(/aspect must be/)
+    await expect(generateCreativeImage({ prompt: 'a', size: '1000x1600' }, { outDir: tmp })).rejects.toThrow(/multiples of 16/)
     await expect(generateCreativeImage({ prompt: 'a', count: 0 }, { outDir: tmp })).rejects.toThrow(/count must be/)
     await expect(generateCreativeImage({ prompt: 'a', count: 4 }, { outDir: tmp })).rejects.toThrow(/count must be/)
     await expect(generateCreativeImage({ prompt: 'a', referenceImagePaths: [path.join(tmp, 'nope.png')] }, { outDir: tmp })).rejects.toThrow(/Reference image not found/)
@@ -47,6 +51,11 @@ describe('generateCreativeImage', () => {
     expect(gen.mock.calls[1]![0]).not.toHaveProperty('quality')
   })
 
+  it('accepts aliases and passes size through', async () => {
+    await generateCreativeImage({ prompt: 'a', aspect: 'landscape', size: '1280x1920' }, { outDir: tmp })
+    expect(gen).toHaveBeenCalledWith(expect.objectContaining({ aspect: '3:2', size: '1280x1920' }))
+  })
+
   it('passes useCodex through only when true', async () => {
     await generateCreativeImage({ prompt: 'a' }, { outDir: path.join(tmp, 'a') })
     expect(gen.mock.calls[0]![0]).not.toHaveProperty('useCodex')
@@ -58,13 +67,17 @@ describe('generateCreativeImage', () => {
     const ref = path.join(tmp, 'ref.png')
     fs.writeFileSync(ref, 'x')
     const res = await generateCreativeImage({ prompt: 'a kitchen', count: 2, referenceImagePaths: [ref] }, { outDir: path.join(tmp, 'out') })
-    expect(gen).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'a kitchen', aspect: 'portrait', count: 2, referenceImagePaths: [ref], outDir: path.join(tmp, 'out') }))
+    expect(gen).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'a kitchen', aspect: '9:16', count: 2, referenceImagePaths: [ref], outDir: path.join(tmp, 'out') }))
     expect(res.files[0]).toEqual({ path: '/x/image-1.png', width: 1024, height: 1536 })
     expect(res.provenance.aiGenerated).toBe(true)
     expect(res.revisedPrompt).toBe('rp')
     expect(res.generator).toEqual({ route: 'openai-api', model: 'gpt-image-2.5-sunburst' })
     expect(res.nextStep).toContain('photoPath')
     expect(res.nextStep).toContain('realism check')
+    expect(res.nextStep).toContain('100%')
+    expect(res.nextStep).toContain('9x16 (1.25x)')
+    expect(res.nextStep).toMatch(/not use this photo full-bleed/i)
+    expect(res).toMatchObject({ size: '1024x1536', sizeNote: 'fell back', placementFit: { '9x16': { scale: 1.25 } } })
     expect(res.image?.mimeType).toBe('image/jpeg')
   })
 

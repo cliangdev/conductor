@@ -91,6 +91,15 @@ Pick one per post and name it in the idea. Change one thing per post so results 
 - The first text of every slide needs `y`.
 - Read the composer's `checks`; an `error` severity blocks the preview.
 
+## Resolution
+
+Slides are 1080x1920 (and 1080x1350 for Instagram). Never upscale a background photo: the full-bleed
+scale is `max(1080/w, 1920/h)` for a photo of w x h (use `max(1080/w, 1350/h)` for the 4:5 cut). A 1200x1200
+photo full-bleed at 9:16 uses 675x1200 source pixels, a 1.6x upscale. Check every `bg` and
+`photos[].src` before composing and refuse a full-bleed use above 1.0x. The fixes are: generate at
+the largest size in that aspect (`aspect: "9:16"`), use a different photo, or use a slide type that
+shows the photo framed at or below native size (such as `grid` or `stack`).
+
 ## Honesty and brand
 
 - No logo, badge or offer on the slides. The offer, if any, goes in the caption.

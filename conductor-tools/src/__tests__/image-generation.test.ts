@@ -28,6 +28,26 @@ afterEach(() => {
   }
 })
 
+describe('image sizes', () => {
+  it('computes placementFit', async () => {
+    const { placementFit } = await import('../lib/image-common.js')
+    const old = placementFit(1024, 1536)
+    expect(old['9x16']).toEqual({ scale: 1.25, videoScale: 1.4, ok: false, videoOk: false })
+    expect(old['1x1'].ok).toBe(false)
+    const big = placementFit(1440, 2560)
+    expect(big['9x16']).toEqual({ scale: 0.75, videoScale: 0.84, ok: true, videoOk: true })
+    expect(big['4x5'].ok && big['1x1'].ok).toBe(true)
+  })
+
+  it('adds placementFit for the first file to the route result', async () => {
+    mockOpenAi.mockResolvedValue({ ...result, files: [{ path: '/x/a.png', width: 1440, height: 2560 }] })
+    process.env['OPENAI_API_KEY'] = 'k'
+    const { generateImages } = await import('../lib/image-generation.js')
+    const res = await generateImages({ prompt: 'p', outDir: '/x' })
+    expect(res.placementFit?.['9x16']?.scale).toBe(0.75)
+  })
+})
+
 describe('resolveOpenAiKey', () => {
   it('prefers CONDUCTOR_OPENAI_API_KEY, then OPENAI_API_KEY, then config', async () => {
     const { resolveOpenAiKey } = await import('../lib/image-generation.js')

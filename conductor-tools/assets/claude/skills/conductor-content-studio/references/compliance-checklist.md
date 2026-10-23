@@ -114,6 +114,27 @@ and the caption.
   text is preferred over relying on a platform's auto-captions.
 - Contrast and safe zones are already checked by the renderer; do not repeat them.
 
+## 8. Sensitive imagery (Veto)
+
+**Does any costume, hooded figure, gesture or symbol resemble a hate symbol?** Check every mascot,
+person, prop and generated image prompt, including shapes that only read that way at a glance.
+
+- A white sheet-ghost with a pointed peak reads as a Klan hood. Never use it for a mascot or a
+  person.
+- If it resembles one, change the costume, colour or shape and note the change, or drop the image.
+  If the idea depends on it, the idea fails.
+
+## 9. Numbers match their source (Veto)
+
+**Does every number or count on a card, slide or caption match the record it came from?**
+Ingredients, minutes, servings, kcal and macros all count.
+
+- Each number gets a row in the pack's "Numbers and sources" list: the number as written, the
+  source record (recipe, knowledge page, brief) and the value there.
+- A mismatch is fixed to the source value or the number is removed. Example: a card said "5
+  ingredients" for a 10-ingredient recipe.
+- A number with no source record is removed, as in check 4.
+
 ## Result
 
 Write a table: check, answer (yes / no / not applicable), what was done, option set. A check that

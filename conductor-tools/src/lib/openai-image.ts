@@ -6,7 +6,7 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, extname, join, resolve } from 'node:path'
-import { ASPECT_SIZES, jpegPreview, sceneRules, validImage, type GeneratedImage, type ImageQuality, type GenerateImagesParams, type GenerateImagesResult } from './image-common.js'
+import { DEFAULT_ASPECT, jpegPreview, resolveImageSize, sceneRules, validImage, type GeneratedImage, type ImageQuality, type GenerateImagesParams, type GenerateImagesResult } from './image-common.js'
 import { writeProvenanceSidecar } from './provenance-sidecar.js'
 
 const API_BASE = 'https://api.openai.com/v1'
@@ -56,12 +56,12 @@ function failure(res: Response, err: ApiError, keySource: string | undefined): E
 
 export async function generateImagesWithOpenAi(params: GenerateImagesParams, cfg: OpenAiImageConfig): Promise<GenerateImagesResult> {
   const { outDir, onProgress } = params
-  const aspect = params.aspect ?? 'portrait'
+  const aspect = params.aspect ?? DEFAULT_ASPECT
   const count = params.count ?? 1
   const refs = params.referenceImagePaths ?? []
   const timeoutMs = params.timeoutMs ?? 300_000
   const prompt = sceneRules(params.prompt, aspect, refs.length > 0)
-  const size = ASPECT_SIZES[aspect]
+  const { size, note: sizeNote } = resolveImageSize(aspect, params.size, cfg.model)
   const quality = params.quality ?? cfg.quality
 
   await mkdir(outDir, { recursive: true })
@@ -124,5 +124,5 @@ export async function generateImagesWithOpenAi(params: GenerateImagesParams, cfg
   }
 
   const preview = await jpegPreview(found[0]!.path, outRoot)
-  return { files: found, provenance, revisedPrompt, outDir: outRoot, quality: quality as ImageQuality, model: cfg.model, ...(preview ? { preview } : {}) }
+  return { files: found, provenance, revisedPrompt, outDir: outRoot, size, ...(sizeNote ? { sizeNote } : {}), quality: quality as ImageQuality, model: cfg.model, ...(preview ? { preview } : {}) }
 }

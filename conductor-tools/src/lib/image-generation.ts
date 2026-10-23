@@ -4,7 +4,7 @@
  */
 import { readConfig } from './config.js'
 import { generateImagesWithCodex } from './codex-image.js'
-import { IMAGE_QUALITIES, type GenerateImagesParams, type GenerateImagesResult, type ImageQuality } from './image-common.js'
+import { IMAGE_QUALITIES, placementFit, type PlacementFit, type GenerateImagesParams, type GenerateImagesResult, type ImageQuality } from './image-common.js'
 import { generateImagesWithOpenAi } from './openai-image.js'
 
 export const DEFAULT_IMAGE_MODEL = 'gpt-image-2.5-sunburst'
@@ -51,6 +51,13 @@ export function resolveImageSettings(explicitQuality?: string): { model: string;
 
 export interface GenerateImagesRouteResult extends GenerateImagesResult {
   generator: { route: 'openai-api' | 'codex'; model: string }
+  /** Full-bleed scale per placement for the first file's actual dimensions; absent when there is none. */
+  placementFit?: Record<string, PlacementFit>
+}
+
+const withFit = (r: GenerateImagesResult): { placementFit?: Record<string, PlacementFit> } => {
+  const first = r.files[0]
+  return first ? { placementFit: placementFit(first.width, first.height) } : {}
 }
 
 export async function generateImages(params: GenerateImagesParams & { useCodex?: boolean }): Promise<GenerateImagesRouteResult> {
@@ -60,10 +67,10 @@ export async function generateImages(params: GenerateImagesParams & { useCodex?:
   if (useCodex === true) {
     const result = await generateImagesWithCodex(rest)
     const agent = result.model === 'default' ? 'Codex default' : `Codex ${result.model}`
-    return { ...result, generator: { route: 'codex', model: `${CODEX_MODEL_LABEL} via ${agent}` } }
+    return { ...result, ...withFit(result), generator: { route: 'codex', model: `${CODEX_MODEL_LABEL} via ${agent}` } }
   }
   const found = resolveOpenAiKey()
   if (!found) throw new CodexConfirmationRequired()
   const result = await generateImagesWithOpenAi(rest, { apiKey: found.key, model, quality, keySource: found.source })
-  return { ...result, generator: { route: 'openai-api', model } }
+  return { ...result, ...withFit(result), generator: { route: 'openai-api', model } }
 }

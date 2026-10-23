@@ -34,7 +34,7 @@ describe('generateImagesWithOpenAi', () => {
     expect(url).toBe('https://api.openai.com/v1/images/generations')
     expect(init.headers.Authorization).toBe('Bearer sk-test')
     const body = JSON.parse(init.body as string)
-    expect(body).toMatchObject({ model: 'gpt-image-2.5-sunburst', size: '1536x1024', quality: 'high', n: 1 })
+    expect(body).toMatchObject({ model: 'gpt-image-2.5-sunburst', size: '2304x1536', quality: 'high', n: 1 })
     expect(body.prompt).toContain('a kitchen')
     expect(body.prompt).toMatch(/NO text/)
     expect(body.prompt).toContain('unretouched photo')
@@ -70,7 +70,7 @@ describe('generateImagesWithOpenAi', () => {
     expect(init.headers['Content-Type']).toBeUndefined()
     const form = init.body as FormData
     expect(form.get('model')).toBe('gpt-image-2.5-sunburst')
-    expect(form.get('size')).toBe('1024x1536')
+    expect(form.get('size')).toBe('1440x2560')
     expect(form.get('quality')).toBe('high')
     expect(form.get('n')).toBe('1')
     expect(String(form.get('prompt'))).toContain('Use the attached images as references')
@@ -78,6 +78,53 @@ describe('generateImagesWithOpenAi', () => {
     expect(file.name).toBe('ref.jpg')
     expect(file.type).toBe('image/jpeg')
     expect(res.revisedPrompt).toBe('')
+  })
+
+  it('requests 1440x2560 by default and reports the size', async () => {
+    fetchMock.mockResolvedValue(ok([{ b64_json: PNG_B64 }]))
+    const res = await generateImagesWithOpenAi({ prompt: 'p', outDir: path.join(tmp, 'd') }, cfg)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string).size).toBe('1440x2560')
+    expect(res.size).toBe('1440x2560')
+    expect(res.sizeNote).toBeUndefined()
+  })
+
+  it.each([
+    ['9:16', '1440x2560'], ['4:5', '1664x2080'], ['1:1', '1920x1920'], ['2:3', '1536x2304'], ['3:2', '2304x1536'], ['16:9', '2560x1440'],
+    ['portrait', '1536x2304'], ['square', '1920x1920'], ['landscape', '2304x1536'],
+  ] as const)('maps aspect %s to %s', async (aspect, size) => {
+    fetchMock.mockResolvedValue(ok([{ b64_json: PNG_B64 }]))
+    await generateImagesWithOpenAi({ prompt: 'p', aspect, outDir: path.join(tmp, 'a') }, cfg)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string).size).toBe(size)
+  })
+
+  it('sends an explicit size and flags an experimental one', async () => {
+    fetchMock.mockImplementation(async () => ok([{ b64_json: PNG_B64 }]))
+    const res = await generateImagesWithOpenAi({ prompt: 'p', size: '2160x3840', outDir: path.join(tmp, 'e') }, cfg)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string).size).toBe('2160x3840')
+    expect(res.sizeNote).toMatch(/experimental/)
+    const plain = await generateImagesWithOpenAi({ prompt: 'p', size: '1280x1920', outDir: path.join(tmp, 'f') }, cfg)
+    expect(plain.sizeNote).toBeUndefined()
+  })
+
+  it('falls back to a standard size with a note on a model without custom sizes', async () => {
+    fetchMock.mockImplementation(async () => ok([{ b64_json: PNG_B64 }]))
+    const res = await generateImagesWithOpenAi({ prompt: 'p', size: '1440x2560', outDir: path.join(tmp, 'g') }, { ...cfg, model: 'gpt-image-1' })
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string).size).toBe('1024x1536')
+    expect(res.size).toBe('1024x1536')
+    expect(res.sizeNote).toMatch(/gpt-image-1.*fell back to 1024x1536/)
+    await generateImagesWithOpenAi({ prompt: 'p', aspect: '16:9', outDir: path.join(tmp, 'h') }, { ...cfg, model: 'gpt-image-1' })
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body as string).size).toBe('1536x1024')
+  })
+
+  it.each([
+    ['1000x1600', /multiples of 16/],
+    ['4000x1600', /over 3840/],
+    ['3840x1024', /1:3 and 3:1/],
+    ['512x512', /total pixels/],
+    ['wide', /WIDTHxHEIGHT/],
+  ])('rejects size %s', async (size, msg) => {
+    await expect(generateImagesWithOpenAi({ prompt: 'p', size, outDir: path.join(tmp, 'x') }, cfg)).rejects.toThrow(msg)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('explains a rejected key', async () => {

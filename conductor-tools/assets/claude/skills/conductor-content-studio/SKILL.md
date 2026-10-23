@@ -34,6 +34,16 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   native-looking slideshow built by `compose_slideshow` and posted as a CAROUSEL; see
   `references/slideshow-formats.md`. STILL and MOTION stay for ideas that really are one still, an
   ad, or a motion piece. A slideshow never carries a logo, badge or offer.
+- **Rejected copy stays rejected.** A CTA or offer line on a card or in a caption is opt-in per
+  request, never a default. That means a sales line: the kit's `ctaClaim`, a trial, price, plan or
+  discount. Naming the app so it can be searched is not one. Approved lines in the knowledge pages are allowed, not required. When the
+  person rejects a line, phrase or visual during a run, ask once whether to ban it. On a yes:
+  `get_brand_kit`, append a rule to `copyRules` with id `banned-<slug>` for a line or phrase (an
+  escaped regex `pattern`, `flags: "i"`, `fields: ["headline", "body", "caption"]`, a `message` that
+  names it as rejected and the date) or `banned-visual-<slug>` for a visual (the `message`
+  describes the visual, the `pattern` matches its name). `update_brand_kit` replaces the whole list,
+  so send the full existing list plus the new rule, then verify with `get_brand_kit`. S0 reads these
+  rules into `context/banned.md` on every later run.
 
 Cost: a run is about 8 subagent calls (strategist 1, ideators 3, director 2, scriptwriter 1, art
 director 1), and only the strategist and the director use the top model tier. `--quick` runs two
@@ -50,7 +60,7 @@ folder; give subagents absolute paths.
 request.md  run.json  brief.md  script.md  direction.md  creative-spec.json  decision.md
 slideshow-spec.json  (S5, instead of creative-spec.json, when the winner is a slideshow)
 image-prompts.json   (S5, only when generation is enabled)
-context/   brand-kit.json  knowledge.md  performance.md  learning.md  media.json
+context/   brand-kit.json  knowledge.md  performance.md  learning.md  banned.md  media.json
 ideas/     angle-1.md  angle-2.md  angle-3.md  pool.md  winner.md
 judging/   scores.md
 drafts/    finalist-<id>/   (contact sheets from the finalist renders)
@@ -113,7 +123,7 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 2. Knowledge, for `context/knowledge.md`: `read_knowledge_pages` for the kit's `knowledgePagePath`
    and `marketing/what-works.md`; `search_knowledge` for persona/audience, campaign and positioning
    pages and read the best few (at most 6 pages in all). Paste each page under its path heading, trimmed
-   to what bears on the request; keep approved lines verbatim. List every expected page that was not
+   to what bears on the request; keep approved lines verbatim, marked "may use, not required". List every expected page that was not
    found under "Missing pages". A missing page is a gap to record, never a reason to stop.
 3. Performance, for `context/performance.md`: `get_marketing_insights` (window `30d`, or `90d` if
    empty) and `list_top_posts` (limit 10). Summarise what the data says; "no performance data yet"
@@ -127,7 +137,10 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    not, using views, engagement rate, average view percentage, 72 h views and any 3-second or
    completion figure the insights expose, and any experiment result. Name what you could not
    measure. With no earlier run or no data, write exactly "No data yet".
-6. Every renderable idea needs a photo (or, for MOTION, a clip; for a slideshow's payoff slide, a real
+6. Banned copy, for `context/banned.md`: list every `copyRules` entry in `context/brand-kit.json`
+   whose id starts with `banned-` (the line or visual, the pattern and the message). With none,
+   write exactly "No banned copy yet".
+7. Every renderable idea needs a photo (or, for MOTION, a clip; for a slideshow's payoff slide, a real
    app screenshot, so ask for one if the media has none); see `references/capabilities.md`. If
    `media.json` has no unblocked image and no clip, ask once with `AskUserQuestion` before ideating:
    **Give a photo or two** (local paths; record them in `context/media.json` as `local` entries the
@@ -147,7 +160,7 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 
 ### S1 — Strategist -> `brief.md`
 
-`Agent(subagent_type: "conductor-content-strategist")` with the six context files, `request.md`
+`Agent(subagent_type: "conductor-content-strategist")` with the seven context files (including `context/banned.md`, whose every entry goes into the brief's must-avoid), `request.md`
 and `references/capabilities.md` (so the brief states rendering constraints correctly: motion text
 over a photo is renderable and needs no filming).
 
@@ -187,8 +200,9 @@ text) unless its slides can be composed from photos already on hand. In that cas
 that folder and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
 `full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
-`imagePrompt`, call `generate_creative_image({prompt})` first, run the realism check
-(`references/realism-check.md`, regenerating on a fail), and use its
+`imagePrompt`, write the prompt by the prompt-writing rules in `references/realism-check.md` and
+call `generate_creative_image({prompt, aspect: "9:16"})` (the largest 9:16 size, so the draft is not
+upscaled), run the realism check on 100% crops (regenerating on a fail), and use its
 path as `photoPath` (generate only for finalists, not the whole pool).
 
 - If the validator refuses the copy (accent phrase or a copy rule), fix the copy once yourself and
@@ -220,7 +234,7 @@ which idea to take; show the decision at the gate.
 
 First copy the winning idea's block from `ideas/pool.md` to `ideas/winner.md`. Then
 `Agent(subagent_type: "conductor-content-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md` and
-`references/publish-pack-template.md`. Besides the script it writes the Publish copy section: a
+`references/publish-pack-template.md`. Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
 caption per platform whose call to action names the app so it can be searched, hashtags, a pinned
 comment and 2 to 3 alternate hooks with a hookType each.
 For a `MOTION` winner tell it that the render shows one headline and one optional body, animated
@@ -235,11 +249,13 @@ For a slideshow winner the art director writes `slideshow-spec.json` instead of 
 `context/media.json`, `script.md`, `references/platform-specs.md`, `references/design-critique.md` and
 `references/publish-pack-template.md`. Photos and the app screenshot are paths from `media.json`
 (download a library image to a local file first) or the person's local files; generated photos go
-through `generate_creative_image` and the realism check first, as below. The rest of this stage is
+through `generate_creative_image` and the realism check first, as below. Every photo then goes
+through the resolution gate below. The rest of this stage is
 the STILL/MOTION path.
 
 `Agent(subagent_type: "conductor-content-art-director")` with `script.md`, `context/media.json`,
-`context/brand-kit.json`, `references/shotlist-template.md`, `references/platform-specs.md` and
+`context/brand-kit.json`, `context/banned.md`, `references/shotlist-template.md`,
+`references/platform-specs.md`, `references/realism-check.md` and
 `references/publish-pack-template.md`. Besides the spec it writes the Publish assets section of
 `direction.md`: cover frame, alt text per card, on-screen text placement and the sound source and
 licence per platform.
@@ -251,11 +267,21 @@ when 9:16 is enabled. The spec's keys must be exactly
 `preview_creative_draft` inputs. Give it `references/capabilities.md` too. The spec's `name` is the
 idea's title only: never include the internal `I<n>` ID, which means nothing outside this run. When
 `media.json` has `generate: true`, the art director may also write `image-prompts.json`
-(`{"photo": "...", "beats": {"2": "..."}}`) next to the spec. Before S6, call
-`generate_creative_image` for each prompt, run the realism check (`references/realism-check.md`,
-regenerating on a fail) on each image, and set `photoPath` (or
+(`{"photo": "...", "beats": {"2": "..."}}`) next to the spec. Prompts follow the prompt-writing
+rules in `references/realism-check.md` and differ in surface, angle and light across the batch. Before S6, call
+`generate_creative_image` for each prompt with `aspect: "9:16"` for 9:16 placements (`"4:5"` or
+`"1:1"` only when no 9:16 placement is enabled), read the result's `placementFit`, run the realism check
+(`references/realism-check.md`, regenerating on a fail) on each image at 100%, and set `photoPath` (or
 `sequence[i].photoPath`) in `creative-spec.json` (for a slideshow, the slide's `bg` or `photos[].src` in `slideshow-spec.json`; `beats` keys are slide numbers). A `FILM` winner skips S5 and goes to the shoot
 script, below.
+
+**Resolution gate (before S6 renders).** For every photo in the spec, library or generated, compute
+the scale per enabled placement and crop, adding the 1.12 video zoom for MOTION (see
+`references/layout-guide.md`, "Resolution"). Use `placementFit` for a generated photo, and
+`max(W/w, H/h)` from `list_creative_media` dimensions for a library one. Refuse any full-bleed use
+above 1.0x. Fix it before rendering: generate at the largest size in that aspect, use a different
+photo, or pick a layout that shows the photo framed at or below native size. Never carry an
+upscaled photo into S6 with a note.
 
 ### S5b — Publish pack and pre-publish checks (you; RENDER after S5, FILM after the shoot script)
 
@@ -279,9 +305,21 @@ does not apply is answered "not applicable".
 4. A claims or trademark check that fails and cannot be fixed by you in one word goes back to the
    scriptwriter once, with the failing line; re-run S4's merge and S5 only if the copy changed. If
    it still fails, show it at the gate as a known issue and never hide it.
-5. Set `S5b` to `done`. On any later copy change, redo this stage so the pack matches the draft.
+5. Fact lint: merge the scriptwriter's "Numbers and sources" into the pack and check each number
+   against its source record (checklist item 9). Fix a mismatch before the gate.
+6. Banned-copy grep: search `creative-spec.json` or `slideshow-spec.json`, `script.md`,
+   `image-prompts.json`, every caption and `publish-pack.md` and `.json` for every banned line,
+   phrase and visual in `context/banned.md`, case-insensitive. A hit is fixed (then redo the
+   affected stage), never shown. Record the result in the pack's "Banned-copy check".
+7. STILL or MOTION: it always shows the kit's `ctaClaim`. If that claim is banned, or the request
+   did not opt in to a CTA and the claim is an offer line, stop and ask the person before S6
+   renders. A sequence uses `cta: false` on every beat unless the brief opted in.
+8. Set `S5b` to `done`. On any later copy change, redo this stage so the pack matches the draft.
 
 ### S6 — Preview gate (you; `RENDER` winner)
+
+Resolution gate first: confirm S5's gate passed for every photo in the spec. A photo above 1.0x at
+any placement is fixed now, not shown.
 
 1. `preview_creative_draft` with the fields from `creative-spec.json`, `full: false`, and no
    `draftDir` (the default location is cleaned up automatically after the commit). Record the

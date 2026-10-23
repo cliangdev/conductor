@@ -35,6 +35,27 @@ On 1:1 every layout auto-fits the headline small (about 60 px at most). Pin it w
 e.g. `{"1x1": [88]}`; 92 passed the checks with an eight-word headline. A pinned size is not shrunk to
 fit, so read `checks` again after pinning.
 
+## Resolution
+
+Never upscale a photo. Before rendering, compute each photo's scale per placement and crop: the
+full-bleed cover scale is `max(W/w, H/h)` for a placement of W x H and a photo of w x h. Placements
+are 9:16 (1080x1920), 4:5 (1080x1350) and 1:1 (1080x1080). For a MOTION also multiply by the video
+zoom (up to 1.12).
+
+- A 1200x1200 photo full-bleed at 9:16 uses 675x1200 source pixels for 1080x1920: 1.6x.
+- A 1024x1536 photo at 9:16 is 1.25x. A 1440x2560 one is 0.75x, and 0.84x with the 1.12 zoom.
+- `bleed` is full-bleed on every placement. Refuse any full-bleed use above 1.0x, and compute the
+  scale for the photo's actual crop in `card`, `split` and `stacked` too.
+
+Fixes, in order:
+
+1. Generate at the largest size in that placement's aspect (`aspect: "9:16"` for 9:16;
+   `placementFit` in the result shows the scale per placement).
+2. Use a different photo.
+3. Use a layout that shows the photo framed at or below native size.
+
+A photo above 1.0x is fixed before anything is shown, not mentioned.
+
 ## Logo
 
 `lockup: "chip"` puts the logo on a white pill. Use it when the photo behind the logo is busy.
