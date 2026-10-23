@@ -237,6 +237,31 @@ class WorkflowServiceTest {
         verify(workflowRepository, never()).save(any());
     }
 
+    /** Posts and Changes share the MARKETING area: the route key is area + noun, so they never collide. */
+    @Test
+    void createWorkflowAllowsASecondLifecycleInTheSameAreaWithADifferentNoun() throws Exception {
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
+        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.findByProjectIdAndName("proj-1", "MARKETING_CHANGES")).thenReturn(Optional.empty());
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "MARKETING_CHANGES")).thenReturn(false);
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+        WorkflowDefinition marketing = new WorkflowDefinition();
+        marketing.setId("wf-marketing");
+        marketing.setName("MARKETING");
+        marketing.setArea("MARKETING");
+        marketing.setDefinition(new ObjectMapper().readTree("{\"id\":\"MARKETING\",\"noun\":\"Post\"}"));
+        when(workflowRepository.findByProjectId("proj-1")).thenReturn(List.of(marketing));
+
+        WorkflowCreateRequest request = new WorkflowCreateRequest("MARKETING_CHANGES");
+        request.setArea("MARKETING");
+        request.setDefinition(java.util.Map.of("id", "MARKETING_CHANGES", "noun", "Change",
+                "statuses", java.util.List.of()));
+
+        WorkflowDefinition saved = service.createWorkflow("proj-1", "user-1", request);
+        assertThat(saved.getArea()).isEqualTo("MARKETING");
+    }
+
     @Test
     void createWorkflowRejectsDuplicateSlug() {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);

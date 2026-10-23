@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Covers V156 (Work Item fields and due date) and the V157 backfill that seeds MARKETING_CHANGES into
- * projects that already existed. Same shape as {@code V110SeedMarketingWorkflowTest}: a private container,
+ * projects that already existed (V159 then moves them into the MARKETING area, see {@code V159MarketingChangesAreaTest}). Same shape as {@code V110SeedMarketingWorkflowTest}: a private container,
  * one template database migrated to just before V157, one clone per case.
  */
 class V157SeedMarketingChangesWorkflowTest {
@@ -75,7 +75,7 @@ class V157SeedMarketingChangesWorkflowTest {
                            || '|' || jsonb_array_length(w.definition -> 'fields')
                     FROM workflow_definitions w
                     WHERE w.project_id = '%s' AND w.definition ->> 'id' = 'MARKETING_CHANGES'
-                    """.formatted(projectA))).isEqualTo("PUBLISHED|MARKETING_CHANGES|true|Change|8");
+                    """.formatted(projectA))).isEqualTo("PUBLISHED|MARKETING|true|Change|8");
             assertThat(queryForString(connection, """
                     SELECT COUNT(*)::text FROM workflow_definition_versions v
                     JOIN workflow_definitions w ON w.id = v.workflow_definition_id

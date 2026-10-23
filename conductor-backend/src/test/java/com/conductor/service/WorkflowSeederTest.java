@@ -237,11 +237,30 @@ class WorkflowSeederTest {
         verify(workflowRepository).save(headerCaptor.capture());
         WorkflowDefinition header = headerCaptor.getValue();
         assertThat(header.getName()).isEqualTo("MARKETING_CHANGES");
-        assertThat(header.getArea()).isEqualTo("MARKETING_CHANGES");
+        // Built-in Marketing changes lives beside Posts under the MARKETING area, not its own slug.
+        assertThat(header.getArea()).isEqualTo("MARKETING");
         assertThat(header.getState()).isEqualTo("PUBLISHED");
         assertThat(header.isSidebarEnabled()).isTrue();
         assertThat(header.getDefinition().get("noun").asText()).isEqualTo("Change");
         verify(versionRepository).save(any(WorkflowDefinitionVersion.class));
+    }
+
+    @Test
+    void headerAreaComesFromTheDefinitionNotTheSlug() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug(any(), any())).thenReturn(false);
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        seeder.seedEngineering(project);
+        seeder.seedMarketing(project);
+        seeder.seedMarketingChanges(project);
+
+        ArgumentCaptor<WorkflowDefinition> headerCaptor = ArgumentCaptor.forClass(WorkflowDefinition.class);
+        verify(workflowRepository, times(3)).save(headerCaptor.capture());
+        for (WorkflowDefinition h : headerCaptor.getAllValues()) {
+            assertThat(h.getArea()).isEqualTo(h.getDefinition().get("area").asText());
+        }
+        assertThat(headerCaptor.getAllValues()).extracting(WorkflowDefinition::getArea)
+                .containsExactly("ENGINEERING", "MARKETING", "MARKETING");
     }
 
     @Test
@@ -264,7 +283,9 @@ class WorkflowSeederTest {
         assertThat(chart.transition("PLANNED", "LIVE")).isPresent();
         assertThat(chart.transition("LIVE", "REVIEWED").orElseThrow().requiresReview()).isTrue();
         assertThat(chart.transition("PLANNED", "REVIEWED")).isEmpty();
-        // Its area/noun route (marketing_changes/changes) must not collide with the Post pipeline's.
-        assertThat(chart.area()).isNotEqualTo(marketingStatechart().area());
+        // It shares the MARKETING area with the Post pipeline; the area/noun routes (marketing/changes vs
+        // marketing/posts) stay distinct by noun.
+        assertThat(chart.area()).isEqualTo("MARKETING").isEqualTo(marketingStatechart().area());
+        assertThat(chart.noun()).isNotEqualToIgnoringCase(marketingStatechart().noun());
     }
 }
