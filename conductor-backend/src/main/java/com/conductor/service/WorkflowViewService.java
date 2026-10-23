@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowDefinitionVersion;
+import com.conductor.generated.model.WorkflowFieldView;
 import com.conductor.generated.model.WorkflowMetricView;
 import com.conductor.generated.model.WorkflowStatusView;
 import com.conductor.generated.model.WorkflowTransitionView;
@@ -13,6 +14,7 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.lifecycle.StatechartField;
 import com.conductor.workflow.lifecycle.StatechartMetric;
 import com.conductor.workflow.lifecycle.StatechartStatus;
 import com.conductor.workflow.lifecycle.StatechartTransition;
@@ -167,6 +169,10 @@ public class WorkflowViewService {
         view.setAssetTypes(statechart.assetTypes());
         view.setStatuses(statechart.statuses().stream().map(this::toStatusView).toList());
         view.setTransitions(statechart.transitions().stream().map(this::toTransitionView).toList());
+        if (!statechart.fields().isEmpty()) {
+            view.setFields(statechart.fields().stream().map(this::toFieldView).toList());
+        }
+        view.setDueLabel(statechart.dueLabel());
         StatechartMetric metric = statechart.metric();
         if (metric != null) {
             WorkflowMetricView metricView = new WorkflowMetricView();
@@ -175,6 +181,16 @@ public class WorkflowViewService {
             metricView.setDirection(metric.direction());
             view.setMetric(metricView);
         }
+        return view;
+    }
+
+    private WorkflowFieldView toFieldView(StatechartField f) {
+        WorkflowFieldView view = new WorkflowFieldView();
+        view.setKey(f.key());
+        view.setLabel(f.label());
+        view.setType(f.type());
+        view.setOptions(f.options().isEmpty() ? null : f.options());
+        view.setRequiredIn(f.requiredIn().isEmpty() ? null : f.requiredIn());
         return view;
     }
 

@@ -88,9 +88,79 @@ class WorkflowDefinitionValidatorTest {
             }
             """;
 
+    // --- fields: typed Work Item fields ---
+
+    /** MINI with the given JSON spliced in as extra top-level members, e.g. {@code "fields": [...]}. */
+    private JsonNode miniWith(String members) throws Exception {
+        return json(MINI.replaceFirst("\"types\": \\[\"TASK\"\\],", "\"types\": [\"TASK\"], " + members + ","));
+    }
+
+    @Test
+    void acceptsWellFormedFieldsAndADueLabel() throws Exception {
+        JsonNode def = miniWith("""
+                "dueLabel": "Review on",
+                "fields": [
+                  {"key": "note", "label": "Note", "type": "longtext"},
+                  {"key": "outcome", "label": "Outcome", "type": "enum", "options": ["a", "b"], "requiredIn": ["DONE"]}
+                ]""");
+        assertThat(validator.validate(PROJECT_ID, def).getErrors()).isEmpty();
+    }
+
+    @Test
+    void rejectsADuplicateFieldKey() throws Exception {
+        JsonNode def = miniWith("""
+                "fields": [
+                  {"key": "note", "label": "Note", "type": "text"},
+                  {"key": "note", "label": "Note again", "type": "text"}
+                ]""");
+        assertThat(validator.validate(PROJECT_ID, def).getErrors()).contains("duplicate field key: note");
+    }
+
+    @Test
+    void rejectsRequiredInAnUnknownStatus() throws Exception {
+        JsonNode def = miniWith("""
+                "fields": [{"key": "note", "label": "Note", "type": "text", "requiredIn": ["NOPE"]}]""");
+        assertThat(validator.validate(PROJECT_ID, def).getErrors())
+                .contains("field 'note' is required in unknown status: NOPE");
+    }
+
+    @Test
+    void rejectsOptionsOnANonEnumAndAnEnumWithoutOptions() throws Exception {
+        JsonNode stray = miniWith("""
+                "fields": [{"key": "note", "label": "Note", "type": "text", "options": ["a"]}]""");
+        assertThat(validator.validate(PROJECT_ID, stray).getErrors())
+                .contains("field 'note' has options but is not an enum");
+        JsonNode bare = miniWith("""
+                "fields": [{"key": "pick", "label": "Pick", "type": "enum"}]""");
+        assertThat(validator.validate(PROJECT_ID, bare).getErrors())
+                .contains("field 'pick' is an enum and needs options");
+    }
+
+    @Test
+    void rejectsStructurallyInvalidFields() throws Exception {
+        for (String bad : new String[] {
+                "{\"key\": \"Bad-Key\", \"label\": \"L\", \"type\": \"text\"}",
+                "{\"key\": \"k\", \"label\": \"L\", \"type\": \"boolean\"}",
+                "{\"key\": \"k\", \"type\": \"text\"}"}) {
+            JsonNode def = miniWith("\"fields\": [" + bad + "]");
+            assertThat(validator.validate(PROJECT_ID, def).getErrors()).as(bad).isNotEmpty();
+        }
+    }
+
+    @Test
+    void rejectsMoreThanTwentyFields() throws Exception {
+        StringBuilder many = new StringBuilder("\"fields\": [");
+        for (int i = 0; i < 21; i++) {
+            many.append(i == 0 ? "" : ",").append("{\"key\": \"k").append(i)
+                    .append("\", \"label\": \"L\", \"type\": \"text\"}");
+        }
+        many.append("]");
+        assertThat(validator.validate(PROJECT_ID, miniWith(many.toString())).getErrors()).isNotEmpty();
+    }
+
     @Test
     void marketingAndAutopilotExamplesAreValid() throws Exception {
-        for (String example : new String[] {"marketing", "marketing-autopilot"}) {
+        for (String example : new String[] {"marketing", "marketing-autopilot", "marketing-changes"}) {
             try (InputStream in = getClass().getResourceAsStream("/schema/examples/" + example + ".workflow.json")) {
                 assertThat(validator.validate(PROJECT_ID, mapper.readTree(in)).getErrors()).as(example).isEmpty();
             }

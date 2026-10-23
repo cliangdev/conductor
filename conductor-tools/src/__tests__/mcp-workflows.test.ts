@@ -72,6 +72,16 @@ describe('workflow-aware MCP tools', () => {
     ])
   })
 
+  it('list_workflows exposes a Workflow\'s declared fields and due label when it has them', async () => {
+    const fields = [{ key: 'verdict', label: 'Verdict', type: 'enum', options: ['worked'], requiredIn: ['REVIEWED'] }]
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'wf-3', slug: 'MARKETING_CHANGES', definition: { types: ['ADS'], statuses: [], fields, dueLabel: 'Review on' } },
+    ])
+    const [entry] = (await listWorkflows({}, config)) as Array<Record<string, unknown>>
+    expect(entry['fields']).toEqual(fields)
+    expect(entry['dueLabel']).toBe('Review on')
+  })
+
   it('list_workflows pushes the kind filter server-side via ?lifecycle', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'wf-2', name: 'SEO report', kind: 'AUTOMATION' },

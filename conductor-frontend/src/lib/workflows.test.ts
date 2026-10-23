@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
+  groupByArea,
+  toWorkNav,
   cancelWorkflowRun,
   categoriesForView,
   dispatchWorkflow,
@@ -215,6 +217,20 @@ describe('resolveWorkflowByAreaNoun', () => {
 
     const sales = await resolveWorkflowByAreaNoun('proj-b', 'sales_ops', 'deals', 'token')
     expect(sales?.slug).toBe('SALES')
+  })
+
+  it('keeps two Workflows in one area apart by noun, and groups both under the area in the sidebar', async () => {
+    const posts = wf({ id: 'wf-p', name: 'MARKETING', slug: 'MARKETING', noun: 'Post', area: 'MARKETING', kind: 'LIFECYCLE' })
+    const changes = wf({ id: 'wf-c', name: 'MARKETING_CHANGES', slug: 'MARKETING_CHANGES', noun: 'Change', area: 'MARKETING', kind: 'LIFECYCLE', createdAt: '2' })
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([posts, changes])
+
+    expect((await resolveWorkflowByAreaNoun('proj-d', 'marketing', 'posts', 'token'))?.slug).toBe('MARKETING')
+    expect((await resolveWorkflowByAreaNoun('proj-e', 'marketing', 'changes', 'token'))?.slug).toBe('MARKETING_CHANGES')
+
+    const groups = groupByArea(toWorkNav([posts, changes]))
+    expect(groups).toHaveLength(1)
+    expect(groups[0][0]).toBe('MARKETING')
+    expect(groups[0][1].map((e) => e.slug)).toEqual(['MARKETING', 'MARKETING_CHANGES'])
   })
 
   it('returns undefined when no workflow matches the area/noun pair', async () => {

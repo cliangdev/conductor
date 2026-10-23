@@ -153,6 +153,7 @@ public class WorkflowDefinitionValidator {
         }
 
         validatePublishesFrom(sc, statusIds, errors);
+        validateFields(sc, statusIds, errors);
 
         // Every skill Step references a bindable skill id. Load the project's bindable set once (a single
         // query), lazily — statecharts with no skill steps issue no query at all.
@@ -178,6 +179,28 @@ public class WorkflowDefinitionValidator {
             validateReachability(sc, errors);
             for (String trigger : CASCADING_TRIGGERS) {
                 validateNoCascadeCycle(sc, trigger, errors);
+            }
+        }
+    }
+
+    /** Field keys are unique, requiredIn names real statuses, and options belong to (and fill) enum fields. */
+    private void validateFields(Statechart sc, Set<String> statusIds, List<String> errors) {
+        Set<String> keys = new HashSet<>();
+        for (StatechartField f : sc.fields()) {
+            if (!keys.add(f.key())) {
+                errors.add("duplicate field key: " + f.key());
+            }
+            boolean isEnum = "enum".equals(f.type());
+            if (isEnum && f.options().isEmpty()) {
+                errors.add("field '" + f.key() + "' is an enum and needs options");
+            }
+            if (!isEnum && !f.options().isEmpty()) {
+                errors.add("field '" + f.key() + "' has options but is not an enum");
+            }
+            for (String status : f.requiredIn()) {
+                if (!statusIds.contains(status)) {
+                    errors.add("field '" + f.key() + "' is required in unknown status: " + status);
+                }
             }
         }
     }

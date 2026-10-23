@@ -234,13 +234,15 @@ export const TOOLS = [
         title: { type: 'string', description: 'Work Item title' },
         description: { type: 'string', description: 'Work Item description (optional). On a publishing Workflow this is the caption — the text that goes out to the platform — not a note about the item.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
+        fields: { type: 'object', description: 'Typed field values, keyed by the field keys the Workflow declares (list_workflows shows them with types and required statuses). Unknown keys and wrong types are rejected.' },
+        dueOn: { type: 'string', description: 'Due date, YYYY-MM-DD (the Workflow\'s dueLabel names it, e.g. "Review on").' },
       },
       required: ['workflow', 'type', 'title'],
     },
   },
   {
     name: 'update_work_item',
-    description: 'Update an existing Work Item\'s title, description, tags, or schedule. On a publishing Workflow the description is the caption that goes out to the platform, not a note. Canonical tool (targets the v2 work-items API). A field you omit is left unchanged. Verify with get_work_item.',
+    description: 'Update an existing Work Item\'s title, description, tags, fields, due date, or schedule. On a publishing Workflow the description is the caption that goes out to the platform, not a note. Canonical tool (targets the v2 work-items API). A field you omit is left unchanged. Verify with get_work_item.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -251,6 +253,8 @@ export const TOOLS = [
         scheduleTimezone: { type: 'string', description: 'IANA zone id the schedule is authored in, e.g. Europe/Berlin (optional). Empty string clears it; an unknown zone is rejected.' },
         publishOnApproval: { type: 'boolean', description: 'Publish as soon as approved (optional). true means no scheduledFor is needed: entering the scheduled status stamps the earliest time every destination accepts. false returns to an explicit scheduledFor.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
+        fields: { type: 'object', description: 'Typed field values to set, merged key by key: a key set to null clears it, a key left out is unchanged. Keys come from the Workflow (list_workflows). Set the fields a status requires here first, then move status with transition_work_item; clearing a required field of the current status is refused.' },
+        dueOn: { type: ['string', 'null'], description: 'Due date, YYYY-MM-DD; null clears it. Omit to leave unchanged.' },
       },
       required: ['issueId'],
     },
@@ -269,7 +273,7 @@ export const TOOLS = [
   },
   {
     name: 'list_work_items',
-    description: 'List Work Items in the project. Canonical tool (targets the v2 work-items API).',
+    description: 'List Work Items in the project. Canonical tool (targets the v2 work-items API). Set dueBefore to find overdue items.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -277,6 +281,7 @@ export const TOOLS = [
         status: { type: 'string', description: 'Filter by status (optional)' },
         workflow: { type: 'string', description: 'Filter by bound Workflow slug (optional, e.g. ENGINEERING)' },
         tag: { type: 'string', description: 'Filter to Work Items carrying this tag (optional). Matched case-insensitively.' },
+        dueBefore: { type: 'string', description: 'YYYY-MM-DD (optional). Only open Work Items due before this date, soonest first. Pass today\'s date for overdue reviews.' },
       },
     },
   },
@@ -1713,6 +1718,8 @@ export async function runMcpServer(): Promise<void> {
               title: params['title'] as string,
               description: params['description'] as string | undefined,
               tags: params['tags'] as string[] | undefined,
+              fields: params['fields'] as Record<string, unknown> | undefined,
+              dueOn: params['dueOn'] as string | undefined,
             },
             config
           )
@@ -1999,6 +2006,8 @@ export async function runMcpServer(): Promise<void> {
               scheduleTimezone: params['scheduleTimezone'] as string | undefined,
               publishOnApproval: params['publishOnApproval'] as boolean | undefined,
               tags: params['tags'] as string[] | undefined,
+              fields: params['fields'] as Record<string, unknown> | undefined,
+              dueOn: params['dueOn'] as string | null | undefined,
             },
             config
           )
@@ -2021,6 +2030,7 @@ export async function runMcpServer(): Promise<void> {
               status: params['status'] as string | undefined,
               workflow: params['workflow'] as string | undefined,
               tag: params['tag'] as string | undefined,
+              dueBefore: params['dueBefore'] as string | undefined,
             },
             config
           )

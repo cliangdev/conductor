@@ -219,6 +219,23 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not record your approval'))
   })
 
+  it('reports the field keys a refused move needs, so the page can point at them', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      workflow: 'ENGINEERING',
+      currentStatus: 'DRAFT',
+      transitions: [{ toStatus: 'DONE', label: 'Finish' }],
+    })
+    vi.mocked(apiPatch).mockRejectedValueOnce(
+      Object.assign(new Error('Cannot move to DONE'), { status: 400, missingFields: ['verdict', 'lesson'] })
+    )
+    const onMissingFields = vi.fn()
+    render(<StatusDropdown {...baseProps} userRole="CREATOR" onMissingFields={onMissingFields} />)
+    await waitFor(() => expect(apiGet).toHaveBeenCalled())
+    fireEvent.click(await screen.findByText('Finish'))
+    await waitFor(() => expect(onMissingFields).toHaveBeenCalledWith(['verdict', 'lesson']))
+    expect(toastError).toHaveBeenCalled()
+  })
+
   it('disables a move the publish gate refuses, with the gate’s own reason, and does not PATCH it', async () => {
     mockView = MARKETING_VIEW
     vi.mocked(apiGet).mockResolvedValueOnce({ workflow: 'MARKETING', currentStatus: 'CHANGES_REQUESTED', transitions: [{ toStatus: 'IN_REVIEW', label: 'Resubmit' }] })

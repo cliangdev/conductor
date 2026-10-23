@@ -31,12 +31,15 @@ public final class Statechart {
     private final List<StatechartTransition> transitions;
     private final StatechartMetric metric;
     private final String publishesFrom;
+    private final List<StatechartField> fields;
+    private final String dueLabel;
     private final Map<String, StatechartStatus> statusById;
 
     private Statechart(String slug, String area, Integer version, String state, Integer schemaVersion,
                        String noun, String defaultView, List<String> types, List<String> assetTypes,
                        List<StatechartStatus> statuses, List<StatechartTransition> transitions,
-                       StatechartMetric metric, String publishesFrom) {
+                       StatechartMetric metric, String publishesFrom,
+                       List<StatechartField> fields, String dueLabel) {
         this.slug = slug;
         this.area = area;
         this.version = version;
@@ -50,6 +53,8 @@ public final class Statechart {
         this.transitions = List.copyOf(transitions);
         this.metric = metric;
         this.publishesFrom = publishesFrom;
+        this.fields = List.copyOf(fields);
+        this.dueLabel = dueLabel;
         Map<String, StatechartStatus> byId = new LinkedHashMap<>();
         for (StatechartStatus s : statuses) {
             byId.put(s.id(), s);
@@ -70,6 +75,11 @@ public final class Statechart {
         if (transitionsNode != null && transitionsNode.isArray()) {
             transitionsNode.forEach(n -> transitions.add(StatechartTransition.parse(n)));
         }
+        List<StatechartField> fields = new java.util.ArrayList<>();
+        JsonNode fieldsNode = def.get("fields");
+        if (fieldsNode != null && fieldsNode.isArray()) {
+            fieldsNode.forEach(n -> fields.add(StatechartField.parse(n)));
+        }
         return new Statechart(
                 Json.text(def, "id"),
                 Json.text(def, "area"),
@@ -83,7 +93,9 @@ public final class Statechart {
                 statuses,
                 transitions,
                 StatechartMetric.parse(def.get("metric")),
-                Json.text(def, "publishes_from"));
+                Json.text(def, "publishes_from"),
+                fields,
+                Json.text(def, "dueLabel"));
     }
 
     public String slug() { return slug; }
@@ -106,6 +118,15 @@ public final class Statechart {
      * is read through {@code PublishingWorkflow}, which knows the legacy fallback.
      */
     public Optional<String> publishesFrom() { return Optional.ofNullable(publishesFrom); }
+
+    /** The typed fields this Workflow's Work Items carry; empty when it declares none. */
+    public List<StatechartField> fields() { return fields; }
+    /** What this Workflow calls a Work Item's due date, or null when it does not say. */
+    public String dueLabel() { return dueLabel; }
+
+    public Optional<StatechartField> field(String key) {
+        return fields.stream().filter(f -> f.key().equals(key)).findFirst();
+    }
 
     public Optional<StatechartStatus> status(String id) {
         return Optional.ofNullable(statusById.get(id));

@@ -95,6 +95,16 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(MissingFieldsException.class)
+    public ProblemDetail handleMissingFieldsException(MissingFieldsException e) {
+        log.warn("MissingFieldsException: {}", e.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        problem.setProperty("missingFields", e.getMissingFields());
+        return problem;
+    }
+
     @ExceptionHandler(ConflictException.class)
     public ProblemDetail handleConflictException(ConflictException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);

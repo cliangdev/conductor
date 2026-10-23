@@ -14,6 +14,8 @@ import com.conductor.generated.v2.model.WorkItemAssignee;
 import com.conductor.generated.v2.model.WorkItemResponse;
 import com.conductor.generated.v2.model.ReviewerResponse;
 import com.conductor.service.ReviewerService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.conductor.service.view.ReviewerView;
 import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkItemWorkflowService;
@@ -27,6 +29,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -45,6 +48,7 @@ import java.util.Map;
 public class WorkItemController implements WorkItemsApi {
 
     private static final Logger log = LoggerFactory.getLogger(WorkItemController.class);
+    private static final ObjectMapper FIELDS_MAPPER = new ObjectMapper();
 
     private final WorkItemService workItemService;
     private final WorkItemWorkflowService workItemWorkflowService;
@@ -74,17 +78,18 @@ public class WorkItemController implements WorkItemsApi {
         }
         WorkItem created = workItemService.createWorkItem(
                 projectId, request.getType(), request.getTitle(), request.getDescription(),
-                request.getWorkflow(), request.getTags(), caller);
+                request.getWorkflow(), request.getTags(), request.getFields(), request.getDueOn(), caller);
         return ResponseEntity.status(201).body(toResponse(created, 0L).statusLabel(statusLabel(projectId, created)));
     }
 
     @Override
     @Transactional(readOnly = true)
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
-                                                                String workflow, String tag) {
+                                                                String workflow, String tag,
+                                                                LocalDate dueBefore) {
         User caller = currentUser();
         List<WorkItem> items =
-                workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, caller);
+                workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, dueBefore, caller);
         List<String> ids = items.stream().map(WorkItem::getId).toList();
         Map<String, Long> counts = workItemService.unresolvedCommentCounts(ids);
         // One query for the whole page, like the comment counts beside it — the list is exactly where an
@@ -134,7 +139,8 @@ public class WorkItemController implements WorkItemsApi {
         WorkItem item = workItemService.patchWorkItem(
                 projectId, workItemId, request.getTitle(), request.getDescription(),
                 request.getStatus(), request.getAssigneeId(), request.getScheduledFor(),
-                request.getScheduleTimezone(), request.getTags(), request.getPublishOnApproval(), caller);
+                request.getScheduleTimezone(), request.getTags(), request.getPublishOnApproval(),
+                request.getFields(), request.getDueOn(), caller);
         // Resolved here too: a client that refreshes its row from a patch response would otherwise see an
         // item's links vanish on an unrelated edit.
         return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
@@ -235,10 +241,18 @@ public class WorkItemController implements WorkItemsApi {
                 .scheduleTimezone(item.getScheduleTimezone())
                 .publishOnApproval(item.isPublishOnApproval())
                 .tags(List.copyOf(item.getTags()))
+                .fields(fieldsOf(item))
+                .dueOn(item.getDueOn())
                 .externalLinks(externalLinks.stream()
                         .map(asset -> new WorkItemExternalLink(asset.getRef(), asset.getType())
                                 .label(asset.getLabel()))
                         .toList());
+    }
+
+    /** The stored field values as a plain map; null when the item has none. */
+    private static Map<String, Object> fieldsOf(WorkItem item) {
+        return item.getFields() == null || item.getFields().isEmpty() ? null
+                : FIELDS_MAPPER.convertValue(item.getFields(), new TypeReference<Map<String, Object>>() { });
     }
 
     /** Map the doer-projection transitions view into its v2 response DTO (identical shape). */

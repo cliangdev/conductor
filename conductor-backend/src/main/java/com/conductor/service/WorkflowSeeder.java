@@ -15,8 +15,8 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 
 /**
- * Seeds the built-in lifecycle Workflows as real DB rows for a project — ENGINEERING (COND-22) and
- * MARKETING (COND-23).
+ * Seeds the built-in lifecycle Workflows as real DB rows for a project — ENGINEERING (COND-22),
+ * MARKETING (COND-23) and MARKETING_CHANGES.
  *
  * <p>Existing projects are seeded by the {@code V74} Flyway migration; this is the runtime path for
  * <em>new</em> projects, invoked from {@link ProjectService} on workspace creation. Both read the same
@@ -29,13 +29,17 @@ public class WorkflowSeeder {
 
     static final String ENGINEERING_SLUG = "ENGINEERING";
     static final String MARKETING_SLUG = "MARKETING";
+    static final String MARKETING_CHANGES_SLUG = "MARKETING_CHANGES";
     private static final String ENGINEERING_RESOURCE = "schema/examples/engineering.workflow.json";
     private static final String MARKETING_RESOURCE = "schema/examples/marketing.workflow.json";
+
+    private static final String MARKETING_CHANGES_RESOURCE = "schema/examples/marketing-changes.workflow.json";
 
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowDefinitionVersionRepository versionRepository;
     private final JsonNode engineeringDefinition;
     private final JsonNode marketingDefinition;
+    private final JsonNode marketingChangesDefinition;
 
     public WorkflowSeeder(WorkflowDefinitionRepository workflowRepository,
                           WorkflowDefinitionVersionRepository versionRepository,
@@ -44,6 +48,7 @@ public class WorkflowSeeder {
         this.versionRepository = versionRepository;
         this.engineeringDefinition = loadDefinition(objectMapper, ENGINEERING_RESOURCE);
         this.marketingDefinition = loadDefinition(objectMapper, MARKETING_RESOURCE);
+        this.marketingChangesDefinition = loadDefinition(objectMapper, MARKETING_CHANGES_RESOURCE);
     }
 
     /**
@@ -60,6 +65,14 @@ public class WorkflowSeeder {
      */
     public void seedMarketing(Project project) {
         seed(project, MARKETING_SLUG, marketingDefinition);
+    }
+
+    /**
+     * Inserts the MARKETING_CHANGES header (a log of marketing changes and their reviewed outcomes) + its
+     * v1 published snapshot for the project, unless one already exists. Runs in the caller's transaction.
+     */
+    public void seedMarketingChanges(Project project) {
+        seed(project, MARKETING_CHANGES_SLUG, marketingChangesDefinition);
     }
 
     private void seed(Project project, String slug, JsonNode definition) {
