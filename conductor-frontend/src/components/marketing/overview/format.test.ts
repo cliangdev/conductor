@@ -63,17 +63,49 @@ describe('conversionRate', () => {
   })
 })
 
-describe('target met', () => {
-  it('says "Target met" once an UP target is reached or passed', () => {
+describe('target met (server without a status)', () => {
+  it('says "On target" once an UP target is reached or passed', () => {
     const m = metric({ unit: 'PERCENT', value: 0.05, target: { value: 0.04, direction: 'UP' } })
-    expect(targetLine(m)).toBe('Target met (4.0%)')
-    expect(targetLine({ ...m, value: 0.04 })).toBe('Target met (4.0%)')
+    expect(targetLine(m)).toBe('On target · Target 4.0%')
+    expect(targetLine({ ...m, value: 0.04 })).toBe('On target · Target 4.0%')
   })
 
-  it('says "Target met" once a DOWN target is reached, and not before', () => {
+  it('says "On target" once a DOWN target is reached, and not before', () => {
     const m = metric({ unit: 'POSITION', goodDirection: 'DOWN', value: 3.5, target: { value: 4, direction: 'DOWN' } })
-    expect(targetLine(m)).toBe('Target met (4.0)')
+    expect(targetLine(m)).toBe('On target · Target 4.0')
     expect(targetLine({ ...m, value: 8 })).toBe('Target 4.0 · 50% there')
+  })
+})
+
+describe('target status', () => {
+  const target = { value: 100, direction: 'UP' as const }
+
+  it('labels each standing', () => {
+    expect(targetLine(metric({ value: 100, status: 'ON_TRACK', missPct: 0, target }))).toBe('On target · Target 100')
+    expect(targetLine(metric({ value: 92, status: 'WATCH', missPct: 0.08, target }))).toBe('Close · 8% short of 100')
+    expect(targetLine(metric({ value: 40, status: 'OFF_TRACK', missPct: 0.6, target }))).toBe('Off target · 60% short of 100')
+    const prorated = { value: 200, direction: 'UP' as const, window: '28d', effectiveValue: 50 }
+    expect(targetLine(metric({ value: 40, status: 'WATCH', missPct: 0.2, target: prorated }))).toBe('Close · 20% short of 50')
+    expect(targetLine(metric({ value: 5, status: 'TOO_EARLY', target }))).toBe('Too early · Target 100')
+  })
+
+  it('says "over" for a DOWN target that is missed', () => {
+    const down = { value: 10, direction: 'DOWN' as const }
+    expect(targetLine(metric({ goodDirection: 'DOWN', value: 11, status: 'WATCH', missPct: 0.1, target: down }))).toBe(
+      'Close · 10% over 10',
+    )
+  })
+
+  it('names the period of a count total target', () => {
+    const m = metric({ aggregation: 'SUM', value: 50, status: 'ON_TRACK', missPct: 0, target: { ...target, window: '28d' } })
+    expect(targetLine(m)).toBe('On target · Target 100 per 28d')
+    expect(targetLine({ ...m, unit: 'PERCENT', aggregation: 'DERIVED', value: 0.5, target: { value: 0.25, direction: 'UP', window: '28d' } })).toBe(
+      'On target · Target 25.0%',
+    )
+  })
+
+  it('has no line without a target', () => {
+    expect(targetLine(metric({ status: 'NO_TARGET' }))).toBeNull()
   })
 })
 

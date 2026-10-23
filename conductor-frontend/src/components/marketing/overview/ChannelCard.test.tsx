@@ -124,10 +124,27 @@ describe('ChannelCard', () => {
     expect(screen.getByRole('region', { name: 'Newsletter' })).toHaveClass('self-start')
   })
 
-  it('says "Target met" instead of a percentage once the target is reached', () => {
+  it('says "On target" instead of a percentage once the target is reached', () => {
     renderCard(channel({ metrics: [metric({ value: 1200, target: { value: 1000, direction: 'UP' } })] }))
-    expect(screen.getByText(/Target met/)).toBeInTheDocument()
+    expect(screen.getByText('On target')).toBeInTheDocument()
     expect(screen.queryByText(/% there/)).not.toBeInTheDocument()
+  })
+
+  it('reads the status the server judged: Close, Off target, Too early', () => {
+    renderCard(
+      channel({
+        metrics: [
+          metric({ metric: 'a', label: 'A', value: 95, status: 'WATCH', missPct: 0.05, target: { value: 100, direction: 'UP' } }),
+          metric({ metric: 'b', label: 'B', value: 40, status: 'OFF_TRACK', missPct: 0.6, target: { value: 100, direction: 'UP' } }),
+          metric({ metric: 'c', label: 'C', value: 0.5, unit: 'PERCENT', status: 'TOO_EARLY', target: { value: 0.25, direction: 'UP' } }),
+        ],
+      }),
+    )
+    expect(screen.getByText('Close')).toBeInTheDocument()
+    expect(screen.getByText(/5% short of 100/)).toBeInTheDocument()
+    expect(screen.getByText('Off target')).toBeInTheDocument()
+    expect(screen.getByText(/60% short of 100/)).toBeInTheDocument()
+    expect(screen.getByText('Too early')).toBeInTheDocument()
   })
 
   it('says when history starts instead of "No previous period"', () => {

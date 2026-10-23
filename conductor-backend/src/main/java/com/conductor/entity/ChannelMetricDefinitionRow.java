@@ -62,6 +62,23 @@ public class ChannelMetricDefinitionRow {
     @Column(name = "target_window")
     private String targetWindow;
 
+    /** EVENT or COHORT (contract v2). See V154. */
+    @Column(name = "basis", nullable = false)
+    private String basis = "EVENT";
+
+    /** ACQUISITION, ACTIVATION, RETENTION or REVENUE. */
+    @Column(name = "area")
+    private String area;
+
+    @Column(name = "description")
+    private String description;
+
+    @Column(name = "headline")
+    private Integer headline;
+
+    @Column(name = "watch_band_pct")
+    private BigDecimal watchBandPct;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -101,5 +118,15 @@ public class ChannelMetricDefinitionRow {
     public void setTargetDirection(String targetDirection) { this.targetDirection = targetDirection; }
     public String getTargetWindow() { return targetWindow; }
     public void setTargetWindow(String targetWindow) { this.targetWindow = targetWindow; }
+    public String getBasis() { return basis; }
+    public void setBasis(String basis) { this.basis = basis == null ? "EVENT" : basis; }
+    public String getArea() { return area; }
+    public void setArea(String area) { this.area = area; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public Integer getHeadline() { return headline; }
+    public void setHeadline(Integer headline) { this.headline = headline; }
+    public BigDecimal getWatchBandPct() { return watchBandPct; }
+    public void setWatchBandPct(BigDecimal watchBandPct) { this.watchBandPct = watchBandPct; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

@@ -45,7 +45,8 @@ public class MarketingOverviewController implements MarketingOverviewApi {
         MarketingOverviewQueryService.Overview overview = queryService.overview(projectId, window);
         return ResponseEntity.ok(new MarketingOverviewResponse(toWindow(overview.window()),
                 overview.funnel().stream().map(MarketingOverviewController::toStage).toList(),
-                overview.channels().stream().map(MarketingOverviewController::toChannel).toList()));
+                overview.channels().stream().map(MarketingOverviewController::toChannel).toList())
+                .funnelBasis(MarketingOverviewResponse.FunnelBasisEnum.valueOf(overview.funnelBasis())));
     }
 
     @Override
@@ -94,7 +95,8 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .value(s.value())
                 .previous(s.previous())
                 .change(s.change())
-                .unavailableReason(s.unavailableReason());
+                .unavailableReason(s.unavailableReason())
+                .basis(OverviewFunnelStage.BasisEnum.valueOf(s.basis()));
     }
 
     private static OverviewChannel toChannel(MarketingOverviewQueryService.ChannelView c) {
@@ -134,7 +136,14 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .insufficientData(m.insufficientData())
                 .funnelOrder(m.funnelOrder())
                 .aggregation(m.aggregation())
-                .target(m.target() == null ? null : toTarget(m.target()));
+                .target(m.target() == null ? null : toTarget(m.target()))
+                .status(m.status() == null ? null : OverviewMetric.StatusEnum.valueOf(m.status()))
+                .missPct(m.missPct())
+                .sampleSize(m.sampleSize())
+                .area(m.area() == null ? null : OverviewMetric.AreaEnum.valueOf(m.area()))
+                .description(m.description())
+                .headline(m.headline())
+                .basis(m.basis() == null ? null : OverviewMetric.BasisEnum.valueOf(m.basis()));
     }
 
     private static MarketingTarget toTarget(MarketingOverviewQueryService.TargetView t) {
@@ -142,6 +151,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
         if (t.readOnly()) {
             target.readOnly(true).source(t.source());
         }
+        target.window(t.window()).watchBandPct(t.watchBandPct());
         return target;
     }
 

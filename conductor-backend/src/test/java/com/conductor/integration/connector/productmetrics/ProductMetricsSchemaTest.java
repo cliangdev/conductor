@@ -65,7 +65,17 @@ class ProductMetricsSchemaTest {
 
         assertThat(pull.definitions()).filteredOn(d -> d.funnelOrder() != null)
                 .extracting(d -> d.metric())
-                .containsExactly("first_open", "onboarding_started", "paywall_shown", "trial_started", "paid");
+                .containsExactly("first_open", "onboarding_started", "quiz_completed", "paywall_shown",
+                        "purchase_started", "trial_started", "paid");
+        assertThat(pull.definitions()).filteredOn(d -> d.funnelOrder() != null)
+                .allSatisfy(d -> assertThat(d.basis()).isEqualTo("COHORT"));
+        assertThat(pull.definitions()).filteredOn(d -> d.metric().equals("retention_d7")).singleElement()
+                .satisfies(d -> {
+                    assertThat(d.aggregation()).isEqualTo("RATIO");
+                    assertThat(d.area()).isEqualTo("RETENTION");
+                    assertThat(d.headline()).isEqualTo(1);
+                    assertThat(d.targetValue()).isNotNull();
+                });
         assertThat(pull.definitions()).filteredOn(d -> d.metric().equals("cost_per_trial")).singleElement()
                 .satisfies(d -> {
                     assertThat(d.aggregation()).isEqualTo("RATIO");
@@ -85,7 +95,7 @@ class ProductMetricsSchemaTest {
         ObjectNode good = (ObjectNode) MAPPER.readTree(local.sampleJson(today.minusDays(1), today));
 
         ObjectNode wrongVersion = good.deepCopy();
-        wrongVersion.put("contractVersion", 2);
+        wrongVersion.put("contractVersion", 3);
         assertThat(validate(wrongVersion)).isNotEmpty();
 
         ObjectNode unknownAggregation = good.deepCopy();
@@ -93,7 +103,12 @@ class ProductMetricsSchemaTest {
         assertThat(validate(unknownAggregation)).isNotEmpty();
 
         ObjectNode ratioWithoutParts = good.deepCopy();
-        ObjectNode ratio = (ObjectNode) ratioWithoutParts.get("metrics").get(7);
+        ObjectNode ratio = null;
+        for (JsonNode m : ratioWithoutParts.get("metrics")) {
+            if (m.get("key").asText().equals("cost_per_trial")) {
+                ratio = (ObjectNode) m;
+            }
+        }
         assertThat(ratio.get("aggregation").asText()).isEqualTo("RATIO");
         ratio.remove("numerator");
         assertThat(validate(ratioWithoutParts)).isNotEmpty();
@@ -105,6 +120,26 @@ class ProductMetricsSchemaTest {
         ObjectNode reservedKey = good.deepCopy();
         ((ObjectNode) reservedKey.get("metrics").get(0)).put("key", "ref_opens");
         assertThat(validate(reservedKey)).isNotEmpty();
+
+        ObjectNode badBasis = good.deepCopy();
+        ((ObjectNode) badBasis.get("metrics").get(0)).put("basis", "WEEKLY");
+        assertThat(validate(badBasis)).isNotEmpty();
+
+        ObjectNode badArea = good.deepCopy();
+        ((ObjectNode) badArea.get("metrics").get(0)).put("area", "GROWTH");
+        assertThat(validate(badArea)).isNotEmpty();
+
+        ObjectNode longRestatement = good.deepCopy();
+        longRestatement.put("restatementDays", 61);
+        assertThat(validate(longRestatement)).isNotEmpty();
+        longRestatement.put("restatementDays", 60);
+        assertThat(validate(longRestatement)).isEmpty();
+        longRestatement.put("contractVersion", 1);
+        assertThat(validate(longRestatement)).isNotEmpty(); // v1 stays capped at 30
+
+        ObjectNode adDimension = good.deepCopy();
+        ((ObjectNode) adDimension.get("points").get(0)).put("dimension", "ad:9:Spring creative");
+        assertThat(validate(adDimension)).isEmpty();
 
         ObjectNode missingCompleteThrough = good.deepCopy();
         missingCompleteThrough.remove("dataCompleteThrough");

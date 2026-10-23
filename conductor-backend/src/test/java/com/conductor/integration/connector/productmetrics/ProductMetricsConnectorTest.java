@@ -159,13 +159,13 @@ class ProductMetricsConnectorTest {
 
     @Test
     void aWrongContractVersionIsRefusedWithThePlainReason() {
-        respond(response("2", METRICS, "[]", "[]"));
+        respond(response("3", METRICS, "[]", "[]"));
 
         assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
                 .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
                     assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
                     assertThat(e.getMessage()).isEqualTo(
-                            "The server speaks product metrics contract version 2; Conductor reads version 1.");
+                            "The server speaks product metrics contract version 3; Conductor reads versions 1 and 2.");
                 });
     }
 
@@ -242,6 +242,118 @@ class ProductMetricsConnectorTest {
         respond(response("1", METRICS, "[]", """
                 [{"metric":"revenue","day":"2026-10-11","value":1}]"""));
         assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).hasMessageContaining("'revenue'");
+    }
+
+    // ---- contract v2 ------------------------------------------------------------------------------
+
+    private static final String METRICS_V2 = """
+            [{"key":"first_open","label":"First opens","unit":"COUNT","aggregation":"SUM","funnelOrder":1,
+              "basis":"COHORT","area":"ACQUISITION","description":"People who opened the app for the first time"},
+             {"key":"retained","label":"Retained","unit":"COUNT","aggregation":"SUM"},
+             {"key":"matured","label":"Matured","unit":"COUNT","aggregation":"SUM"},
+             {"key":"retention","label":"Retention","unit":"PERCENT","aggregation":"RATIO","numerator":"retained",
+              "denominator":"matured","area":"RETENTION","headline":2,
+              "target":{"value":0.25,"direction":"UP","watchBandPct":15}}]""";
+
+    private static String v2(String restatementDays, String metrics, String points) {
+        return """
+                {"contractVersion":2,"timezone":"America/Los_Angeles","dataCompleteThrough":"2026-10-12",
+                 "restatementDays":%s,"metrics":%s,"points":%s}""".formatted(restatementDays, metrics, points);
+    }
+
+    @Test
+    void aVersion2ResponseCarriesBasisAreaDescriptionHeadlineAndTheWatchBand() {
+        respond(v2("60", METRICS_V2, "[]"));
+
+        ChannelMetricsPull pull = connector.pull(ctx(URL), FROM, TO);
+
+        assertThat(pull.definitions()).filteredOn(d -> d.metric().equals("first_open")).singleElement()
+                .satisfies(d -> {
+                    assertThat(d.basis()).isEqualTo("COHORT");
+                    assertThat(d.area()).isEqualTo("ACQUISITION");
+                    assertThat(d.description()).isEqualTo("People who opened the app for the first time");
+                });
+        assertThat(pull.definitions()).filteredOn(d -> d.metric().equals("retention")).singleElement()
+                .satisfies(d -> {
+                    assertThat(d.basis()).isEqualTo("EVENT"); // the default
+                    assertThat(d.headline()).isEqualTo(2);
+                    assertThat(d.watchBandPct()).isEqualByComparingTo("15");
+                    assertThat(d.targetValue()).isEqualByComparingTo("0.25");
+                });
+        assertThat(pull.trailingDays()).isEqualTo(60);
+    }
+
+    @Test
+    void aVersion1ResponseStillReadsAsBeforeAndIgnoresVersion2Fields() {
+        respond(response("1", """
+                [{"key":"first_open","label":"First opens","unit":"COUNT","aggregation":"SUM","basis":"COHORT",
+                  "area":"NONSENSE","headline":0}]""", "[]", "[]"));
+
+        ChannelMetricsPull pull = connector.pull(ctx(URL), FROM, TO);
+
+        assertThat(pull.definitions()).singleElement().satisfies(d -> {
+            assertThat(d.basis()).isEqualTo("EVENT");
+            assertThat(d.area()).isNull();
+            assertThat(d.headline()).isNull();
+        });
+    }
+
+    @Test
+    void restatementIsCappedAt30OnVersion1And60OnVersion2() {
+        respond(response("1", METRICS, "[]", "[]").replace("\"restatementDays\":3", "\"restatementDays\":31"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessage("restatementDays must be a whole number from 0 to 30.");
+
+        server.reset();
+        respond(v2("61", METRICS_V2, "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessage("restatementDays must be a whole number from 0 to 60.");
+    }
+
+    @Test
+    void aBadBasisAreaDescriptionOrHeadlineIsRefused() {
+        String base = """
+                [{"key":"a","label":"A","unit":"COUNT","aggregation":"SUM",%s}]""";
+        respond(v2("3", base.formatted("\"basis\":\"WEEKLY\""), "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessage("The metric 'a' has basis 'WEEKLY'; expected EVENT or COHORT.");
+
+        server.reset();
+        respond(v2("3", base.formatted("\"area\":\"GROWTH\""), "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessageContaining("has area 'GROWTH'");
+
+        server.reset();
+        respond(v2("3", base.formatted("\"description\":\"" + "x".repeat(241) + "\""), "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).hasMessageContaining("longer than 240");
+
+        server.reset();
+        respond(v2("3", base.formatted("\"headline\":0"), "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).hasMessageContaining("headline");
+    }
+
+    @Test
+    void keywordAndAdDimensionsAreAcceptedOnVersion2Only() {
+        String metrics = """
+                [{"key":"a","label":"A","unit":"COUNT","aggregation":"SUM"}]""";
+        String points = """
+                [{"metric":"a","day":"2026-10-11","value":1,"dimension":"keyword:77:meal planner: free"},
+                 {"metric":"a","day":"2026-10-11","value":2,"dimension":"ad:9:Spring creative"}]""";
+        respond(v2("3", metrics, points));
+
+        assertThat(connector.pull(ctx(URL), FROM, TO).points()).extracting(ChannelMetricPoint::dimensionKey)
+                .containsExactly("keyword:77:meal planner: free", "ad:9:Spring creative");
+
+        server.reset();
+        respond(response("1", metrics, points, "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessageContaining("start with source: or campaign:");
+
+        server.reset();
+        respond(v2("3", metrics, """
+                [{"metric":"a","day":"2026-10-11","value":1,"dimension":"keyword:77"}]"""));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessageContaining("source:, campaign:, keyword: or ad:");
     }
 
     // ---- HTTP -------------------------------------------------------------------------------------

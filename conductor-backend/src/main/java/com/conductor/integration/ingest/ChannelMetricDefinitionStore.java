@@ -54,6 +54,11 @@ public class ChannelMetricDefinitionStore {
             row.setTargetValue(d.targetValue());
             row.setTargetDirection(d.targetDirection());
             row.setTargetWindow(d.targetWindow());
+            row.setBasis(d.basis());
+            row.setArea(d.area());
+            row.setDescription(d.description());
+            row.setHeadline(d.headline());
+            row.setWatchBandPct(d.watchBandPct());
             repository.save(row);
         }
     }

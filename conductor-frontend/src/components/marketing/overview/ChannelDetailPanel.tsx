@@ -312,6 +312,9 @@ export function ChannelDetailPanel({
                         <p className="text-xs font-medium text-muted-foreground">
                           {m.label}
                         </p>
+                        {m.description && (
+                          <p className="text-xs text-muted-foreground">{m.description}</p>
+                        )}
                         <p className="text-2xl font-semibold tabular-nums text-foreground">
                           {formatMetricValue(m.value, m.unit)}
                         {m.asOf && (

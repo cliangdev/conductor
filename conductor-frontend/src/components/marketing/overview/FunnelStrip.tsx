@@ -1,8 +1,9 @@
 import { InfoIcon } from 'lucide-react'
 import { ChangeLine } from './ChangeLine'
 import { MetricFlags } from './MetricFlags'
-import { conversionRate, formatMetricValue, readOnlyTargetSource, targetLine } from './format'
-import type { OverviewFunnelStage, OverviewMetric } from './types'
+import { conversionRate, formatMetricValue, readOnlyTargetSource } from './format'
+import { TargetStatusLine } from './TargetNote'
+import type { MetricBasis, OverviewFunnelStage, OverviewMetric } from './types'
 
 const PRODUCT_STAGE_PREFIX = 'product_'
 
@@ -15,6 +16,8 @@ function productMetricFor(stage: OverviewFunnelStage, metrics: OverviewMetric[])
 
 const FRESHNESS_NOTE =
   'Days up to the "data through" date are complete. Later days may still be reported and can change.'
+
+const COHORT_NOTE = 'In-app stages count people who first opened in the window, followed to now.'
 
 function stageChange(stage: OverviewFunnelStage) {
   const pct =
@@ -65,8 +68,11 @@ export function FunnelStrip({
   stages,
   channelLabels = {},
   productMetrics = [],
+  basis,
 }: {
   stages: OverviewFunnelStage[]
+  /** COHORT adds a note that the in-app stages follow each cohort to now. */
+  basis?: MetricBasis
   /** The In-app channel's metrics: their provisional and small-sample flags and read-only targets show on the in-app stages. */
   productMetrics?: OverviewMetric[]
   /** Channel key to display label, used to name a collapsed group of unavailable stages. */
@@ -89,6 +95,7 @@ export function FunnelStrip({
           <InfoIcon className="h-3.5 w-3.5" aria-hidden />
         </span>
       </div>
+      {basis === 'COHORT' && <p className="text-xs text-muted-foreground">{COHORT_NOTE}</p>}
       <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card lg:grid lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] lg:gap-2 lg:divide-y-0 lg:overflow-visible lg:border-0 lg:bg-transparent">
         {items.map((item) => {
           if (item.kind === 'unavailable') {
@@ -106,7 +113,6 @@ export function FunnelStrip({
           const { stage, from } = item
           const conversion = from ? conversionRate(from.value, stage.value) : null
           const product = productMetricFor(stage, productMetrics)
-          const targetNote = product?.target ? targetLine(product) : null
           return (
             <li
               key={stage.key}
@@ -125,9 +131,9 @@ export function FunnelStrip({
                 </p>
               )}
               {product && <MetricFlags metric={product} className="basis-full lg:mt-1" />}
-              {product?.target && targetNote && (
+              {product?.target && (
                 <p className="basis-full text-xs text-muted-foreground lg:mt-1">
-                  {targetNote}
+                  <TargetStatusLine metric={product} />
                   {product.target.readOnly && <> · {readOnlyTargetSource(product.target)}</>}
                 </p>
               )}

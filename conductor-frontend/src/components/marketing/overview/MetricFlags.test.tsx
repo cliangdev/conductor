@@ -17,6 +17,13 @@ describe('MetricFlags', () => {
     expect(screen.queryByText('Provisional')).not.toBeInTheDocument()
   })
 
+  it('drops the chip when the status already says Too early', () => {
+    const { container } = render(<MetricFlags metric={{ insufficientData: true, status: 'TOO_EARLY' }} />)
+    expect(container).toBeEmptyDOMElement()
+    render(<MetricFlags metric={{ insufficientData: true, status: 'ON_TRACK' }} />)
+    expect(screen.getByText('Small sample')).toBeInTheDocument()
+  })
+
   it('reads the flag from a metric', () => {
     expect(metricFlags({ insufficientData: true })).toEqual({ smallSample: true })
     expect(metricFlags({})).toEqual({ smallSample: false })

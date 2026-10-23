@@ -217,7 +217,19 @@ interface OverviewMetric {
   insufficientData?: boolean | null
   provisionalDays?: number | null
   funnelOrder?: number | null
-  target?: { value: number; direction: string; readOnly?: boolean | null; source?: string | null } | null
+  status?: string | null
+  missPct?: number | null
+  sampleSize?: number | null
+  area?: string | null
+  basis?: string | null
+  target?: {
+    value: number
+    direction: string
+    readOnly?: boolean | null
+    source?: string | null
+    window?: string | null
+    effectiveValue?: number | null
+  } | null
   series?: OverviewSeriesPoint[]
 }
 
@@ -252,6 +264,7 @@ interface OverviewFunnelStage {
   source: string
   available: boolean
   unavailableReason?: string | null
+  basis?: string | null
 }
 
 interface OverviewDimension {
@@ -265,6 +278,7 @@ interface OverviewResponse {
   window: Record<string, string>
   funnel: OverviewFunnelStage[]
   channels: OverviewChannel[]
+  funnelBasis?: string | null
 }
 
 interface ChannelDetailResponse {
@@ -305,6 +319,8 @@ function trimTarget(t: NonNullable<OverviewMetric['target']>): Record<string, un
   return omitNulls({
     value: t.value,
     direction: t.direction,
+    window: t.window,
+    effectiveValue: t.effectiveValue,
     readOnly: t.readOnly ? true : null,
     setIn: t.readOnly ? t.source : null,
   })
@@ -341,6 +357,14 @@ function trimMetric(
     provisional: flags && windowHasProvisionalDay(m, dataCompleteThrough) ? true : null,
     smallSample: flags && m.insufficientData ? true : null,
     target: m.target ? trimTarget(m.target) : null,
+    // Standing against the target: ON_TRACK, WATCH (close), OFF_TRACK or TOO_EARLY; omitted without a target.
+    // missPct is the shortfall as a fraction of the (prorated) target.
+    status: m.status && m.status !== 'NO_TARGET' ? m.status : null,
+    missPct: m.status && m.status !== 'NO_TARGET' ? round4(m.missPct) : null,
+    sampleSize: m.sampleSize,
+    area: m.area,
+    // COHORT: each day counts the people who first opened that day, followed to now (EVENT is the default).
+    basis: m.basis === 'COHORT' ? m.basis : null,
     series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,
   })
 }
@@ -405,6 +429,7 @@ function trimFunnel(funnel: OverviewFunnelStage[]) {
           changePct: round4(s.changePct ?? (s.previous && s.value != null ? (s.value - s.previous) / s.previous : null)),
           conversionFromKey: s.conversionFromKey,
           conversionPct: round4(conversionPct),
+          basis: s.basis === 'COHORT' ? s.basis : null,
         })
       }),
     unavailableStages: funnel
@@ -428,6 +453,8 @@ async function getChannelInsights(
     const overview = await apiGet<OverviewResponse>(`${base}/overview?window=${backendWindow}`, config)
     out['window'] = overview.window
     Object.assign(out, trimFunnel(overview.funnel))
+    // COHORT: the in-app stages count people who first opened in the window, followed to now.
+    if (overview.funnelBasis === 'COHORT') out['funnelBasis'] = overview.funnelBasis
     out['channels'] = overview.channels.map((c) => trimChannel(c, false))
   }
 

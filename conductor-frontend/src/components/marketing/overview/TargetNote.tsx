@@ -2,8 +2,22 @@
 // edit button. A target a connector feed owns (the in-app channel's) is read-only: it names where it is
 // set and never offers an edit button.
 
-import { readOnlyTargetSource, targetLine } from './format'
+import { TARGET_STATUS_CLASS, readOnlyTargetSource, targetStatusParts } from './format'
 import type { OverviewMetric } from './types'
+
+/** "On target · Target 200" with the status label coloured; plain text when there is no status to colour. */
+export function TargetStatusLine({ metric }: { metric: OverviewMetric }) {
+  const parts = targetStatusParts(metric)
+  if (!parts) return null
+  if (!parts.label) return <>{parts.detail}</>
+  return (
+    <>
+      <span className={`font-medium ${parts.status ? TARGET_STATUS_CLASS[parts.status] : ''}`}>{parts.label}</span>
+      {' · '}
+      {parts.detail}
+    </>
+  )
+}
 
 export function TargetNote({
   metric,
@@ -22,7 +36,7 @@ export function TargetNote({
   /** The connection that owns the targets, named when they cannot be edited here. */
   ownerLabel?: string
 }) {
-  const line = targetLine(metric)
+  const line = metric.target ? <TargetStatusLine metric={metric} /> : null
   if (metric.target?.readOnly) {
     return (
       <p className="text-xs text-muted-foreground">

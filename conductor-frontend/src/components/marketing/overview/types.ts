@@ -19,6 +19,10 @@ export const CHANNEL_ORDER: ChannelKey[] = ['WEB', 'SEARCH', 'SOCIAL', 'STORE', 
 export type ChannelStatus = 'LIVE' | 'STALE' | 'NOT_CONNECTED' | 'COMING_SOON' | 'MISMATCH'
 export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION' | 'RATING'
 export type TargetDirection = 'UP' | 'DOWN'
+/** Where a value stands against its target. TOO_EARLY: no value, or a rate on fewer than 20 observations. */
+export type TargetStatus = 'ON_TRACK' | 'WATCH' | 'OFF_TRACK' | 'TOO_EARLY' | 'NO_TARGET'
+/** COHORT: a value counts the people who first opened on that day (or in the window), followed to now. */
+export type MetricBasis = 'EVENT' | 'COHORT'
 
 export interface OverviewWindowRange {
   from: string
@@ -44,6 +48,8 @@ export interface OverviewFunnelStage {
   available: boolean
   unavailableReason?: string | null
   dataCompleteThrough?: string | null
+  /** COHORT for in-app stages counted by cohort; EVENT (or absent) otherwise. */
+  basis?: MetricBasis
 }
 
 export interface OverviewConnection {
@@ -60,6 +66,12 @@ export interface MarketingTarget {
   readOnly?: boolean
   /** Where a read-only target is set, e.g. "Set in Product metrics". */
   source?: string | null
+  /** The period a count or currency total target is stated for, e.g. "28d"; absent means the target is compared as stated. */
+  window?: string | null
+  /** A miss within this percent of the target reads as Close; absent means 10. */
+  watchBandPct?: number | null
+  /** The target the value was judged against in the requested window (prorated when the target has a window). */
+  effectiveValue?: number | null
 }
 
 export interface OverviewSeriesPoint {
@@ -89,6 +101,20 @@ export interface OverviewMetric {
   funnelOrder?: number | null
   /** The feed reported a sample under 20 for the window; `noise` is then also true. */
   insufficientData?: boolean
+  /** Standing against the target (the prorated target for a count or currency total); absent from older servers. */
+  status?: TargetStatus
+  /** How far short of the target, as a fraction of it (0.05 is 5%); 0 when met, null when not judged. */
+  missPct?: number | null
+  /** Observations behind the value, when known. */
+  sampleSize?: number | null
+  /** PRODUCT only: the part of the growth scorecard the metric belongs to. */
+  area?: 'ACQUISITION' | 'ACTIVATION' | 'RETENTION' | 'REVENUE' | null
+  /** PRODUCT only: what the metric counts, in the feed's words. */
+  description?: string | null
+  /** PRODUCT only: priority among the feed's headline metrics (1 first). */
+  headline?: number | null
+  /** PRODUCT only: COHORT when each day counts the people who first opened that day. */
+  basis?: MetricBasis
   /** Days after the channel's data-complete day that the series still shows (excluded from the value). */
   provisionalDays?: number
   target?: MarketingTarget | null
@@ -132,6 +158,8 @@ export interface MarketingOverviewResponse {
   window: OverviewWindowRange
   funnel: OverviewFunnelStage[]
   channels: OverviewChannel[]
+  /** COHORT when the in-app stages count people who first opened in the window, followed to now. */
+  funnelBasis?: MetricBasis
 }
 
 export interface OverviewDimensionColumn {

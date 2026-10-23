@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://conductor.dev/schemas/product-metrics-v1.schema.json",
-  "title": "Conductor product metrics contract, v1",
-  "description": "The response of GET {baseUrl}?from=YYYY-MM-DD&to=YYYY-MM-DD. See docs/integrations-product-metrics.md. This file is the source of truth for the shape; the prose explains the meaning.",
+  "$id": "https://conductor.dev/schemas/product-metrics-v2.schema.json",
+  "title": "Conductor product metrics contract, v2",
+  "description": "The response of GET {baseUrl}?from=YYYY-MM-DD&to=YYYY-MM-DD. See docs/integrations-product-metrics.md. This file is the source of truth for the shape; the prose explains the meaning. Version 2 adds optional fields to version 1; a version 1 response is still valid, but v2-only fields (basis, area, description, headline, watchBandPct, keyword:/ad: dimensions, restatementDays above 30) are only read when contractVersion is 2.",
   "type": "object",
   "required": ["contractVersion", "timezone", "dataCompleteThrough", "restatementDays", "metrics", "points"],
   "properties": {
-    "contractVersion": { "const": 1 },
+    "contractVersion": { "enum": [1, 2] },
     "timezone": {
       "type": "string",
       "minLength": 1,
@@ -20,8 +20,8 @@
     "restatementDays": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 30,
-      "description": "How many days back the backend may still change a number after it has reported it."
+      "maximum": 60,
+      "description": "How many days back the backend may still change a number after it has reported it. At most 30 on version 1; up to 60 on version 2, so cohorts can mature."
     },
     "metrics": {
       "type": "array",
@@ -39,6 +39,8 @@
       "items": { "$ref": "#/$defs/referencePoint" }
     }
   },
+  "if": { "properties": { "contractVersion": { "const": 1 } }, "required": ["contractVersion"] },
+  "then": { "properties": { "restatementDays": { "maximum": 30 } } },
   "$defs": {
     "date": { "type": "string", "format": "date" },
     "metric": {
@@ -64,6 +66,25 @@
           "minimum": 1,
           "description": "Places the metric as a stage of the in-app funnel, 1 first. Absent means not a funnel stage."
         },
+        "basis": {
+          "enum": ["EVENT", "COHORT"],
+          "default": "EVENT",
+          "description": "v2. EVENT: a point counts what happened on its day. COHORT: a point's day is the day its members first opened, and its value is how many of them reached the stage by dataCompleteThrough. Restate cohort days as they mature (see restatementDays)."
+        },
+        "area": {
+          "enum": ["ACQUISITION", "ACTIVATION", "RETENTION", "REVENUE"],
+          "description": "v2. Which part of the growth scorecard the metric belongs to."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "v2. What the metric counts, in plain words, e.g. 'Installs that started a free trial'."
+        },
+        "headline": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "v2. Priority among the headline metrics, 1 first. Absent means not a headline metric."
+        },
         "target": {
           "oneOf": [
             { "type": "null" },
@@ -73,7 +94,8 @@
               "properties": {
                 "value": { "type": "number", "minimum": 0 },
                 "direction": { "enum": ["UP", "DOWN"], "description": "Defaults to the metric's good." },
-                "window": { "type": "string", "pattern": "^[0-9]{1,3}d$", "description": "For example 28d." }
+                "window": { "type": "string", "pattern": "^[0-9]{1,3}d$", "description": "For example 28d." },
+                "watchBandPct": { "type": "number", "minimum": 0, "maximum": 100, "description": "v2. A miss within this percent of the target reads as Close (WATCH) instead of Off target. Default 10." }
               }
             }
           ]
@@ -97,8 +119,8 @@
         "value": { "type": "number" },
         "dimension": {
           "type": ["string", "null"],
-          "pattern": "^(source|campaign):.{1,190}$",
-          "description": "Null for the day's total. source:<name> or campaign:<id>:<name> for a breakdown row."
+          "pattern": "^((source|campaign):.{1,190}|(keyword|ad):[^:]{1,100}:.{1,190})$",
+          "description": "Null for the day's total. source:<name> or campaign:<id>:<name> for a breakdown row; v2 also keyword:<id>:<text> and ad:<id>:<name>."
         },
         "sampleSize": {
           "type": ["integer", "null"],
