@@ -49,7 +49,7 @@ Keep this light — one or two follow-up questions, not a form:
 - **Static ad / short video from a photo**: the headline (or let the skill draft one from the
   Knowledge page), and a photo. Call `list_creative_media({kind: "IMAGE"})` first and offer what's
   already on hand before asking for a new photo; no photo fits and none is offered? Offer to generate one with
-  `generate_creative_image` (needs an OpenAI API key, or the person's yes to use Codex). A new photo is a local file path (a URL: download it
+  `generate_creative_image` (Codex by default, an OpenAI API key as the fallback). A new photo is a local file path (a URL: download it
   to a local file first) — it is only uploaded after the person approves the preview.
 - **Organic post or slideshow** (the person says so under "Other", or describes a TikTok or Instagram
   photo post that is not an ad): skip the brand layouts. Hand off to the `conductor-creative` skill's

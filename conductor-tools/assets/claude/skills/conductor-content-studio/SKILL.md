@@ -151,12 +151,13 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    preview refuses it.
    When the library does have usable images, or the request itself asks for generated imagery, set
    `"generate": true` without asking: ideas use a library photo when one fits and give an
-   `imagePrompt` only when none does. If `generate_creative_image` later fails (no key, an API
-   error, or Codex missing or logged out), treat that finalist as unrenderable in S3b; at S6, say
-   why and ask for a photo instead of offering Approve & upload. With no API key the tool returns
-   `CODEX_CONFIRMATION_REQUIRED`: ask the person once per run (set a key, use Codex this time, or
-   skip and use a library photo); a yes covers the rest of the run, so pass `useCodex: true` on
-   later calls without asking again. Never pass it before that yes.
+   `imagePrompt` only when none does. Generate with Codex by default: pass `useCodex: true` on every
+   `generate_creative_image` call without asking (it is cheaper than the API). If Codex fails
+   (missing, logged out, or a plan without image generation), say why once and call again without
+   `useCodex`: that uses the person's OpenAI API key when one is set. With no key it returns
+   `CODEX_CONFIRMATION_REQUIRED`; then ask once per run whether to fix Codex (`codex login`), set a
+   key, or skip and use a library photo. If no route works, treat that finalist as unrenderable in
+   S3b; at S6, say why and ask for a photo instead of offering Approve & upload.
 
 ### S1 — Strategist -> `brief.md`
 

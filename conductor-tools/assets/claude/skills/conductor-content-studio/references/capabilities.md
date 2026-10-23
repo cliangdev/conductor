@@ -68,7 +68,7 @@ needs changing until it fits.
 ## Generated photos
 
 When `media.json` has `generate: true`, one generated photo per card or beat (or as a MOTION
-background) is renderable. It comes from `generate_creative_image` (OpenAI Images API, or Codex with the person's yes):
+background) is renderable. It comes from `generate_creative_image` (Codex by default, the OpenAI Images API as the fallback):
 photographic, no text, logos or screens in the picture, and no depiction of the product unless a real
 reference image is supplied. It is `aiGenerated: true`. Run `references/realism-check.md` on every one. Collages, charts and text-in-image stay out.
 Ask for a mid-tone scene: under `bleed`, a dark or night scene can render almost black. For a dark scene, use `card`.

@@ -26,8 +26,8 @@ export function checkConfigFile(): boolean {
   return fs.existsSync(CONFIG_PATH)
 }
 
-const CODEX_CHECK_NAME = 'Image generation: Codex (asks before each run)'
-const API_KEY_HINT = 'set an OpenAI API key with `conductor config set-openai-api-key` — about half the cost'
+const CODEX_CHECK_NAME = 'Image generation: Codex (the skills\' default)'
+const API_KEY_HINT = 'an OpenAI API key (`conductor config set-openai-api-key`) is the fallback when Codex fails'
 
 export function describeCodexStatus(status: CodexStatus): { status: 'pass' | 'warn'; message: string } {
   if (status.state === 'ready') return { status: 'pass', message: `${CODEX_CHECK_NAME}: ${status.version}, logged in` }
@@ -37,12 +37,16 @@ export function describeCodexStatus(status: CodexStatus): { status: 'pass' | 'wa
   return { status: 'warn', message: `${CODEX_CHECK_NAME}: not found — npm i -g @openai/codex, then \`codex login\` (optional; only needed to generate photos)` }
 }
 
+/** Both routes: the skills try Codex first and fall back to the API key, so either one working passes. */
 export async function checkImageGeneration(): Promise<{ status: 'pass' | 'warn'; message: string }> {
+  const codex = describeCodexStatus(await checkCodexCli())
   const found = resolveOpenAiKey()
-  if (!found) {
-    const codex = describeCodexStatus(await checkCodexCli())
-    return { status: codex.status, message: `${codex.message}; ${API_KEY_HINT}` }
-  }
+  if (!found) return { status: codex.status, message: `${codex.message}; ${API_KEY_HINT}` }
+  const api = await checkOpenAiRoute(found)
+  return { status: codex.status === 'pass' || api.status === 'pass' ? 'pass' : 'warn', message: `${codex.message}; fallback: ${api.message}` }
+}
+
+async function checkOpenAiRoute(found: { key: string; source: string }): Promise<{ status: 'pass' | 'warn'; message: string }> {
   const { model, quality } = resolveImageSettings()
   const label = `Image generation: OpenAI API (${model}, ${quality}), key from ${found.source}`
   try {

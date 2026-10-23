@@ -81,8 +81,8 @@ a crop is a FAIL. A flaw that shows in no placement crop can PASS with a note.
 
 Regenerate with the failed tells named in the new prompt, for example "four different peppers, no
 two alike", "matte sauce, dried at the edges, soft window light", "hands out of frame". At most two
-regenerations per image (larger sizes cost more on the API, and the Codex route spends the allowance
-the person has already agreed to). Then stop. Tell the person what still looks generated and offer a
+regenerations per image (each uses Codex allowance, or bills the API key on the fallback route, more at
+larger sizes). Then stop. Tell the person what still looks generated and offer a
 library photo, a reference photo (`referenceImagePaths`), or filming. Never ship a FAIL.
 
 ## Report
