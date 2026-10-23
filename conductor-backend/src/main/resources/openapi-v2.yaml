@@ -6796,7 +6796,12 @@ components:
         window:
           type: string
           nullable: true
-          description: The period a count or currency total target is stated for, e.g. "28d"; the status prorates it to the requested window. Null means 28d.
+          description: The period a count or currency total target is stated for, e.g. "28d"; the status prorates it to the requested window. Null means the target is compared as stated, never prorated.
+        effectiveValue:
+          type: number
+          format: double
+          nullable: true
+          description: The target the value was judged against in the requested window - value prorated from window when the target declares one, otherwise value. Present on metric output.
         watchBandPct:
           type: number
           format: double

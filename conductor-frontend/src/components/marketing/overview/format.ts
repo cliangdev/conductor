@@ -110,7 +110,7 @@ export function targetStatusParts(metric: OverviewMetric): { status: TargetStatu
   if ((status === 'WATCH' || status === 'OFF_TRACK') && metric.missPct !== null && metric.missPct !== undefined) {
     const pct = Math.round(metric.missPct * 100)
     const word = target.direction === 'UP' ? 'short of' : 'over'
-    return { status, label, detail: `${pct}% ${word} ${formatMetricValue(target.value, metric.unit)}` }
+    return { status, label, detail: `${pct}% ${word} ${formatMetricValue(target.effectiveValue ?? target.value, metric.unit)}` }
   }
   return { status, label, detail: targetText(metric, target) }
 }

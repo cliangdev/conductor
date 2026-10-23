@@ -386,12 +386,12 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
         for (int d = 8; d <= 14; d++) {
             put(store, "app-store-connect", "STORE", "downloads", day(d), 10, null, false);
         }
-        // 280 per 28 days is 70 for 7: exactly met
-        service.setTarget(project.getId(), "STORE", "downloads", 280.0, null, "u");
+        // a Conductor-owned target has no window: compared as stated, not prorated (70 in the window)
+        service.setTarget(project.getId(), "STORE", "downloads", 70.0, null, "u");
 
         assertThat(metric(channel(overview7(), "STORE"), "downloads").status()).isEqualTo("ON_TRACK");
 
-        service.setTarget(project.getId(), "STORE", "downloads", 400.0, null, "u"); // 100 for 7: 30% short
+        service.setTarget(project.getId(), "STORE", "downloads", 100.0, null, "u"); // 70 against 100: 30% short
         MetricView downloads = metric(channel(overview7(), "STORE"), "downloads");
         assertThat(downloads.status()).isEqualTo("OFF_TRACK");
         assertThat(downloads.missPct()).isCloseTo(0.3, org.assertj.core.data.Offset.offset(1e-9));

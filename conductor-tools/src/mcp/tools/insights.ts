@@ -228,6 +228,7 @@ interface OverviewMetric {
     readOnly?: boolean | null
     source?: string | null
     window?: string | null
+    effectiveValue?: number | null
   } | null
   series?: OverviewSeriesPoint[]
 }
@@ -319,6 +320,7 @@ function trimTarget(t: NonNullable<OverviewMetric['target']>): Record<string, un
     value: t.value,
     direction: t.direction,
     window: t.window,
+    effectiveValue: t.effectiveValue,
     readOnly: t.readOnly ? true : null,
     setIn: t.readOnly ? t.source : null,
   })

@@ -83,12 +83,26 @@ class MarketingTargetStatusTest {
         assertThat(status(count(Good.UP), 70.0, per28, null, 7).status()).isEqualTo("ON_TRACK");
         assertThat(status(count(Good.UP), 63.0, per28, null, 7).status()).isEqualTo("WATCH");
         assertThat(status(count(Good.UP), 60.0, per28, null, 7).status()).isEqualTo("OFF_TRACK");
-        // no stated window means 28d; a 7d-stated target is not prorated down to 7
-        assertThat(status(count(Good.UP), 70.0, new TargetView(280, "UP"), null, 7).status()).isEqualTo("ON_TRACK");
+        // a 7d-stated target is not prorated down to 7
         assertThat(status(count(Good.UP), 60.0, new TargetView(60, "UP", true, "x", "7d", null), null, 7).status())
                 .isEqualTo("ON_TRACK");
         // 90 days scales up
         assertThat(status(count(Good.UP), 800.0, per28, null, 90).status()).isEqualTo("OFF_TRACK"); // needs 900
+    }
+
+    @Test
+    void aTargetWithNoWindowIsComparedAsStatedWhateverTheRequestedWindow() {
+        TargetView owned = new TargetView(100, "UP");
+        assertThat(status(count(Good.UP), 100.0, owned, null, 7).status()).isEqualTo("ON_TRACK");
+        assertThat(status(count(Good.UP), 100.0, owned, null, 90).status()).isEqualTo("ON_TRACK");
+        assertThat(status(count(Good.UP), 25.0, owned, null, 7).status()).isEqualTo("OFF_TRACK");
+        assertThat(MarketingOverviewQueryService.effectiveTarget(count(Good.UP), owned, 90)).isEqualTo(100.0);
+    }
+
+    @Test
+    void theEffectiveTargetIsTheProratedOneForAWindowedTarget() {
+        TargetView per28 = new TargetView(200, "UP", true, "x", "28d", null);
+        assertThat(MarketingOverviewQueryService.effectiveTarget(count(Good.UP), per28, 7)).isCloseTo(50.0, within(1e-9));
     }
 
     @Test

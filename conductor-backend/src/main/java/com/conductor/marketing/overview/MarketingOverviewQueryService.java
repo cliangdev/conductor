@@ -109,9 +109,18 @@ public class MarketingOverviewQueryService {
 
     /** {@code readOnly} targets come from a connector feed (the product backend sets them); {@code source} says where. */
     public record TargetView(double value, String direction, boolean readOnly, String source, String window,
-                             Double watchBandPct) {
+                             Double watchBandPct, Double effectiveValue) {
+        public TargetView(double value, String direction, boolean readOnly, String source, String window,
+                          Double watchBandPct) {
+            this(value, direction, readOnly, source, window, watchBandPct, null);
+        }
+
         public TargetView(double value, String direction, boolean readOnly, String source) {
-            this(value, direction, readOnly, source, null, null);
+            this(value, direction, readOnly, source, null, null, null);
+        }
+
+        TargetView withEffectiveValue(double effective) {
+            return new TargetView(value, direction, readOnly, source, window, watchBandPct, effective);
         }
 
         public TargetView(double value, String direction) {
@@ -1000,6 +1009,9 @@ public class MarketingOverviewQueryService {
             statusSample = denominator == null ? null : Math.round(denominator);
         }
         TargetStatus targetStatus = targetStatus(metric, value, targetView, statusSample, ctx.days);
+        if (targetView != null) {
+            targetView = targetView.withEffectiveValue(effectiveTarget(metric, targetView, ctx.days));
+        }
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
                 change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder(),
                 metric.agg().name(), targetStatus.status(), targetStatus.missPct(), statusSample, metric.area(),
@@ -1011,7 +1023,7 @@ public class MarketingOverviewQueryService {
      * (a PERCENT metric or a ratio) resting on fewer than {@link #MIN_SAMPLE} observations; ON_TRACK when met in
      * the target's direction; WATCH when it misses by no more than the watch band (default
      * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target; otherwise OFF_TRACK. A count or currency total is compared
-     * with its target prorated from the window the target is stated for (default 28 days) to {@code windowDays}.
+     * with its target prorated from the window the target declares (feed targets only; none means compared as stated) to {@code windowDays}.
      */
     static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, int windowDays) {
         if (target == null) {
@@ -1021,10 +1033,7 @@ public class MarketingOverviewQueryService {
         if (value == null || (rate && sample != null && sample < MIN_SAMPLE)) {
             return new TargetStatus("TOO_EARLY", null);
         }
-        double expected = target.value();
-        if (metric.agg() == Aggregation.SUM && (metric.unit() == Unit.COUNT || metric.unit() == Unit.CURRENCY)) {
-            expected = expected * windowDays / targetWindowDays(target.window());
-        }
+        double expected = effectiveTarget(metric, target, windowDays);
         boolean up = "UP".equals(target.direction());
         if (up ? value >= expected : value <= expected) {
             return new TargetStatus("ON_TRACK", 0.0);
@@ -1036,6 +1045,19 @@ public class MarketingOverviewQueryService {
         double band = (target.watchBandPct() != null ? target.watchBandPct()
                 : metric.watchBandPct() != null ? metric.watchBandPct() : DEFAULT_WATCH_BAND_PCT) / 100;
         return new TargetStatus(miss <= band + 1e-9 ? "WATCH" : "OFF_TRACK", miss);
+    }
+
+    /**
+     * The target the value is compared with. Only a count or currency total whose target declares a window
+     * (a feed target) is prorated to {@code windowDays}; a Conductor-owned target has no window and is
+     * compared as stated.
+     */
+    static double effectiveTarget(Metric metric, TargetView target, int windowDays) {
+        if (target.window() != null && !target.window().isBlank() && metric.agg() == Aggregation.SUM
+                && (metric.unit() == Unit.COUNT || metric.unit() == Unit.CURRENCY)) {
+            return target.value() * windowDays / targetWindowDays(target.window());
+        }
+        return target.value();
     }
 
     private static int targetWindowDays(String window) {

@@ -66,10 +66,12 @@ export interface MarketingTarget {
   readOnly?: boolean
   /** Where a read-only target is set, e.g. "Set in Product metrics". */
   source?: string | null
-  /** The period a count or currency total target is stated for, e.g. "28d"; absent means 28d. */
+  /** The period a count or currency total target is stated for, e.g. "28d"; absent means the target is compared as stated. */
   window?: string | null
   /** A miss within this percent of the target reads as Close; absent means 10. */
   watchBandPct?: number | null
+  /** The target the value was judged against in the requested window (prorated when the target has a window). */
+  effectiveValue?: number | null
 }
 
 export interface OverviewSeriesPoint {
