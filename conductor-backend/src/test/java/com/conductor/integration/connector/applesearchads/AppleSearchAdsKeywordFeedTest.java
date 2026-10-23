@@ -271,6 +271,67 @@ class AppleSearchAdsKeywordFeedTest {
         server.verify();
     }
 
+    private static final String MIXED_CAMPAIGNS = """
+            {"data":[
+              {"id":1001,"name":"Brand","adChannelType":"SEARCH","startTime":"2026-01-01T00:00:00.000","endTime":null},
+              {"id":1003,"name":"Today","adChannelType":"DISPLAY","startTime":"2026-01-01T00:00:00.000","endTime":null},
+              {"id":1004,"name":"Legacy","startTime":"2026-01-01T00:00:00.000","endTime":null}
+             ],"pagination":{"totalResults":3,"startIndex":0,"itemsPerPage":1000}}""";
+
+    private void expectMixedCampaigns() {
+        server.expect(once(), requestTo(BASE + "/reports/campaigns"))
+                .andRespond(withSuccess(CAMPAIGN_REPORT, MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/campaigns?limit=1000&offset=0"))
+                .andRespond(withSuccess(MIXED_CAMPAIGNS, MediaType.APPLICATION_JSON));
+    }
+
+    @Test
+    void nonSearchCampaignsAreNotAskedForKeywordOrAdReports() {
+        expectMixedCampaigns();
+        expectBreakdownReports();
+        // campaign 1004 has no adChannelType, so it is still queried
+        server.expect(once(), requestTo(BASE + "/reports/campaigns/1004/keywords"))
+                .andRespond(withSuccess("{\"data\":{\"reportingDataResponse\":{\"row\":[]}}}", MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/reports/campaigns/1004/ads"))
+                .andRespond(withSuccess("{\"data\":{\"reportingDataResponse\":{\"row\":[]}}}", MediaType.APPLICATION_JSON));
+
+        connector.pullDaily(ctx(), FROM, TO);
+
+        // no expectation for campaign 1003 (DISPLAY): a request to it would fail the call
+        server.verify();
+    }
+
+    @Test
+    void aClientErrorOnOneCampaignsBreakdownIsSkippedAndTheRestOfThePullSurvives() {
+        server.expect(once(), requestTo(BASE + "/reports/campaigns"))
+                .andRespond(withSuccess(CAMPAIGN_REPORT, MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/campaigns?limit=1000&offset=0"))
+                .andRespond(withSuccess("""
+                        {"data":[{"id":1001,"name":"Brand","adChannelType":"SEARCH"},
+                                 {"id":1005,"name":"Odd","adChannelType":"SEARCH"}],
+                         "pagination":{"totalResults":2}}""", MediaType.APPLICATION_JSON));
+        expectBreakdownReports();
+        server.expect(once(), requestTo(BASE + "/reports/campaigns/1005/keywords"))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), FROM, TO);
+
+        assertThat(value(points, "impressions", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("500");
+    }
+
+    @Test
+    void aServerErrorOnABreakdownReportStillFailsThePull() {
+        server.expect(once(), requestTo(BASE + "/reports/campaigns"))
+                .andRespond(withSuccess(CAMPAIGN_REPORT, MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/campaigns?limit=1000&offset=0"))
+                .andRespond(withSuccess(CAMPAIGNS, MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/reports/campaigns/1001/keywords"))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> connector.pullDaily(ctx(), FROM, TO))
+                .isInstanceOf(RuntimeException.class);
+    }
+
     private static BigDecimal value(List<ChannelMetricPoint> points, String metric, String dimension, String day) {
         return points.stream()
                 .filter(p -> p.metric().equals(metric) && p.dimensionKey().equals(dimension) && p.day().toString().equals(day))

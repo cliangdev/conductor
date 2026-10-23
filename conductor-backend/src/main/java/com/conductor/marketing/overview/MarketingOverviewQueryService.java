@@ -1308,8 +1308,13 @@ public class MarketingOverviewQueryService {
         String label = dimensionKey;
         if (channel == MetricChannel.ADS) {
             // campaign:{id}:{name}; the name may itself contain colons, so split on the first two only
+            // ad:{adGroupId}:{adId}:{name}: an ad id is only unique within its ad group, so the row key keeps both
             String[] parts = dimensionKey.split(":", 3);
-            if (parts.length == 3) {
+            String[] adParts = dimensionKey.startsWith("ad:") ? dimensionKey.split(":", 4) : null;
+            if (adParts != null && adParts.length == 4) {
+                key = adParts[1] + ":" + adParts[2];
+                label = adParts[3].isBlank() ? key : adParts[3];
+            } else if (parts.length == 3) {
                 key = parts[1];
                 label = parts[2].isBlank() ? parts[1] : parts[2];
             }

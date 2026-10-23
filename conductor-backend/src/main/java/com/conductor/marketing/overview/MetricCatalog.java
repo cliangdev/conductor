@@ -269,7 +269,8 @@ public final class MetricCatalog {
                 sumColumn("impressions", "impressions", "Impressions", Unit.COUNT),
                 sumColumn("taps", "taps", "Taps", Unit.COUNT),
                 ratioColumn("tap_through_rate", "Tap rate", Unit.PERCENT, "taps", "impressions"),
-                sumColumn("installs", "installs", "Installs", Unit.COUNT),
+                // first-time downloads only (redownloads are stored separately), so these do not reconcile with Campaigns
+                sumColumn("installs", "installs", "Installs (first-time)", Unit.COUNT),
                 ratioColumn("install_rate", "Install rate", Unit.PERCENT, "installs", "taps"),
                 sumColumn("spend", "spend", "Spend", Unit.CURRENCY),
                 ratioColumn("cost_per_install", "Cost per install", Unit.CURRENCY, "spend", "installs"));

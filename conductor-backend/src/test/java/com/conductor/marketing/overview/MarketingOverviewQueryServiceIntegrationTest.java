@@ -607,7 +607,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         put(ads, "apple-search-ads", "ADS", "spend", kw, day(10), 25, false);
         put(ads, "apple-search-ads", "ADS", "impressions", "keyword:78:no state", day(10), 10, false);
         put(ads, "apple-search-ads", "ADS", "spend", "campaign:5:Brand", day(10), 99, false);
-        put(ads, "apple-search-ads", "ADS", "impressions", "ad:9:Variant A", day(10), 400, false);
+        put(ads, "apple-search-ads", "ADS", "impressions", "ad:55:9:Variant A", day(10), 400, false);
+        put(ads, "apple-search-ads", "ADS", "impressions", "ad:55:10:Variant: B", day(10), 300, false);
         stateStore.upsert(ads, java.util.List.of(new com.conductor.integration.DimensionState(kw,
                 java.util.Map.of("status", "ACTIVE", "bidAmount", 1.5, "matchType", "EXACT",
                         "adGroupName", "Core", "campaignName", "Brand"))));
@@ -631,7 +632,9 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
                 .containsEntry("matchType", "EXACT").containsEntry("adGroupName", "Core");
         assertThat(keywords.rows().get(1).state()).isNull();
         assertThat(detail.dimensions().get(2).rows()).extracting(MarketingOverviewQueryService.DimensionRowView::label)
-                .containsExactly("Variant A");
+                .containsExactly("Variant A", "Variant: B");
+        assertThat(detail.dimensions().get(2).rows()).extracting(MarketingOverviewQueryService.DimensionRowView::key)
+                .containsExactly("55:9", "55:10");
         // keyword and ad rows never inflate the channel totals
         assertThat(metric(detail.channel(), "impressions").value()).isNull();
     }

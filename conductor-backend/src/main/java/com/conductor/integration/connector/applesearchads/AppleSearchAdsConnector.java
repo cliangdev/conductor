@@ -502,15 +502,26 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
             for (Map<String, Object> campaign : campaigns) {
                 String campaignId = str(campaign.get("id"));
                 if (isBlank(campaignId)) continue;
-                for (LocalDate[] chunk : chunks) {
-                    for (Map<String, Object> row : pagedReportRows(
-                            API_BASE + "/reports/campaigns/" + campaignId + "/keywords", chunk, headers)) {
-                        collectKeywordRow(row, points, reportStates);
+                if (!supportsKeywordReports(campaign)) continue;
+                try {
+                    List<ChannelMetricPoint> campaignPoints = new ArrayList<>();
+                    Map<String, Map<String, Object>> campaignStates = new LinkedHashMap<>();
+                    for (LocalDate[] chunk : chunks) {
+                        for (Map<String, Object> row : pagedReportRows(
+                                API_BASE + "/reports/campaigns/" + campaignId + "/keywords", chunk, headers)) {
+                            collectKeywordRow(row, campaignPoints, campaignStates);
+                        }
+                        for (Map<String, Object> row : pagedReportRows(
+                                API_BASE + "/reports/campaigns/" + campaignId + "/ads", chunk, headers)) {
+                            collectAdRow(row, campaignPoints, campaignStates);
+                        }
                     }
-                    for (Map<String, Object> row : pagedReportRows(
-                            API_BASE + "/reports/campaigns/" + campaignId + "/ads", chunk, headers)) {
-                        collectAdRow(row, points, reportStates);
-                    }
+                    points.addAll(campaignPoints);
+                    reportStates.putAll(campaignStates);
+                } catch (HttpClientErrorException e) {
+                    int status = e.getStatusCode().value();
+                    if (status == 401 || status == 403 || status == 429) throw e;
+                    log.warn("Apple Search Ads keyword/ad report skipped for campaign {}: {}", campaignId, status);
                 }
             }
             if (withState && !to.isBefore(LocalDate.now(clock.withZone(ZoneOffset.UTC)))) {
@@ -603,6 +614,12 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
             if (added == 0 || (total >= 0 ? offset >= total : added < REPORT_PAGE)) break;
         }
         return out;
+    }
+
+    /** Only Search Results campaigns have keyword reports; a campaign that does not say what it is is still tried. */
+    private static boolean supportsKeywordReports(Map<String, Object> campaign) {
+        String type = str(campaign.get("adChannelType"));
+        return isBlank(type) || "SEARCH".equalsIgnoreCase(type);
     }
 
     /** False only when the campaign's own start/end dates prove it cannot have data in the window. */
