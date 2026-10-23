@@ -108,12 +108,13 @@ the library is used by its id (`photoId`) with no upload at all.
 `generate_creative_image` with a scene prompt drawn from the brand's Knowledge page and the angle:
 the scene, subject, light, framing and where the headline's negative space sits, written by the
 prompt-writing rules in `references/realism-check.md`. The tool adds its own
-fixed rules (photographic, no text, letters, logos, UI or phone screens) and uses the OpenAI Images API
-when a key is set (`conductor config set-openai-api-key`; 20-45 s; larger sizes cost more; `conductor doctor`
-reports the route). With no key it generates nothing and returns `CODEX_CONFIRMATION_REQUIRED`: ask the
-person whether to set a key, use Codex this time (their ChatGPT Plus weekly allowance, shared with coding;
-about 40-50 images uses a week), or skip and use a library photo. Only on an explicit yes call again with
-`useCodex: true`; never pass it unasked. An API error is reported, not retried on Codex. Quality defaults to `high` (both routes); pass `quality: "medium"` or `"low"` only for throwaway drafts, and Codex runs on its cheapest model. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
+fixed rules (photographic, no text, letters, logos, UI or phone screens). Generate with Codex by
+default: pass `useCodex: true` without asking, since it is cheaper than the API (it runs the person's
+local Codex CLI on their ChatGPT plan allowance, about a minute an image). If Codex fails (missing, logged
+out, or a plan without image generation), say why and call again without `useCodex`: that uses the OpenAI
+Images API when a key is set (`conductor config set-openai-api-key`; 20-45 s; larger sizes cost more). With
+no key it returns `CODEX_CONFIRMATION_REQUIRED`: ask whether to fix Codex (`codex login`), set a key, or
+skip and use a library photo. `conductor doctor` reports both routes. Quality defaults to `high` (both routes); pass `quality: "medium"` or `"low"` only for throwaway drafts, and Codex runs on its cheapest model. It returns the first image plus `files[].path`; pass a path as `photoPath` (or
 `sequence[].photoPath`). When the real product must appear, list a real shot in
 `referenceImagePaths` — never describe an invented product. Each file gets a provenance sidecar
 (`aiGenerated: true`) that the preview and commit use automatically, so don't ask about it, and the
@@ -130,7 +131,7 @@ screen or shot (pass it in `referenceImagePaths`, or use a library photo of the 
 poses (a person smiling at a phone on a couch, a mug, a generic laptop) and empty decorative scenes (a
 sunlit counter with nothing happening) are out. A generated still cannot show an invented product
 screen; real product shots come in as references. Ask for `count: 2` or `3` when you want options
-(each image bills the API key, more at larger sizes; on the Codex route each uses weekly quota, so ask first).
+(each uses Codex allowance, or bills the API key on the fallback route).
 
 **Every generated photo gets the realism check** in `references/realism-check.md` before it is used,
 on a 100% crop at each placement's size and crop, never a contact sheet: it must not look AI-made

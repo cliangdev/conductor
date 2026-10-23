@@ -123,10 +123,11 @@ Creative's id — in a prompt, in the MCP tools and in the CLI (`conductor creat
 
 Ask Claude to generate one ("make me a photo of ..."). It writes the scene, generates the image
 and shows you the result; it is used like any local photo, and is recorded as AI-generated
-automatically (the AI label applies when you publish). Set an OpenAI API key once
-(`conductor config set-openai-api-key <key>`); each image takes under a minute and costs about $0.05 on that key.
-With no key, Claude asks before using your ChatGPT Plus Codex allowance instead (it runs out after about 40-50
-images a week), or you can skip and use a library photo. `conductor doctor` shows which route is active.
+automatically (the AI label applies when you publish). The Conductor skills generate with Codex by
+default: install the Codex CLI (`npm i -g @openai/codex`) and run `codex login` with a ChatGPT Plus (or
+higher) account; each image takes about a minute and uses part of the weekly allowance. If Codex is not
+available, Claude uses an OpenAI API key when you have set one (`conductor config set-openai-api-key <key>`,
+billed per image), or asks you. `conductor doctor` shows both routes.
 Generated photos contain no text or logos, and never show your real product unless you give Claude a
 real photo of it.
 

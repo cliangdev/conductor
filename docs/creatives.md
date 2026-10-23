@@ -147,17 +147,19 @@ The result carries `placementFit`: for each placement (9x16, 4x5, 1x1) the full-
 the video zoom (up to 1.12) and `ok` when it is at most 1.0. The result's `generator`
 names the route (`openai-api` or `codex`) and model; `model` and `quality` report what was used.
 
-- **Default route: OpenAI Images API.** Needs a key: `conductor config set-openai-api-key <key>` (kept
+- **Tool default route: OpenAI Images API.** Used when the call has no `useCodex`. Needs a key: `conductor config set-openai-api-key <key>` (kept
   in `~/.conductor/config.json`, so it works for Claude Desktop, which doesn't inherit shell env), or
   env `CONDUCTOR_OPENAI_API_KEY` / `OPENAI_API_KEY` (that precedence, then config). Model
   `gpt-image-2.5-sunburst` (override with `CONDUCTOR_IMAGE_MODEL`). Billed to that key per image, more at larger sizes; 20-45 s. Reference images go to
   the edits endpoint.
-- **Codex only with the person's yes.** With no key the tool generates nothing and returns an error
-  with `code: 'CODEX_CONFIRMATION_REQUIRED'`, `options` (set an API key / use Codex / skip) and a
-  `nextStep`. Ask the person: set a key, use Codex this time, or skip and use a library photo. Codex
-  runs the local `codex exec` (built-in image_gen) on their ChatGPT Plus (or higher) weekly allowance,
-  shared with coding; about 40-50 images exhausts a week, roughly $0.10 an image. Only on an explicit
-  yes call again with `useCodex: true` (honoured even when a key exists); never pass it unasked.
+- **Codex: the skills' default.** `useCodex: true` runs the local `codex exec` (built-in image_gen,
+  `gpt-image-2`) on the person's ChatGPT Plus (or higher) weekly allowance, shared with coding; it is
+  honoured even when a key exists, and it honours the custom size (1440x2560 verified 2026-10-22). The
+  `conductor-creative` and `conductor-content-studio` skills pass it on every call without asking, as
+  it is cheaper than the API, and fall back to a call without it when Codex fails. Called without
+  `useCodex` and with no key, the tool generates nothing and returns an error with
+  `code: 'CODEX_CONFIRMATION_REQUIRED'`, `options` (set an API key / use Codex / skip) and a
+  `nextStep`, so other callers still ask before spending the allowance.
 - **Quality.** One setting for both routes: the `quality` input (`low|medium|high`), else env
   `CONDUCTOR_IMAGE_QUALITY` (ignored if not one of those), else `high`. Use `medium`/`low` only for
   throwaway drafts.
@@ -167,9 +169,9 @@ names the route (`openai-api` or `codex`) and model; `model` and `quality` repor
   If Codex rejects the model for the account, the run retries once on the person's default model
   (reported as `model: 'default'`).
 - **No silent fallback.** An API error (bad key, quota) is reported, not retried on Codex.
-- **Doctor.** `conductor doctor` has an "Image generation" check naming the active route: the OpenAI
-  API with model, quality and key source (verified against the model endpoint), or Codex with its
-  install and login state and a hint that a key costs about half.
+- **Doctor.** `conductor doctor` has an "Image generation" check covering both routes: Codex (the
+  skills' default) with its install and login state, then the OpenAI API fallback with model, quality
+  and key source (verified against the model endpoint). Either route working passes.
 
 - **Prompt.** The caller writes the scene; the tool adds fixed rules: photographic unless asked
   otherwise, no text, letters, logos, watermarks, UI or phone screens, and clean negative space for

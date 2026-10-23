@@ -1534,7 +1534,7 @@ export const TOOLS = [
   },
   {
     name: 'generate_creative_image',
-    description: "Generate a photo on this machine. Uses the OpenAI Images API when a key is configured (billed to that key; cost grows with size). Default is 9:16 at 1440x2560, large enough that no placement upscales it; the result reports size, sizeNote and placementFit (full-bleed scale per placement; above 1.0 is upscaled). With no key it returns CODEX_CONFIRMATION_REQUIRED instead — ask the person, and pass useCodex: true only if they agree to spend their Codex quota (about a minute per image). Quality is `high` unless you pass low/medium for a throwaway draft. The image never contains text, logos or screens. Check the result for an AI look before using it. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
+    description: "Generate a photo on this machine. Uses the OpenAI Images API when a key is configured (billed to that key; cost grows with size). Default is 9:16 at 1440x2560, large enough that no placement upscales it; the result reports size, sizeNote and placementFit (full-bleed scale per placement; above 1.0 is upscaled). useCodex: true runs the person's Codex CLI instead (about a minute per image, on their ChatGPT plan allowance); without it and with no key it returns CODEX_CONFIRMATION_REQUIRED. Quality is `high` unless you pass low/medium for a throwaway draft. The image never contains text, logos or screens. Check the result for an AI look before using it. Returns the image plus local file paths, each with a .provenance.json sidecar marking it AI-generated. Next: pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1544,7 +1544,7 @@ export const TOOLS = [
         count: { type: 'number', description: 'How many images, 1-3 (default 1)' },
         quality: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Image quality, default high; low/medium only for throwaway drafts' },
         referenceImagePaths: { type: 'array', items: { type: 'string' }, description: 'Local images to stay faithful to, such as a real product shot (optional)' },
-        useCodex: { type: 'boolean', description: 'Set true only after the person has agreed to use their Codex/ChatGPT quota (see CODEX_CONFIRMATION_REQUIRED).' },
+        useCodex: { type: 'boolean', description: "Use the person's local Codex CLI (ChatGPT plan allowance; cheaper than the API). The Conductor skills pass it by default; other callers only after the person agrees (see CODEX_CONFIRMATION_REQUIRED)." },
       },
       required: ['prompt'],
     },
@@ -2598,9 +2598,9 @@ export async function runMcpServer(): Promise<void> {
             if (!(err instanceof CodexConfirmationRequired)) throw err
             return errorResponse({
               code: 'CODEX_CONFIRMATION_REQUIRED',
-              error: "No OpenAI API key is configured. Codex can make this image on the person's ChatGPT plan, but each image uses roughly 2% of the weekly Codex allowance (about $0.10, measured) and that allowance is shared with coding.",
+              error: "No OpenAI API key is configured. Codex can make this image on the person's ChatGPT plan, but each image uses part of the weekly Codex allowance, which is shared with coding.",
               options: [
-                { choice: 'set-api-key', how: 'conductor config set-openai-api-key <key> (or OPENAI_API_KEY), then call again', cost: 'about $0.05 an image' },
+                { choice: 'set-api-key', how: 'conductor config set-openai-api-key <key> (or OPENAI_API_KEY), then call again', cost: 'billed per image, more at larger sizes' },
                 { choice: 'use-codex', how: 'call again with useCodex: true', cost: 'Codex weekly allowance' },
                 { choice: 'skip', how: 'use a library photo instead' },
               ],
