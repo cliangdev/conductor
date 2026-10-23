@@ -251,14 +251,30 @@ public final class MetricCatalog {
                             derived("tap_through_rate", "Tap-through rate", Unit.PERCENT, Good.UP,
                                     "taps", "impressions")),
                     List.of(new Dimension("campaigns", "Campaigns", List.of(
-                            sumColumn("spend", "spend", "Spend", Unit.CURRENCY),
-                            sumColumn("impressions", "impressions", "Impressions", Unit.COUNT),
-                            sumColumn("taps", "taps", "Taps", Unit.COUNT),
-                            sumColumn("installs", "installs", "Installs", Unit.COUNT),
-                            ratioColumn("cost_per_install", "Cost per install", Unit.CURRENCY, "spend", "installs")))),
+                                    sumColumn("spend", "spend", "Spend", Unit.CURRENCY),
+                                    sumColumn("impressions", "impressions", "Impressions", Unit.COUNT),
+                                    sumColumn("taps", "taps", "Taps", Unit.COUNT),
+                                    sumColumn("installs", "installs", "Installs", Unit.COUNT),
+                                    ratioColumn("cost_per_install", "Cost per install", Unit.CURRENCY, "spend", "installs")),
+                                    "campaign:"),
+                            new Dimension("keywords", "Keywords", adBreakdownColumns(), "keyword:"),
+                            new Dimension("ads", "Ads", adBreakdownColumns(), "ad:")),
                     4),
             // The in-app channel has no fixed metrics: each connected backend declares its own (see productChannel).
             new Channel(MetricChannel.PRODUCT, "In-app", List.of(PRODUCT_CONNECTOR_ID), List.of(), List.of(), 4));
+
+    /** Keyword and ad tables: delivery, the two funnel rates, spend and cost per install. */
+    private static List<Column> adBreakdownColumns() {
+        return List.of(
+                sumColumn("impressions", "impressions", "Impressions", Unit.COUNT),
+                sumColumn("taps", "taps", "Taps", Unit.COUNT),
+                ratioColumn("tap_through_rate", "Tap rate", Unit.PERCENT, "taps", "impressions"),
+                // first-time downloads only (redownloads are stored separately), so these do not reconcile with Campaigns
+                sumColumn("installs", "installs", "Installs (first-time)", Unit.COUNT),
+                ratioColumn("install_rate", "Install rate", Unit.PERCENT, "installs", "taps"),
+                sumColumn("spend", "spend", "Spend", Unit.CURRENCY),
+                ratioColumn("cost_per_install", "Cost per install", Unit.CURRENCY, "spend", "installs"));
+    }
 
     /** Funnel order. A stage with no data is reported unavailable with its reason, never dropped. */
     private static final List<FunnelStage> FUNNEL = List.of(

@@ -3,40 +3,53 @@
   "operations": [
     {
       "id": "campaign_report",
-      "description": "Campaign-level installs, downloads, and spend time series (last 30 days)",
+      "description": "Campaign-level installs, spend and efficiency time series (last 30 days, summed across campaigns)",
       "params": {},
       "outputShape": {
-        "installs": [
-          { "date": "2026-06-01", "installs": 142 }
+        "installsSeries": [
+          { "date": "2026-06-01", "newDownloads": 98, "installs": 142 }
         ],
-        "downloads": [
-          { "date": "2026-06-01", "downloads": 98 }
+        "spendSeries": [
+          { "date": "2026-06-01", "localSpend": 84.50 }
         ],
-        "spend": [
-          { "date": "2026-06-01", "spend": 84.50 }
+        "effSeries": [
+          { "date": "2026-06-01", "avgCPA": 1.2, "avgCPT": 0.4, "conversionRate": 0.3 }
         ]
       },
-      "outputKeys": ["installs", "downloads", "spend"]
+      "outputKeys": ["installsSeries", "spendSeries", "effSeries"]
     },
     {
       "id": "keyword_report",
-      "description": "Top keywords by installs with spend, taps, and TTR (last 30 days; requires campaignId)",
+      "description": "Top keywords by new downloads with spend, CPA and taps (last 30 days; requires campaignId)",
       "params": {
         "campaignId": "Campaign ID configured in connection settings"
       },
       "outputShape": {
         "topKeywords": [
-          { "keyword": "example app", "installs": 58, "taps": 210, "spend": 32.10, "ttr": 0.276 }
+          { "keyword": "example app", "newDownloads": 58, "taps": 210, "localSpend": 32.10, "avgCPA": 0.55 }
         ]
       },
       "outputKeys": ["topKeywords"]
+    },
+    {
+      "id": "search_term_report",
+      "description": "Top search terms by new downloads with taps and conversion rate (last 30 days; requires campaignId)",
+      "params": {
+        "campaignId": "Campaign ID configured in connection settings"
+      },
+      "outputShape": {
+        "topSearchTerms": [
+          { "searchTerm": "example app free", "newDownloads": 12, "taps": 90, "conversionRate": 0.13 }
+        ]
+      },
+      "outputKeys": ["topSearchTerms"]
     }
   ],
   "ingest": [
     {
       "id": "channel_metrics",
       "label": "Daily ad metrics",
-      "description": "Spend, impressions, taps and installs per day, in total and per campaign, kept for the channel overview",
+      "description": "Spend, impressions, taps and installs per day, in total and per campaign, keyword and ad (with current bid and status), kept for the channel overview",
       "mode": "SNAPSHOT",
       "sink": "CHANNEL_METRICS",
       "defaultIntervalMinutes": 360

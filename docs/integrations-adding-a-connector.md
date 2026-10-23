@@ -248,9 +248,13 @@ A connector that should appear as a channel in the Marketing overview implements
   `maxDaysPerPull()` (a long backfill is split into chunks of this many days).
 - Optionally `snapshot(metric)` (the platform's reading at pull time, stored final, e.g. a rating count)
   and `prunesMissingDimensions()` (default true: a dimension row absent from a returned metric-day is
-  deleted).
+  deleted). A source that fails part-way must throw, never return the part it has: pruning trusts a returned
+  metric-day to be complete.
+- Optionally override `pull(...)` to return `ChannelMetricsPull.dimensionStates`: the current state (bid, status,
+  ...) of dimension members, upserted into `channel_dimension_state` by the same dimension key and shown as
+  `state` on the channel detail's dimension rows. Apple Search Ads uses it for keywords and ads.
 
-No migration is needed. Add the spec to the parameterised list in `IntegrationToolSpecIngestTest`. Worked
+No migration is needed for daily metrics. Add the spec to the parameterised list in `IntegrationToolSpecIngestTest`. Worked
 example: [`integrations-app-store-connect.md`](integrations-app-store-connect.md).
 
 ### The `SnapshotIngestAdapter` bridge

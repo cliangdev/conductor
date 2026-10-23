@@ -100,6 +100,27 @@ class AppleSearchAdsConnectorTest {
         assertThat((List<?>) result.data().get("topSearchTerms")).isEmpty();
     }
 
+    /** Every operation's outputKeys must be keys fetchData really returns, or the tool filter drops them all. */
+    @Test
+    void toolSpecOutputKeysAreKeysFetchDataReturns() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        AppleAdsTokenService tokenService = mock(AppleAdsTokenService.class);
+        when(tokenService.accessToken(any(), any())).thenReturn("bearer-token");
+        when(restTemplate.exchange(contains("/reports/campaigns"), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(campaignReportBody()));
+        AppleSearchAdsConnector connector = new AppleSearchAdsConnector(restTemplate, tokenService);
+
+        Map<String, Object> data = connector.fetchData(ctx(fullConfig())).data();
+
+        var operations = connector.getToolSpec().operations();
+        assertThat(operations).extracting(o -> o.id())
+                .containsExactly("campaign_report", "keyword_report", "search_term_report");
+        for (var op : operations) {
+            assertThat(data.keySet()).containsAll(op.outputKeys());
+        }
+    }
+
     @Test
     void missingCredentials_returnsSetupRequired() {
         AppleSearchAdsConnector connector = new AppleSearchAdsConnector(

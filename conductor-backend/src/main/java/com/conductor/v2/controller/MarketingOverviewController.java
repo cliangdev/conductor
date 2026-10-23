@@ -161,6 +161,6 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                         .map(c -> new OverviewDimensionColumn(c.key(), c.label(),
                                 OverviewDimensionColumn.UnitEnum.valueOf(c.unit().name())))
                         .toList(),
-                d.rows().stream().map(r -> new OverviewDimensionRow(r.key(), r.label(), r.values())).toList());
+                d.rows().stream().map(r -> new OverviewDimensionRow(r.key(), r.label(), r.values()).state(r.state())).toList());
     }
 }

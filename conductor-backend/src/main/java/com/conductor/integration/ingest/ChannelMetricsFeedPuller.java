@@ -54,6 +54,7 @@ public class ChannelMetricsFeedPuller {
     private final ConnectionService connectionService;
     private final ChannelMetricDailyStore store;
     private final ChannelMetricDefinitionStore definitionStore;
+    private final ChannelDimensionStateStore stateStore;
     private final ObjectMapper objectMapper;
     private final OAuthFlowService oAuthFlowService;
     private final Clock clock;
@@ -63,9 +64,10 @@ public class ChannelMetricsFeedPuller {
                                     ConnectionService connectionService,
                                     ChannelMetricDailyStore store,
                                     ChannelMetricDefinitionStore definitionStore,
+                                    ChannelDimensionStateStore stateStore,
                                     ObjectMapper objectMapper,
                                     OAuthFlowService oAuthFlowService) {
-        this(connectorRegistry, connectionService, store, definitionStore, objectMapper, oAuthFlowService,
+        this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
                 Clock.systemUTC());
     }
 
@@ -73,6 +75,7 @@ public class ChannelMetricsFeedPuller {
                              ConnectionService connectionService,
                              ChannelMetricDailyStore store,
                              ChannelMetricDefinitionStore definitionStore,
+                             ChannelDimensionStateStore stateStore,
                              ObjectMapper objectMapper,
                              OAuthFlowService oAuthFlowService,
                              Clock clock) {
@@ -80,6 +83,7 @@ public class ChannelMetricsFeedPuller {
         this.connectionService = connectionService;
         this.store = store;
         this.definitionStore = definitionStore;
+        this.stateStore = stateStore;
         this.objectMapper = objectMapper;
         this.oAuthFlowService = oAuthFlowService;
         this.clock = clock;
@@ -157,6 +161,9 @@ public class ChannelMetricsFeedPuller {
                 metric -> source.snapshot(metric) || pulledSnapshots.contains(metric));
         if (pulled.definitions() != null) {
             definitionStore.replace(connection.getProjectId(), connection.getId(), pulled.definitions());
+        }
+        if (!pulled.dimensionStates().isEmpty()) {
+            stateStore.upsert(connection.getId(), pulled.dimensionStates());
         }
         log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, to);
         Integer hint = pulled.trailingDays() != null ? pulled.trailingDays() : previousHint;

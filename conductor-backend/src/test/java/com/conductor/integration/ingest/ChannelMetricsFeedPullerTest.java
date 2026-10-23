@@ -110,7 +110,7 @@ class ChannelMetricsFeedPullerTest {
                     return ((List<?>) inv.getArgument(7)).size();
                 });
 
-        puller = new ChannelMetricsFeedPuller(registry, connectionService, store, definitionStore,
+        puller = new ChannelMetricsFeedPuller(registry, connectionService, store, definitionStore, mock(ChannelDimensionStateStore.class),
                 new ObjectMapper(), oAuthFlowService, Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
     }
 

@@ -19,6 +19,7 @@ import com.conductor.integration.ingest.digest.MetricsSnapshot;
 import com.conductor.marketing.insights.MarketingInsightsQueryService;
 import com.conductor.marketing.overview.MetricCatalog.Aggregation;
 import com.conductor.marketing.overview.MetricCatalog.Column;
+import com.conductor.integration.ingest.ChannelDimensionStateStore;
 import com.conductor.marketing.overview.MetricCatalog.Dimension;
 import com.conductor.marketing.overview.MetricCatalog.Metric;
 import com.conductor.marketing.overview.MetricCatalog.Unit;
@@ -210,7 +211,12 @@ public class MarketingOverviewQueryService {
 
     public record ColumnView(String key, String label, Unit unit) {}
 
-    public record DimensionRowView(String key, String label, List<Double> values) {}
+    /** @param state the member's current state (status, bid, ...) when its connector reports one; else null */
+    public record DimensionRowView(String key, String label, List<Double> values, Map<String, Object> state) {
+        public DimensionRowView(String key, String label, List<Double> values) {
+            this(key, label, values, null);
+        }
+    }
 
     public record DimensionTable(String key, String label, List<ColumnView> columns, List<DimensionRowView> rows) {}
 
@@ -224,6 +230,7 @@ public class MarketingOverviewQueryService {
     private final ConnectorFeedRepository feedRepository;
     private final MarketingInsightsQueryService insightsQueryService;
     private final PublishPlatformRegistry platformRegistry;
+    private final ChannelDimensionStateStore stateStore;
     private final MetricsChangeDetector changeDetector = new MetricsChangeDetector();
 
     public MarketingOverviewQueryService(ChannelMetricDailyRepository dailyRepository,
@@ -232,7 +239,8 @@ public class MarketingOverviewQueryService {
                                          ConnectionRepository connectionRepository,
                                          ConnectorFeedRepository feedRepository,
                                          MarketingInsightsQueryService insightsQueryService,
-                                         PublishPlatformRegistry platformRegistry) {
+                                         PublishPlatformRegistry platformRegistry,
+                                         ChannelDimensionStateStore stateStore) {
         this.dailyRepository = dailyRepository;
         this.targetRepository = targetRepository;
         this.definitionRepository = definitionRepository;
@@ -240,6 +248,7 @@ public class MarketingOverviewQueryService {
         this.feedRepository = feedRepository;
         this.insightsQueryService = insightsQueryService;
         this.platformRegistry = platformRegistry;
+        this.stateStore = stateStore;
     }
 
     // ---- reads --------------------------------------------------------------------------------------
@@ -1279,26 +1288,33 @@ public class MarketingOverviewQueryService {
             }
         }
 
+        Map<String, Map<String, Object>> states = dimension.keyPrefix() == null
+                ? Map.of() : stateStore.find(connectionIds, dimension.keyPrefix());
         String sortKey = dimension.columns().get(0).key();
         List<DimensionRowView> out = byKey.entrySet().stream()
                 .sorted(Comparator.comparing((Map.Entry<String, Map<String, Double>> e) ->
                         e.getValue().getOrDefault(sortKey, Double.NEGATIVE_INFINITY)).reversed()
                         .thenComparing(Map.Entry::getKey))
                 .limit(DIMENSION_ROWS)
-                .map(e -> toRow(channel.channel(), e.getKey(), e.getValue(), dimension))
+                .map(e -> toRow(channel.channel(), e.getKey(), e.getValue(), dimension, states.get(e.getKey())))
                 .toList();
         return new DimensionTable(dimension.key(), dimension.label(),
                 dimension.columns().stream().map(c -> new ColumnView(c.key(), c.label(), c.unit())).toList(), out);
     }
 
     private DimensionRowView toRow(MetricChannel channel, String dimensionKey, Map<String, Double> values,
-                                   Dimension dimension) {
+                                   Dimension dimension, Map<String, Object> state) {
         String key = dimensionKey;
         String label = dimensionKey;
         if (channel == MetricChannel.ADS) {
             // campaign:{id}:{name}; the name may itself contain colons, so split on the first two only
+            // ad:{adGroupId}:{adId}:{name}: an ad id is only unique within its ad group, so the row key keeps both
             String[] parts = dimensionKey.split(":", 3);
-            if (parts.length == 3) {
+            String[] adParts = dimensionKey.startsWith("ad:") ? dimensionKey.split(":", 4) : null;
+            if (adParts != null && adParts.length == 4) {
+                key = adParts[1] + ":" + adParts[2];
+                label = adParts[3].isBlank() ? key : adParts[3];
+            } else if (parts.length == 3) {
                 key = parts[1];
                 label = parts[2].isBlank() ? parts[1] : parts[2];
             }
@@ -1322,7 +1338,7 @@ public class MarketingOverviewQueryService {
             }
         }
         List<Double> ordered = dimension.columns().stream().map(c -> values.get(c.key())).toList();
-        return new DimensionRowView(key, label, ordered);
+        return new DimensionRowView(key, label, ordered, state == null || state.isEmpty() ? null : state);
     }
 
     private static Map<String, Double> sumPerKey(List<ChannelMetricDaily> rows, String metric, LocalDate from,

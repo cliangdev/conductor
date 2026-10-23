@@ -31,7 +31,7 @@ class MarketingOverviewTopPostsTest {
     private final MarketingOverviewQueryService service = new MarketingOverviewQueryService(
             mock(ChannelMetricDailyRepository.class), mock(ChannelMetricTargetRepository.class),
             mock(com.conductor.repository.ChannelMetricDefinitionRepository.class), mock(ConnectionRepository.class), mock(ConnectorFeedRepository.class), insights,
-            new PublishPlatformRegistry());
+            new PublishPlatformRegistry(), mock(com.conductor.integration.ingest.ChannelDimensionStateStore.class));
 
     @Test
     void socialDetailCarriesTheTopFivePostsForTheSameWindow() {
