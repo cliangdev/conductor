@@ -522,10 +522,10 @@ public class MarketingReportService {
         for (DimensionRowView r : table.rows()) {
             Map<String, Double> v = values(table, r);
             Map<String, Object> state = r.state();
-            // ad:{adGroupId}:{adId}:{name} reaches the table as key={adGroupId}, label={adId}:{name}
-            int colon = r.label().indexOf(':');
-            String adId = colon < 0 ? r.key() : r.label().substring(0, colon);
-            String name = colon < 0 ? r.label() : r.label().substring(colon + 1);
+            // ad:{adGroupId}:{adId}:{name} reaches the table as key={adGroupId}:{adId}, label={name}
+            int colon = r.key().indexOf(':');
+            String adId = colon < 0 ? r.key() : r.key().substring(colon + 1);
+            String name = r.label();
             out.add(new Ad(str(state, "adGroupName"), adId, name.isBlank() ? adId : name, str(state, "creativeType"),
                     str(state, "productPageId"), str(state, "status"), v.get("impressions"), v.get("taps"),
                     v.get("installs"), v.get("install_rate"), v.get("spend"), v.get("cost_per_install")));
