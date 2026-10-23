@@ -103,6 +103,10 @@ class V157SeedMarketingChangesWorkflowTest {
             assertThat(queryForString(connection,
                     "SELECT definition ->> 'noun' FROM workflow_definitions WHERE id = '" + existingId + "'"))
                     .isEqualTo("Tweak");
+            // A pre-existing (e.g. user-authored draft) definition must never be published by the seed.
+            assertThat(queryForString(connection,
+                    "SELECT COUNT(*)::text FROM workflow_definition_versions WHERE workflow_definition_id = '"
+                            + existingId + "'")).isEqualTo("0");
             assertThat(queryForString(connection,
                     "SELECT COUNT(*)::text FROM workflow_definitions WHERE definition ->> 'id' = 'MARKETING_CHANGES'"))
                     .isEqualTo("2");

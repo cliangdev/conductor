@@ -210,9 +210,12 @@ public class WorkItemWorkflowService {
         }
         StatechartTransition t = transition.get();
         // An automatic move never fills in fields for anyone: while the target status still needs some,
-        // the edge simply does not fire.
-        if (!WorkItemFields.missingRequired(statechart, workItem.getFields(), t.to()).isEmpty()) {
-            return Optional.empty();
+        // the edge is blocked. Reported like any other refused gate (the caller records the reason and
+        // announces the blocked move) rather than swallowed as "no edge".
+        List<String> missing = WorkItemFields.missingRequired(statechart, workItem.getFields(), t.to());
+        if (!missing.isEmpty()) {
+            throw new UnprocessableEntityException("Cannot move to " + t.to()
+                    + " until these fields are filled in: " + String.join(", ", missing));
         }
         if (!systemTriggerRegistry.bypassesReviewGate(trigger)
                 && t.requiresReview() && !isReviewSatisfied(projectId, workItem, t)) {

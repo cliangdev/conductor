@@ -253,7 +253,7 @@ export const TOOLS = [
         scheduleTimezone: { type: 'string', description: 'IANA zone id the schedule is authored in, e.g. Europe/Berlin (optional). Empty string clears it; an unknown zone is rejected.' },
         publishOnApproval: { type: 'boolean', description: 'Publish as soon as approved (optional). true means no scheduledFor is needed: entering the scheduled status stamps the earliest time every destination accepts. false returns to an explicit scheduledFor.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
-        fields: { type: 'object', description: 'Typed field values to set, merged key by key: a key set to null clears it, a key left out is unchanged. Keys come from the Workflow (list_workflows). Send the fields a status requires together with the status move.' },
+        fields: { type: 'object', description: 'Typed field values to set, merged key by key: a key set to null clears it, a key left out is unchanged. Keys come from the Workflow (list_workflows). Set the fields a status requires here first, then move status with transition_work_item; clearing a required field of the current status is refused.' },
         dueOn: { type: ['string', 'null'], description: 'Due date, YYYY-MM-DD; null clears it. Omit to leave unchanged.' },
       },
       required: ['issueId'],

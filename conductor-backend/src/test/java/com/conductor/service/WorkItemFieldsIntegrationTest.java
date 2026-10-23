@@ -152,6 +152,25 @@ class WorkItemFieldsIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void editingFieldsCannotClearWhatTheCurrentStatusRequires() {
+        WorkItem item = create("Shorter title", Map.of("hypothesis", "Clicks go up"), null);
+        patch(item, "LIVE", Map.of("liveSince", "2026-10-01"), null);
+        approve(item);
+        patch(item, "REVIEWED", Map.of("outcome", "Up 12%", "lesson", "Short wins", "verdict", "worked"), null);
+
+        Map<String, Object> clear = new HashMap<>();
+        clear.put("verdict", null);
+        assertThatThrownBy(() -> patch(item, null, clear, null))
+                .isInstanceOfSatisfying(MissingFieldsException.class,
+                        e -> assertThat(e.getMissingFields()).containsExactly("verdict"));
+
+        // A field the status does not require stays freely editable.
+        WorkItem edited = patch(item, null, Map.of("control", "Old title"), null);
+        assertThat(edited.getFields().get("control").asText()).isEqualTo("Old title");
+        assertThat(edited.getFields().get("verdict").asText()).isEqualTo("worked");
+    }
+
+    @Test
     void abandoningNeedsNoFields() {
         WorkItem item = create("Dropped idea", null, null);
         assertThat(patch(item, "ABANDONED", null, null).getCurrentStatus()).isEqualTo("ABANDONED");

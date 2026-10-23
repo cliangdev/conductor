@@ -300,6 +300,32 @@ class WorkItemWorkflowServiceTest {
         assertThat(workItem.getCurrentStatus()).isEqualTo("DONE");
     }
 
+    @Test
+    void automaticEdgeBlockedByMissingRequiredFieldsIsReportedNotSwallowed() {
+        String json = STATUS_CHANGED_LIFECYCLE
+                .replace("\"statuses\"", "\"fields\": [{\"key\": \"verdict\", \"label\": \"Verdict\","
+                        + " \"type\": \"text\", \"requiredIn\": [\"DONE\"]}], \"statuses\"")
+                .replace(", \"requiresReview\": true, \"reviewerRole\": \"REVIEWER\", \"reviewOutcomes\": [\"APPROVED\"]", "");
+        WorkflowDefinitionVersion snapshot = new WorkflowDefinitionVersion();
+        snapshot.setVersion(1);
+        try {
+            snapshot.setDefinition(new ObjectMapper().readTree(json));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        when(versionRepository.findLatestPublished(any(), eq("LC_TEST"))).thenReturn(Optional.of(snapshot));
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("LC_TEST"), eq(1)))
+                .thenReturn(Optional.of(snapshot));
+        WorkItem workItem = workItemAt("REVIEW");
+        workItem.setWorkflow("LC_TEST");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.applySystemTransition(
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_STATUS_CHANGED))
+                .isInstanceOf(com.conductor.exception.UnprocessableEntityException.class)
+                .hasMessageContaining("verdict");
+        assertThat(workItem.getCurrentStatus()).isEqualTo("REVIEW");
+    }
+
     // --- availableTransitions (doer projection) ---
 
     @Test

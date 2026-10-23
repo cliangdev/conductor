@@ -380,6 +380,13 @@ public class WorkItemService {
             statusChanged = true;
         }
 
+        // Editing fields must not leave the item short of what its (possibly new) status requires: clearing
+        // a required field in place is refused with the same error a transition gives.
+        if (fields != null) {
+            WorkItemFields.requireFilled(workItemWorkflowService.resolveFor(projectId, workItem),
+                    workItem.getFields(), workItem.getCurrentStatus());
+        }
+
         workItemRepository.save(workItem);
 
         bundleRevert.ifPresent(revert ->
