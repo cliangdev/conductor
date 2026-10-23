@@ -119,6 +119,8 @@ public class NotificationGroupController implements NotificationsApi {
         response.setProvider(config.getProvider() != null ? config.getProvider().name() : null);
         response.setWebhookUrl(config.getWebhookUrl());
         response.setEnabled(config.isEnabled());
+        response.setDeliveryMode(NotificationGroupResponse.DeliveryModeEnum.fromValue(config.getDeliveryMode().name()));
+        response.setGroupWindowMinutes(config.getGroupWindowMinutes());
         response.setCreatedAt(config.getCreatedAt());
         response.setUpdatedAt(config.getUpdatedAt());
 

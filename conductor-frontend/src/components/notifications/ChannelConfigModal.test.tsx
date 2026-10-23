@@ -220,3 +220,104 @@ describe('GroupChannelConfigModal', () => {
     expect(await screen.findByText(/failed to save/i)).toBeInTheDocument()
   })
 })
+
+describe('GroupChannelConfigModal delivery setting', () => {
+  const publishingGroups = [
+    {
+      value: 'PUBLISHING',
+      label: 'Publishing',
+      eventTypes: ['WORK_ITEM_STATUS_CHANGED', 'REVIEW_SUBMITTED', 'POST_AWAITING_MANUAL'],
+    },
+  ]
+  const publishingGroup: NotificationGroupResponse = {
+    channelGroup: 'PUBLISHING',
+    label: 'Publishing',
+    provider: 'DISCORD',
+    webhookUrl: 'https://discord.com/api/webhooks/123/abc',
+    enabled: true,
+    deliveryMode: 'EACH',
+    groupWindowMinutes: 60,
+    events: [
+      { eventType: 'WORK_ITEM_STATUS_CHANGED', label: 'Any work item status change', enabled: true },
+      { eventType: 'REVIEW_SUBMITTED', label: 'Review submitted', enabled: false },
+    ],
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+  }
+
+  it('hides the delivery control for groups with no rolled-up events', () => {
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        availableGroups={[{ value: 'MEMBERS', label: 'Members', eventTypes: ['MEMBER_JOINED'] }]}
+      />,
+    )
+    expect(screen.queryByText('Delivery')).not.toBeInTheDocument()
+  })
+
+  it('defaults a new channel to Grouped, 15 min', () => {
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        availableGroups={publishingGroups}
+      />,
+    )
+    expect(screen.getByRole('radio', { name: /grouped/i })).toBeChecked()
+    expect((screen.getByLabelText(/keep updating/i) as HTMLSelectElement).value).toBe('15')
+  })
+
+  it('shows the stored mode, and hides the window when delivering each event', () => {
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        existingGroup={publishingGroup}
+        availableGroups={[]}
+      />,
+    )
+    expect(screen.getByRole('radio', { name: /every event/i })).toBeChecked()
+    expect(screen.queryByLabelText(/keep updating/i)).not.toBeInTheDocument()
+  })
+
+  it('sends the chosen mode and window on save', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={onSave}
+        existingGroup={{ ...publishingGroup, deliveryMode: 'GROUPED', groupWindowMinutes: 15 }}
+        availableGroups={[]}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText(/keep updating/i), { target: { value: '240' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave).toHaveBeenCalledWith(
+      'PUBLISHING',
+      expect.objectContaining({ deliveryMode: 'GROUPED', groupWindowMinutes: 240 }),
+    )
+  })
+
+  it('sends Every event when chosen', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={onSave}
+        existingGroup={{ ...publishingGroup, deliveryMode: 'GROUPED', groupWindowMinutes: 15 }}
+        availableGroups={[]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('radio', { name: /every event/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][1].deliveryMode).toBe('EACH')
+  })
+})

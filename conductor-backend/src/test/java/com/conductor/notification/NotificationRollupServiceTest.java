@@ -10,7 +10,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -39,7 +38,7 @@ class NotificationRollupServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new NotificationRollupService(repository, discord, Duration.ofMinutes(15));
+        service = new NotificationRollupService(repository, discord);
         config = new NotificationGroupConfig();
         config.setId(CONFIG_ID);
         config.setProjectId(PROJECT_ID);
@@ -109,6 +108,47 @@ class NotificationRollupServiceTest {
         verify(discord, never()).postReturningId(anyString(), anyString());
         assertThat(r.getLines()).containsOnlyKeys("1", "2");
         assertThat(r.getMessageId()).isEqualTo("msg-1");
+    }
+
+    @Test
+    void eachModeBypassesTheRollup() {
+        config.setDeliveryMode(DeliveryMode.EACH);
+
+        assertThat(service.rollup(config, status("1", "IN_REVIEW", "In Review"))).isFalse();
+        assertThat(NotificationRollupService.appliesTo(config, status("1", "IN_REVIEW", "In Review"))).isFalse();
+
+        verify(repository, never()).lockChannel(anyString());
+        verify(discord, never()).postReturningId(anyString(), anyString());
+        verify(discord, never()).editMessage(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void theChannelsOwnWindowDecidesWhetherTheMessageIsStillCurrent() {
+        config.setGroupWindowMinutes(60);
+        // 30 minutes old: outside the 15-minute default, inside this channel's hour
+        NotificationRollup r = row(OffsetDateTime.now().minusMinutes(30), line("1", 0, "IN_REVIEW", "In Review", null));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(discord.buildRollupPayload(any())).thenReturn("ROLLUP");
+        when(discord.editMessage(WEBHOOK, "msg-1", "ROLLUP")).thenReturn(true);
+
+        assertThat(service.rollup(config, status("2", "IN_REVIEW", "In Review"))).isTrue();
+
+        verify(discord, never()).postReturningId(anyString(), anyString());
+        assertThat(r.getLines()).containsOnlyKeys("1", "2");
+    }
+
+    @Test
+    void aShortChannelWindowPostsFreshWhereTheDefaultWouldHaveEdited() {
+        config.setGroupWindowMinutes(5);
+        NotificationRollup r = row(OffsetDateTime.now().minusMinutes(10), line("1", 0, "IN_REVIEW", "In Review", null));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(discord.format(any())).thenReturn("SINGLE");
+        when(discord.postReturningId(WEBHOOK, "SINGLE")).thenReturn("msg-2");
+
+        assertThat(service.rollup(config, status("2", "IN_REVIEW", "In Review"))).isTrue();
+
+        verify(discord, never()).editMessage(anyString(), anyString(), anyString());
+        assertThat(r.getMessageId()).isEqualTo("msg-2");
     }
 
     @Test

@@ -5,11 +5,9 @@ import com.conductor.entity.NotificationRollup;
 import com.conductor.repository.NotificationRollupRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -25,8 +23,13 @@ import java.util.Set;
  * Nothing in here is scheduled. There is no timer, flush or sweep, which matters because production
  * scales to zero. Each incoming event either edits the channel's current message or posts a new one,
  * synchronously, and "current" is a timestamp comparison made at that moment: the message was last
- * touched less than {@code conductor.notifications.rollup-window} ago. A quiet channel therefore just
+ * touched less than the channel's own {@code groupWindowMinutes} ago. A quiet channel therefore just
  * stops being edited; its last message stays exactly as it was.
+ *
+ * <h2>Per channel</h2>
+ * Each channel chooses its {@link DeliveryMode} and window in Settings. {@code EACH} declines here, so the
+ * event goes out as its own message. The settings are read from the config on every event, so a change
+ * takes effect on the next one with no other action.
  *
  * <h2>What rolls up</h2>
  * {@code WORK_ITEM_STATUS_CHANGED}, {@code REVIEW_SUBMITTED} and {@code REVIEWER_ASSIGNED}. Comments carry
@@ -55,29 +58,28 @@ public class NotificationRollupService {
 
     private final NotificationRollupRepository rollupRepository;
     private final DiscordProvider discordProvider;
-    private final Duration window;
 
     public NotificationRollupService(NotificationRollupRepository rollupRepository,
-                                     DiscordProvider discordProvider,
-                                     @Value("${conductor.notifications.rollup-window:PT15M}") Duration window) {
+                                     DiscordProvider discordProvider) {
         this.rollupRepository = rollupRepository;
         this.discordProvider = discordProvider;
-        this.window = window;
     }
 
     /** Cheap pre-check so events that never roll up do not open a transaction (the pool is small). */
     static boolean appliesTo(NotificationGroupConfig config, NotificationMessage event) {
-        return ROLLED_UP.contains(event.getEventType()) && config.getProvider() == ProviderType.DISCORD;
+        return ROLLED_UP.contains(event.getEventType()) && config.getProvider() == ProviderType.DISCORD
+                && config.getDeliveryMode() == DeliveryMode.GROUPED;
     }
 
     /**
      * @return true when the event was handled here (edited into or posted as the rolling message); false
-     *         when it is not a rolled-up event, the channel is not Discord, or nothing could be posted --
+     *         when it is not a rolled-up event, the channel is not Discord or delivers each event, or
+     *         nothing could be posted --
      *         the caller then sends it the ordinary way
      */
     @Transactional
     public boolean rollup(NotificationGroupConfig config, NotificationMessage event) {
-        if (!ROLLED_UP.contains(event.getEventType()) || config.getProvider() != ProviderType.DISCORD) {
+        if (!appliesTo(config, event)) {
             return false;
         }
         Map<String, String> meta = event.getMetadata();
@@ -93,7 +95,7 @@ public class NotificationRollupService {
                 return false;
             }
             NotificationRollup row = rollupRepository.findById(config.getId()).orElse(null);
-            boolean current = row != null && row.getUpdatedAt().plus(window).isAfter(now);
+            boolean current = row != null && row.getUpdatedAt().plusMinutes(config.getGroupWindowMinutes()).isAfter(now);
 
             Map<String, RollupLine> lines = new LinkedHashMap<>(current ? row.getLines() : Map.of());
             boolean isNewItem = !lines.containsKey(workItemId);

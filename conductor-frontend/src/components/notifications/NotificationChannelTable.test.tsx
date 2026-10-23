@@ -183,3 +183,33 @@ describe('NotificationGroupTable', () => {
     expect(screen.getByText('Members')).toBeInTheDocument()
   })
 })
+
+describe('NotificationGroupTable delivery hint', () => {
+  const rolledUp: NotificationGroupResponse = {
+    ...issuesGroup,
+    events: [
+      { eventType: 'WORK_ITEM_STATUS_CHANGED', label: 'Any work item status change', enabled: true },
+    ],
+  }
+  const props = { onEdit: vi.fn(), onDelete: vi.fn(), onTest: vi.fn(), testingGroup: null }
+
+  it('shows Grouped with the window', () => {
+    render(
+      <NotificationGroupTable
+        {...props}
+        groups={[{ ...rolledUp, deliveryMode: 'GROUPED', groupWindowMinutes: 15 }]}
+      />,
+    )
+    expect(screen.getByText('Grouped · 15 min')).toBeInTheDocument()
+  })
+
+  it('shows Every event', () => {
+    render(<NotificationGroupTable {...props} groups={[{ ...rolledUp, deliveryMode: 'EACH' }]} />)
+    expect(screen.getByText('Every event')).toBeInTheDocument()
+  })
+
+  it('shows no hint for a group without rolled-up events', () => {
+    render(<NotificationGroupTable {...props} groups={[disabledGroup]} />)
+    expect(screen.queryByText(/grouped|every event/i)).not.toBeInTheDocument()
+  })
+})

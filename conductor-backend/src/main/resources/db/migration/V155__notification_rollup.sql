@@ -16,3 +16,12 @@ CREATE TABLE notification_rollup (
     updated_at  TIMESTAMP WITH TIME ZONE NOT NULL,
     lines       JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
+-- Per-channel delivery setting, changed at runtime from Settings -> Notifications. EACH sends every
+-- event as its own message; GROUPED edits one rolling message while the channel was touched within
+-- group_window_minutes. Existing channels become GROUPED (15 min), the behaviour they get today.
+ALTER TABLE notification_group_config
+    ADD COLUMN delivery_mode VARCHAR(20) NOT NULL DEFAULT 'GROUPED',
+    ADD COLUMN group_window_minutes INT NOT NULL DEFAULT 15,
+    ADD CONSTRAINT ck_notification_group_delivery_mode CHECK (delivery_mode IN ('EACH', 'GROUPED')),
+    ADD CONSTRAINT ck_notification_group_window CHECK (group_window_minutes BETWEEN 1 AND 1440);

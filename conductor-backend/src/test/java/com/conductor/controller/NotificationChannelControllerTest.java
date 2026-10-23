@@ -312,6 +312,46 @@ class NotificationChannelControllerTest {
     }
 
     @Test
+    void upsertNotificationGroupRoundTripsTheDeliverySettings() throws Exception {
+        NotificationGroupConfig config = buildGroupConfig();
+        config.setDeliveryMode(com.conductor.notification.DeliveryMode.EACH);
+        config.setGroupWindowMinutes(60);
+        when(notificationGroupService.upsertGroup(eq("proj-1"), eq("ISSUES"), any(), any(User.class)))
+                .thenReturn(new UpsertResult(config, false));
+
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/groups/ISSUES")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[\"WORK_ITEM_STATUS_CHANGED\"],\"deliveryMode\":\"EACH\",\"groupWindowMinutes\":60}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deliveryMode").value("EACH"))
+                .andExpect(jsonPath("$.groupWindowMinutes").value(60));
+    }
+
+    @Test
+    void getNotificationGroupsReportsTheDefaultDeliverySettings() throws Exception {
+        when(notificationGroupService.getGroups(eq("proj-1"), any(User.class)))
+                .thenReturn(List.of(buildGroupConfig()));
+
+        mockMvc.perform(get("/api/v1/projects/proj-1/notifications/groups")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(jsonPath("$[0].deliveryMode").value("GROUPED"))
+                .andExpect(jsonPath("$[0].groupWindowMinutes").value(15));
+    }
+
+    @Test
+    void upsertNotificationGroupReturns400ForAWindowOutOfBounds() throws Exception {
+        when(notificationGroupService.upsertGroup(eq("proj-1"), eq("ISSUES"), any(), any(User.class)))
+                .thenThrow(new com.conductor.exception.BusinessException("groupWindowMinutes must be between 1 and 1440"));
+
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/groups/ISSUES")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[],\"groupWindowMinutes\":2000}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void deleteNotificationGroupReturns204() throws Exception {
         mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/groups/ISSUES")
                         .header("Authorization", "Bearer valid-token"))

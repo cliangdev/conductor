@@ -7,11 +7,13 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.NotificationGroupRequest;
 import com.conductor.generated.model.NotificationTestResponse;
 import com.conductor.notification.ChannelGroup;
+import com.conductor.notification.DeliveryMode;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDeliveryService;
 import com.conductor.notification.NotificationMessage;
 import com.conductor.notification.ProviderType;
 import com.conductor.repository.NotificationGroupConfigRepository;
+import com.conductor.repository.NotificationRollupRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,17 +31,23 @@ public class NotificationGroupService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationGroupService.class);
 
+    static final int MIN_WINDOW_MINUTES = 1;
+    static final int MAX_WINDOW_MINUTES = 1440;
+
     private final NotificationGroupConfigRepository groupConfigRepository;
     private final NotificationDeliveryService notificationDeliveryService;
     private final ProjectSecurityService projectSecurityService;
+    private final NotificationRollupRepository rollupRepository;
 
     public NotificationGroupService(
             NotificationGroupConfigRepository groupConfigRepository,
             NotificationDeliveryService notificationDeliveryService,
-            ProjectSecurityService projectSecurityService) {
+            ProjectSecurityService projectSecurityService,
+            NotificationRollupRepository rollupRepository) {
         this.groupConfigRepository = groupConfigRepository;
         this.notificationDeliveryService = notificationDeliveryService;
         this.projectSecurityService = projectSecurityService;
+        this.rollupRepository = rollupRepository;
     }
 
     @Transactional(readOnly = true)
@@ -72,6 +80,12 @@ public class NotificationGroupService {
             }
         }
 
+        Integer requestedWindow = request.getGroupWindowMinutes();
+        if (requestedWindow != null && (requestedWindow < MIN_WINDOW_MINUTES || requestedWindow > MAX_WINDOW_MINUTES)) {
+            throw new BusinessException("groupWindowMinutes must be between "
+                    + MIN_WINDOW_MINUTES + " and " + MAX_WINDOW_MINUTES);
+        }
+
         Optional<NotificationGroupConfig> existing =
                 groupConfigRepository.findByProjectIdAndChannelGroup(projectId, channelGroup);
 
@@ -88,7 +102,25 @@ public class NotificationGroupService {
         config.setEnabled(Boolean.TRUE.equals(request.getEnabled()));
         config.setEnabledEventTypes(new HashSet<>(enabledEventTypes));
 
+        // Omitted keeps the stored value (a new config starts from the entity defaults), so clients that
+        // predate the setting keep working.
+        DeliveryMode previousMode = config.getDeliveryMode();
+        int previousWindow = config.getGroupWindowMinutes();
+        if (request.getDeliveryMode() != null) {
+            config.setDeliveryMode(DeliveryMode.valueOf(request.getDeliveryMode().getValue()));
+        }
+        if (requestedWindow != null) {
+            config.setGroupWindowMinutes(requestedWindow);
+        }
+        boolean deliveryChanged = !isNew
+                && (previousMode != config.getDeliveryMode() || previousWindow != config.getGroupWindowMinutes());
+
         NotificationGroupConfig saved = groupConfigRepository.save(config);
+        if (deliveryChanged) {
+            // Forget the current rolling message so the next grouped event starts a fresh one under the
+            // new settings, rather than editing a message the old settings opened.
+            rollupRepository.deleteById(saved.getId());
+        }
         return new UpsertResult(saved, isNew);
     }
 

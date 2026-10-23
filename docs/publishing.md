@@ -598,9 +598,14 @@ in place, with **one line per Post** showing its latest state:
 - **One item** in the message renders exactly as the single message always did. **Two or more** render as
   "N Posts updated" (or "N Work Items updated" when the nouns are mixed), lines grouped under a heading per
   status — ordered open, in progress, terminal, then first seen.
-- **The window** is `conductor.notifications.rollup-window` (default `PT15M`, env
-  `NOTIFICATION_ROLLUP_WINDOW`). If the channel's message was last updated less than that ago, the event edits
-  it; otherwise it posts a new one. At 25 lines (or about 3,500 characters) the next new item starts a fresh
+- **A per-channel setting.** In Settings → Notifications, each Issues or Publishing channel chooses
+  **Every event** (`EACH`: one message per event, as before) or **Grouped** (`GROUPED`, the default) with a
+  window of 5 minutes, 15 minutes, 30 minutes, 1 hour or 4 hours (`deliveryMode` / `groupWindowMinutes` on the
+  notification group API; any 1–1440 minutes is accepted). A change applies to the next event, and the channel's
+  current rolling message is forgotten so the next grouped event starts a fresh one. Other channel groups always
+  send each event.
+- **The window** is the channel's `groupWindowMinutes` (default 15). If the channel's message was last updated
+  less than that ago, the event edits it; otherwise it posts a new one. At 25 lines (or about 3,500 characters) the next new item starts a fresh
   message. Discord pings once, when a message is posted — edits do not notify.
 - **Purely event-driven.** There is no timer, flush or sweep (production scales to zero): the window is just
   `updated_at` compared with the clock when an event arrives, so a quiet channel simply stops being edited.

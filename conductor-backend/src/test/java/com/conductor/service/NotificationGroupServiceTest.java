@@ -6,10 +6,12 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.NotificationGroupRequest;
 import com.conductor.notification.ChannelGroup;
+import com.conductor.notification.DeliveryMode;
 import com.conductor.notification.NotificationDeliveryService;
 import com.conductor.notification.NotificationMessage;
 import com.conductor.notification.ProviderType;
 import com.conductor.repository.NotificationGroupConfigRepository;
+import com.conductor.repository.NotificationRollupRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,6 +46,9 @@ class NotificationGroupServiceTest {
 
     @Mock
     private ProjectSecurityService projectSecurityService;
+
+    @Mock
+    private NotificationRollupRepository rollupRepository;
 
     @InjectMocks
     private NotificationGroupService service;
@@ -110,6 +115,67 @@ class NotificationGroupServiceTest {
         assertThat(result.isNew()).isFalse();
         assertThat(result.config().getWebhookUrl()).isEqualTo("https://discord.com/updated");
         assertThat(result.config().getEnabledEventTypes()).containsExactlyInAnyOrder("WORK_ITEM_STATUS_CHANGED", "REVIEW_SUBMITTED");
+    }
+
+    @Test
+    void upsertGroupDefaultsToGroupedFifteenMinutesWhenOmittedOnCreate() {
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
+                .thenReturn(Optional.empty());
+        when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        NotificationGroupConfig saved = service.upsertGroup("proj-1", "ISSUES",
+                buildRequest("https://discord.com/test", List.of()), adminUser).config();
+
+        assertThat(saved.getDeliveryMode()).isEqualTo(DeliveryMode.GROUPED);
+        assertThat(saved.getGroupWindowMinutes()).isEqualTo(15);
+    }
+
+    @Test
+    void upsertGroupStoresDeliverySettingsAndForgetsTheRollingMessageWhenTheyChange() {
+        NotificationGroupConfig existing = buildConfig(ChannelGroup.ISSUES);
+        existing.setId("cfg-1");
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(existing));
+        when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        NotificationGroupRequest req = buildRequest("https://discord.com/test", List.of());
+        req.setDeliveryMode(NotificationGroupRequest.DeliveryModeEnum.EACH);
+        req.setGroupWindowMinutes(60);
+        NotificationGroupConfig saved = service.upsertGroup("proj-1", "ISSUES", req, adminUser).config();
+
+        assertThat(saved.getDeliveryMode()).isEqualTo(DeliveryMode.EACH);
+        assertThat(saved.getGroupWindowMinutes()).isEqualTo(60);
+        verify(rollupRepository).deleteById("cfg-1");
+    }
+
+    @Test
+    void upsertGroupKeepsStoredDeliverySettingsWhenOmittedOnUpdate() {
+        NotificationGroupConfig existing = buildConfig(ChannelGroup.ISSUES);
+        existing.setId("cfg-1");
+        existing.setDeliveryMode(DeliveryMode.EACH);
+        existing.setGroupWindowMinutes(240);
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(existing));
+        when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        NotificationGroupConfig saved = service.upsertGroup("proj-1", "ISSUES",
+                buildRequest("https://discord.com/test", List.of()), adminUser).config();
+
+        assertThat(saved.getDeliveryMode()).isEqualTo(DeliveryMode.EACH);
+        assertThat(saved.getGroupWindowMinutes()).isEqualTo(240);
+        verify(rollupRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void upsertGroupRejectsAWindowOutOfBounds() {
+        for (int bad : new int[] {0, 1441}) {
+            NotificationGroupRequest req = buildRequest("https://discord.com/test", List.of());
+            req.setGroupWindowMinutes(bad);
+            assertThatThrownBy(() -> service.upsertGroup("proj-1", "ISSUES", req, adminUser))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("groupWindowMinutes");
+        }
+        verify(groupConfigRepository, never()).save(any());
     }
 
     @Test
