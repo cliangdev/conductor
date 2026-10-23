@@ -154,6 +154,10 @@
     "mcpConfig": "{\n  \"mcpServers\": {\n    \"conductor\": {\n      \"command\": \"conductor\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}",
     "slashCommands": [
       {
+        "name": "conductor:marketing-report",
+        "description": "Build the app marketing report: pull the whole-funnel numbers, refresh stale industry benchmarks from sources read this session, and publish a ten-section HTML report with prioritised next actions."
+      },
+      {
         "name": "conductor:prd",
         "description": "Create a PRD for the current project through guided discovery, research, and writing."
       },
@@ -224,6 +228,10 @@
       {
         "name": "conductor-creative",
         "description": "Makes a Creative end to end, static or short video: sets up the Brand Kit if unconfigured, reads it and its Knowledge page, picks media and an angle, previews a draft locally and shows it for approval before anything is saved, commits it, fixes what's wrong, then hands it to conductor-publisher."
+      },
+      {
+        "name": "conductor-marketing-analyst",
+        "description": "Method for the marketing report: fetch the report payload, research and record missing or stale benchmarks, rank next actions by users lost, and write only what the numbers and cited sources support."
       },
       {
         "name": "conductor-content-studio",
@@ -738,6 +746,32 @@
       "description": "What is working across the project's published Posts: totals, engagement rate by platform, format and time, best and worst posts, and movers vs the prior window. Add include [\"channels\"] for per-channel status, funnel and metrics.",
       "category": "marketing",
       "requiredParams": []
+    },
+    {
+      "name": "get_marketing_report",
+      "description": "The whole-funnel marketing report in one payload: sources, headline metrics, acquisition by source, funnel with its biggest drop, daily chart data, scorecard, keywords, ads, benchmarks and changes. Window 7d or 28d.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_marketing_benchmark",
+      "description": "Record an industry benchmark for a metric from a source read this session. sourceUrl and checkedOn are required; never from memory.",
+      "category": "marketing",
+      "requiredParams": [
+        "metricRef",
+        "value",
+        "sourceName",
+        "sourceUrl",
+        "checkedOn"
+      ]
+    },
+    {
+      "name": "delete_marketing_benchmark",
+      "description": "Remove the stored benchmark for a metric.",
+      "category": "marketing",
+      "requiredParams": [
+        "metricRef"
+      ]
     },
     {
       "name": "submit_review",

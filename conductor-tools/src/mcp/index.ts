@@ -67,6 +67,7 @@ import {
   type CreatePostParams,
 } from './tools/posts.js'
 import { getMarketingInsights } from './tools/insights.js'
+import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -1191,6 +1192,44 @@ export const TOOLS = [
         platform: { type: 'string', description: 'Restrict posts to one platform, from the project\'s connected platforms (optional; needs "posts")' },
         channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'With "channels": add this channel\'s series and breakdown tables (optional)' },
       },
+    },
+  },
+  {
+    name: 'get_marketing_report',
+    description: 'The whole-funnel marketing report in one payload: sources, headline, acquisition, funnel, scorecard, keywords, ads, benchmarks and changes. Percent values are fractions. Read-only. Use get_marketing_insights for per-Post performance; set_marketing_benchmark to record an industry benchmark.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window: { type: 'string', enum: ['7d', '28d'], description: 'Report window (default 28d)' },
+      },
+    },
+  },
+  {
+    name: 'set_marketing_benchmark',
+    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        metricRef: { type: 'string', description: '{source.channel}.{key} of a scorecard row (e.g. STORE.conversion_rate) or PRODUCT.{key}' },
+        label: { type: 'string', description: 'Display name (optional)' },
+        value: { type: 'number', description: 'The benchmark in the metric\'s own unit (a rate is a fraction: 0.03 = 3%)' },
+        rangeText: { type: 'string', description: 'The published range the value summarises, e.g. "2-4%" (optional)' },
+        segment: { type: 'string', description: 'What it covers: category, store, country, model (optional)' },
+        sourceName: { type: 'string', description: 'Who published it' },
+        sourceUrl: { type: 'string', description: 'http(s) URL of the page you read' },
+        checkedOn: { type: 'string', description: 'YYYY-MM-DD, the day you read the source (not in the future)' },
+        notes: { type: 'string', description: 'Caveats (optional)' },
+      },
+      required: ['metricRef', 'value', 'sourceName', 'sourceUrl', 'checkedOn'],
+    },
+  },
+  {
+    name: 'delete_marketing_benchmark',
+    description: 'Remove the stored benchmark for a metric (idempotent). Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
+    inputSchema: {
+      type: 'object',
+      properties: { metricRef: { type: 'string', description: 'CHANNEL.metric or PRODUCT.<key>' } },
+      required: ['metricRef'],
     },
   },
   {
@@ -2352,6 +2391,27 @@ export async function runMcpServer(): Promise<void> {
               channel: params['channel'] as string | undefined,
             })
           )
+        }
+        case 'get_marketing_report': {
+          return successResponse(await getMarketingReport(config, { window: params['window'] as string | undefined }))
+        }
+        case 'set_marketing_benchmark': {
+          return successResponse(
+            await setMarketingBenchmark(config, {
+              metricRef: params['metricRef'] as string,
+              label: params['label'] as string | undefined,
+              value: params['value'] as number,
+              rangeText: params['rangeText'] as string | undefined,
+              segment: params['segment'] as string | undefined,
+              sourceName: params['sourceName'] as string,
+              sourceUrl: params['sourceUrl'] as string,
+              checkedOn: params['checkedOn'] as string,
+              notes: params['notes'] as string | undefined,
+            })
+          )
+        }
+        case 'delete_marketing_benchmark': {
+          return successResponse(await deleteMarketingBenchmark(config, { metricRef: params['metricRef'] as string }))
         }
         case 'get_post_analytics': {
           return successResponse(

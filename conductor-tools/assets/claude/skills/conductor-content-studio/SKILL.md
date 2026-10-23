@@ -127,7 +127,7 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    found under "Missing pages". A missing page is a gap to record, never a reason to stop.
 3. Performance, for `context/performance.md`: `get_marketing_insights` (window `30d`, or `90d` if
    empty) and `list_top_posts` (limit 10). Summarise what the data says; "no performance data yet"
-   is a valid result.
+   is a valid result. For the whole-funnel view (acquisition, in-app funnel, benchmarks) `get_marketing_report` exists.
 4. `list_creative_media` for `IMAGE`, `VIDEO` and `AUDIO` -> `context/media.json` (id, kind, label,
    dimensions or duration, checked, blocked, provenance).
 5. Learning, for `context/learning.md`. Glob `.conductor/content-runs/*/run.json`, skip this run, and
