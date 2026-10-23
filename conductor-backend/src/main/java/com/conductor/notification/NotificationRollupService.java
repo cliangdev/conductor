@@ -7,7 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
@@ -36,9 +35,11 @@ import java.util.Set;
  *
  * <h2>Consistency</h2>
  * Discord failures never propagate (the caller's transaction must not die because a webhook is down), and
- * a message id is only stored once Discord has actually returned one. Runs in its own transaction so a
- * failure here cannot mark the caller's transaction rollback-only, and holds a row lock for the duration
- * so two simultaneous events cannot fork the message or lose each other's line.
+ * a message id is only stored once Discord has actually returned one. Joins the caller's transaction
+ * rather than opening its own: the publishing paths emit inside a request transaction, and a second
+ * connection per event would let a burst of approvals starve the five-connection prod pool. The channel's
+ * config row is locked for the rest of that transaction, so two simultaneous events cannot fork the
+ * message or lose each other's line.
  */
 @Service
 public class NotificationRollupService {
@@ -74,7 +75,7 @@ public class NotificationRollupService {
      *         when it is not a rolled-up event, the channel is not Discord, or nothing could be posted --
      *         the caller then sends it the ordinary way
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public boolean rollup(NotificationGroupConfig config, NotificationMessage event) {
         if (!ROLLED_UP.contains(event.getEventType()) || config.getProvider() != ProviderType.DISCORD) {
             return false;
@@ -88,7 +89,10 @@ public class NotificationRollupService {
         boolean sent = false;
         try {
             OffsetDateTime now = OffsetDateTime.now();
-            NotificationRollup row = rollupRepository.findByIdForUpdate(config.getId()).orElse(null);
+            if (rollupRepository.lockChannel(config.getId()).isEmpty()) {
+                return false;
+            }
+            NotificationRollup row = rollupRepository.findById(config.getId()).orElse(null);
             boolean current = row != null && row.getUpdatedAt().plus(window).isAfter(now);
 
             Map<String, RollupLine> lines = new LinkedHashMap<>(current ? row.getLines() : Map.of());

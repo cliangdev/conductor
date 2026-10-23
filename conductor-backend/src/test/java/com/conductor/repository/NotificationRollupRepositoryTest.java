@@ -77,7 +77,8 @@ class NotificationRollupRepositoryTest extends AbstractNoneWebIntegrationTest {
         rollupRepository.saveAndFlush(rollupFor(config));
         entityManager.clear();
 
-        NotificationRollup loaded = rollupRepository.findByIdForUpdate(config.getId()).orElseThrow();
+        assertThat(rollupRepository.lockChannel(config.getId())).contains(config.getId());
+        NotificationRollup loaded = rollupRepository.findById(config.getId()).orElseThrow();
 
         assertThat(loaded.getMessageId()).isEqualTo("123456789");
         assertThat(loaded.getLines()).containsOnlyKeys("w1", "w2");
@@ -91,7 +92,7 @@ class NotificationRollupRepositoryTest extends AbstractNoneWebIntegrationTest {
         rollupRepository.saveAndFlush(rollupFor(config));
         entityManager.clear();
 
-        NotificationRollup loaded = rollupRepository.findByIdForUpdate(config.getId()).orElseThrow();
+        NotificationRollup loaded = rollupRepository.findById(config.getId()).orElseThrow();
         Map<String, RollupLine> lines = new LinkedHashMap<>(loaded.getLines());
         lines.remove("w2");
         loaded.setLines(lines);
@@ -102,7 +103,7 @@ class NotificationRollupRepositoryTest extends AbstractNoneWebIntegrationTest {
         NotificationRollup again = rollupRepository.findById(config.getId()).orElseThrow();
         assertThat(again.getLines()).containsOnlyKeys("w1");
         assertThat(again.getMessageId()).isEqualTo("999");
-        assertThat(rollupRepository.findByIdForUpdate("missing-" + UUID.randomUUID())).isEmpty();
+        assertThat(rollupRepository.lockChannel("missing-" + UUID.randomUUID())).isEmpty();
     }
 
     @Test

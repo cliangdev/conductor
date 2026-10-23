@@ -19,6 +19,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,6 +45,7 @@ class NotificationRollupServiceTest {
         config.setProjectId(PROJECT_ID);
         config.setProvider(ProviderType.DISCORD);
         config.setWebhookUrl(WEBHOOK);
+        lenient().when(repository.lockChannel(CONFIG_ID)).thenReturn(Optional.of(CONFIG_ID));
     }
 
     private NotificationMessage status(String itemId, String toStatus, String label) {
@@ -83,7 +85,7 @@ class NotificationRollupServiceTest {
 
     @Test
     void firstEventPostsAndRecordsTheMessageId() {
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.empty());
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.empty());
         when(discord.format(any())).thenReturn("SINGLE");
         when(discord.postReturningId(WEBHOOK, "SINGLE")).thenReturn("m-9");
 
@@ -98,7 +100,7 @@ class NotificationRollupServiceTest {
     @Test
     void eventInsideTheWindowEditsTheExistingMessage() {
         NotificationRollup r = row(OffsetDateTime.now().minusMinutes(2), line("1", 0, "IN_REVIEW", "In Review", null));
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
         when(discord.buildRollupPayload(any())).thenReturn("ROLLUP");
         when(discord.editMessage(WEBHOOK, "msg-1", "ROLLUP")).thenReturn(true);
 
@@ -112,7 +114,7 @@ class NotificationRollupServiceTest {
     @Test
     void eventAfterTheWindowPostsANewMessageStartingFromThatEventAlone() {
         NotificationRollup r = row(OffsetDateTime.now().minusMinutes(30), line("1", 0, "IN_REVIEW", "In Review", null));
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
         when(discord.format(any())).thenReturn("SINGLE");
         when(discord.postReturningId(WEBHOOK, "SINGLE")).thenReturn("msg-2");
 
@@ -126,7 +128,7 @@ class NotificationRollupServiceTest {
     @Test
     void sameItemsEventsCollapseToOneLineHoldingTheLatestState() {
         NotificationRollup r = row(OffsetDateTime.now().minusMinutes(1), line("1", 0, "IN_REVIEW", "In Review", null));
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
         when(discord.format(any())).thenReturn("SINGLE");
         when(discord.editMessage(anyString(), anyString(), anyString())).thenReturn(true);
 
@@ -141,7 +143,7 @@ class NotificationRollupServiceTest {
     @Test
     void verdictNoteSurvivesTheNextStatusChange() {
         NotificationRollup r = row(OffsetDateTime.now().minusMinutes(1), line("1", 0, "IN_REVIEW", "In Review", null));
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
         when(discord.format(any())).thenReturn("SINGLE");
         when(discord.editMessage(anyString(), anyString(), anyString())).thenReturn(true);
 
@@ -158,7 +160,7 @@ class NotificationRollupServiceTest {
     @Test
     void reviewerAssignedOnlyAddsTheItemAndDoesNotTouchExistingState() {
         NotificationRollup r = row(OffsetDateTime.now().minusMinutes(1), line("1", 0, "SCHEDULED", "Scheduled", "approved by Bryan"));
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
         when(discord.format(any())).thenReturn("SINGLE");
         when(discord.editMessage(anyString(), anyString(), anyString())).thenReturn(true);
 
@@ -171,7 +173,7 @@ class NotificationRollupServiceTest {
     @Test
     void aFailedEditPostsAFreshMessageAndResetsTheRow() {
         NotificationRollup r = row(OffsetDateTime.now().minusMinutes(1), line("1", 0, "IN_REVIEW", "In Review", null));
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
         when(discord.buildRollupPayload(any())).thenReturn("ROLLUP");
         when(discord.editMessage(WEBHOOK, "msg-1", "ROLLUP")).thenReturn(false);
         when(discord.format(any())).thenReturn("SINGLE");
@@ -185,7 +187,7 @@ class NotificationRollupServiceTest {
 
     @Test
     void aFailedPostLeavesTheRowUntouchedAndReportsNotHandled() {
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.empty());
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.empty());
         when(discord.format(any())).thenReturn("SINGLE");
         when(discord.postReturningId(WEBHOOK, "SINGLE")).thenReturn(null);
 
@@ -200,7 +202,7 @@ class NotificationRollupServiceTest {
         for (int i = 0; i < NotificationRollupService.MAX_LINES; i++) {
             r.getLines().put("x" + i, line("x" + i, i, "IN_REVIEW", "In Review", null));
         }
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
         when(discord.format(any())).thenReturn("SINGLE");
         when(discord.postReturningId(WEBHOOK, "SINGLE")).thenReturn("msg-new");
 
@@ -218,7 +220,7 @@ class NotificationRollupServiceTest {
             assertThat(service.rollup(config, NotificationMessage.of(type, PROJECT_ID, Map.of("workItemId", "1"))))
                     .as(type.name()).isFalse();
         }
-        verify(repository, never()).findByIdForUpdate(anyString());
+        verify(repository, never()).lockChannel(anyString());
     }
 
     @Test
@@ -229,7 +231,7 @@ class NotificationRollupServiceTest {
 
     @Test
     void aThrowingProviderNeverEscapes() {
-        when(repository.findByIdForUpdate(CONFIG_ID)).thenReturn(Optional.empty());
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.empty());
         when(discord.format(any())).thenThrow(new IllegalStateException("boom"));
 
         assertThat(service.rollup(config, status("1", "X", "X"))).isFalse();
