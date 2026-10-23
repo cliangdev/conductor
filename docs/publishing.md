@@ -586,6 +586,30 @@ project has not configured one**, so adding this took nothing away from a projec
 notifications. A manual-publish alert has no fallback — there is nothing sensible to say about it in an
 Issues channel — so it is simply silent until a Publishing channel exists.
 
+### One rolling message, not one per event
+
+Status changes and the two review events (`WORK_ITEM_STATUS_CHANGED`, `REVIEWER_ASSIGNED`,
+`REVIEW_SUBMITTED`) do not each post their own Discord message. A channel keeps **one** message and edits it
+in place, with **one line per Post** showing its latest state:
+`[RE-80](link) Title · Scheduled · approved by Bryan`. An approval that used to produce three messages
+(review approved, moved to Approved, moved to Scheduled) is now one line; a review verdict sets the
+"approved by" / "changes requested by" suffix and the next status change keeps it.
+
+- **One item** in the message renders exactly as the single message always did. **Two or more** render as
+  "N Posts updated" (or "N Work Items updated" when the nouns are mixed), lines grouped under a heading per
+  status — ordered open, in progress, terminal, then first seen.
+- **The window** is `conductor.notifications.rollup-window` (default `PT15M`, env
+  `NOTIFICATION_ROLLUP_WINDOW`). If the channel's message was last updated less than that ago, the event edits
+  it; otherwise it posts a new one. At 25 lines (or about 3,500 characters) the next new item starts a fresh
+  message. Discord pings once, when a message is posted — edits do not notify.
+- **Purely event-driven.** There is no timer, flush or sweep (production scales to zero): the window is just
+  `updated_at` compared with the clock when an event arrives, so a quiet channel simply stops being edited.
+  State lives in `notification_rollup` (one row per channel config), locked per event so two arriving together
+  cannot fork the message. If Discord refuses an edit (the message was deleted), a fresh one is posted.
+- **Never rolled up:** comments (their text is the content), `AUTO_TRANSITION_BLOCKED` and
+  `POST_AWAITING_MANUAL` (they ask someone to act), and workflow failures. The "send a test notification"
+  button is also unchanged.
+
 ## Testing against the real platforms
 
 Nothing above has been run against a live Page, Instagram account or TikTok creator yet. The checklist

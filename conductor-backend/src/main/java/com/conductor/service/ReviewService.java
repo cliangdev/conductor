@@ -141,6 +141,7 @@ public class ReviewService {
         Map<String, Object> meta = new java.util.HashMap<>(Map.of(
                 "workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict));
         meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(publishingWorkflow.publishes(workItem)));
+        workItemWorkflowService.stampRollupContext(meta, projectId, workItem);
         signalBus.publish(Signal.of(
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEW_SUBMITTED, projectId, workItemId, Instant.now(),
                 meta, new SignalOrigin("work_item", workItemId)));

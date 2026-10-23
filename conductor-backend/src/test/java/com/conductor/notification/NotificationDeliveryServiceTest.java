@@ -41,6 +41,9 @@ class NotificationDeliveryServiceTest {
     @Mock
     private DiscordProvider discordProvider;
 
+    @Mock
+    private NotificationRollupService rollupService;
+
     @InjectMocks
     private NotificationDeliveryService deliveryService;
 
@@ -210,6 +213,47 @@ class NotificationDeliveryServiceTest {
         deliveryService.deliver(publishingEventOf(EventType.POST_AWAITING_MANUAL));
 
         verify(discordProvider, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    void deliverFallsBackToPlainSendWhenRollupDeclinesTheEvent() {
+        NotificationGroupConfig config = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of(EventType.WORK_ITEM_STATUS_CHANGED.name()));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(config));
+        when(rollupService.rollup(any(), any())).thenReturn(false);
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
+    }
+
+    @Test
+    void deliverDoesNotSendSeparatelyWhenRollupHandledTheEvent() {
+        NotificationGroupConfig config = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of(EventType.WORK_ITEM_STATUS_CHANGED.name()));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(config));
+        when(rollupService.rollup(any(), any())).thenReturn(true);
+
+        deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+
+        verify(discordProvider, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    void eventsThatNeverRollUpDoNotEvenAskTheRollupService() {
+        NotificationGroupConfig config = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of(EventType.COMMENT_ADDED.name()));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(config));
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliver(eventOf(EventType.COMMENT_ADDED));
+
+        verify(rollupService, never()).rollup(any(), any());
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
     }
 
     private NotificationMessage eventOf(EventType type) {

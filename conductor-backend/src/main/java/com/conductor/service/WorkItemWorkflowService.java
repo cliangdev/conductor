@@ -241,6 +241,41 @@ public class WorkItemWorkflowService {
         return resolver.resolveRequired(projectId, slug, workItem.getWorkflowVersion());
     }
 
+    /**
+     * Stamps what a roll-up notification line needs onto an event that is not itself a status change:
+     * the item's noun, area, display id and <em>current</em> status (id, label, category).
+     *
+     * <p>A review verdict or a reviewer assignment carries the item's id and title but not where it
+     * stands, and the rolling Discord message shows one line per item at its latest status. Stamping it
+     * here, where the statechart is already resolved, keeps the delivery path free of lookups. Keys mirror
+     * the status-change event's ({@code noun}, {@code area}, {@code displayId}) with {@code status*} for the
+     * current state, so a reader never mistakes them for a transition's {@code toStatus*}.
+     */
+    public void stampRollupContext(Map<String, Object> meta, String projectId, WorkItem workItem) {
+        if (workItem == null) {
+            return;
+        }
+        Statechart statechart = resolveFor(projectId, workItem);
+        meta.put("noun", statechart.noun());
+        if (statechart.area() != null) {
+            meta.put("area", statechart.area());
+        }
+        if (workItem.getProject() != null && workItem.getProject().getKey() != null
+                && workItem.getSequenceNumber() != null) {
+            meta.put("displayId", workItem.getProject().getKey() + "-" + workItem.getSequenceNumber());
+        }
+        String current = workItem.getCurrentStatus();
+        if (current != null) {
+            meta.put("status", current);
+            statechart.status(current).ifPresent(s -> {
+                meta.put("statusLabel", s.displayLabel());
+                if (s.category() != null) {
+                    meta.put("statusCategory", s.category());
+                }
+            });
+        }
+    }
+
     private boolean isReviewer(String projectId, String callerId) {
         return projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
                 .map(m -> m.getRole() == MemberRole.REVIEWER)

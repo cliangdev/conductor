@@ -5,6 +5,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
@@ -12,6 +16,12 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -40,17 +50,29 @@ public class DiscordProvider implements NotificationProvider {
     }
 
     /** Humanize an UPPER_SNAKE status id for display when no explicit label is provided. */
-    private static String humanize(String statusId) {
+    static String humanize(String statusId) {
         if (statusId == null || statusId.isBlank()) return "";
         String lower = statusId.replace('_', ' ').toLowerCase();
         return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
     }
 
     private final RestTemplate restTemplate;
+    private final RestTemplate patchTemplate;
     private final String frontendUrl;
 
+    /**
+     * The shared {@code RestTemplate} is built on {@code HttpURLConnection}, which refuses {@code PATCH};
+     * editing a webhook message needs it, so edits go through a template on the JDK HTTP client instead.
+     * Posting keeps using the shared one, exactly as before.
+     */
+    @Autowired
     public DiscordProvider(RestTemplate restTemplate, @Value("${frontend.url:http://localhost:3000}") String frontendUrl) {
+        this(restTemplate, new RestTemplate(new JdkClientHttpRequestFactory()), frontendUrl);
+    }
+
+    DiscordProvider(RestTemplate restTemplate, RestTemplate patchTemplate, String frontendUrl) {
         this.restTemplate = restTemplate;
+        this.patchTemplate = patchTemplate;
         this.frontendUrl = frontendUrl;
     }
 
@@ -65,7 +87,7 @@ public class DiscordProvider implements NotificationProvider {
      * <p>Falls back to the legacy shape when an event does not carry the routing metadata, so an emitter
      * that has not been enriched still produces a link rather than a broken half of one.
      */
-    private String workItemLink(String projectId, Map<String, String> meta, String workItemId) {
+    String workItemLink(String projectId, Map<String, String> meta, String workItemId) {
         String area = meta.get("area");
         String noun = meta.get("noun");
         String displayId = meta.get("displayId");
@@ -82,7 +104,7 @@ public class DiscordProvider implements NotificationProvider {
      * The same naive plural the frontend's route builder uses, so the two agree on the URL. Deliberately
      * not a general pluralizer: it only has to match {@code pluralizeNoun} in {@code lib/workflows.ts}.
      */
-    private static String pluralize(String noun) {
+    static String pluralize(String noun) {
         if (noun.endsWith("y") && noun.length() > 1 && "aeiou".indexOf(noun.charAt(noun.length() - 2)) < 0) {
             return noun.substring(0, noun.length() - 1) + "ies";
         }
@@ -272,6 +294,133 @@ public class DiscordProvider implements NotificationProvider {
         } catch (RestClientException e) {
             log.warn("Discord webhook request failed: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Posts a message and returns the id Discord gave it, so it can be edited later.
+     *
+     * <p>Discord only returns the created message when the webhook is called with {@code wait=true}; the
+     * parameter is added to whatever query the configured URL already has (a {@code thread_id}, say)
+     * rather than appended blindly. Like {@link #send}, a failure is logged and swallowed -- here it
+     * surfaces as {@code null}, which the caller must treat as "nothing was posted" and not record an id.
+     *
+     * @return the message id, or null when the post failed or the response carried no id
+     */
+    public String postReturningId(String webhookUrl, String formattedMessage) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(formattedMessage, headers);
+        try {
+            URI uri = UriComponentsBuilder.fromUriString(webhookUrl).replaceQueryParam("wait", "true")
+                    .build().toUri();
+            var response = restTemplate.postForEntity(uri, request, Map.class);
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                log.warn("Discord webhook returned {} without a message", response.getStatusCode().value());
+                return null;
+            }
+            Object id = response.getBody().get("id");
+            return id == null ? null : String.valueOf(id);
+        } catch (RuntimeException e) {
+            log.warn("Discord webhook request failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Replaces a previously posted webhook message ({@code PATCH {webhook}/messages/{id}}). Edits do not
+     * notify, which is the point of rolling up.
+     *
+     * @return false when Discord rejected it -- typically a 404 because someone deleted the message --
+     *         so the caller can post a fresh one instead
+     */
+    public boolean editMessage(String webhookUrl, String messageId, String formattedMessage) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(formattedMessage, headers);
+        try {
+            URI uri = UriComponentsBuilder.fromUriString(webhookUrl).pathSegment("messages", messageId)
+                    .build().toUri();
+            var response = patchTemplate.exchange(uri, HttpMethod.PATCH, request, String.class);
+            return response.getStatusCode().is2xxSuccessful();
+        } catch (RuntimeException e) {
+            log.warn("Discord message edit failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * The embed for a rolling message holding two or more Work Items: a count title and one line per
+     * item under a heading per status.
+     *
+     * <p>Groups are ordered by status category (open, in progress, terminal) and then by when the group
+     * first appeared. That approximates statechart order without a lookup on the delivery path: the
+     * category is already on every line, the full status order is not. A one-item message never comes
+     * here -- it is rendered by {@link #format} so a quiet channel looks exactly as it always has.
+     */
+    public String buildRollupPayload(Collection<RollupLine> lines) {
+        List<RollupLine> ordered = new ArrayList<>(lines);
+        ordered.sort(Comparator.comparingLong(RollupLine::seq));
+
+        Map<String, List<RollupLine>> groups = new LinkedHashMap<>();
+        for (RollupLine line : ordered) {
+            groups.computeIfAbsent(groupKey(line), k -> new ArrayList<>()).add(line);
+        }
+        List<Map.Entry<String, List<RollupLine>>> entries = new ArrayList<>(groups.entrySet());
+        // stable sort: equal ranks keep first-seen order
+        entries.sort(Comparator.comparingInt(e -> categoryRank(e.getValue().get(0).category())));
+
+        StringBuilder body = new StringBuilder();
+        for (var entry : entries) {
+            if (body.length() > 0) body.append("\n");
+            RollupLine first = entry.getValue().get(0);
+            String label = first.statusLabel() == null || first.statusLabel().isBlank() ? "Updated" : first.statusLabel();
+            body.append("**").append(label).append("**\n");
+            for (RollupLine l : entry.getValue()) {
+                body.append(lineText(l, false)).append("\n");
+            }
+        }
+
+        long distinctNouns = ordered.stream().map(l -> l.noun() == null ? "" : l.noun()).distinct().count();
+        String noun = distinctNouns == 1 && ordered.get(0).noun() != null && !ordered.get(0).noun().isBlank()
+                ? pluralize(ordered.get(0).noun()) : "Work Items";
+        String title = ordered.size() + " " + noun + " updated";
+        String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        return String.format("{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"}]}",
+                escapeJson(title), escapeJson(body.toString().stripTrailing()), COLOR_DEFAULT, timestamp);
+    }
+
+    /**
+     * One item's line: {@code [RE-80](link) Title · Scheduled · approved by Bryan}. The status is left
+     * out when the line sits under a status heading (it would repeat the heading).
+     */
+    static String lineText(RollupLine l, boolean withStatus) {
+        String title = l.title() == null ? "" : l.title().replace('\n', ' ').replace('\r', ' ');
+        if (title.length() > 100) title = title.substring(0, 97) + "...";
+        StringBuilder sb = new StringBuilder();
+        if (l.displayId() != null && !l.displayId().isBlank()) {
+            sb.append("[").append(l.displayId()).append("](").append(l.link()).append(") ").append(title);
+        } else {
+            sb.append("[").append(title).append("](").append(l.link()).append(")");
+        }
+        if (withStatus && l.statusLabel() != null && !l.statusLabel().isBlank()) {
+            sb.append(" \u00b7 ").append(l.statusLabel());
+        }
+        if (l.verdictNote() != null && !l.verdictNote().isBlank()) {
+            sb.append(" \u00b7 ").append(l.verdictNote());
+        }
+        return sb.toString();
+    }
+
+    private static String groupKey(RollupLine l) {
+        return l.status() != null && !l.status().isBlank() ? l.status() : "";
+    }
+
+    private static int categoryRank(String category) {
+        return switch (category == null ? "" : category) {
+            case "open" -> 0;
+            case "terminal" -> 2;
+            default -> 1;
+        };
     }
 
     static String escapeJson(String value) {

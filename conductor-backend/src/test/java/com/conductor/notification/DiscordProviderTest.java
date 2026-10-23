@@ -560,4 +560,80 @@ class DiscordProviderTest {
         assertThat(json).contains("/app/projects/proj-1/marketing/posts/CLT-1");
     }
 
+
+    // --- Rolling message ---
+
+    private static RollupLine rl(String id, long seq, String status, String label, String category, String note) {
+        return new RollupLine(id, "RE-" + id, "Title " + id, "Post", status, label, category,
+                "http://x/" + id, note, seq);
+    }
+
+    @Test
+    void rollupPayloadGroupsByStatusInCategoryThenFirstSeenOrder() {
+        String payload = discordProvider.buildRollupPayload(java.util.List.of(
+                rl("1", 0, "PUBLISHED", "Published", "terminal", null),
+                rl("2", 1, "IN_REVIEW", "In Review", "in_progress", "approved by Bryan"),
+                rl("3", 2, "DRAFT", "Draft", "open", null),
+                rl("4", 3, "IN_REVIEW", "In Review", "in_progress", null)));
+
+        assertThat(payload).contains("4 Posts updated");
+        int draft = payload.indexOf("**Draft**");
+        int review = payload.indexOf("**In Review**");
+        int published = payload.indexOf("**Published**");
+        assertThat(draft).isLessThan(review);
+        assertThat(review).isLessThan(published);
+        assertThat(payload).contains("[RE-2](http://x/2) Title 2 \u00b7 approved by Bryan");
+        assertThat(payload.indexOf("RE-2")).isLessThan(payload.indexOf("RE-4"));
+    }
+
+    @Test
+    void rollupTitleSaysWorkItemsWhenNounsAreMixed() {
+        RollupLine issue = new RollupLine("a", "E-1", "T", "Issue", "S", "S", "open", "l", null, 0);
+        String payload = discordProvider.buildRollupPayload(java.util.List.of(
+                issue, rl("2", 1, "S", "S", "open", null)));
+
+        assertThat(payload).contains("2 Work Items updated");
+    }
+
+    @Test
+    void postReturningIdAddsWaitToAnExistingQueryAndReadsTheId() {
+        org.mockito.ArgumentCaptor<java.net.URI> uri = org.mockito.ArgumentCaptor.forClass(java.net.URI.class);
+        when(restTemplate.postForEntity(uri.capture(), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of("id", "987")));
+
+        String id = discordProvider.postReturningId(WEBHOOK_URL + "?thread_id=5", "{}");
+
+        assertThat(id).isEqualTo("987");
+        assertThat(uri.getValue().toString()).isEqualTo(WEBHOOK_URL + "?thread_id=5&wait=true");
+    }
+
+    @Test
+    void postReturningIdIsNullOnFailureAndNeverThrows() {
+        when(restTemplate.postForEntity(any(java.net.URI.class), any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
+
+        assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}")).isNull();
+    }
+
+    @Test
+    void editMessagePatchesTheMessageUnderTheWebhookKeepingItsQuery() {
+        RestTemplate patch = org.mockito.Mockito.mock(RestTemplate.class);
+        DiscordProvider p = new DiscordProvider(restTemplate, patch, FRONTEND_URL);
+        org.mockito.ArgumentCaptor<java.net.URI> uri = org.mockito.ArgumentCaptor.forClass(java.net.URI.class);
+        when(patch.exchange(uri.capture(), eq(org.springframework.http.HttpMethod.PATCH), any(HttpEntity.class),
+                eq(String.class))).thenReturn(ResponseEntity.ok("{}"));
+
+        assertThat(p.editMessage(WEBHOOK_URL + "?thread_id=5", "987", "{}")).isTrue();
+        assertThat(uri.getValue().toString()).isEqualTo(WEBHOOK_URL + "/messages/987?thread_id=5");
+    }
+
+    @Test
+    void editMessageReturnsFalseWhenDiscordRefuses() {
+        RestTemplate patch = org.mockito.Mockito.mock(RestTemplate.class);
+        DiscordProvider p = new DiscordProvider(restTemplate, patch, FRONTEND_URL);
+        when(patch.exchange(any(java.net.URI.class), eq(org.springframework.http.HttpMethod.PATCH),
+                any(HttpEntity.class), eq(String.class))).thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+
+        assertThat(p.editMessage(WEBHOOK_URL, "987", "{}")).isFalse();
+    }
 }

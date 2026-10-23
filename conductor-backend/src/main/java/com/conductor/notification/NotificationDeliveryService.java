@@ -39,11 +39,14 @@ public class NotificationDeliveryService {
 
     private final NotificationGroupConfigRepository groupConfigRepository;
     private final DiscordProvider discordProvider;
+    private final NotificationRollupService rollupService;
 
     public NotificationDeliveryService(NotificationGroupConfigRepository groupConfigRepository,
-                                       DiscordProvider discordProvider) {
+                                       DiscordProvider discordProvider,
+                                       NotificationRollupService rollupService) {
         this.groupConfigRepository = groupConfigRepository;
         this.discordProvider = discordProvider;
+        this.rollupService = rollupService;
     }
 
     /**
@@ -77,7 +80,11 @@ public class NotificationDeliveryService {
         if (config == null) {
             return;
         }
-        send(config, event);
+        // Status changes and review events fold into the channel's rolling message; everything else (and
+        // anything the roll-up declines) is sent as its own message, as before.
+        if (!(NotificationRollupService.appliesTo(config, event) && rollupService.rollup(config, event))) {
+            send(config, event);
+        }
     }
 
     /**
