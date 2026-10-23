@@ -1196,7 +1196,7 @@ export const TOOLS = [
   },
   {
     name: 'get_marketing_report',
-    description: 'The whole-funnel marketing report in one payload: window, sources (with dataCompleteThrough), headline metrics, acquisition rows by source, the cohort/event funnel with its biggestDrop, daily store impressions and ad spend, the scorecard (value, target, status, basis), top 25 keywords, ads, benchmarks (ratio, judged, stale) and changes (open, dueForReview, reviewedInWindow). Percent values are fractions. Status: ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY (a rate on under 20 observations), NO_TARGET. Null and empty fields are dropped. Read-only. Use get_marketing_insights for per-Post performance; set_marketing_benchmark to record an industry benchmark.',
+    description: 'The whole-funnel marketing report in one payload: sources, headline, acquisition, funnel, scorecard, keywords, ads, benchmarks and changes. Percent values are fractions. Read-only. Use get_marketing_insights for per-Post performance; set_marketing_benchmark to record an industry benchmark.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1210,7 +1210,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        metricRef: { type: 'string', description: 'CHANNEL.metric or PRODUCT.<key>, as in the report scorecard' },
+        metricRef: { type: 'string', description: '{source.channel}.{key} of a scorecard row (e.g. STORE.conversion_rate) or PRODUCT.{key}' },
         label: { type: 'string', description: 'Display name (optional)' },
         value: { type: 'number', description: 'The benchmark in the metric\'s own unit (a rate is a fraction: 0.03 = 3%)' },
         rangeText: { type: 'string', description: 'The published range the value summarises, e.g. "2-4%" (optional)' },

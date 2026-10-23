@@ -14,7 +14,11 @@ sentence rests on a number in the payload or a source you read this session.
 ## Step 1 — Fetch
 
 Call `get_marketing_report` (`window` `28d` unless the person asked for `7d`). Percent values are
-fractions (0.12 = 12%). Note, per source, `dataCompleteThrough` and `lastFetchedAt`: a source that is
+fractions (0.12 = 12%). The payload drops null and empty fields, except `window.to` (null when no source has data),
+`changes` and the section arrays, which are always present. Top 25 keywords, 20 ads; `totalRows` gives the
+full count when capped. The `sources` list carries `dataCompleteThrough`; `changes` has `open`, `dueForReview`,
+`reviewedInWindow`; each `benchmarks[]` row has ratio, `judged` and `stale`. Note, per source,
+`dataCompleteThrough` and `lastFetchedAt`: a source that is
 `STALE`, `NOT_CONNECTED`, or behind the others is named in the report with its lag. If `window.to` is
 null or `sources` are all unconnected, say so and stop: there is nothing to report on yet.
 
@@ -34,7 +38,7 @@ paid, retention and the like) that has none, or whose entry is `stale` (checked 
    then reputable industry reports. Match category, store, country and model; a mismatch on any of them
    is a caveat, written in `segment` or `notes`. Open the page (`WebFetch`) and read the figure; a search
    snippet alone is not a source.
-3. **Record each** with `set_marketing_benchmark`: `metricRef` as in the scorecard, `value` as a fraction
+3. **Record each** with `set_marketing_benchmark`: `metricRef` = `{source.channel}.{key}` from the scorecard row (e.g. `STORE.conversion_rate`; the row's `key` is the bare metric name) or `PRODUCT.{key}`, `value` as a fraction
    for rates, `rangeText` if a range was published, `segment`, `sourceName`, the page's `sourceUrl`, and
    `checkedOn` = today. Then re-call `get_marketing_report` once to read the stored ratios back.
 4. **Never state a benchmark you did not read this session.** Not from memory, not from a prior report.

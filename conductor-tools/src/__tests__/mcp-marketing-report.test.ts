@@ -62,7 +62,14 @@ describe('getMarketingReport', () => {
     expect((out['keywords'] as Record<string, unknown>[])[0]).toEqual({ keywordId: 'k0', text: 'kw 0', judgeable: false, spend: 1.2346 })
     // emptied sections stay present; the empty changes object is dropped
     expect(out['sources']).toEqual([])
-    expect(out).not.toHaveProperty('changes')
+    expect(out['changes']).toEqual({ open: [], dueForReview: [], reviewedInWindow: [] })
+  })
+
+  it('keeps changes and a null window.to when the report has no data yet', async () => {
+    mocked(apiGet).mockResolvedValue({ window: { from: '2026-09-20', to: null }, sources: [] })
+    const out = (await getMarketingReport(config, {})) as Record<string, unknown>
+    expect(out['window']).toEqual({ from: '2026-09-20', to: null })
+    expect(out['changes']).toEqual({ open: [], dueForReview: [], reviewedInWindow: [] })
   })
 
   it('passes 7d and rejects other windows', async () => {
@@ -101,6 +108,13 @@ describe('setMarketingBenchmark', () => {
 })
 
 describe('deleteMarketingBenchmark', () => {
+  it('accepts a metric key with dots, as the backend does, and still rejects bad refs', async () => {
+    mocked(apiPut).mockResolvedValue({})
+    const ok = { metricRef: 'PRODUCT.trial.rate-v2', value: 0.1, sourceName: 's', sourceUrl: 'https://x.test', checkedOn: '2026-10-01' }
+    await expect(setMarketingBenchmark(config, ok)).resolves.toBeDefined()
+    await expect(setMarketingBenchmark(config, { ...ok, metricRef: 'STORE.a:b' })).rejects.toThrow(/metricRef/)
+  })
+
   it('DELETEs the metricRef', async () => {
     mocked(apiDelete).mockResolvedValue(undefined)
     expect(await deleteMarketingBenchmark(config, { metricRef: 'PRODUCT.trial_rate' })).toEqual({ deleted: 'PRODUCT.trial_rate' })
