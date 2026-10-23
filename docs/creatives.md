@@ -140,14 +140,17 @@ committed.
 ## Generated photos
 
 When the media library has no fitting photo, `generate_creative_image({prompt, aspect?, count?,
-quality?, referenceImagePaths?, useCodex?})` makes one on the person's machine. `aspect` is `portrait` (default,
-1024x1536), `square` (1024x1024) or `landscape` (1536x1024); `count` is 1-3. The result's `generator`
+quality?, size?, referenceImagePaths?, useCodex?})` makes one on the person's machine. `aspect` is `9:16`
+(default, 1440x2560), `4:5` (1664x2080), `1:1` (1920x1920), `2:3`, `3:2` or `16:9` (`portrait`, `square` and
+`landscape` stay as aliases for `2:3`, `1:1` and `3:2`); `size` sets an exact `WIDTHxHEIGHT`; `count` is 1-3.
+The result carries `placementFit`: for each placement (9x16, 4x5, 1x1) the full-bleed scale, the scale with
+the video zoom (up to 1.12) and `ok` when it is at most 1.0. The result's `generator`
 names the route (`openai-api` or `codex`) and model; `model` and `quality` report what was used.
 
 - **Default route: OpenAI Images API.** Needs a key: `conductor config set-openai-api-key <key>` (kept
   in `~/.conductor/config.json`, so it works for Claude Desktop, which doesn't inherit shell env), or
   env `CONDUCTOR_OPENAI_API_KEY` / `OPENAI_API_KEY` (that precedence, then config). Model
-  `gpt-image-2.5-sunburst` (override with `CONDUCTOR_IMAGE_MODEL`). About $0.05 an image billed to that key, 20-45 s. Reference images go to
+  `gpt-image-2.5-sunburst` (override with `CONDUCTOR_IMAGE_MODEL`). Billed to that key per image, more at larger sizes; 20-45 s. Reference images go to
   the edits endpoint.
 - **Codex only with the person's yes.** With no key the tool generates nothing and returns an error
   with `code: 'CODEX_CONFIRMATION_REQUIRED'`, `options` (set an API key / use Codex / skip) and a
@@ -186,8 +189,9 @@ names the route (`openai-api` or `codex`) and model; `model` and `quality` repor
   each file's own provenance. The preview reports which local files still need provenance.
   `aiGenerated: true` means the AI label applies when the Post is published.
 - **Use.** Pass a file's `path` as `photoPath` (or `sequence[].photoPath`) to
-  `preview_creative_draft`. A 1024x1536 image cropped to 9:16 may draw the preview's non-blocking
-  "soft, upscaled photo" warning.
+  `preview_creative_draft`. Never use a photo above 1.0x full-bleed at a placement (a 1024x1536 image at
+  9:16 is 1.25x): check `placementFit`, and regenerate at the largest size in that aspect, use another
+  photo or pick a framed layout.
 
 ## Attach — "Use in Post"
 

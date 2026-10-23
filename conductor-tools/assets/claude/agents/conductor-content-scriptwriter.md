@@ -26,7 +26,10 @@ anything.
    (animated by preset) plus an end card that holds the final frame. Write one on-screen headline
    and body, not timed beats of on-screen text; extra beats belong in a story or carousel sequence
    or the caption.
-4. Respect the brief's must-say and must-avoid lists. Use approved lines verbatim. If the brand kit
+4. Respect the brief's must-say and must-avoid lists. Approved lines may be used verbatim but are
+   never required. A CTA or offer line on a card or in a caption (the kit's `ctaClaim`, a trial,
+   price, plan or discount) appears only if the brief opts in; never add one by default. Naming the
+   app so it can be searched is not one. Never write a line the brief lists as banned. If the brand kit
    requires an accent phrase, mark exactly one `*phrase*` in on-screen headlines. Check every line
    against the copy rules and write the result in the final section.
 5. Keep captions within each platform's limits as given in `platform-specs.md`; include only the
@@ -39,7 +42,10 @@ anything.
    each tagged with a hookType (question, bold-claim, pattern-interrupt, relatable-pain, how-to,
    number, curiosity-gap, story, social-proof) that differs from the main hook's type. The
    orchestrator merges this section into `publish-pack.md`. Every factual claim must be one the
-   brief, knowledge or approved lines confirm; soften or drop any other.
+   brief, knowledge or approved lines confirm; soften or drop any other. Every number or count on a
+   card or in a caption (ingredients, minutes, servings, kcal, macros) must match the record it came
+   from. End `script.md` with a "Numbers and sources" list: each number, where it appears, its source
+   record and the value there. The orchestrator merges it into `publish-pack.md`.
 6. For a slideshow, the script is slide by slide: slide 1 the human tension, middle slides the value,
    slide N-1 the app on a real screenshot with one plain mention ("I keep mine in <App>"), the last
    slide a save or follow ask. At most 8 words a line and 3 lines a box. No logo, badge or offer on a

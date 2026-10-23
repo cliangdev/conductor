@@ -45,7 +45,13 @@ URLs, the CTA claim, the copy rules (each a regex, a message, and which fields i
 approved lines, the enabled placements, and `knowledgePagePath` — the wiki page holding this
 brand's positioning, message hierarchy, approved verbatim lines and voice in prose. Read that page
 with `read_knowledge_pages` before writing anything. Quote its approved lines rather than
-paraphrasing them; they were worded and cleared on purpose.
+paraphrasing them when you use one; they were worded and cleared on purpose, and are allowed, not
+required. A CTA or offer line (a trial, price, plan or discount) is opt-in per request, never a default. Copy rules with ids starting
+`banned-` are lines, phrases or visuals the person rejected earlier: never reuse them. When the person
+rejects one now, ask once whether to ban it; on a yes append a `banned-<slug>` rule (escaped regex
+`pattern`, `flags: "i"`, `fields` headline, body and caption, a `message` naming it as rejected and
+the date) to the full existing `copyRules` list, call `update_brand_kit` (it replaces the whole list),
+and verify with `get_brand_kit`.
 
 **If `configured` comes back `false`**, this kit has never been touched — a brand-free stock
 default, not this workspace's actual brand. Set it up before writing any ad rather than rendering
@@ -100,9 +106,10 @@ the library is used by its id (`photoId`) with no upload at all.
 
 **Nothing in the library fits, or the person asks for a generated one?** Call
 `generate_creative_image` with a scene prompt drawn from the brand's Knowledge page and the angle:
-the scene, subject, light, framing and where the headline's negative space sits. The tool adds its own
+the scene, subject, light, framing and where the headline's negative space sits, written by the
+prompt-writing rules in `references/realism-check.md`. The tool adds its own
 fixed rules (photographic, no text, letters, logos, UI or phone screens) and uses the OpenAI Images API
-when a key is set (`conductor config set-openai-api-key`; about $0.05 an image, 20-45 s; `conductor doctor`
+when a key is set (`conductor config set-openai-api-key`; 20-45 s; larger sizes cost more; `conductor doctor`
 reports the route). With no key it generates nothing and returns `CODEX_CONFIRMATION_REQUIRED`: ask the
 person whether to set a key, use Codex this time (their ChatGPT Plus weekly allowance, shared with coding;
 about 40-50 images uses a week), or skip and use a library photo. Only on an explicit yes call again with
@@ -110,20 +117,26 @@ about 40-50 images uses a week), or skip and use a library photo. Only on an exp
 `sequence[].photoPath`). When the real product must appear, list a real shot in
 `referenceImagePaths` — never describe an invented product. Each file gets a provenance sidecar
 (`aiGenerated: true`) that the preview and commit use automatically, so don't ask about it, and the
-AI label applies. A 1024x1536 image cropped to 9:16 may draw the "soft, upscaled photo" warning:
-mention it, don't fight it.
+AI label applies. `aspect` defaults to `"9:16"` (1440x2560, the largest 9:16 size); `"4:5"`, `"1:1"`,
+`"2:3"`, `"3:2"` and `"16:9"` are the other options and `size` sets an exact `WIDTHxHEIGHT`. Generate in the
+aspect of the placement you will use it full-bleed in. The result's `placementFit` gives each placement's
+scale (9:16, 4:5, 1:1, and with the video zoom). Never use a photo above 1.0x full-bleed: a 1200x1200
+photo at 9:16 is a 1.6x upscale and a 1024x1536 one is 1.25x. Fix it before previewing: generate at the
+largest size in that aspect, use a different photo, or pick a layout that shows the photo framed at or
+below native size (`references/layout-guide.md`, "Resolution").
 
 **The photo shows the product doing its job**, or a concrete scene of the problem or the result: a real
 screen or shot (pass it in `referenceImagePaths`, or use a library photo of the product in use). Stock
 poses (a person smiling at a phone on a couch, a mug, a generic laptop) and empty decorative scenes (a
 sunlit counter with nothing happening) are out. A generated still cannot show an invented product
 screen; real product shots come in as references. Ask for `count: 2` or `3` when you want options
-(each image costs about $0.05 on the API route; on the Codex route each uses weekly quota, so ask first).
+(each image bills the API key, more at larger sizes; on the Codex route each uses weekly quota, so ask first).
 
-**Every generated photo gets the realism check** in `references/realism-check.md` before it is used:
-it must not look AI-made (waxy surfaces, duplicated objects, warped hands, mushy detail). On a fail,
-regenerate with a prompt that names the fix, at most twice; if the third still fails, say what looks
-generated and offer a library photo, a reference photo or filming. The check is about quality, not
+**Every generated photo gets the realism check** in `references/realism-check.md` before it is used,
+on a 100% crop at each placement's size and crop, never a contact sheet: it must not look AI-made
+(waxy surfaces, duplicated objects, warped hands, mushy detail). Library photos are checked too. On a
+fail, regenerate with a prompt that names the failed tells, at most twice; if the third still fails,
+say what looks generated and offer a library photo, a reference photo or filming. Never ship a FAIL. The check is about quality, not
 concealment: the AI label still applies.
 
 **Open the photo and look at it before using it** — a generated one most of all (pseudo-text, warped
@@ -166,7 +179,8 @@ safety checks, so the preview also runs them for every placement (and, for a vid
 and returns them as `checks: [{placementKey, index?, rule, message, severity}]` plus `passed`. An
 `error` check (`safeZone`, `spill`, `contrast`, `font`, `image`, ...) is exactly what would fail the
 full render after the person approved: e.g. an App Store badge intruding into the band TikTok/Reels
-reserve on 9:16. A `warning` (a soft, upscaled photo) does not block, but mention it.
+reserve on 9:16. A `warning` about a soft, upscaled photo means the resolution gate was missed: fix the
+photo (step 5) before showing the draft. Other warnings do not block, but mention them.
 
 When `passed` is false, **do not show the image or ask for approval yet.** Fix the design and
 preview again, repeating until `passed` is true:
@@ -249,7 +263,7 @@ the Creative and overrides only its own `headline`, and optionally `body`, `phot
 photo, uploaded on commit) or `photoId`, or `cta`. Structure a story hook, mechanism,
 payoff — the first beat has to earn the next tap on its own, since that's where the drop-off is
 worst. A logo lockup and CTA claim land on the last beat only by default; `cta: true` on an earlier
-beat overrides that. A story sequence publishes: attach it to an Instagram or Facebook Story
+beat overrides that. Set `cta: false` on every beat unless the request opts in to a CTA. A story sequence publishes: attach it to an Instagram or Facebook Story
 destination and each beat goes out as its own story, in order. A carousel renders every card at one shared aspect ratio (`carouselRatio`),
 since the destination platforms require that.
 

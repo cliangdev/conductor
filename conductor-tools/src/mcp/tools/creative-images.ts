@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs'
 import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve, sep } from 'node:path'
-import { IMAGE_QUALITIES, type GeneratedImage, type ImageAspect, type ImageQuality } from '../../lib/image-common.js'
+import { IMAGE_QUALITIES, normalizeAspect, parseSize, type GeneratedImage, type ImageQuality, type PlacementFit } from '../../lib/image-common.js'
 import { generateImages } from '../../lib/image-generation.js'
 import { findProjectRoot, slugify, stamp } from './creative-drafts.js'
 
@@ -13,11 +13,13 @@ import { findProjectRoot, slugify, stamp } from './creative-drafts.js'
 
 export const GENERATED_SUBDIR = join('.conductor', 'generated')
 const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000
-const ASPECTS: readonly ImageAspect[] = ['portrait', 'square', 'landscape']
 
 export interface GenerateCreativeImageParams {
   prompt: string
+  /** A ratio (default 9:16) or the aliases portrait, square, landscape. */
   aspect?: string
+  /** Custom WIDTHxHEIGHT; overrides aspect. */
+  size?: string
   count?: number
   quality?: string
   referenceImagePaths?: string[]
@@ -38,6 +40,9 @@ export interface GenerateCreativeImageResult {
   provenance: { source: string; licence: string; aiGenerated: true }
   revisedPrompt: string
   outDir: string
+  size: string
+  sizeNote?: string
+  placementFit?: Record<string, PlacementFit>
   quality: ImageQuality
   model: string
   generator: { route: 'openai-api' | 'codex'; model: string }
@@ -72,14 +77,31 @@ export async function pruneGenerated(projectRoot: string, now: Date = new Date()
   return removed
 }
 
+const REALISM_STEP =
+  'Run the realism check before using it: crop the on-screen region at 100% for each placement\'s crop (not a contact sheet) and look for AI tells (waxy or plastic surfaces, over-sharpening or HDR glow, warped hands, faces or teeth, duplicated, merged or floating objects, inconsistent light or shadows, mushy background detail, pseudo-text, a fake product or screen). If any shows, regenerate at most twice with a prompt that names each failed tell; if it still fails, stop, say what looks generated and offer a library photo instead. Never use a photo that failed.'
+
+function nextStep(fit: Record<string, PlacementFit> | undefined): string {
+  const entries = Object.entries(fit ?? {})
+  const over = entries.filter(([, f]) => !f.ok).map(([p, f]) => `${p} (${f.scale}x)`)
+  const overVideo = entries.filter(([, f]) => f.ok && !f.videoOk).map(([p, f]) => `${p} (${f.videoScale}x with the video zoom)`)
+  const fix = "regenerate at that placement's aspect, use another photo, or use a framed layout at or below native size."
+  const upscale =
+    (over.length ? ` Placements above 1.0x: ${over.join(', ')}. Do not use this photo full-bleed there (it would be upscaled): ${fix}` : '') +
+    (overVideo.length ? ` As a MOTION background it would be upscaled at ${overVideo.join(', ')}: use background motion "none" or ${fix}` : '')
+  return `${REALISM_STEP}${upscale} If it passes, pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft. Its .provenance.json sidecar carries the AI-generated label either way.`
+}
+
 export async function generateCreativeImage(
   params: GenerateCreativeImageParams,
   options: GenerateCreativeImageOptions = {}
 ): Promise<GenerateCreativeImageResult> {
   const prompt = typeof params.prompt === 'string' ? params.prompt.trim() : ''
   if (!prompt) throw new Error('prompt is required — describe the scene to photograph.')
-  const aspect = (params.aspect ?? 'portrait') as ImageAspect
-  if (!ASPECTS.includes(aspect)) throw new Error(`aspect must be one of ${ASPECTS.join(', ')}.`)
+  const aspect = normalizeAspect(params.aspect)
+  if (params.size !== undefined) {
+    if (typeof params.size !== 'string') throw new Error('size must look like WIDTHxHEIGHT, e.g. 1440x2560.')
+    parseSize(params.size)
+  }
   const count = params.count ?? 1
   if (!Number.isInteger(count) || count < 1 || count > 3) throw new Error('count must be a whole number from 1 to 3.')
   if (params.quality !== undefined && !(IMAGE_QUALITIES as readonly string[]).includes(params.quality)) {
@@ -107,6 +129,7 @@ export async function generateCreativeImage(
   const result = await generateImages({
     prompt,
     aspect,
+    ...(params.size ? { size: params.size } : {}),
     count,
     ...(params.quality ? { quality: params.quality as ImageQuality } : {}),
     referenceImagePaths,
@@ -124,8 +147,10 @@ export async function generateCreativeImage(
     quality: result.quality,
     model: result.model,
     generator: result.generator,
-    nextStep:
-      'Run the realism check before using it: look at the image for AI tells (waxy or plastic surfaces, over-sharpening or HDR glow, warped hands, faces or teeth, duplicated, merged or floating objects, inconsistent light or shadows, mushy background detail, pseudo-text, a fake product or screen). If any shows, regenerate once or twice with a prompt that names the fix; if it still looks generated, say so and offer a library photo instead. If it passes, pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft. Its .provenance.json sidecar carries the AI-generated label either way.',
+    size: result.size,
+    ...(result.sizeNote ? { sizeNote: result.sizeNote } : {}),
+    ...(result.placementFit ? { placementFit: result.placementFit } : {}),
+    nextStep: nextStep(result.placementFit),
     ...(result.preview ? { image: result.preview } : {}),
   }
 }

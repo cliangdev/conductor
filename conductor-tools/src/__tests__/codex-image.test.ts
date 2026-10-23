@@ -108,7 +108,7 @@ describe('generateImagesWithCodex', () => {
     expect(seen[seen.length - 1]).toBe('-')
     await new Promise((r) => setImmediate(r))
     expect(stdin).toContain('a kitchen')
-    expect(stdin).toContain('1536x1024')
+    expect(stdin).toContain('2304x1536')
     expect(stdin).toMatch(/NO text/)
     expect(stdin).toContain('unretouched photo')
     expect(stdin).toContain('avoid the AI look')
@@ -194,8 +194,10 @@ describe('cost settings', () => {
   const flag = (args: string[], f: string) => args[args.indexOf(f) + 1]
 
   it('buildPrompt carries the quality, defaulting to high', () => {
-    expect(lib.buildPrompt('s', 'square', 1, false)).toContain('1024x1024, high quality.')
-    expect(lib.buildPrompt('s', 'square', 2, false, 'low')).toContain('2 images at size 1024x1024, low quality.')
+    expect(lib.buildPrompt('s', 'square', 1, false)).toContain('1920x1920, high quality.')
+    expect(lib.buildPrompt('s', '9:16', 1, false)).toContain('1440x2560, high quality.')
+    expect(lib.buildPrompt('s', '9:16', 1, false, 'high', '1280x1920')).toContain('1280x1920, high quality.')
+    expect(lib.buildPrompt('s', 'square', 2, false, 'low')).toContain('2 images at size 1920x1920, low quality.')
     expect(lib.buildPrompt('s', 'square', 1, false)).not.toContain('low quality')
   })
 

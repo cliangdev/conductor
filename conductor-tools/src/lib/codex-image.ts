@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process'
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
-import { type Captured, type GeneratedImage, type GenerateImagesParams, type GenerateImagesResult, type ImageAspect, type ImageQuality, ASPECT_SIZES, jpegPreview, runCapture, sceneRules, validImage } from './image-common.js'
+import { type Captured, type GeneratedImage, type GenerateImagesParams, type GenerateImagesResult, type ImageAspect, type ImageAspectInput, type ImageQuality, ASPECT_SIZES, DEFAULT_ASPECT, jpegPreview, resolveImageSize, runCapture, sceneRules, validImage } from './image-common.js'
 import { binaryAvailable } from './media-probe.js'
 import { writeProvenanceSidecar } from './provenance-sidecar.js'
 
@@ -105,10 +105,10 @@ export async function checkCodexCli(): Promise<CodexStatus> {
   }
 }
 
-export function buildPrompt(scene: string, aspect: ImageAspect, count: number, hasReferences: boolean, quality: ImageQuality = 'high'): string {
+export function buildPrompt(scene: string, aspect: ImageAspectInput, count: number, hasReferences: boolean, quality: ImageQuality = 'high', size: string = resolveImageSize(aspect).size): string {
   return [
     sceneRules(scene, aspect, hasReferences),
-    `- Use the image_gen tool to create exactly ${count} image${count === 1 ? '' : 's'} at size ${ASPECT_SIZES[aspect]}, ${quality} quality.`,
+    `- Use the image_gen tool to create exactly ${count} image${count === 1 ? '' : 's'} at size ${size}, ${quality} quality.`,
     `- Then copy each generated file into the current directory as ${Array.from({ length: Math.min(count, 2) }, (_, i) => `image-${i + 1}.png`).join(', ')}${count > 2 ? '…' : ''}.`,
     '- Reply with JSON: {"files": [absolute paths of the copies], "revisedPrompt": "the prompt the image tool actually used"}.',
   ].join('\n')
@@ -216,7 +216,8 @@ function runCodexExec(codex: string, args: string[], prompt: string, timeoutMs: 
 
 export async function generateImagesWithCodex(params: GenerateImagesParams): Promise<GenerateImagesResult> {
   const { outDir, onProgress } = params
-  const aspect = params.aspect ?? 'portrait'
+  const aspect = params.aspect ?? DEFAULT_ASPECT
+  const { size, note: sizeNote } = resolveImageSize(aspect, params.size)
   const count = params.count ?? 1
   const refs = params.referenceImagePaths ?? []
   const timeoutMs = params.timeoutMs ?? 300_000
@@ -244,7 +245,7 @@ export async function generateImagesWithCodex(params: GenerateImagesParams): Pro
     ...refs.flatMap((r) => ['-i', r]),
     '-',
   ]
-  const prompt = buildPrompt(params.prompt, aspect, count, refs.length > 0, quality)
+  const prompt = buildPrompt(params.prompt, aspect, count, refs.length > 0, quality, size)
   let model = requestedModel
   onProgress?.(`Starting Codex image generation (model ${requestedModel}, ${quality} quality)`)
   let outcome: ExecOutcome
@@ -307,5 +308,5 @@ export async function generateImagesWithCodex(params: GenerateImagesParams): Pro
   }
 
   const preview = await jpegPreview(found[0]!.path, outRoot)
-  return { files: found, provenance, revisedPrompt, outDir: outRoot, quality, model, ...(preview ? { preview } : {}) }
+  return { files: found, provenance, revisedPrompt, outDir: outRoot, size, ...(sizeNote ? { sizeNote } : {}), quality, model, ...(preview ? { preview } : {}) }
 }

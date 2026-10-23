@@ -53,6 +53,16 @@ Run: <runId>   Creative: <display id, or "not yet committed">   Tags: hook <type
 ## Compliance
 <the table from compliance-checklist.md: check, answer, what was done, option set>
 
+## Numbers and sources
+| Number as written | Where it appears | Source record | Value in source |
+|---|---|---|---|
+| <"10 ingredients", "25 min", "420 kcal"> | <card or caption> | <recipe, page or brief> | <value there> |
+(Write "none" if the post has no numbers. Every number must match its source.)
+
+## Banned-copy check
+<"clean: no banned line or visual from context/banned.md appears in the specs, script, image
+prompts, captions or this pack", or the hit and how it was fixed>
+
 ## Third-party assets
 | Asset | Whose | Permission or licence |
 |---|---|---|
@@ -80,6 +90,8 @@ Run: <runId>   Creative: <display id, or "not yet committed">   Tags: hook <type
       "options": { "altText": "<alt text for a single feed image>" }
     }
   ],
+  "numbers": [{ "number": "10 ingredients", "appearsIn": "card 2", "source": "<recipe or page>", "sourceValue": "10" }],
+  "bannedCopyCheck": "clean",
   "altText": ["<card 1 alt text>", "<card 2 alt text>"],
   "alternateHooks": [{ "hook": "<line>", "hookType": "question" }],
   "tags": { "hookType": "bold-claim", "angle": "utility-education", "format": "carousel" }
@@ -119,6 +131,8 @@ Rules:
   default. Keys that need a Post's own asset id (`coverAssetId`, `thumbnailAssetId`,
   `photoCoverIndex`) are not known until media is attached to a Post, so the pack does not carry
   them; the cover frame is in `publish-pack.md` for the publisher to act on.
+- `numbers` has one item per number on a card, slide or caption (empty array if none), each matching
+  its source record. `bannedCopyCheck` is `"clean"` or a short note of the hit and its fix.
 - `altText` is one string per image or card, in order. It is also the source for the Creative's
   own `altText` field.
 - `alternateHooks` and `tags` are for learning and experiments, not for publishing. `tags` is also

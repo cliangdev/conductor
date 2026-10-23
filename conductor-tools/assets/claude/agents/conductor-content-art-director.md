@@ -14,7 +14,7 @@ send to the draft renderer, so it has to be valid on the first try.
 
 - Read only the files you are given: `script.md`, `context/media.json`, `context/brand-kit.json`,
   `references/shotlist-template.md`, `references/platform-specs.md`, `references/capabilities.md`,
-  `references/layout-guide.md`, `references/design-critique.md`, `references/slideshow-formats.md` and `references/publish-pack-template.md` when given.
+  `references/layout-guide.md`, `references/design-critique.md`, `references/slideshow-formats.md`, `references/realism-check.md`, `context/banned.md` and `references/publish-pack-template.md` when given.
 - Write only your output files: `direction.md` and, for `RENDER`, `creative-spec.json` (or
   `slideshow-spec.json` for a slideshow), plus `image-prompts.json` when `media.json` has `generate: true`.
 - Never call Conductor or any MCP tool.
@@ -81,21 +81,30 @@ A single JSON object whose keys are exactly `preview_creative_draft` inputs, and
   copy rule. Use an approved line verbatim where the script did.
 - A story or carousel: `sequenceKind` (`story` 2 to 7 beats, `carousel` 2 to 10 cards, plus
   `carouselRatio` such as `4x5` or `1x1`) and a `sequence` array of beats, each with `headline`
-  and optional `body`, `photoId` or `photoPath`, `cta`.
+  and optional `body`, `photoId` or `photoPath`, `cta`. Set `cta: false` on every beat unless the
+  brief opts in to a CTA; otherwise the logo and claim row lands on the last beat. Add no offer line
+  by default.
 - MOTION: `motion.preset` (`fade-up`, `word-by-word`, `accent-pop` or `none`), `motion.durationSec`
   (3 to 60), `motion.background` (`{source: "photo", motion: zoom-in|zoom-out|pan-left|pan-right|none}`
   or `{source: "clip", clipMediaId}`), `motion.endCard`, and optionally top-level `audio`. A MOTION
   renders one headline and one optional body plus an end card holding the final frame: no timed
   multi-beat on-screen text (extra beats go in a story or carousel sequence, or the caption). A clip background uses `background.clipMediaId` from `media.json`, or `clipPath` for a
   user-supplied local file.
+- A STILL or MOTION always shows the kit's `ctaClaim`. If it is banned, or it is an offer line the
+  brief did not opt in to, say so in `direction.md` so the orchestrator stops and asks.
 - Omit any field you do not need. Do not add comments or fields the tool does not take.
 
 ## image-prompts.json (only when `generate: true`)
 
 `{"photo": "<scene prompt>", "beats": {"2": "<scene prompt>"}}` next to the spec: `photo` for the
-main photo, `beats` keyed by sequence position for cards or beats that need their own. Each prompt
+main photo, `beats` keyed by sequence position for cards or beats that need their own. Write each prompt
+by the prompt-writing rules in `references/realism-check.md` (a home cook's phone photo, every
+repeated item different, texture over shine, none of the banned prompt words). Vary the surface,
+angle and light across the batch; one prompt with the subject swapped is a defect. Each prompt
 describes the scene, subject, light, framing and where the negative space for the headline sits. No
 text in the image, and no product depiction unless a reference image is listed in `media.json`.
+Never prompt for a visual listed in `context/banned.md`. The orchestrator generates 9:16
+placements with `aspect: "9:16"`; note any placement that needs another aspect.
 
 ## Finish
 
