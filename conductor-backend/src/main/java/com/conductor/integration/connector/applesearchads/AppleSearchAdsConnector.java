@@ -446,8 +446,9 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
      * Per-day spend, impressions, taps and installs: totals across campaigns (empty dimension key), per
      * campaign ({@code campaign:{id}:{name}}), per keyword ({@code keyword:{id}:{text}}) and per ad
      * ({@code ad:{id}:{name}}); the id never contains a colon, so split on the second one. Totals sum the
-     * campaign rows only. Any failing report fails the whole pull, so the store never prunes history on a
-     * partial answer.
+     * campaign rows only. A server error or auth failure on any report fails the whole pull. A 4xx on one
+     * campaign's keyword/ad report skips just that campaign and lists it in {@link ChannelMetricsPull#skippedCampaignIds()},
+     * so the store keeps that campaign's stored keywords and ads while still pruning the others.
      */
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
@@ -478,6 +479,7 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         Map<LocalDate, Map<String, Double>> totals = new TreeMap<>();
         List<ChannelMetricPoint> points = new ArrayList<>();
         List<DimensionState> states = new ArrayList<>();
+        Set<String> skippedCampaigns = new java.util.LinkedHashSet<>();
         // what the keyword and ad report rows say about each member, used when the state read does not cover it
         Map<String, Map<String, Object>> reportStates = new LinkedHashMap<>();
         try {
@@ -522,6 +524,7 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                     int status = e.getStatusCode().value();
                     if (status == 401 || status == 403 || status == 429) throw e;
                     log.warn("Apple Search Ads keyword/ad report skipped for campaign {}: {}", campaignId, status);
+                    skippedCampaigns.add(campaignId);
                 }
             }
             if (withState && !to.isBefore(LocalDate.now(clock.withZone(ZoneOffset.UTC)))) {
@@ -548,7 +551,7 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         }
         totals.forEach((day, byMetric) -> byMetric.forEach(
                 (metric, value) -> points.add(ChannelMetricPoint.total(metric, day, value))));
-        return new ChannelMetricsPull(points, null, null, null, Set.of(), states);
+        return new ChannelMetricsPull(points, null, null, null, Set.of(), states, null, skippedCampaigns);
     }
 
     /** Longest dimension key we store (the state table's key column). */

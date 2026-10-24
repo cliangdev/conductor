@@ -163,8 +163,9 @@ public class ChannelMetricsFeedPuller {
         }
         java.util.Set<String> pulledSnapshots = pulled.snapshotMetrics();
         int written = store.replaceWindow(connection.getProjectId(), connection.getId(), connection.getConnectorId(),
-                source.channel().name(), from, to, provisionalFrom, pulled.points(), source.prunesMissingDimensions(),
-                metric -> source.snapshot(metric) || pulledSnapshots.contains(metric));
+                source.channel().name(), from, to, provisionalFrom, pulled.points(),
+                source.prunesMissingDimensions(), metric -> source.snapshot(metric) || pulledSnapshots.contains(metric),
+                pulled.skippedCampaignIds());
         boolean rewalk = false;
         if (pulled.definitions() != null) {
             java.util.Set<String> before = definitionStore.keys(connection.getId());

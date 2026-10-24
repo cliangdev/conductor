@@ -29,6 +29,7 @@ class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
 
     @Autowired private ChannelMetricDailyRepository repository;
     @Autowired private com.conductor.integration.ingest.ChannelMetricDailyStore store;
+    @Autowired private com.conductor.integration.ingest.ChannelDimensionStateStore stateStore;
     @Autowired private ChannelMetricTargetRepository targetRepository;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
@@ -146,6 +147,29 @@ class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
                 .extracting(ChannelMetricDaily::getDimensionKey, r -> r.getValue().intValue())
                 .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple("facebook", 900),
                         org.assertj.core.groups.Tuple.tuple("instagram", 2410));
+    }
+
+    @Test
+    void aSkippedCampaignKeepsItsRowsWhileAKeywordDeletedFromAHealthyCampaignIsPruned() {
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        stateStore.upsert(connectionId, List.of(
+                new com.conductor.integration.DimensionState("keyword:1:alpha", java.util.Map.of("campaignId", "A")),
+                new com.conductor.integration.DimensionState("keyword:2:beta", java.util.Map.of("campaignId", "A")),
+                new com.conductor.integration.DimensionState("keyword:3:gamma", java.util.Map.of("campaignId", "B"))));
+        store.replaceWindow(project.getId(), connectionId, "apple-search-ads", "ADS", d, d, d, List.of(
+                pt("impressions", "keyword:1:alpha", d, 10), pt("impressions", "keyword:2:beta", d, 20),
+                pt("impressions", "keyword:3:gamma", d, 30), pt("impressions", "", d, 60)), true, m -> false, java.util.Set.of());
+
+        // next pull: keyword beta was deleted from campaign A; campaign B's report 404s (skipped)
+        store.replaceWindow(project.getId(), connectionId, "apple-search-ads", "ADS", d, d, d, List.of(
+                pt("impressions", "keyword:1:alpha", d, 11), pt("impressions", "", d, 11)), true, m -> false,
+                java.util.Set.of("B"));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(repository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(connectionId))
+                .extracting(ChannelMetricDaily::getDimensionKey)
+                .containsExactlyInAnyOrder("", "keyword:1:alpha", "keyword:3:gamma");
     }
 
     @Test

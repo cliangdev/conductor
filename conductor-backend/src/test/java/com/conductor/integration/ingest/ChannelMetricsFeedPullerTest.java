@@ -100,7 +100,7 @@ class ChannelMetricsFeedPullerTest {
         spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null, null, null,
                 null, IngestSink.CHANNEL_METRICS, null);
 
-        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(store.replaceWindow(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), anyBoolean(), any(), any()))
                 .thenAnswer(inv -> {
                     LocalDate provisionalFrom = inv.getArgument(6);
                     for (ChannelMetricPoint p : inv.<List<ChannelMetricPoint>>getArgument(7)) {
@@ -227,7 +227,18 @@ class ChannelMetricsFeedPullerTest {
 
         pull(null);
 
-        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), eq(false), any());
+        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), eq(false), any(), any());
+    }
+
+    @Test
+    void skippedCampaignsAreHandedToTheStoreAndPruningStaysOn() {
+        stubPull(new ChannelMetricsPull(List.of(), null, null, null, java.util.Set.of(), List.of(), null,
+                java.util.Set.of("1005")));
+
+        pull(null);
+
+        verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), eq(true), any(),
+                eq(java.util.Set.of("1005")));
     }
 
     @Test
@@ -263,7 +274,7 @@ class ChannelMetricsFeedPullerTest {
 
         assertThat(batch.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         assertThat(batch.errorMessage()).isEqualTo("reconnect");
-        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
+        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -291,7 +302,7 @@ class ChannelMetricsFeedPullerTest {
         pull(null);
 
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true), any());
+                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true), any(), any());
     }
 
     // ---- source-declared provisional boundary, trailing hint and definitions ----
@@ -312,7 +323,7 @@ class ChannelMetricsFeedPullerTest {
                 org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(1), true),
                 org.assertj.core.groups.Tuple.tuple(TODAY, true));
         verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), eq(TODAY.minusDays(1)), any(),
-                anyBoolean(), any());
+                anyBoolean(), any(), any());
     }
 
     @Test
@@ -363,7 +374,7 @@ class ChannelMetricsFeedPullerTest {
         pull(null);
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(store, definitionStore);
-        order.verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
+        order.verify(store).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any());
         order.verify(definitionStore).replace("proj-1", "conn-1", definitions);
     }
 
@@ -555,7 +566,7 @@ class ChannelMetricsFeedPullerTest {
         LocalDate to = from.plusDays(13);
         verify(source).pullDaily(any(), eq(from), eq(to));
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq(from), eq(to), eq(TODAY.minusDays(4)), any(), anyBoolean(), any());
+                eq(from), eq(to), eq(TODAY.minusDays(4)), any(), anyBoolean(), any(), any());
         assertThat(batch.hasMore()).isTrue();
         assertThat(batch.nextCursor())
                 .isEqualTo("{\"lastDay\":\"" + to + "\",\"resumeFrom\":\"" + to.plusDays(1) + "\"}");
@@ -642,6 +653,6 @@ class ChannelMetricsFeedPullerTest {
         assertThat(batch.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         assertThat(batch.errorMessage()).isEqualTo("Reconnect Google Search Console — its sign-in has expired");
         verify(source, never()).pullDaily(any(), any(), any());
-        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
+        verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any());
     }
 }
