@@ -19,7 +19,9 @@ CREATE TABLE notification_rollup (
 
 -- Per-channel delivery setting, changed at runtime from Settings -> Notifications. EACH sends every
 -- event as its own message; GROUPED edits one rolling message while the channel was touched within
--- group_window_minutes. Existing channels become GROUPED (15 min), the behaviour they get today.
+-- group_window_minutes. Existing channels move to GROUPED (15 min) on purpose, so they get consolidated
+-- delivery by default even though they sent one message per event until now; a channel can switch back to
+-- EACH in Settings -> Notifications.
 ALTER TABLE notification_group_config
     ADD COLUMN delivery_mode VARCHAR(20) NOT NULL DEFAULT 'GROUPED',
     ADD COLUMN group_window_minutes INT NOT NULL DEFAULT 15,

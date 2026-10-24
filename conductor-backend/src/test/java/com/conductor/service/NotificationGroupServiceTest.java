@@ -145,7 +145,37 @@ class NotificationGroupServiceTest {
 
         assertThat(saved.getDeliveryMode()).isEqualTo(DeliveryMode.EACH);
         assertThat(saved.getGroupWindowMinutes()).isEqualTo(60);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(groupConfigRepository, rollupRepository);
+        order.verify(groupConfigRepository).save(any());
+        order.verify(rollupRepository).lockChannel("cfg-1");
+        order.verify(rollupRepository).deleteById("cfg-1");
+    }
+
+    @Test
+    void upsertGroupForgetsTheRollingMessageWhenOnlyTheWebhookChanges() {
+        NotificationGroupConfig existing = buildConfig(ChannelGroup.ISSUES);
+        existing.setId("cfg-1");
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(existing));
+        when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.upsertGroup("proj-1", "ISSUES", buildRequest("https://discord.com/api/webhooks/9/new", List.of()), adminUser);
+
+        verify(rollupRepository).lockChannel("cfg-1");
         verify(rollupRepository).deleteById("cfg-1");
+    }
+
+    @Test
+    void upsertGroupKeepsTheRollingMessageWhenNothingDeliveryRelatedChanged() {
+        NotificationGroupConfig existing = buildConfig(ChannelGroup.ISSUES);
+        existing.setId("cfg-1");
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(existing));
+        when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.upsertGroup("proj-1", "ISSUES", buildRequest(existing.getWebhookUrl(), List.of()), adminUser);
+
+        verify(rollupRepository, never()).deleteById(any());
     }
 
     @Test
@@ -159,7 +189,7 @@ class NotificationGroupServiceTest {
         when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         NotificationGroupConfig saved = service.upsertGroup("proj-1", "ISSUES",
-                buildRequest("https://discord.com/test", List.of()), adminUser).config();
+                buildRequest(existing.getWebhookUrl(), List.of()), adminUser).config();
 
         assertThat(saved.getDeliveryMode()).isEqualTo(DeliveryMode.EACH);
         assertThat(saved.getGroupWindowMinutes()).isEqualTo(240);

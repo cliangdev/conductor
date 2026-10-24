@@ -65,8 +65,11 @@ function GroupRow({
 }) {
   const enabledCount = group.events?.filter((e) => e.enabled).length ?? 0
   const totalCount = group.events?.length ?? 0
+  // Only worth saying when something can actually be delivered that way: a disabled channel, or one
+  // with no rolled-up event type switched on, never produces a grouped message.
   const hasRolledUpEvents =
-    group.events?.some((e) => ROLLED_UP_EVENT_TYPES.includes(e.eventType)) ?? false
+    group.enabled &&
+    (group.events?.some((e) => e.enabled && ROLLED_UP_EVENT_TYPES.includes(e.eventType)) ?? false)
   const deliveryHint =
     (group.deliveryMode ?? DEFAULT_DELIVERY_MODE) === 'EACH'
       ? 'Every event'

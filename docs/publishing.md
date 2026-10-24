@@ -595,22 +595,39 @@ in place, with **one line per Post** showing its latest state:
 (review approved, moved to Approved, moved to Scheduled) is now one line; a review verdict sets the
 "approved by" / "changes requested by" suffix and the next status change keeps it.
 
-- **One item** in the message renders exactly as the single message always did. **Two or more** render as
+- **One item** in the message renders exactly as the single message always did, except once it has both
+  moved and been reviewed: then it reads from the item's whole line ("Post moved to Scheduled · approved by
+  Bryan"), so an approval followed by an auto-move to Scheduled does not make the approval disappear.
+  **Two or more** render as
   "N Posts updated" (or "N Work Items updated" when the nouns are mixed), lines grouped under a heading per
   status — ordered open, in progress, terminal, then first seen.
 - **A per-channel setting.** In Settings → Notifications, each Issues or Publishing channel chooses
   **Every event** (`EACH`: one message per event, as before) or **Grouped** (`GROUPED`, the default) with a
   window of 5 minutes, 15 minutes, 30 minutes, 1 hour or 4 hours (`deliveryMode` / `groupWindowMinutes` on the
-  notification group API; any 1–1440 minutes is accepted). A change applies to the next event, and the channel's
-  current rolling message is forgotten so the next grouped event starts a fresh one. Other channel groups always
+  notification group API; any 1–1440 minutes is accepted). A change to the mode, the window or the webhook
+  applies to the next event, and the channel's current rolling message is forgotten so the next grouped event
+  starts a fresh one. Existing channels moved to Grouped (15 min) when this shipped; **Every event** restores
+  one message per event. Other channel groups always
   send each event.
 - **The window** is the channel's `groupWindowMinutes` (default 15). If the channel's message was last updated
-  less than that ago, the event edits it; otherwise it posts a new one. At 25 lines (or about 3,500 characters) the next new item starts a fresh
+  less than that ago, the event edits it; otherwise it posts a new one. A message is also never edited for
+  longer than four windows (at most four hours) after it was started, so steady activity cannot keep one
+  message going all day. At 25 lines (or about 3,500 characters) the next new item starts a fresh
   message. Discord pings once, when a message is posted — edits do not notify.
 - **Purely event-driven.** There is no timer, flush or sweep (production scales to zero): the window is just
   `updated_at` compared with the clock when an event arrives, so a quiet channel simply stops being edited.
   State lives in `notification_rollup` (one row per channel config), locked per event so two arriving together
-  cannot fork the message. If Discord refuses an edit (the message was deleted), a fresh one is posted.
+  cannot fork the message.
+- **After commit, in its own transaction.** The roll-up runs once the change that caused it has committed (a
+  rolled-back change sends nothing), in a short transaction of its own with a 3 s lock timeout, and re-reads
+  the channel's settings after taking the lock. Its Discord calls use a 3 s connect / 5 s read timeout
+  (`conductor.notifications.discord.connect-timeout-ms` / `read-timeout-ms`). A failure in it can only cost
+  the notification, never the status change or review; where nothing was posted it falls back to a plain
+  message.
+- **Failed edits do not fork or lose lines.** Only a 404 (the message or webhook was deleted) posts a fresh
+  message, carrying every current line. A 429 or any other error keeps the message id and still saves the
+  lines, so the next successful edit includes everything; the rate-limit `retry_after` is logged, nothing
+  sleeps or retries, and no extra message is sent. Every post and edit carries `allowed_mentions: {parse: []}`.
 - **Never rolled up:** comments (their text is the content), `AUTO_TRANSITION_BLOCKED` and
   `POST_AWAITING_MANUAL` (they ask someone to act), and workflow failures. The "send a test notification"
   button is also unchanged.

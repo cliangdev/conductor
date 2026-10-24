@@ -5,6 +5,8 @@ import com.conductor.repository.NotificationGroupConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.Optional;
@@ -80,10 +82,53 @@ public class NotificationDeliveryService {
         if (config == null) {
             return;
         }
-        // Status changes and review events fold into the channel's rolling message; everything else (and
-        // anything the roll-up declines) is sent as its own message, as before.
-        if (!(NotificationRollupService.appliesTo(config, event) && rollupService.rollup(config, event))) {
+        // Status changes and review events fold into the channel's rolling message; everything else is
+        // sent as its own message, as before.
+        if (NotificationRollupService.appliesTo(config, event)) {
+            rollupAfterCommit(config, event);
+        } else {
             send(config, event);
+        }
+    }
+
+    /**
+     * Runs the roll-up once the caller's transaction has committed, or straight away when there is none.
+     *
+     * <p>The roll-up locks the channel's config row and makes Discord calls, so it must not run inside
+     * the caller's transaction: it would hold that lock until the caller commits, could deadlock with
+     * lifecycle cascades that update parent Work Items after this ran, and a database error swallowed in
+     * it would still mark the caller rollback-only and fail the user's status change or review. After
+     * commit it opens its own short transaction (two connections are held, but briefly, and the first has
+     * no locks), and whatever it does can no longer affect the caller's data -- a failure can only cost
+     * the notification. If the caller rolls back, nothing is sent: no notification for a change that did
+     * not happen.
+     *
+     * <p>Nothing thrown here escapes: by then there is nobody to tell, and {@code afterCommit} exceptions
+     * would otherwise surface from the caller's commit.
+     */
+    private void rollupAfterCommit(NotificationGroupConfig config, NotificationMessage event) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    rollupNow(config, event);
+                }
+            });
+        } else {
+            rollupNow(config, event);
+        }
+    }
+
+    private void rollupNow(NotificationGroupConfig config, NotificationMessage event) {
+        try {
+            // false means the roll-up declined (or could not post anything): send the ordinary way. Safe
+            // because nothing reached Discord.
+            if (!rollupService.rollup(config.getId(), event)) {
+                send(config, event);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to roll up {} notification for project {}: {}",
+                    event.getEventType(), event.getProjectId(), e.getMessage());
         }
     }
 

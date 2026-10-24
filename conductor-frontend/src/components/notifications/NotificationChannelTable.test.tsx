@@ -212,4 +212,18 @@ describe('NotificationGroupTable delivery hint', () => {
     render(<NotificationGroupTable {...props} groups={[disabledGroup]} />)
     expect(screen.queryByText(/grouped|every event/i)).not.toBeInTheDocument()
   })
+
+  it('shows no hint for a disabled channel even when it has rolled-up events on', () => {
+    render(<NotificationGroupTable {...props} groups={[{ ...rolledUp, enabled: false }]} />)
+    expect(screen.queryByText(/grouped|every event/i)).not.toBeInTheDocument()
+  })
+
+  it('shows no hint when no rolled-up event type is switched on', () => {
+    const off = {
+      ...rolledUp,
+      events: [{ eventType: 'WORK_ITEM_STATUS_CHANGED', label: 'Any work item status change', enabled: false }],
+    }
+    render(<NotificationGroupTable {...props} groups={[off]} />)
+    expect(screen.queryByText(/grouped|every event/i)).not.toBeInTheDocument()
+  })
 })

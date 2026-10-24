@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -97,6 +98,7 @@ public class NotificationGroupService {
             config.setChannelGroup(channelGroup);
         }
 
+        String previousWebhook = config.getWebhookUrl();
         config.setProvider(ProviderType.valueOf(request.getProvider().getValue()));
         config.setWebhookUrl(request.getWebhookUrl());
         config.setEnabled(Boolean.TRUE.equals(request.getEnabled()));
@@ -113,12 +115,17 @@ public class NotificationGroupService {
             config.setGroupWindowMinutes(requestedWindow);
         }
         boolean deliveryChanged = !isNew
-                && (previousMode != config.getDeliveryMode() || previousWindow != config.getGroupWindowMinutes());
+                && (previousMode != config.getDeliveryMode() || previousWindow != config.getGroupWindowMinutes()
+                    || !Objects.equals(previousWebhook, config.getWebhookUrl()));
 
         NotificationGroupConfig saved = groupConfigRepository.save(config);
         if (deliveryChanged) {
             // Forget the current rolling message so the next grouped event starts a fresh one under the
-            // new settings, rather than editing a message the old settings opened.
+            // new settings (mode, window or webhook), rather than editing a message the old ones opened.
+            // The channel lock is taken first -- the same one a rollup holds while it works -- so an
+            // in-flight rollup finishes before the row goes and cannot write back a row built from the
+            // old settings; the rollup itself re-reads the config after taking that lock.
+            rollupRepository.lockChannel(saved.getId());
             rollupRepository.deleteById(saved.getId());
         }
         return new UpsertResult(saved, isNew);

@@ -12,11 +12,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -24,6 +27,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class DiscordProvider implements NotificationProvider {
@@ -56,24 +61,62 @@ public class DiscordProvider implements NotificationProvider {
         return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
     }
 
+    /** What came of an attempt to edit the rolling message. */
+    public enum EditOutcome {
+        OK,
+        /** 404: the message (or the webhook) was deleted, so a fresh message is the only way forward. */
+        NOT_FOUND,
+        /** 429: Discord asked us to slow down; the message still exists. */
+        RATE_LIMITED,
+        /** Any other error, or a timeout; the message may well still exist. */
+        FAILED
+    }
+
+    /**
+     * What came of posting a new rolling message.
+     *
+     * @param messageId   the id Discord gave it, or null when nothing was posted
+     * @param rateLimited true when Discord answered 429 -- the caller must not pile a second request on
+     */
+    public record PostResult(String messageId, boolean rateLimited) {
+        static PostResult failed() { return new PostResult(null, false); }
+    }
+
+    private static final Pattern RETRY_AFTER = Pattern.compile("\"retry_after\"\\s*:\\s*([0-9.]+)");
+    private static final String NO_MENTIONS = "\"allowed_mentions\":{\"parse\":[]}";
+    private static final int MAX_REVIEWER_NAME = 80;
+
     private final RestTemplate restTemplate;
-    private final RestTemplate patchTemplate;
+    private final RestTemplate rollupTemplate;
     private final String frontendUrl;
 
     /**
      * The shared {@code RestTemplate} is built on {@code HttpURLConnection}, which refuses {@code PATCH};
-     * editing a webhook message needs it, so edits go through a template on the JDK HTTP client instead.
-     * Posting keeps using the shared one, exactly as before.
+     * editing a webhook message needs it, so the rolling message's calls (the {@code wait=true} post and the
+     * edits) go through a template on the JDK HTTP client instead. That template has a short connect and
+     * read timeout: those calls run while the channel's config row is locked, so a stalled Discord must
+     * not hold the lock for long. Plain {@link #send} keeps using the shared template, exactly as before,
+     * and the shared bean itself is not touched.
      */
     @Autowired
-    public DiscordProvider(RestTemplate restTemplate, @Value("${frontend.url:http://localhost:3000}") String frontendUrl) {
-        this(restTemplate, new RestTemplate(new JdkClientHttpRequestFactory()), frontendUrl);
+    public DiscordProvider(RestTemplate restTemplate,
+                           @Value("${frontend.url:http://localhost:3000}") String frontendUrl,
+                           @Value("${conductor.notifications.discord.connect-timeout-ms:3000}") long connectTimeoutMs,
+                           @Value("${conductor.notifications.discord.read-timeout-ms:5000}") long readTimeoutMs) {
+        this(restTemplate, boundedTemplate(connectTimeoutMs, readTimeoutMs), frontendUrl);
     }
 
-    DiscordProvider(RestTemplate restTemplate, RestTemplate patchTemplate, String frontendUrl) {
+    DiscordProvider(RestTemplate restTemplate, RestTemplate rollupTemplate, String frontendUrl) {
         this.restTemplate = restTemplate;
-        this.patchTemplate = patchTemplate;
+        this.rollupTemplate = rollupTemplate;
         this.frontendUrl = frontendUrl;
+    }
+
+    private static RestTemplate boundedTemplate(long connectTimeoutMs, long readTimeoutMs) {
+        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(connectTimeoutMs)).build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
+        factory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
+        return new RestTemplate(factory);
     }
 
     /**
@@ -302,50 +345,92 @@ public class DiscordProvider implements NotificationProvider {
      * <p>Discord only returns the created message when the webhook is called with {@code wait=true}; the
      * parameter is added to whatever query the configured URL already has (a {@code thread_id}, say)
      * rather than appended blindly. Like {@link #send}, a failure is logged and swallowed -- here it
-     * surfaces as {@code null}, which the caller must treat as "nothing was posted" and not record an id.
-     *
-     * @return the message id, or null when the post failed or the response carried no id
+     * surfaces as a result without an id, which the caller must treat as "nothing was posted" and not
+     * record an id. A 429 is flagged separately so the caller does not follow it with another request.
+     * The payload is sent with mentions disabled.
      */
-    public String postReturningId(String webhookUrl, String formattedMessage) {
+    public PostResult postReturningId(String webhookUrl, String formattedMessage) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<String> request = new HttpEntity<>(formattedMessage, headers);
+        HttpEntity<String> request = new HttpEntity<>(withNoMentions(formattedMessage), headers);
         try {
             URI uri = UriComponentsBuilder.fromUriString(webhookUrl).replaceQueryParam("wait", "true")
                     .build().toUri();
-            var response = restTemplate.postForEntity(uri, request, Map.class);
+            var response = rollupTemplate.postForEntity(uri, request, Map.class);
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
                 log.warn("Discord webhook returned {} without a message", response.getStatusCode().value());
-                return null;
+                return PostResult.failed();
             }
             Object id = response.getBody().get("id");
-            return id == null ? null : String.valueOf(id);
+            return new PostResult(id == null ? null : String.valueOf(id), false);
+        } catch (RestClientResponseException e) {
+            if (e.getStatusCode().value() == 429) {
+                log.warn("Discord rate-limited the rollup post (retry_after={})", retryAfter(e));
+                return new PostResult(null, true);
+            }
+            log.warn("Discord webhook request failed: {}", e.getMessage());
+            return PostResult.failed();
         } catch (RuntimeException e) {
             log.warn("Discord webhook request failed: {}", e.getMessage());
-            return null;
+            return PostResult.failed();
         }
     }
 
     /**
      * Replaces a previously posted webhook message ({@code PATCH {webhook}/messages/{id}}). Edits do not
-     * notify, which is the point of rolling up.
+     * notify, which is the point of rolling up. The payload is sent with mentions disabled, because Discord
+     * re-parses mentions on every edit and does not keep the original message's setting. A {@code wait}
+     * parameter on the configured URL is dropped: it belongs to posting and means nothing to an edit.
      *
-     * @return false when Discord rejected it -- typically a 404 because someone deleted the message --
-     *         so the caller can post a fresh one instead
+     * <p>Never sleeps or retries; on a 429 it logs Discord's {@code retry_after} and leaves the next event
+     * to try again.
      */
-    public boolean editMessage(String webhookUrl, String messageId, String formattedMessage) {
+    public EditOutcome editMessage(String webhookUrl, String messageId, String formattedMessage) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<String> request = new HttpEntity<>(formattedMessage, headers);
+        HttpEntity<String> request = new HttpEntity<>(withNoMentions(formattedMessage), headers);
         try {
-            URI uri = UriComponentsBuilder.fromUriString(webhookUrl).pathSegment("messages", messageId)
-                    .build().toUri();
-            var response = patchTemplate.exchange(uri, HttpMethod.PATCH, request, String.class);
-            return response.getStatusCode().is2xxSuccessful();
+            URI uri = UriComponentsBuilder.fromUriString(webhookUrl).replaceQueryParam("wait")
+                    .pathSegment("messages", messageId).build().toUri();
+            var response = rollupTemplate.exchange(uri, HttpMethod.PATCH, request, String.class);
+            return response.getStatusCode().is2xxSuccessful() ? EditOutcome.OK : EditOutcome.FAILED;
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            if (status == 404) {
+                log.info("Discord message {} is gone (404)", messageId);
+                return EditOutcome.NOT_FOUND;
+            }
+            if (status == 429) {
+                log.warn("Discord rate-limited the rollup edit (retry_after={})", retryAfter(e));
+                return EditOutcome.RATE_LIMITED;
+            }
+            log.warn("Discord message edit failed: {}", e.getMessage());
+            return EditOutcome.FAILED;
         } catch (RuntimeException e) {
             log.warn("Discord message edit failed: {}", e.getMessage());
-            return false;
+            return EditOutcome.FAILED;
         }
+    }
+
+    private static String retryAfter(RestClientResponseException e) {
+        Matcher m = RETRY_AFTER.matcher(e.getResponseBodyAsString());
+        return m.find() ? m.group(1) + "s" : "unknown";
+    }
+
+    /**
+     * Adds {@code "allowed_mentions":{"parse":[]}} to a webhook payload so nothing in a title or reviewer
+     * name can ping. In one place because every rolling-message request (post and edit) needs it and an
+     * edit does not inherit it from the original.
+     */
+    static String withNoMentions(String payload) {
+        if (payload == null || payload.contains("\"allowed_mentions\"")) {
+            return payload;
+        }
+        int end = payload.lastIndexOf('}');
+        if (end < 0) {
+            return payload;
+        }
+        return payload.substring(0, end) + "," + NO_MENTIONS + payload.substring(end);
     }
 
     /**
@@ -390,6 +475,23 @@ public class DiscordProvider implements NotificationProvider {
     }
 
     /**
+     * A one-item message built from the item's whole line, for when a verdict and a status change both
+     * happened to it: the status title as always ({@code Post moved to Scheduled}) with the verdict note
+     * kept in the description, so a later auto-move does not make the approval disappear.
+     */
+    public String buildSinglePayload(RollupLine l) {
+        String noun = l.noun() == null || l.noun().isBlank() ? "Work Item" : l.noun();
+        String label = l.statusLabel() == null || l.statusLabel().isBlank() ? "Updated" : l.statusLabel();
+        String description = (l.title() == null ? "" : l.title())
+                + (l.verdictNote() == null || l.verdictNote().isBlank() ? "" : " \u00b7 " + l.verdictNote());
+        String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        return String.format(
+                "{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"url\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"}]}",
+                escapeJson(noun + " moved to " + label), escapeJson(description), escapeJson(l.link()),
+                colorForCategory(l.category()), timestamp);
+    }
+
+    /**
      * One item's line: {@code [RE-80](link) Title · Scheduled · approved by Bryan}. The status is left
      * out when the line sits under a status heading (it would repeat the heading).
      */
@@ -400,7 +502,7 @@ public class DiscordProvider implements NotificationProvider {
         if (l.displayId() != null && !l.displayId().isBlank()) {
             sb.append("[").append(l.displayId()).append("](").append(l.link()).append(") ").append(title);
         } else {
-            sb.append("[").append(title).append("](").append(l.link()).append(")");
+            sb.append("[").append(escapeLinkText(title)).append("](").append(l.link()).append(")");
         }
         if (withStatus && l.statusLabel() != null && !l.statusLabel().isBlank()) {
             sb.append(" \u00b7 ").append(l.statusLabel());
@@ -409,6 +511,11 @@ public class DiscordProvider implements NotificationProvider {
             sb.append(" \u00b7 ").append(l.verdictNote());
         }
         return sb.toString();
+    }
+
+    /** Backslash-escapes what would end or restart a markdown link label. */
+    static String escapeLinkText(String text) {
+        return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]");
     }
 
     private static String groupKey(RollupLine l) {

@@ -100,6 +100,32 @@ class WorkItemWorkflowServiceTest {
         verify(publishGateEvaluator, never()).enforce(any(), any(), any());
     }
 
+    @Test
+    void stampRollupContextStampsTheNounAndCurrentStatus() {
+        WorkItem item = workItemAt("IN_REVIEW");
+        java.util.Map<String, Object> meta = new java.util.HashMap<>();
+
+        service.stampRollupContext(meta, PROJECT_ID, item);
+
+        assertThat(meta).containsEntry("status", "IN_REVIEW").containsKey("noun");
+    }
+
+    /** Review submission and reviewer assignment call this; an unresolvable workflow must not fail them. */
+    @Test
+    void stampRollupContextSkipsAnItemWhoseWorkflowCannotBeResolved() {
+        WorkItem item = workItemAt("IN_REVIEW");
+        item.setWorkflow("NO_SUCH_WORKFLOW");
+        item.setWorkflowVersion(7);
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("NO_SUCH_WORKFLOW"), eq(7)))
+                .thenReturn(Optional.empty());
+        when(versionRepository.findLatestPublished(any(), eq("NO_SUCH_WORKFLOW"))).thenReturn(Optional.empty());
+        java.util.Map<String, Object> meta = new java.util.HashMap<>();
+
+        assertThatCode(() -> service.stampRollupContext(meta, PROJECT_ID, item)).doesNotThrowAnyException();
+
+        assertThat(meta).isEmpty();
+    }
+
     private WorkflowDefinitionVersion engineeringSnapshot() {
         return snapshot("/schema/examples/engineering.workflow.json");
     }

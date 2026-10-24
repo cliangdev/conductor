@@ -7,6 +7,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +17,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -251,6 +254,74 @@ class NotificationDeliveryServiceTest {
         when(discordProvider.format(any())).thenReturn("{}");
 
         deliveryService.deliver(eventOf(EventType.COMMENT_ADDED));
+
+        verify(rollupService, never()).rollup(any(), any());
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
+    }
+
+    private NotificationGroupConfig groupedConfig() {
+        NotificationGroupConfig config = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of(EventType.WORK_ITEM_STATUS_CHANGED.name()));
+        config.setId("cfg-1");
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(config));
+        return config;
+    }
+
+    @Test
+    void insideATransactionTheRollupWaitsForTheCommit() {
+        groupedConfig();
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+            verify(rollupService, never()).rollup(any(), any());
+
+            when(rollupService.rollup(any(), any())).thenReturn(true);
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+
+            verify(rollupService).rollup(eq("cfg-1"), any());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void aRolledBackCallerSendsNothing() {
+        groupedConfig();
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        verify(rollupService, never()).rollup(any(), any());
+        verify(discordProvider, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    void nothingThrownByTheRollupEscapesAfterCommit() {
+        groupedConfig();
+        when(rollupService.rollup(any(), any())).thenThrow(new IllegalStateException("boom"));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+            assertThatNoException().isThrownBy(() ->
+                    TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void anEachChannelSendsPlainlyWithoutAskingTheRollup() {
+        NotificationGroupConfig config = groupedConfig();
+        config.setDeliveryMode(DeliveryMode.EACH);
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
 
         verify(rollupService, never()).rollup(any(), any());
         verify(discordProvider).send(WEBHOOK_URL, "{}");
