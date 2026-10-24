@@ -158,6 +158,21 @@ class ProductMetricsConnectorTest {
     }
 
     @Test
+    void aBadRequestIsRetriedWithBackoffNotParkedAsSetupRequired() {
+        server.expect(once(), requestTo(URL + "?from=2026-10-01&to=2026-10-14"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"detail\":\"the range is at most 31 days, got 46 (use several calls)\"}"));
+
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
+                    assertThat(e.health()).isEqualTo(ConnectorHealth.DEGRADED);
+                    assertThat(e.getMessage()).contains("HTTP 400").contains("at most 31 days");
+                });
+    }
+
+    @Test
     void aWrongContractVersionIsRefusedWithThePlainReason() {
         respond(response("3", METRICS, "[]", "[]"));
 

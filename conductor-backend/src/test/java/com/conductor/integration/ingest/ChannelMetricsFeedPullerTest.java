@@ -376,6 +376,142 @@ class ChannelMetricsFeedPullerTest {
         verify(definitionStore, never()).replace(any(), any(), any());
     }
 
+    // ---- restatement walks never exceed the per-request cap ----
+
+    private List<LocalDate[]> drain(String cursor, int hint, java.util.function.Function<Integer, ChannelMetricsPull> respond) {
+        List<LocalDate[]> calls = new ArrayList<>();
+        org.mockito.Mockito.doAnswer(inv -> {
+            calls.add(new LocalDate[]{inv.getArgument(1), inv.getArgument(2)});
+            return respond.apply(hint);
+        }).when(source).pull(any(), any(), any());
+        IngestBatch batch;
+        int guard = 0;
+        do {
+            batch = pull(cursor);
+            cursor = batch.nextCursor();
+            assertThat(++guard).isLessThan(30);
+        } while (batch.hasMore());
+        lastCursor = cursor;
+        return calls;
+    }
+
+    private String lastCursor;
+
+    private void assertContiguousWithinCap(List<LocalDate[]> calls, LocalDate start) {
+        LocalDate expected = start;
+        for (LocalDate[] c : calls) {
+            assertThat(c[0]).isEqualTo(expected);
+            assertThat(java.time.temporal.ChronoUnit.DAYS.between(c[0], c[1]) + 1).isLessThanOrEqualTo(14);
+            expected = c[1].plusDays(1);
+        }
+        assertThat(expected).isEqualTo(TODAY.plusDays(1));
+    }
+
+    @Test
+    void aFortyFiveDayRestatementIsWalkedInChunksOfAtMostFourteenDays() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        org.mockito.Mockito.doAnswer(inv -> inv.getArgument(0) == null ? 3 : inv.getArgument(0)).when(source).trailingDays(any(Integer.class));
+
+        List<LocalDate[]> calls = drain("{\"lastDay\":\"2026-10-13\",\"trailingDays\":45}", 45,
+                h -> new ChannelMetricsPull(List.of(), null, null, 45, java.util.Set.of()));
+
+        assertThat(calls).hasSize(4);
+        assertContiguousWithinCap(calls, TODAY.minusDays(45));
+        assertThat(lastCursor).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":45}");
+    }
+
+    @Test
+    void aNinetyDayRestatementIsWalkedInChunksOfAtMostFourteenDays() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        org.mockito.Mockito.doAnswer(inv -> inv.getArgument(0) == null ? 3 : inv.getArgument(0)).when(source).trailingDays(any(Integer.class));
+
+        List<LocalDate[]> calls = drain("{\"lastDay\":\"2026-10-14\",\"trailingDays\":90}", 90,
+                h -> new ChannelMetricsPull(List.of(), null, null, 90, java.util.Set.of()));
+
+        assertThat(calls).hasSize(7);
+        assertContiguousWithinCap(calls, TODAY.minusDays(90));
+    }
+
+    @Test
+    void movingFromAThreeDayHintToAFortyFiveDayHintNeverAsksForMoreThanFourteenDays() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        org.mockito.Mockito.doAnswer(inv -> inv.getArgument(0) == null ? 3 : inv.getArgument(0)).when(source).trailingDays(any(Integer.class));
+        List<LocalDate[]> calls = new ArrayList<>();
+        org.mockito.Mockito.doAnswer(inv -> {
+            calls.add(new LocalDate[]{inv.getArgument(1), inv.getArgument(2)});
+            return new ChannelMetricsPull(List.of(), null, null, 45, java.util.Set.of());
+        }).when(source).pull(any(), any(), any());
+
+        // yesterday's pull stored hint 3; this pull learns 45; the next walks 45 days
+        IngestBatch first = pull("{\"lastDay\":\"2026-10-13\",\"trailingDays\":3}");
+        assertThat(first.hasMore()).isFalse();
+        calls.clear();
+        String cursor = first.nextCursor();
+        IngestBatch b;
+        do {
+            b = pull(cursor);
+            cursor = b.nextCursor();
+        } while (b.hasMore());
+
+        assertThat(calls).hasSize(4);
+        assertContiguousWithinCap(calls, TODAY.minusDays(45));
+    }
+
+    // ---- backfill when a response gains metrics or changes contract version ----
+
+    private static MetricDefinition def(String key) {
+        return new MetricDefinition(key, key, "COUNT", "SUM", null, null, "UP", 1, null, null, null);
+    }
+
+    @Test
+    void newMetricKeysRestartTheBackfillWalkFromTheBackfillFloor() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        when(definitionStore.keys("conn-1")).thenReturn(java.util.Set.of("sessions"));
+        stubPull(new ChannelMetricsPull(List.of(), null, List.of(def("sessions"), def("signups")), 3,
+                java.util.Set.of(), List.of(), 2));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"trailingDays\":3,\"contractVersion\":2}");
+
+        assertThat(batch.hasMore()).isTrue();
+        assertThat(batch.nextCursor()).contains("\"resumeFrom\":\"" + TODAY.minusDays(90) + "\"");
+    }
+
+    @Test
+    void aContractVersionChangeRestartsTheBackfillWalk() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        when(definitionStore.keys("conn-1")).thenReturn(java.util.Set.of("sessions"));
+        stubPull(new ChannelMetricsPull(List.of(), null, List.of(def("sessions")), 3, java.util.Set.of(), List.of(), 2));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"trailingDays\":3}");
+
+        assertThat(batch.hasMore()).isTrue();
+        assertThat(batch.nextCursor()).contains("\"resumeFrom\":\"" + TODAY.minusDays(90) + "\"")
+                .contains("\"contractVersion\":2");
+    }
+
+    @Test
+    void unchangedKeysAndVersionDoNotBackfill() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        when(definitionStore.keys("conn-1")).thenReturn(java.util.Set.of("sessions"));
+        stubPull(new ChannelMetricsPull(List.of(), null, List.of(def("sessions")), 3, java.util.Set.of(), List.of(), 2));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"trailingDays\":3,\"contractVersion\":2}");
+
+        assertThat(batch.hasMore()).isFalse();
+        assertThat(batch.nextCursor()).doesNotContain("resumeFrom");
+    }
+
+    @Test
+    void aFirstPullAlreadyBackfillsSoItNeverSchedulesAnotherWalk() {
+        when(source.maxDaysPerPull()).thenReturn(200);
+        when(definitionStore.keys("conn-1")).thenReturn(java.util.Set.of());
+        stubPull(new ChannelMetricsPull(List.of(), null, List.of(def("sessions")), 3, java.util.Set.of(), List.of(), 2));
+
+        IngestBatch batch = pull(null);
+
+        assertThat(batch.hasMore()).isFalse();
+    }
+
     // ---- chunked backfill ----
 
     @Test
@@ -399,8 +535,8 @@ class ChannelMetricsFeedPullerTest {
         assertThat(from.getAllValues().get(0)).isEqualTo(TODAY.minusDays(90));
         assertThat(to.getAllValues().get(0)).isEqualTo(TODAY.minusDays(90).plusDays(29));
         for (int i = 1; i < pulls; i++) {
-            // each chunk restarts exactly trailing-1 (3) days before the previous chunk's last day
-            assertThat(from.getAllValues().get(i)).isEqualTo(to.getAllValues().get(i - 1).minusDays(3));
+            // each chunk starts the day after the previous chunk's last day: no overlap, no gap
+            assertThat(from.getAllValues().get(i)).isEqualTo(to.getAllValues().get(i - 1).plusDays(1));
             assertThat(to.getAllValues().get(i)).isAfter(to.getAllValues().get(i - 1));
         }
         assertThat(to.getAllValues().get(pulls - 1)).isEqualTo(TODAY);
@@ -421,7 +557,8 @@ class ChannelMetricsFeedPullerTest {
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
                 eq(from), eq(to), eq(TODAY.minusDays(4)), any(), anyBoolean(), any());
         assertThat(batch.hasMore()).isTrue();
-        assertThat(batch.nextCursor()).isEqualTo("{\"lastDay\":\"" + to + "\"}");
+        assertThat(batch.nextCursor())
+                .isEqualTo("{\"lastDay\":\"" + to + "\",\"resumeFrom\":\"" + to.plusDays(1) + "\"}");
     }
 
     @Test

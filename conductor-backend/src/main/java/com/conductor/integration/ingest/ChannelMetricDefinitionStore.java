@@ -25,6 +25,13 @@ public class ChannelMetricDefinitionStore {
         this.repository = repository;
     }
 
+    /** The metric keys currently defined for a connection. */
+    @Transactional(readOnly = true)
+    public Set<String> keys(String connectionId) {
+        return repository.findByConnectionId(connectionId).stream()
+                .map(ChannelMetricDefinitionRow::getMetric).collect(Collectors.toSet());
+    }
+
     @Transactional
     public void replace(String projectId, String connectionId, List<MetricDefinition> definitions) {
         Map<String, ChannelMetricDefinitionRow> existing = new HashMap<>();
