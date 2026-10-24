@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
+  findPostsNavEntry,
   groupByArea,
   toWorkNav,
   cancelWorkflowRun,
@@ -280,5 +281,25 @@ describe('isLifecycleWorkflow', () => {
   it('does not infer lifecycle from an empty {} definition (the my-workflow regression)', () => {
     // An automation that leaked definition:{} must not be treated as a lifecycle workflow.
     expect(isLifecycleWorkflow({ ...base, kind: 'AUTOMATION', definition: {} })).toBe(false)
+  })
+})
+
+describe('findPostsNavEntry', () => {
+  const entry = (slug: string, noun: string, area = 'MARKETING') => ({ slug, label: noun, noun, area, createdAt: '' })
+  const changes = entry('MARKETING_CHANGES', 'Change')
+  const posts = entry('MARKETING', 'Post')
+
+  it('picks Posts even when Changes is listed first in the same area', () => {
+    expect(findPostsNavEntry([changes, posts])).toBe(posts)
+  })
+
+  it('falls back to a Post-noun workflow in the area when the built-in slug is absent', () => {
+    const custom = entry('SOCIAL', 'Post')
+    expect(findPostsNavEntry([changes, custom])).toBe(custom)
+  })
+
+  it('never returns Changes alone', () => {
+    expect(findPostsNavEntry([changes])).toBeUndefined()
+    expect(findPostsNavEntry([entry('MARKETING', 'Post', 'ENGINEERING')])).toBeUndefined()
   })
 })

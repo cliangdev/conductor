@@ -60,6 +60,17 @@ const CAMPAIGNS_WORKFLOW = {
   createdAt: '2025-12-01T00:00:00Z',
 }
 
+// Marketing changes shares the MARKETING area and is listed first (older), so "first entry in the area"
+// would resolve Posts to /marketing/changes.
+const CHANGES_WORKFLOW = {
+  ...MARKETING_WORKFLOW,
+  id: 'wf-changes',
+  name: 'MARKETING_CHANGES',
+  slug: 'MARKETING_CHANGES',
+  noun: 'Change',
+  createdAt: '2025-11-01T00:00:00Z',
+}
+
 function stubApi(insights: () => Promise<unknown>, workflows: unknown[] = [MARKETING_WORKFLOW]) {
   ;(apiGet as Mock).mockImplementation((path: string) => {
     if (path.includes('/marketing/insights')) return insights()
@@ -128,6 +139,17 @@ describe('WhatsWorkingPanel', () => {
 
     expect(await screen.findByText('No published Posts in this window yet')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /go to posts/i })).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/marketing/posts',
+    )
+  })
+
+  it('"Go to Posts" resolves Posts by noun even when Changes shares the area and sorts first', async () => {
+    stubApi(() => Promise.resolve(emptyInsightsResponse()), [CHANGES_WORKFLOW, MARKETING_WORKFLOW])
+    renderPanel()
+
+    expect(await screen.findByText('No published Posts in this window yet')).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /go to posts/i })).toHaveAttribute(
       'href',
       '/app/projects/proj-1/marketing/posts',
     )

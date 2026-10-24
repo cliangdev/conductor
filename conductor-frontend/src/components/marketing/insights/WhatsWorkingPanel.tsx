@@ -16,7 +16,7 @@ import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { compactCount, count } from '@/components/marketing/destinations/DestinationMetrics'
-import { humanizeId, useSidebarWorkNav, workItemDetailPath, workItemListPath } from '@/lib/workflows'
+import { humanizeId, findPostsNavEntry, useSidebarWorkNav, workItemDetailPath, workItemListPath } from '@/lib/workflows'
 import { InsightsGroupTable } from './InsightsGroupTable'
 import { InsightsBestTimes } from './InsightsBestTimes'
 import { InsightsPostList } from './InsightsPostList'
@@ -33,8 +33,6 @@ import {
   type InsightsWindowValue,
   type MarketingInsightsResponse,
 } from './types'
-
-const MARKETING_AREA = 'MARKETING'
 
 const WINDOW_TABS: TabItem[] = INSIGHTS_WINDOWS.map((w) => ({ value: w, label: w }))
 
@@ -101,7 +99,7 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
 
   const { entries } = useSidebarWorkNav(projectId, accessToken)
   const postWorkflow = useMemo(
-    () => entries.find((e) => e.area.toUpperCase() === MARKETING_AREA),
+    () => findPostsNavEntry(entries),
     [entries],
   )
 

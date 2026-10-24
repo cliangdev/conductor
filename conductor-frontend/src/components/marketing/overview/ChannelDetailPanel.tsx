@@ -16,7 +16,7 @@ import { usePermissions } from "@/contexts/PermissionsContext";
 import { apiErrorMessage } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { usePersistedStateAfterMount } from "@/lib/persisted";
-import { useSidebarWorkNav, workItemDetailPath } from "@/lib/workflows";
+import { findPostsNavEntry, useSidebarWorkNav, workItemDetailPath } from "@/lib/workflows";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { InsightsPostList } from "@/components/marketing/insights/InsightsPostList";
 import type { InsightsPost } from "@/components/marketing/insights/types";
@@ -46,8 +46,6 @@ const WINDOW_TABS: TabItem[] = DETAIL_WINDOWS.map((w) => ({
   label: w,
 }));
 const WINDOW_STORAGE_KEY = "marketing.overview.detailWindow";
-const MARKETING_AREA = "MARKETING";
-
 function isDetailWindow(value: string): value is OverviewWindowValue {
   return (DETAIL_WINDOWS as string[]).includes(value);
 }
@@ -76,7 +74,7 @@ export function ChannelDetailPanel({
 
   const { entries } = useSidebarWorkNav(projectId, accessToken);
   const postWorkflow = useMemo(
-    () => entries.find((e) => e.area.toUpperCase() === MARKETING_AREA),
+    () => findPostsNavEntry(entries),
     [entries],
   );
 

@@ -105,6 +105,48 @@ class V159MarketingChangesAreaTest {
         }
     }
 
+    /** The real prod state: V157's full JSON, area 'MARKETING_CHANGES', in the header and the v1 snapshot. */
+    @Test
+    void movesTheFullOriginalDefinitionHeaderAndSnapshot() throws Exception {
+        String url = databaseAt158();
+        try (Connection c = connect(url)) {
+            String id = insertWorkflowJson(c, insertProject(c, "Prod"), "MARKETING_CHANGES", "MARKETING_CHANGES", originalJson());
+
+            flyway(url).load().migrate();
+
+            assertThat(row(c, id)).isEqualTo("MARKETING|MARKETING|MARKETING");
+            // The rest of the document survives the area rewrite.
+            assertThat(queryForString(c, "SELECT v.definition ->> 'noun' FROM workflow_definition_versions v WHERE v.workflow_definition_id = '" + id + "'"))
+                    .isEqualTo("Change");
+        }
+    }
+
+    /** A header the user moved elsewhere keeps its (old-area) snapshot too: the snapshot follows the header. */
+    @Test
+    void leavesTheSnapshotOfAHeaderTheUserMovedElsewhere() throws Exception {
+        String url = databaseAt158();
+        try (Connection c = connect(url)) {
+            String id = insertWorkflowJson(c, insertProject(c, "Moved"), "MARKETING_CHANGES", "GROWTH", originalJson());
+            // Header was moved by the user; the v1 snapshot still carries the seeded area.
+            try (Statement s = c.createStatement()) {
+                s.execute("UPDATE workflow_definitions SET definition = jsonb_set(definition, '{area}', '\"GROWTH\"') WHERE id = '" + id + "'");
+            }
+
+            flyway(url).load().migrate();
+
+            assertThat(row(c, id)).isEqualTo("GROWTH|GROWTH|MARKETING_CHANGES");
+        }
+    }
+
+    private static String originalJson() throws Exception {
+        try (var in = V159MarketingChangesAreaTest.class.getResourceAsStream("/schema/examples/marketing-changes.workflow.json")) {
+            String json = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                    .replaceFirst("\"area\"\\s*:\\s*\"MARKETING\"", "\"area\": \"MARKETING_CHANGES\"");
+            assertThat(json).contains("\"area\": \"MARKETING_CHANGES\"");
+            return json;
+        }
+    }
+
     /** header column | header definition area | v1 snapshot area */
     private static String row(Connection c, String id) throws SQLException {
         return queryForString(c, """
@@ -120,9 +162,14 @@ class V159MarketingChangesAreaTest {
 
     private static String insertWorkflow(Connection c, String projectId, String slug, String area, String noun)
             throws SQLException {
-        String id = UUID.randomUUID().toString();
         String json = "{\"schemaVersion\":1,\"id\":\"%s\",\"area\":\"%s\",\"version\":1,\"state\":\"PUBLISHED\",\"noun\":\"%s\"}"
                 .formatted(slug, area, noun);
+        return insertWorkflowJson(c, projectId, slug, area, json);
+    }
+
+    private static String insertWorkflowJson(Connection c, String projectId, String slug, String area, String json)
+            throws SQLException {
+        String id = UUID.randomUUID().toString();
         try (PreparedStatement st = c.prepareStatement("""
                 INSERT INTO workflow_definitions
                     (id, project_id, name, enabled, definition, version, state, area, schema_version, sidebar_enabled)
