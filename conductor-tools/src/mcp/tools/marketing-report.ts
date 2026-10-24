@@ -64,14 +64,18 @@ export async function getMarketingReport(
   }) as Record<string, unknown>
   // An emptied section must still read as "none", not as a missing key.
   for (const k of ALWAYS_PRESENT) if (!(k in trimmed)) trimmed[k] = []
-  if (!('changes' in trimmed)) trimmed['changes'] = { open: [], dueForReview: [], reviewedInWindow: [] }
+  // All three change buckets stay present even when empty: "nothing due" must not read as a missing key.
+  const changes = (trimmed['changes'] ?? {}) as Record<string, unknown>
+  trimmed['changes'] = {
+    open: changes['open'] ?? [],
+    dueForReview: changes['dueForReview'] ?? [],
+    reviewedInWindow: changes['reviewedInWindow'] ?? [],
+  }
   // window.to is null until a source has data; keep the key so "no data yet" is explicit.
   const w = report['window'] as { from?: string | null; to?: string | null } | undefined
   if (w) trimmed['window'] = { from: w.from ?? null, to: w.to ?? null }
-  const totalRows: Record<string, number> = {}
-  if (keywords.length > MAX_REPORT_KEYWORDS) totalRows['keywords'] = keywords.length
-  if (ads.length > MAX_REPORT_ADS) totalRows['ads'] = ads.length
-  return Object.keys(totalRows).length > 0 ? { ...trimmed, totalRows } : trimmed
+  // The backend already caps keywords at MAX_REPORT_KEYWORDS, so only ads can run past their cap here.
+  return ads.length > MAX_REPORT_ADS ? { ...trimmed, totalRows: { ads: ads.length } } : trimmed
 }
 
 // the metric part mirrors the backend's METRIC_KEY ([A-Za-z0-9_.-]{1,64}, MarketingBenchmarkService)

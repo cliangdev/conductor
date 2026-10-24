@@ -1206,13 +1206,13 @@ export const TOOLS = [
   },
   {
     name: 'set_marketing_benchmark',
-    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
+    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
     inputSchema: {
       type: 'object',
       properties: {
         metricRef: { type: 'string', description: '{source.channel}.{key} of a scorecard row (e.g. STORE.conversion_rate) or PRODUCT.{key}' },
         label: { type: 'string', description: 'Display name (optional)' },
-        value: { type: 'number', description: 'The benchmark in the metric\'s own unit (a rate is a fraction: 0.03 = 3%)' },
+        value: { type: 'number', description: 'The benchmark in the metric\'s own unit (a rate is a fraction: 0.03 = 3%); for a count or currency total, the figure per 28 days' },
         rangeText: { type: 'string', description: 'The published range the value summarises, e.g. "2-4%" (optional)' },
         segment: { type: 'string', description: 'What it covers: category, store, country, model (optional)' },
         sourceName: { type: 'string', description: 'Who published it' },

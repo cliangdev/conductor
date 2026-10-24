@@ -43,8 +43,8 @@ Status colours (also say it in text, never colour alone):
    `changes` carry their `displayId`.
 8. **Scorecard table.** key, label, area, value, target, status chip, basis.
 9. **Keyword table.** The columns from the skill; sort by spend; `judgeable: false` rows muted with "too
-   early". Note beneath: only keywords with 20+ taps can be judged alone. If `totalRows.keywords` is set,
-   say "top 25 of N by spend".
+   early". Note beneath: only keywords with 20+ taps can be judged alone. The report carries the top 25
+   by spend; say so.
 10. **About.** Sources list (connector, status, data through, last fetched), window and lags, small-number
     caveats, benchmark provenance, known data issues, glossary (`<dl>`).
 

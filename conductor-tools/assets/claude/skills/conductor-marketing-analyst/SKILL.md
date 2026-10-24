@@ -15,8 +15,7 @@ sentence rests on a number in the payload or a source you read this session.
 
 Call `get_marketing_report` (`window` `28d` unless the person asked for `7d`). Percent values are
 fractions (0.12 = 12%). The payload drops null and empty fields, except `window.to` (null when no source has data),
-`changes` and the section arrays, which are always present. Top 25 keywords, 20 ads; `totalRows` gives the
-full count when capped. The `sources` list carries `dataCompleteThrough`; `changes` has `open`, `dueForReview`,
+`changes` and the section arrays, which are always present. Top 25 keywords, 20 ads (`totalRows.ads` gives the full ad count when capped). The `sources` list carries `dataCompleteThrough`; `changes` has `open`, `dueForReview`,
 `reviewedInWindow`; each `benchmarks[]` row has ratio, `judged` and `stale`. Note, per source,
 `dataCompleteThrough` and `lastFetchedAt`: a source that is
 `STALE`, `NOT_CONNECTED`, or behind the others is named in the report with its lag. If `window.to` is

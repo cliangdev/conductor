@@ -217,7 +217,8 @@ gets a standing:
 | `NO_TARGET` | no label | The metric has no target. |
 
 `missPct` is the shortfall as a fraction of the target (0.05 is 5% short; 0 when met). A **count or currency
-total** target is stated for its `window` (default `28d`), so Conductor compares a 7-day total with 7/28 of it.
+total** target that declares a `window` is prorated to the requested window (a 7-day total is compared with 7/28
+of a `28d` target); a target with no window is compared as stated.
 Rates and levels are compared as they are.
 
 ## Privacy

@@ -41,7 +41,7 @@ describe('trimReportValue', () => {
 describe('getMarketingReport', () => {
   const kw = (i: number) => ({ keywordId: `k${i}`, text: `kw ${i}`, judgeable: false, bid: null, spend: 1.23456 })
 
-  it('defaults to 28d, caps keywords at 25 and ads at 20, and reports the totals', async () => {
+  it('defaults to 28d, caps keywords at 25 and ads at 20, and reports the ad total', async () => {
     mocked(apiGet).mockResolvedValue({
       window: { from: '2026-09-20', to: '2026-10-17' },
       sources: [],
@@ -58,11 +58,22 @@ describe('getMarketingReport', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/report?window=28d', config)
     expect((out['keywords'] as unknown[]).length).toBe(25)
     expect((out['ads'] as unknown[]).length).toBe(20)
-    expect(out['totalRows']).toEqual({ keywords: 30, ads: 22 })
+    expect(out['totalRows']).toEqual({ ads: 22 })
     expect((out['keywords'] as Record<string, unknown>[])[0]).toEqual({ keywordId: 'k0', text: 'kw 0', judgeable: false, spend: 1.2346 })
     // emptied sections stay present; the empty changes object is dropped
     expect(out['sources']).toEqual([])
     expect(out['changes']).toEqual({ open: [], dueForReview: [], reviewedInWindow: [] })
+  })
+
+  it('keeps all three change buckets when only some have items', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-20', to: '2026-10-17' },
+      changes: { open: [{ id: 'w1', title: 'Change' }], dueForReview: [], reviewedInWindow: [] },
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['changes'].open).toHaveLength(1)
+    expect(out['changes'].dueForReview).toEqual([])
+    expect(out['changes'].reviewedInWindow).toEqual([])
   })
 
   it('keeps changes and a null window.to when the report has no data yet', async () => {
