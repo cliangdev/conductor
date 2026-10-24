@@ -5726,6 +5726,7 @@ components:
             Publish as soon as approved (see WorkItemResponse.publishOnApproval). Omit to leave unchanged.
         tags:
           type: array
+          nullable: true
           description: >-
             Freeform labels for this Work Item. Sent whole — the stored set becomes exactly this list, so
             omit the field to leave existing tags alone and send an empty array to clear them. Values are
@@ -5734,6 +5735,7 @@ components:
             type: string
         fields:
           type: object
+          nullable: true
           additionalProperties: true
           description: >-
             Typed field values to set, merged key by key into the stored ones: a key sent with a value

@@ -758,6 +758,54 @@ class WorkItemServiceTest {
         verify(signalBus, never()).publish(any());
     }
 
+    @Test
+    void completeFromPullRequestBlockedByRequiredFieldsRecordsPrAndAnnouncesInsteadOfThrowing() {
+        // The pr_merged edge exists but its target needs fields that are empty: applySystemTransition refuses.
+        // The webhook must not fail or roll back; the PR is still recorded and the blocked move announced.
+        testIssue.setCurrentStatus("CODE_REVIEW");
+        when(workItemRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
+        when(workItemWorkflowService.applySystemTransition(
+                eq("proj-1"), eq(testIssue), eq(WorkItemWorkflowService.TRIGGER_PR_MERGED)))
+                .thenThrow(new com.conductor.exception.UnprocessableEntityException(
+                        "Cannot move to DONE until these fields are filled in: summary"));
+
+        workItemService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
+
+        assertThat(testIssue.getCurrentStatus()).isEqualTo("CODE_REVIEW");
+        verify(assetService).recordAsset(testIssue, "github_pr", "https://github.com/x/y/pull/9", "Pull Request", "link");
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        assertThat(captor.getValue().type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_AUTO_TRANSITION_BLOCKED);
+        assertThat(captor.getValue().payload()).containsEntry("fromStatus", "CODE_REVIEW");
+        assertThat(captor.getValue().payload().get("reason").toString()).contains("summary");
+    }
+
+    @Test
+    void patchWithoutTagsOrFieldsKeepsStoredTagsAndSkipsRequiredFieldsCheck() {
+        testIssue.setTags(new java.util.LinkedHashSet<>(java.util.List.of("keep")));
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+
+        WorkItem result = workItemService.patchWorkItem("proj-1", "issue-1", "Renamed", null, null, null, null,
+                null, null, null, null, null, caller);
+
+        assertThat(result.getTitle()).isEqualTo("Renamed");
+        assertThat(result.getTags()).containsExactly("keep");
+    }
+
+    @Test
+    void patchWithEmptyTagsClearsThem() {
+        testIssue.setTags(new java.util.LinkedHashSet<>(java.util.List.of("keep")));
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+
+        WorkItem result = workItemService.patchWorkItem("proj-1", "issue-1", null, null, null, null, null,
+                null, java.util.List.of(), null, null, null, caller);
+
+        assertThat(result.getTags()).isEmpty();
+    }
+
     // --- resolveByReference (id-or-displayId lookup for a human or machine caller, e.g.
     // coordinator:get_work_item) ---
 
