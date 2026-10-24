@@ -151,7 +151,7 @@ public class MarketingOverviewController implements MarketingOverviewApi {
         if (t.readOnly()) {
             target.readOnly(true).source(t.source());
         }
-        target.window(t.window()).watchBandPct(t.watchBandPct());
+        target.window(t.window()).watchBandPct(t.watchBandPct()).effectiveValue(t.effectiveValue());
         return target;
     }
 

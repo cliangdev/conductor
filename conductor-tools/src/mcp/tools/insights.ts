@@ -222,6 +222,8 @@ interface OverviewMetric {
   sampleSize?: number | null
   area?: string | null
   basis?: string | null
+  description?: string | null
+  headline?: boolean | null
   target?: {
     value: number
     direction: string
@@ -229,6 +231,7 @@ interface OverviewMetric {
     source?: string | null
     window?: string | null
     effectiveValue?: number | null
+    watchBandPct?: number | null
   } | null
   series?: OverviewSeriesPoint[]
 }
@@ -321,6 +324,7 @@ function trimTarget(t: NonNullable<OverviewMetric['target']>): Record<string, un
     direction: t.direction,
     window: t.window,
     effectiveValue: t.effectiveValue,
+    watchBandPct: t.watchBandPct,
     readOnly: t.readOnly ? true : null,
     setIn: t.readOnly ? t.source : null,
   })
@@ -363,6 +367,8 @@ function trimMetric(
     missPct: m.status && m.status !== 'NO_TARGET' ? round4(m.missPct) : null,
     sampleSize: m.sampleSize,
     area: m.area,
+    description: m.description,
+    headline: m.headline ? true : null,
     // COHORT: each day counts the people who first opened that day, followed to now (EVENT is the default).
     basis: m.basis === 'COHORT' ? m.basis : null,
     series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,

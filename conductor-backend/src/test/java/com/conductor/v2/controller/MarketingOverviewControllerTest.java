@@ -107,6 +107,21 @@ class MarketingOverviewControllerTest {
     // ---- reads ----
 
     @Test
+    void overview_exposesTheProratedEffectiveTarget() throws Exception {
+        memberWithRole(MemberRole.REVIEWER);
+        when(queryService.overview(PROJECT_ID, "7d")).thenReturn(new Overview(window(), List.of(),
+                List.of(webChannel(new TargetView(500, "UP", false, null, "28d", 15.0, 125.0)))));
+
+        mockMvc.perform(get(BASE + "/overview").param("window", "7d")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channels[0].metrics[0].target.value").value(500.0))
+                .andExpect(jsonPath("$.channels[0].metrics[0].target.effectiveValue").value(125.0))
+                .andExpect(jsonPath("$.channels[0].metrics[0].target.window").value("28d"))
+                .andExpect(jsonPath("$.channels[0].metrics[0].target.watchBandPct").value(15.0));
+    }
+
+    @Test
     void member_readsTheOverview() throws Exception {
         memberWithRole(MemberRole.REVIEWER);
         when(queryService.overview(PROJECT_ID, "7d")).thenReturn(new Overview(window(),

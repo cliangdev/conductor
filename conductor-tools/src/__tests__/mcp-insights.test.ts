@@ -316,6 +316,25 @@ describe('get_marketing_insights include channels', () => {
     expect(product.stages[0]).not.toHaveProperty('missPct')
   })
 
+  it('passes description, headline and the target watchBandPct through', async () => {
+    const o = overview()
+    o.channels.push({
+      channel: 'PRODUCT', label: 'In-app', status: 'LIVE', dataCompleteThrough: '2026-10-13', connections: [],
+      metrics: [{
+        metric: 'retention_d7', label: 'D7 retention', unit: 'PERCENT', value: 0.21, noise: false, series: [],
+        description: 'Share of first-openers back on day 7', headline: true,
+        target: { value: 0.25, direction: 'UP', window: '28d', effectiveValue: 0.25, watchBandPct: 15 },
+      }],
+    } as never)
+    mocked(apiGet).mockResolvedValue(o)
+    const result = await getMarketingInsights(config, { include: ['channels'], window: '7d' })
+    const metric = ((result['marketing'] as Record<string, any>).channels[2]).metrics[0]
+    expect(metric).toMatchObject({
+      description: 'Share of first-openers back on day 7', headline: true,
+      target: { value: 0.25, window: '28d', effectiveValue: 0.25, watchBandPct: 15 },
+    })
+  })
+
   it('PRODUCT not connected points at the connector to add', async () => {
     const o = overview()
     o.channels.push({
