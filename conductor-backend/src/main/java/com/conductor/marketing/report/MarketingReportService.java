@@ -53,6 +53,8 @@ public class MarketingReportService {
     static final long MIN_SAMPLE = 20;
     /** A benchmark checked longer ago than this should be refreshed. */
     static final int STALE_BENCHMARK_DAYS = 90;
+    /** The period a count or currency benchmark is stated for. */
+    static final int BENCHMARK_PERIOD_DAYS = 28;
 
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
 
@@ -138,10 +140,14 @@ public class MarketingReportService {
     private Report assemble(String projectId, Snapshot snap, LocalDate today, OffsetDateTime now) {
         Map<MetricChannel, SnapshotChannel> channels = snap.channels();
         LocalDate from = snap.overview().window().from();
+        // null on a project with no data in any channel; nothing to clip then, and no value to judge
         LocalDate to = snap.overview().window().to();
+        LocalDate end = to != null ? to : today;
+        int windowDays = to == null ? BENCHMARK_PERIOD_DAYS : (int) (to.toEpochDay() - from.toEpochDay() + 1);
         return new Report(new Window(from, to), now, sources(channels), headline(channels),
-                acquisition(channels), funnel(snap), daily(channels), scorecard(channels), keywords(channels),
-                ads(channels), benchmarks(projectId, channels, today), changes(projectId, from, today));
+                acquisition(channels), funnel(snap), daily(channels, from, end), scorecard(channels), keywords(channels),
+                ads(channels), benchmarks(projectId, channels, today, windowDays),
+                changes(projectId, from, end, today));
     }
 
     // ---- sources and headline ----------------------------------------------------------------------
@@ -401,13 +407,18 @@ public class MarketingReportService {
 
     // ---- daily -------------------------------------------------------------------------------------
 
-    private static List<Day> daily(Map<MetricChannel, SnapshotChannel> channels) {
+    /** Each source's series reaches back before the window (history for the change detector); the report shows only the window. */
+    private static List<Day> daily(Map<MetricChannel, SnapshotChannel> channels, LocalDate from, LocalDate to) {
         Map<LocalDate, Double[]> byDay = new TreeMap<>();
         Map<LocalDate, Boolean> provisional = new HashMap<>();
         collect(metric(channels, MetricChannel.STORE, "impressions"), 0, byDay, provisional);
         collect(metric(channels, MetricChannel.ADS, "spend"), 1, byDay, provisional);
         List<Day> out = new ArrayList<>();
-        byDay.forEach((day, v) -> out.add(new Day(day, v[0], v[1], provisional.getOrDefault(day, false))));
+        byDay.forEach((day, v) -> {
+            if (!day.isBefore(from) && !day.isAfter(to)) {
+                out.add(new Day(day, v[0], v[1], provisional.getOrDefault(day, false)));
+            }
+        });
         return out;
     }
 
@@ -535,7 +546,12 @@ public class MarketingReportService {
 
     // ---- benchmarks --------------------------------------------------------------------------------
 
-    private List<Benchmark> benchmarks(String projectId, Map<MetricChannel, SnapshotChannel> channels, LocalDate today) {
+    /**
+     * A count or currency total (SUM) benchmark is stated per {@link #BENCHMARK_PERIOD_DAYS} days and prorated
+     * to the report window, so the 7d and 28d verdicts agree. A ratio, rate, average or level is compared as stated.
+     */
+    private List<Benchmark> benchmarks(String projectId, Map<MetricChannel, SnapshotChannel> channels, LocalDate today,
+                                       int windowDays) {
         List<Benchmark> out = new ArrayList<>();
         for (MarketingBenchmark b : benchmarkRepository.findByProjectIdOrderByMetricRefAsc(projectId)) {
             int dot = b.getMetricRef().indexOf('.');
@@ -550,6 +566,10 @@ public class MarketingReportService {
             }
             Double value = m == null ? null : m.value();
             double benchmark = b.getValue().doubleValue();
+            if (m != null && "SUM".equals(m.aggregation())
+                    && (m.unit() == MetricCatalog.Unit.COUNT || m.unit() == MetricCatalog.Unit.CURRENCY)) {
+                benchmark = benchmark * windowDays / BENCHMARK_PERIOD_DAYS;
+            }
             boolean rate = m != null && (m.unit() == MetricCatalog.Unit.PERCENT || "DERIVED".equals(m.aggregation()));
             boolean judged = value != null && !(rate && m.sampleSize() != null && m.sampleSize() < MIN_SAMPLE);
             out.add(new Benchmark(b.getMetricRef(), b.getLabel() != null ? b.getLabel() : m == null ? null : m.label(),
@@ -567,9 +587,10 @@ public class MarketingReportService {
      * One query for the change log. "Reviewed in the window" is read from {@code updated_at}: a change
      * is edited when it is reviewed, and a later edit to a reviewed change is rare enough not to matter here.
      */
-    private Changes changes(String projectId, LocalDate from, LocalDate today) {
+    private Changes changes(String projectId, LocalDate from, LocalDate to, LocalDate today) {
         List<WorkItem> items = workItemRepository.findChangeLog(projectId, CHANGES_WORKFLOW,
-                List.of(STATUS_PLANNED, STATUS_LIVE), STATUS_REVIEWED, from.atStartOfDay().atOffset(ZoneOffset.UTC));
+                List.of(STATUS_PLANNED, STATUS_LIVE), STATUS_REVIEWED, from.atStartOfDay().atOffset(ZoneOffset.UTC),
+                to.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC));
         List<Change> open = new ArrayList<>();
         List<Change> due = new ArrayList<>();
         List<Change> reviewed = new ArrayList<>();

@@ -223,7 +223,7 @@ interface OverviewMetric {
   area?: string | null
   basis?: string | null
   description?: string | null
-  headline?: boolean | null
+  headline?: number | null
   target?: {
     value: number
     direction: string
@@ -368,7 +368,7 @@ function trimMetric(
     sampleSize: m.sampleSize,
     area: m.area,
     description: m.description,
-    headline: m.headline ? true : null,
+    headline: m.headline,
     // COHORT: each day counts the people who first opened that day, followed to now (EVENT is the default).
     basis: m.basis === 'COHORT' ? m.basis : null,
     series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,
