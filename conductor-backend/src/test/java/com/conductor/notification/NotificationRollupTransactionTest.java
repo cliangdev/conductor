@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -128,6 +129,30 @@ class NotificationRollupTransactionTest extends AbstractNoneWebIntegrationTest {
         });
 
         verify(discord).postReturningId(anyString(), anyString());
+        assertThat(rollupRepository.findById(config.getId())).isPresent();
+    }
+
+    @Test
+    void threeEventsInOneCallerTransactionTakeOneLockAndMakeOneDiscordCall() {
+        String itemId = "w-" + UUID.randomUUID();
+        Map<String, String> meta = Map.of("workItemId", itemId, "workItemTitle", "T", "noun", "Post",
+                "displayId", "RE-1", "toStatus", "SCHEDULED", "toStatusLabel", "Scheduled", "toCategory", "in_progress");
+        when(discord.buildSinglePayload(any())).thenReturn("COMBINED");
+        NotificationRollupRepository spied = org.mockito.Mockito.mock(NotificationRollupRepository.class, org.mockito.AdditionalAnswers.delegatesTo(rollupRepository));
+        NotificationRollupService rollup = (NotificationRollupService) beans.applyBeanPostProcessorsAfterInitialization(
+                new NotificationRollupService(spied, configRepository, discord), "rollupSpied");
+        NotificationDeliveryService spiedDelivery = new NotificationDeliveryService(configRepository, discord, rollup);
+
+        tx.executeWithoutResult(s -> {
+            spiedDelivery.deliver(NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, project.getId(), meta));
+            spiedDelivery.deliver(NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, project.getId(), meta));
+            spiedDelivery.deliver(NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, project.getId(), meta));
+            verifyNoInteractions(discord);
+        });
+
+        verify(spied, times(1)).lockChannel(config.getId());
+        verify(discord, times(1)).postReturningId(anyString(), anyString());
+        verify(discord, never()).editMessage(anyString(), anyString(), anyString());
         assertThat(rollupRepository.findById(config.getId())).isPresent();
     }
 

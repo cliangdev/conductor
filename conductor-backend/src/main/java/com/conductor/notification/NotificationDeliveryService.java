@@ -8,8 +8,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 
 /**
  * Delivers a {@link NotificationMessage} to a project's configured chat channel. This is *only* the
@@ -103,32 +105,72 @@ public class NotificationDeliveryService {
      * the notification. If the caller rolls back, nothing is sent: no notification for a change that did
      * not happen.
      *
+     * <p>Events are buffered per transaction and per channel, so one request that emits several (approving
+     * a Post is a review, then Approved, then Scheduled) costs one roll-up transaction and one Discord
+     * call per channel rather than one of each per event.
+     *
      * <p>Nothing thrown here escapes: by then there is nobody to tell, and {@code afterCommit} exceptions
      * would otherwise surface from the caller's commit.
      */
     private void rollupAfterCommit(NotificationGroupConfig config, NotificationMessage event) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    rollupNow(config, event);
-                }
-            });
+            pendingRollups().add(config, event);
         } else {
-            rollupNow(config, event);
+            rollupNow(config.getId(), List.of(new Buffered(config, event)));
         }
     }
 
-    private void rollupNow(NotificationGroupConfig config, NotificationMessage event) {
+    /**
+     * The current transaction's buffer, registering it on first use. It lives in the synchronization
+     * itself, so it is per transaction by construction (a suspended outer transaction keeps its own) and
+     * the framework drops it with the synchronizations -- nothing is left on a pooled thread.
+     */
+    private PendingRollups pendingRollups() {
+        for (TransactionSynchronization sync : TransactionSynchronizationManager.getSynchronizations()) {
+            if (sync instanceof PendingRollups pending) {
+                return pending;
+            }
+        }
+        PendingRollups pending = new PendingRollups();
+        TransactionSynchronizationManager.registerSynchronization(pending);
+        return pending;
+    }
+
+    private void rollupNow(String configId, List<Buffered> buffered) {
         try {
-            // false means the roll-up declined (or could not post anything): send the ordinary way. Safe
-            // because nothing reached Discord.
-            if (!rollupService.rollup(config.getId(), event)) {
-                send(config, event);
+            // false means the roll-up declined (or could not post anything): send each event the ordinary
+            // way, in order. Safe because nothing reached Discord.
+            List<NotificationMessage> events = buffered.stream().map(Buffered::event).toList();
+            if (!rollupService.rollup(configId, events)) {
+                buffered.forEach(b -> send(b.config(), b.event()));
             }
         } catch (Exception e) {
-            log.warn("Failed to roll up {} notification for project {}: {}",
-                    event.getEventType(), event.getProjectId(), e.getMessage());
+            NotificationMessage first = buffered.get(0).event();
+            log.warn("Failed to roll up {} notification(s) for project {}: {}",
+                    first.getEventType(), first.getProjectId(), e.getMessage());
+        }
+    }
+
+    private record Buffered(NotificationGroupConfig config, NotificationMessage event) { }
+
+    /** Rolled-up events of one transaction by channel, in the order they were emitted. */
+    private final class PendingRollups implements TransactionSynchronization {
+
+        private final Map<String, List<Buffered>> byConfig = new LinkedHashMap<>();
+
+        void add(NotificationGroupConfig config, NotificationMessage event) {
+            byConfig.computeIfAbsent(config.getId(), id -> new ArrayList<>()).add(new Buffered(config, event));
+        }
+
+        @Override
+        public void afterCommit() {
+            byConfig.forEach(NotificationDeliveryService.this::rollupNow);
+        }
+
+        @Override
+        public void afterCompletion(int status) {
+            // Commit or rollback: either way the buffer is done with.
+            byConfig.clear();
         }
     }
 

@@ -13,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.OffsetDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -21,6 +22,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -372,6 +375,89 @@ class NotificationRollupServiceTest {
         assertThat(l.getValue().moved()).isTrue();
         assertThat(l.getValue().statusLabel()).isEqualTo("Scheduled");
         assertThat(l.getValue().verdictNote()).isEqualTo("approved by Bryan");
+    }
+
+    @Test
+    void anApprovalFollowedByTwoMovesIsOneCallShowingScheduledAndApprovedBy() {
+        NotificationRollup r = row(OffsetDateTime.now().minusMinutes(1), line("1", 0, "IN_REVIEW", "In Review", null));
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(discord.buildSinglePayload(any())).thenReturn("COMBINED");
+        when(discord.editMessage(WEBHOOK, "msg-1", "COMBINED")).thenReturn(DiscordProvider.EditOutcome.OK);
+
+        assertThat(service.rollup(CONFIG_ID, List.of(review("1", "APPROVED"),
+                status("1", "APPROVED", "Approved"), status("1", "SCHEDULED", "Scheduled")))).isTrue();
+
+        verify(discord, times(1)).editMessage(anyString(), anyString(), anyString());
+        verify(discord, never()).postReturningId(anyString(), anyString());
+        verify(repository, times(1)).lockChannel(CONFIG_ID);
+        verify(repository, times(1)).findById(CONFIG_ID);
+        verify(configRepository, times(1)).findById(CONFIG_ID);
+        ArgumentCaptor<RollupLine> l = ArgumentCaptor.forClass(RollupLine.class);
+        verify(discord).buildSinglePayload(l.capture());
+        assertThat(l.getValue().statusLabel()).isEqualTo("Scheduled");
+        assertThat(l.getValue().verdictNote()).isEqualTo("approved by Bryan");
+        assertThat(r.getLines().get("1").statusLabel()).isEqualTo("Scheduled");
+    }
+
+    @Test
+    void aBatchOnAFreshChannelPostsOnce() {
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.empty());
+        when(discord.buildSinglePayload(any())).thenReturn("COMBINED");
+        when(discord.postReturningId(WEBHOOK, "COMBINED")).thenReturn(posted("m-1"));
+
+        assertThat(service.rollup(CONFIG_ID, List.of(review("1", "APPROVED"),
+                status("1", "SCHEDULED", "Scheduled")))).isTrue();
+
+        verify(discord, times(1)).postReturningId(anyString(), anyString());
+        ArgumentCaptor<NotificationRollup> saved = ArgumentCaptor.forClass(NotificationRollup.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getLines().get("1").statusLabel()).isEqualTo("Scheduled");
+    }
+
+    @Test
+    void aBatchSpanningACapacityRolloverFinishesTheFullMessageThenPostsTheRest() {
+        NotificationRollup r = row(OffsetDateTime.now().minusMinutes(1));
+        for (int i = 0; i < NotificationRollupService.MAX_LINES; i++) {
+            r.getLines().put("x" + i, line("x" + i, i, "IN_REVIEW", "In Review", null));
+        }
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.of(r));
+        when(discord.buildRollupPayload(any())).thenReturn("FULL");
+        when(discord.buildSinglePayload(any())).thenReturn("REST");
+        when(discord.editMessage(WEBHOOK, "msg-1", "FULL")).thenReturn(DiscordProvider.EditOutcome.OK);
+        when(discord.postReturningId(WEBHOOK, "REST")).thenReturn(posted("msg-new"));
+
+        // an existing item changes (fits), then a new item and its approval overflow into a new message
+        assertThat(service.rollup(CONFIG_ID, List.of(status("x0", "APPROVED", "Approved"),
+                review("new", "APPROVED"), status("new", "SCHEDULED", "Scheduled")))).isTrue();
+
+        verify(discord, times(1)).editMessage(anyString(), anyString(), anyString());
+        verify(discord, times(1)).postReturningId(anyString(), anyString());
+        assertThat(r.getMessageId()).isEqualTo("msg-new");
+        assertThat(r.getLines()).containsOnlyKeys("new");
+        assertThat(r.getLines().get("new").statusLabel()).isEqualTo("Scheduled");
+        assertThat(r.getLines().get("new").verdictNote()).isEqualTo("approved by Bryan");
+    }
+
+    @Test
+    void aBatchForAnEachChannelFallsBackWithoutAnyDiscordCall() {
+        config.setDeliveryMode(DeliveryMode.EACH);
+
+        assertThat(service.rollup(CONFIG_ID, List.of(review("1", "APPROVED"), status("1", "SCHEDULED", "Scheduled"))))
+                .isFalse();
+
+        verifyNoInteractions(discord);
+    }
+
+    @Test
+    void aBatchThatCouldNotPostAnythingFallsBack() {
+        when(repository.findById(CONFIG_ID)).thenReturn(Optional.empty());
+        when(discord.buildSinglePayload(any())).thenReturn("COMBINED");
+        when(discord.postReturningId(WEBHOOK, "COMBINED")).thenReturn(new DiscordProvider.PostResult(null, false));
+
+        assertThat(service.rollup(CONFIG_ID, List.of(review("1", "APPROVED"), status("1", "SCHEDULED", "Scheduled"))))
+                .isFalse();
+
+        verify(repository, never()).save(any());
     }
 
     @Test

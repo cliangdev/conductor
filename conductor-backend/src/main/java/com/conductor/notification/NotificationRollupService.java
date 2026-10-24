@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -52,6 +53,10 @@ import java.util.Set;
  * is already committed -- so a burst of approvals cannot starve the five-connection prod pool. The lock
  * wait is capped ({@code lock_timeout}) and every Discord call has a short timeout, so a stuck holder or a
  * stalled Discord costs at most a few seconds and, at worst, this one notification.
+ *
+ * <h2>Batches</h2>
+ * One caller transaction can emit several rolled-up events for the same channel; they arrive together and
+ * are folded in order under one lock into one Discord call (see {@link #rollup(String, List)}).
  *
  * <h2>Consistency</h2>
  * Discord failures never propagate, and a message id is only stored once Discord has actually returned
@@ -96,22 +101,37 @@ public class NotificationRollupService {
                 && config.getDeliveryMode() == DeliveryMode.GROUPED;
     }
 
-    /**
-     * @return true when the event is dealt with and nothing more should be sent (edited into or posted as
-     *         the rolling message, or deliberately dropped because the channel was deleted or disabled, no
-     *         longer wants this event, or Discord is rate-limiting us); false when the caller should send
-     *         it the ordinary way -- not a rolled-up event, the channel now delivers each event, or
-     *         nothing could be posted
-     */
+    /** One event; see {@link #rollup(String, List)}. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean rollup(String configId, NotificationMessage event) {
-        if (!ROLLED_UP.contains(event.getEventType())) {
-            return false;
+        return rollup(configId, List.of(event));
+    }
+
+    /**
+     * Folds every event of one caller transaction for this channel into the rolling message with a single
+     * lock, a single read of the settings and the row, and a single Discord call. Approving a Post is a
+     * review, then Approved, then Scheduled; doing that as three roll-ups was three transactions and three
+     * round trips (and three hits on the webhook's rate limit) for one visible change.
+     *
+     * <p>If folding fills the current message part-way, it is finished with one edit and the rest goes to
+     * a fresh message: at most two calls, and at most one such rollover per batch.
+     *
+     * @return true when the events are dealt with and nothing more should be sent (edited into or posted as
+     *         the rolling message, or deliberately dropped because the channel was deleted or disabled, no
+     *         longer wants them, or Discord is rate-limiting us); false when the caller should send each
+     *         of them the ordinary way, in order -- not rolled-up events, the channel now delivers each
+     *         event, or nothing could be posted
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean rollup(String configId, List<NotificationMessage> events) {
+        if (events.isEmpty()) {
+            return true;
         }
-        Map<String, String> meta = event.getMetadata();
-        String workItemId = meta.get("workItemId");
-        if (workItemId == null || workItemId.isBlank()) {
-            return false;
+        for (NotificationMessage event : events) {
+            String id = event.getMetadata().get("workItemId");
+            if (!ROLLED_UP.contains(event.getEventType()) || id == null || id.isBlank()) {
+                return false; // never mixed in practice; if it is, the whole batch goes out plainly
+            }
         }
 
         boolean sent = false;
@@ -125,30 +145,60 @@ public class NotificationRollupService {
             }
             // Read after the lock: whatever changed the channel's settings while we waited is now visible.
             NotificationGroupConfig config = configRepository.findById(configId).orElse(null);
-            if (config == null || !config.isEnabled()
-                    || !config.getEnabledEventTypes().contains(event.getEventType().name())) {
-                return true; // disabled, or no longer opted in: drop
+            if (config == null || !config.isEnabled()) {
+                return true; // deleted or disabled: drop
             }
-            if (!appliesTo(config, event)) {
-                return false; // now EACH: the caller sends it plainly
+            List<NotificationMessage> wanted = events.stream()
+                    .filter(e -> config.getEnabledEventTypes().contains(e.getEventType().name()))
+                    .toList();
+            if (wanted.isEmpty()) {
+                return true; // no longer opted in: drop
+            }
+            if (!appliesTo(config, wanted.get(0))) {
+                return false; // now EACH: the caller sends them plainly
             }
 
             NotificationRollup row = rollupRepository.findById(configId).orElse(null);
             boolean current = row != null && isCurrent(row, config, now);
 
             Map<String, RollupLine> lines = new LinkedHashMap<>(current ? row.getLines() : Map.of());
-            boolean isNewItem = !lines.containsKey(workItemId);
-            lines.put(workItemId, upsert(lines.get(workItemId), event, nextSeq(lines), workItemId));
+            Map<String, RollupLine> closing = null; // the message finished by a mid-batch rollover
+            NotificationMessage closingEvent = null;
+            NotificationMessage last = null;
+            for (NotificationMessage event : wanted) {
+                String workItemId = event.getMetadata().get("workItemId");
+                boolean isNewItem = !lines.containsKey(workItemId);
+                lines.put(workItemId, upsert(lines.get(workItemId), event, nextSeq(lines), workItemId));
 
-            if (current && isNewItem && lines.size() > 1 && overCapacity(lines)) {
-                // Full: this item opens a new message rather than lengthening one that is about to hit
-                // Discord's limit.
-                lines = new LinkedHashMap<>();
-                lines.put(workItemId, upsert(null, event, 0, workItemId));
+                if (current && closing == null && isNewItem && lines.size() > 1 && overCapacity(lines)) {
+                    // Full: this item opens a new message rather than lengthening one that is about to hit
+                    // Discord's limit. The current one is finished as it stood before this event.
+                    closing = new LinkedHashMap<>(lines);
+                    closing.remove(workItemId);
+                    closingEvent = last;
+                    lines = new LinkedHashMap<>();
+                    lines.put(workItemId, upsert(null, event, 0, workItemId));
+                }
+                last = event;
+            }
+
+            if (closing != null) {
+                // One edit to finish the full message. Whatever its outcome, the message exists (or was
+                // deleted, in which case there is nothing to finish), so nothing else is sent for it.
+                DiscordProvider.EditOutcome outcome =
+                        discordProvider.editMessage(config.getWebhookUrl(), row.getMessageId(), render(closingEvent, closing));
+                sent = true;
+                if (outcome == DiscordProvider.EditOutcome.NOT_FOUND) {
+                    log.info("Rollup message for config {} was deleted; starting a fresh one", configId);
+                } else {
+                    row.setLines(closing);
+                    row.setUpdatedAt(now);
+                    rollupRepository.save(row);
+                }
                 current = false;
             }
 
-            String payload = render(event, lines);
+            String payload = render(last, lines);
 
             if (current) {
                 switch (discordProvider.editMessage(config.getWebhookUrl(), row.getMessageId(), payload)) {
@@ -175,8 +225,9 @@ public class NotificationRollupService {
 
             DiscordProvider.PostResult posted = discordProvider.postReturningId(config.getWebhookUrl(), payload);
             if (posted.rateLimited()) {
-                if (row != null) {
+                if (row != null && closing == null) {
                     // Remember the lines against the old id; the next event edits (404s) and reposts them.
+                    // (After a rollover the old message was just finished with its own lines; keep those.)
                     row.setLines(lines);
                     row.setUpdatedAt(now);
                     rollupRepository.save(row);
@@ -185,7 +236,8 @@ public class NotificationRollupService {
             }
             if (posted.messageId() == null) {
                 // Nothing was posted: leave the row as it was (never store an id Discord did not give).
-                return false;
+                // After a rollover the first half did go out, so the caller must not resend it.
+                return sent;
             }
             sent = true;
             NotificationRollup fresh = row != null ? row : new NotificationRollup();
@@ -197,11 +249,12 @@ public class NotificationRollupService {
             rollupRepository.save(fresh);
             return true;
         } catch (Exception e) {
-            // A webhook, lock or bookkeeping failure must never escape. If the message already went out,
+            // A webhook, lock or bookkeeping failure must never escape. If a message already went out,
             // report it as handled so the caller does not send a duplicate. A failed statement leaves a
             // Postgres transaction unusable, so roll this (own) transaction back rather than try to commit.
-            log.warn("Failed to roll up {} notification for project {}: {}",
-                    event.getEventType(), event.getProjectId(), e.getMessage());
+            NotificationMessage first = events.get(0);
+            log.warn("Failed to roll up {} notification(s) for project {}: {}",
+                    first.getEventType(), first.getProjectId(), e.getMessage());
             try {
                 TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             } catch (RuntimeException ignored) {
@@ -226,15 +279,18 @@ public class NotificationRollupService {
      * Two or more items render as the roll-up embed. One item renders as today's single message for the
      * latest event -- unless it has both moved and been given a verdict, when the latest event alone would
      * hide the other half (an approval, then an auto-move to Scheduled, must not read as just "moved"), so
-     * it is rendered from the item's whole line.
+     * it is rendered from the item's whole line. That is also how a batch that collapses to one item shows
+     * the final state plus the verdict note. {@code latest} is null only for a message finished by a
+     * rollover before any event of the batch touched it.
      */
-    private String render(NotificationMessage event, Map<String, RollupLine> lines) {
+    private String render(NotificationMessage latest, Map<String, RollupLine> lines) {
         if (lines.size() == 1) {
             RollupLine only = lines.values().iterator().next();
-            if (only.moved() && only.verdictNote() != null && !only.verdictNote().isBlank()) {
+            boolean combined = only.moved() && only.verdictNote() != null && !only.verdictNote().isBlank();
+            if (combined || latest == null) {
                 return discordProvider.buildSinglePayload(only);
             }
-            return discordProvider.format(event);
+            return discordProvider.format(latest);
         }
         return discordProvider.buildRollupPayload(lines.values());
     }
