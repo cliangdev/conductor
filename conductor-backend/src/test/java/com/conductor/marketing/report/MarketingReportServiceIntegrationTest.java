@@ -427,6 +427,20 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(inside.getId()).isNotNull();
     }
 
+    @Test
+    void windowStringsAre28dByDefaultAndOnly7dOr28dAreAccepted() {
+        seedStoreAndAds(4);
+        String id = f.project.getId();
+
+        for (String raw : new String[]{null, "28d", "7d"}) {
+            Report r = service.report(id, raw);
+            long days = r.window().to().toEpochDay() - r.window().from().toEpochDay() + 1;
+            assertThat(days).isEqualTo("7d".equals(raw) ? 7 : 28);
+        }
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.report(id, "90d"))
+                .isInstanceOf(com.conductor.exception.BusinessException.class);
+    }
+
     private void benchmark(String ref, double value, LocalDate checkedOn) {
         MarketingBenchmark b = new MarketingBenchmark();
         b.setProjectId(f.project.getId());
