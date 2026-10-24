@@ -659,8 +659,18 @@ public class WorkItemService {
         }
 
         String previousStatus = workItem.getCurrentStatus();
-        Optional<StatechartTransition> applied = workItemWorkflowService.applySystemTransition(
-                projectId, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED);
+        Optional<StatechartTransition> applied;
+        String blockedReason = null;
+        try {
+            applied = workItemWorkflowService.applySystemTransition(
+                    projectId, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED);
+        } catch (UnprocessableEntityException refused) {
+            // The edge exists but a gate (required fields, publish gate) refused it. The status was never
+            // set; a webhook must not fail or roll back over that, so the PR is still recorded below and
+            // the blocked move is announced like any other blocked automatic transition.
+            applied = Optional.empty();
+            blockedReason = refused.getMessage();
+        }
         workItemRepository.save(workItem);
 
         // COND-18 E5: record the merged PR as a github_pr Asset. Idempotent on (workItem, type, ref).
@@ -672,6 +682,13 @@ public class WorkItemService {
 
         if (applied.isPresent()) {
             publishStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), pullRequestUrl);
+        } else if (blockedReason != null) {
+            log.warn("PR merge for {}-{}: auto-transition from {} blocked: {}",
+                    projectKey, sequenceNumber, previousStatus, blockedReason);
+            String target = workItemWorkflowService.resolveFor(projectId, workItem)
+                    .triggeredTransitionFrom(previousStatus, WorkItemWorkflowService.TRIGGER_PR_MERGED)
+                    .map(StatechartTransition::to).orElse(previousStatus);
+            publishAutoTransitionBlocked(projectId, workItem, previousStatus, target, blockedReason);
         } else {
             log.info("PR merge for {}-{}: workflow {} declares no '{}' transition from status {}; "
                             + "recorded PR asset only, status unchanged",
