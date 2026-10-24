@@ -22,7 +22,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * DB-backed coverage for {@code V160__notification_rollup.sql}: the migration applies under
+ * DB-backed coverage for {@code V161__notification_rollup.sql}: the migration applies under
  * {@code ddl-auto=validate}, the jsonb {@code lines} (including each line's stored order) round-trip, the
  * locking finder returns the row, and the row goes when its channel config does. Rides the shared
  * singleton Postgres per {@code docs/testing-guidelines.md} and isolates with random ids.
