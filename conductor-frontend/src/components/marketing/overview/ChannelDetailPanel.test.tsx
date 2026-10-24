@@ -182,6 +182,30 @@ describe('ChannelDetailPanel', () => {
     expect(screen.getByText('Launch reel')).toBeInTheDocument()
   })
 
+  it('links a top post with no workflowSlug to Posts, not Changes, when both share MARKETING', async () => {
+    const wf = (slug: string, noun: string, createdAt: string) => ({
+      id: slug, projectId: 'proj-1', name: slug, enabled: true, kind: 'LIFECYCLE', sidebarEnabled: true,
+      area: 'MARKETING', slug, noun, createdAt, updatedAt: createdAt,
+    })
+    const post = {
+      workItemId: 'wi-1', displayId: 'POST-1', title: 'Launch reel', targetId: 't1', platform: 'instagram',
+      views: 900, observedAt: '2026-09-14T00:00:00Z', engagementRate: 0.08,
+    }
+    ;(apiGet as Mock).mockImplementation((path: string) => {
+      if (path.includes('/marketing/channels/'))
+        return Promise.resolve(detailResponse({ channel: { ...detailResponse().channel, channel: 'SOCIAL', label: 'Social' }, topPosts: [post] }))
+      if (path.includes('/workflows?'))
+        return Promise.resolve([
+          wf('MARKETING_CHANGES', 'Change', '2025-11-01T00:00:00Z'),
+          wf('MARKETING', 'Post', '2026-01-01T00:00:00Z'),
+        ])
+      return Promise.resolve([])
+    })
+    render(<ChannelDetailPanel projectId="proj-1" channel="social" />)
+    const link = await screen.findByRole('link', { name: /Launch reel/ })
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/marketing/posts/POST-1')
+  })
+
   it('gives an unknown channel a not-found state without calling the API', () => {
     render(<ChannelDetailPanel projectId="proj-1" channel="bogus" />)
     expect(screen.getByText('Channel not found')).toBeInTheDocument()

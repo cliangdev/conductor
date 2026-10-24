@@ -88,7 +88,7 @@ public class WorkflowSeeder {
         header.setDefinition(definition);
         header.setVersion(1);
         header.setState("PUBLISHED");
-        header.setArea(slug);
+        header.setArea(areaOf(definition, slug));
         header.setSchemaVersion(1);
         header.setSidebarEnabled(true);
         header.setEnabled(true);
@@ -100,6 +100,12 @@ public class WorkflowSeeder {
         snapshot.setDefinition(definition);
         snapshot.setSchemaVersion(1);
         versionRepository.save(snapshot);
+    }
+
+    /** The nav-grouping area: the definition's own {@code area}, falling back to the slug only if absent. */
+    private static String areaOf(JsonNode definition, String slug) {
+        JsonNode area = definition.get("area");
+        return area != null && area.isTextual() && !area.asText().isBlank() ? area.asText() : slug;
     }
 
     // NOTE: this seeder (and the V74 backfill migration) writes workflow_definitions directly, bypassing

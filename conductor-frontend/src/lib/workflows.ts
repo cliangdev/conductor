@@ -589,6 +589,18 @@ export interface WorkNavEntry {
 }
 
 /**
+ * The Posts (publishing) workflow among the sidebar entries. MARKETING also holds Changes, so the area
+ * alone is ambiguous: prefer the built-in slug MARKETING, else any entry in that area whose noun is Post.
+ */
+export function findPostsNavEntry(entries: WorkNavEntry[]): WorkNavEntry | undefined {
+  const inArea = entries.filter((e) => e.area.toUpperCase() === 'MARKETING')
+  return (
+    inArea.find((e) => e.slug.toUpperCase() === 'MARKETING') ??
+    inArea.find((e) => e.noun.toLowerCase() === 'post')
+  )
+}
+
+/**
  * Map sidebar-enabled lifecycle Workflows to nav entries, stably ordered by creation time. Reads the
  * first-class `slug`/`noun`/`area` fields the server now exposes — never the raw statechart `definition`.
  */
