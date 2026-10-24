@@ -13,12 +13,15 @@ import java.util.Set;
  * @param trailingDays      how many days back the next pull should re-read; carried in the feed cursor; null
  *                          leaves the previous hint
  * @param snapshotMetrics   metrics whose points are final readings whatever their day (stocks)
+ * @param contractVersion   the source's schema/contract version for this response; a change from the one in the
+ *                          feed cursor schedules a history backfill; null when the source has none
  * @param dimensionStates   the current state (bid, status, ...) of dimension members, upserted by key; null/empty
  *                          leaves what is stored
  */
 public record ChannelMetricsPull(List<ChannelMetricPoint> points, LocalDate provisionalFrom,
                                  List<MetricDefinition> definitions, Integer trailingDays,
-                                 Set<String> snapshotMetrics, List<DimensionState> dimensionStates) {
+                                 Set<String> snapshotMetrics, List<DimensionState> dimensionStates,
+                                 Integer contractVersion) {
 
     public ChannelMetricsPull {
         if (points == null) points = List.of();
@@ -27,8 +30,14 @@ public record ChannelMetricsPull(List<ChannelMetricPoint> points, LocalDate prov
     }
 
     public ChannelMetricsPull(List<ChannelMetricPoint> points, LocalDate provisionalFrom,
+                              List<MetricDefinition> definitions, Integer trailingDays, Set<String> snapshotMetrics,
+                              List<DimensionState> dimensionStates) {
+        this(points, provisionalFrom, definitions, trailingDays, snapshotMetrics, dimensionStates, null);
+    }
+
+    public ChannelMetricsPull(List<ChannelMetricPoint> points, LocalDate provisionalFrom,
                               List<MetricDefinition> definitions, Integer trailingDays, Set<String> snapshotMetrics) {
-        this(points, provisionalFrom, definitions, trailingDays, snapshotMetrics, List.of());
+        this(points, provisionalFrom, definitions, trailingDays, snapshotMetrics, List.of(), null);
     }
 
     public static ChannelMetricsPull of(List<ChannelMetricPoint> points) {

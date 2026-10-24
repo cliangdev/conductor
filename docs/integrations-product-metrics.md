@@ -32,7 +32,11 @@ Accept: application/json
 ```
 
 `from` and `to` are inclusive days in the timezone the response declares. Conductor asks for at most 14 days at
-a time: the first sync backfills 90 days in chunks, later syncs (every 6 hours) re-read the last few days.
+a time, never more, even when re-reading a long `restatementDays` window: the first sync backfills 90 days in
+chunks, later syncs (every 6 hours) re-read the last `restatementDays` days in consecutive chunks. When a response
+adds metric keys or changes `contractVersion`, Conductor re-walks the 90-day history so new metrics get their
+history. An HTTP 400 is treated as a transient error (retried with backoff), not a setup problem; 401, 403, 404
+and redirects still ask the user to fix the connection.
 Redirects are not followed. Respond within about 30 seconds.
 
 ## Response

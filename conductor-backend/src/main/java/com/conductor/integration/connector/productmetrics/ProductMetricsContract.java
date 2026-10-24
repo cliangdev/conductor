@@ -175,7 +175,7 @@ public final class ProductMetricsContract {
         int trailing = (int) Math.min(MAX_TRAILING_DAYS, Math.max(Math.max(1, restatement.asInt()), lag));
 
         ChannelMetricsPull pull = new ChannelMetricsPull(points, completeThrough.plusDays(1), definitions, trailing,
-                snapshots);
+                snapshots, List.of(), version.asInt());
         return new Parsed(pull, timezone, completeThrough);
     }
 

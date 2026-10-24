@@ -118,6 +118,14 @@ public class ProductMetricsClient {
         if (status >= 500) {
             throw ChannelMetricsSourceException.degraded("The metrics server answered HTTP " + status + detail(response.getBody()));
         }
+        if (status == 400) {
+            // We build from/to ourselves, so a 400 means our request was wrong (e.g. a range the server caps),
+            // not that the user's setup is: keep the feed retrying with backoff instead of parking it.
+            org.slf4j.LoggerFactory.getLogger(ProductMetricsClient.class).error(
+                    "Product metrics server rejected {}..{} with HTTP 400{}", from, to, detail(response.getBody()));
+            throw ChannelMetricsSourceException.degraded("The metrics server answered HTTP 400"
+                    + detail(response.getBody()));
+        }
         if (status >= 400) {
             throw ChannelMetricsSourceException.setupRequired("The metrics server answered HTTP " + status
                     + detail(response.getBody()));

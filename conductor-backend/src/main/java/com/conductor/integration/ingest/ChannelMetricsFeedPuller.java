@@ -36,7 +36,9 @@ import java.time.ZoneOffset;
  *
  * <p>A pull covers at most {@link ChannelMetricsSource#maxDaysPerPull()} days. When that stops short of today
  * the cursor records the chunk's last day and the batch says {@code hasMore}, so the scheduler re-dues the
- * feed at once; the next pull restarts {@code trailing - 1} days earlier and moves on, until it reaches today.
+ * feed at once; the next pull resumes the day after (cursor {@code resumeFrom}) and moves on, until it reaches today. A
+ * restatement window wider than a chunk is therefore walked over several pulls, each replacing only its own days.
+ * A response that adds metric keys or changes contract version re-walks the whole backfill window.
  * The OAuth access token is refreshed first (Google tokens last an hour).
  */
 @Service
@@ -49,6 +51,10 @@ public class ChannelMetricsFeedPuller {
     static final String CURSOR_TRAILING_DAYS = "trailingDays";
     /** Never reach back further than this, whatever a source asks for (GSC allows ~16 months, we keep it sane). */
     static final int MAX_BACKFILL_DAYS = 480;
+    /** Where the next chunk of an unfinished walk (backfill or trailing re-read) starts; absent once it reaches today. */
+    static final String CURSOR_RESUME_FROM = "resumeFrom";
+    /** The source's contract version at the last pull; a change schedules a history backfill. */
+    static final String CURSOR_CONTRACT_VERSION = "contractVersion";
 
     private final ConnectorRegistry connectorRegistry;
     private final ConnectionService connectionService;
@@ -110,26 +116,26 @@ public class ChannelMetricsFeedPuller {
         int backfill = Math.min(Math.max(trailing, source.backfillDays()), MAX_BACKFILL_DAYS);
         LocalDate lastDay = parseLastDay(request.cursor());
 
+        LocalDate floor = today.minusDays(backfill);
+        LocalDate resumeFrom = parseDate(request.cursor(), CURSOR_RESUME_FROM);
         LocalDate from;
-        if (lastDay == null) {
-            from = today.minusDays(backfill);
+        if (resumeFrom != null) {
+            from = resumeFrom;
+        } else if (lastDay == null) {
+            from = floor;
         } else {
             LocalDate trailingFrom = today.minusDays(trailing);
             LocalDate gapFrom = lastDay.minusDays(trailing - 1L);
             from = trailingFrom.isBefore(gapFrom) ? trailingFrom : gapFrom;
-            LocalDate floor = today.minusDays(backfill);
-            if (from.isBefore(floor)) {
-                from = floor;
-            }
+        }
+        if (from.isBefore(floor)) {
+            from = floor;
         }
         LocalDate provisionalFrom = today.minusDays(trailing);
 
-        // One chunk per pull so a backfill never holds a connection for minutes. The window always advances
-        // past the stored lastDay, even when the trailing overlap is as wide as a chunk.
+        // One chunk per pull, never wider than the source's per-request cap -- a long restatement window is
+        // walked forward over successive pulls (resumeFrom in the cursor), each chunk replacing only its own days.
         long chunkEnd = (long) from.toEpochDay() + Math.max(1, source.maxDaysPerPull()) - 1;
-        if (lastDay != null) {
-            chunkEnd = Math.max(chunkEnd, lastDay.toEpochDay() + 1);
-        }
         LocalDate to = chunkEnd >= today.toEpochDay() ? today : LocalDate.ofEpochDay(chunkEnd);
 
         ConnectionContext ctx;
@@ -159,7 +165,15 @@ public class ChannelMetricsFeedPuller {
         int written = store.replaceWindow(connection.getProjectId(), connection.getId(), connection.getConnectorId(),
                 source.channel().name(), from, to, provisionalFrom, pulled.points(), source.prunesMissingDimensions(),
                 metric -> source.snapshot(metric) || pulledSnapshots.contains(metric));
+        boolean rewalk = false;
         if (pulled.definitions() != null) {
+            java.util.Set<String> before = definitionStore.keys(connection.getId());
+            boolean newKeys = !before.isEmpty() && pulled.definitions().stream()
+                    .anyMatch(d -> !before.contains(d.metric()));
+            Integer previousVersion = parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
+            boolean versionChanged = lastDay != null && pulled.contractVersion() != null
+                    && !pulled.contractVersion().equals(previousVersion);
+            rewalk = newKeys || versionChanged;
             definitionStore.replace(connection.getProjectId(), connection.getId(), pulled.definitions());
         }
         if (!pulled.dimensionStates().isEmpty()) {
@@ -167,9 +181,21 @@ public class ChannelMetricsFeedPuller {
         }
         log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, to);
         Integer hint = pulled.trailingDays() != null ? pulled.trailingDays() : previousHint;
+        Integer version = pulled.contractVersion() != null ? pulled.contractVersion()
+                : parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
+        LocalDate next = null;
+        if (rewalk) {
+            log.info("Channel metrics feed {} gained metrics or changed contract version; backfilling from {}",
+                    feed.getId(), floor);
+            next = floor;
+        } else if (to.isBefore(today)) {
+            next = to.plusDays(1);
+        }
         String cursor = "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\""
-                + (hint == null ? "" : ",\"" + CURSOR_TRAILING_DAYS + "\":" + hint) + "}";
-        return new IngestBatch(java.util.List.of(), cursor, to.isBefore(today), false, ConnectorHealth.HEALTHY, null);
+                + (next == null ? "" : ",\"" + CURSOR_RESUME_FROM + "\":\"" + next + "\"")
+                + (hint == null ? "" : ",\"" + CURSOR_TRAILING_DAYS + "\":" + hint)
+                + (version == null ? "" : ",\"" + CURSOR_CONTRACT_VERSION + "\":" + version) + "}";
+        return new IngestBatch(java.util.List.of(), cursor, next != null, false, ConnectorHealth.HEALTHY, null);
     }
 
     private static String displayName(ChannelMetricsSource source, Connection connection) {
@@ -193,12 +219,28 @@ public class ChannelMetricsFeedPuller {
     }
 
     private LocalDate parseLastDay(String cursor) {
+        return parseDate(cursor, CURSOR_LAST_DAY);
+    }
+
+    private LocalDate parseDate(String cursor, String field) {
         if (cursor == null || cursor.isBlank()) {
             return null;
         }
         try {
-            JsonNode node = objectMapper.readTree(cursor).get(CURSOR_LAST_DAY);
+            JsonNode node = objectMapper.readTree(cursor).get(field);
             return node == null || node.isNull() ? null : LocalDate.parse(node.asText());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Integer parseInt(String cursor, String field) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(cursor).get(field);
+            return node == null || !node.canConvertToInt() ? null : node.asInt();
         } catch (Exception e) {
             return null;
         }
