@@ -1,6 +1,7 @@
 package com.conductor.entity;
 
 import com.conductor.notification.ChannelGroup;
+import com.conductor.notification.DeliveryMode;
 import com.conductor.notification.ProviderType;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
@@ -52,6 +53,13 @@ public class NotificationGroupConfig {
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "delivery_mode", length = 20, nullable = false)
+    private DeliveryMode deliveryMode = DeliveryMode.GROUPED;
+
+    @Column(name = "group_window_minutes", nullable = false)
+    private int groupWindowMinutes = 15;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
         name = "notification_group_config_event",
@@ -98,6 +106,12 @@ public class NotificationGroupConfig {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public DeliveryMode getDeliveryMode() { return deliveryMode; }
+    public void setDeliveryMode(DeliveryMode deliveryMode) { this.deliveryMode = deliveryMode; }
+
+    public int getGroupWindowMinutes() { return groupWindowMinutes; }
+    public void setGroupWindowMinutes(int groupWindowMinutes) { this.groupWindowMinutes = groupWindowMinutes; }
 
     public Set<String> getEnabledEventTypes() { return enabledEventTypes; }
     public void setEnabledEventTypes(Set<String> enabledEventTypes) { this.enabledEventTypes = enabledEventTypes; }

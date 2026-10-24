@@ -5,6 +5,11 @@ import { Modal } from '@/components/ui/modal'
 import { cn } from '@/lib/utils'
 import {
   CHANNEL_GROUPS,
+  DEFAULT_DELIVERY_MODE,
+  DEFAULT_GROUP_WINDOW_MINUTES,
+  GROUP_WINDOW_OPTIONS,
+  ROLLED_UP_EVENT_TYPES,
+  type DeliveryMode,
   EVENT_TYPE_DESCRIPTIONS,
   EVENT_TYPE_SUBTITLES,
   type NotificationGroupRequest,
@@ -57,6 +62,8 @@ export function GroupChannelConfigModal({
   const [webhookUrl, setWebhookUrl] = useState('')
   const [enabled, setEnabled] = useState(true)
   const [enabledEventTypes, setEnabledEventTypes] = useState<string[]>([])
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(DEFAULT_DELIVERY_MODE)
+  const [groupWindowMinutes, setGroupWindowMinutes] = useState(DEFAULT_GROUP_WINDOW_MINUTES)
   const [urlError, setUrlError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -71,12 +78,16 @@ export function GroupChannelConfigModal({
       setEnabledEventTypes(
         existingGroup.events?.filter((e) => e.enabled).map((e) => e.eventType) ?? []
       )
+      setDeliveryMode(existingGroup.deliveryMode ?? DEFAULT_DELIVERY_MODE)
+      setGroupWindowMinutes(existingGroup.groupWindowMinutes ?? DEFAULT_GROUP_WINDOW_MINUTES)
     } else {
       setSelectedGroup(availableGroups[0]?.value ?? '')
       setProvider('DISCORD')
       setWebhookUrl('')
       setEnabled(true)
       setEnabledEventTypes([])
+      setDeliveryMode(DEFAULT_DELIVERY_MODE)
+      setGroupWindowMinutes(DEFAULT_GROUP_WINDOW_MINUTES)
     }
     setUrlError(null)
     setSaveError(null)
@@ -87,6 +98,8 @@ export function GroupChannelConfigModal({
     ? CHANNEL_GROUPS.find((g) => g.value === existingGroup?.channelGroup)
     : CHANNEL_GROUPS.find((g) => g.value === selectedGroup)
   const groupEventTypes = currentGroupMeta?.eventTypes ?? []
+  // Only groups that carry status/review events have anything to roll up; the others send each event.
+  const hasRolledUpEvents = groupEventTypes.some((t) => ROLLED_UP_EVENT_TYPES.includes(t))
 
   function toggleEventType(type: string) {
     setEnabledEventTypes((prev) =>
@@ -116,6 +129,7 @@ export function GroupChannelConfigModal({
         webhookUrl: webhookUrl.trim(),
         enabled,
         enabledEventTypes,
+        ...(hasRolledUpEvents ? { deliveryMode, groupWindowMinutes } : {}),
       })
       onClose()
     } catch {
@@ -224,6 +238,66 @@ export function GroupChannelConfigModal({
               ))}
             </div>
           </div>
+        )}
+
+        {/* Delivery */}
+        {hasRolledUpEvents && (
+          <fieldset>
+            <legend className="block text-sm font-medium text-foreground mb-2">Delivery</legend>
+            <div className="rounded-md border border-border p-3 space-y-2">
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="delivery-mode"
+                  value="EACH"
+                  checked={deliveryMode === 'EACH'}
+                  onChange={() => setDeliveryMode('EACH')}
+                />
+                <span className="text-sm text-foreground">Every event — one message each</span>
+              </label>
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="delivery-mode"
+                  value="GROUPED"
+                  checked={deliveryMode === 'GROUPED'}
+                  onChange={() => setDeliveryMode('GROUPED')}
+                />
+                <span className="text-sm text-foreground">
+                  Grouped — one message that updates as things change
+                </span>
+              </label>
+              {deliveryMode === 'GROUPED' && (
+                <div className="pl-6 pt-1">
+                  <label
+                    htmlFor="group-window"
+                    className="block text-xs text-muted-foreground mb-1"
+                  >
+                    Keep updating the same message for
+                  </label>
+                  <select
+                    id="group-window"
+                    value={groupWindowMinutes}
+                    onChange={(e) => setGroupWindowMinutes(Number(e.target.value))}
+                    className="border border-border bg-background text-foreground rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {GROUP_WINDOW_OPTIONS.map((o) => (
+                      <option key={o.minutes} value={o.minutes}>
+                        {o.label}
+                      </option>
+                    ))}
+                    {!GROUP_WINDOW_OPTIONS.some((o) => o.minutes === groupWindowMinutes) && (
+                      <option value={groupWindowMinutes}>{groupWindowMinutes} min</option>
+                    )}
+                  </select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Status and review changes edit one message while the channel stays active. Comments
+                    and alerts are always sent on their own.
+                  </p>
+                </div>
+              )}
+            </div>
+          </fieldset>
         )}
 
         {/* Provider */}

@@ -7,9 +7,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
@@ -28,6 +31,9 @@ class DiscordProviderTest {
     @Mock
     private RestTemplate restTemplate;
 
+    @Mock
+    private RestTemplate rollupTemplate;
+
     private DiscordProvider discordProvider;
 
     private static final String FRONTEND_URL = "http://localhost:3000";
@@ -38,7 +44,7 @@ class DiscordProviderTest {
 
     @BeforeEach
     void setUp() {
-        discordProvider = new DiscordProvider(restTemplate, FRONTEND_URL);
+        discordProvider = new DiscordProvider(restTemplate, rollupTemplate, FRONTEND_URL);
     }
 
     /**
@@ -560,4 +566,140 @@ class DiscordProviderTest {
         assertThat(json).contains("/app/projects/proj-1/marketing/posts/CLT-1");
     }
 
+
+    // --- Rolling message ---
+
+    private static RollupLine rl(String id, long seq, String status, String label, String category, String note) {
+        return new RollupLine(id, "RE-" + id, "Title " + id, "Post", status, label, category,
+                "http://x/" + id, note, seq);
+    }
+
+    @Test
+    void rollupPayloadGroupsByStatusInCategoryThenFirstSeenOrder() {
+        String payload = discordProvider.buildRollupPayload(java.util.List.of(
+                rl("1", 0, "PUBLISHED", "Published", "terminal", null),
+                rl("2", 1, "IN_REVIEW", "In Review", "in_progress", "approved by Bryan"),
+                rl("3", 2, "DRAFT", "Draft", "open", null),
+                rl("4", 3, "IN_REVIEW", "In Review", "in_progress", null)));
+
+        assertThat(payload).contains("4 Posts updated");
+        int draft = payload.indexOf("**Draft**");
+        int review = payload.indexOf("**In Review**");
+        int published = payload.indexOf("**Published**");
+        assertThat(draft).isLessThan(review);
+        assertThat(review).isLessThan(published);
+        assertThat(payload).contains("[RE-2](http://x/2) Title 2 \u00b7 approved by Bryan");
+        assertThat(payload.indexOf("RE-2")).isLessThan(payload.indexOf("RE-4"));
+    }
+
+    @Test
+    void rollupTitleSaysWorkItemsWhenNounsAreMixed() {
+        RollupLine issue = new RollupLine("a", "E-1", "T", "Issue", "S", "S", "open", "l", null, 0);
+        String payload = discordProvider.buildRollupPayload(java.util.List.of(
+                issue, rl("2", 1, "S", "S", "open", null)));
+
+        assertThat(payload).contains("2 Work Items updated");
+    }
+
+    @Test
+    void postReturningIdAddsWaitToAnExistingQueryAndReadsTheId() {
+        org.mockito.ArgumentCaptor<java.net.URI> uri = org.mockito.ArgumentCaptor.forClass(java.net.URI.class);
+        when(rollupTemplate.postForEntity(uri.capture(), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of("id", "987")));
+
+        DiscordProvider.PostResult result = discordProvider.postReturningId(WEBHOOK_URL + "?thread_id=5", "{}");
+
+        assertThat(result.messageId()).isEqualTo("987");
+        assertThat(uri.getValue().toString()).isEqualTo(WEBHOOK_URL + "?thread_id=5&wait=true");
+    }
+
+    @Test
+    void postReturningIdHasNoIdOnFailureAndNeverThrows() {
+        when(rollupTemplate.postForEntity(any(java.net.URI.class), any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
+
+        DiscordProvider.PostResult result = discordProvider.postReturningId(WEBHOOK_URL, "{}");
+
+        assertThat(result.messageId()).isNull();
+        assertThat(result.rateLimited()).isFalse();
+    }
+
+    @Test
+    void postReturningIdFlagsARateLimit() {
+        when(rollupTemplate.postForEntity(any(java.net.URI.class), any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.TOO_MANY_REQUESTS, "Too Many", HttpHeaders.EMPTY,
+                        "{\"retry_after\": 1.5}".getBytes(), null));
+
+        DiscordProvider.PostResult result = discordProvider.postReturningId(WEBHOOK_URL, "{}");
+
+        assertThat(result.messageId()).isNull();
+        assertThat(result.rateLimited()).isTrue();
+    }
+
+    @SuppressWarnings("unchecked")
+    private HttpEntity<String> capturedRequest(org.mockito.ArgumentCaptor<HttpEntity> captor) {
+        return (HttpEntity<String>) captor.getValue();
+    }
+
+    @Test
+    void rollupPostAndEditBothCarryAllowedMentionsNone() {
+        org.mockito.ArgumentCaptor<HttpEntity> post = org.mockito.ArgumentCaptor.forClass(HttpEntity.class);
+        when(rollupTemplate.postForEntity(any(java.net.URI.class), post.capture(), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of("id", "1")));
+        org.mockito.ArgumentCaptor<HttpEntity> patch = org.mockito.ArgumentCaptor.forClass(HttpEntity.class);
+        when(rollupTemplate.exchange(any(java.net.URI.class), eq(HttpMethod.PATCH), patch.capture(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{}"));
+
+        discordProvider.postReturningId(WEBHOOK_URL, "{\"embeds\":[{\"title\":\"@everyone\"}]}");
+        discordProvider.editMessage(WEBHOOK_URL, "1", "{\"embeds\":[{\"title\":\"@everyone\"}]}");
+
+        assertThat(capturedRequest(post).getBody())
+                .isEqualTo("{\"embeds\":[{\"title\":\"@everyone\"}],\"allowed_mentions\":{\"parse\":[]}}");
+        assertThat(capturedRequest(patch).getBody())
+                .isEqualTo("{\"embeds\":[{\"title\":\"@everyone\"}],\"allowed_mentions\":{\"parse\":[]}}");
+    }
+
+    @Test
+    void editMessagePatchesTheMessageUnderTheWebhookKeepingItsQueryButNotWait() {
+        org.mockito.ArgumentCaptor<java.net.URI> uri = org.mockito.ArgumentCaptor.forClass(java.net.URI.class);
+        when(rollupTemplate.exchange(uri.capture(), eq(HttpMethod.PATCH), any(HttpEntity.class),
+                eq(String.class))).thenReturn(ResponseEntity.ok("{}"));
+
+        assertThat(discordProvider.editMessage(WEBHOOK_URL + "?thread_id=5&wait=true", "987", "{}"))
+                .isEqualTo(DiscordProvider.EditOutcome.OK);
+        assertThat(uri.getValue().toString()).isEqualTo(WEBHOOK_URL + "/messages/987?thread_id=5");
+    }
+
+    @Test
+    void editMessageDistinguishesGoneFromRateLimitedFromFailed() {
+        when(rollupTemplate.exchange(any(java.net.URI.class), eq(HttpMethod.PATCH), any(HttpEntity.class),
+                eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.TOO_MANY_REQUESTS, "Too Many", HttpHeaders.EMPTY,
+                        "{\"retry_after\": 2}".getBytes(), null))
+                .thenThrow(new HttpServerErrorException(HttpStatus.BAD_GATEWAY))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("timed out"));
+
+        assertThat(discordProvider.editMessage(WEBHOOK_URL, "9", "{}")).isEqualTo(DiscordProvider.EditOutcome.NOT_FOUND);
+        assertThat(discordProvider.editMessage(WEBHOOK_URL, "9", "{}")).isEqualTo(DiscordProvider.EditOutcome.RATE_LIMITED);
+        assertThat(discordProvider.editMessage(WEBHOOK_URL, "9", "{}")).isEqualTo(DiscordProvider.EditOutcome.FAILED);
+        assertThat(discordProvider.editMessage(WEBHOOK_URL, "9", "{}")).isEqualTo(DiscordProvider.EditOutcome.FAILED);
+    }
+
+    @Test
+    void linkTextEscapesBracketsAndBackslashes() {
+        RollupLine l = new RollupLine("a", null, "Fix [WIP] a\\b", "Post", "S", "S", "open", "http://x/a", null, 0);
+
+        assertThat(DiscordProvider.lineText(l, false)).isEqualTo("[Fix \\[WIP\\] a\\\\b](http://x/a)");
+    }
+
+    @Test
+    void aSingleItemRendersItsStatusAndItsVerdictTogether() {
+        RollupLine l = new RollupLine("1", "RE-1", "Title 1", "Post", "SCHEDULED", "Scheduled", "in_progress",
+                "http://x/1", "approved by Bryan", 0, true);
+
+        String payload = discordProvider.buildSinglePayload(l);
+
+        assertThat(payload).contains("Post moved to Scheduled").contains("approved by Bryan").contains("Title 1");
+    }
 }

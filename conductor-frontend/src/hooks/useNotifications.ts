@@ -24,12 +24,39 @@ export interface NotificationEventConfig {
   enabled: boolean
 }
 
+export type DeliveryMode = 'EACH' | 'GROUPED'
+
+export const DEFAULT_DELIVERY_MODE: DeliveryMode = 'GROUPED'
+export const DEFAULT_GROUP_WINDOW_MINUTES = 15
+
+/** Windows offered in the UI; the API accepts any 1-1440 minutes. */
+export const GROUP_WINDOW_OPTIONS: { minutes: number; label: string }[] = [
+  { minutes: 5, label: '5 min' },
+  { minutes: 15, label: '15 min' },
+  { minutes: 30, label: '30 min' },
+  { minutes: 60, label: '1 hour' },
+  { minutes: 240, label: '4 hours' },
+]
+
+/** Events that fold into a channel's rolling message when its delivery mode is Grouped. */
+export const ROLLED_UP_EVENT_TYPES = [
+  'WORK_ITEM_STATUS_CHANGED',
+  'REVIEW_SUBMITTED',
+  'REVIEWER_ASSIGNED',
+]
+
+export function groupWindowLabel(minutes: number): string {
+  return GROUP_WINDOW_OPTIONS.find((o) => o.minutes === minutes)?.label ?? `${minutes} min`
+}
+
 export interface NotificationGroupResponse {
   channelGroup: string
   label: string
   provider: string
   webhookUrl: string
   enabled: boolean
+  deliveryMode?: DeliveryMode
+  groupWindowMinutes?: number
   events: NotificationEventConfig[]
   createdAt: string
   updatedAt: string
@@ -40,6 +67,8 @@ export interface NotificationGroupRequest {
   webhookUrl: string
   enabled: boolean
   enabledEventTypes: string[]
+  deliveryMode?: DeliveryMode
+  groupWindowMinutes?: number
 }
 
 export interface NotificationTestResponse {
