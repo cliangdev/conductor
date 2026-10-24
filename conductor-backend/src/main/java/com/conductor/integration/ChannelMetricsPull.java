@@ -17,16 +17,27 @@ import java.util.Set;
  *                          feed cursor schedules a history backfill; null when the source has none
  * @param dimensionStates   the current state (bid, status, ...) of dimension members, upserted by key; null/empty
  *                          leaves what is stored
+ * @param skippedCampaignIds campaigns whose dimension members (keywords, ads) the source could not read this pull
+ *                          (e.g. a 4xx on their report); the store keeps those campaigns' stored dimension rows
+ *                          instead of pruning them as missing, and prunes everything else as usual
  */
 public record ChannelMetricsPull(List<ChannelMetricPoint> points, LocalDate provisionalFrom,
                                  List<MetricDefinition> definitions, Integer trailingDays,
                                  Set<String> snapshotMetrics, List<DimensionState> dimensionStates,
-                                 Integer contractVersion) {
+                                 Integer contractVersion, Set<String> skippedCampaignIds) {
 
     public ChannelMetricsPull {
         if (points == null) points = List.of();
         if (snapshotMetrics == null) snapshotMetrics = Set.of();
         if (dimensionStates == null) dimensionStates = List.of();
+        if (skippedCampaignIds == null) skippedCampaignIds = Set.of();
+    }
+
+    public ChannelMetricsPull(List<ChannelMetricPoint> points, LocalDate provisionalFrom,
+                              List<MetricDefinition> definitions, Integer trailingDays, Set<String> snapshotMetrics,
+                              List<DimensionState> dimensionStates, Integer contractVersion) {
+        this(points, provisionalFrom, definitions, trailingDays, snapshotMetrics, dimensionStates, contractVersion,
+                Set.of());
     }
 
     public ChannelMetricsPull(List<ChannelMetricPoint> points, LocalDate provisionalFrom,

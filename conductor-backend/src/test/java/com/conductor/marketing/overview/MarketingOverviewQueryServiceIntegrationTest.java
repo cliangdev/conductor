@@ -255,6 +255,17 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void aChannelWithOnlyPointInTimeReadingsIsCompleteThroughItsLatestReadingAtMostYesterday() {
+        String meta = connectFresh("meta");
+        put(meta, "meta", "SOCIAL", "followers", "facebook", day(12), 100, false);
+        assertThat(channel(overview7(), "SOCIAL").dataCompleteThrough()).isEqualTo(day(12));
+
+        // a reading taken today is not a complete day
+        put(meta, "meta", "SOCIAL", "followers", "facebook", day(15), 105, false);
+        assertThat(channel(overview7(), "SOCIAL").dataCompleteThrough()).isEqualTo(day(14));
+    }
+
+    @Test
     void derivedMetricsAreWeightedByTheirDenominatorNotAnAverageOfDailyRatios() {
         String gsc = connectFresh("gsc");
         // day A: 1 click / 10 impressions at position 2; day B: 9 clicks / 990 impressions at position 10
@@ -776,7 +787,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         ChannelView social = channel(overview7(), "SOCIAL");
         MetricView followers = metric(social, "followers");
 
-        assertThat(social.dataCompleteThrough()).isEqualTo(day(15));
+        // a reading taken today is the latest level, but today is not a complete day
+        assertThat(social.dataCompleteThrough()).isEqualTo(day(14));
         assertThat(followers.value()).isEqualTo(200.0);
         assertThat(followers.previous()).isNull();
         assertThat(followers.historyStartsOn()).isEqualTo(day(15));

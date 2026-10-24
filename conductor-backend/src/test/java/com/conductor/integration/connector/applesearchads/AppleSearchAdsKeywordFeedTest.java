@@ -314,9 +314,22 @@ class AppleSearchAdsKeywordFeedTest {
         server.expect(once(), requestTo(BASE + "/reports/campaigns/1005/keywords"))
                 .andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST));
 
-        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), FROM, TO);
+        com.conductor.integration.ChannelMetricsPull pull = connector.pull(ctx(), FROM, LocalDate.of(2026, 10, 1));
 
-        assertThat(value(points, "impressions", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("500");
+        assertThat(value(pull.points(), "impressions", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("500");
+        // the store is told to keep that campaign's stored keywords and ads, not to stop pruning altogether
+        assertThat(pull.skippedCampaignIds()).containsExactly("1005");
+    }
+
+    @Test
+    void aCompletePullSkipsNoCampaign() {
+        server.expect(once(), requestTo(BASE + "/reports/campaigns"))
+                .andRespond(withSuccess(CAMPAIGN_REPORT, MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/campaigns?limit=1000&offset=0"))
+                .andRespond(withSuccess(CAMPAIGNS, MediaType.APPLICATION_JSON));
+        expectBreakdownReports();
+
+        assertThat(connector.pull(ctx(), FROM, LocalDate.of(2026, 10, 1)).skippedCampaignIds()).isEmpty();
     }
 
     @Test

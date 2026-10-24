@@ -786,25 +786,28 @@ public class MarketingOverviewQueryService {
      * (Search Console lags about three days) must not have its short window compared with a full previous
      * one. The slowest connection wins. Only flows count: a snapshot (a level such as followers) is a
      * point-in-time reading with nothing to restate, so it never holds the date back. A channel with only
-     * snapshots is as current as today; one with no settled data at all ends at {@code fallbackEnd}.
+     * snapshots is as current as its latest reading, no later than yesterday (the complete days); one with no settled data at all ends at {@code fallbackEnd}.
      */
     private static LocalDate dataCompleteThrough(Context ctx, MetricCatalog.Channel channel,
                                                  List<ChannelMetricDaily> rows) {
         Map<String, LocalDate> latestByConnection = new HashMap<>();
-        boolean anySnapshot = false;
+        LocalDate latestSnapshot = null;
         for (ChannelMetricDaily row : rows) {
             Metric metric = channel.metric(row.getMetric()).orElse(null);
             if (metric == null) {
                 continue;
             }
             if (metric.agg() == Aggregation.LEVEL) {
-                anySnapshot = true;
+                LocalDate day = row.getDay().isAfter(ctx.yesterday) ? ctx.yesterday : row.getDay();
+                if (latestSnapshot == null || day.isAfter(latestSnapshot)) {
+                    latestSnapshot = day;
+                }
             } else if (!row.isProvisional() && !row.getDay().isAfter(ctx.yesterday)) {
                 latestByConnection.merge(row.getConnectionId(), row.getDay(), (a, b) -> b.isAfter(a) ? b : a);
             }
         }
         return latestByConnection.values().stream().min(Comparator.naturalOrder())
-                .orElse(anySnapshot ? ctx.today : ctx.fallbackEnd);
+                .orElse(latestSnapshot != null ? latestSnapshot : ctx.fallbackEnd);
     }
 
     private List<ChannelMetricDaily> load(Context ctx, MetricCatalog.Channel channel, Set<String> connectionIds) {

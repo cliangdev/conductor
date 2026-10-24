@@ -273,7 +273,9 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(rate.sampleSize()).isEqualTo(14L);
         MarketingReportService.Benchmark downloads = byRef.get("STORE.downloads");
         assertThat(downloads.value()).isEqualTo(7.0);
-        assertThat(downloads.ratio()).isEqualTo(0.07);
+        // a count benchmark is per 28 days: 100 prorated to the 7-day window is 25
+        assertThat(downloads.benchmark()).isEqualTo(25.0);
+        assertThat(downloads.ratio()).isEqualTo(0.28);
         assertThat(downloads.judged()).isTrue();
         assertThat(downloads.stale()).isFalse();
         // a benchmark for a metric the report does not have is listed without a value
@@ -372,6 +374,71 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(daily.get(0).storeImpressions()).isEqualTo(1000.0);
         assertThat(daily.get(0).adSpend()).isEqualTo(5.0);
         assertThat(daily.get(6).day()).isEqualTo(ago(1));
+    }
+
+    @Test
+    void aCountBenchmarkGivesTheSameVerdictAtSevenAndTwentyEightDays() {
+        for (int d = 1; d <= 28; d++) {
+            f.put(store, "app-store-connect", "STORE", "downloads", "", ago(d), 10);
+            f.put(store, "app-store-connect", "STORE", "impressions", "", ago(d), 100);
+            f.put(store, "app-store-connect", "STORE", "impressions_unique", "", ago(d), 100);
+        }
+        benchmark("STORE.downloads", 280, TODAY.minusDays(5));
+        benchmark("STORE.conversion_rate", 0.1, TODAY.minusDays(5));
+
+        for (int days : new int[]{7, 28}) {
+            Map<String, MarketingReportService.Benchmark> byRef = new java.util.HashMap<>();
+            service.report(f.project.getId(), days, TODAY, NOW).benchmarks().forEach(b -> byRef.put(b.metricRef(), b));
+            assertThat(byRef.get("STORE.downloads").ratio()).isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-9));
+            // a rate is compared as stated, whatever the window
+            assertThat(byRef.get("STORE.conversion_rate").benchmark()).isEqualTo(0.1);
+        }
+    }
+
+    @Test
+    void dailyIsClippedToTheReportWindowEvenWhenTheSourceReachesFurtherBack() {
+        for (int d = 1; d <= 40; d++) {
+            f.put(store, "app-store-connect", "STORE", "impressions", "", ago(d), 100);
+            f.put(ads, "apple-search-ads", "ADS", "spend", "", ago(d), 5);
+        }
+
+        Report report = service.report(f.project.getId(), 28, TODAY, NOW);
+
+        assertThat(report.daily()).isNotEmpty();
+        assertThat(report.daily()).allSatisfy(d -> {
+            assertThat(d.day()).isAfterOrEqualTo(report.window().from());
+            assertThat(d.day()).isBeforeOrEqualTo(report.window().to());
+        });
+        assertThat(report.daily()).hasSize(28);
+    }
+
+    @Test
+    void aChangeReviewedAfterTheWindowEndsIsNotReviewedInTheWindow() {
+        WorkItem inside = f.change("Reviewed inside", "REVIEWED", null);
+        WorkItem later = f.change("Reviewed later", "REVIEWED", null);
+        jdbc.update("UPDATE work_items SET updated_at = now() + interval '10 days' WHERE id = ?", later.getId());
+
+        // a report as of 14 days ago: its window ended before either edit, so only items updated by then count
+        Report past = service.report(f.project.getId(), 7, TODAY.minusDays(14), NOW.minusDays(14));
+
+        assertThat(past.changes().reviewedInWindow()).extracting(MarketingReportService.Change::title).isEmpty();
+        assertThat(service.report(f.project.getId(), 7, TODAY, NOW).changes().reviewedInWindow())
+                .extracting(MarketingReportService.Change::title).containsExactly("Reviewed inside");
+        assertThat(inside.getId()).isNotNull();
+    }
+
+    @Test
+    void windowStringsAre28dByDefaultAndOnly7dOr28dAreAccepted() {
+        seedStoreAndAds(4);
+        String id = f.project.getId();
+
+        for (String raw : new String[]{null, "28d", "7d"}) {
+            Report r = service.report(id, raw);
+            long days = r.window().to().toEpochDay() - r.window().from().toEpochDay() + 1;
+            assertThat(days).isEqualTo("7d".equals(raw) ? 7 : 28);
+        }
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.report(id, "90d"))
+                .isInstanceOf(com.conductor.exception.BusinessException.class);
     }
 
     private void benchmark(String ref, double value, LocalDate checkedOn) {

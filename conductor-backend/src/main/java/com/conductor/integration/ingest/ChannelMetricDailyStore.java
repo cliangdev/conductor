@@ -72,11 +72,24 @@ public class ChannelMetricDailyStore {
                              LocalDate from, LocalDate to, LocalDate provisionalFrom,
                              List<ChannelMetricPoint> points, boolean pruneDroppedDimensions,
                              java.util.function.Predicate<String> snapshotMetric) {
+        return replaceWindow(projectId, connectionId, connectorId, channel, from, to, provisionalFrom, points,
+                pruneDroppedDimensions, snapshotMetric, Set.of());
+    }
+
+    /**
+     * @param skippedCampaignIds campaigns the source could not read this pull: their stored dimension rows (the
+     *                           members whose state names the campaign) are kept rather than pruned as missing
+     */
+    @Transactional
+    public int replaceWindow(String projectId, String connectionId, String connectorId, String channel,
+                             LocalDate from, LocalDate to, LocalDate provisionalFrom,
+                             List<ChannelMetricPoint> points, boolean pruneDroppedDimensions,
+                             java.util.function.Predicate<String> snapshotMetric, Set<String> skippedCampaignIds) {
         List<ChannelMetricPoint> valid = points.stream()
                 .filter(p -> p.day() != null && p.value() != null && p.metric() != null)
                 .toList();
         if (pruneDroppedDimensions) {
-            deleteDroppedDimensions(connectionId, from, to, valid);
+            deleteDroppedDimensions(connectionId, from, to, valid, skippedCampaignIds);
         }
 
         int written = 0;
@@ -106,7 +119,7 @@ public class ChannelMetricDailyStore {
 
     /** Dimension rows in the window, for a (metric, day) this pull returned, whose key it did not return. */
     private void deleteDroppedDimensions(String connectionId, LocalDate from, LocalDate to,
-                                         List<ChannelMetricPoint> points) {
+                                         List<ChannelMetricPoint> points, Set<String> skippedCampaignIds) {
         Set<String> returned = new HashSet<>();
         Set<String> returnedMetricDays = new HashSet<>();
         for (ChannelMetricPoint p : points) {
@@ -123,8 +136,18 @@ public class ChannelMetricDailyStore {
                 new MapSqlParameterSource().addValue("connectionId", connectionId)
                         .addValue("from", Date.valueOf(from)).addValue("to", Date.valueOf(to)),
                 (rs, n) -> new Object[]{rs.getString(1), rs.getString(2), rs.getDate(3).toLocalDate(), rs.getString(4)});
+        Set<String> preserved = new HashSet<>();
+        if (!skippedCampaignIds.isEmpty()) {
+            preserved.addAll(jdbc.queryForList("""
+                    SELECT dimension_key FROM channel_dimension_state
+                     WHERE connection_id = :connectionId AND state ->> 'campaignId' IN (:campaigns)
+                    """,
+                    new MapSqlParameterSource().addValue("connectionId", connectionId)
+                            .addValue("campaigns", skippedCampaignIds), String.class));
+        }
         List<String> stale = new ArrayList<>();
         for (Object[] row : existing) {
+            if (preserved.contains((String) row[3])) continue;
             String metric = (String) row[1];
             LocalDate day = (LocalDate) row[2];
             if (returnedMetricDays.contains(metric + "\u0000" + day)
