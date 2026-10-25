@@ -160,6 +160,9 @@ export interface CreativeRenderRun {
   startedAt?: string | null
   finishedAt?: string | null
   error?: string | null
+  /** Where the run executes: the daemon, or the workspace's Cloud Run runtime target. Older runs omit it. */
+  runtime?: 'self-hosted' | 'target' | null
+  targetName?: string | null
 }
 
 /** 202 body of POST .../creatives/{id}/render-runs. */

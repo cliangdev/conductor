@@ -6837,6 +6837,13 @@ components:
           type: string
           nullable: true
           description: "Defaults to conductor-<name> when omitted."
+        renderImage:
+          type: string
+          nullable: true
+          description: >-
+            Optional Artifact Registry mirror of the conductor-render image. When set, provisioning also
+            creates a `<jobName>-render` Cloud Run Job so Creatives requested from the web app render on
+            this target.
 
     UpdateRuntimeTargetRequest:
       type: object
@@ -6850,6 +6857,35 @@ components:
           nullable: true
         jobName:
           type: string
+          nullable: true
+        renderImage:
+          type: string
+          nullable: true
+          description: Set the render image (re-provisions the render Job). An empty string clears it.
+
+    RuntimeTargetRender:
+      type: object
+      required: [status]
+      description: >-
+        Render-job readiness, separate from the target's own status — a render failure never changes it.
+      properties:
+        status:
+          type: string
+          enum: [NONE, READY, ERROR]
+        error:
+          type: string
+          nullable: true
+        warnings:
+          type: array
+          nullable: true
+          items:
+            type: string
+        resolvedImage:
+          type: string
+          nullable: true
+        lastProvisionedAt:
+          type: string
+          format: date-time
           nullable: true
 
     RuntimeTargetResponse:
@@ -6871,6 +6907,14 @@ components:
           type: string
         image:
           type: string
+        renderImage:
+          type: string
+          nullable: true
+        renderJobName:
+          type: string
+          nullable: true
+        render:
+          $ref: '#/components/schemas/RuntimeTargetRender'
         status:
           type: string
           enum: [PROVISIONING, ACTIVE, ERROR]

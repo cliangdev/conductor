@@ -17,6 +17,7 @@ import {
   setClaudeRuntime,
   verifyProviderCredential,
 } from '@/lib/api'
+import { renderAvailability } from '@/lib/runtimeRender'
 import type { ClaudeRuntimeConfig, ConnectionSummary, ProviderVerificationReport, RuntimeTarget } from '@/lib/api'
 
 const BUILTIN_VALUE = ''
@@ -146,6 +147,22 @@ export function ClaudeRuntimeSection({
           )}
         </div>
       )}
+      {config.source === 'project-target' && target && (() => {
+        const availability = renderAvailability(target)
+        return availability.available ? (
+          <p className="text-xs text-muted-foreground" data-testid="runtime-render-line">Creatives render here</p>
+        ) : (
+          <p className="text-xs text-muted-foreground" data-testid="runtime-render-line">
+            Creatives render on your self-hosted daemon: {availability.reason.replace(/\.$/, '')}.{' '}
+            <Link
+              href={`/app/projects/${projectId}/integrations/gcp`}
+              className="text-primary hover:underline"
+            >
+              Set up rendering
+            </Link>
+          </p>
+        )
+      })()}
       {config.source === 'project-target' && target?.errorMessage && (
         <p className="text-xs text-destructive">{target.errorMessage}</p>
       )}

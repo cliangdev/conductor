@@ -21,6 +21,7 @@ import com.google.cloud.run.v2.JobName;
 import com.google.cloud.run.v2.JobsClient;
 import com.google.cloud.run.v2.JobsSettings;
 import com.google.cloud.run.v2.LocationName;
+import com.google.cloud.run.v2.ResourceRequirements;
 import com.google.cloud.run.v2.TaskTemplate;
 import com.google.protobuf.Timestamp;
 import org.slf4j.Logger;
@@ -320,8 +321,23 @@ public class GcpConnector implements FetchConnector {
                 .toList();
     }
 
+    /**
+     * @param command            container command; null/empty = {@link #CLAUDE_COMMAND}
+     * @param cpu                CPU limit (e.g. {@code "2"}); null = Cloud Run's default
+     * @param memory             memory limit (e.g. {@code "4Gi"}); null = Cloud Run's default
+     * @param taskTimeoutSeconds per-task timeout; null = Cloud Run's default
+     */
     public record EnsureJobSpec(String gcpProjectId, String region, String jobName, String image,
-                                String runtimeServiceAccountEmail) {}
+                                String runtimeServiceAccountEmail, List<String> command, String cpu,
+                                String memory, Integer taskTimeoutSeconds) {
+        /** The claude-code job: default command, Cloud Run's default resources and timeout. */
+        public EnsureJobSpec(String gcpProjectId, String region, String jobName, String image,
+                             String runtimeServiceAccountEmail) {
+            this(gcpProjectId, region, jobName, image, runtimeServiceAccountEmail, null, null, null, null);
+        }
+    }
+
+    public static final List<String> CLAUDE_COMMAND = List.of("conductor-claude-entrypoint");
 
     /**
      * @param jobName Job resource name.
@@ -346,8 +362,9 @@ public class GcpConnector implements FetchConnector {
             Job.Builder jobBuilder = buildJob(spec);
             boolean exists;
             try {
-                jobsClient.getJob(jobName);
+                Job existing = jobsClient.getJob(jobName);
                 exists = true;
+                mergeExisting(jobBuilder, existing, spec);
             } catch (NotFoundException e) {
                 exists = false;
             }
@@ -380,13 +397,101 @@ public class GcpConnector implements FetchConnector {
         return Instant.ofEpochSecond(ts.getSeconds(), ts.getNanos()).atOffset(ZoneOffset.UTC);
     }
 
-    private Job.Builder buildJob(EnsureJobSpec spec) {
+    /**
+     * An update replaces the whole template, so settings the customer made on the existing Job must be
+     * carried over: its service account when the spec names none, and its cpu/memory whenever they are at
+     * least our defaults (below-minimum values are raised to ours). Package-private: directly unit-tested.
+     */
+    static void mergeExisting(Job.Builder built, Job existing, EnsureJobSpec spec) {
+        TaskTemplate existingTask = existing.getTemplate().getTemplate();
+        TaskTemplate.Builder task = built.getTemplateBuilder().getTemplateBuilder();
+        if (task.getServiceAccount().isEmpty() && !existingTask.getServiceAccount().isEmpty()) {
+            task.setServiceAccount(existingTask.getServiceAccount());
+        }
+        if (existingTask.getContainersCount() == 0 || task.getContainersCount() == 0) {
+            return;
+        }
+        Map<String, String> existingLimits = existingTask.getContainers(0).getResources().getLimitsMap();
+        String cpu = keepIfLarger(spec.cpu(), existingLimits.get("cpu"), GcpConnector::cpuMillis);
+        String memory = keepIfLarger(spec.memory(), existingLimits.get("memory"), GcpConnector::memoryBytes);
+        if (cpu == null && memory == null) {
+            return;
+        }
+        ResourceRequirements.Builder resources = task.getContainersBuilder(0).getResourcesBuilder();
+        if (cpu != null) {
+            resources.putLimits("cpu", cpu);
+        }
+        if (memory != null) {
+            resources.putLimits("memory", memory);
+        }
+    }
+
+    private static String keepIfLarger(String ours, String existing, java.util.function.Function<String, Long> parse) {
+        if (ours == null || ours.isBlank()) {
+            return null;
+        }
+        if (existing == null || existing.isBlank()) {
+            return ours;
+        }
+        Long existingValue = parse.apply(existing);
+        Long ourValue = parse.apply(ours);
+        if (existingValue == null || ourValue == null) {
+            return existingValue == null ? ours : existing;
+        }
+        return existingValue >= ourValue ? existing : ours;
+    }
+
+    static Long cpuMillis(String cpu) {
+        try {
+            String v = cpu.trim();
+            return v.endsWith("m") ? Long.parseLong(v.substring(0, v.length() - 1))
+                    : Math.round(Double.parseDouble(v) * 1000);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    static Long memoryBytes(String memory) {
+        String v = memory.trim();
+        String[][] units = {{"Ki", "1024"}, {"Mi", "1048576"}, {"Gi", "1073741824"}, {"Ti", "1099511627776"},
+                {"K", "1000"}, {"M", "1000000"}, {"G", "1000000000"}, {"T", "1000000000000"}};
+        try {
+            for (String[] u : units) {
+                if (v.endsWith(u[0])) {
+                    return Math.round(Double.parseDouble(v.substring(0, v.length() - u[0].length()))
+                            * Long.parseLong(u[1]));
+                }
+            }
+            return Long.parseLong(v);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    // package-private: directly unit-tested.
+    static Job.Builder buildJob(EnsureJobSpec spec) {
         Container.Builder container = Container.newBuilder()
                 .setImage(spec.image())
-                .addCommand("conductor-claude-entrypoint");
+                .addAllCommand(spec.command() == null || spec.command().isEmpty() ? CLAUDE_COMMAND : spec.command());
+        ResourceRequirements.Builder resources = ResourceRequirements.newBuilder();
+        boolean hasLimits = false;
+        if (spec.cpu() != null && !spec.cpu().isBlank()) {
+            resources.putLimits("cpu", spec.cpu());
+            hasLimits = true;
+        }
+        if (spec.memory() != null && !spec.memory().isBlank()) {
+            resources.putLimits("memory", spec.memory());
+            hasLimits = true;
+        }
+        if (hasLimits) {
+            container.setResources(resources);
+        }
         TaskTemplate.Builder taskTemplate = TaskTemplate.newBuilder()
                 .addContainers(container)
                 .setMaxRetries(0);
+        if (spec.taskTimeoutSeconds() != null) {
+            taskTemplate.setTimeout(com.google.protobuf.Duration.newBuilder().setSeconds(spec.taskTimeoutSeconds()));
+        }
         if (spec.runtimeServiceAccountEmail() != null && !spec.runtimeServiceAccountEmail().isBlank()) {
             taskTemplate.setServiceAccount(spec.runtimeServiceAccountEmail());
         }

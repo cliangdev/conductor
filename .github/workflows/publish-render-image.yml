@@ -1,8 +1,8 @@
 name: Publish Render Image
 
 # Publishes ghcr.io/cliangdev/conductor-render, the image the system workflow
-# `conductor-creative-render` runs on a self-hosted daemon. It bundles Playwright Chromium, ffmpeg and
-# the conductor CLI, installed at an EXACT published version, so it must be rebuilt after each CLI
+# `conductor-creative-render` runs on a self-hosted daemon or a BYO Cloud
+# Run target. It bundles Playwright Chromium, ffmpeg and the conductor CLI, installed at an EXACT published version, so it must be rebuilt after each CLI
 # release (the render core ships inside the CLI package). Tags: :1 (floating, what the workflow
 # pins), :<cli version>, :sha-<short>.
 on:
@@ -16,6 +16,10 @@ on:
     branches: [main]
     paths:
       - 'runner-image/Dockerfile.render'
+      - 'runner-image/conductor-step-entrypoint.mjs'
+      - 'runner-image/runner-protocol.mjs'
+      - 'runner-image/runner-protocol.selftest.mjs'
+      - 'runner-image/step-entrypoint.selftest.mjs'
       - '.github/workflows/publish-render-image.yml'
   workflow_dispatch:
 
@@ -51,6 +55,13 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: '22'
+
+      - name: Syntax-check and self-test the step entrypoint
+        run: |
+          node --check runner-image/runner-protocol.mjs
+          node --check runner-image/conductor-step-entrypoint.mjs
+          node runner-image/runner-protocol.selftest.mjs
+          node runner-image/step-entrypoint.selftest.mjs
 
       - name: Resolve the CLI version to install
         id: cli

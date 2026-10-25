@@ -71,14 +71,16 @@ class ClaudeCodeContainerRunnerTest {
     void setUp() {
         RuntimeTargetResolver runtimeTargetResolver = new RuntimeTargetResolver("gcp-proj", "us-central1",
                 "conductor-claude-code", runtimeTargetService, projectSettingsRepository);
-        runner = new ClaudeCodeContainerRunner(launcher, runtimeTargetResolver, credentialService,
-                stepRunRepository, runRepository, runTokenService, projectSettingsRepository, new WorkflowInterpolator(),
-                new ObjectMapper(), logBroker, activeConnectionResolver, connectorRegistry, "http://localhost:8080") {
+        CloudRunStepRunner stepRunner = new CloudRunStepRunner(launcher, stepRunRepository, runRepository,
+                logBroker, new ObjectMapper()) {
             @Override
             protected void sleepSeconds(int seconds) {
                 // no-op for fast tests
             }
         };
+        runner = new ClaudeCodeContainerRunner(stepRunner, runtimeTargetResolver, credentialService,
+                runTokenService, projectSettingsRepository, new WorkflowInterpolator(),
+                new ObjectMapper(), activeConnectionResolver, connectorRegistry, "http://localhost:8080");
     }
 
     private Map<String, Object> stepDef() {

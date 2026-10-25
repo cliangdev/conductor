@@ -5,7 +5,8 @@
 // panel is read-only: it lists what a local render produced, shows the latest SUCCEEDED render's
 // frames as a grid, and polls while a render is in flight. For a Creative that needs a local render
 // (`webRender`) there is also an explicit "Render" button that dispatches the `conductor-creative-render`
-// system Workflow onto the workspace's self-hosted daemon; it is never fired automatically.
+// system Workflow, which runs on the workspace's BYO Cloud Run runtime target when that target is set
+// up for rendering and otherwise on its self-hosted daemon; it is never fired automatically.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -72,7 +73,8 @@ export interface RendersPanelProps {
    *  no "Prepare for posting" button, the same "renders locally" guidance MOTION shows. */
   localRender?: boolean
   /** The Creative needs a browser/ffmpeg render (`needsLocalRender`): show the Render button, which
-   *  runs it on the workspace's self-hosted daemon through the `conductor-creative-render` Workflow. */
+   *  runs it through the `conductor-creative-render` Workflow: on the designated Cloud Run runtime target
+   *  when its render job is ready, otherwise on the workspace's self-hosted daemon. */
   webRender?: boolean
   token: string
   registry?: CreativeRegistry | null
@@ -481,6 +483,7 @@ export function RendersPanel({
 function RenderRunStatus({ projectId, run }: { projectId: string; run: CreativeRenderRun }) {
   const phase = renderRunPhase(run)
   if (phase === 'succeeded') return null
+  const onTarget = run.runtime === 'target'
   const runHref = `/app/projects/${projectId}/workflows/${run.workflowId}/runs/${run.runId}`
   const viewRun = (
     <Link href={runHref} className="text-xs text-primary underline-offset-2 hover:underline">
@@ -501,14 +504,20 @@ function RenderRunStatus({ projectId, run }: { projectId: string; run: CreativeR
   return (
     <div className="space-y-1.5" data-testid="render-run-status">
       <div className="flex items-center gap-2">
-        {phase === 'waiting' ? (
+        {onTarget ? (
+          <StatusBadge
+            status="running"
+            hue="amber"
+            label={run.targetName ? `Rendering on ${run.targetName}` : 'Rendering on your Cloud Run target'}
+          />
+        ) : phase === 'waiting' ? (
           <StatusBadge status="awaitingpickup" hue="amber" label="Waiting for a runner" />
         ) : (
           <StatusBadge status="running" hue="amber" label="Rendering…" />
         )}
         {viewRun}
       </div>
-      {phase === 'waiting' && (
+      {phase === 'waiting' && !onTarget && (
         <p className="text-xs text-muted-foreground">
           Start the conductor daemon on a machine with Docker (<code className="text-foreground">conductor start</code>
           ).{' '}

@@ -309,7 +309,8 @@ public class CreativeController implements CreativesApi {
     private CreativeRenderRun toRunResponse(CreativeRenderDispatchService.RenderRunView run) {
         return new CreativeRenderRun(run.workflowId(), run.runId(), run.status())
                 .waitReason(run.waitReason()).startedAt(run.startedAt()).finishedAt(run.finishedAt())
-                .error(run.error());
+                .error(run.error()).runtime(CreativeRenderRun.RuntimeEnum.fromValue(run.runtime()))
+                .targetName(run.targetName());
     }
 
     @Override

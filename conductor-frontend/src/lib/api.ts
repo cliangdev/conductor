@@ -892,6 +892,17 @@ export function listProjectApiKeys(projectId: string, token: string): Promise<Pr
 export type RuntimeTargetProvider = 'gcp-cloud-run'
 export type RuntimeTargetStatus = 'PROVISIONING' | 'ACTIVE' | 'ERROR'
 
+export type RuntimeTargetRenderStatus = 'NONE' | 'READY' | 'ERROR'
+
+/** Render readiness is separate from the target's own status: a render failure never flips it to ERROR. */
+export interface RuntimeTargetRender {
+  status: RuntimeTargetRenderStatus
+  error?: string | null
+  warnings?: string[] | null
+  resolvedImage?: string | null
+  lastProvisionedAt?: string | null
+}
+
 export interface RuntimeTarget {
   id: string
   name: string
@@ -906,6 +917,10 @@ export interface RuntimeTarget {
   warnings?: string[] | null
   resolvedImage?: string | null
   lastProvisionedAt?: string | null
+  /** Artifact Registry mirror of conductor-render; unset = the target isn't set up for rendering. */
+  renderImage?: string | null
+  renderJobName?: string | null
+  render?: RuntimeTargetRender | null
   createdAt: string
   updatedAt: string
 }
@@ -925,6 +940,8 @@ export interface UpdateRuntimeTargetBody {
   region?: string
   image?: string
   jobName?: string
+  /** Re-provisions the render job. Send on its own: `{ renderImage }`. */
+  renderImage?: string
 }
 
 export function listRuntimeTargets(projectId: string, token: string): Promise<RuntimeTarget[]> {

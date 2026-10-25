@@ -61,15 +61,17 @@ class ClaudeCodeStepExecutorTest {
         // sleepSeconds seam now lives on the extracted runner (ClaudeCodeStepExecutor delegates all
         // container-execution mechanics to it) — this test still exercises the executor end-to-end
         // through that runner, just with the poll sleep stubbed out for speed.
-        runner = new ClaudeCodeContainerRunner(launcher, runtimeTargetResolver, credentialService,
-                stepRunRepository, runRepository, runTokenService, projectSettingsRepository,
-                new WorkflowInterpolator(), new ObjectMapper(), logBroker,
-                new ActiveConnectionResolver(connectionRepository), connectorRegistry, "http://localhost:8080") {
+        CloudRunStepRunner stepRunner = new CloudRunStepRunner(launcher, stepRunRepository, runRepository,
+                logBroker, new ObjectMapper()) {
             @Override
             protected void sleepSeconds(int seconds) {
                 // no-op for fast tests
             }
         };
+        runner = new ClaudeCodeContainerRunner(stepRunner, runtimeTargetResolver, credentialService,
+                runTokenService, projectSettingsRepository,
+                new WorkflowInterpolator(), new ObjectMapper(),
+                new ActiveConnectionResolver(connectionRepository), connectorRegistry, "http://localhost:8080");
         executor = new ClaudeCodeStepExecutor(runner, new WorkflowInterpolator());
     }
 

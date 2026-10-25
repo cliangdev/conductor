@@ -7,9 +7,12 @@
 # Claude Code runs locally. The CLI is installed from npm at an exact version (CONDUCTOR_VERSION):
 # publish-render-image.yml builds this after each CLI release and moves the floating `:1` tag.
 #
-# The image has no useful default command. It needs a conductor daemon >= 0.41.0, which runs the
-# step's `run:` script as `sh -c`; an older daemon ignores `run` and lands in the CMD below, which
-# fails loudly instead of hanging.
+# The image has no useful default command and deliberately no ENTRYPOINT. Two launchers run it:
+#  - a self-hosted conductor daemon >= 0.41.0 starts it with `--entrypoint sh` and runs the step's
+#    `run:` script as `sh -c`; an older daemon ignores `run` and lands in the CMD below, which fails
+#    loudly instead of hanging;
+#  - a BYO Cloud Run Job (runtime target) sets its command to `conductor-step-entrypoint`, which
+#    runs the same script from CONDUCTOR_STEP_RUN and reports logs and the result to the backend.
 FROM mcr.microsoft.com/playwright:v1.63.0-noble
 
 ARG CONDUCTOR_VERSION
@@ -32,8 +35,14 @@ RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 \
     && conductor --version \
     && conductor creative --help >/dev/null
 
+# Self-reporting entrypoint for Cloud Run (the Job's command); unused on a self-hosted daemon.
+COPY --chmod=755 conductor-step-entrypoint.mjs /usr/local/bin/conductor-step-entrypoint
+# Shared protocol helpers, imported by the entrypoint as ./runner-protocol.mjs (same directory).
+COPY --chmod=644 runner-protocol.mjs /usr/local/bin/runner-protocol.mjs
+
 LABEL org.opencontainers.image.source="https://github.com/cliangdev/conductor" \
       org.opencontainers.image.description="Renders Conductor Creatives: Playwright Chromium, ffmpeg and the conductor CLI" \
+      dev.conductor.runner.protocol="1" \
       dev.conductor.cli.version="${CONDUCTOR_VERSION}"
 
 # pwuser ships with the Playwright image; the render needs no root.

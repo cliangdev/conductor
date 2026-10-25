@@ -24,7 +24,7 @@ interface StubRuntimeTarget {
   id: string
   name: string
   provider: 'gcp-cloud-run'
-  connectionId: string
+  connectionId: string | null
   gcpProjectId: string
   region: string
   jobName: string
@@ -32,6 +32,7 @@ interface StubRuntimeTarget {
   status: 'PROVISIONING' | 'ACTIVE' | 'ERROR'
   errorMessage?: string | null
   warnings?: string[] | null
+  render?: { status: 'NONE' | 'READY' | 'ERROR' } | null
   createdAt: string
   updatedAt: string
 }
@@ -114,6 +115,56 @@ describe('ClaudeRuntimeSection', () => {
 
     expect(await screen.findByText('Not configured')).toBeInTheDocument()
     expect(screen.getByText(/link a runtime target below/i)).toBeInTheDocument()
+  })
+
+  it('says creatives render here when the designated target render is READY', async () => {
+    const t = { ...activeTarget, render: { status: 'READY' as const } }
+    getRuntimeBehavior = () =>
+      Promise.resolve({ source: 'project-target', runtimeTargetId: 'target-1', runtimeTarget: t, builtinConfigured: true })
+    listTargetsBehavior = () => Promise.resolve([t])
+    render(<ClaudeRuntimeSection projectId="proj-1" />)
+    expect(await screen.findByText('Creatives render here')).toBeInTheDocument()
+  })
+
+  it.each([['NONE'], ['ERROR'], [null]] as const)(
+    'says creatives render on the daemon (with a link) when render is %s',
+    async (status) => {
+      const t = { ...activeTarget, render: status ? { status } : null }
+      getRuntimeBehavior = () =>
+        Promise.resolve({ source: 'project-target', runtimeTargetId: 'target-1', runtimeTarget: t, builtinConfigured: true })
+      listTargetsBehavior = () => Promise.resolve([t])
+      render(<ClaudeRuntimeSection projectId="proj-1" />)
+      expect(await screen.findByText(/Creatives render on your self-hosted daemon/)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Set up rendering' })).toHaveAttribute(
+        'href',
+        '/app/projects/proj-1/integrations/gcp',
+      )
+    },
+  )
+
+  it.each([
+    ['PROVISIONING', 'conn-1', 'Target is provisioning'],
+    ['ERROR', 'conn-1', 'Target is error'],
+    ['ACTIVE', null, 'No GCP connection'],
+  ] as const)(
+    'does not claim creatives render here when render is READY but the target is %s / connection %s',
+    async (status, connectionId, reason) => {
+      const t = { ...activeTarget, status, connectionId, render: { status: 'READY' as const } }
+      getRuntimeBehavior = () =>
+        Promise.resolve({ source: 'project-target', runtimeTargetId: 'target-1', runtimeTarget: t, builtinConfigured: true })
+      listTargetsBehavior = () => Promise.resolve([t])
+      render(<ClaudeRuntimeSection projectId="proj-1" />)
+      const line = await screen.findByTestId('runtime-render-line')
+      expect(line).toHaveTextContent('Creatives render on your self-hosted daemon')
+      expect(line).toHaveTextContent(reason)
+      expect(screen.queryByText('Creatives render here')).toBeNull()
+    },
+  )
+
+  it('shows no render line for the builtin runtime', async () => {
+    render(<ClaudeRuntimeSection projectId="proj-1" />)
+    await screen.findByText('Built-in Conductor runtime')
+    expect(screen.queryByTestId('runtime-render-line')).toBeNull()
   })
 
   it('shows the designated target name and status when one is set', async () => {

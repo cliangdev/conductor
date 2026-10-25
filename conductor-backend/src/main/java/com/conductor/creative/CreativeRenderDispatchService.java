@@ -9,7 +9,9 @@ import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.workflow.WorkflowRunQueryService;
 import com.conductor.workflow.WorkflowTriggerService;
+import com.conductor.workflow.RuntimeTargetResolver;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.http.HttpStatus;
@@ -24,7 +26,8 @@ import java.util.Optional;
 
 /**
  * Renders a Creative from the web: fires the {@code conductor-creative-render} system workflow, which runs
- * {@code conductor creative render} on the workspace's self-hosted daemon. Only for a Creative that needs a
+ * {@code conductor creative render} on the workspace's designated Cloud Run runtime target when that target
+ * has a READY render job, otherwise on its self-hosted daemon. Only for a Creative that needs a
  * browser or ffmpeg ({@link CreativeRenderService#needsLocalRender}); the rest is assembled in the backend.
  */
 @Service
@@ -42,6 +45,7 @@ public class CreativeRenderDispatchService {
     private final WorkflowRunQueryService runQueryService;
     private final WorkflowStepRunRepository stepRunRepository;
     private final ObjectMapper objectMapper;
+    private final RuntimeTargetResolver runtimeTargetResolver;
 
     public CreativeRenderDispatchService(ProjectSecurityService projectSecurityService,
                                          CreativeRepository creativeRepository,
@@ -52,7 +56,8 @@ public class CreativeRenderDispatchService {
                                          WorkflowRunRepository runRepository,
                                          WorkflowRunQueryService runQueryService,
                                          WorkflowStepRunRepository stepRunRepository,
-                                         ObjectMapper objectMapper) {
+                                         ObjectMapper objectMapper,
+                                         RuntimeTargetResolver runtimeTargetResolver) {
         this.projectSecurityService = projectSecurityService;
         this.creativeRepository = creativeRepository;
         this.renderService = renderService;
@@ -63,11 +68,26 @@ public class CreativeRenderDispatchService {
         this.runQueryService = runQueryService;
         this.stepRunRepository = stepRunRepository;
         this.objectMapper = objectMapper;
+        this.runtimeTargetResolver = runtimeTargetResolver;
     }
 
-    /** A render workflow run as the API reports it. */
+    public static final String RUNTIME_SELF_HOSTED = "self-hosted";
+    public static final String RUNTIME_TARGET = "target";
+
+    /**
+     * A render workflow run as the API reports it.
+     *
+     * @param runtime    where the render runs: {@code target} (the workspace's Cloud Run runtime target) or
+     *                   {@code self-hosted} (its daemon)
+     * @param targetName the runtime target's name when {@code runtime} is {@code target}
+     */
     public record RenderRunView(String workflowId, String runId, String status, String waitReason,
-                                OffsetDateTime startedAt, OffsetDateTime finishedAt, String error) {
+                                OffsetDateTime startedAt, OffsetDateTime finishedAt, String error,
+                                String runtime, String targetName) {
+        public RenderRunView(String workflowId, String runId, String status, String waitReason,
+                             OffsetDateTime startedAt, OffsetDateTime finishedAt, String error) {
+            this(workflowId, runId, status, waitReason, startedAt, finishedAt, error, RUNTIME_SELF_HOSTED, null);
+        }
     }
 
     @Transactional
@@ -116,6 +136,15 @@ public class CreativeRenderDispatchService {
         payload.put("type", EVENT_TYPE);
         payload.put("projectId", projectId);
         payload.put("creativeId", creativeId);
+        // Where this render runs. `target` only when the designated runtime target can render right now
+        // (ACTIVE, connected, render job READY); anything else falls back to the daemon, as before.
+        RuntimeTargetResolver.RenderTargetResolution resolution = runtimeTargetResolver.resolveRenderTarget(projectId);
+        if (resolution.available()) {
+            payload.put("runtime", RUNTIME_TARGET);
+            payload.put("targetName", resolution.targetName());
+        } else {
+            payload.put("runtime", RUNTIME_SELF_HOSTED);
+        }
         WorkflowRun run = workflowTriggerService.fireTrigger(workflow.getId(), "workflow_dispatch", toJson(payload));
         return view(workflow.getId(), run, runQueryService.deriveWaitReasons(List.of(run)).get(run.getId()));
     }
@@ -167,8 +196,19 @@ public class CreativeRenderDispatchService {
     private RenderRunView view(String workflowId, WorkflowRun run, String waitReason) {
         String error = run.getStatus() == WorkflowRunStatus.FAILED || run.getStatus() == WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT
                 ? failureReason(run) : null;
+        String runtime = RUNTIME_SELF_HOSTED;
+        String targetName = null;
+        try {
+            JsonNode payload = objectMapper.readTree(run.getEventPayload());
+            if (RUNTIME_TARGET.equals(payload.path("runtime").asText(null))) {
+                runtime = RUNTIME_TARGET;
+                targetName = payload.path("targetName").asText(null);
+            }
+        } catch (JsonProcessingException | RuntimeException e) {
+            // an unreadable payload (or a run from before this field existed) is a self-hosted run
+        }
         return new RenderRunView(workflowId, run.getId(), run.getStatus().name(), waitReason,
-                run.getStartedAt(), run.getCompletedAt(), error);
+                run.getStartedAt(), run.getCompletedAt(), error, runtime, targetName);
     }
 
     /** The first reason a step or job of the run recorded (e.g. DAEMON_PICKUP_TIMEOUT), or a generic line. */
