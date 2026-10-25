@@ -32,6 +32,10 @@ public class ConnectionHealthService {
 
     public static final String HEALTHY = "HEALTHY";
     public static final String UNHEALTHY = "UNHEALTHY";
+    /** Status of a connection whose feed pulls fine but whose data has stopped advancing; see {@link #markNoNewData}. */
+    public static final String DEGRADED = "DEGRADED";
+    /** {@code health_detail} marker identifying a DEGRADED written by {@link #markNoNewData}, so only that flag is ever cleared. */
+    public static final String NO_NEW_DATA_DETAIL = "NO_NEW_DATA";
 
     /** Provider error bodies can be arbitrarily long; the row stores enough to be actionable. */
     public static final int MAX_MESSAGE_LENGTH = 500;
@@ -68,6 +72,10 @@ public class ConnectionHealthService {
     @Transactional
     public void markHealthy(String connectionId) {
         find(connectionId, HEALTHY).ifPresent(conn -> {
+            if (isNoNewData(conn)) {
+                // Credentials work, but that says nothing about the data having stopped: not ours to clear.
+                return;
+            }
             boolean recovered = UNHEALTHY.equals(conn.getHealthStatus());
             conn.setHealthStatus(HEALTHY);
             conn.setHealthCheckedAt(OffsetDateTime.now());
@@ -78,6 +86,29 @@ public class ConnectionHealthService {
                 log.info("Connection {} ({}) recovered to HEALTHY", conn.getId(), conn.getConnectorId());
             }
         });
+    }
+
+    /**
+     * Flags a connection whose feed keeps pulling successfully but whose newest stored day is {@code since}.
+     * Purely informational (DEGRADED + message): it never touches the feed, and it never overwrites a more
+     * severe verdict (UNHEALTHY / SETUP_REQUIRED) from an actual auth or setup failure.
+     */
+    @Transactional
+    public void markNoNewData(String connectionId, java.time.LocalDate since) {
+        String message = "No new data since "
+                + java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.ENGLISH).format(since);
+        // One conditional UPDATE: a concurrent markUnhealthy can't be overwritten by a read-then-save.
+        connectionRepository.markNoNewData(connectionId, message);
+    }
+
+    /** Clears the flag {@link #markNoNewData} set (and only that flag) once newer data arrives. */
+    @Transactional
+    public void clearNoNewData(String connectionId) {
+        connectionRepository.clearNoNewData(connectionId);
+    }
+
+    private static boolean isNoNewData(Connection conn) {
+        return DEGRADED.equals(conn.getHealthStatus()) && NO_NEW_DATA_DETAIL.equals(conn.getHealthDetail());
     }
 
     /**

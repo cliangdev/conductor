@@ -34,6 +34,14 @@ describe('ConnectionRow', () => {
   })
 
 
+  it('shows the no-new-data message for a DEGRADED connection without a reconnect prompt', () => {
+    renderRow(connection({ healthStatus: 'DEGRADED', healthMessage: 'No new data since Oct 3' }))
+
+    expect(screen.getByText(/No new data since Oct 3/)).toBeInTheDocument()
+    expect(screen.queryByText('Needs reconnect')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Reconnect the account/)).not.toBeInTheDocument()
+  })
+
   it('shows an error state for an UNHEALTHY connection', () => {
     renderRow(connection({ healthStatus: 'UNHEALTHY', healthMessage: 'Token has been expired or revoked.' }))
 

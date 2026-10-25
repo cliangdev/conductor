@@ -56,9 +56,11 @@ class ChannelMetricsFeedPullerSteadyStateIntegrationTest extends AbstractNoneWeb
     @Autowired private ConnectorFeedRepository feedRepository;
     @Autowired private MarketingOverviewQueryService overviewService;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private com.conductor.service.ConnectionHealthService healthService;
     @Autowired private org.springframework.transaction.PlatformTransactionManager txManager;
 
     private String cursor;
+    private com.conductor.integration.IngestBatch lastBatch;
     private Connection connection;
     private ChannelMetricsSource source;
     private Project project;
@@ -123,15 +125,15 @@ class ChannelMetricsFeedPullerSteadyStateIntegrationTest extends AbstractNoneWeb
         OAuthFlowService oauth = mock(OAuthFlowService.class);
         when(oauth.withFreshToken(any(), any())).thenAnswer(inv -> inv.getArgument(1));
         ChannelMetricsFeedPuller puller = new ChannelMetricsFeedPuller(registry, connectionService, store,
-                mock(ChannelMetricDefinitionStore.class), mock(ChannelDimensionStateStore.class), objectMapper, oauth,
+                mock(ChannelMetricDefinitionStore.class), mock(ChannelDimensionStateStore.class), objectMapper, oauth, healthService,
                 Clock.fixed(Instant.parse(day + "T09:00:00Z"), ZoneOffset.UTC));
         IngestSpec spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null,
                 null, null, null, IngestSink.CHANNEL_METRICS, null);
         ConnectorFeed feed = new ConnectorFeed();
         feed.setId("f");
         feed.setIntervalMinutes(360);
-        cursor = puller.pull(feed, spec, connection, new IngestRequest("channel_metrics", null, cursor, 500))
-                .nextCursor();
+        lastBatch = puller.pull(feed, spec, connection, new IngestRequest("channel_metrics", null, cursor, 500));
+        cursor = lastBatch.nextCursor();
     }
 
     private LocalDate dataCompleteThrough(LocalDate today) {
@@ -172,6 +174,100 @@ class ChannelMetricsFeedPullerSteadyStateIntegrationTest extends AbstractNoneWeb
 
         assertThat(provisionalDays()).containsExactly(LocalDate.of(2026, 10, 12), LocalDate.of(2026, 10, 13),
                 LocalDate.of(2026, 10, 14));
+    }
+
+    private void seedDay(LocalDate day) {
+        new org.springframework.transaction.support.TransactionTemplate(txManager).executeWithoutResult(t ->
+                dailyRepository.upsert(UUID.randomUUID().toString(), project.getId(), connection.getId(),
+                        "app-store-connect", "STORE", "downloads", "", day, java.math.BigDecimal.ZERO, false));
+    }
+
+    private Connection reloaded() {
+        return connectionRepository.findById(connection.getId()).orElseThrow();
+    }
+
+    private void sourceReturnsNothing() {
+        when(source.pullDaily(any(ConnectionContext.class), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of());
+    }
+
+    @Test
+    void aFeedWhoseNewestDayIsOverAWeekOldIsFlaggedThenClearedWhenNewDataArrives() {
+        setUp();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate newest = today.minusDays(10);
+        seedDay(newest); // a zero-valued day still counts as data
+        sourceReturnsNothing();
+
+        pullOn(today.toString());
+        Connection flagged = reloaded();
+        assertThat(flagged.getHealthStatus()).isEqualTo("DEGRADED");
+        assertThat(flagged.getHealthMessage()).startsWith("No new data since ");
+        // not a failure: the batch is healthy, so FeedPullService keeps failures at 0 and schedules normally
+        assertThat(overviewStatus(today)).isEqualTo("STALE");
+
+        pullOn(today.plusDays(0).toString()); // still stalled: stays flagged, no churn
+        assertThat(reloaded().getHealthMessage()).isEqualTo(flagged.getHealthMessage());
+
+        seedDay(today.minusDays(1));
+        pullOn(today.toString());
+        Connection cleared = reloaded();
+        assertThat(cleared.getHealthStatus()).isEqualTo("HEALTHY");
+        assertThat(cleared.getHealthMessage()).isNull();
+    }
+
+    @Test
+    void theStallFlagIsAHealthyBatchWithAnAdvancingCursor() {
+        setUp();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        seedDay(today.minusDays(20));
+        sourceReturnsNothing();
+        String clock = today.toString();
+        pullOn(clock);
+        assertThat(cursor).contains("\"lastDay\":\"" + today + "\"");
+        assertThat(lastBatch.health()).isEqualTo(com.conductor.integration.ConnectorHealth.HEALTHY);
+        assertThat(lastBatch.errorMessage()).isNull();
+    }
+
+    @Test
+    void aConnectionThatNeverHadDataIsNotFlagged() {
+        setUp();
+        sourceReturnsNothing();
+        pullOn(LocalDate.now(ZoneOffset.UTC).toString());
+        assertThat(reloaded().getHealthStatus()).isNull();
+    }
+
+    @Test
+    void theStallFlagNeitherOverwritesNorClearsAnAuthFailure() {
+        setUp();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        seedDay(today.minusDays(10));
+        sourceReturnsNothing();
+        healthService.markUnhealthy(connection.getId(), "token revoked");
+
+        pullOn(today.toString());
+        assertThat(reloaded().getHealthStatus()).isEqualTo("UNHEALTHY");
+
+        seedDay(today.minusDays(1));
+        pullOn(today.toString());
+        assertThat(reloaded().getHealthStatus()).isEqualTo("UNHEALTHY");
+    }
+
+    @Test
+    void aTokenRefreshDoesNotClearTheStallFlag() {
+        setUp();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        seedDay(today.minusDays(10));
+        sourceReturnsNothing();
+        pullOn(today.toString());
+        healthService.markHealthy(connection.getId());
+        assertThat(reloaded().getHealthStatus()).isEqualTo("DEGRADED");
+    }
+
+    private String overviewStatus(LocalDate today) {
+        return overviewService.snapshot(project.getId(), 7, today, java.time.OffsetDateTime.now())
+                .overview().channels().stream().filter(c -> c.channel().equals("STORE")).findFirst().orElseThrow()
+                .status();
     }
 
     private List<LocalDate> provisionalDays() {

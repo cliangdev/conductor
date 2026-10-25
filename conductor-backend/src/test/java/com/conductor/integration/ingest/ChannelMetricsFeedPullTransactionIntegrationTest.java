@@ -123,7 +123,8 @@ class ChannelMetricsFeedPullTransactionIntegrationTest extends AbstractNoneWebIn
             return inv.getArgument(1);
         });
         ChannelMetricsFeedPuller puller = new ChannelMetricsFeedPuller(registry, connectionService, store,
-                mock(ChannelMetricDefinitionStore.class), mock(ChannelDimensionStateStore.class), objectMapper, oauth);
+                mock(ChannelMetricDefinitionStore.class), mock(ChannelDimensionStateStore.class), objectMapper, oauth,
+                mock(com.conductor.service.ConnectionHealthService.class));
         service = new FeedPullService(feedRepository, connectionService, registry, mock(SnapshotIngestAdapter.class),
                 mock(DigestSink.class), mock(com.conductor.integration.ingest.digest.MetricsDigestService.class),
                 mock(com.conductor.service.publish.PostMetricsFeedPuller.class), puller, transactionTemplate);

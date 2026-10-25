@@ -35,6 +35,21 @@ public interface ConnectionRepository extends JpaRepository<Connection, String> 
     List<PublishableConnection> findPublishableByProjectIdAndConnectorIdIn(@Param("projectId") String projectId,
                                                                            @Param("connectorIds") java.util.Collection<String> connectorIds);
     List<Connection> findByProjectId(String projectId);
+
+    /** Atomically flags a stalled feed unless a more severe verdict holds the row or the same message is already set. */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Connection c SET c.healthStatus = 'DEGRADED', c.healthMessage = :message, c.healthDetail = 'NO_NEW_DATA', "
+            + "c.healthCheckedAt = CURRENT_TIMESTAMP WHERE c.id = :id "
+            + "AND (c.healthStatus IS NULL OR c.healthStatus = 'HEALTHY' OR c.healthDetail = 'NO_NEW_DATA') "
+            + "AND (c.healthDetail IS NULL OR c.healthDetail <> 'NO_NEW_DATA' OR c.healthMessage IS NULL OR c.healthMessage <> :message "
+            + "OR c.healthStatus <> 'DEGRADED')")
+    int markNoNewData(@Param("id") String id, @Param("message") String message);
+
+    /** Atomically clears the stall flag, and only that flag. */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Connection c SET c.healthStatus = 'HEALTHY', c.healthMessage = NULL, c.healthDetail = NULL, "
+            + "c.healthCheckedAt = CURRENT_TIMESTAMP WHERE c.id = :id AND c.healthDetail = 'NO_NEW_DATA'")
+    int clearNoNewData(@Param("id") String id);
     Optional<Connection> findByIdAndConnectorId(String id, String connectorId);
 
     /**

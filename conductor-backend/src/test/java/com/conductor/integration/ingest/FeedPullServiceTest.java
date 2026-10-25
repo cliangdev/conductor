@@ -116,6 +116,38 @@ class FeedPullServiceTest {
         assertThat(feed.getNextRunAt()).isNotNull();
     }
 
+    @org.junit.jupiter.api.Test
+    void aStalledChannelPullIsStillASuccessWithZeroFailuresAndTheNormalSchedule() {
+        ChannelMetricsFeedPuller channelPuller = mock(ChannelMetricsFeedPuller.class);
+        FeedPullService withChannel = new FeedPullService(feedRepository, connectionService, connectorRegistry,
+                snapshotIngestAdapter, digestSink, metricsDigestService, postMetricsFeedPuller, channelPuller);
+        ConnectorFeed feed = feed();
+        feed.setIngestId("channel_metrics");
+        feed.setIntervalMinutes(360);
+        feed.setConsecutiveFailures(0);
+        Connection conn = connection();
+        when(connectionService.getById("conn-1")).thenReturn(Optional.of(conn));
+        IngestSpec spec = new IngestSpec("channel_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null,
+                null, null, null, com.conductor.integration.IngestSink.CHANNEL_METRICS, null);
+        Connector connector = mock(Connector.class);
+        IntegrationToolSpec toolSpec = mock(IntegrationToolSpec.class);
+        when(toolSpec.ingest()).thenReturn(List.of(spec));
+        when(connector.getToolSpec()).thenReturn(toolSpec);
+        when(connectorRegistry.getById("gsc")).thenReturn(Optional.of(connector));
+        // what the puller returns for a feed flagged "no new data": a plain healthy batch
+        when(channelPuller.pull(any(), any(), any(), any()))
+                .thenReturn(new IngestBatch(List.of(), "{\"lastDay\":\"2026-10-14\"}", false, false,
+                        com.conductor.integration.ConnectorHealth.HEALTHY, null));
+        java.time.OffsetDateTime before = java.time.OffsetDateTime.now();
+
+        withChannel.pull(feed);
+
+        assertThat(feed.getConsecutiveFailures()).isZero();
+        assertThat(feed.getStatus()).isEqualTo(com.conductor.integration.ingest.ConnectorFeedStatus.ACTIVE);
+        assertThat(feed.getNextRunAt()).isAfterOrEqualTo(before.plusMinutes(360));
+        assertThat(feed.getCursorState()).isEqualTo("{\"lastDay\":\"2026-10-14\"}");
+    }
+
     private static ConnectorFeed feed() {
         ConnectorFeed feed = new ConnectorFeed();
         feed.setId("feed-1");

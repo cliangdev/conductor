@@ -51,6 +51,8 @@ export function ConnectionRow({
   onChooseAccount,
 }: ConnectionRowProps) {
   const unhealthy = isUnhealthy(connection);
+  // DEGRADED = the account works but its data has stopped advancing: say so, never ask for a reconnect.
+  const degradedNote = !unhealthy && connection.healthStatus === 'DEGRADED' ? connection.healthMessage : null;
   // The callback stores the grant before the picker runs, so a picker that failed (or a tab closed on
   // it) leaves a row that reads ACTIVE yet can never publish. Without this the only way back to the
   // picker was the `?selectAccount=` marker the redirect carried, and that is gone after one navigation.
@@ -84,7 +86,12 @@ export function ConnectionRow({
           </div>
         ) : (
           <div className="text-xs text-muted-foreground flex items-center gap-1">
-            {connection.status === 'ACTIVE' ? (
+            {degradedNote ? (
+              <span data-testid="degraded-note" className="text-status-progress">
+                {degradedNote}
+                {connection.healthCheckedAt && <span className="text-muted-foreground"> · {timeAgo(connection.healthCheckedAt)}</span>}
+              </span>
+            ) : connection.status === 'ACTIVE' ? (
               <>
                 <CheckCircleIcon className="h-3.5 w-3.5 text-status-done" />
                 Connected

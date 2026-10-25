@@ -12,7 +12,9 @@ import com.conductor.integration.IngestRequest;
 import com.conductor.integration.IngestSpec;
 import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.service.OAuthFlowService;
+import com.conductor.service.ConnectionHealthService;
 import com.conductor.service.ConnectionService;
+import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -64,6 +66,7 @@ public class ChannelMetricsFeedPuller {
     private final ObjectMapper objectMapper;
     private final OAuthFlowService oAuthFlowService;
     private final Clock clock;
+    private final ConnectionHealthService connectionHealthService;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
@@ -72,9 +75,10 @@ public class ChannelMetricsFeedPuller {
                                     ChannelMetricDefinitionStore definitionStore,
                                     ChannelDimensionStateStore stateStore,
                                     ObjectMapper objectMapper,
-                                    OAuthFlowService oAuthFlowService) {
+                                    OAuthFlowService oAuthFlowService,
+                                    ConnectionHealthService connectionHealthService) {
         this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
-                Clock.systemUTC());
+                connectionHealthService, Clock.systemUTC());
     }
 
     ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
@@ -84,7 +88,9 @@ public class ChannelMetricsFeedPuller {
                              ChannelDimensionStateStore stateStore,
                              ObjectMapper objectMapper,
                              OAuthFlowService oAuthFlowService,
+                             ConnectionHealthService connectionHealthService,
                              Clock clock) {
+        this.connectionHealthService = connectionHealthService;
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
         this.store = store;
@@ -194,11 +200,39 @@ public class ChannelMetricsFeedPuller {
         } else if (to.isBefore(today)) {
             next = to.plusDays(1);
         }
+        if (next == null) {
+            flagStall(connection, today);
+        }
         String cursor = "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\""
                 + (next == null ? "" : ",\"" + CURSOR_RESUME_FROM + "\":\"" + next + "\"")
                 + (hint == null ? "" : ",\"" + CURSOR_TRAILING_DAYS + "\":" + hint)
                 + (version == null ? "" : ",\"" + CURSOR_CONTRACT_VERSION + "\":" + version) + "}";
         return new IngestBatch(java.util.List.of(), cursor, next != null, false, ConnectorHealth.HEALTHY, null);
+    }
+
+    /**
+     * Surfaces "pulls fine, no new days" on the connection's health (informational DEGRADED + message; the feed's
+     * failure count, backoff and cursor are untouched). The high-water mark is the newest stored day, so a source
+     * re-returning old days still counts as stalled, a quiet-but-recent channel does not, and a connection that
+     * never stored anything is not flagged. A newer day clears it. Never lets a health bookkeeping error fail the pull.
+     */
+    private void flagStall(Connection connection, LocalDate today) {
+        if (connectionHealthService == null) {
+            return;
+        }
+        try {
+            LocalDate latest = store.latestDay(connection.getId());
+            if (latest == null) {
+                return;
+            }
+            if (latest.isBefore(today.minusDays(MarketingOverviewQueryService.LAGGING_DAYS))) {
+                connectionHealthService.markNoNewData(connection.getId(), latest);
+            } else {
+                connectionHealthService.clearNoNewData(connection.getId());
+            }
+        } catch (RuntimeException e) {
+            log.warn("Channel metrics stall check for connection {} failed: {}", connection.getId(), e.getMessage());
+        }
     }
 
     private static String displayName(ChannelMetricsSource source, Connection connection) {

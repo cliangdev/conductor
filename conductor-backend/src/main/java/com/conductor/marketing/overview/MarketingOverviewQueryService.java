@@ -91,7 +91,7 @@ public class MarketingOverviewQueryService {
      * stale and no longer holds the funnel window back. Well above the normal 2-3 day lag of Search Console or
      * the App Store.
      */
-    static final int LAGGING_DAYS = 7;
+    public static final int LAGGING_DAYS = 7;
     /** How many earlier windows feed the noise baseline, bounded by {@link #MAX_HISTORY_DAYS}. */
     private static final int HISTORY_PERIODS = 5;
     private static final int MAX_HISTORY_DAYS = 180;
