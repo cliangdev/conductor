@@ -147,6 +147,28 @@ export interface Creative {
   latestRender?: CreativeRender | null
   /** The family's RUNNING hook experiment, if any (COND-24 T5). Same value on every letter in the family. */
   activeExperimentId?: string | null
+  /** The latest `conductor-creative-render` Workflow run for this Creative — GET detail only. */
+  renderRun?: CreativeRenderRun | null
+}
+
+/** A WorkflowRun status as the backend reports it (PENDING, PENDING_LOCAL_PICKUP, RUNNING, SUCCESS,
+ *  FAILED, CANCELLED, LOCAL_PICKUP_TIMEOUT, ...). Kept a string: the Workflow engine owns the set. */
+export interface CreativeRenderRun {
+  workflowId: string
+  runId: string
+  status: string
+  /** e.g. AWAITING_RUNNER — a self-hosted job no daemon has claimed yet. */
+  waitReason?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  error?: string | null
+}
+
+/** 202 body of POST .../creatives/{id}/render-runs. */
+export interface CreativeRenderRunDispatch {
+  workflowId: string
+  runId: string
+  status: string
 }
 
 export interface CreateCreativeRequest {
@@ -884,4 +906,15 @@ export function creativeToRenderCreative(
     backgroundVideoUrl: motion?.background?.source === 'clip' ? motionMedia?.clipMedia?.url ?? undefined : undefined,
     clipStartSec: motion?.background?.clipStartSec ?? undefined,
   }
+}
+
+/** Starts a web render: dispatches the `conductor-creative-render` system Workflow (runs on the
+ *  workspace's self-hosted daemon). Rejections: 409 RENDER_RUN_ACTIVE / RENDER_WORKFLOW_DISABLED /
+ *  RENDER_WORKFLOW_NAME_TAKEN, 422 with `violations` or RENDER_NOT_NEEDED. */
+export function dispatchCreativeRenderRun(
+  projectId: string,
+  creativeId: string,
+  token: string,
+): Promise<CreativeRenderRunDispatch> {
+  return apiPost<CreativeRenderRunDispatch>(`${creativesBase(projectId)}/${creativeId}/render-runs`, {}, token)
 }

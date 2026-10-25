@@ -402,6 +402,8 @@ export interface ApiError extends Error {
   violations?: { field: string; ruleId: string; message: string }[]
   /** Keys of the Workflow fields a refused status move needs filled in first. */
   missingFields?: string[]
+  /** The problem+json body's other members (e.g. a 409's `workflowId` / `runId`). */
+  extensions?: Record<string, unknown>
 }
 
 const NETWORK_ERROR_MESSAGE = 'Could not reach server — please try again'
@@ -412,6 +414,7 @@ async function throwApiError(res: Response): Promise<never> {
   let fieldErrors: { field: string; message: string }[] | undefined
   let violations: { field: string; ruleId: string; message: string }[] | undefined
   let missingFields: string[] | undefined
+  let extensions: Record<string, unknown> | undefined
   try {
     const contentType = res.headers.get('content-type') ?? ''
     if (contentType.includes('json')) {
@@ -423,6 +426,7 @@ async function throwApiError(res: Response): Promise<never> {
       if (Array.isArray(json.fieldErrors)) fieldErrors = json.fieldErrors
       if (Array.isArray(json.violations)) violations = json.violations
       if (Array.isArray(json.missingFields)) missingFields = json.missingFields
+      if (json && typeof json === 'object') extensions = json
     }
   } catch { /* non-parseable body — keep defaults */ }
   const err = new Error(detail ?? `Server error (${res.status})`) as ApiError
@@ -432,6 +436,7 @@ async function throwApiError(res: Response): Promise<never> {
   if (fieldErrors) err.fieldErrors = fieldErrors
   if (violations) err.violations = violations
   if (missingFields) err.missingFields = missingFields
+  if (extensions) err.extensions = extensions
   throw err
 }
 
