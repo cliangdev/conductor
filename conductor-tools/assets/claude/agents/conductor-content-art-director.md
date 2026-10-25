@@ -90,6 +90,12 @@ A single JSON object whose keys are exactly `preview_creative_draft` inputs, and
   renders one headline and one optional body plus an end card holding the final frame: no timed
   multi-beat on-screen text (extra beats go in a story or carousel sequence, or the caption). A clip background uses `background.clipMediaId` from `media.json`, or `clipPath` for a
   user-supplied local file.
+- Music: top-level `audio` also applies to a slideshow or other CAROUSEL (`{source: "track", trackId}`,
+  which adds a slideshow video; optional `slideshow: {slideDurations, zoom}`) and to a CLIP (`track`
+  replaces its sound, `mix` plays the track under it, `none` mutes it). Choose `trackId` from an
+  `AUDIO` entry in `media.json` before proposing any new file; a new file goes into the library
+  first, with its source and licence, and is referenced by `trackId`. Never write a direction that
+  bakes music into an MP4 outside Conductor.
 - A STILL or MOTION always shows the kit's `ctaClaim`. If it is banned, or it is an offer line the
   brief did not opt in to, say so in `direction.md` so the orchestrator stops and asks.
 - Omit any field you do not need. Do not add comments or fields the tool does not take.

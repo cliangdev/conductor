@@ -87,6 +87,12 @@ destination can't take one (a carousel's slides are not a story sequence), and t
 with `MULTI_IMAGE_UNSUPPORTED` naming the destination: switch it to Feed or remove it, then retry. A one-slide carousel is a single image and
 fits anywhere an image does.
 
+A CAROUSEL Creative with a music track is different: no platform accepts a chosen track on photos,
+so it also has a 9:16 slideshow video, and each destination sends either the photos (silent) or that
+one video (`carouselAs`: `photos` or `video`, see Options). Sent as a video it is a single video, so
+it goes anywhere a video does, including a reel or YouTube, and the multi-image restriction above
+does not apply to it.
+
 ### Scheduling with no time given
 
 When nobody names a time, `create_post` schedules for the next five-minute mark at or after the
@@ -120,6 +126,15 @@ dropped rather than acted on. TikTok needs a `privacyLevel` from that account's
 `privacyLevelOptions` before it will publish at all; nothing else needs an option to go out, so
 absent a stated preference (a publish pack, below, counts as one), leave every other option unset
 rather than filling in a default.
+
+`carouselAs` (`photos` or `video`) is the one option that is Conductor's own rather than the
+platform's. It appears only on a destination whose media comes from a CAROUSEL Creative with a music
+track: attaching the Creative sets it per destination (video for TikTok and YouTube, photos for
+Instagram and Facebook feed). Tell the person which was chosen and why it matters (photos go out
+silent, without the track), and change it with `set_publish_targets` if they want the other. On a
+`video` destination mind the platform's length limits (Facebook reels 3 to 90 s, Instagram reels at
+least 3 s, YouTube Shorts 60 s when a track is attached); the preflight warns. Without a track the
+key is never set.
 
 Then run this checklist against the copy, per destination, and **halt on any failure** — report it
 and ask how to proceed. Do not fix content yourself.
@@ -158,6 +173,11 @@ set, such as a disclosure toggle or an AI label, whenever any were pre-filled or
 | Post | Destination | Account | When | State |
 |---|---|---|---|---|
 | MK-12 | Instagram | @acme | 2026-09-04 14:15 Europe/Berlin | pending review |
+
+Whenever the Post's Creative has a music track (a CAROUSEL's slideshow, a CLIP's new sound), add a
+**Sent as** column with `photos` or `video` per destination (read it from the target's `carouselAs`
+option in `get_post_status`; a MOTION or CLIP is always a video), so the person sees which
+destinations carry the music.
 
 Under it, say in one sentence who has to act next — "waiting for a reviewer; approval schedules it
 automatically" — and, where a TikTok destination is involved, that the creator records their consent

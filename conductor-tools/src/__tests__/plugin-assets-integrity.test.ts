@@ -157,4 +157,28 @@ describe('plugin assets integrity', () => {
     }
     expect(missing, `Missing reference files:\n${missing.join('\n')}`).toEqual([])
   })
+
+  it('a reference file shared by two skills is byte-identical in both', () => {
+    const byName = new Map<string, string[]>()
+    for (const f of allFiles) {
+      const m = f.match(/^skills\/([^/]+)\/references\/(.+)$/)
+      if (!m) continue
+      byName.set(m[2]!, [...(byName.get(m[2]!) ?? []), f])
+    }
+    const shared = [...byName.entries()].filter(([, files]) => files.length > 1)
+    expect(shared.length).toBeGreaterThan(0)
+    const drifted: string[] = []
+    for (const [name, files] of shared) {
+      const first = fs.readFileSync(path.join(assetDir, files[0]!))
+      for (const other of files.slice(1)) {
+        if (!first.equals(fs.readFileSync(path.join(assetDir, other)))) drifted.push(`${name}: ${files[0]} differs from ${other}`)
+      }
+    }
+    expect(drifted, `Shared reference files must stay identical — edit both copies:\n${drifted.join('\n')}`).toEqual([])
+  })
+
+  it('every SKILL.md stays within 500 lines', () => {
+    const long = skills.filter(s => s.text.split('\n').length > 500).map(s => s.rel)
+    expect(long).toEqual([])
+  })
 })

@@ -73,8 +73,11 @@ already covers.
 Nothing is saved to Conductor until the person approves what they have seen:
 
 1. `preview_creative_draft` with what was gathered (local files go in `photoPath`/`clipPath`/
-   `audioPath`; an edit to an existing Creative passes `baseCreativeId`). It renders on this machine
-   and returns the image — no Creative is created and nothing is uploaded.
+   `audioPath`; an edit to an existing Creative passes `baseCreativeId`). Music is `audio` (a MOTION,
+   a CAROUSEL slideshow or a CLIP; reuse a track from `list_creative_media({kind: "AUDIO"})`, else
+   `audioPath` and give its source and licence at commit). It renders on this machine and returns
+   the image (a CAROUSEL with a track also returns the slideshow video's path to watch) — no Creative
+   is created and nothing is uploaded.
 2. Read `passed` and `checks` in the result first. The preview runs the full render's per-placement
    checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts,
    images), so a design that would fail the real render shows up here. If `passed` is false, fix the

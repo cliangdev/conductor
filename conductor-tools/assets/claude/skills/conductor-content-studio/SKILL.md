@@ -331,6 +331,13 @@ any placement is fixed now, not shown.
    caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
    the caption from `publish-pack.json` and the alt text from `direction.md`. Record the preview's
    `draftDir` as `drafts.final`.
+   **Music:** a slideshow or clip with music uses `audio` on the Creative, and a track from
+   `context/media.json` (`kind: "AUDIO"`, unblocked) is reused before any new file. A new music file
+   is uploaded to the library first with `upload_creative_media` (with `source` and `licence`) and
+   referenced by `trackId`; never bake music into an MP4 outside Conductor. A slideshow with
+   `audio.source: "track"` previews as its slideshow MP4 too (`slideshowVideoPath`), so give the
+   person that path to watch along with the sheet, and put the track's licence in the pack's music
+   line (`references/compliance-checklist.md` section 3).
 2. Eye-check the image. Load the `conductor-creative` skill with `Skill(skill: "conductor-creative")` and
    apply its review guidance (step 7 and the silent-failures list), scoring the draft with
    `references/design-critique.md` (the slideshow criteria for a slideshow, the STILL criteria
