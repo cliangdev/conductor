@@ -121,6 +121,102 @@ class CreativeSpecBuilderTest {
         assertThat(builder.resolvePlacements(kit, carousel)).containsExactly("1x1");
     }
 
+    @Test
+    void aCarouselWithATrackGetsSlidesDurationsAndTheNormalisedAudioBlock() {
+        Creative carousel = creative();
+        carousel.setKind(Creative.KIND_CAROUSEL);
+        carousel.setPlacements(objectMapper.valueToTree(List.of("9x16")));
+        List<MediaFacts> slides = List.of(libraryPhoto("a"), libraryPhoto("b"), MediaFacts.local("c", CreativePhoto.MEDIA_KIND_IMAGE, null, null, 1080, 1920));
+        MediaFacts track = MediaFacts.local("song", CreativePhoto.MEDIA_KIND_AUDIO, new BigDecimal("30"), null, null, null);
+
+        CreativeRenderSpec spec = builder.buildCarousel("r-1", false, carousel, kit, slides, track,
+                new CreativeAudio().source("track").trackId("t").volume(new BigDecimal("0.9")).fadeOutSec(BigDecimal.ONE),
+                null);
+
+        assertThat(spec.getCreative().getSlides()).extracting("url")
+                .containsExactly("signed://photos/a.jpg", "signed://photos/b.jpg", "local:c");
+        // No durations given: 3.0 s for the first slide, 2.5 s for the rest; zoom on; 0.5 s crossfade.
+        assertThat(spec.getCreative().getSlideshow().getSlideDurations()).extracting(BigDecimal::doubleValue)
+                .containsExactly(3.0, 2.5, 2.5);
+        assertThat(spec.getCreative().getSlideshow().getZoom()).isTrue();
+        assertThat(spec.getCreative().getSlideshow().getCrossfadeSec()).isEqualByComparingTo("0.5");
+        assertThat(spec.getCreative().getAudio().getTrackUrl()).isEqualTo("local:song");
+        assertThat(spec.getCreative().getAudio().getVolume()).isEqualByComparingTo("0.9");
+        assertThat(spec.getCreative().getAudio().getFadeInSec()).isEqualByComparingTo("0.5");
+        assertThat(spec.getCreative().getAudio().getTargetLufs()).isEqualByComparingTo("-14");
+        assertThat(spec.getPlacements()).containsExactly(Map.of("key", "9x16", "width", 1080, "height", 1920));
+    }
+
+    @Test
+    void slideDurationsAreTakenAsGivenOnlyWhenThereIsOneForEverySlideAndZoomCanBeTurnedOff() {
+        com.conductor.generated.v2.model.CreativeSlideshow show = new com.conductor.generated.v2.model.CreativeSlideshow()
+                .slideDurations(List.of(new BigDecimal("4"), new BigDecimal("1"))).zoom(false);
+        assertThat(CreativeSpecBuilder.resolveSlideDurations(show, 2)).extracting(BigDecimal::doubleValue).containsExactly(4.0, 1.0);
+        assertThat(CreativeSpecBuilder.resolveSlideDurations(show, 3)).extracting(BigDecimal::doubleValue).containsExactly(3.0, 2.5, 2.5);
+        assertThat(CreativeSpecBuilder.resolveSlideDurations(null, 1)).extracting(BigDecimal::doubleValue).containsExactly(3.0);
+
+        Creative carousel = creative();
+        carousel.setKind(Creative.KIND_CAROUSEL);
+        CreativeRenderSpec spec = builder.buildCarousel("r-1", false, carousel, kit, List.of(libraryPhoto("a")), null,
+                new CreativeAudio().source("track"), show);
+        assertThat(spec.getCreative().getSlideshow().getZoom()).isFalse();
+    }
+
+    @Test
+    void aClipWithNewSoundGetsOnePlacementObjectPerFrameAndTheAudioBlock() {
+        Creative clipCreative = creative();
+        clipCreative.setKind(Creative.KIND_CLIP);
+        MediaFacts clip = MediaFacts.local("clip", CreativePhoto.MEDIA_KIND_VIDEO, new BigDecimal("12.5"), true, 1080, 1920);
+        MediaFacts track = MediaFacts.local("song", CreativePhoto.MEDIA_KIND_AUDIO, new BigDecimal("30"), null, null, null);
+
+        CreativeRenderSpec spec = builder.buildClip("r-1", clipCreative, kit,
+                List.of(new CreativeSpecBuilder.ClipPlacement("9x16", 1080, 1920, clip)), track,
+                new CreativeAudio().source("mix").trackId("t").volume(new BigDecimal("0.3")).fadeOutSec(BigDecimal.ONE));
+
+        assertThat(spec.getCreative().getKind().getValue()).isEqualTo("CLIP");
+        assertThat(spec.getCreative().getAudio().getSource()).isEqualTo("mix");
+        assertThat(spec.getCreative().getAudio().getTrackUrl()).isEqualTo("local:song");
+        assertThat(spec.getPlacements()).hasSize(1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> placement = (Map<String, Object>) spec.getPlacements().get(0);
+        assertThat(placement).containsEntry("key", "9x16").containsEntry("width", 1080).containsEntry("height", 1920)
+                .containsEntry("clipUrl", "local:clip").containsEntry("clipHasAudio", true);
+        assertThat(((BigDecimal) placement.get("durationSec"))).isEqualByComparingTo("12.5");
+    }
+
+    @Test
+    void anUnknownClipDurationIsOmittedUnknownAudioCountsAsPresentAndTheRealSizeWins() {
+        Creative clipCreative = creative();
+        clipCreative.setKind(Creative.KIND_CLIP);
+        MediaFacts clip = MediaFacts.local("clip", CreativePhoto.MEDIA_KIND_VIDEO, null, null, 720, 1280);
+        CreativeRenderSpec spec = builder.buildClip("r-1", clipCreative, kit,
+                List.of(new CreativeSpecBuilder.ClipPlacement("9x16", 1080, 1920, clip)), null,
+                new CreativeAudio().source("mix").trackId("t").volume(new BigDecimal("0.3")).fadeOutSec(BigDecimal.ONE));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> placement = (Map<String, Object>) spec.getPlacements().get(0);
+        assertThat(placement).doesNotContainKey("durationSec").containsEntry("clipHasAudio", true)
+                .containsEntry("width", 720).containsEntry("height", 1280);
+
+        MediaFacts silent = MediaFacts.local("clip", CreativePhoto.MEDIA_KIND_VIDEO, new BigDecimal("5"), false, null, null);
+        CreativeRenderSpec silentSpec = builder.buildClip("r-1", clipCreative, kit,
+                List.of(new CreativeSpecBuilder.ClipPlacement("9x16", 1080, 1920, silent)), null,
+                new CreativeAudio().source("none").volume(BigDecimal.ONE).fadeOutSec(BigDecimal.ONE));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> silentPlacement = (Map<String, Object>) silentSpec.getPlacements().get(0);
+        assertThat(silentPlacement).containsEntry("clipHasAudio", false).containsEntry("width", 1080);
+    }
+
+    @Test
+    void aMutedClipHasNoTrackUrl() {
+        Creative clipCreative = creative();
+        clipCreative.setKind(Creative.KIND_CLIP);
+        MediaFacts clip = MediaFacts.local("clip", CreativePhoto.MEDIA_KIND_VIDEO, new BigDecimal("5"), true, 1080, 1920);
+        CreativeRenderSpec spec = builder.buildClip("r-1", clipCreative, kit,
+                List.of(new CreativeSpecBuilder.ClipPlacement("9x16", 1080, 1920, clip)), null,
+                new CreativeAudio().source("none").volume(BigDecimal.ONE).fadeOutSec(BigDecimal.ONE));
+        assertThat(spec.getCreative().getAudio().getTrackUrl()).isNull();
+    }
+
     private Creative creative() {
         Creative c = new Creative();
         c.setLayout("stacked");

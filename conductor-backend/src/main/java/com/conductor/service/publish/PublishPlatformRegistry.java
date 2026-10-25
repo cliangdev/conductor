@@ -107,6 +107,21 @@ public class PublishPlatformRegistry {
             "brandContentToggle", "brandOrganicToggle");
 
     /**
+     * A Conductor-only option key: how a CAROUSEL Creative with a music track goes out, as its slide images
+     * ({@code photos}) or its companion slideshow video ({@code video}). Valid on these platforms' targets,
+     * but never an {@link PublishPlatform#optionParams()} entry, so it is never sent to a connector.
+     */
+    public static final String OPTION_CAROUSEL_AS = "carouselAs";
+    public static final String CAROUSEL_AS_PHOTOS = "photos";
+    public static final String CAROUSEL_AS_VIDEO = "video";
+    private static final Set<String> CAROUSEL_AS_PLATFORMS = Set.of("tiktok", "instagram", "facebook", "youtube");
+
+    /** Whether {@code key} is a Conductor-only option the platform {@code platformId} accepts. */
+    public static boolean acceptsConductorOnlyOption(String platformId, String key) {
+        return OPTION_CAROUSEL_AS.equals(key) && platformId != null && CAROUSEL_AS_PLATFORMS.contains(platformId);
+    }
+
+    /**
      * TikTok's option keys, the row's own camelCase on the left and the parameter the connector's shipped
      * tool spec declares on the right (TIK-1). Insertion order is kept so the action input reads the same
      * way the spec does.

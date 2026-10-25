@@ -76,6 +76,10 @@ public class CreativeRenderFrame {
     @Column(name = "poster_gcs_path")
     private String posterGcsPath;
 
+    /** The library AUDIO item mixed into this video frame (audio source track or mix); null otherwise. */
+    @Column(name = "audio_media_id", length = 36)
+    private String audioMediaId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -137,6 +141,9 @@ public class CreativeRenderFrame {
 
     public String getPosterGcsPath() { return posterGcsPath; }
     public void setPosterGcsPath(String posterGcsPath) { this.posterGcsPath = posterGcsPath; }
+
+    public String getAudioMediaId() { return audioMediaId; }
+    public void setAudioMediaId(String audioMediaId) { this.audioMediaId = audioMediaId; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

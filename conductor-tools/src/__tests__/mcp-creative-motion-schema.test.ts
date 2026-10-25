@@ -36,7 +36,7 @@ describe('create_creative / update_creative schemas accept motion/audio', () => 
       expect(properties['audio']).toBeDefined()
       expect(properties['audio'].type).toBe('object')
       const audioProps = properties['audio'].properties as Record<string, { type?: string; enum?: string[] }>
-      expect(audioProps['source'].enum).toEqual(['clip', 'track', 'none'])
+      expect(audioProps['source'].enum).toEqual(['clip', 'track', 'mix', 'none'])
       expect(audioProps['trackId'].type).toBe('string')
       expect(audioProps['volume'].type).toBe('number')
       expect(audioProps['fadeOutSec'].type).toBe('number')

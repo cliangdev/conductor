@@ -5,6 +5,8 @@
 // what to post by hand and the form to record it, the consent that stands, and any content of its own.
 
 import { Check, ImageOff } from 'lucide-react'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { ShowDetails } from '@/components/ui/show-details'
 import { isVideoContentType, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { InstagramPublishOptions, isSingleImageTarget } from '@/components/marketing/InstagramPublishOptions'
@@ -15,6 +17,7 @@ import { TikTokPublishOptions } from '@/components/marketing/TikTokPublishOption
 import { YouTubePublishOptions } from '@/components/marketing/YouTubePublishOptions'
 import { MediaThumb } from '@/components/marketing/MediaThumb'
 import { ManualPublishForm } from './ManualPublishForm'
+import type { CarouselAs } from './types'
 import type { DestinationActions, DestinationMode, DestinationRowModel } from './model'
 import { awaitsAHuman } from './publishState'
 
@@ -63,6 +66,8 @@ export function DestinationRowDetails({
   // platform, and on the manual lane the creator sets all of it in the platform's own composer.
   const showOptions = !row.manual
   const rowIsVideo = row.effectiveAssets.some((a) => isVideoContentType(a.contentType))
+  // A music carousel set to go out as its slideshow video is a video post, whatever the media list says.
+  const postsAsVideo = row.carouselAs === 'video' || rowIsVideo
 
   if (mode === 'pick' && !row.settled) {
     return (
@@ -75,12 +80,29 @@ export function DestinationRowDetails({
           disabled={saving || locked}
           onChange={(next) => actions.setFormat(row, next)}
         />
+        {showOptions && row.carouselAs && (
+          <div className="space-y-1">
+            <Label htmlFor={`${idPrefix}-carousel-as`}>Post as</Label>
+            <Select
+              id={`${idPrefix}-carousel-as`}
+              value={row.carouselAs}
+              disabled={saving || locked}
+              onChange={(e) => actions.setCarouselAs(row, e.target.value as CarouselAs)}
+            >
+              <option value="photos">Photos (no chosen music)</option>
+              <option value="video">Video with music</option>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Platforms can&apos;t add a chosen track to photos, so the music plays only in the video.
+            </p>
+          </div>
+        )}
         {showOptions && option.platform === 'tiktok' && (
           <TikTokPublishOptions
             idPrefix={`tiktok-${option.connectionId}`}
             accountLabel={option.label}
             privacyLevelOptions={option.privacyLevelOptions ?? []}
-            isVideo={row.effectiveAssets.some((a) => isVideoContentType(a.contentType))}
+            isVideo={postsAsVideo}
             images={row.effectiveAssets.filter((a) => !isVideoContentType(a.contentType))}
             creatorDisabled={{
               comment: option.commentDisabled === true,
@@ -201,14 +223,14 @@ export function DestinationRowDetails({
             <>
               <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-done" aria-hidden />
               <span>
-                {optionsSummary(row.tiktokOptions, rowIsVideo)} · consented
+                {optionsSummary(row.tiktokOptions, postsAsVideo)} · consented
                 {row.consent.consentedByName ? ` by ${row.consent.consentedByName}` : ''}
                 {row.consent.consentedAt ? ` on ${new Date(row.consent.consentedAt).toLocaleDateString()}` : ''}.
                 Covers every TikTok destination on this post.
               </span>
             </>
           ) : (
-            <span>{optionsSummary(row.tiktokOptions, rowIsVideo)}</span>
+            <span>{optionsSummary(row.tiktokOptions, postsAsVideo)}</span>
           )}
         </p>
       )}

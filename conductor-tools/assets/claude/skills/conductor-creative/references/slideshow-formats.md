@@ -127,4 +127,9 @@ Captions on TikTok and Instagram cannot hold clickable links, so do not rely on 
 3. `preview_creative_draft({kind: "CAROUSEL", slidePaths, caption, slideAltText})` using the
    returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram). Look at the contact sheet and show
    it.
+   With music (`audio: {source: "track", trackId}`, a library track from
+   `list_creative_media({kind: "AUDIO"})`; a new file is uploaded there first with its source and
+   licence), the preview also renders the slideshow video and returns `slideshowVideoPath`: watch it
+   with the person. No platform accepts a chosen track on photos, so a destination sends the video
+   (`carouselAs: "video"`) or the silent photos.
 4. Only after the person approves, `commit_creative_draft`.

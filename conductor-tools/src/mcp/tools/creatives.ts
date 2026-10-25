@@ -8,6 +8,7 @@ import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/medi
 import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
 import { renderCreative as runLocalRender, renderViaApi } from '../../lib/creative-render.js'
+import { needsLocalRender } from '../../lib/creative-local-render.js'
 
 /**
  * Conductor Creatives: a Brand Kit (tokens, copy rules, approved lines) governs one or more
@@ -302,9 +303,11 @@ export interface CreativeFields {
   /** MOTION only: the animation timeline (preset, duration, background motion/clip, end card) —
    * validated server-side; see the create_creative/update_creative tool schemas for the shape. */
   motion?: Record<string, unknown>
-  /** MOTION only: the audio track (clip's own sound, a library track, or none) — validated
-   * server-side; see the create_creative/update_creative tool schemas for the shape. */
+  /** The audio of a MOTION, CAROUSEL or CLIP (clip's own sound, a library track, a mix, or none, per
+   * kind) — validated server-side; see the create_creative/update_creative tool schemas for the shape. */
   audio?: Record<string, unknown>
+  /** CAROUSEL only: slide pacing and zoom of the slideshow video made when audio.source is track. */
+  slideshow?: Record<string, unknown>
   focalOverride?: Record<string, string>
   headline?: string
   body?: string
@@ -1203,15 +1206,18 @@ export async function attachCreativeToPost(
     if (latest) {
       renderId = latest.id
     } else {
-      // CLIP and CAROUSEL render server-side in one synchronous call, so there is no reason to make
-      // the caller do it as a separate step.
-      const creative = await apiGet<{ kind?: string }>(`${creativesBase(config)}/${params.creativeId}`, config)
+      // CLIP and CAROUSEL render in one synchronous call (on the server, or here when their audio needs
+      // encoding), so there is no reason to make the caller do it as a separate step.
+      const creative = await apiGet<{ kind?: string; audio?: { source?: string } | null }>(`${creativesBase(config)}/${params.creativeId}`, config)
       if (creative?.kind !== 'CLIP' && creative?.kind !== 'CAROUSEL') {
         throw new Error(
           'No SUCCEEDED render exists for this Creative yet — call render_creative (previewOnly: false) first, or pass an explicit renderId.'
         )
       }
-      const rendered = await renderViaApi({ creativeId: params.creativeId, previewOnly: false, renderer: 'mcp' }, config)
+      const renderParams = { creativeId: params.creativeId, previewOnly: false, renderer: 'mcp' }
+      const rendered = needsLocalRender(creative.kind, creative.audio)
+        ? await runLocalRender(renderParams, config)
+        : await renderViaApi(renderParams, config)
       if (!rendered.ok || !rendered.renderId) {
         throw new Error(`Rendering this ${creative.kind} Creative before attaching failed: ${rendered.error ?? 'unknown error'}`)
       }

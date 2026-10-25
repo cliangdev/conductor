@@ -10,6 +10,9 @@ import com.conductor.generated.v2.model.CreativeRenderSpec;
 import com.conductor.generated.v2.model.CreativeRenderSpecAudio;
 import com.conductor.generated.v2.model.CreativeRenderSpecBeat;
 import com.conductor.generated.v2.model.CreativeRenderSpecBrand;
+import com.conductor.generated.v2.model.CreativeRenderSpecSlide;
+import com.conductor.generated.v2.model.CreativeRenderSpecSlideshow;
+import com.conductor.generated.v2.model.CreativeSlideshow;
 import com.conductor.generated.v2.model.CreativeRenderSpecCreative;
 import com.conductor.generated.v2.model.CreativeRenderSpecLogos;
 import com.conductor.generated.v2.model.CreativeRenderSpecMotion;
@@ -113,7 +116,117 @@ public class CreativeSpecBuilder {
                     .clipHasAudio(motionMedia.backgroundClip() != null ? motionMedia.backgroundClip().getHasAudio() : null);
         }
 
-        return new CreativeRenderSpec(renderId, previewOnly, creativeSpec, brand, placements);
+        return new CreativeRenderSpec(renderId, previewOnly, creativeSpec, brand, new ArrayList<Object>(placements));
+    }
+
+    // ── CAROUSEL slideshow and CLIP sound (music on CAROUSEL and CLIP) ───────────────────────────
+
+    /** The fade-in every normalised mix starts with, and the loudness the local job normalises to. */
+    static final BigDecimal FADE_IN_SEC = new BigDecimal("0.5");
+    static final BigDecimal TARGET_LUFS = new BigDecimal("-14");
+    static final BigDecimal CROSSFADE_SEC = new BigDecimal("0.5");
+    static final double DEFAULT_FIRST_SLIDE_SEC = 3.0;
+    static final double DEFAULT_SLIDE_SEC = 2.5;
+    static final int SLIDESHOW_WIDTH = 1080;
+    static final int SLIDESHOW_HEIGHT = 1920;
+
+    /** One duration per slide: the requested list when it fits, else 3.0 s for the first slide and 2.5 s for the rest. */
+    static List<BigDecimal> resolveSlideDurations(CreativeSlideshow slideshow, int slideCount) {
+        List<BigDecimal> requested = slideshow != null ? slideshow.getSlideDurations() : null;
+        if (requested != null && requested.size() == slideCount) {
+            return List.copyOf(requested);
+        }
+        List<BigDecimal> durations = new ArrayList<>();
+        for (int i = 0; i < slideCount; i++) {
+            durations.add(BigDecimal.valueOf(i == 0 ? DEFAULT_FIRST_SLIDE_SEC : DEFAULT_SLIDE_SEC));
+        }
+        return durations;
+    }
+
+    /**
+     * The local-render spec of a CAROUSEL with a music track: the 9x16 slide list, the resolved slideshow
+     * (durations, zoom, 0.5 s crossfade), the audio block, and one 1080x1920 placement. Everything else is
+     * the plain spec. {@code slides} are the 9x16 list's media (the {@code default} list when there is no
+     * 9x16 one), in order; a media that did not resolve is skipped.
+     */
+    public CreativeRenderSpec buildCarousel(String renderId, boolean previewOnly, Creative creative, BrandKit kit,
+                                            List<MediaFacts> slides, MediaFacts track, CreativeAudio audio,
+                                            CreativeSlideshow slideshow) {
+        CreativeRenderSpec spec = build(renderId, previewOnly, creative, kit, null, Map.of(),
+                toStringList(creative.getPlacements()), null);
+        List<CreativeRenderSpecSlide> specSlides = new ArrayList<>();
+        for (MediaFacts slide : slides) {
+            String url = mediaUrl(slide);
+            if (url != null) {
+                specSlides.add(new CreativeRenderSpecSlide(url));
+            }
+        }
+        boolean zoom = slideshow == null || slideshow.getZoom() == null || slideshow.getZoom();
+        spec.getCreative()
+                .slides(specSlides)
+                .slideshow(new CreativeRenderSpecSlideshow(resolveSlideDurations(slideshow, specSlides.size()), zoom,
+                        CROSSFADE_SEC))
+                .audio(buildNormalisedAudio(audio, track));
+        Map<String, Object> placement = new LinkedHashMap<>();
+        placement.put("key", "9x16");
+        placement.put("width", SLIDESHOW_WIDTH);
+        placement.put("height", SLIDESHOW_HEIGHT);
+        spec.setPlacements(new ArrayList<>(List.of(placement)));
+        return spec;
+    }
+
+    /** The slide list a CAROUSEL's slideshow video is made from: the 9x16 list, else the default one. */
+    public static String slideshowKey(Map<String, ?> slides) {
+        return slides.containsKey("9x16") ? "9x16" : "default";
+    }
+
+    /** One CLIP frame the local job renders: its placement and the clip it takes sound from. */
+    public record ClipPlacement(String key, int width, int height, MediaFacts clip) {
+    }
+
+    /**
+     * The local-render spec of a CLIP whose sound is replaced, mixed or muted: the audio block and one
+     * object per placement frame ({@code clipUrl}, {@code durationSec}, {@code clipHasAudio}). The clip
+     * is used from its start — a CLIP has no start offset of its own.
+     */
+    public CreativeRenderSpec buildClip(String renderId, Creative creative, BrandKit kit, List<ClipPlacement> clips,
+                                        MediaFacts track, CreativeAudio audio) {
+        CreativeRenderSpec spec = build(renderId, false, creative, kit, null, Map.of(),
+                toStringList(creative.getPlacements()), null);
+        spec.getCreative().audio(buildNormalisedAudio(audio, track));
+        List<Object> placements = new ArrayList<>();
+        for (ClipPlacement clip : clips) {
+            Map<String, Object> placement = new LinkedHashMap<>();
+            placement.put("key", clip.key());
+            // The video stream is copied unchanged, so the clip's real size wins over the registry's.
+            Integer realWidth = clip.clip().getWidth();
+            Integer realHeight = clip.clip().getHeight();
+            boolean realSize = realWidth != null && realHeight != null && realWidth > 0 && realHeight > 0;
+            placement.put("width", realSize ? realWidth : clip.width());
+            placement.put("height", realSize ? realHeight : clip.height());
+            placement.put("clipUrl", mediaUrl(clip.clip()));
+            // Unknown duration: omit the key, the job probes the file.
+            if (clip.clip().getDurationSeconds() != null) {
+                placement.put("durationSec", clip.clip().getDurationSeconds());
+            }
+            // Unknown audio counts as present; the job verifies the actual stream.
+            placement.put("clipHasAudio", !Boolean.FALSE.equals(clip.clip().getHasAudio()));
+            placements.add(placement);
+        }
+        spec.setPlacements(placements);
+        return spec;
+    }
+
+    /** The CAROUSEL/CLIP audio block: {@code trackUrl} for a track or mix, plus the fixed fade-in and target loudness. */
+    private CreativeRenderSpecAudio buildNormalisedAudio(CreativeAudio audio, MediaFacts track) {
+        boolean usesTrack = "track".equals(audio.getSource()) || "mix".equals(audio.getSource());
+        return new CreativeRenderSpecAudio()
+                .source(audio.getSource())
+                .trackUrl(usesTrack && track != null ? mediaUrl(track) : null)
+                .volume(audio.getVolume())
+                .fadeOutSec(audio.getFadeOutSec())
+                .fadeInSec(FADE_IN_SEC)
+                .targetLufs(TARGET_LUFS);
     }
 
     /** kit enabled ∪ creative opt-ins ∩ registry — except a sequence Creative, which renders only its own shape. */

@@ -663,7 +663,7 @@
     },
     {
       "name": "set_publish_targets",
-      "description": "Replace which connected accounts a Work Item publishes to, with per-target format, media and publish options.",
+      "description": "Replace which connected accounts a Work Item publishes to, with per-target format, media and publish options (including carouselAs: photos or video, for a carousel with a music track).",
       "category": "marketing",
       "requiredParams": [
         "issueId",
@@ -712,7 +712,7 @@
     },
     {
       "name": "create_post",
-      "description": "Create, schedule and submit a Post in one call: caption, media (paths, URLs or Media library ids), destinations by account name and format, fire time, reviewers.",
+      "description": "Create, schedule and submit a Post in one call: caption, media (paths, URLs or Media library ids), destinations by account name and format, fire time, reviewers, per-destination options (carouselAs for a carousel with a track).",
       "category": "marketing",
       "requiredParams": [
         "text",
@@ -816,7 +816,7 @@
     },
     {
       "name": "list_creative_media",
-      "description": "The project's media library (photos, videos, audio) with review state and provenance. Call before uploading to reuse existing media.",
+      "description": "The project's media library (photos, videos, audio) with review state and provenance. Call before uploading to reuse existing media; call with kind AUDIO to reuse a music track.",
       "category": "marketing"
     },
     {
@@ -826,7 +826,7 @@
     },
     {
       "name": "get_creative",
-      "description": "One Creative in full: its fields, readiness checklist, and the other lettered variants in its family.",
+      "description": "One Creative in full: its fields (audio, slideshow, renderedVideo), readiness checklist, and the other lettered variants in its family.",
       "category": "marketing",
       "requiredParams": [
         "creativeId"
@@ -850,12 +850,12 @@
     },
     {
       "name": "create_creative",
-      "description": "Create a Creative, or with variantOf cut a lettered variant of an existing one. Refused with the failing rule's message on a validation or readiness error.",
+      "description": "Create a Creative, or with variantOf cut a lettered variant of an existing one. audio adds a library track to a MOTION, CAROUSEL (slideshow video) or CLIP (replace, mix or mute). Refused with the failing rule's message on a validation or readiness error.",
       "category": "marketing"
     },
     {
       "name": "update_creative",
-      "description": "Patch a Creative's fields. version must match the current value or the write is refused with a 409 conflict.",
+      "description": "Patch a Creative's fields, including audio and slideshow. version must match the current value or the write is refused with a 409 conflict.",
       "category": "marketing",
       "requiredParams": [
         "creativeId",
@@ -864,7 +864,7 @@
     },
     {
       "name": "upload_creative_media",
-      "description": "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance for the readiness checklist. Kind, dimensions, duration and audio are detected automatically; a video also gets a poster frame.",
+      "description": "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence) for the readiness checklist; a music track needs both before review. Kind, dimensions, duration and audio are detected automatically; a video also gets a poster frame.",
       "category": "marketing"
     },
     {
@@ -874,7 +874,7 @@
     },
     {
       "name": "render_creative",
-      "description": "Render a Creative locally (Playwright on this machine) to upload-ready JPEG frames, or a contact sheet with previewOnly. Runs synchronously and returns the render id, state and frame URLs.",
+      "description": "Render a Creative locally to upload-ready frames (JPEG per placement; MP4 for MOTION, a CAROUSEL with a track, or a CLIP with new audio, encoded with ffmpeg here), or a contact sheet with previewOnly. Runs synchronously and returns the render id, state and frame URLs.",
       "category": "marketing",
       "requiredParams": [
         "creativeId"
@@ -903,12 +903,12 @@
     },
     {
       "name": "preview_creative_draft",
-      "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image. Never writes to Conductor; commit only after the person approves.",
+      "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image; a CAROUSEL with a track also renders its slideshow MP4 and returns the path. Never writes to Conductor; commit only after the person approves.",
       "category": "marketing"
     },
     {
       "name": "commit_creative_draft",
-      "description": "Save an approved draft: uploads its local files, creates (or updates) the Creative, and renders the real frames. The first write to Conductor; a draft commits once. Call get_creative to verify.",
+      "description": "Save an approved draft: uploads its local files, creates (or updates) the Creative, and renders the real frames (a CAROUSEL with a track also gets its slideshow MP4). The first write to Conductor; a draft commits once. Call get_creative to verify.",
       "category": "marketing",
       "requiredParams": [
         "draftDir"
@@ -916,7 +916,7 @@
     },
     {
       "name": "attach_creative_to_post",
-      "description": "Attach a Creative's rendered frames to a Post as its media, placement to platform, for every destination without its own custom media. Call get_post_status (postId) to verify.",
+      "description": "Attach a Creative's rendered frames to a Post as its media, placement to platform, for every destination without its own custom media. A CAROUSEL with a track is sent per target as photos or its slideshow video (carouselAs). Call get_post_status (postId) to verify.",
       "category": "marketing",
       "requiredParams": [
         "creativeId",

@@ -7994,6 +7994,14 @@ components:
         PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR, SELF_ONLY), `disableComment`,
         `disableDuet`, `disableStitch` (booleans), `brandContentToggle` (boolean — paid partnership; TikTok
         refuses it combined with SELF_ONLY) and `brandOrganicToggle` (boolean — the creator's own brand).
+
+
+        Conductor-only key (TikTok, Instagram, Facebook, YouTube; never sent to a platform): `carouselAs`
+        (`photos` | `video`) — for a target whose media comes from a CAROUSEL Creative with a music
+        track, whether it publishes the slide images or the companion 9x16 slideshow video. Attaching the
+        Creative writes the resolved value (`video` for TikTok, YouTube and Reel-format targets, `photos`
+        for Instagram and Facebook feed); changing it re-selects that target's media. Ignored, with a
+        warning, when the target's media is not from such a Creative.
       example:
         privacyLevel: PUBLIC_TO_EVERYONE
         disableComment: false
@@ -9116,11 +9124,15 @@ components:
         - CAROUSEL
       description: >-
         CAROUSEL is a set of finished images used as-is, ordered per placement (`slides`); a 1-slide
-        CAROUSEL is a finished still. No brand layout; the backend assembles CAROUSEL renders by copying
-        the chosen images. STILL (default) is today's brand-layout Creative. CLIP is a finished video used as-is, one file
-        for all placements or one per placement (COND-24 PR1) — no brand layout, no local rendering; the
-        backend assembles CLIP renders by copying the chosen media. MOTION (PR2) is a branded animated
-        video; the API accepts it today, but rendering it currently refuses with 422.
+        CAROUSEL is a finished still. No brand layout. Without an `audio` track the backend assembles
+        CAROUSEL renders by copying the chosen images; with `audio.source` "track" the render is local
+        (MCP/CLI): the backend links the slide images and the local job adds one more frame, a 9x16
+        `video/mp4` slideshow of the slides set to the track (see `slideshow`, `renderedVideo`).
+        STILL (default) is today's brand-layout Creative. CLIP is a finished video used as-is, one file
+        for all placements or one per placement (COND-24 PR1) — no brand layout; the backend assembles
+        CLIP renders by copying the chosen media, unless `audio.source` is "track", "mix" or "none", in
+        which case the render is local and produces a new MP4 with that sound. MOTION (PR2) is a branded
+        animated video rendered by a local job.
 
     CreativeLayoutOverrides:
       type: object
@@ -9192,26 +9204,83 @@ components:
       type: object
       nullable: true
       description: >-
-        A MOTION creative's audio track (COND-24 PR2). `source` is a plain string, not an OpenAPI enum —
-        same reasoning as CreativeMotionBackground.
+        The sound of a MOTION, CAROUSEL or CLIP creative. `source` is a plain string, not an OpenAPI enum —
+        same reasoning as CreativeMotionBackground. MOTION: clip | track | none. CAROUSEL: track | none
+        (a track makes the render produce a companion 9x16 slideshow MP4; see `slideshow`). CLIP: clip
+        (the clip's own sound, the default) | track (replace it) | mix (the track under the clip's sound) |
+        none (mute). Any source other than `clip` makes a CLIP render local (MCP/CLI) and produce a new MP4.
       properties:
         source:
           type: string
           nullable: true
           description: >-
-            clip | track | none. Defaults to "clip" when the background is a clip with sound, else "none".
+            MOTION: clip | track | none; defaults to "clip" when the background is a clip with sound, else
+            "none". CAROUSEL: track | none; defaults to "none". CLIP: clip | track | mix | none; defaults
+            to "clip". "mix" is refused when the CLIP's clip has no sound.
         trackId:
           type: string
           nullable: true
-          description: An AUDIO media id, required when source is "track".
+          description: An uploaded, unblocked AUDIO media id in the project; required when source is "track" or "mix".
         volume:
           type: number
           nullable: true
-          description: 0-1. Defaults to 0.8.
+          description: >-
+            0-1. Defaults to 0.8 on MOTION, and on CAROUSEL and CLIP to 1.0 for "track" and 0.3 for "mix"
+            (the track under the clip's own sound).
         fadeOutSec:
           type: number
           nullable: true
           description: 0-5. Defaults to 1.
+
+    CreativeSlideshow:
+      type: object
+      nullable: true
+      description: >-
+        How a CAROUSEL with a music track becomes its companion 9x16 video (CAROUSEL only; refused with 422
+        on any other kind). Crossfade between slides is fixed at 0.5 s.
+      properties:
+        slideDurations:
+          type: array
+          nullable: true
+          description: >-
+            Seconds each 9x16 slide is shown, one entry per slide of the 9x16 list (the default list when
+            there is none), each 1-10. Defaults to 3.0 s for the first slide and 2.5 s for the rest.
+          items:
+            type: number
+        zoom:
+          type: boolean
+          nullable: true
+          description: Slow push-in on every slide. Defaults to true.
+
+    CreativeRenderedVideo:
+      type: object
+      description: >-
+        The video/mp4 frame of the latest SUCCEEDED, non-preview render of a CAROUSEL (the slideshow with
+        its track) or CLIP (the video with its new sound).
+      required:
+        - renderId
+        - frameId
+        - placementKey
+        - url
+      properties:
+        renderId:
+          type: string
+        frameId:
+          type: string
+        placementKey:
+          type: string
+        url:
+          type: string
+          description: Short-lived signed GET URL.
+        posterUrl:
+          type: string
+          nullable: true
+        durationSeconds:
+          type: number
+          nullable: true
+        hasAudio:
+          type: boolean
+          nullable: true
 
     SequenceKind:
       type: string
@@ -9367,7 +9436,20 @@ components:
           allOf:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
-          description: The audio track for a MOTION creative, defaults already applied.
+          description: The audio of a MOTION, CAROUSEL or CLIP creative, defaults already applied. Null when none was set.
+        slideshow:
+          allOf:
+            - $ref: "#/components/schemas/CreativeSlideshow"
+          nullable: true
+          description: The slideshow settings of a CAROUSEL creative; `zoom` is always set, `slideDurations` is absent when the defaults (3.0 s, then 2.5 s per slide) apply.
+        renderedVideo:
+          allOf:
+            - $ref: "#/components/schemas/CreativeRenderedVideo"
+          nullable: true
+          description: >-
+            The video/mp4 frame of the latest SUCCEEDED non-preview render, for a CAROUSEL or CLIP; null
+            for any other kind or when that render has no video frame. Populated on the single-Creative
+            GET and on list reads.
         version:
           type: integer
         createdBy:
@@ -9485,7 +9567,12 @@ components:
           allOf:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
-          description: The audio track for a MOTION creative. Any field left unset gets its documented default.
+          description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        slideshow:
+          allOf:
+            - $ref: "#/components/schemas/CreativeSlideshow"
+          nullable: true
+          description: CAROUSEL only. Any field left unset gets its documented default.
         layoutOverrides:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
@@ -9607,7 +9694,12 @@ components:
           allOf:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
-          description: The audio track for a MOTION creative. Any field left unset gets its documented default.
+          description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        slideshow:
+          allOf:
+            - $ref: "#/components/schemas/CreativeSlideshow"
+          nullable: true
+          description: CAROUSEL only. Any field left unset gets its documented default.
         layoutOverrides:
           allOf:
             - $ref: "#/components/schemas/CreativeLayoutOverrides"
@@ -9933,11 +10025,26 @@ components:
           allOf:
             - $ref: "#/components/schemas/CreativeRenderSpecAudio"
           nullable: true
-          description: Set only for a MOTION render.
+          description: Set for a MOTION render, a CAROUSEL render with a track, and a CLIP render whose audio is not its own sound.
         clipHasAudio:
           type: boolean
           nullable: true
           description: Whether the resolved background clip has audio; null when the background is a photo or there is no background clip.
+        slides:
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
+          type: array
+          nullable: true
+          description: >-
+            Set only for a CAROUSEL render with a track: the 9x16 slide list (the `default` list when there
+            is no 9x16 one), in order. In a draft spec a local file is the literal `local:<key>`.
+          items:
+            $ref: "#/components/schemas/CreativeRenderSpecSlide"
+        slideshow:
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
+          allOf:
+            - $ref: "#/components/schemas/CreativeRenderSpecSlideshow"
+          nullable: true
+          description: Set only for a CAROUSEL render with a track.
 
     CreativeRenderSpecMotionBackground:
       type: object
@@ -9967,9 +10074,40 @@ components:
         endCard:
           type: boolean
 
+    CreativeRenderSpecSlide:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          description: A signed GET (valid at least 30 minutes), or `local:<key>` in a draft spec.
+
+    CreativeRenderSpecSlideshow:
+      type: object
+      description: The resolved slideshow of a CAROUSEL render with a track, defaults already applied.
+      required:
+        - slideDurations
+        - zoom
+        - crossfadeSec
+      properties:
+        slideDurations:
+          type: array
+          description: Seconds per slide, one entry per entry of `creative.slides`.
+          items:
+            type: number
+        zoom:
+          type: boolean
+        crossfadeSec:
+          type: number
+          description: Fixed at 0.5.
+
     CreativeRenderSpecAudio:
       type: object
-      description: The resolved audio track for a MOTION render, defaults already applied. `trackUrl` is a signed GET (valid at least 30 minutes), set only when `source` is "track".
+      description: >-
+        The resolved audio for a local render, defaults already applied. `trackUrl` is a signed GET (valid
+        at least 30 minutes), set only when `source` is "track" or "mix". `fadeInSec` and `targetLufs`
+        are set for CAROUSEL and CLIP (0.5 s and -14); MOTION leaves them null and is not normalised.
       properties:
         source:
           type: string
@@ -9980,6 +10118,14 @@ components:
           type: number
           nullable: true
         fadeOutSec:
+          type: number
+          nullable: true
+        fadeInSec:
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
+          type: number
+          nullable: true
+        targetLufs:
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
           type: number
           nullable: true
 
@@ -10003,9 +10149,14 @@ components:
           $ref: "#/components/schemas/CreativeRenderSpecBrand"
         placements:
           type: array
-          items:
-            type: string
-          description: The resolved placements this render must produce one frame per (kit-enabled ∪ Creative opt-ins) ∩ registry, or ["story"]/[carouselRatio] for a sequence Creative.
+          items: {}
+          description: >-
+            The resolved placements this render must produce one frame per. STILL and MOTION: placement key
+            strings, (kit-enabled ∪ Creative opt-ins) ∩ registry, or ["story"]/[carouselRatio] for a
+            sequence Creative. CAROUSEL with a track: one object `{key: "9x16", width: 1080, height: 1920}`.
+            CLIP with a new sound: one object per placement frame, `{key, width, height, clipUrl,
+            clipStartSec?, durationSec, clipHasAudio}`, `clipUrl` a signed GET (a local file in a draft is
+            `local:<key>`).
 
     CreativeRenderFrameResponse:
       type: object
@@ -10041,19 +10192,19 @@ components:
           format: int64
         contentType:
           type: string
-          description: image/jpeg or image/png for a STILL frame; a video content type for a CLIP frame.
+          description: image/jpeg or image/png for an image frame (a STILL, or a CAROUSEL slide); video/mp4 for a video frame (CLIP, MOTION, or a CAROUSEL's slideshow with its track).
         durationSeconds:
           type: number
           nullable: true
-          description: Set for a CLIP (video) frame; null for an image frame.
+          description: Set for a video frame; null for an image frame.
         hasAudio:
           type: boolean
           nullable: true
-          description: Set for a CLIP (video) frame; null for an image frame.
+          description: Set for a video frame; null for an image frame.
         posterUrl:
           type: string
           nullable: true
-          description: Short-lived signed GET URL of a CLIP frame's poster JPEG, if the source media had one.
+          description: Short-lived signed GET URL of a video frame's poster JPEG, if it has one.
         warnings:
           type: array
           items:
@@ -10189,6 +10340,19 @@ components:
           description: >-
             The alt text attach set on this Instagram destination's `altText` option (from the Creative's
             alt text). Null when attach set none.
+        carouselAs:
+          type: string
+          nullable: true
+          enum:
+            - photos
+            - video
+          description: >-
+            For a CAROUSEL Creative with a track: how attach resolved this destination, now stored in its
+            `carouselAs` option. Null for any other Creative.
+        warning:
+          type: string
+          nullable: true
+          description: Something the person should know about what this destination got (e.g. video wanted but none rendered).
 
     AttachCreativeTargetSkip:
       type: object

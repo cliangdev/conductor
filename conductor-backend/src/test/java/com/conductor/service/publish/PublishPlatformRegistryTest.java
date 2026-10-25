@@ -244,6 +244,17 @@ class PublishPlatformRegistryTest {
     }
 
     @Test
+    void carouselAs_isAConductorOnlyOptionOnFourPlatformsAndNeverAConnectorParam() {
+        for (String platform : List.of("tiktok", "instagram", "facebook", "youtube")) {
+            assertThat(PublishPlatformRegistry.acceptsConductorOnlyOption(platform, "carouselAs")).isTrue();
+            // Not an optionParams entry, so PublishInputBuilder (which iterates optionParams) never sends it.
+            assertThat(registry.require(platform).optionParams()).doesNotContainKey("carouselAs");
+        }
+        assertThat(PublishPlatformRegistry.acceptsConductorOnlyOption("linkedin", "carouselAs")).isFalse();
+        assertThat(PublishPlatformRegistry.acceptsConductorOnlyOption("tiktok", "autoAddMusic")).isFalse();
+    }
+
+    @Test
     void postFormat_parsesLeniently_andRejectsUnknown() {
         assertThat(PostFormat.parse(null)).isEqualTo(PostFormat.FEED);
         assertThat(PostFormat.parse("  ")).isEqualTo(PostFormat.FEED);

@@ -65,10 +65,14 @@ pack: original audio, a library track (with its recorded `licence`), the clip's 
   idea fails this check and the director may disqualify it.
 - Instagram Reels `audioName` is an attribution label for a Reel's audio; set it only when the
   sound has a credit to give.
-- A library track used in a MOTION Creative must have its licence recorded (the readiness checklist
-  blocks otherwise).
-- Photo posts on TikTok: `autoAddMusic` lets TikTok pick a soundtrack. Leave it unset unless the
-  person chose it, because the track is not one the team vetted.
+- A library track used on any Creative (MOTION, a CAROUSEL's slideshow video, a CLIP's replaced or
+  mixed sound) must have its `source` and `licence` recorded (the readiness checklist blocks
+  otherwise), and the licence must cover every destination the video goes to. Name the track and its
+  licence in the pack for each platform.
+- Photo posts on TikTok: `autoAddMusic` lets TikTok pick a soundtrack. It applies only to photo
+  posts, so leave it unset unless the person chose it (the track is not one the team vetted). It is
+  not how a vetted track gets onto a carousel: no platform accepts a chosen track on photos, so a
+  carousel with a vetted track goes out as its slideshow video (`carouselAs: video`).
 
 ## 4. Claims (Veto)
 

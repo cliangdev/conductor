@@ -29,7 +29,7 @@ import {
   targetKey,
 } from './publishState'
 import { effectiveAssetsFor, type DestinationDraft } from './selectionState'
-import type { PublishTargetOption, SelectedPublishTarget } from './types'
+import type { CarouselAs, PublishTargetOption, SelectedPublishTarget } from './types'
 
 /** Which way the rows read: a list to pick from, or a list of outcomes. */
 export type DestinationMode = 'pick' | 'outcome'
@@ -94,6 +94,8 @@ export interface DestinationRowModel {
   tiktokOptions: TikTokPublishOptionValues
   instagramOptions: InstagramPublishOptionValues
   youtubeOptions: YouTubePublishOptionValues
+  /** How a music CAROUSEL goes out here; null when this target's Creative has no track (no choice to make). */
+  carouselAs: CarouselAs | null
   /** What actually goes out here: the chosen subset in its order, or the whole Post's media. */
   effectiveAssets: MediaAsset[]
   blockers: PublishFinding[]
@@ -252,6 +254,7 @@ export function buildRows(args: BuildRowsArgs, now: Date = new Date()): Destinat
       tiktokOptions,
       instagramOptions: draft.instagram[key] ?? {},
       youtubeOptions: draft.youtube[key] ?? {},
+      carouselAs: draft.carouselAs?.[key] ?? null,
       effectiveAssets: effectiveAssetsFor(content, assets),
       blockers: findingsFor(target, preflight?.blockers),
       warnings: findingsFor(target, preflight?.warnings),
@@ -324,6 +327,7 @@ export interface DestinationActions {
   setTikTokOptions: (row: DestinationRowModel, next: TikTokPublishOptionValues) => void
   setInstagramOptions: (row: DestinationRowModel, next: InstagramPublishOptionValues) => void
   setYouTubeOptions: (row: DestinationRowModel, next: YouTubePublishOptionValues) => void
+  setCarouselAs: (row: DestinationRowModel, next: CarouselAs) => void
   setContent: (row: DestinationRowModel, next: TargetContent) => void
   /** Re-sends every failed destination; the server has no per-target retry. */
   retry: () => Promise<void>

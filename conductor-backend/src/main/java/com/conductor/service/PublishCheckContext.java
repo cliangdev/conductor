@@ -1,6 +1,10 @@
 package com.conductor.service;
 
+import com.conductor.creative.Creative;
+import com.conductor.creative.CreativePlacementMedia;
+import com.conductor.creative.CreativeRenderFrameRepository;
 import com.conductor.entity.Asset;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetAsset;
@@ -14,11 +18,13 @@ import com.conductor.repository.PublishConsentRepository;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -48,6 +54,7 @@ public final class PublishCheckContext {
     private List<PostPublishTargetAsset> selectionRows;
     private Optional<PublishConsent> consent;
     private boolean connectionsLoaded;
+    private Set<String> carouselTrackFrameIds;
 
     /** A context over explicit loaders; a loader is only called when something asks for its data. */
     public PublishCheckContext(WorkItem workItem,
@@ -139,6 +146,27 @@ public final class PublishCheckContext {
             consent = consentLoader.get();
         }
         return consent;
+    }
+
+    /**
+     * Ids of the Post's render frames that belong to a CAROUSEL Creative whose audio is a track, read once
+     * per check by a narrow (frame id, kind, audio) projection rather than whole Creative rows.
+     */
+    public Set<String> carouselTrackFrameIds(CreativeRenderFrameRepository frameRepository) {
+        if (carouselTrackFrameIds == null) {
+            List<String> frameIds = assets().stream().map(Asset::getCreativeFrameId)
+                    .filter(Objects::nonNull).distinct().toList();
+            Set<String> result = new HashSet<>();
+            if (!frameIds.isEmpty()) {
+                for (Object[] row : frameRepository.findCreativeKindAndAudioByIdIn(frameIds)) {
+                    if (Creative.KIND_CAROUSEL.equals(row[1]) && CreativePlacementMedia.hasTrack((JsonNode) row[2])) {
+                        result.add((String) row[0]);
+                    }
+                }
+            }
+            carouselTrackFrameIds = result;
+        }
+        return carouselTrackFrameIds;
     }
 
     /**

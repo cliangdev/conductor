@@ -235,6 +235,51 @@ class CreativeDraftSpecTest {
                                 .containsExactlyInAnyOrder("clipStartBeyondDuration", "audioClipHasNoAudio"));
     }
 
+    @Test
+    void aCarouselDraftWithALocalTrackGetsTheFullSlideshowSpec() {
+        LocalMediaInfo slide = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1920);
+        CreativeDraftSpecRequest request = draftRequest("x")
+                .kind(CreativeKind.CAROUSEL).caption("c")
+                .slides(Map.of("9x16", List.of("local:s1", "local:s2", "local:s3")))
+                .audio(new CreativeAudio().source("track").trackId("local:song"))
+                .slideshow(new com.conductor.generated.v2.model.CreativeSlideshow()
+                        .slideDurations(List.of(new BigDecimal("4"), new BigDecimal("2"), new BigDecimal("2"))))
+                .localMedia(Map.of("s1", slide, "s2", slide, "s3", slide,
+                        "song", new LocalMediaInfo(MediaKind.AUDIO).durationSeconds(new BigDecimal("30"))
+                                .source("Pixabay").licence("Pixabay licence")));
+
+        CreativeService.DraftSpec draft = service.buildDraftSpec(PROJECT, request, caller);
+        CreativeRenderSpec spec = draft.spec();
+
+        assertThat(spec.getCreative().getSlides()).extracting("url").containsExactly("local:s1", "local:s2", "local:s3");
+        assertThat(spec.getCreative().getSlideshow().getSlideDurations())
+                .extracting(BigDecimal::doubleValue).containsExactly(4.0, 2.0, 2.0);
+        assertThat(spec.getCreative().getSlideshow().getZoom()).isTrue();
+        assertThat(spec.getCreative().getSlideshow().getCrossfadeSec()).isEqualByComparingTo("0.5");
+        assertThat(spec.getCreative().getAudio().getSource()).isEqualTo("track");
+        assertThat(spec.getCreative().getAudio().getTrackUrl()).isEqualTo("local:song");
+        assertThat(spec.getCreative().getAudio().getVolume()).isEqualByComparingTo("1");
+        assertThat(spec.getCreative().getAudio().getFadeInSec()).isEqualByComparingTo("0.5");
+        assertThat(spec.getCreative().getAudio().getTargetLufs()).isEqualByComparingTo("-14");
+        assertThat(spec.getPlacements()).hasSize(1);
+        assertThat(spec.getPlacements().get(0)).isEqualTo(
+                Map.of("key", "9x16", "width", 1080, "height", 1920));
+        // The track's provenance travels with the declared local file.
+        assertThat(draft.readiness().items()).filteredOn(i -> i.key().equals("audioProvenance"))
+                .singleElement().satisfies(i -> assertThat(i.ok()).isTrue());
+    }
+
+    @Test
+    void aCarouselDraftWithoutATrackKeepsTheMinimalSpec() {
+        LocalMediaInfo slide = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1350);
+        CreativeRenderSpec spec = service.buildDraftSpec(PROJECT, draftRequest("x").kind(CreativeKind.CAROUSEL)
+                .caption("c").slides(Map.of("4x5", List.of("local:s1"))).localMedia(Map.of("s1", slide)), caller).spec();
+
+        assertThat(spec.getCreative().getSlideshow()).isNull();
+        assertThat(spec.getCreative().getAudio()).isNull();
+        assertThat(spec.getPlacements()).containsExactly("4x5");
+    }
+
     // ── 422 ──────────────────────────────────────────────────────────────────────────────────────
 
     @Test

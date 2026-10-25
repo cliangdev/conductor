@@ -691,6 +691,176 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 .isInstanceOf(com.conductor.exception.BusinessException.class);
     }
 
+    // ── Music on CAROUSEL and CLIP: local renders ───────────────────────────────────────────────
+
+    private Creative withAudio(Creative c, String source, String trackId, double volume) {
+        com.fasterxml.jackson.databind.node.ObjectNode audio = objectMapper.createObjectNode();
+        audio.put("source", source);
+        if (trackId != null) {
+            audio.put("trackId", trackId);
+        }
+        audio.put("volume", volume);
+        audio.put("fadeOutSec", 1.0);
+        c.setAudio(audio);
+        return creativeRepository.save(c);
+    }
+
+    private Creative carouselWithTrack(CreativePhoto track, int slideCount) {
+        List<String> ids = new java.util.ArrayList<>();
+        for (int i = 0; i < slideCount; i++) {
+            ids.add(newImageMedia(1080, 1920).getId());
+        }
+        Creative carousel = newCarouselCreative(Map.of("9x16", ids), List.of("9x16"));
+        return withAudio(carousel, "track", track.getId(), 1.0);
+    }
+
+    @Test
+    void aTimedOutLocalCarouselRenderLeavesNoLinkedSlideFramesBehind() {
+        Creative carousel = carouselWithTrack(newAudioMedia(), 2);
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+        String renderId = result.render().getId();
+        assertThat(frameRepository.findAllByRenderId(renderId)).hasSize(2);
+        CreativeRender render = renderRepository.findById(renderId).orElseThrow();
+        render.setRequestedAt(OffsetDateTime.now().minusMinutes(31));
+        renderRepository.saveAndFlush(render);
+
+        renderService.getRender(project.getId(), carousel.getId(), renderId, admin);
+
+        assertThat(renderRepository.findById(renderId).orElseThrow().getState()).isEqualTo(CreativeRender.STATE_FAILED);
+        assertThat(frameRepository.findAllByRenderId(renderId)).isEmpty();
+    }
+
+    @Test
+    void aCarouselWithATrackIsARunningRenderWithTheSlideFramesLinkedAndTheSlideshowSpec() {
+        CreativePhoto track = newAudioMedia();
+        Creative carousel = carouselWithTrack(track, 3);
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_RUNNING);
+        assertThat(result.frames()).extracting(f -> f.getPlacementKey() + "#" + f.getSequenceIndex())
+                .containsExactly("9x16#0", "9x16#1", "9x16#2");
+        assertThat(result.spec().getCreative().getKind().getValue()).isEqualTo("CAROUSEL");
+        assertThat(result.spec().getCreative().getSlides()).hasSize(3);
+        assertThat(result.spec().getCreative().getSlideshow().getSlideDurations())
+                .extracting(BigDecimal::doubleValue).containsExactly(3.0, 2.5, 2.5);
+        assertThat(result.spec().getCreative().getAudio().getTrackUrl()).isNotBlank();
+        assertThat(result.spec().getCreative().getAudio().getTargetLufs()).isEqualByComparingTo("-14");
+        assertThat(result.spec().getPlacements()).hasSize(1);
+    }
+
+    @Test
+    void theSlideshowVideoFrameWithNoIndexCoexistsWithTheSlidesRecordsTheTrackAndCompletes() {
+        CreativePhoto track = newAudioMedia();
+        Creative carousel = carouselWithTrack(track, 2);
+        String renderId = renderService.requestRender(project.getId(), carousel.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+
+        // Completing before the video is uploaded is refused: this carousel is rendered into a video.
+        assertThatThrownBy(() -> renderService.completeRender(project.getId(), carousel.getId(), renderId, null, admin))
+                .isInstanceOf(com.conductor.exception.UnprocessableEntityException.class);
+
+        renderService.putFrame(project.getId(), carousel.getId(), renderId, "9x16", null, 1080, 1920,
+                mp4(), "video/mp4", new BigDecimal("5.5"), true, admin);
+        renderService.putFramePoster(project.getId(), carousel.getId(), renderId, "9x16", null, jpeg(), "image/jpeg", admin);
+        CreativeRenderService.RenderView completed = renderService.completeRender(
+                project.getId(), carousel.getId(), renderId, null, admin);
+
+        assertThat(completed.render().getState()).isEqualTo(CreativeRender.STATE_SUCCEEDED);
+        assertThat(completed.frames()).hasSize(3);
+        CreativeRenderFrame video = completed.frames().stream()
+                .filter(f -> f.getContentType().equals("video/mp4")).findFirst().orElseThrow();
+        assertThat(video.getSequenceIndex()).isNull();
+        assertThat(video.getAudioMediaId()).isEqualTo(track.getId());
+        assertThat(video.getHasAudio()).isTrue();
+        assertThat(completed.frames().stream().filter(f -> f.getContentType().equals("image/jpeg")))
+                .allSatisfy(f -> assertThat(f.getAudioMediaId()).isNull());
+
+        // renderedVideo exposes the mp4 for a CAROUSEL, and the thumbnail is a slide, never the video's poster.
+        assertThat(renderService.renderedVideo(completed, Creative.KIND_CAROUSEL).getFrameId()).isEqualTo(video.getId());
+        assertThat(renderService.renderedVideo(completed, Creative.KIND_STILL)).isNull();
+        assertThat(renderService.thumbnailUrl(completed, List.of("9x16")))
+                .contains(completed.frames().stream().filter(f -> f.getContentType().equals("image/jpeg"))
+                        .findFirst().orElseThrow().getGcsPath());
+    }
+
+    @Test
+    void aCarouselWithoutATrackStillRendersAtOnceAsBefore() {
+        Creative carousel = newCarouselCreative(Map.of("4x5", List.of(newImageMedia(1080, 1350).getId())), List.of("4x5"));
+        carousel = withAudio(carousel, "none", null, 1.0);
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_SUCCEEDED);
+        assertThat(result.spec()).isNull();
+    }
+
+    @Test
+    void aClipWithNewSoundIsARunningRenderWithPlacementObjectsAndTheClipsOwnSoundStaysInstant() {
+        CreativePhoto video = newVideoMedia(1080, 1920);
+        video.setHasAudio(true);
+        video = photoRepository.save(video);
+        CreativePhoto track = newAudioMedia();
+
+        Creative own = newClipCreative(Map.of("default", video.getId()));
+        assertThat(renderService.requestRender(project.getId(), own.getId(), new CreateCreativeRenderRequest(), admin)
+                .render().getState()).isEqualTo(CreativeRender.STATE_SUCCEEDED);
+
+        Creative mixed = withAudio(newClipCreative(Map.of("default", video.getId())), "mix", track.getId(), 0.3);
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), mixed.getId(), new CreateCreativeRenderRequest(), admin);
+
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_RUNNING);
+        assertThat(result.frames()).isEmpty();
+        assertThat(result.spec().getCreative().getAudio().getSource()).isEqualTo("mix");
+        assertThat(result.spec().getCreative().getAudio().getTrackUrl()).isNotBlank();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> placement = (Map<String, Object>) result.spec().getPlacements().get(0);
+        assertThat(placement).containsEntry("key", "9x16").containsEntry("width", 1080).containsEntry("height", 1920)
+                .containsEntry("clipHasAudio", true);
+        assertThat(placement.get("clipUrl")).isNotNull();
+
+        String renderId = result.render().getId();
+        renderService.putFrame(project.getId(), mixed.getId(), renderId, "9x16", null, 1080, 1920,
+                mp4(), "video/mp4", new BigDecimal("10"), true, admin);
+        CreativeRenderService.RenderView done = renderService.completeRender(project.getId(), mixed.getId(), renderId, null, admin);
+        assertThat(done.frames()).singleElement().satisfies(f -> assertThat(f.getAudioMediaId()).isEqualTo(track.getId()));
+        assertThat(renderService.renderedVideo(done, Creative.KIND_CLIP)).isNotNull();
+    }
+
+    @Test
+    void aMutedClipRendersLocallyWithNoTrackAndRecordsNoAudioMedia() {
+        CreativePhoto video = newVideoMedia(1080, 1920);
+        Creative muted = withAudio(newClipCreative(Map.of("default", video.getId())), "none", null, 1.0);
+
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), muted.getId(), new CreateCreativeRenderRequest(), admin);
+        assertThat(result.render().getState()).isEqualTo(CreativeRender.STATE_RUNNING);
+        assertThat(result.spec().getCreative().getAudio().getTrackUrl()).isNull();
+
+        renderService.putFrame(project.getId(), muted.getId(), result.render().getId(), "9x16", null, 1080, 1920,
+                mp4(), "video/mp4", new BigDecimal("10"), false, admin);
+        assertThat(frameRepository.findAllByRenderId(result.render().getId())).singleElement()
+                .satisfies(f -> assertThat(f.getAudioMediaId()).isNull());
+    }
+
+    @Test
+    void aMotionVideoFrameRecordsItsTrack() {
+        CreativePhoto track = newAudioMedia();
+        Creative motion = newMotionCreative(null, track.getId());
+        String renderId = renderService.requestRender(project.getId(), motion.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+
+        renderService.putFrame(project.getId(), motion.getId(), renderId, "9x16", null, 1080, 1920,
+                mp4(), "video/mp4", new BigDecimal("8"), true, admin);
+
+        assertThat(frameRepository.findAllByRenderId(renderId)).singleElement()
+                .satisfies(f -> assertThat(f.getAudioMediaId()).isEqualTo(track.getId()));
+    }
+
     // ── spec parity (draft-spec refactor): the persisted path's spec must not change ─────────────
 
     @Test

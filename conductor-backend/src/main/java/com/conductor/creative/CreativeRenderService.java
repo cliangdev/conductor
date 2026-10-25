@@ -11,6 +11,8 @@ import com.conductor.generated.v2.model.CreativeAudio;
 import com.conductor.generated.v2.model.CreativeMotion;
 import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderFrameResponse;
+import com.conductor.generated.v2.model.CreativeRenderedVideo;
+import com.conductor.generated.v2.model.CreativeSlideshow;
 import com.conductor.generated.v2.model.CreativeRenderResponse;
 import com.conductor.generated.v2.model.CreativeRenderSpec;
 import com.conductor.generated.v2.model.CreativeRenderState;
@@ -272,6 +274,7 @@ public class CreativeRenderService {
         }
         Map<String, String> clipMedia = toClipMediaMap(creative.getClipMedia());
         BrandKit kit = requireKit(projectId, creative.getBrandKitId());
+        CreativeAudio audio = toAudio(creative.getAudio());
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 creative.getLayout(), creative.getTheme(), toStringList(creative.getPlacements()),
                 creative.getHeadline(), creative.getBody(), creative.getCaption(),
@@ -279,12 +282,16 @@ public class CreativeRenderService {
                 // own state, exactly as the STILL path forces its own READY checks above.
                 Creative.STATE_READY, null, true, true, true, false, creative.getSequenceKind(), List.of(),
                 creative.getCarouselRatio(), Set.of(), Map.of(), Map.of(),
-                Creative.KIND_CLIP, resolveClipMediaEntries(projectId, clipMedia), null));
+                Creative.KIND_CLIP, resolveClipMediaEntries(projectId, clipMedia), null)
+                .withAudioAndSlideshow(audioInputFor(projectId, creative, clipMedia), null));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
 
         Map<String, String> framePlacements = resolveClipFramePlacements(projectId, clipMedia);
+        if (clipNeedsLocalRender(audio)) {
+            return requestLocalClipRender(projectId, creative, request, caller, kit, audio, framePlacements);
+        }
 
         CreativeRender render = new CreativeRender();
         render.setProjectId(projectId);
@@ -330,6 +337,77 @@ public class CreativeRenderService {
         return new CreateRenderResult(render, null, frames);
     }
 
+    /** A CLIP whose sound is replaced, mixed or muted is rendered into a new MP4 on the person's machine. */
+    static boolean clipNeedsLocalRender(CreativeAudio audio) {
+        return audio != null && ("track".equals(audio.getSource()) || "mix".equals(audio.getSource())
+                || "none".equals(audio.getSource()));
+    }
+
+    /** A CAROUSEL with a music track is rendered into a companion slideshow MP4 on the person's machine. */
+    static boolean carouselNeedsLocalRender(CreativeAudio audio) {
+        return audio != null && "track".equals(audio.getSource());
+    }
+
+    /**
+     * A CLIP with new sound: a RUNNING render with a spec, no frames yet. The local job PUTs one video
+     * frame per placement (no index) and a poster, then completes — the frames land through
+     * {@link #putFrame} like a MOTION's.
+     */
+    private CreateRenderResult requestLocalClipRender(String projectId, Creative creative,
+                                                      CreateCreativeRenderRequest request, User caller, BrandKit kit,
+                                                      CreativeAudio audio, Map<String, String> framePlacements) {
+        List<CreativeSpecBuilder.ClipPlacement> clips = new ArrayList<>();
+        for (Map.Entry<String, String> entry : framePlacements.entrySet()) {
+            MediaFacts clip = findMedia(projectId, entry.getValue());
+            CreativeRegistry.PlacementInfo placement = registry.hasPlacement(entry.getKey())
+                    ? registry.placements().get(entry.getKey()) : null;
+            if (clip == null || placement == null) {
+                continue;
+            }
+            clips.add(new CreativeSpecBuilder.ClipPlacement(entry.getKey(), placement.width(), placement.height(), clip));
+        }
+        MediaFacts track = findMedia(projectId, audio.getTrackId());
+        CreativeRender render = saveRunningRender(projectId, creative, request, caller);
+        CreativeRenderSpec spec = specBuilder.buildClip(render.getId(), creative, kit, clips, track, audio);
+        return new CreateRenderResult(render, spec);
+    }
+
+    private CreativeRender saveRunningRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
+                                             User caller) {
+        return saveRender(projectId, creative, request, caller, CreativeRender.STATE_RUNNING);
+    }
+
+    /** A new non-preview render row in {@code state}; a SUCCEEDED one is also finished, in the same save. */
+    private CreativeRender saveRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
+                                      User caller, String state) {
+        CreativeRender render = new CreativeRender();
+        render.setProjectId(projectId);
+        render.setCreativeId(creative.getId());
+        render.setCreativeVersion(creative.getVersion());
+        render.setState(state);
+        render.setPreviewOnly(false);
+        render.setRenderer(request != null ? request.getRenderer() : null);
+        render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
+        render.setRequestedBy(caller.getId());
+        render.setRequestedAt(OffsetDateTime.now());
+        if (CreativeRender.STATE_SUCCEEDED.equals(state)) {
+            render.setFinishedAt(OffsetDateTime.now());
+        }
+        return renderRepository.save(render);
+    }
+
+    /** The validator's view of a saved CAROUSEL's or CLIP's audio, against the media as it stands now. */
+    private CreativeValidator.AudioInput audioInputFor(String projectId, Creative creative, Map<String, String> clipMedia) {
+        CreativeAudio audio = toAudio(creative.getAudio());
+        if (audio == null) {
+            return null;
+        }
+        List<MediaFacts> clips = new ArrayList<>();
+        clipMedia.values().forEach(clipId -> clips.add(findMedia(projectId, clipId)));
+        return CreativeValidator.AudioInput.of(audio, findMedia(projectId, audio.getTrackId()),
+                CreativeValidator.AudioInput.clipHasAudioOf(clips));
+    }
+
     /**
      * CAROUSEL renders are assembled here, like CLIP's: the slides are finished images used as-is, so the
      * backend links each slide's own object (nothing is copied) and records one IMAGE frame per slide per
@@ -345,29 +423,30 @@ public class CreativeRenderService {
         BrandKit kit = requireKit(projectId, creative.getBrandKitId());
         List<String> placements = toStringList(creative.getPlacements());
         Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+        CreativeAudio audio = toAudio(creative.getAudio());
+        CreativeSlideshow slideshow = toSlideshow(creative.getSlideshow());
+        List<String> videoList = slides.get(CreativeSpecBuilder.slideshowKey(slides));
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 creative.getLayout(), creative.getTheme(), placements, creative.getHeadline(), creative.getBody(),
                 creative.getCaption(),
                 // Force the READY-only checks (caption + at least one slide), as the CLIP path does.
                 Creative.STATE_READY, null, true, true, true, false, null, List.of(), null, Set.of(), Map.of(),
                 Map.of(), Creative.KIND_CAROUSEL, List.of(), null, resolveSlideEntries(projectId, slides),
-                toStringList(creative.getSlideAltText())));
+                toStringList(creative.getSlideAltText()))
+                .withAudioAndSlideshow(audioInputFor(projectId, creative, Map.of()),
+                        slideshow != null ? new CreativeValidator.SlideshowInput(
+                                slideshow.getSlideDurations() != null
+                                        ? slideshow.getSlideDurations().stream().map(BigDecimal::doubleValue).toList() : null,
+                                videoList != null ? videoList.size() : 0) : null));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
 
-        CreativeRender render = new CreativeRender();
-        render.setProjectId(projectId);
-        render.setCreativeId(creative.getId());
-        render.setCreativeVersion(creative.getVersion());
-        render.setState(CreativeRender.STATE_SUCCEEDED);
-        render.setPreviewOnly(false);
-        render.setRenderer(request != null ? request.getRenderer() : null);
-        render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
-        render.setRequestedBy(caller.getId());
-        render.setRequestedAt(OffsetDateTime.now());
-        render.setFinishedAt(OffsetDateTime.now());
-        render = renderRepository.save(render);
+        boolean local = carouselNeedsLocalRender(audio);
+        // Local: the slide images are linked now, exactly as the instant path does; the local job adds one
+        // 9x16 video frame (no index) and completes the render.
+        CreativeRender render = saveRender(projectId, creative, request, caller,
+                local ? CreativeRender.STATE_RUNNING : CreativeRender.STATE_SUCCEEDED);
 
         List<CreativeRenderFrame> frames = new ArrayList<>();
         for (String placementKey : placements) {
@@ -397,6 +476,15 @@ public class CreativeRenderService {
                 frameRepository.save(frame);
                 frames.add(frame);
             }
+        }
+        if (local) {
+            List<MediaFacts> slideFacts = new ArrayList<>();
+            for (String id : videoList != null ? videoList : List.<String>of()) {
+                slideFacts.add(findMedia(projectId, id));
+            }
+            CreativeRenderSpec spec = specBuilder.buildCarousel(render.getId(), false, creative, kit, slideFacts,
+                    findMedia(projectId, audio.getTrackId()), audio, slideshow);
+            return new CreateRenderResult(render, spec, frames);
         }
         return new CreateRenderResult(render, null, frames);
     }
@@ -504,6 +592,7 @@ public class CreativeRenderService {
         if (!render.isRunning()) {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
         }
+        Creative creative = findCreative(projectId, creativeId);
         if (frameBytes == null || frameBytes.length == 0) {
             throw new BusinessException("Frame body must not be empty");
         }
@@ -543,11 +632,23 @@ public class CreativeRenderService {
         frame.setSizeBytes(frameBytes.length);
         frame.setDurationSeconds(video ? durationSeconds : null);
         frame.setHasAudio(video ? hasAudio : null);
+        frame.setAudioMediaId(video ? trackMixedInto(creative) : null);
         if (frame.getWarnings() == null) {
             frame.setWarnings(objectMapper.createArrayNode());
         }
         frameRepository.save(frame);
         return new RenderView(render, frameRepository.findAllByRenderIdOrdered(renderId));
+    }
+
+    /** The library AUDIO item a video frame of {@code creative} has mixed in (audio source track, or a CLIP's mix), else null. */
+    private String trackMixedInto(Creative creative) {
+        CreativeAudio audio = toAudio(creative.getAudio());
+        if (audio == null || audio.getTrackId() == null) {
+            return null;
+        }
+        boolean mixed = "track".equals(audio.getSource())
+                || ("mix".equals(audio.getSource()) && Creative.KIND_CLIP.equals(creative.getKind()));
+        return mixed ? audio.getTrackId() : null;
     }
 
     /**
@@ -600,6 +701,15 @@ public class CreativeRenderService {
         if (!render.isRunning()) {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
         }
+        Creative creative = findCreative(projectId, creativeId);
+        CreativeAudio audio = toAudio(creative.getAudio());
+        boolean needsVideo = Creative.KIND_CAROUSEL.equals(creative.getKind()) ? carouselNeedsLocalRender(audio)
+                : Creative.KIND_CLIP.equals(creative.getKind()) && clipNeedsLocalRender(audio);
+        if (needsVideo && frameRepository.findAllByRenderId(renderId).stream()
+                .noneMatch(f -> f.getContentType() != null && f.getContentType().startsWith("video/"))) {
+            throw new UnprocessableEntityException("Render " + renderId + " cannot complete: this "
+                    + creative.getKind() + " is rendered into a video, and no video frame was uploaded");
+        }
         render.setState(CreativeRender.STATE_SUCCEEDED);
         render.setFinishedAt(OffsetDateTime.now());
         render = renderRepository.save(render);
@@ -620,6 +730,18 @@ public class CreativeRenderService {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
         }
         // AC-P0-3.2: a failed render leaves no frame behind for attach to find.
+        discardFrames(renderId);
+
+        render.setState(CreativeRender.STATE_FAILED);
+        render.setError(request.getMessage());
+        render.setLog(request.getLog());
+        render.setFinishedAt(OffsetDateTime.now());
+        render = renderRepository.save(render);
+        return new RenderView(render, List.of());
+    }
+
+    /** Deletes a render's frames and, after commit, the stored objects nothing else references. */
+    private void discardFrames(String renderId) {
         List<String> framePaths = new ArrayList<>();
         for (CreativeRenderFrame frame : frameRepository.findAllByRenderId(renderId)) {
             framePaths.add(frame.getGcsPath());
@@ -630,13 +752,6 @@ public class CreativeRenderService {
         frameRepository.deleteAllByRenderId(renderId);
         // Frames may link Media objects: only objects nothing else references are removed, after commit.
         storageReferences.deleteUnreferencedAfterCommit(framePaths, log);
-
-        render.setState(CreativeRender.STATE_FAILED);
-        render.setError(request.getMessage());
-        render.setLog(request.getLog());
-        render.setFinishedAt(OffsetDateTime.now());
-        render = renderRepository.save(render);
-        return new RenderView(render, List.of());
     }
 
     @Transactional
@@ -750,17 +865,44 @@ public class CreativeRenderService {
         if (view == null || view.frames().isEmpty()) {
             return null;
         }
-        CreativeRenderFrame frame = view.frames().stream()
+        // A CAROUSEL with a track holds its slides and one slideshow video: the thumbnail is a slide, not the
+        // video's poster (which sorts first, having no sequence index).
+        boolean hasImages = view.frames().stream().anyMatch(f -> !isVideoFrame(f));
+        List<CreativeRenderFrame> candidates = hasImages
+                ? view.frames().stream().filter(f -> !isVideoFrame(f)).toList() : view.frames();
+        CreativeRenderFrame frame = candidates.stream()
                 .filter(f -> "4x5".equals(f.getPlacementKey()))
                 .findFirst()
                 .orElseGet(() -> placementOrder.stream()
-                        .flatMap(key -> view.frames().stream().filter(f -> key.equals(f.getPlacementKey())).limit(1))
+                        .flatMap(key -> candidates.stream().filter(f -> key.equals(f.getPlacementKey())).limit(1))
                         .findFirst()
-                        .orElseGet(() -> view.frames().get(0)));
+                        .orElseGet(() -> candidates.get(0)));
         // A thumbnail is an <img>: a video frame shows its poster (null when it has none, so the caller falls back).
         boolean video = frame.getContentType() != null && frame.getContentType().startsWith("video/");
         String path = video ? frame.getPosterGcsPath() : frame.getGcsPath();
         return path != null ? storageService.generateSignedUrl(path, FRAME_URL_EXPIRY_MINUTES) : null;
+    }
+
+    private static boolean isVideoFrame(CreativeRenderFrame frame) {
+        return frame.getContentType() != null && frame.getContentType().startsWith("video/");
+    }
+
+    /**
+     * The video/mp4 frame of {@code view} for a CAROUSEL or CLIP, as {@code CreativeResponse.renderedVideo}:
+     * the first one in display order. Null for any other kind, or when the render has no video frame.
+     */
+    public CreativeRenderedVideo renderedVideo(RenderView view, String kind) {
+        if (view == null || !(Creative.KIND_CAROUSEL.equals(kind) || Creative.KIND_CLIP.equals(kind))) {
+            return null;
+        }
+        return view.frames().stream().filter(CreativeRenderService::isVideoFrame).findFirst()
+                .map(frame -> new CreativeRenderedVideo(view.render().getId(), frame.getId(), frame.getPlacementKey(),
+                        storageService.generateSignedUrl(frame.getGcsPath(), FRAME_URL_EXPIRY_MINUTES))
+                        .posterUrl(frame.getPosterGcsPath() != null
+                                ? storageService.generateSignedUrl(frame.getPosterGcsPath(), FRAME_URL_EXPIRY_MINUTES) : null)
+                        .durationSeconds(frame.getDurationSeconds())
+                        .hasAudio(frame.getHasAudio()))
+                .orElse(null);
     }
 
     // ── spec building (see CreativeSpecBuilder) ──────────────────────────────────────────────────
@@ -772,6 +914,11 @@ public class CreativeRenderService {
     /** {@code creative.motion} JSON -&gt; the typed DTO, or null when unset. Mirrors {@code CreativeService#toMotion}. */
     private CreativeMotion toMotion(JsonNode node) {
         return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeMotion.class) : null;
+    }
+
+    /** {@code creative.slideshow} JSON -&gt; the typed DTO, or null when unset. */
+    private CreativeSlideshow toSlideshow(JsonNode node) {
+        return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeSlideshow.class) : null;
     }
 
     /** {@code creative.audio} JSON -&gt; the typed DTO, or null when unset. Mirrors {@code CreativeService#toAudio}. */
@@ -820,6 +967,9 @@ public class CreativeRenderService {
             render.setError("timed out");
             render.setFinishedAt(OffsetDateTime.now());
             renderRepository.save(render);
+            // Same as failRender: a CAROUSEL links its slide frames at request time, and a failed render
+            // leaves no frame behind for attach to find.
+            discardFrames(render.getId());
         }
     }
 

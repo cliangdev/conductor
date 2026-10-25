@@ -188,6 +188,29 @@ class CreativePlacementTargetMapperTest {
         assertThat(CreativePlacementTargetMapper.carouselPlacementFor(target("youtube", "FEED"), all)).isNull();
     }
 
+    @Test
+    void aCarouselVideoGoesToTikTokYouTubeAndInstagramOrFacebookFeedAndReelButNeverAStory() {
+        for (String platform : new String[] {"tiktok", "youtube"}) {
+            assertThat(CreativePlacementTargetMapper.carouselVideoFor(target(platform, "FEED"))).isEqualTo("9x16");
+        }
+        for (String platform : new String[] {"instagram", "facebook"}) {
+            assertThat(CreativePlacementTargetMapper.carouselVideoFor(target(platform, "FEED"))).isEqualTo("9x16");
+            assertThat(CreativePlacementTargetMapper.carouselVideoFor(target(platform, "REEL"))).isEqualTo("9x16");
+            assertThat(CreativePlacementTargetMapper.carouselVideoFor(target(platform, "STORY"))).isNull();
+        }
+        assertThat(CreativePlacementTargetMapper.carouselVideoFor(target("linkedin", "FEED"))).isNull();
+    }
+
+    @Test
+    void aCarouselWithATrackDefaultsToVideoOnTikTokYouTubeAndReelsAndPhotosOnFeeds() {
+        assertThat(CreativePlacementTargetMapper.defaultCarouselAs(target("tiktok", "FEED"))).isEqualTo("video");
+        assertThat(CreativePlacementTargetMapper.defaultCarouselAs(target("youtube", "FEED"))).isEqualTo("video");
+        assertThat(CreativePlacementTargetMapper.defaultCarouselAs(target("instagram", "REEL"))).isEqualTo("video");
+        assertThat(CreativePlacementTargetMapper.defaultCarouselAs(target("facebook", "REEL"))).isEqualTo("video");
+        assertThat(CreativePlacementTargetMapper.defaultCarouselAs(target("instagram", "FEED"))).isEqualTo("photos");
+        assertThat(CreativePlacementTargetMapper.defaultCarouselAs(target("facebook", "FEED"))).isEqualTo("photos");
+    }
+
     private static PostPublishTarget target(String platform, String format) {
         PostPublishTarget target = new PostPublishTarget();
         target.setPlatform(platform);

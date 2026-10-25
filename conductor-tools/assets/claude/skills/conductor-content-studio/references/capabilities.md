@@ -17,15 +17,20 @@ needs changing until it fits.
   - Text animation presets: `fade-up`, `word-by-word`, `accent-pop` or `none`.
   - Background: a photo with a slow zoom or pan, or a clip from the library.
   - An end card holds the finished frame for the last 2 s.
-  - Audio: the clip's own sound, a library music track, or none.
+  - Audio: the clip's own sound, a library music track, or none (`audio.source` `clip`, `track`, `none`).
   - This is the right tool for a motion-text post: **it does not need filming.**
 - **CLIP**: a finished video posted as-is. There is no brand layout and nothing to draft. It only
-  applies when the person already has the video.
+  applies when the person already has the video. Its sound can be kept, replaced with a library
+  track, mixed under, or muted (`audio.source` `clip`, `track`, `mix`, `none`); `mix` needs a clip
+  that has sound.
 - **CAROUSEL**: finished images posted as-is (1 to 10 slides for 4:5 and 1:1, up to 35 for 9:16
   TikTok photo posts; one slide is a finished still). No brand layout is applied, so it only applies
   when the slides already exist as image files or library media. Slides are ordered per placement
   (`slides`, with `default` as the fallback) and each must match its placement's aspect. Reels,
-  Stories and YouTube cannot take it.
+  Stories and YouTube cannot take its photos. With a library music track (`audio.source` `track`)
+  it also gets a 9:16 slideshow video (`slideshow.slideDurations`, 1 to 10 s per slide, default 3 s
+  then 2.5 s; `zoom` default on), because no platform accepts a chosen track on photos. Each
+  destination then sends the photos (silent) or that video (`carouselAs`: `photos` or `video`).
 
 - **Slideshow** (organic posts): native-looking slides made locally by `compose_slideshow` (photo with
   text, app screenshot with callouts, Notes page, chat, photo grid, stacked before/after, tier list,
@@ -76,7 +81,7 @@ Ask for a mid-tone scene: under `bleed`, a dark or night scene can render almost
 ## What it cannot do (so the idea needs filming or a rethink)
 
 - Footage of people, places, cooking or the product in use. Screen recordings of an app.
-- Voiceover or spoken dialogue: MOTION has music or clip sound, not speech.
+- Voiceover or spoken dialogue: Creatives carry music or a clip's sound, not speech.
 - Charts, illustrations, or text inside a generated image. In a STILL each card is one photo plus
   text; grids, stacks and collages exist only as slideshow slides (above).
 - Anything that relies on a product claim the brief can't confirm. That's a copy problem, not a

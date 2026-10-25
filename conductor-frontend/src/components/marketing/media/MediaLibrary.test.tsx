@@ -325,6 +325,18 @@ describe('MediaLibrary usage', () => {
     expect(within(screen.getByTestId('media-tile-free')).queryByText(/post/)).not.toBeInTheDocument()
   })
 
+  it('shows "N creatives · N posts" or "Unused" on AUDIO tiles, leaving image tiles as they are', async () => {
+    setup([
+      photo('song', 'a song', 1, 1, { mediaKind: 'AUDIO', contentType: 'audio/mpeg', creativeCount: 2, postCount: 1 }),
+      photo('idle', 'idle song', 1, 1, { mediaKind: 'AUDIO', contentType: 'audio/mpeg', creativeCount: 0, postCount: 0 }),
+      photo('img', 'image', 1080, 1350, { postCount: 0, creativeCount: 3 }),
+    ])
+    await screen.findByTestId('media-grid')
+    expect(within(screen.getByTestId('media-tile-song')).getByTestId('audio-usage')).toHaveTextContent('2 creatives · 1 post')
+    expect(within(screen.getByTestId('media-tile-idle')).getByTestId('audio-usage')).toHaveTextContent('Unused')
+    expect(within(screen.getByTestId('media-tile-img')).queryByTestId('audio-usage')).not.toBeInTheDocument()
+  })
+
   it('"On posts" keeps only media with posts', async () => {
     const user = userEvent.setup()
     setup(rows())

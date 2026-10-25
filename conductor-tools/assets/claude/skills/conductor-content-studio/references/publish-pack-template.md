@@ -126,6 +126,7 @@ Rules:
   | Instagram | `altText` (at most 1000 characters) | a single feed image only |
   | Instagram | `audioName`, `shareToFeed`, `collaborators` (at most 3, not on a carousel) | reels only |
   | YouTube | `containsSyntheticMedia` | video |
+  | any of TikTok, Instagram, Facebook, YouTube | `carouselAs` (`photos` or `video`) | a CAROUSEL Creative with a music track only |
 
   Set only what the compliance check or the plan decided: leave a key out rather than writing a
   default. Keys that need a Post's own asset id (`coverAssetId`, `thumbnailAssetId`,

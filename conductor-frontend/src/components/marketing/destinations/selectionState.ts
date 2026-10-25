@@ -20,7 +20,7 @@ import {
 import type { PostFormat } from '@/components/marketing/PostFormatSelector'
 import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { isManual, targetKey } from './publishState'
-import type { PublishTargetOption, PublishTargetSelectionPayload, SelectedPublishTarget } from './types'
+import type { CarouselAs, PublishTargetOption, PublishTargetSelectionPayload, SelectedPublishTarget } from './types'
 
 /** Everything a person can set per destination, keyed by `targetKey`. `keys` is which rows are picked. */
 export interface DestinationDraft {
@@ -30,6 +30,8 @@ export interface DestinationDraft {
   instagram: Record<string, InstagramPublishOptionValues>
   youtube: Record<string, YouTubePublishOptionValues>
   content: Record<string, TargetContent>
+  /** Only for a target whose server row carries `carouselAs` (a music CAROUSEL); absent otherwise. */
+  carouselAs?: Record<string, CarouselAs>
 }
 
 export const EMPTY_DRAFT: DestinationDraft = {
@@ -84,6 +86,20 @@ export function seedYouTubeOptions(
     if (target.platform !== 'youtube') continue
     const key = targetKey(target.platform, target.connectionId)
     seeded[key] = normalizeYouTubeOptions(target.publishOptions ?? fallback[key])
+  }
+  return seeded
+}
+
+/** The `carouselAs` choice each persisted target carries; targets without one get no entry. */
+export function seedCarouselAs(
+  targets: SelectedPublishTarget[],
+  fallback: Record<string, CarouselAs> = {}
+): Record<string, CarouselAs> {
+  const seeded: Record<string, CarouselAs> = {}
+  for (const target of targets) {
+    const key = targetKey(target.platform, target.connectionId)
+    const stored = target.publishOptions?.carouselAs ?? fallback[key]
+    if (stored === 'photos' || stored === 'video') seeded[key] = stored
   }
   return seeded
 }
@@ -146,6 +162,7 @@ export function draftFromTargets(
     instagram: { ...fallback.instagram, ...seedInstagramOptions(targets, fallback.instagram) },
     youtube: { ...fallback.youtube, ...seedYouTubeOptions(targets, fallback.youtube) },
     content: { ...fallback.content, ...seedContent(targets, fallback.content) },
+    carouselAs: seedCarouselAs(targets, fallback.carouselAs),
   }
 }
 
@@ -173,6 +190,12 @@ export function buildSelectionPayload(
     }
   }
   const optionsFor = (o: PublishTargetOption): Partial<PublishTargetSelectionPayload> => {
+    const base = platformOptionsFor(o)
+    const carouselAs = isManual(o) ? undefined : draft.carouselAs?.[targetKey(o.platform, o.connectionId)]
+    if (!carouselAs) return base
+    return { publishOptions: { ...base.publishOptions, carouselAs } }
+  }
+  const platformOptionsFor = (o: PublishTargetOption): Partial<PublishTargetSelectionPayload> => {
     if (isManual(o)) return {}
     const key = targetKey(o.platform, o.connectionId)
     if (o.platform === 'tiktok') {

@@ -31,18 +31,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * "Use in Post" (COND-24 T3, AC-P0-3.3): copies a SUCCEEDED render's frames into a Post's own assets and,
+ * "Use in Post" (COND-24 T3, AC-P0-3.3): links a SUCCEEDED render's frames into a Post's own assets and,
  * for every target that has not chosen its own media, sets that destination's media by placement —
- * {@link CreativePlacementTargetMapper} owns the placement → target rule; this class owns the storage
- * copy, the {@link com.conductor.entity.Asset} rows, and reconstructing the Post's <em>whole</em> target
+ * {@link CreativePlacementTargetMapper} owns the placement → target rule; this class owns the frame
+ * links, the {@link com.conductor.entity.Asset} rows, and reconstructing the Post's <em>whole</em> target
  * selection so {@link PublishTargetService#replaceSelection} — the same set-replace a person's own edit
  * goes through — treats this exactly like any other bundle customisation (the approval gate reverts, the
  * bundle hash changes).
  *
  * <p>A target with {@code custom_media = true} already made its own choice and is never overwritten: it is
  * reported in {@code targetsSkipped}, and its existing selection is carried through the rebuilt list
- * unchanged. A target the mapper has no opinion about (a Facebook or Instagram Reel — reels are video, and
- * a Creative's frames are always still images) is touched by neither list.
+ * unchanged. A target the mapper has no opinion about (a Facebook or Instagram Reel for a still, say) is
+ * touched by neither list. A CAROUSEL with a music track has a companion 9x16 video frame too: each target
+ * takes the slides or that video by its {@code carouselAs} option (default video for TikTok, YouTube and
+ * Reels, photos for Instagram and Facebook feed), which attach writes into the target's options.
  */
 @Service
 public class CreativeAttachService {
@@ -93,7 +95,8 @@ public class CreativeAttachService {
     public record AttachedAsset(String assetId, String frameId, String placementKey, Integer sequenceIndex) {
     }
 
-    public record TargetUpdate(String targetId, String platform, List<String> assetIds, String altText) {
+    public record TargetUpdate(String targetId, String platform, List<String> assetIds, String altText,
+                               String carouselAs, String warning) {
     }
 
     public record TargetSkip(String targetId, String platform, String reason) {
@@ -133,7 +136,8 @@ public class CreativeAttachService {
         // shared with PublishTargetService for destinations added after this attach.
         boolean carousel = Creative.KIND_CAROUSEL.equals(creative.getKind());
         CreativePlacementMedia.Placements placements = new CreativePlacementMedia.Placements(carousel)
-                .withStillAltText(CreativePlacementMedia.stillAltTextOf(creative));
+                .withStillAltText(CreativePlacementMedia.stillAltTextOf(creative))
+                .withTrack(carousel && CreativePlacementMedia.hasTrack(creative));
 
         // Attaching the same render again (say, to fill a destination added afterwards) reuses the frames
         // already on this Post instead of copying them a second time.
@@ -207,14 +211,31 @@ public class CreativeAttachService {
             // Instagram alt text: only a lone still, and never over one the author already wrote.
             Map<String, Object> options = parsePublishOptions(target.getPublishOptions());
             String altText = CreativePlacementMedia.hasAltText(options) ? null : placements.altTextFor(target, matched);
+            // A CAROUSEL with a track: record how this destination takes it (photos or the slideshow video)
+            // so the person and the skills can see it. An explicit choice of the author is never overwritten.
+            // A fallback to photos because no video exists yet is reported but never written: it would read
+            // as an explicit choice and the video default would not apply once the carousel is re-rendered.
+            String resolvedCarouselAs = placements.carouselAsFor(target);
+            String persistedCarouselAs = placements.carouselAsToPersist(target);
+            boolean writeCarouselAs = persistedCarouselAs != null
+                    && (options == null || options.get(PublishPlatformRegistry.OPTION_CAROUSEL_AS) == null);
+            String warning = placements.videoMissingFor(target)
+                    ? "This carousel has a music track but no video was rendered, so it goes out as photos:"
+                            + " render it again to produce the video" : null;
             PublishTargetService.TargetSelection selection = selectionFor(target, matched);
-            if (altText != null) {
-                Map<String, Object> withAlt = options == null ? new LinkedHashMap<>() : new LinkedHashMap<>(options);
-                withAlt.put("altText", altText);
+            if (altText != null || writeCarouselAs) {
+                Map<String, Object> merged = options == null ? new LinkedHashMap<>() : new LinkedHashMap<>(options);
+                if (altText != null) {
+                    merged.put("altText", altText);
+                }
+                if (writeCarouselAs) {
+                    merged.put(PublishPlatformRegistry.OPTION_CAROUSEL_AS, resolvedCarouselAs);
+                }
                 selection = new PublishTargetService.TargetSelection(selection.platform(), selection.connectionId(),
-                        withAlt, selection.captionOverride(), selection.assetIds(), selection.format(), selection.noMedia());
+                        merged, selection.captionOverride(), selection.assetIds(), selection.format(), selection.noMedia());
             }
-            updates.add(new TargetUpdate(target.getId(), target.getPlatform(), matched, altText));
+            updates.add(new TargetUpdate(target.getId(), target.getPlatform(), matched, altText,
+                    resolvedCarouselAs, warning));
             selections.add(selection);
         }
 

@@ -132,7 +132,7 @@ public class Creative {
     @Column(name = "motion", columnDefinition = "jsonb")
     private JsonNode motion;
 
-    /** PR2: {@code {source: clip|track|none, trackId?, volume?, fadeOutSec?}} for a MOTION creative. Unused by PR1. */
+    /** {@code {source: clip|track|mix|none, trackId?, volume?, fadeOutSec?}} for a MOTION, CAROUSEL or CLIP creative. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "audio", columnDefinition = "jsonb")
     private JsonNode audio;
@@ -146,6 +146,11 @@ public class Creative {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "slide_alt_text", columnDefinition = "jsonb")
     private JsonNode slideAltText;
+
+    /** {@code {slideDurations?: number[], zoom?: boolean}} for a CAROUSEL creative with a track. See V162__creative_music.sql. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "slideshow", columnDefinition = "jsonb")
+    private JsonNode slideshow;
 
     @Version
     @Column(name = "version", nullable = false)
@@ -275,6 +280,9 @@ public class Creative {
 
     public JsonNode getAudio() { return audio; }
     public void setAudio(JsonNode audio) { this.audio = audio; }
+
+    public JsonNode getSlideshow() { return slideshow; }
+    public void setSlideshow(JsonNode slideshow) { this.slideshow = slideshow; }
 
     public JsonNode getSlides() { return slides; }
     public void setSlides(JsonNode slides) { this.slides = slides; }

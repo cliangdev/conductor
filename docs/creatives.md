@@ -288,14 +288,14 @@ belongs to the same project — checked on every write, the same way a STILL Cre
 needs no layout, theme, headline or photo; going `READY` needs a caption and at least one clip instead of a
 headline and a photo.
 
-**CLIP renders are assembled by this backend, not by a local job.** `POST .../creatives/{id}/renders` for a
+**A CLIP that keeps its own sound is assembled by this backend, not by a local job** (a CLIP with new audio renders locally: see [Music on carousels and clips](#music-on-carousels-and-clips)). `POST .../creatives/{id}/renders` for a
 CLIP creative settles `SUCCEEDED` in the same call: one frame per placement the clip set covers. An
 explicit `clipMedia` key (other than `default`) is that frame's own placement; `default`'s media resolves
 to whichever registry placement's aspect ratio is closest to its own — among every registry placement, a
 story's aspect counts as `9x16` (so a 9:16 default lands on `9x16`, not `story`) — and only fills that
 placement in when nothing more specific already claims it. Each frame is a server-side `StorageService.copy`
-of the source media (and its poster, if it has one) into the render's own path; `spec` is always null for a
-CLIP response, since there is no local job to hand a spec to. `previewOnly` is refused with 422 — there is
+of the source media (and its poster, if it has one) into the render's own path; `spec` is null for such a
+CLIP response, since there is no local job to hand a spec to (a CLIP with new audio gets one). `previewOnly` is refused with 422 — there is
 no contact sheet to assemble from a single finished file. A frame carries `durationSeconds`/`hasAudio`/
 `posterUrl`/`contentType` alongside the usual width/height/size — null for a STILL frame, set for a CLIP
 one.
@@ -335,21 +335,24 @@ Readiness items: `slides`, `caption`, `altText` (the Creative's alt text, or alt
 `photoChecked` (every slide), all blocking; `mediaProvenance`; `aiDisclosure` (never blocking, shown
 when any slide is AI-generated); `state`.
 
-**Renders are assembled by the backend**, like CLIP: `POST .../renders` settles `SUCCEEDED` in the
+**Renders are assembled by the backend**, like CLIP (unless the carousel has a music track, see
+[Music on carousels and clips](#music-on-carousels-and-clips)): `POST .../renders` settles `SUCCEEDED` in the
 same call with one image frame per slide per placement, carrying `placementKey` and a 0-based
 `sequenceIndex`. `previewOnly` is refused with 422. `latestRenderThumbnailUrl` is slide 1 of `4x5`
-when present, else of the first placement. Because nothing renders locally, `render_creative` and
+when present, else of the first placement. Because nothing renders locally (without a track), `render_creative` and
 `commit_creative_draft` request the server render, and `attach_creative_to_post` does so itself when
 a CAROUSEL has no render yet.
 
 Attach picks one ordered list per destination (the full table, limits and the
 `MULTI_IMAGE_UNSUPPORTED` blocker are in [`publishing.md`](publishing.md#carousels-from-a-creative)):
 Instagram feed `4x5` else `1x1`; Facebook feed `1x1` else `4x5`; TikTok `9x16` else `4x5`. Reels,
-Stories and YouTube cannot take one.
+Stories and YouTube cannot take the photos (with a music track they can take the slideshow video
+instead).
 
 Draft flow: `preview_creative_draft({kind: "CAROUSEL", slidePaths: {"4x5": [paths...]}})` reads each
 local image's size and `.provenance.json` sidecar, asks `draft-spec` for violations and readiness,
-and returns one contact sheet per placement (slides in order); nothing is rendered or saved.
+and returns one contact sheet per placement (slides in order); nothing is saved. With a music track it
+also renders the slideshow video and returns its path (`slideshowVideoPath`).
 `commit_creative_draft` uploads the slides in order (labelled from the file stem), writes their ids
 into `slides`, and requests the server render. To turn an existing media set into a Creative, upload
 it in one call (`upload_creative_media` with `folder` or `files`, up to 100, three at a time, one
@@ -394,7 +397,7 @@ field path like `motion.preset`, the same shape every other Creative violation u
 400 from Jackson rejecting an unknown enum literal. A `photo` background reuses the Creative's own
 `photoId`; a `clip` background points `clipMediaId` at a `VIDEO` in the media library (uploaded, unblocked,
 same project, `clipStartSec` less than the clip's own duration). `audio` is
-`{source: clip|track|none, trackId?, volume?, fadeOutSec?}` — `track` needs an `AUDIO` media id; `clip`
+`{source: clip|track|none, trackId?, volume?, fadeOutSec?}` (CAROUSEL and CLIP take it too, below) — `track` needs an `AUDIO` media id; `clip`
 needs a `clip` background whose media actually has an audio track (`hasAudio=true`).
 
 **MOTION has no sequences.** A MOTION creative is one animated frame per placement; `sequenceKind` /
@@ -436,9 +439,72 @@ TikTok and an Instagram/Facebook reel exactly as a CLIP's would.
 
 **Readiness for MOTION** is STILL's photo-verdict checklist when the background is a photo, or the
 background clip's own source/licence when it is a clip (`clipProvenance`); plus the audio track's own
-source/licence when `audio.source` is `"track"` (`audioProvenance`) — a licensed music track needs the same
+source/licence when `audio.source` is `"track"` (`audioProvenance`, which now applies to a CAROUSEL or CLIP with a track too) — a licensed music track needs the same
 provenance discipline as a photo or a clip. Alt text is advisory (non-blocking) for MOTION, like CLIP,
 since both are video.
+
+## Music on carousels and clips {#music-on-carousels-and-clips}
+
+A library `AUDIO` track is no longer MOTION-only. `audio` is
+`{source: clip|track|mix|none, trackId?, volume?, fadeOutSec?}` on three kinds:
+
+| Kind | `source` | Notes |
+|---|---|---|
+| MOTION | `clip`, `track`, `none` | unchanged; volume 0.8, `fadeOutSec` 1 |
+| CAROUSEL | `track`, `none` | a track makes a 9:16 slideshow video beside the slide images; volume 1.0, `fadeOutSec` 1 |
+| CLIP | `clip` (default), `track` replaces its sound, `mix` plays the track under it, `none` mutes it | `mix` is refused (422 on `audio.source`) when the clip has no sound; track volume 1.0, mix volume 0.3, `fadeOutSec` 1 |
+
+`trackId` is required for `track` and `mix` and must be an uploaded, unblocked `AUDIO` media in the
+project. Going to review needs the track's `source` and `licence` recorded (`audioProvenance`, blocking) for
+every kind. Deleting or blocking a track a Creative uses is refused with 409, the same as a photo; the
+library's `creativeCount` for a track counts MOTION, CAROUSEL and CLIP Creatives using it, and `postCount`
+the Posts that link a render frame made with it.
+
+**Why a slideshow video.** No platform takes a chosen track with photos: Instagram's carousel container has
+no audio parameter, TikTok photo posts take only `autoAddMusic` (TikTok picks the song), Facebook photo
+posts have no audio, and YouTube has no photo post. So a carousel with a track gets a companion MP4 and each
+publish target chooses `carouselAs: photos | video` (see [`publishing.md`](publishing.md#carousels-from-a-creative)).
+
+**`slideshow`** (CAROUSEL only; refused on other kinds): `{slideDurations?: number[], zoom?: boolean}`.
+`slideDurations` has one entry per `9x16` slide, each 1 to 10 s; the default is 3 s for the first slide
+and 2.5 s for the rest (the TikTok-native pace, which keeps 20 slides under 60 s). `zoom` (default true) is a
+slow push-in on each slide. Slides cross-fade for a fixed 0.5 s, so the video lasts the sum of the
+durations minus 0.5 s per join. It is built from the `9x16` slide list (falling back to `default`).
+
+**Where it renders: on the user's machine, never the backend.** A render needs the local job when:
+
+- a CAROUSEL has `audio.source: track`;
+- a CLIP has `audio.source` of `track`, `mix` or `none`.
+
+Everything else keeps the instant server path (a CAROUSEL without a track, a CLIP with `clip` or no
+`audio`). For the local cases `POST .../renders` returns a `RUNNING` render with a `spec`, like MOTION. For a
+CAROUSEL the backend links the slide image frames at request time, as it always did; the local job then
+adds one more frame, placement `9x16` with no `index`, `video/mp4`, plus its poster, and completes the
+render. For a CLIP the job writes one video frame per placement (re-muxed with `-c:v copy` where it can) and
+a poster. `render_creative`, `commit_creative_draft` and `attach_creative_to_post` route this by the
+Creative's kind and audio (`needsLocalRender` in `conductor-tools/src/lib/creative-local-render.ts`), so a
+caller needs nothing extra beyond ffmpeg on that machine. The audio chain is the same for both: fade in
+0.5 s, fade out `fadeOutSec`, then a two-pass loudness normalisation to -14 LUFS with `volume` folded into
+the target and a -2 dBTP ceiling, AAC 128k at 48 kHz stereo; a track shorter than the video loops. MOTION
+keeps its current audio output unchanged (no normalisation).
+
+`CreativeResponse.renderedVideo` is the video frame of the latest succeeded, non-preview render of a CAROUSEL
+or CLIP (`renderId`, `frameId`, `placementKey`, `url`, `posterUrl`, `durationSeconds`, `hasAudio`), null
+otherwise. A carousel's `latestRenderThumbnailUrl` still prefers its first slide image over the video's
+poster. `get_creative` returns `audio`, `slideshow` and `renderedVideo`.
+
+**Preview.** `preview_creative_draft` for a CAROUSEL with `audio.trackId` or `audioPath` renders the slideshow
+MP4 on this machine and returns its path as `slideshowVideoPath` next to the contact sheet, so the person
+can watch it before approving. A CLIP still has no draft preview (look at the MP4 after `render_creative`).
+`audioPath` uploads on commit; pass the track's `source` and `licence` to `commit_creative_draft`.
+
+**Attach.** A CAROUSEL with a track and a `9x16` video frame resolves `carouselAs` per target at attach (an
+explicit value wins; otherwise `video` for TikTok, YouTube and any reel-format target, `photos` for Instagram
+and Facebook feed) and writes it into the target's options. `photos` sends the slide images only, never the
+video; `video` sends the one `9x16` MP4 on every platform (a single video on an Instagram or Facebook feed
+target already publishes as a Reel). A CAROUSEL's photo selection also excludes video frames now, which
+fixes TikTok photo posts receiving the MP4 beside the slides. With no track, the key is never written. A CLIP
+or MOTION with a new track is an ordinary video, so the video-aware mapping above applies unchanged.
 
 ## What this backend does not do
 

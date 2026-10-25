@@ -399,6 +399,28 @@ handed several items directly (a story sequence) publishes them as that many sto
 [Story sequences](#story-sequences). A one-slide carousel is a finished still and publishes as a
 single image. Order is content: slides attach in the order of their list.
 
+**A carousel with a music track.** No platform accepts a chosen track with photos: Instagram's carousel
+container has no audio parameter (`audio_name` is for reels only), TikTok photo posts take only
+`autoAddMusic` (TikTok picks the song), Facebook multi-photo posts have no audio, and YouTube has no
+photo post. So a `CAROUSEL` with `audio.source: track` also has a 9:16 slideshow video (see
+[`creatives.md`](creatives.md#music-on-carousels-and-clips)), and each target picks how it goes out with
+the `carouselAs` option:
+
+| `carouselAs` | Sent | Default for |
+|---|---|---|
+| `photos` | the slide images from the table above, silent; never the MP4 | Instagram feed, Facebook feed |
+| `video` | the one `9x16` MP4 with the track, on every platform (a single video on an Instagram or Facebook feed target already publishes as a Reel) | TikTok, YouTube, any reel-format target |
+
+Attach resolves it per target (an explicit value wins) and writes it into the target's options, so the
+UI, `list_publish_targets` and the confirmation table show it. Without a track the key is never written
+and nothing changes. If `video` is wanted but the Creative has no `9x16` video frame yet, the target falls
+back to photos with a skip message. Changing `carouselAs` later (`set_publish_targets`, or editing the
+target) re-selects that target's Creative media. Because `video` is a single video, the multi-image
+blocker above does not apply to it, and the video rules do: the preflight warns on a `video` target when
+the video is over 90 s or under 3 s for Facebook, under 3 s for Instagram, or over 60 s for YouTube (a
+Short over 60 s with a copyright claim, which a track brings, is blocked). TikTok's own duration cap
+applies as for any video. The same Creative's photo selection never includes the MP4.
+
 Meanwhile the two long-standing Facebook feed numbers move: **75 days** is the actual scheduling
 ceiling for a Page feed post (the doc previously said 30, which was never the real limit), and the
 new 29-day figure is a Reels-only cap layered under it.
@@ -462,6 +484,13 @@ with a warning naming why (`OPTION_IGNORED`).
 | TikTok | `videoCoverTimestampMs` | non-negative integer | video posts |
 | TikTok | `autoAddMusic` | boolean | photo posts |
 | TikTok | `photoCoverIndex` | zero-based integer | photo posts |
+| TikTok, Instagram, Facebook, YouTube | `carouselAs` | `photos` or `video` | media from a CAROUSEL Creative with a music track |
+
+`carouselAs` is Conductor's own key: it chooses between the slides and the slideshow video and is never
+sent to the platform. It is accepted without `OPTION_UNKNOWN`, checked against its two values
+(`OPTION_INVALID`), and dropped with `OPTION_IGNORED` when the target's media is not from such a
+Creative. `autoAddMusic` applies only to photo posts and is not how a chosen track gets onto a carousel:
+leave it unset unless the person picked it, since TikTok chooses the song.
 
 ## Firing on time
 

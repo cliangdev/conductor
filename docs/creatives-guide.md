@@ -227,7 +227,9 @@ in the pack:
   app. Text, motion graphics and real photos are exempt.
 - **Music.** Each platform's sound source and licence is named. Business accounts cannot use most
   trending tracks, so the team picks original audio or TikTok's Commercial Music Library (licensed
-  for TikTok only).
+  for TikTok only). A track you add to any video, slideshow or clip needs its source and licence
+  recorded in the library, and the licence has to cover every platform the video goes to. TikTok's
+  `autoAddMusic` only applies to photo posts, so leave it off unless you chose it.
 - **Claims.** Each factual or product claim must come from the brief, your Knowledge pages or an
   approved line; otherwise it is softened or cut.
 - **Third-party material.** Music, footage, logos, memes, likenesses, trademarks and parody of
@@ -282,6 +284,19 @@ and builds the slides on your machine with `compose_slideshow`.
   names the app ("search <App> in the App Store"); you also pin a comment, keep the link in your bio,
   and repost to Instagram Stories with a link sticker. The publish pack lists these. Turn on the
   platform's branded-content ("your brand") setting, and the AI label if a photo was generated.
+
+**Adding music.** No platform lets you pick a song for a photo post, so a slideshow with music is
+sent as a video instead. Ask Claude for "a slideshow with a music track". Claude first looks through
+your audio library and reuses a track that fits; a new file is added to the library with its source
+and licence first (never mixed into an MP4 somewhere else). The preview then also builds a 9:16
+slideshow video on your machine (it needs ffmpeg) and gives you its path to watch before you approve.
+Slides last 3 seconds for the first and 2.5 seconds for the rest, with a slow zoom and 0.5-second
+cross-fades; ask for different timing or no zoom. Keep it under about 60 seconds, since YouTube
+blocks a Short longer than that when it has a track, and Facebook reels run 3 to 90 seconds. When
+you attach it to a Post, each destination sends either the photos (silent) or the video: TikTok and
+YouTube default to the video, Instagram and Facebook feed to the photos. You can flip a destination
+between **photos** and **video** before it publishes; the confirmation table shows which one it
+is.
 
 Ads are different: use "Static ad" in `/conductor:creative` for a brand-layout ad.
 
@@ -359,6 +374,10 @@ audio.
 5. **Readiness** requires a caption and at least one clip (default or per-placement) before a Clip
    creative can go Ready — same idea as a Still creative's photo-and-headline requirement, just
    video-shaped.
+6. **Audio** (optional) — keep the clip's own sound (the default), **replace** it with a library
+   music track, **mix** a track in underneath it (the music dips while the clip speaks; only offered
+   when the clip has sound), or **mute** it. A track has a volume (1 for replace, 0.3 for mix) and a
+   fade out, and its source and licence must be recorded before the Creative can go Ready.
 
 ### Make a Motion creative
 
@@ -392,9 +411,11 @@ audio.
 
 ### Render it
 
-Rendering a Clip is instant — there's no local Playwright job, because there's nothing to draw: the
-server just copies your uploaded clip(s) into one render frame per placement they cover. Do it
-however's convenient:
+Rendering a Clip that keeps its own sound is instant — there's no local Playwright job, because
+there's nothing to draw: the server just copies your uploaded clip(s) into one render frame per
+placement they cover. A Clip with replaced, mixed or muted sound renders on your machine instead
+(ffmpeg makes the new MP4), the same way Motion does, so use Claude Code/Desktop or the CLI for it.
+Otherwise, do it however's convenient:
 
 - **Prepare for posting**, in the Renders panel on the Creative's editor page — a plain button, web
   only, no Claude Code needed.

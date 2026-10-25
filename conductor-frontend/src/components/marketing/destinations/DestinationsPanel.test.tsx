@@ -23,6 +23,7 @@ function actions(): DestinationActions {
     setTikTokOptions: vi.fn(),
     setInstagramOptions: vi.fn(),
     setYouTubeOptions: vi.fn(),
+    setCarouselAs: vi.fn(),
     setContent: vi.fn(),
     retry: vi.fn(async () => {}),
     completeManual: vi.fn(async () => {}),

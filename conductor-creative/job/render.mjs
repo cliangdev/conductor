@@ -20,11 +20,19 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { startServer } from './server.mjs';
 import { createApiTransport } from './transport.mjs';
 import { motionKeyTimes, normalizeMotionCreative } from '../motion.js';
+import {
+  audioSourceUrl, buildClipAudioArgs, buildClipAudioMeasureArgs, buildFfmpegArgs, buildSlideshowArgs,
+  buildSlideshowMeasureArgs, resolveSlideDurations, probeMedia, runFfmpeg, runLoudnormTwoPass, slideshowDuration,
+  SLIDE_FPS, SLIDE_H, SLIDE_W,
+} from './media.mjs';
+
+export { audioSourceUrl, buildFfmpegArgs };
+export * from './media.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = join(HERE, '..'); // conductor-creative/, the static root
@@ -110,70 +118,13 @@ function writeAsync(stream, chunk) {
   });
 }
 
-/* The URL ffmpeg should read audio from, per spec.creative.audio.source (see
- * README's Creative fields / motion.js's header comment): 'clip' reuses the
- * SAME clip already playing as the video background (its own recorded
- * sound); 'track' is a separate library audio file with its own signed URL.
- * `null` for 'none' or a spec with no audio at all. */
-function audioSourceUrl(creative) {
-  const audio = creative.audio;
-  if (!audio || audio.source === 'none') return null;
-  if (audio.source === 'clip') return creative.backgroundVideoUrl || null;
-  if (audio.source === 'track') return audio.trackUrl || null;
-  return null;
-}
-
-async function downloadToTemp(url, dir, name) {
+async function downloadToTemp(url, dir, name, what = 'audio') {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`failed to download audio (${url}): ${res.status}`);
+  if (!res.ok) throw new Error(`failed to download ${what} (${url}): ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   const path = join(dir, name);
   await writeFile(path, buf);
   return path;
-}
-
-/* ffmpeg argv for one MOTION placement: JPEGs piped in via stdin (image2pipe,
- * one concatenated JPEG stream — ffmpeg's own SOI/EOI framing needs no extra
- * delimiting), an optional audio input trimmed to durationSec, H.264/AAC,
- * faststart. `-movflags +faststart` needs a seekable output (it rewrites the
- * moov atom after the first encode pass), so `outPath` is a real temp file,
- * never stdout. */
-function buildFfmpegArgs({ fps, durationSec, audioPath, audioSource, clipStartSec, volume, fadeOutSec, outPath }) {
-  const args = ['-f', 'image2pipe', '-framerate', String(fps), '-i', '-'];
-  if (audioPath) {
-    if (audioSource === 'clip') {
-      args.push('-ss', String(clipStartSec || 0), '-t', String(durationSec), '-i', audioPath);
-    } else {
-      args.push('-t', String(durationSec), '-i', audioPath);
-    }
-  }
-  // The piped JPEGs are full-range (yuvj420p); platforms expect limited-range yuv420p, so convert the range
-  // explicitly — `-pix_fmt yuv420p` alone keeps the full-range flag and ffprobe still reports yuvj420p.
-  // Map streams explicitly. A clip used for its sound is an MP4 with its own video stream, and ffmpeg's
-  // default picks the highest-resolution video among the inputs — for a 4:5 or 1:1 frame that is the
-  // clip's 9:16 picture, so the output was the raw clip, not the rendered creative.
-  args.push('-map', '0:v:0');
-  if (audioPath) args.push('-map', '1:a:0?');
-  args.push('-vf', 'scale=in_range=pc:out_range=tv,format=yuv420p', '-color_range', 'tv');
-  args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', '-preset', 'veryfast', '-r', String(fps));
-  if (audioPath) {
-    // A clip's own sound plays as recorded — untouched. A library track is a music bed layered under
-    // the creative, so only IT gets volume control and a fade-out (README/the contract: "volume,
-    // afade=t=out..." is listed for 'track', not for 'clip').
-    if (audioSource === 'track') {
-      const v = volume != null ? volume : 0.8;
-      const fadeOut = fadeOutSec != null ? fadeOutSec : 1;
-      const filters = [`volume=${v}`];
-      if (fadeOut > 0) filters.push(`afade=t=out:st=${Math.max(0, durationSec - fadeOut)}:d=${fadeOut}`);
-      args.push('-af', filters.join(','));
-    }
-    // Bound the output by the video's own length, not `-shortest`: the audio file reads instantly while
-    // frames trickle in through the pipe, and `-shortest` could end the file as soon as audio hit EOF
-    // (it raced — one placement would finish, the next would be cut off mid-render).
-    args.push('-c:a', 'aac', '-b:a', '128k', '-t', String(durationSec));
-  }
-  args.push('-movflags', '+faststart', '-y', outPath);
-  return args;
 }
 
 /* Renders ONE placement's MOTION video: one frame.html page load, then N
@@ -297,6 +248,151 @@ async function renderMotionPlacement({ browser, origin, spec, placementKey, ffmp
   }
 }
 
+/* ── CAROUSEL slideshow / CLIP audio: ffmpeg only, no browser ───────────── */
+
+function sniffImageExt(buf) {
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'jpg';
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'png';
+  if (buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP') return 'webp';
+  return 'img';
+}
+
+async function downloadImage(url, dir, name) {
+  const path = await downloadToTemp(url, dir, name, 'slide image');
+  const ext = sniffImageExt((await readFile(path)).subarray(0, 12));
+  const renamed = `${path}.${ext}`;
+  await rename(path, renamed);
+  return renamed;
+}
+
+function requireFfmpeg(ffmpegPath, what) {
+  if (!ffmpegPath) {
+    throw new Error(
+      `${what} needs a local ffmpeg binary — pass \`ffmpegPath\` to run() (e.g. a system \`ffmpeg\` found via `
+      + '`which ffmpeg`, or a bundled ffmpeg-static build).'
+    );
+  }
+}
+
+/* The CAROUSEL's 9:16 slideshow video: slides + optional track -> one H.264/AAC mp4 and a JPEG poster of the first slide. */
+export async function renderSlideshow({ spec, ffmpegPath, log = () => {} }) {
+  requireFfmpeg(ffmpegPath, 'a CAROUSEL slideshow render');
+  const creative = spec.creative;
+  const slides = (creative.slides || []).map((s) => (typeof s === 'string' ? s : s.url)).filter(Boolean);
+  if (!slides.length) throw new Error('the slideshow spec lists no slides');
+  const slideshow = creative.slideshow || {};
+  const durations = resolveSlideDurations(slideshow.slideDurations, slides.length);
+  const audio = creative.audio && creative.audio.source === 'track' && creative.audio.trackUrl ? creative.audio : null;
+
+  const dir = await mkdtemp(join(tmpdir(), 'cc-slideshow-'));
+  try {
+    const slidePaths = [];
+    for (let i = 0; i < slides.length; i += 1) slidePaths.push(await downloadImage(slides[i], dir, `slide-${i}`));
+    const audioPath = audio ? await downloadToTemp(audio.trackUrl, dir, 'track') : null;
+    const outPath = join(dir, 'slideshow.mp4');
+    const encSpec = { slideDurations: durations, zoom: slideshow.zoom !== false, audio };
+    const inputs = { slidePaths, audioPath, outPath };
+    log(`rendering a ${slides.length}-slide slideshow (${slideshowDuration(durations)}s, ${audioPath ? 'with track' : 'silent'})`);
+    if (audioPath) {
+      await runLoudnormTwoPass({
+        ffmpegPath, log,
+        measureArgs: buildSlideshowMeasureArgs(encSpec, inputs),
+        buildEncodeArgs: (measured) => buildSlideshowArgs(encSpec, inputs, measured),
+      });
+    } else {
+      await runFfmpeg(ffmpegPath, buildSlideshowArgs(encSpec, inputs, null));
+    }
+    const posterPath = join(dir, 'poster.jpg');
+    await runFfmpeg(ffmpegPath, [
+      '-i', slidePaths[0], '-vf', `scale=${SLIDE_W}:${SLIDE_H}:force_original_aspect_ratio=increase,crop=${SLIDE_W}:${SLIDE_H}`,
+      '-frames:v', '1', '-q:v', '2', '-update', '1', '-y', posterPath,
+    ]);
+    return {
+      bytes: await readFile(outPath), posterBytes: await readFile(posterPath),
+      width: SLIDE_W, height: SLIDE_H, fps: SLIDE_FPS,
+      durationSeconds: slideshowDuration(durations), hasAudio: Boolean(audioPath),
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/* One CLIP placement: the clip's sound replaced (`track`), ducked under a track (`mix`) or removed (`none`). */
+export async function renderClipAudio({ spec, placement, ffmpegPath, log = () => {} }) {
+  requireFfmpeg(ffmpegPath, 'a CLIP audio render');
+  const audio = spec.creative.audio || {};
+  let source = audio.source;
+  if (!placement.clipUrl) throw new Error(`placement ${placement.key}: the spec has no clipUrl`);
+  if (source !== 'track' && source !== 'mix' && source !== 'none') throw new Error(`a CLIP render has nothing to do for audio source "${source}"`);
+  if (source !== 'none' && !audio.trackUrl) throw new Error('the spec has no trackUrl for the chosen audio source');
+
+  const dir = await mkdtemp(join(tmpdir(), 'cc-clip-'));
+  try {
+    const clipPath = await downloadToTemp(placement.clipUrl, dir, 'clip.mp4', 'clip');
+    const trackPath = source === 'none' ? null : await downloadToTemp(audio.trackUrl, dir, 'track');
+    const outPath = join(dir, 'out.mp4');
+    const info = await probeMedia(ffmpegPath, clipPath);
+    let encAudio = { ...audio, source };
+    if (source === 'mix' && (placement.clipHasAudio === false || !info.hasAudio)) {
+      log(`${placement.key}: the clip has no sound to mix under; using the track alone`);
+      source = 'track';
+      encAudio = { ...audio, source, volume: 1.0 };
+    }
+    let durationSec = placement.durationSec;
+    if (!(Number.isFinite(durationSec) && durationSec > 0)) {
+      if (!(info.durationSec > 0)) throw new Error(`placement ${placement.key}: the clip's duration is unknown`);
+      durationSec = Math.round((info.durationSec - (placement.clipStartSec || 0)) * 1000) / 1000;
+      log(`${placement.key}: duration probed from the clip: ${durationSec}s`);
+    }
+    if (!(durationSec > 0)) throw new Error(`placement ${placement.key}: clipStartSec is past the end of the clip`);
+    const encSpec = { audio: encAudio };
+    const p = { clipPath, trackPath, outPath, clipStartSec: placement.clipStartSec, durationSec };
+    log(`${placement.key}: clip audio ${source}, ${durationSec}s`);
+    if (source === 'none') {
+      await runFfmpeg(ffmpegPath, buildClipAudioArgs(encSpec, p, null));
+    } else {
+      await runLoudnormTwoPass({
+        ffmpegPath, log,
+        measureArgs: buildClipAudioMeasureArgs(encSpec, p),
+        buildEncodeArgs: (measured) => buildClipAudioArgs(encSpec, p, measured),
+      });
+    }
+    const posterPath = join(dir, 'poster.jpg');
+    await runFfmpeg(ffmpegPath, ['-i', outPath, '-frames:v', '1', '-q:v', '2', '-update', '1', '-y', posterPath]);
+    const outInfo = await probeMedia(ffmpegPath, outPath);
+    return {
+      bytes: await readFile(outPath), posterBytes: await readFile(posterPath),
+      width: outInfo.width || info.width || placement.width, height: outInfo.height || info.height || placement.height, durationSeconds: durationSec, hasAudio: source !== 'none',
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function runLocalVideo({ spec, transport, ffmpegPath, log }) {
+  const warnings = [];
+  if (spec.creative.kind === 'CAROUSEL') {
+    const placement = (spec.placements || [])[0] || { key: '9x16' };
+    const key = placement.key || '9x16';
+    const r = await renderSlideshow({ spec, ffmpegPath, log });
+    // No `index`: this is the one extra video frame beside the slide images (null sequence_index).
+    await transport.putFrame(key, { bytes: r.bytes, contentType: 'video/mp4', width: r.width, height: r.height, durationSeconds: r.durationSeconds, hasAudio: r.hasAudio });
+    await transport.putPoster(key, r.posterBytes);
+    log(`ok   ${key}  video/mp4  ${r.width}x${r.height}  ${r.durationSeconds}s  audio=${r.hasAudio}`);
+  } else {
+    const placements = spec.placements || [];
+    if (!placements.length) throw new Error('the render spec names no placements to render');
+    for (const placement of placements) {
+      const r = await renderClipAudio({ spec, placement, ffmpegPath, log });
+      await transport.putFrame(placement.key, { bytes: r.bytes, contentType: 'video/mp4', width: r.width, height: r.height, durationSeconds: r.durationSeconds, hasAudio: r.hasAudio });
+      await transport.putPoster(placement.key, r.posterBytes);
+      log(`ok   ${placement.key}  video/mp4  ${r.width}x${r.height}  ${r.durationSeconds}s  audio=${r.hasAudio}`);
+    }
+  }
+  await transport.complete(warnings);
+  log(`complete (${warnings.length} warning(s))`);
+}
+
 /* ── Draft preview: the full render's per-placement checks, without the frames ───────────────── */
 
 /* A draft preview renders only the contact sheet (sheet.html), which never runs the assertions — a
@@ -371,7 +467,7 @@ async function checkFrame({ browser, origin, spec, frame, fps, log }) {
  *   packageRoot       static root to serve (default: this package's own root).
  *   browserFactory    () => Promise<Browser> (default: launches real Playwright chromium).
  *   ffmpegPath        a local ffmpeg binary's path. Required for a MOTION
- *                     render (not previewOnly) — ignored otherwise.
+ *                     render (not previewOnly) and for every CAROUSEL/CLIP render (previews too) — ignored otherwise.
  *   fps               frames per second for a MOTION render (default 30).
  *   checkPlacements   true: when the spec is `previewOnly`, also run the full render's per-placement
  *                     assertions (see checkFrame above) and pass them to `transport.complete(warnings,
@@ -391,6 +487,19 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
     log(`FAIL ${err.message}`);
     await reportFailure(transport, err.message, log);
     return false;
+  }
+
+  // CAROUSEL (slideshow) and CLIP (audio swap) are ffmpeg-only: no static server, no browser. A previewOnly
+  // spec still produces the mp4 — the draft preview has to be able to watch it.
+  if (spec && spec.creative && (spec.creative.kind === 'CAROUSEL' || spec.creative.kind === 'CLIP')) {
+    try {
+      await runLocalVideo({ spec, transport, ffmpegPath, log });
+      return true;
+    } catch (err) {
+      log(`FAIL ${err.message}`);
+      await reportFailure(transport, err.message, log);
+      return false;
+    }
   }
 
   const { server, origin } = await startServer(packageRoot);

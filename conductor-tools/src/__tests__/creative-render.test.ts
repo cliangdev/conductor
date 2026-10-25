@@ -148,3 +148,59 @@ describe('renderCreative MOTION routing', () => {
     expect(resolveFfmpegPathMock).not.toHaveBeenCalled()
   })
 })
+
+describe('renderCreative CAROUSEL / CLIP audio routing', () => {
+  it('sends a plain CAROUSEL, a CAROUSEL with source none, and a CLIP with its own sound to the server', async () => {
+    for (const creative of [
+      { kind: 'CAROUSEL' },
+      { kind: 'CAROUSEL', audio: { source: 'none' } },
+      { kind: 'CLIP' },
+      { kind: 'CLIP', audio: { source: 'clip' } },
+    ]) {
+      mocked(apiGet).mockResolvedValueOnce(creative)
+      mocked(apiPost).mockResolvedValueOnce({ id: 'r', state: 'SUCCEEDED', frames: [] })
+      await renderCreative({ creativeId: 'c1' }, config)
+    }
+    expect(apiPost).toHaveBeenCalledTimes(4)
+    expect(resolveFfmpegPathMock).not.toHaveBeenCalled()
+    expect(findBrowserFactoryMock).not.toHaveBeenCalled()
+  })
+
+  it('renders a CAROUSEL with a track locally with ffmpeg, never through the server POST', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ kind: 'CAROUSEL', audio: { source: 'track', trackId: 't1' } })
+    resolveFfmpegPathMock.mockResolvedValueOnce('/usr/local/bin/ffmpeg')
+
+    await expect(renderCreative({ creativeId: 'c1' }, config)).rejects.toThrow(PACKAGING_BUG_ERROR)
+
+    expect(resolveFfmpegPathMock).toHaveBeenCalledTimes(1)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it.each(['track', 'mix', 'none'])('renders a CLIP with audio %s locally with ffmpeg', async (source) => {
+    mocked(apiGet).mockResolvedValueOnce({ kind: 'CLIP', audio: { source } })
+    resolveFfmpegPathMock.mockResolvedValueOnce('/usr/local/bin/ffmpeg')
+
+    await expect(renderCreative({ creativeId: 'c1' }, config)).rejects.toThrow(PACKAGING_BUG_ERROR)
+
+    expect(resolveFfmpegPathMock).toHaveBeenCalledTimes(1)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it('reports a missing ffmpeg for a local CLIP render without starting a render', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ kind: 'CLIP', audio: { source: 'mix' } })
+    resolveFfmpegPathMock.mockRejectedValueOnce(new Error('No ffmpeg could be found to process this media.'))
+
+    const result = await renderCreative({ creativeId: 'c1' }, config)
+
+    expect(result).toEqual({ ok: false, error: 'No ffmpeg could be found to process this media.', frames: [] })
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it('keeps previewOnly on the server path so its refusal is relayed', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ kind: 'CAROUSEL', audio: { source: 'track' } })
+    mocked(apiPost).mockRejectedValueOnce(new ApiError(422, 'Preview renders are not supported'))
+    const result = await renderCreative({ creativeId: 'c1', previewOnly: true }, config)
+    expect(result.ok).toBe(false)
+    expect(resolveFfmpegPathMock).not.toHaveBeenCalled()
+  })
+})

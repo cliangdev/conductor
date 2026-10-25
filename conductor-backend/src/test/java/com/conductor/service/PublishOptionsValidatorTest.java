@@ -764,6 +764,126 @@ class PublishOptionsValidatorTest {
         });
     }
 
+    // --- carouselAs: a Conductor-only option (music on carousels) ---
+
+    private com.conductor.creative.CreativeRenderFrameRepository frameRepository;
+
+    /** Re-builds the validator with the repositories that tell it which Creative a file came from. */
+    private void withCreativeLookups() {
+        frameRepository = Mockito.mock(com.conductor.creative.CreativeRenderFrameRepository.class);
+        validator = new PublishOptionsValidator(new PublishPlatformRegistry(), postPublishTargetRepository,
+                connectionRepository, publishConsentService, new ObjectMapper(),
+                new PublishTargetMediaResolver(assetRepository, targetAssetRepository), assetRepository,
+                frameRepository);
+    }
+
+    /** {@code asset} is a frame of a CAROUSEL Creative whose audio is (or is not) a track. */
+    private void fromCarousel(Asset asset, boolean withTrack) {
+        asset.setCreativeFrameId("frame-" + asset.getId());
+        com.fasterxml.jackson.databind.JsonNode audio = withTrack
+                ? new ObjectMapper().createObjectNode().put("source", "track").put("trackId", "t1") : null;
+        when(frameRepository.findCreativeKindAndAudioByIdIn(any())).thenReturn(List.<Object[]>of(
+                new Object[]{asset.getCreativeFrameId(), com.conductor.creative.Creative.KIND_CAROUSEL, audio}));
+    }
+
+    @Test
+    void carouselAsIsAKnownOptionOnTheFourPlatformsAndUnknownElsewhere() {
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"carouselAs\":\"photos\"}"));
+        assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW"))).noneMatch(f -> "OPTION_UNKNOWN".equals(f.code()));
+
+        for (String platform : List.of("tiktok", "facebook", "youtube")) {
+            givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+            givenTargets(target(platform, "conn-" + platform, "acct", "tiktok".equals(platform)
+                    ? "{\"carouselAs\":\"video\",\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}" : "{\"carouselAs\":\"video\"}"));
+            assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW")))
+                    .noneMatch(f -> "OPTION_UNKNOWN".equals(f.code()));
+        }
+    }
+
+    @Test
+    void carouselAsMustBePhotosOrVideo() {
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"carouselAs\":\"slideshow\"}"));
+
+        assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW"))).anySatisfy(f -> {
+            assertThat(f.code()).isEqualTo("OPTION_INVALID");
+            assertThat(f.blocks()).isTrue();
+            assertThat(f.message()).contains("carouselAs").contains("photos").contains("video");
+        });
+    }
+
+    @Test
+    void carouselAsOnMediaThatIsNotACarouselWithATrackIsIgnoredWithAWarning() {
+        withCreativeLookups();
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"carouselAs\":\"video\"}"));
+        Asset a = image("a.jpg");
+        givenAssets(a);
+        givenSelection(lastTarget(), a);
+        fromCarousel(a, false);
+
+        assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW"))).anySatisfy(f -> {
+            assertThat(f.code()).isEqualTo("OPTION_IGNORED");
+            assertThat(f.blocks()).isFalse();
+            assertThat(f.message()).contains("carouselAs").contains("music track");
+        });
+    }
+
+    @Test
+    void carouselAsOnACarouselWithATrackIsAcceptedAndWarnsOnlyOnVideoLengthsThePlatformRefuses() {
+        withCreativeLookups();
+        givenTargets(target("youtube", "conn-yt", "Acme Channel", "{\"carouselAs\":\"video\"}"));
+        Asset mp4 = video("slideshow.mp4");
+        mp4.setDurationSeconds(new java.math.BigDecimal("75"));
+        givenAssets(mp4);
+        givenSelection(lastTarget(), mp4);
+        fromCarousel(mp4, true);
+
+        List<com.conductor.service.publish.PublishFinding> findings = validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+        assertThat(findings).noneMatch(f -> "OPTION_IGNORED".equals(f.code()));
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.code()).isEqualTo("VIDEO_LENGTH");
+            assertThat(f.blocks()).isFalse();
+            assertThat(f.message()).contains("75 second").contains("60");
+        });
+
+        mp4.setDurationSeconds(new java.math.BigDecimal("45"));
+        assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW"))).noneMatch(f -> "VIDEO_LENGTH".equals(f.code()));
+    }
+
+    @Test
+    void aFacebookOrInstagramSlideshowVideoOutsideReelLengthWarns() {
+        withCreativeLookups();
+        givenTargets(target("facebook", "conn-fb", "Acme Page", "{\"carouselAs\":\"video\"}"));
+        Asset mp4 = video("slideshow.mp4");
+        mp4.setDurationSeconds(new java.math.BigDecimal("100"));
+        givenAssets(mp4);
+        givenSelection(lastTarget(), mp4);
+        fromCarousel(mp4, true);
+        assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW")))
+                .anySatisfy(f -> assertThat(f.code()).isEqualTo("VIDEO_LENGTH"));
+
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"carouselAs\":\"video\"}"));
+        mp4.setDurationSeconds(new java.math.BigDecimal("2"));
+        givenSelection(lastTarget(), mp4);
+        assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW")))
+                .anySatisfy(f -> assertThat(f.code()).isEqualTo("VIDEO_LENGTH"));
+    }
+
+    @Test
+    void theCarouselFactsAreReadOncePerCheckNoMatterHowManyTargetsSetCarouselAs() {
+        withCreativeLookups();
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"carouselAs\":\"video\"}"),
+                target("youtube", "conn-yt", "Acme Channel", "{\"carouselAs\":\"video\"}"),
+                target("facebook", "conn-fb", "Acme Page", "{\"carouselAs\":\"photos\"}"));
+        Asset mp4 = video("slideshow.mp4");
+        mp4.setDurationSeconds(new java.math.BigDecimal("30"));
+        givenAssets(mp4);
+        fromCarousel(mp4, true);
+
+        validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+
+        verify(frameRepository, org.mockito.Mockito.times(1)).findCreativeKindAndAudioByIdIn(any());
+    }
+
     // --- helpers for the option-type and ignored-option tests ---
 
     private PostPublishTarget lastTargetRef;

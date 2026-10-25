@@ -285,12 +285,19 @@ itself and check it with the person before uploading.
    `{"default": mediaId}`. A different cut per placement (e.g. a square edit for feed, a vertical one
    for Reels): `{"9x16": mediaId, "4x5": mediaId}` — `default` still covers any placement without its
    own entry. A reel takes exactly one video, so don't split a reel-eligible placement across two.
-3. `render_creative` — instant for a CLIP (the backend assembles the frames; nothing renders locally
-   here the way a STILL creative's browser-driven render does).
+3. `render_creative` — instant for a CLIP that keeps its own sound (the backend assembles the frames;
+   nothing renders in a browser). With `audio` (below) it encodes a new MP4 on this machine with
+   ffmpeg instead.
 4. `preview_creative` — returns a small poster sheet across placements instead of the STILL contact
    sheet, plus each placement's duration. Still worth a look: a poster is one frame, not the whole
    cut, so open the actual video before calling a rough or misframed clip done.
 5. `attach_creative_to_post`, same as any other Creative.
+
+Music on a CLIP is `audio` on the Creative (see "Music" below): `source: "clip"` keeps the clip's
+own sound (the default), `"track"` replaces it with a library track, `"mix"` plays the track under
+the clip's sound (`volume` defaults to 0.3 and the music ducks under the clip's sound; the clip must have sound,
+or `mix` is refused), `"none"` mutes it. Set it on `create_creative`/`update_creative`, then
+`render_creative`; look at the new MP4 before attaching, since a poster is one frame.
 
 Mind each destination's own duration limit (per docs/publishing.md) — a clip that's fine on one
 platform may get rejected or trimmed on another; check before attaching to a Post that fans out
@@ -323,6 +330,12 @@ thing).
    within 2% (4x5 = 1080x1350, 9x16 = 1080x1920, 1x1 = 1080x1080); a mismatch comes back as a
    `slideAspect` violation, so fix the image rather than the list. Limits: 10 slides for 4x5 and
    1x1, 35 for 9x16 (TikTok photo posts); aim for 5 to 7.
+   With a music track, `audio: {source: "track", trackId}` plus `audioPath` for a file not yet in the
+   library (see "Music" below) also renders a 9:16 slideshow MP4 here: `preview_creative_draft`
+   returns it as `slideshowVideoPath` beside the contact sheet, so watch it with the person, not
+   just the sheet. `slideshow: {slideDurations, zoom}` sets the pace (one entry per 9x16 slide, 1 to
+   10 s; default 3 s for the first slide and 2.5 s for the rest) and the slow push-in (default on).
+   Keep the total short: a 20-slide default runs about 40 s.
 4. Alt text: `slideAltText` has one entry per slide, in order (or a single Creative `altText`); readiness
    blocks without it. Slides are never rewritten, so check them for burned-in text, logos and claims
    and approve with `photoChecked: true`.
@@ -330,7 +343,12 @@ thing).
    `attach_creative_to_post` (it renders first if needed). The mapping: Instagram feed gets `4x5`
    (else `1x1`), Facebook feed `1x1` (else `4x5`), TikTok `9x16` (else `4x5`). Reels, Stories and
    YouTube can't take a multi-image post; the preflight blocks with `MULTI_IMAGE_UNSUPPORTED`, so
-   switch that destination to Feed or remove it.
+   switch that destination to Feed or remove it. A carousel with a track is different: no platform
+   accepts a chosen track on photos, so each destination sends it as `carouselAs: "photos"`
+   (silent) or `"video"` (the slideshow MP4 with the track). Attach defaults to video for TikTok
+   and YouTube and photos for Instagram and Facebook feed, and writes the choice into the target's
+   options; change it with `set_publish_targets` (publisher skill). Mind each platform's length limit
+   for the video.
 
 ## Short videos from a photo or clip
 
@@ -353,8 +371,8 @@ destination rewards video over an image.
    - `motion.endCard` — default true: the last 2 seconds hold the finished composition, CTA
      included, regardless of how short the preset's own entrance would otherwise leave it.
    - `audio` — `source: "clip"` (the background clip's own recorded sound — the default when there
-     is one), `"track"` (a separate library track: `trackId` from `upload_creative_media`, plus
-     `volume` and `fadeOutSec`), or `"none"`.
+     is one), `"track"` (a library track: `trackId`, plus `volume` and `fadeOutSec`; see "Music"
+     below), or `"none"`.
 
    A MOTION Creative is one animated frame per placement: it cannot also be a story or a carousel
    (`sequenceKind`/`sequence`) — that is refused with a 422 (`motionNoSequence`). For several beats, make
@@ -368,9 +386,28 @@ destination rewards video over an image.
    machine fails with a clear message naming how to get one rather than silently producing nothing.
 5. `attach_creative_to_post`, same as any Creative — one MP4 per placement.
 
-A library music track's `licence` has to be recorded on upload (same as a photo's provenance) — the
-readiness checklist blocks a MOTION Creative on it whenever `audio.source` is `"track"`. A reel or
-other vertical placement takes exactly one video, same as a CLIP.
+A reel or other vertical placement takes exactly one video, same as a CLIP.
+
+## Music
+
+Music works on a MOTION (`clip`, `track` or `none`), a CAROUSEL (`track`, which makes a slideshow video) and
+a CLIP (`track`, `mix`, `none`), through `audio: {source, trackId, volume, fadeOutSec}`. The rules
+are the same for all three:
+
+- Before making a video or slideshow with music, call `list_creative_media({kind: "AUDIO"})` and
+  reuse a library track that fits.
+- A new music file goes into the library first with `upload_creative_media`, with `source` (where it
+  came from) and `licence` (the terms, e.g. "Own work", "Licensed for social use"). Then reference
+  it by `trackId`. With `audioPath` the file uploads on commit, so pass `source` and `licence` to
+  `commit_creative_draft` (or keep a `.provenance.json` sidecar beside it).
+- Readiness blocks the Creative (`audioProvenance`) until the track's `source` and `licence` are
+  recorded, for every kind. Use only music the person has the right to use on the destination
+  platforms.
+- Never bake music into an MP4 outside Conductor when `audio` can do it: the track then never reaches
+  the library, its licence is unrecorded, and the Creative can't change or drop it later.
+- Volume defaults: 0.8 for MOTION, 1 for a CAROUSEL or a CLIP `track`, 0.3 for `mix`. A CAROUSEL or CLIP encode
+  normalises loudness (MOTION does not); if the level is still wrong, adjust `volume` rather than re-exporting.
+- Rendering runs on this machine and needs ffmpeg; without it the tool fails with a clear message.
 
 ## Cleaning up
 
