@@ -17,6 +17,8 @@ on:
     paths:
       - 'runner-image/Dockerfile.render'
       - 'runner-image/conductor-step-entrypoint.mjs'
+      - 'runner-image/runner-protocol.mjs'
+      - 'runner-image/runner-protocol.selftest.mjs'
       - 'runner-image/step-entrypoint.selftest.mjs'
       - '.github/workflows/publish-render-image.yml'
   workflow_dispatch:
@@ -56,7 +58,9 @@ jobs:
 
       - name: Syntax-check and self-test the step entrypoint
         run: |
+          node --check runner-image/runner-protocol.mjs
           node --check runner-image/conductor-step-entrypoint.mjs
+          node runner-image/runner-protocol.selftest.mjs
           node runner-image/step-entrypoint.selftest.mjs
 
       - name: Resolve the CLI version to install

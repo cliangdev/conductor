@@ -11,6 +11,16 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  COMPLETE_POST_RETRIES,
+  armTimeout,
+  buildSecrets as sharedBuildSecrets,
+  createLineSplitter,
+  createLogBatcher,
+  makeLocalLog,
+  postJson as sharedPostJson,
+  scrub,
+} from './runner-protocol.mjs';
 
 // Root of the container's Conductor filesystem contract. Always /conductor in production —
 // overridable only so entrypoint.selftest.mjs can run outside a container, on a real filesystem.
@@ -23,9 +33,6 @@ const MCP_CONFIG_PATH = path.join(RUNNER_ROOT, 'mcp-config.json');
 // downloads into it here regardless (idempotent overwrite), since it's the only option at all on
 // Cloud Run, which has no shared host volume.
 const ARTIFACTS_DIR = process.env.CONDUCTOR_ARTIFACTS_DIR || path.join(RUNNER_ROOT, 'artifacts');
-const LOG_FLUSH_INTERVAL_MS = 2000;
-const COMPLETE_POST_RETRIES = 3;
-const LOG_POST_RETRIES = 1;
 const KILL_GRACE_MS = 10_000;
 
 const EXIT = {
@@ -53,50 +60,14 @@ const REQUIRED_VARS = [
   'CONDUCTOR_STEP_COMPLETE_URL',
 ];
 
+const localLog = makeLocalLog('[conductor-claude-entrypoint]');
+const postJson = (url, token, body, opts = {}) => sharedPostJson(url, token, body, { ...opts, log: localLog });
+
 /** Values scrubbed from every log line before it's posted or printed. Never log these raw. */
 function buildSecrets(env) {
-  return [env.CONDUCTOR_RUN_TOKEN, env.CONDUCTOR_API_KEY, env.ANTHROPIC_API_KEY, env.CLAUDE_CODE_OAUTH_TOKEN]
-    .filter((v) => typeof v === 'string' && v.length > 0);
-}
-
-function scrub(line, secrets) {
-  let out = line;
-  for (const secret of secrets) {
-    out = out.split(secret).join('[REDACTED]');
-  }
-  return out;
-}
-
-function localLog(...args) {
-  // Local stdout only — never a secret-bearing value; callers must scrub first.
-  console.log('[conductor-claude-entrypoint]', ...args);
-}
-
-async function postJson(url, token, body, { retries = 0 } = {}) {
-  let lastErr;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return true;
-    } catch (err) {
-      lastErr = err;
-      if (attempt < retries) await sleep(500 * (attempt + 1));
-    }
-  }
-  localLog('post failed:', url, String(lastErr));
-  return false;
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return sharedBuildSecrets(env, {
+    names: ['CONDUCTOR_RUN_TOKEN', 'CONDUCTOR_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'],
+  });
 }
 
 /**
@@ -369,27 +340,34 @@ function buildClaudeInvocation(env) {
  */
 function runClaude({ childEnv, args }, env, secrets, initialLines = []) {
   return new Promise((resolve) => {
-    // Line buffers per stream — stdout carries the stream-json events (we watch for `result`),
-    // stderr is forwarded as-is. Both feed the same pending-lines queue for log posting.
-    const lineBuffers = { stdout: '', stderr: '' };
+    // stdout carries the stream-json events (we watch for `result`), stderr is forwarded as-is.
+    // Both feed the same log batcher.
     const workerJobId = extractWorkerJobId(env.CONDUCTOR_STEP_COMPLETE_URL);
-    let pendingLines = [...initialLines];
-    let droppedLogCount = 0;
+    // workerJobId is omitted (not just falsy) when extraction fails — JSON.stringify drops
+    // undefined-valued keys, and the backend treats a missing field as optional.
+    const logs = createLogBatcher({
+      url: env.CONDUCTOR_LOG_CHUNK_URL,
+      token: env.CONDUCTOR_RUN_TOKEN,
+      workerJobId,
+      secrets,
+      log: localLog,
+      initialLines,
+    });
     let resultEvent = null;
     let timedOut = false;
 
     const pushStdoutLine = (line) => {
       const event = tryParseEvent(line);
       if (!event) {
-        pendingLines.push(line); // malformed JSON — raw passthrough, nothing silently lost
+        logs.push(line); // malformed JSON — raw passthrough, nothing silently lost
         return;
       }
       if (event.type === 'result') resultEvent = event; // classification only, untouched by translation
       const translated = translateEvent(event);
       if (translated === null) {
-        pendingLines.push(line); // recognized-but-unhandled shape — raw passthrough
+        logs.push(line); // recognized-but-unhandled shape — raw passthrough
       } else {
-        pendingLines.push(...translated);
+        logs.push(...translated);
       }
     };
 
@@ -403,69 +381,39 @@ function runClaude({ childEnv, args }, env, secrets, initialLines = []) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    const flushLogs = async () => {
-      if (pendingLines.length === 0) return;
-      const lines = pendingLines;
-      pendingLines = [];
-      const ok = await postJson(
-        env.CONDUCTOR_LOG_CHUNK_URL,
-        env.CONDUCTOR_RUN_TOKEN,
-        // workerJobId is omitted (not just falsy) when extraction fails — JSON.stringify drops
-        // undefined-valued keys, and the backend treats a missing field as optional.
-        { workerJobId, lines: lines.map((l) => scrub(l, secrets)) },
-        { retries: LOG_POST_RETRIES },
-      );
-      if (!ok) droppedLogCount += lines.length;
-    };
-    const flushTimer = setInterval(() => flushLogs().catch(() => {}), LOG_FLUSH_INTERVAL_MS);
-
-    const onData = (streamName) => (chunk) => {
-      lineBuffers[streamName] += chunk.toString('utf8');
-      const lines = lineBuffers[streamName].split('\n');
-      lineBuffers[streamName] = lines.pop(); // trailing partial line stays buffered
-      for (const line of lines) {
-        if (line.trim() === '') continue;
-        if (streamName === 'stdout') {
-          pushStdoutLine(line);
-        } else {
-          pendingLines.push(line);
-        }
-      }
-    };
-    child.stdout.on('data', onData('stdout'));
-    child.stderr.on('data', onData('stderr'));
+    const stdout = createLineSplitter(pushStdoutLine);
+    const stderr = createLineSplitter((line) => logs.push(line));
+    child.stdout.on('data', (chunk) => stdout.write(chunk));
+    child.stderr.on('data', (chunk) => stderr.write(chunk));
 
     const timeoutMinutes = Number(env.CONDUCTOR_TIMEOUT_MINUTES) > 0 ? Number(env.CONDUCTOR_TIMEOUT_MINUTES) : 30;
-    const hardTimer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // already exited
-        }
-      }, KILL_GRACE_MS);
-    }, timeoutMinutes * 60_000);
+    const timeout = armTimeout({
+      minutes: timeoutMinutes,
+      graceMs: KILL_GRACE_MS,
+      kill: (signal) => child.kill(signal),
+      onTimeout: () => {
+        timedOut = true;
+      },
+    });
 
     child.on('close', async (code, signal) => {
-      clearInterval(flushTimer);
-      clearTimeout(hardTimer);
+      logs.stop();
+      timeout.clear();
       // Flush any trailing partial line plus whatever's still pending.
-      if (lineBuffers.stdout.trim()) pushStdoutLine(lineBuffers.stdout);
-      if (lineBuffers.stderr.trim()) pendingLines.push(lineBuffers.stderr);
-      await flushLogs();
-      if (droppedLogCount > 0) {
-        localLog(`dropped ${droppedLogCount} log lines after repeated post failures`);
+      stdout.end();
+      stderr.end();
+      await logs.flush();
+      if (logs.dropped > 0) {
+        localLog(`dropped ${logs.dropped} log lines after repeated post failures`);
       }
       resolve({ code, signal, resultEvent, timedOut });
     });
 
     child.on('error', async (err) => {
-      clearInterval(flushTimer);
-      clearTimeout(hardTimer);
-      pendingLines.push(`[spawn error] ${err.message}`);
-      await flushLogs();
+      logs.stop();
+      timeout.clear();
+      logs.push(`[spawn error] ${err.message}`);
+      await logs.flush();
       resolve({ code: null, signal: null, resultEvent: null, timedOut: false, spawnError: err });
     });
   });

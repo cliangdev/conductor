@@ -8,6 +8,8 @@ on:
     paths:
       - 'runner-image/Dockerfile.claude-runner'
       - 'runner-image/conductor-claude-entrypoint.mjs'
+      - 'runner-image/runner-protocol.mjs'
+      - 'runner-image/runner-protocol.selftest.mjs'
       - 'runner-image/entrypoint.selftest.mjs'
       - '.github/workflows/publish-claude-runner.yml'
 
@@ -40,7 +42,9 @@ jobs:
 
       - name: Lint entrypoint (syntax + self-test)
         run: |
+          node --check runner-image/runner-protocol.mjs
           node --check runner-image/conductor-claude-entrypoint.mjs
+          node runner-image/runner-protocol.selftest.mjs
           node runner-image/entrypoint.selftest.mjs
 
       - name: Short SHA

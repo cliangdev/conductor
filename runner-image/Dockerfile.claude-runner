@@ -80,6 +80,8 @@ RUN useradd -m -s /bin/bash runner
 RUN mkdir -p /conductor/workspace /conductor/outputs /conductor/inputs \
     && chown -R runner:runner /conductor
 COPY --chmod=755 conductor-claude-entrypoint.mjs /usr/local/bin/conductor-claude-entrypoint
+# Shared protocol helpers, imported by the entrypoint as ./runner-protocol.mjs (same directory).
+COPY --chmod=644 runner-protocol.mjs /usr/local/bin/runner-protocol.mjs
 
 USER runner
 WORKDIR /conductor/workspace

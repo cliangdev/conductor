@@ -15,10 +15,17 @@
 // Zero npm dependencies: only Node built-ins.
 
 import { spawn } from 'node:child_process';
+import {
+  COMPLETE_POST_RETRIES,
+  armTimeout,
+  buildSecrets as sharedBuildSecrets,
+  createLineSplitter,
+  createLogBatcher,
+  makeLocalLog,
+  postJson as sharedPostJson,
+  scrub,
+} from './runner-protocol.mjs';
 
-const LOG_FLUSH_INTERVAL_MS = 2000;
-const COMPLETE_POST_RETRIES = 3;
-const LOG_POST_RETRIES = 1;
 const KILL_GRACE_MS = Number(process.env.CONDUCTOR_KILL_GRACE_MS) > 0 ? Number(process.env.CONDUCTOR_KILL_GRACE_MS) : 10_000;
 const DEFAULT_TIMEOUT_MINUTES = 30;
 
@@ -36,55 +43,9 @@ const REQUIRED_VARS = [
   'CONDUCTOR_STEP_COMPLETE_URL',
 ];
 
-/** Values scrubbed from every log line before it is posted or printed. Never log these raw. */
-function buildSecrets(env) {
-  const secrets = new Set();
-  for (const name of ['CONDUCTOR_RUN_TOKEN', 'CONDUCTOR_API_KEY']) {
-    if (typeof env[name] === 'string' && env[name].length > 0) secrets.add(env[name]);
-  }
-  for (const [name, value] of Object.entries(env)) {
-    if (/KEY|TOKEN|SECRET|PASSWORD/i.test(name) && typeof value === 'string' && value.length > 16) {
-      secrets.add(value);
-    }
-  }
-  // Longest first so a secret that contains another is redacted whole.
-  return [...secrets].sort((a, b) => b.length - a.length);
-}
-
-function scrub(line, secrets) {
-  let out = line;
-  for (const secret of secrets) out = out.split(secret).join('[REDACTED]');
-  return out;
-}
-
-function localLog(...args) {
-  // Local stdout only; callers must scrub first.
-  console.log('[conductor-step-entrypoint]', ...args);
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function postJson(url, token, body, { retries = 0 } = {}) {
-  let lastErr;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return true;
-    } catch (err) {
-      lastErr = err;
-      if (attempt < retries) await sleep(500 * (attempt + 1));
-    }
-  }
-  localLog('post failed:', url, String(lastErr));
-  return false;
-}
+const localLog = makeLocalLog('[conductor-step-entrypoint]');
+const buildSecrets = (env) => sharedBuildSecrets(env, { names: ['CONDUCTOR_RUN_TOKEN', 'CONDUCTOR_API_KEY'], pattern: true });
+const postJson = (url, token, body, opts = {}) => sharedPostJson(url, token, body, { ...opts, log: localLog });
 
 async function reportComplete(env, exitCode, errorReason) {
   return postJson(
@@ -98,10 +59,7 @@ async function reportComplete(env, exitCode, errorReason) {
 /** Runs the script; resolves with { code, timedOut } once the child and its log flush are done. */
 function runScript(env, secrets) {
   return new Promise((resolve) => {
-    let pendingLines = [];
-    let droppedLogCount = 0;
     let timedOut = false;
-    const lineBuffers = { stdout: '', stderr: '' };
 
     // Own process group so a timeout kills the whole tree (the script may fork browsers, ffmpeg...).
     const child = spawn('sh', ['-c', env.CONDUCTOR_STEP_RUN], {
@@ -122,47 +80,38 @@ function runScript(env, secrets) {
       }
     };
 
-    const flushLogs = async () => {
-      if (pendingLines.length === 0) return;
-      const lines = pendingLines;
-      pendingLines = [];
-      const ok = await postJson(
-        env.CONDUCTOR_LOG_CHUNK_URL,
-        env.CONDUCTOR_RUN_TOKEN,
-        { workerJobId: env.CONDUCTOR_WORKER_JOB_ID, lines: lines.map((l) => scrub(l, secrets)) },
-        { retries: LOG_POST_RETRIES },
-      );
-      if (!ok) droppedLogCount += lines.length;
-    };
-    const flushTimer = setInterval(() => flushLogs().catch(() => {}), LOG_FLUSH_INTERVAL_MS);
-
-    const onData = (name) => (chunk) => {
-      lineBuffers[name] += chunk.toString('utf8');
-      const lines = lineBuffers[name].split('\n');
-      lineBuffers[name] = lines.pop(); // trailing partial line stays buffered
-      for (const line of lines) if (line.trim() !== '') pendingLines.push(line);
-    };
-    child.stdout.on('data', onData('stdout'));
-    child.stderr.on('data', onData('stderr'));
+    const logs = createLogBatcher({
+      url: env.CONDUCTOR_LOG_CHUNK_URL,
+      token: env.CONDUCTOR_RUN_TOKEN,
+      workerJobId: env.CONDUCTOR_WORKER_JOB_ID,
+      secrets,
+      log: localLog,
+    });
+    const stdout = createLineSplitter((line) => logs.push(line));
+    const stderr = createLineSplitter((line) => logs.push(line));
+    child.stdout.on('data', (chunk) => stdout.write(chunk));
+    child.stderr.on('data', (chunk) => stderr.write(chunk));
 
     const minutes = Number(env.CONDUCTOR_TIMEOUT_MINUTES) > 0 ? Number(env.CONDUCTOR_TIMEOUT_MINUTES) : DEFAULT_TIMEOUT_MINUTES;
-    let killTimer;
-    const hardTimer = setTimeout(() => {
-      timedOut = true;
-      pendingLines.push(`Step timed out after ${minutes} minutes; stopping it.`);
-      killGroup('SIGTERM');
-      killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS);
-    }, minutes * 60_000);
+    const timeout = armTimeout({
+      minutes,
+      graceMs: KILL_GRACE_MS,
+      kill: killGroup,
+      onTimeout: () => {
+        timedOut = true;
+        logs.push(`Step timed out after ${minutes} minutes; stopping it.`);
+      },
+    });
 
-    child.on('error', (err) => pendingLines.push(`Could not start the step: ${err.message}`));
+    child.on('error', (err) => logs.push(`Could not start the step: ${err.message}`));
 
     child.on('close', async (code, signal) => {
-      clearInterval(flushTimer);
-      clearTimeout(hardTimer);
-      clearTimeout(killTimer);
-      for (const name of ['stdout', 'stderr']) if (lineBuffers[name].trim()) pendingLines.push(lineBuffers[name]);
-      await flushLogs();
-      if (droppedLogCount > 0) localLog(`dropped ${droppedLogCount} log lines after repeated post failures`);
+      logs.stop();
+      timeout.clear();
+      stdout.end();
+      stderr.end();
+      await logs.flush();
+      if (logs.dropped > 0) localLog(`dropped ${logs.dropped} log lines after repeated post failures`);
       // Killed by a signal without our timeout: report 128+signal like a shell would.
       const exitCode = code ?? (signal ? 128 + ({ SIGTERM: 15, SIGKILL: 9, SIGINT: 2 }[signal] ?? 1) : 1);
       resolve({ code: exitCode, timedOut });

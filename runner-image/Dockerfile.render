@@ -37,6 +37,8 @@ RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 \
 
 # Self-reporting entrypoint for Cloud Run (the Job's command); unused on a self-hosted daemon.
 COPY --chmod=755 conductor-step-entrypoint.mjs /usr/local/bin/conductor-step-entrypoint
+# Shared protocol helpers, imported by the entrypoint as ./runner-protocol.mjs (same directory).
+COPY --chmod=644 runner-protocol.mjs /usr/local/bin/runner-protocol.mjs
 
 LABEL org.opencontainers.image.source="https://github.com/cliangdev/conductor" \
       org.opencontainers.image.description="Renders Conductor Creatives: Playwright Chromium, ffmpeg and the conductor CLI" \
