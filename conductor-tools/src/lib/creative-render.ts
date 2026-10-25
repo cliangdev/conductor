@@ -15,6 +15,7 @@ import type { Config } from '../mcp/config.js'
 import { apiGet, apiPost, ApiError } from '../mcp/api.js'
 import { findBrowserFactory } from './creative-browser.js'
 import { resolveFfmpegPath } from './media-probe.js'
+import { needsLocalRender } from './creative-local-render.js'
 
 /** Frames per second for a MOTION render's ffmpeg encode — fixed, not user-configurable (see
  * conductor-creative/README.md's job/render.mjs section). */
@@ -113,8 +114,13 @@ async function loadRenderCore(): Promise<{ run: RenderCore['run']; createApiTran
   return { run: renderMod.run, createApiTransport: transportMod.createApiTransport }
 }
 
+/** A local render that is ffmpeg-only: a CAROUSEL or CLIP with audio to encode (no browser involved). */
+function isAudioVideoRender(kind: string | undefined, audio: { source?: string } | null | undefined): boolean {
+  return (kind === 'CAROUSEL' || kind === 'CLIP') && needsLocalRender(kind, audio)
+}
+
 /**
- * A CLIP or CAROUSEL creative has no local browser render path at all — it's finished media used
+ * A CLIP or CAROUSEL creative without audio to encode has no local browser render path at all — it's finished media used
  * as-is (a video, or ordered images), and the backend assembles its frames itself synchronously. This just POSTs the render and relays what
  * came back — `ApiError`'s `message` is already the server's own plain-English sentence (an RFC 7807
  * `detail`), so a failure reaches the caller unchanged rather than wrapped in a generic message.
@@ -139,27 +145,29 @@ export async function renderViaApi(params: RenderCreativeParams, config: Config)
  * Renders a Creative end to end. STILL and MOTION creatives both find a local browser and run the
  * render core against the external API, reading back the stored render (frames with signed URLs,
  * final state) whether or not the render itself succeeded — a FAILED render still has an id and an
- * error message worth returning. A MOTION render (not previewOnly) additionally needs a local ffmpeg
+ * error message worth returning. A MOTION render, a CAROUSEL with a track and a CLIP with track/mix/none audio (not previewOnly) additionally need a local ffmpeg
  * binary — resolved the same way `upload_creative_media`/`media-probe.ts` finds one (a system binary
  * on PATH first, else the bundled `ffmpeg-static` fallback) — and runs at a fixed 30fps; a previewOnly
  * MOTION render (the key-moments contact sheet) needs neither ffmpeg nor a video encode, so it skips
- * this resolution entirely. CLIP and CAROUSEL creatives never launch a browser — see {@link renderViaApi}.
+ * this resolution entirely. A CLIP/CAROUSEL that needs no local encode never launches a browser — see {@link renderViaApi}; one that does is encoded by ffmpeg alone.
  */
 export async function renderCreative(
   params: RenderCreativeParams,
   config: Config,
   log: (...args: unknown[]) => void = () => {}
 ): Promise<RenderCreativeResult> {
-  const creative = await apiGet<{ kind?: string }>(
+  const creative = await apiGet<{ kind?: string; audio?: { source?: string } | null }>(
     `/api/v2/projects/${config.projectId}/marketing/creatives/${params.creativeId}`,
     config
   )
-  if (creative.kind === 'CLIP' || creative.kind === 'CAROUSEL') {
+  const audioVideo = isAudioVideoRender(creative.kind, creative.audio)
+  // previewOnly stays on the server path for CLIP/CAROUSEL: the server refuses it with its own message.
+  if ((creative.kind === 'CLIP' || creative.kind === 'CAROUSEL') && (!audioVideo || params.previewOnly)) {
     return renderViaApi(params, config)
   }
 
   let ffmpegPath: string | undefined
-  if (creative.kind === 'MOTION' && !params.previewOnly) {
+  if ((creative.kind === 'MOTION' || audioVideo) && !params.previewOnly) {
     try {
       ffmpegPath = await resolveFfmpegPath()
     } catch (err) {
@@ -265,13 +273,14 @@ interface FileTransportModule {
  * `previewOnly` needs ffmpeg, resolved the same way {@link renderCreative} resolves it.
  */
 export async function renderDraft(
-  params: { spec: { creative?: { kind?: string }; previewOnly?: boolean }; localFiles: Record<string, string>; outDir: string },
+  params: { spec: { creative?: { kind?: string; audio?: { source?: string } | null }; previewOnly?: boolean }; localFiles: Record<string, string>; outDir: string },
   log: (...args: unknown[]) => void = () => {}
 ): Promise<RenderDraftResult> {
   const { spec, localFiles, outDir } = params
 
   let ffmpegPath: string | undefined
-  if (spec.creative?.kind === 'MOTION' && !spec.previewOnly) {
+  const draftAudio = spec.creative?.audio
+  if ((spec.creative?.kind === 'MOTION' || isAudioVideoRender(spec.creative?.kind, draftAudio)) && !spec.previewOnly) {
     try {
       ffmpegPath = await resolveFfmpegPath()
     } catch (err) {

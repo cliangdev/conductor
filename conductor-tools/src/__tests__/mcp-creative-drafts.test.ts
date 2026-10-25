@@ -672,3 +672,100 @@ describe('CAROUSEL drafts', () => {
     expect(result).toMatchObject({ ok: true, creativeId: 'c1' })
   })
 })
+
+describe('CAROUSEL drafts with a music track', () => {
+  let s1: string
+  let s2: string
+  let song: string
+  const slideshowSpec = { creative: { kind: 'CAROUSEL', audio: { source: 'track' } }, previewOnly: false }
+
+  function fakeSlideshowRender() {
+    mocked(renderDraft).mockImplementation(async ({ outDir }: { outDir: string }) => {
+      fs.writeFileSync(path.join(outDir, 'slideshow-9x16.mp4'), Buffer.from([0, 0, 0, 1]))
+      const manifest = {
+        ok: true,
+        frames: [{ placementKey: '9x16', file: 'slideshow-9x16.mp4', contentType: 'video/mp4', width: 1080, height: 1920, durationSeconds: 11.5, hasAudio: true }],
+        warnings: [],
+      }
+      return { ok: true, manifest }
+    })
+  }
+
+  beforeEach(() => {
+    s1 = path.join(root, '01.png')
+    s2 = path.join(root, '02.png')
+    song = path.join(root, 'song.mp3')
+    fs.writeFileSync(s1, PNG)
+    fs.writeFileSync(s2, PNG)
+    fs.writeFileSync(song, Buffer.from('ID3'))
+    mocked(composePosterSheet).mockResolvedValue(Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+    mocked(probeMedia).mockResolvedValue({ kind: 'AUDIO', durationSeconds: 30 })
+  })
+
+  it('audioPath renders the slideshow MP4 through renderDraft with a full spec, and returns its path beside the sheet', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: slideshowSpec, readiness: {} })
+    fakeSlideshowRender()
+
+    const result = await previewCreativeDraft(
+      { kind: 'CAROUSEL', caption: 'C', slidePaths: { '9x16': [s1, s2] }, audioPath: song, slideshow: { zoom: false } },
+      config,
+      { projectRoot: root }
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const body = mocked(apiPost).mock.calls[0]![1] as Record<string, any>
+    expect(body.audio).toEqual({ source: 'track', trackId: 'local:audio' })
+    expect(body.slideshow).toEqual({ zoom: false })
+    expect(body.previewOnly).toBe(false)
+    expect(mocked(renderDraft).mock.calls[0]![0]).toMatchObject({ spec: slideshowSpec, localFiles: { audio: song } })
+    expect(result.slideshowVideoPath).toBe(path.join(result.draftDir, 'slideshow-9x16.mp4'))
+    expect(result.slideshowDurationSeconds).toBe(11.5)
+    expect(result.sheets?.map((x) => x.placementKey)).toEqual(['9x16'])
+    expect(result.nextStep).toMatch(/slideshow video/)
+  })
+
+  it('an audio.trackId from the library also renders the video; a track-less carousel still renders nothing', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: slideshowSpec, readiness: {} })
+    fakeSlideshowRender()
+    const withTrack = await previewCreativeDraft(
+      { kind: 'CAROUSEL', slidePaths: { '9x16': [s1] }, audio: { source: 'track', trackId: 'aud-1' } },
+      config,
+      { projectRoot: root }
+    )
+    expect(withTrack.ok && withTrack.slideshowVideoPath).toBeTruthy()
+    expect(renderDraft).toHaveBeenCalledTimes(1)
+
+    mocked(renderDraft).mockClear()
+    mocked(apiPost).mockResolvedValueOnce({ spec: {}, readiness: {} })
+    const silent = await previewCreativeDraft({ kind: 'CAROUSEL', slidePaths: { '9x16': [s1] }, audio: { source: 'none' } }, config, { projectRoot: root })
+    expect(silent.ok && silent.slideshowVideoPath).toBeFalsy()
+    expect(renderDraft).not.toHaveBeenCalled()
+  })
+
+  it('fails honestly when the slideshow video cannot be rendered', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: slideshowSpec, readiness: {} })
+    mocked(renderDraft).mockResolvedValue({ ok: false, error: 'ffmpeg exploded' })
+    const r = await previewCreativeDraft({ kind: 'CAROUSEL', slidePaths: { '9x16': [s1] }, audioPath: song }, config, { projectRoot: root })
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/slideshow video.*ffmpeg exploded/) })
+  })
+
+  it('commit renders a carousel with a track locally, not through the server', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: slideshowSpec, readiness: {} })
+    fakeSlideshowRender()
+    const preview = await previewCreativeDraft({ kind: 'CAROUSEL', slidePaths: { '9x16': [s1] }, audioPath: song }, config, { projectRoot: root })
+    if (!preview.ok) throw new Error(preview.error)
+
+    mocked(uploadCreativeMedia).mockImplementation(async ({ filePath }: { filePath: string }) => ({ media: { id: 'm-' + path.basename(filePath, path.extname(filePath)) }, warnings: [] }))
+    mocked(createCreative).mockResolvedValue({ id: 'c1', kind: 'CAROUSEL', version: 1, audio: { source: 'track', trackId: 'm-song' } })
+    mocked(renderCreative).mockResolvedValue({ ok: true, renderId: 'r1', state: 'SUCCEEDED', frames: [] })
+    mocked(getCreative).mockResolvedValue({ id: 'c1', version: 1, readiness: {} })
+
+    const result = await commitCreativeDraft({ draftDir: preview.draftDir, licence: 'Own work', source: 'me' }, config, { projectRoot: root })
+
+    expect((mocked(createCreative).mock.calls[0]![0] as any).audio).toEqual({ source: 'track', trackId: 'm-song' })
+    expect(renderCreative).toHaveBeenCalledTimes(1)
+    expect(renderViaApi).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ ok: true, creativeId: 'c1' })
+  })
+})

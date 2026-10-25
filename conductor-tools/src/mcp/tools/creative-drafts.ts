@@ -9,6 +9,7 @@ import { apiGet, apiPatch, apiPost, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia } from '../../lib/media-probe.js'
 import { readProvenanceSidecar, type SidecarProvenance } from '../../lib/provenance-sidecar.js'
+import { needsLocalRender } from '../../lib/creative-local-render.js'
 import { renderCreative as runLocalRender, renderViaApi, renderDraft, type DraftCheck, type DraftManifest } from '../../lib/creative-render.js'
 import {
   createCreative,
@@ -49,7 +50,7 @@ export interface PreviewCreativeDraftParams extends CreativeFields {
   photoPath?: string
   /** A video clip on this machine; becomes the MOTION background clip (`local:clip`). */
   clipPath?: string
-  /** An audio file on this machine; becomes the MOTION audio track (`local:audio`). */
+  /** An audio file on this machine; becomes the audio track of a MOTION or CAROUSEL (`local:audio`). */
   audioPath?: string
   /** CAROUSEL only: the slides as local image files (or existing media ids), ordered per placement,
    * e.g. {"4x5": ["/art/01.png", "/art/02.png"]}; each path becomes a `local:<key>` entry of `slides`. */
@@ -116,6 +117,9 @@ export interface PreviewCreativeDraftSuccess {
   files: Array<{ placementKey: string; index?: number; file: string; width?: number; height?: number }>
   /** CAROUSEL only: one contact sheet image per placement (per ten slides). */
   sheets?: Array<{ placementKey: string; file: string; slides: number }>
+  /** CAROUSEL with a track only: the slideshow MP4 rendered on this machine (the full video, not a sheet). */
+  slideshowVideoPath?: string
+  slideshowDurationSeconds?: number
   readiness?: unknown
   warnings: Array<{ placementKey?: string; index?: number; message: string }>
   /**
@@ -418,11 +422,14 @@ export async function previewCreativeDraft(
     return { ok: false, rendered: false, error: `slidePaths is for kind CAROUSEL, not ${params.kind}.` }
   }
   let isCarousel = params.kind === 'CAROUSEL' || (!!params.slidePaths && !params.kind)
-  if (!isCarousel && !params.kind && params.baseCreativeId) {
-    // Editing a saved Creative without naming its kind: a CAROUSEL base takes the carousel path.
+  let baseAudio: { source?: string } | null | undefined
+  if (params.baseCreativeId && (isCarousel || !params.kind)) {
+    // Editing a saved Creative without naming its kind: a CAROUSEL base takes the carousel path, and
+    // its saved audio decides whether the slideshow video is rendered.
     try {
-      const base = await apiGet<{ kind?: string }>(`${creativesBase(config)}/${params.baseCreativeId}`, config)
-      isCarousel = base?.kind === 'CAROUSEL'
+      const base = await apiGet<{ kind?: string; audio?: { source?: string } | null }>(`${creativesBase(config)}/${params.baseCreativeId}`, config)
+      if (!isCarousel) isCarousel = base?.kind === 'CAROUSEL'
+      baseAudio = base?.audio
     } catch {
       /* unknown kind: treat as a rendered Creative */
     }
@@ -454,7 +461,10 @@ export async function previewCreativeDraft(
   }
 
   const full = !!params.full
-  const body: Record<string, unknown> = { ...request, previewOnly: !full }
+  // A CAROUSEL with a track gets its slideshow MP4 rendered here, so its spec must be a full render spec.
+  const requestAudio = request['audio'] as { source?: string; trackId?: string } | undefined
+  const carouselVideo = isCarousel && needsLocalRender('CAROUSEL', requestAudio ?? baseAudio)
+  const body: Record<string, unknown> = { ...request, previewOnly: carouselVideo ? false : !full }
   if (params.baseCreativeId) body['baseCreativeId'] = params.baseCreativeId
   if (Object.keys(localMedia).length) {
     // Keys with sidecar provenance also tell the backend where the file came from (readiness checks it).
@@ -508,7 +518,29 @@ export async function previewCreativeDraft(
   await writeFile(join(draftDir, 'draft.json'), JSON.stringify(draft, null, 2))
 
   if (isCarousel) {
-    return carouselPreview({ request, localFiles, localMedia, localProvenance, draftDir, readiness: response.readiness, log })
+    const sheetResult = await carouselPreview({ request, localFiles, localMedia, localProvenance, draftDir, readiness: response.readiness, log })
+    if (!carouselVideo) return sheetResult
+    const video = await renderDraft({ spec, localFiles, outDir: draftDir }, log)
+    if (!video.ok || !video.manifest) {
+      return { ok: false, rendered: false, error: `The slideshow video could not be rendered: ${video.error ?? 'the draft render failed.'}`, draftDir }
+    }
+    const mp4 = video.manifest.frames.find((f) => f.contentType === 'video/mp4')
+    if (!mp4) {
+      return { ok: false, rendered: false, error: 'The slideshow render finished but produced no video.', draftDir }
+    }
+    const videoPath = join(draftDir, mp4.file)
+    return {
+      ...sheetResult,
+      files: [...sheetResult.files, { placementKey: mp4.placementKey, file: videoPath, ...(mp4.width !== undefined ? { width: mp4.width } : {}), ...(mp4.height !== undefined ? { height: mp4.height } : {}) }],
+      slideshowVideoPath: videoPath,
+      ...(mp4.durationSeconds !== undefined ? { slideshowDurationSeconds: mp4.durationSeconds } : {}),
+      warnings: video.manifest.warnings,
+      nextStep:
+        `Nothing has been saved to Conductor. The slideshow video (${mp4.durationSeconds !== undefined ? `${mp4.durationSeconds}s, ` : ''}with the track) is at ${videoPath}; ` +
+        'the contact sheet shows the slides. Show the contact sheet and give the person the video path to watch (check the music level, the fade and the pacing), ' +
+        'and check the order, the crop and any burned-in text. Resolve any blocking readiness item you can fix now (caption, alt text, photoChecked, the track\'s source and licence). ' +
+        'Only after they approve, call commit_creative_draft({draftDir, photoChecked: true, source, licence}) with the track\'s provenance; to change something, call preview_creative_draft again.',
+    }
   }
 
   const rendered = await renderDraft({ spec, localFiles, outDir: draftDir }, log)
@@ -694,9 +726,11 @@ export async function commitCreativeDraft(
     JSON.stringify({ ...draft, uploaded, committed: true, committedAt: new Date().toISOString(), creativeId }, null, 2)
   )
 
-  // A CAROUSEL is finished images: the server assembles its frames in one call, nothing renders locally.
+  // A CAROUSEL is finished images: the server assembles its frames in one call, unless it has a track,
+  // in which case the slideshow MP4 is encoded here (renderCreative routes it, checking the saved audio).
   const isCarousel = draft.request['kind'] === 'CAROUSEL' || created['kind'] === 'CAROUSEL'
-  const rendered = isCarousel
+  const savedAudio = (created['audio'] ?? draft.request['audio']) as { source?: string } | null | undefined
+  const rendered = isCarousel && !needsLocalRender('CAROUSEL', savedAudio)
     ? await renderViaApi({ creativeId, previewOnly: false, renderer: 'mcp' }, config)
     : await runLocalRender({ creativeId, previewOnly: false, renderer: 'mcp' }, config, log)
   const verified = await getCreative({ creativeId }, config).catch(() => undefined)

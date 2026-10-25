@@ -137,7 +137,7 @@ const CREATIVE_FIELD_PROPERTIES = {
   kind: {
     type: 'string',
     enum: ['STILL', 'MOTION', 'CLIP', 'CAROUSEL'],
-    description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. CAROUSEL is finished images used as-is via slides (one slide is a finished still). MOTION is the same brand layout animated into a short video — set motion (and optionally audio) too.',
+    description: 'Defaults to STILL (a brand-rendered photo/headline). CLIP is a finished video used as-is via clipMedia. CAROUSEL is finished images used as-is via slides (one slide is a finished still). MOTION is the same brand layout animated into a short video — set motion (and optionally audio) too. audio adds a library track to MOTION, CAROUSEL (as a slideshow video) or CLIP (replace, mix or mute its sound).',
   },
   clipMedia: {
     type: 'object',
@@ -174,12 +174,20 @@ const CREATIVE_FIELD_PROPERTIES = {
   },
   audio: {
     type: 'object',
-    description: 'MOTION only: source: clip (the background clip\'s own sound — default when it has one) | track (a library track) | none. trackId: an AUDIO media id from upload_creative_media (source=track). volume: 0-1, default 0.8 (track only). fadeOutSec: 0-5, default 1 (track only).',
+    description: 'Music/sound for MOTION, CAROUSEL and CLIP. source — MOTION: clip (the background clip\'s own sound, default when it has one) | track | none. CAROUSEL: track | none (a track makes a slideshow video alongside the photos). CLIP: clip (its own sound, default) | track (replace it) | mix (track under the clip\'s sound; the clip must have sound) | none (mute). trackId: an AUDIO media id from list_creative_media / upload_creative_media, required for track and mix; it needs source and licence recorded before review. volume: 0-1 — default 0.8 (MOTION), 1 (CAROUSEL/CLIP track), 0.3 (mix). fadeOutSec: 0-5, default 1. Renders locally, so the tool needs the local render stack.',
     properties: {
-      source: { type: 'string', enum: ['clip', 'track', 'none'] },
+      source: { type: 'string', enum: ['clip', 'track', 'mix', 'none'] },
       trackId: { type: 'string' },
       volume: { type: 'number' },
       fadeOutSec: { type: 'number' },
+    },
+  },
+  slideshow: {
+    type: 'object',
+    description: 'CAROUSEL only: how the 9x16 slides become a video when audio.source is track. slideDurations: seconds per 9x16 slide, one entry per slide, each 1-10 (default 3 for the first, 2.5 for the rest). zoom: slow push-in on each slide, default true. Slides cross-fade for 0.5 s.',
+    properties: {
+      slideDurations: { type: 'array', items: { type: 'number' } },
+      zoom: { type: 'boolean' },
     },
   },
   layout: { type: 'string', description: "Layout key from the creative registry, e.g. stacked/bleed/card/split (optional — defaults to the registry's first layout)" },
@@ -991,7 +999,7 @@ export const TOOLS = [
               publishOptions: {
                 type: 'object',
                 additionalProperties: true,
-                description: 'Per-platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key — read optionKeys first. Unknown keys are dropped. TikTok privacy and interaction keys are the creator\'s own choice in their browser at consent; the server refuses them from an API key.',
+                description: 'Per-platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key — read optionKeys first. Unknown keys are dropped. carouselAs: photos | video, for a target whose media comes from a CAROUSEL Creative with a track (photos cannot carry the track; video sends the slideshow MP4). TikTok privacy and interaction keys are the creator\'s own choice in their browser at consent; the server refuses them from an API key.',
               },
             },
             required: ['platform'],
@@ -1091,7 +1099,7 @@ export const TOOLS = [
               format: { type: 'string', enum: ['feed', 'reel', 'story'], description: 'The surface this destination publishes to (default feed). Must be one of that platform\'s formats in list_publish_targets.' },
               captionOverride: { type: 'string', description: 'Copy for this destination alone (optional). Ignored by a story.' },
               assetIds: { type: 'array', items: { type: ['string', 'number'] }, description: 'Ordered subset of media for this destination: 0-based indexes into `media`, or asset ids. Omit to inherit all; a story keeps only the first.' },
-              options: { type: 'object', additionalProperties: true, description: 'Platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key. TikTok privacy/interaction keys are ignored: the creator picks them in their browser when consenting.' },
+              options: { type: 'object', additionalProperties: true, description: 'Platform options, keyed exactly as list_publish_targets reports them under that platform\'s optionKeys. Never guess a key. carouselAs (photos | video) picks how a CAROUSEL Creative with a track is sent. TikTok privacy/interaction keys are ignored: the creator picks them in their browser when consenting.' },
             },
             required: ['platform'],
           },
@@ -1316,7 +1324,7 @@ export const TOOLS = [
   },
   {
     name: 'list_creative_media',
-    description: "The project's media library (photos, videos, audio) — id, label, kind, dimensions/duration, checked/blocked review state (with reason), provenance, how many posts and creatives use it (postCount, creativeCount) and a URL to look at it. Call before upload_creative_media to reuse existing, already-checked media instead of uploading a duplicate; add it to a Post with upload_asset({mediaIds}).",
+    description: "The project's media library (photos, videos, audio) — id, label, kind, dimensions/duration, checked/blocked review state (with reason), provenance, how many posts and creatives use it (postCount, creativeCount) and a URL to look at it. For music call with kind AUDIO and reuse a track before uploading another. Call before upload_creative_media to reuse existing, already-checked media instead of uploading a duplicate; add it to a Post with upload_asset({mediaIds}).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1361,7 +1369,7 @@ export const TOOLS = [
   },
   {
     name: 'get_creative',
-    description: "One Creative in full: its fields, its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
+    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1413,15 +1421,8 @@ export const TOOLS = [
             endCard: { type: 'boolean' },
           },
         },
-        audio: {
-          type: 'object',
-          properties: {
-            source: { type: 'string', enum: ['clip', 'track', 'none'] },
-            trackId: { type: 'string' },
-            volume: { type: 'number' },
-            fadeOutSec: { type: 'number' },
-          },
-        },
+        audio: CREATIVE_FIELD_PROPERTIES.audio,
+        slideshow: CREATIVE_FIELD_PROPERTIES.slideshow,
         layout: { type: 'string' },
         theme: { type: 'string', enum: ['dark', 'light'] },
         photoId: { type: 'string' },
@@ -1460,7 +1461,7 @@ export const TOOLS = [
   },
   {
     name: 'upload_creative_media',
-    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL), a clipMedia entry (CLIP) or a slides entry (CAROUSEL). Pass files (up to 100) or a folder to upload many at once, in name order: every file gets its own result, and one failure does not stop the rest. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; source/licence/aiGenerated apply only when there is none. Pass exactly one of filePath, url, files or folder.",
+    description: "Upload a photo, video or audio file into the project's media library from a local file or a public URL, recording its provenance (source, licence, aiGenerated) for the readiness checklist. Kind, dimensions, duration and audio presence are detected automatically; a video also gets an extracted poster frame. Use the returned media's id as a Creative's photoId (STILL), a clipMedia entry (CLIP), a slides entry (CAROUSEL) or audio.trackId (record source and licence for audio). Pass files (up to 100) or a folder to upload many at once, in name order: every file gets its own result, and one failure does not stop the rest. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; source/licence/aiGenerated apply only when there is none. Pass exactly one of filePath, url, files or folder.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1509,7 +1510,7 @@ export const TOOLS = [
   },
   {
     name: 'render_creative',
-    description: 'Render a Creative to upload-ready frames — one JPEG per placement for STILL (Playwright on this machine), or one MP4 with a poster per placement for MOTION (ffmpeg-encoded on this machine) — or a small contact sheet with previewOnly. Runs synchronously: a STILL placement takes seconds; a MOTION placement takes roughly 20s per 8s of video, so a multi-placement MOTION render can take a couple of minutes. CLIP and CAROUSEL render on the server in one call (previewOnly is refused). Returns the render id, state, frame URLs (MOTION frames also carry durationSeconds/hasAudio/posterUrl) and any warnings. Call preview_creative to actually look at the result.',
+    description: 'Render a Creative to upload-ready frames — one JPEG per placement for STILL (Playwright on this machine), or one MP4 with a poster per placement for MOTION (ffmpeg-encoded on this machine) — or a small contact sheet with previewOnly. Runs synchronously: a STILL placement takes seconds; a MOTION placement takes roughly 20s per 8s of video, so a multi-placement MOTION render can take a couple of minutes. CLIP and CAROUSEL render on the server in one call (previewOnly is refused), unless the Creative has audio that needs encoding: a CAROUSEL with a track (adds one 9x16 slideshow MP4) or a CLIP with track, mix or none (re-muxed on this machine, with ffmpeg). Returns the render id, state, frame URLs (MOTION frames also carry durationSeconds/hasAudio/posterUrl) and any warnings. Call preview_creative to actually look at the result.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1564,7 +1565,7 @@ export const TOOLS = [
   },
   {
     name: 'preview_creative_draft',
-    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo: nothing is rendered; it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations. Violations come back as a structured error and nothing is rendered.",
+    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo: it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1585,7 +1586,7 @@ export const TOOLS = [
         },
         photoPath: { type: 'string', description: 'A photo on this machine (optional; use instead of photoId)' },
         clipPath: { type: 'string', description: 'MOTION only: a video clip on this machine used as the background (optional; use instead of motion.background.clipMediaId)' },
-        audioPath: { type: 'string', description: 'MOTION only: an audio file on this machine used as the music track (optional; use instead of audio.trackId)' },
+        audioPath: { type: 'string', description: 'MOTION or CAROUSEL: an audio file on this machine used as the music track (optional; use instead of audio.trackId). For a CAROUSEL, set audio.source to track too. Committing uploads it into the library — record its source and licence.' },
         slidePaths: {
           type: 'object',
           additionalProperties: { type: 'array', items: { type: 'string' } },
@@ -1599,7 +1600,7 @@ export const TOOLS = [
   },
   {
     name: 'commit_creative_draft',
-    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames (a CAROUSEL's are assembled on the server). Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
+    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames (a CAROUSEL's are assembled on the server, plus its slideshow MP4 here when it has a track). Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1614,7 +1615,7 @@ export const TOOLS = [
   },
   {
     name: 'attach_creative_to_post',
-    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take it. Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). Call get_post_status (postId) to verify.",
+    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take its photos. A CAROUSEL with a track also has a slideshow video: per target, carouselAs (photos | video) in publish options picks which is sent (default video for TikTok and YouTube, photos for Instagram and Facebook feed). Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). Call get_post_status (postId) to verify.",
     inputSchema: {
       type: 'object',
       properties: {
