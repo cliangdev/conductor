@@ -60,12 +60,28 @@ class RenderTargetStepRunnerTest {
             }
         };
         runner = new RenderTargetStepRunner(shared, resolver, runTokenService, projectSettingsRepository,
-                new WorkflowInterpolator(), "https://api.example.test");
+                stepRunRepository, new WorkflowInterpolator(), "https://api.example.test");
     }
 
     private void targetReady() {
         when(resolver.resolveRenderTarget(PROJECT_ID)).thenReturn(new RuntimeTargetResolver.RenderTargetResolution(
                 TARGET, "us-east1-docker.pkg.dev/customer-proj/repo/render@sha256:abc", "acme-run", null));
+    }
+
+    private void resumeTargetReady() {
+        when(resolver.resolveRenderTargetForResume(PROJECT_ID, "acme-run")).thenReturn(
+                new RuntimeTargetResolver.RenderTargetResolution(TARGET, "img", "acme-run", null));
+    }
+
+    private WorkflowStepRun inFlightRow() {
+        WorkflowStepRun inFlight = new WorkflowStepRun();
+        inFlight.setStatus(WorkflowStepStatus.RUNNING);
+        inFlight.setWorkerJobId("worker-inflight");
+        inFlight.setExecutionName("exec-inflight");
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.of(inFlight));
+        org.mockito.Mockito.lenient().when(stepRunRepository.findByJobRunIdAndWorkerJobId(JOB_RUN_ID, "worker-inflight"))
+                .thenReturn(Optional.of(inFlight));
+        return inFlight;
     }
 
     private void tokensAndSteprow() {
@@ -81,6 +97,7 @@ class RenderTargetStepRunnerTest {
         stepDef.put("id", "render");
         stepDef.put("run", "conductor creative render \"$CREATIVE_ID\" --workflow-run-id \"$CONDUCTOR_WORKFLOW_RUN_ID\"");
         stepDef.put("env", new LinkedHashMap<>(Map.of("CREATIVE_ID", "${{ event.creativeId }}")));
+        stepDef.put("with", new LinkedHashMap<>(Map.of("conductor_mcp", true)));
         return stepDef;
     }
 
@@ -144,7 +161,9 @@ class RenderTargetStepRunnerTest {
         verify(launcher).startExecution(target.capture(), task.capture());
         assertThat(target.getValue()).isEqualTo(TARGET);
         assertThat(task.getValue().command()).containsExactly("conductor-step-entrypoint");
-        assertThat(task.getValue().timeoutMinutes()).isEqualTo(30);
+        // The Cloud Run execution timeout is the step budget + 3 minutes of grace; the entrypoint's own
+        // timer (CONDUCTOR_TIMEOUT_MINUTES) stays at the step budget so it fires first and self-reports.
+        assertThat(task.getValue().timeoutMinutes()).isEqualTo(33);
         Map<String, String> env = task.getValue().env();
         assertThat(env).containsEntry("CONDUCTOR_API_URL", "https://api.example.test")
                 .containsEntry("CONDUCTOR_PROJECT_ID", PROJECT_ID)
@@ -153,6 +172,7 @@ class RenderTargetStepRunnerTest {
                 .containsEntry("CONDUCTOR_RUN_TOKEN", "run-token")
                 .containsEntry("CONDUCTOR_API_KEY", "mcp-key")
                 .containsEntry("CONDUCTOR_TIMEOUT_MINUTES", "30")
+                .containsEntry("CONDUCTOR_MCP_ENABLED", "true")
                 .containsEntry("CREATIVE_ID", "cr-7")
                 .containsEntry("CONDUCTOR_LOG_CHUNK_URL",
                         "https://api.example.test/internal/v1/workflow-runs/run-123/log-chunk");
@@ -170,7 +190,7 @@ class RenderTargetStepRunnerTest {
         when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
-        when(runTokenService.generateMcpToken(anyString(), anyString(), anyInt())).thenReturn("mcp-key");
+        org.mockito.Mockito.lenient().when(runTokenService.generateMcpToken(anyString(), anyString(), anyInt())).thenReturn("mcp-key");
         Map<String, Object> stepDef = stepDef();
         stepDef.put("env", Map.of("CONDUCTOR_RUN_TOKEN", "evil"));
 
@@ -193,7 +213,7 @@ class RenderTargetStepRunnerTest {
 
         ArgumentCaptor<ContainerTask> task = ArgumentCaptor.forClass(ContainerTask.class);
         verify(launcher).startExecution(any(CloudRunTarget.class), task.capture());
-        assertThat(task.getValue().timeoutMinutes()).isEqualTo(35);
+        assertThat(task.getValue().timeoutMinutes()).isEqualTo(38);
         assertThat(task.getValue().env()).containsEntry("CONDUCTOR_TIMEOUT_MINUTES", "35");
     }
 
@@ -220,10 +240,86 @@ class RenderTargetStepRunnerTest {
     }
 
     @Test
-    void exit127_mapsToRenderImageOutdated_withTheMirrorHint() {
-        assertThat(failureReasonForExit(127)).startsWith("RENDER_IMAGE_OUTDATED")
+    void exit127_isTheScriptsOwnCommandNotFound_notAnOutdatedImage() {
+        assertThat(failureReasonForExit(127)).startsWith("STEP_FAILED (exit 127)")
+                .contains("a command in the render step was not found")
+                .doesNotContain("RENDER_IMAGE_OUTDATED");
+    }
+
+    @Test
+    void containerFailedToStart_executableNotFound_mapsToRenderImageOutdated_withTheMirrorHint() {
+        targetReady();
+        tokensAndSteprow();
+        launchesAndFinishesWith(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.FAILED,
+                Optional.of(127), Optional.of("Container failed to start: exec: \"conductor-step-entrypoint\": "
+                        + "executable file not found in $PATH")));
+
+        StepResult result = runner.run(context(stepDef()));
+
+        assertThat(result.getErrorReason()).startsWith("RENDER_IMAGE_OUTDATED")
                 .contains("conductor-step-entrypoint").contains("mirror the current conductor-render image")
                 .contains("re-sync the target");
+    }
+
+    @Test
+    void launchRejectedWithExecutableNotFound_mapsToRenderImageOutdated() {
+        targetReady();
+        tokensAndSteprow();
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenThrow(new IllegalStateException("exec: \"conductor-step-entrypoint\": executable file not found"));
+
+        assertThat(runner.run(context(stepDef())).getErrorReason()).startsWith("RENDER_IMAGE_OUTDATED");
+    }
+
+    @Test
+    void unrelatedExecutionFailureMessage_fallsBackToTheExitCodeMapping() {
+        targetReady();
+        tokensAndSteprow();
+        launchesAndFinishesWith(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.FAILED,
+                Optional.of(137), Optional.of("Memory limit of 4096 MiB exceeded")));
+
+        assertThat(runner.run(context(stepDef())).getErrorReason()).isEqualTo("STEP_FAILED (exit 137)");
+    }
+
+    // ---- conductor_mcp ----
+
+    @Test
+    void conductorMcpFalse_mintsNoApiKey_andDisablesMcp() {
+        targetReady();
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        launchesAndFinishesWith(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        Map<String, Object> stepDef = stepDef();
+        stepDef.put("with", Map.of("conductor_mcp", false));
+
+        runner.run(context(stepDef));
+
+        ArgumentCaptor<ContainerTask> task = ArgumentCaptor.forClass(ContainerTask.class);
+        verify(launcher).startExecution(any(CloudRunTarget.class), task.capture());
+        assertThat(task.getValue().env()).containsEntry("CONDUCTOR_MCP_ENABLED", "false")
+                .doesNotContainKey("CONDUCTOR_API_KEY");
+        verify(runTokenService, never()).generateMcpToken(anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    void conductorMcpAbsent_mintsNoApiKey() {
+        targetReady();
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        launchesAndFinishesWith(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        Map<String, Object> stepDef = stepDef();
+        stepDef.remove("with");
+
+        runner.run(context(stepDef));
+
+        ArgumentCaptor<ContainerTask> task = ArgumentCaptor.forClass(ContainerTask.class);
+        verify(launcher).startExecution(any(CloudRunTarget.class), task.capture());
+        assertThat(task.getValue().env()).containsEntry("CONDUCTOR_MCP_ENABLED", "false")
+                .doesNotContainKey("CONDUCTOR_API_KEY");
     }
 
     @Test
@@ -311,7 +407,7 @@ class RenderTargetStepRunnerTest {
 
     @Test
     void backendRestart_resumesPollingTheStoredExecution_withoutRelaunching() {
-        targetReady();
+        resumeTargetReady();
         when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
         WorkflowStepRun inFlight = new WorkflowStepRun();
         inFlight.setStatus(WorkflowStepStatus.RUNNING);
@@ -331,7 +427,7 @@ class RenderTargetStepRunnerTest {
 
     @Test
     void backendRestart_withOnlyAnOperationName_resolvesTheExecutionWithoutRelaunching() {
-        targetReady();
+        resumeTargetReady();
         when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
         WorkflowStepRun inFlight = new WorkflowStepRun();
         inFlight.setStatus(WorkflowStepStatus.RUNNING);
@@ -380,6 +476,50 @@ class RenderTargetStepRunnerTest {
         assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
         assertThat(result.getErrorReason()).isEqualTo("STEP_TIMEOUT");
         verify(launcher).cancelExecution(any(CloudRunTarget.class), eq("exec-1"));
-        verify(launcher, times(6)).pollExecution(any(CloudRunTarget.class), eq("exec-1"));
+        verify(launcher, times(24)).pollExecution(any(CloudRunTarget.class), eq("exec-1"));
+    }
+
+    // ---- resume ignores the "available for rendering" gate ----
+
+    @Test
+    void resume_whileTargetIsNotReadyForRendering_stillReattachesToTheExecution() {
+        // The resolver's resume lookup does not apply status / render readiness / designation; the gate
+        // (resolveRenderTarget) must not be consulted at all.
+        resumeTargetReady();
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        inFlightRow();
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-inflight")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+
+        StepResult result = runner.run(context(stepDef()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        verify(resolver, never()).resolveRenderTarget(anyString());
+        verify(launcher, never()).startExecution(any(), any());
+    }
+
+    @Test
+    void resume_targetDeleted_failsClearly_namingTheUntrackedExecution_withoutClaimingItStopped() {
+        when(resolver.resolveRenderTargetForResume(PROJECT_ID, "acme-run")).thenReturn(
+                new RuntimeTargetResolver.RenderTargetResolution(null, null, "acme-run",
+                        "the runtime target no longer exists"));
+        inFlightRow();
+
+        StepResult result = runner.run(context(stepDef()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).startsWith("RENDER_TARGET_UNAVAILABLE")
+                .contains("exec-inflight").contains("could not be tracked").doesNotContain("stopped");
+        verifyNoInteractions(launcher);
+    }
+
+    @Test
+    void firstRun_stillRequiresTheTargetToBeAvailableForRendering() {
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(resolver.resolveRenderTarget(PROJECT_ID)).thenReturn(new RuntimeTargetResolver.RenderTargetResolution(
+                null, null, "acme-run", "runtime target 'acme-run' is not set up for rendering"));
+
+        assertThat(runner.run(context(stepDef())).getErrorReason()).startsWith("RENDER_TARGET_UNAVAILABLE");
+        verify(resolver, never()).resolveRenderTargetForResume(anyString(), any());
     }
 }

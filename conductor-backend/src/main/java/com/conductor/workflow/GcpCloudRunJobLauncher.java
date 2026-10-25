@@ -222,7 +222,8 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
             return new ExecutionState(Status.CANCELLED, exitCodeFor(target, executionName));
         }
         if (execution.getFailedCount() > 0) {
-            return new ExecutionState(Status.FAILED, exitCodeFor(target, executionName));
+            return new ExecutionState(Status.FAILED, exitCodeFor(target, executionName),
+                    failureMessageOf(execution, target, executionName));
         }
         if (execution.getSucceededCount() > 0) {
             return new ExecutionState(Status.SUCCEEDED, exitCodeFor(target, executionName));
@@ -239,6 +240,29 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
         } catch (Exception e) {
             log.warn("Failed to cancel Cloud Run execution {}: {}", executionName, e.getMessage());
         }
+    }
+
+    /**
+     * Cloud Run's own failure text: the messages of the execution's non-succeeded conditions, plus the
+     * task's last attempt status message. Best-effort, never throws.
+     */
+    private Optional<String> failureMessageOf(Execution execution, CloudRunTarget target, String executionName) {
+        StringBuilder message = new StringBuilder();
+        execution.getConditionsList().stream()
+                .filter(c -> !c.getMessage().isEmpty())
+                .forEach(c -> message.append(c.getMessage()).append(' '));
+        try {
+            TasksClient tasksClient = clientFactory.forTarget(target).tasks();
+            for (Task task : tasksClient.listTasks(executionName).iterateAll()) {
+                if (task.hasLastAttemptResult() && !task.getLastAttemptResult().getStatus().getMessage().isEmpty()) {
+                    message.append(task.getLastAttemptResult().getStatus().getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to fetch task failure message for execution {}: {}", executionName, e.getMessage());
+        }
+        String text = message.toString().trim();
+        return text.isEmpty() ? Optional.empty() : Optional.of(text);
     }
 
     /**

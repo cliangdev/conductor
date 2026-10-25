@@ -161,6 +161,43 @@ public class RuntimeTargetResolver {
         return new RenderTargetResolution(cloudRunTarget, image, name, null);
     }
 
+    /**
+     * The target a render step was dispatched to, for re-attaching to an execution it already started
+     * (backend restart). Needs only that the target row and its connection still exist: the target's
+     * status, its render readiness and the workspace designation are irrelevant to polling/cancelling an
+     * execution that is already running. The dispatch-time {@code targetName} wins over the current
+     * designation, which may since have moved to another target.
+     */
+    public RenderTargetResolution resolveRenderTargetForResume(String projectId, String dispatchedTargetName) {
+        RuntimeTarget target = null;
+        if (dispatchedTargetName != null) {
+            target = runtimeTargetService.findByProjectIdAndName(projectId, dispatchedTargetName).orElse(null);
+        } else {
+            String targetId = designatedTargetId(projectId);
+            if (targetId != null) {
+                try {
+                    target = runtimeTargetService.get(projectId, targetId);
+                } catch (jakarta.persistence.EntityNotFoundException e) {
+                    target = null;
+                }
+            }
+        }
+        if (target == null) {
+            return RenderTargetResolution.unavailable(dispatchedTargetName, "the runtime target no longer exists");
+        }
+        String name = target.getName();
+        if (target.getConnectionId() == null) {
+            return RenderTargetResolution.unavailable(name,
+                    "runtime target '" + name + "' has lost its GCP connection");
+        }
+        RuntimeTargetService.TargetRuntimeConfig config = runtimeTargetService.configOf(target);
+        CloudRunTarget cloudRunTarget = new CloudRunTarget(
+                config.gcpProjectId(), config.region(), config.renderJobName(), target.getConnectionId());
+        String image = config.render() != null && config.render().resolvedImage() != null
+                ? config.render().resolvedImage() : config.renderImage();
+        return new RenderTargetResolution(cloudRunTarget, image, name, null);
+    }
+
     /** Outcome of {@link #resolveRenderTarget}: either a usable {@code target}/{@code image}, or an {@code unavailableReason}. */
     public record RenderTargetResolution(CloudRunTarget target, String image, String targetName,
                                          String unavailableReason) {

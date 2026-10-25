@@ -1,13 +1,17 @@
 package com.conductor.workflow;
 
 import com.conductor.entity.ProjectSettings;
+import com.conductor.entity.WorkflowStepRun;
+import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.repository.ProjectSettingsRepository;
+import com.conductor.repository.WorkflowStepRunRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Runs the system Creative-render workflow's {@code docker} step on the workspace's designated BYO Cloud
@@ -33,13 +37,22 @@ public class RenderTargetStepRunner {
             + "conductor-step-entrypoint; mirror the current conductor-render image and re-sync the target";
 
     private static final List<String> COMMAND = List.of("conductor-step-entrypoint");
+    /**
+     * Minutes past the step's own budget before Cloud Run kills the execution (and the poll gives up): the
+     * entrypoint enforces {@code CONDUCTOR_TIMEOUT_MINUTES} itself (SIGTERM, then SIGKILL) and needs this
+     * long to report STEP_TIMEOUT. The render Job's task timeout is MAX_TIMEOUT_MINUTES plus this.
+     */
+    static final int TIMEOUT_GRACE_MINUTES = 3;
+
     private static final CloudRunStepRunner.Reasons REASONS = new CloudRunStepRunner.Reasons(
-            "RENDER_LAUNCH_ERROR", "STEP_TIMEOUT", "STEP_CONFIG_ERROR", RenderTargetStepRunner::mapExitCode);
+            "RENDER_LAUNCH_ERROR", "STEP_TIMEOUT", "STEP_CONFIG_ERROR", RenderTargetStepRunner::mapExitCode,
+            RenderTargetStepRunner::mapFailureMessage);
 
     private final CloudRunStepRunner stepRunner;
     private final RuntimeTargetResolver runtimeTargetResolver;
     private final RunTokenService runTokenService;
     private final ProjectSettingsRepository projectSettingsRepository;
+    private final WorkflowStepRunRepository stepRunRepository;
     private final WorkflowInterpolator interpolator;
     private final String backendBaseUrl;
 
@@ -47,21 +60,38 @@ public class RenderTargetStepRunner {
                                   RuntimeTargetResolver runtimeTargetResolver,
                                   RunTokenService runTokenService,
                                   ProjectSettingsRepository projectSettingsRepository,
+                                  WorkflowStepRunRepository stepRunRepository,
                                   WorkflowInterpolator interpolator,
                                   @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.stepRunner = stepRunner;
         this.runtimeTargetResolver = runtimeTargetResolver;
         this.runTokenService = runTokenService;
         this.projectSettingsRepository = projectSettingsRepository;
+        this.stepRunRepository = stepRunRepository;
         this.interpolator = interpolator;
         this.backendBaseUrl = backendBaseUrl;
     }
 
     public StepResult run(StepExecutionContext context) {
         String projectId = context.getProjectId();
-        RuntimeTargetResolver.RenderTargetResolution resolution = runtimeTargetResolver.resolveRenderTarget(projectId);
-        if (!resolution.available()) {
-            return StepResult.failed("", "RENDER_TARGET_UNAVAILABLE: " + describe(context, resolution));
+        Optional<WorkflowStepRun> priorRow = priorStepRow(context);
+        RuntimeTargetResolver.RenderTargetResolution resolution;
+        if (priorRow.isPresent()) {
+            // Resuming after a restart: re-attach to the execution this step already started. The
+            // "available for rendering" gate does not apply — only the target row + connection are needed.
+            resolution = runtimeTargetResolver.resolveRenderTargetForResume(projectId, dispatchedTargetName(context));
+            if (!resolution.available() && !isTerminal(priorRow.get())) {
+                String execution = priorRow.get().getExecutionName() != null
+                        ? priorRow.get().getExecutionName() : priorRow.get().getOperationName();
+                return StepResult.failed("", "RENDER_TARGET_UNAVAILABLE: " + describe(context, resolution)
+                        + ". The render's Cloud Run execution `" + execution + "` could not be tracked; "
+                        + "check its status in the Cloud Run console.");
+            }
+        } else {
+            resolution = runtimeTargetResolver.resolveRenderTarget(projectId);
+            if (!resolution.available()) {
+                return StepResult.failed("", "RENDER_TARGET_UNAVAILABLE: " + describe(context, resolution));
+            }
         }
 
         Map<String, Object> stepDef = context.getStepDefinition();
@@ -77,17 +107,48 @@ public class RenderTargetStepRunner {
         int ttlHours = projectSettingsRepository.findByProjectId(projectId)
                 .map(ProjectSettings::getRunTokenTtlHours).orElse(24);
 
+        boolean conductorMcp = conductorMcpEnabled(stepDef);
+
         CloudRunStepRunner.Spec spec = new CloudRunStepRunner.Spec(resolution.target(), resolution.image(), COMMAND,
                 timeoutMinutes, "docker",
                 workerJobId -> buildEnv(stepDef, ctx, interpolatedScript, projectId, runId, jobId, workerJobId,
-                        timeoutMinutes, ttlHours),
-                REASONS);
+                        timeoutMinutes, ttlHours, conductorMcp),
+                REASONS, TIMEOUT_GRACE_MINUTES);
         return stepRunner.run(context, spec);
+    }
+
+    /** The step's row when it already launched (or finished) an execution, i.e. this run is a resume. */
+    private Optional<WorkflowStepRun> priorStepRow(StepExecutionContext context) {
+        Object stepId = context.getStepDefinition().get("id");
+        if (!(stepId instanceof String id)) {
+            return Optional.empty();
+        }
+        return stepRunRepository.findByJobRunIdAndStepId(context.getJobRun().getId(), id)
+                .filter(row -> row.getWorkerJobId() != null
+                        && (row.getExecutionName() != null || row.getOperationName() != null || isTerminal(row)));
+    }
+
+    private static boolean isTerminal(WorkflowStepRun row) {
+        return row.getStatus() == WorkflowStepStatus.SUCCESS || row.getStatus() == WorkflowStepStatus.FAILED;
+    }
+
+    private static String dispatchedTargetName(StepExecutionContext context) {
+        Object name = context.getRuntimeContext().getEventPayload().get("targetName");
+        return name != null ? name.toString() : null;
+    }
+
+    /** {@code with.conductor_mcp}: only a step that asks for it gets a run-scoped API key. */
+    private static boolean conductorMcpEnabled(Map<String, Object> stepDef) {
+        if (stepDef.get("with") instanceof Map<?, ?> with) {
+            Object value = with.get("conductor_mcp");
+            return Boolean.TRUE.equals(value) || (value instanceof String s && "true".equalsIgnoreCase(s.trim()));
+        }
+        return false;
     }
 
     private Map<String, String> buildEnv(Map<String, Object> stepDef, RuntimeContext ctx, String script,
                                          String projectId, String runId, String jobId, String workerJobId,
-                                         int timeoutMinutes, int ttlHours) {
+                                         int timeoutMinutes, int ttlHours, boolean conductorMcp) {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("CONDUCTOR_API_URL", backendBaseUrl);
         env.put("CONDUCTOR_PROJECT_ID", projectId);
@@ -99,7 +160,10 @@ public class RenderTargetStepRunner {
         env.put("CONDUCTOR_STEP_COMPLETE_URL",
                 backendBaseUrl + "/internal/v1/workflow-runs/" + runId + "/steps/" + workerJobId + "/complete");
         env.put("CONDUCTOR_TIMEOUT_MINUTES", String.valueOf(timeoutMinutes));
-        env.put("CONDUCTOR_API_KEY", runTokenService.generateMcpToken(runId, projectId, ttlHours));
+        env.put("CONDUCTOR_MCP_ENABLED", String.valueOf(conductorMcp));
+        if (conductorMcp) {
+            env.put("CONDUCTOR_API_KEY", runTokenService.generateMcpToken(runId, projectId, ttlHours));
+        }
         env.put("CONDUCTOR_STEP_RUN", script);
 
         if (stepDef.get("env") instanceof Map<?, ?> stepEnv) {
@@ -141,8 +205,19 @@ public class RenderTargetStepRunner {
         return switch (exitCode) {
             case 20 -> "STEP_CONFIG_ERROR";
             case 124 -> "STEP_TIMEOUT";
-            case 127 -> IMAGE_OUTDATED_REASON;
+            // 127 here is the step script's own "command not found": a render image without the
+            // entrypoint fails at container start and is recognised from Cloud Run's message instead.
+            case 127 -> "STEP_FAILED (exit 127): a command in the render step was not found";
             default -> "STEP_FAILED (exit " + exitCode + ")";
         };
+    }
+
+    /** Cloud Run's failure text for an execution whose container could not start the entrypoint. */
+    static String mapFailureMessage(String message) {
+        String m = message.toLowerCase(java.util.Locale.ROOT);
+        boolean missingEntrypoint = m.contains("executable file not found")
+                || m.contains("conductor-step-entrypoint")
+                || m.contains("container failed to start");
+        return missingEntrypoint ? IMAGE_OUTDATED_REASON : null;
     }
 }

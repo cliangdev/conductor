@@ -315,4 +315,45 @@ class GcpCloudRunJobLauncherTest {
         assertThat(result.executionName()).isEmpty();
         assertThat(result.reachedApi()).isFalse();
     }
+
+    @Test
+    void startExecution_executionOverrideTimeoutIsTheTasksTimeoutInSeconds() throws Exception {
+        stubRunJobAsync();
+        when(initialFuture.get(20L, TimeUnit.SECONDS)).thenReturn(snapshot);
+        when(snapshot.getName()).thenReturn("op-1");
+        when(operationFuture.getMetadata()).thenReturn(metadataFuture);
+        when(metadataFuture.get(30L, TimeUnit.SECONDS)).thenReturn(Execution.newBuilder().setName("exec-1").build());
+        // The render runner passes step budget (30) + 3 minutes of grace as the task timeout.
+        launcher.startExecution(TARGET, new ContainerTask("image:1", java.util.List.of("cmd"), Map.of(), 33));
+
+        org.mockito.ArgumentCaptor<RunJobRequest> request = org.mockito.ArgumentCaptor.forClass(RunJobRequest.class);
+        verify(jobsClient).runJobAsync(request.capture());
+        assertThat(request.getValue().getOverrides().getTimeout().getSeconds()).isEqualTo(33 * 60L);
+    }
+
+    @Test
+    void pollExecution_failedExecution_surfacesCloudRunsFailureMessage() {
+        ExecutionsClient executions = executionsClient;
+        TasksClientHolder.install(clientFactory, executions);
+        Execution failed = Execution.newBuilder().setName("exec-1")
+                .setCompletionTime(com.google.protobuf.Timestamp.newBuilder().setSeconds(1))
+                .setFailedCount(1)
+                .addConditions(com.google.cloud.run.v2.Condition.newBuilder().setType("Completed")
+                        .setMessage("Container failed to start: executable file not found"))
+                .build();
+        when(executions.getExecution("exec-1")).thenReturn(failed);
+
+        CloudRunJobLauncher.ExecutionState state = launcher.pollExecution(TARGET, "exec-1");
+
+        assertThat(state.status()).isEqualTo(CloudRunJobLauncher.Status.FAILED);
+        assertThat(state.failureMessage()).hasValueSatisfying(m -> assertThat(m).contains("executable file not found"));
+    }
+
+    /** Wires {@code clientFactory.forTarget} to executions + a tasks client that lists nothing. */
+    private static final class TasksClientHolder {
+        static void install(CloudRunClientFactory factory, ExecutionsClient executions) {
+            com.google.cloud.run.v2.TasksClient tasks = mock(com.google.cloud.run.v2.TasksClient.class);
+            when(factory.forTarget(TARGET)).thenReturn(new CloudRunClientFactory.Clients(null, executions, tasks));
+        }
+    }
 }

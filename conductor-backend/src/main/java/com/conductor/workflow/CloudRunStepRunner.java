@@ -76,15 +76,38 @@ public class CloudRunStepRunner {
      * @param configError   the env factory threw {@link CredentialResolutionException}
      * @param exitCode      container exit code to errorReason, used only when the container never
      *                      self-reported a reason of its own
+     * @param failureMessage optional: Cloud Run's failure text (launch error or execution failure) to
+     *                      errorReason; returns null when the text is not recognised. Consulted before
+     *                      {@code exitCode}
      */
-    public record Reasons(String launchError, String timeout, String configError, IntFunction<String> exitCode) {}
+    public record Reasons(String launchError, String timeout, String configError, IntFunction<String> exitCode,
+                          Function<String, String> failureMessage) {
+        public Reasons(String launchError, String timeout, String configError, IntFunction<String> exitCode) {
+            this(launchError, timeout, configError, exitCode, null);
+        }
+
+        /** The errorReason for Cloud Run's own failure text, or null when it is not one the runner recognises. */
+        String reasonForMessage(Optional<String> message) {
+            return failureMessage != null && message != null && message.isPresent()
+                    ? failureMessage.apply(message.get()) : null;
+        }
+    }
 
     /**
      * @param envFactory builds the container env from the step's {@code workerJobId}; may throw
      *                   {@link CredentialResolutionException}. Not called when the step resumes.
+     * @param graceMinutes extra minutes added to {@code timeoutMinutes} for the Cloud Run execution
+     *                   timeout and the poll budget, so a container that enforces {@code timeoutMinutes}
+     *                   itself has time to kill its child and report before Cloud Run does
      */
     public record Spec(CloudRunTarget target, String image, List<String> command, int timeoutMinutes,
-                       String stepType, Function<String, Map<String, String>> envFactory, Reasons reasons) {}
+                       String stepType, Function<String, Map<String, String>> envFactory, Reasons reasons,
+                       int graceMinutes) {
+        public Spec(CloudRunTarget target, String image, List<String> command, int timeoutMinutes,
+                    String stepType, Function<String, Map<String, String>> envFactory, Reasons reasons) {
+            this(target, image, command, timeoutMinutes, stepType, envFactory, reasons, 0);
+        }
+    }
 
     public StepResult run(StepExecutionContext context, Spec spec) {
         CloudRunTarget target = spec.target();
@@ -94,7 +117,7 @@ public class CloudRunStepRunner {
         WorkflowJobRun jobRun = context.getJobRun();
         String stepId = (String) stepDef.get("id");
         String label = spec.stepType() + " step";
-        int timeoutMinutes = spec.timeoutMinutes();
+        int timeoutMinutes = spec.timeoutMinutes() + spec.graceMinutes();
         Reasons reasons = spec.reasons();
 
         WorkflowStepRun stepRun = resolveOrCreateStepRun(jobRun, stepId, stepDef, spec.stepType());
@@ -203,7 +226,9 @@ public class CloudRunStepRunner {
         } catch (Exception e) {
             log.warn("Failed to start Cloud Run execution for {} {}: {}", label, stepId, e.getMessage());
             appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
-            return StepResult.failed(logBuilder.toString(), reasons.launchError()).withWorkerJobId(workerJobId);
+            String launchReason = reasons.reasonForMessage(Optional.ofNullable(e.getMessage()));
+            return StepResult.failed(logBuilder.toString(), launchReason != null ? launchReason : reasons.launchError())
+                    .withWorkerJobId(workerJobId);
         }
 
         // operationName is persisted unconditionally, before executionName is even known — the
@@ -397,7 +422,10 @@ public class CloudRunStepRunner {
         if (cloudRunState.status() == CloudRunJobLauncher.Status.SUCCEEDED) {
             return StepResult.success(log, Map.of()).withWorkerJobId(workerJobId);
         }
-        String errorReason = cloudRunState.exitCode().map(reasons.exitCode()::apply).orElse(reasons.launchError());
+        String errorReason = reasons.reasonForMessage(cloudRunState.failureMessage());
+        if (errorReason == null) {
+            errorReason = cloudRunState.exitCode().map(reasons.exitCode()::apply).orElse(reasons.launchError());
+        }
         return StepResult.failed(log, errorReason).withWorkerJobId(workerJobId);
     }
 

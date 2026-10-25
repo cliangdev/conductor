@@ -131,8 +131,14 @@ public interface CloudRunJobLauncher {
      *                 self-reported {@code errorReason} (via the step-complete callback) is the
      *                 primary signal; this is only a fallback for cases where the container never
      *                 got to report (OOM kill, image pull failure, task killed by Cloud Run).
+     * @param failureMessage Cloud Run's own failure text for the execution/task (e.g. a container that
+     *                 failed to start), best-effort; empty when none was exposed.
      */
-    record ExecutionState(Status status, Optional<Integer> exitCode) {
+    record ExecutionState(Status status, Optional<Integer> exitCode, Optional<String> failureMessage) {
+        public ExecutionState(Status status, Optional<Integer> exitCode) {
+            this(status, exitCode, Optional.empty());
+        }
+
         public static ExecutionState running() {
             return new ExecutionState(Status.RUNNING, Optional.empty());
         }

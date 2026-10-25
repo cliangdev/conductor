@@ -287,4 +287,59 @@ class RuntimeTargetResolverTest {
         assertThat(resolution.available()).isFalse();
         assertThat(resolution.unavailableReason()).contains("no longer exists");
     }
+
+    // ---- resolveRenderTargetForResume: re-attaching ignores status, render readiness and designation ----
+
+    private RuntimeTarget namedTarget(RuntimeTargetStatus status, String connectionId) {
+        RuntimeTarget target = new RuntimeTarget();
+        target.setName("acme-run");
+        target.setStatus(status);
+        target.setConnectionId(connectionId);
+        when(runtimeTargetService.findByProjectIdAndName("proj-1", "acme-run")).thenReturn(Optional.of(target));
+        return target;
+    }
+
+    @Test
+    void resolveForResume_provisioningTarget_withRenderError_andNoDesignation_stillResolvesTheRenderJob() {
+        RuntimeTarget target = namedTarget(RuntimeTargetStatus.PROVISIONING, "conn-1");
+        withRender(target, new RuntimeTargetService.RenderConfig("ERROR", "image gone", java.util.List.of(), null, null));
+
+        RuntimeTargetResolver.RenderTargetResolution resolution =
+                resolver.resolveRenderTargetForResume("proj-1", "acme-run");
+
+        assertThat(resolution.available()).isTrue();
+        assertThat(resolution.target().jobName()).isEqualTo("conductor-acme-run-render");
+        assertThat(resolution.target().connectionId()).isEqualTo("conn-1");
+        org.mockito.Mockito.verifyNoInteractions(projectSettingsRepository);
+    }
+
+    @Test
+    void resolveForResume_withoutADispatchedName_usesTheDesignatedTarget() {
+        RuntimeTarget target = designated(RuntimeTargetStatus.ERROR, "conn-1");
+        withRender(target, RuntimeTargetService.RenderConfig.NONE);
+
+        assertThat(resolver.resolveRenderTargetForResume("proj-1", null).available()).isTrue();
+    }
+
+    @Test
+    void resolveForResume_targetDeleted_isUnavailable() {
+        when(runtimeTargetService.findByProjectIdAndName("proj-1", "acme-run")).thenReturn(Optional.empty());
+
+        RuntimeTargetResolver.RenderTargetResolution resolution =
+                resolver.resolveRenderTargetForResume("proj-1", "acme-run");
+
+        assertThat(resolution.available()).isFalse();
+        assertThat(resolution.unavailableReason()).contains("no longer exists");
+    }
+
+    @Test
+    void resolveForResume_connectionRemoved_isUnavailable() {
+        namedTarget(RuntimeTargetStatus.ERROR, null);
+
+        RuntimeTargetResolver.RenderTargetResolution resolution =
+                resolver.resolveRenderTargetForResume("proj-1", "acme-run");
+
+        assertThat(resolution.available()).isFalse();
+        assertThat(resolution.unavailableReason()).contains("connection");
+    }
 }
