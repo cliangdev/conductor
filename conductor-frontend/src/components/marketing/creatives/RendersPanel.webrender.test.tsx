@@ -21,18 +21,18 @@ import { RendersPanel } from './RendersPanel'
 import type { CreativeRenderRun } from './types'
 
 const RENDERS = '/api/v2/projects/proj-1/marketing/creatives/cr-1/renders'
-const CREATIVE = '/api/v2/projects/proj-1/marketing/creatives/cr-1'
+const LATEST = '/api/v2/projects/proj-1/marketing/creatives/cr-1/render-runs/latest'
 const DISPATCH = '/api/v2/projects/proj-1/marketing/creatives/cr-1/render-runs'
 
 function run(overrides: Partial<CreativeRenderRun> = {}): CreativeRenderRun {
   return { workflowId: 'wf-1', runId: 'run-1', status: 'RUNNING', ...overrides }
 }
 
-/** GET creative returns `renderRun`; GET renders returns []. */
+/** GET render-runs/latest returns the run (undefined = 204); GET renders returns []. */
 function mockGets(getRun: () => CreativeRenderRun | null) {
   ;(apiGet as Mock).mockImplementation(async (path: string) => {
     if (path === RENDERS) return []
-    if (path === CREATIVE) return { renderRun: getRun() }
+    if (path === LATEST) return getRun() ?? undefined
     throw new Error(`unexpected GET ${path}`)
   })
 }
@@ -130,7 +130,7 @@ describe('RendersPanel web render', () => {
     mockGets(() => run({ status: 'SUCCESS' }))
     setup()
     await screen.findByText('No renders yet')
-    await waitFor(() => expect(apiGet).toHaveBeenCalledWith(CREATIVE, 'tok'))
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith(LATEST, 'tok'))
     expect(screen.queryByTestId('render-run-status')).toBeNull()
     expect(screen.queryByTestId('render-run-failed')).toBeNull()
     expect(screen.getByRole('button', { name: 'Render' })).toBeEnabled()
@@ -157,12 +157,63 @@ describe('RendersPanel web render', () => {
     mockGets(() => run())
     setup()
     await screen.findByText('Rendering…')
-    const creativeCalls = () => (apiGet as Mock).mock.calls.filter((c) => c[0] === CREATIVE).length
+    const creativeCalls = () => (apiGet as Mock).mock.calls.filter((c) => c[0] === LATEST).length
     const before = creativeCalls()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5100)
     })
     expect(creativeCalls()).toBeGreaterThan(before)
+  })
+
+  it('204 from render-runs/latest shows no banner and no error', async () => {
+    mockGets(() => null)
+    setup()
+    await screen.findByText('No renders yet')
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith(LATEST, 'tok'))
+    expect(screen.queryByTestId('render-run-status')).toBeNull()
+    expect(screen.queryByTestId('render-run-failed')).toBeNull()
+    expect(screen.queryByTestId('render-run-error')).toBeNull()
+  })
+
+  it('a stale run-status error clears after a successful poll', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let failing = true
+    ;(apiGet as Mock).mockImplementation(async (path: string) => {
+      if (path === RENDERS) return [{ id: 'r', state: 'RUNNING', requestedAt: new Date().toISOString(), frames: [], creativeVersion: 3 }]
+      if (path === LATEST) {
+        if (failing) throw Object.assign(new Error('x'), { detail: 'status down' })
+        return run({ status: 'SUCCESS' })
+      }
+      throw new Error(`unexpected GET ${path}`)
+    })
+    setup()
+    expect(await screen.findByText('status down')).toBeInTheDocument()
+    failing = false
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100)
+    })
+    await waitFor(() => expect(screen.queryByText('status down')).toBeNull())
+  })
+
+  it('a list error and a run-status error are independent', async () => {
+    ;(apiGet as Mock).mockImplementation(async (path: string) => {
+      if (path === RENDERS) throw Object.assign(new Error('x'), { detail: 'list down' })
+      if (path === LATEST) throw Object.assign(new Error('x'), { detail: 'status down' })
+      throw new Error(`unexpected GET ${path}`)
+    })
+    setup()
+    expect(await screen.findByText('list down')).toBeInTheDocument()
+    expect(await screen.findByText('status down')).toBeInTheDocument()
+  })
+
+  it('a run-status failure does not hide a successful renders list', async () => {
+    ;(apiGet as Mock).mockImplementation(async (path: string) => {
+      if (path === RENDERS) return []
+      throw Object.assign(new Error('x'), { detail: 'status down' })
+    })
+    setup()
+    expect(await screen.findByText('No renders yet')).toBeInTheDocument()
+    expect(await screen.findByText('status down')).toBeInTheDocument()
   })
 
   it('guards against double clicks while the dispatch is in flight', async () => {

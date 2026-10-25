@@ -147,8 +147,6 @@ export interface Creative {
   latestRender?: CreativeRender | null
   /** The family's RUNNING hook experiment, if any (COND-24 T5). Same value on every letter in the family. */
   activeExperimentId?: string | null
-  /** The latest `conductor-creative-render` Workflow run for this Creative — GET detail only. */
-  renderRun?: CreativeRenderRun | null
 }
 
 /** A WorkflowRun status as the backend reports it (PENDING, PENDING_LOCAL_PICKUP, RUNNING, SUCCESS,
@@ -906,6 +904,19 @@ export function creativeToRenderCreative(
     backgroundVideoUrl: motion?.background?.source === 'clip' ? motionMedia?.clipMedia?.url ?? undefined : undefined,
     clipStartSec: motion?.background?.clipStartSec ?? undefined,
   }
+}
+
+/** The latest `conductor-creative-render` Workflow run for a Creative; null when it has never run (204). */
+export async function getLatestCreativeRenderRun(
+  projectId: string,
+  creativeId: string,
+  token: string,
+): Promise<CreativeRenderRun | null> {
+  const run = await apiGet<CreativeRenderRun | undefined>(
+    `${creativesBase(projectId)}/${creativeId}/render-runs/latest`,
+    token,
+  )
+  return run ?? null
 }
 
 /** Starts a web render: dispatches the `conductor-creative-render` system Workflow (runs on the

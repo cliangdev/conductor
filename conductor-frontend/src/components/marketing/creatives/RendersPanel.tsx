@@ -27,7 +27,7 @@ import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
 import { isRenderRunActive, renderRunPhase } from '@/components/marketing/creatives/creativeCopy'
 import {
   dispatchCreativeRenderRun,
-  getCreative,
+  getLatestCreativeRenderRun,
   listCreativeRenders,
   requestCreativeRender,
   type CreativeKind,
@@ -100,9 +100,11 @@ export function RendersPanel({
   const canManage = useCan('creative.manage')
   const [renders, setRenders] = useState<CreativeRender[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The render-run status poll has its own error so it neither hides nor clears the list's.
+  const [runError, setRunError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [preparing, setPreparing] = useState(false)
-  // The latest render-run (system Workflow) for this Creative, from GET creative's `renderRun`.
+  // The latest render-run (system Workflow) for this Creative, from GET .../render-runs/latest.
   const [run, setRun] = useState<CreativeRenderRun | null>(null)
   const [dispatching, setDispatching] = useState(false)
   const dispatchingRef = useRef(false)
@@ -141,10 +143,10 @@ export function RendersPanel({
 
   const loadRun = useCallback(async () => {
     try {
-      const creative = await getCreative(projectId, creativeId, token)
-      setRun(creative.renderRun ?? null)
+      setRun(await getLatestCreativeRenderRun(projectId, creativeId, token))
+      setRunError(null)
     } catch (err) {
-      setError(apiErrorMessage(err, 'Could not load the render status'))
+      setRunError(apiErrorMessage(err, 'Could not load the render status'))
     }
   }, [projectId, creativeId, token])
 
@@ -266,6 +268,11 @@ export function RendersPanel({
       </div>
 
       {error && <Alert variant="destructive">{error}</Alert>}
+      {runError && (
+        <Alert variant="destructive" data-testid="render-run-error">
+          {runError}
+        </Alert>
+      )}
 
       {dispatchError && (
         <Alert variant="destructive" data-testid="render-dispatch-error">
