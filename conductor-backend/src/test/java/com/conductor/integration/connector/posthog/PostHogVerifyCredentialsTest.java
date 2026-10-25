@@ -108,4 +108,31 @@ class PostHogVerifyCredentialsTest {
         assertThatThrownBy(() -> PostHogSettings.resolveHost("https://ph.example.com/x"))
                 .isInstanceOf(ChannelMetricsSourceException.class);
     }
+
+    @Test
+    void ipLiteralsAndLocalhostAreRejectedAsHosts() {
+        for (String h : new String[] {"https://169.254.169.254", "10.0.0.5", "https://[::1]", "localhost",
+                "https://foo.localhost", "https://127.0.0.1:8080", "https://2130706433"}) {
+            assertThatThrownBy(() -> PostHogSettings.resolveHost(h))
+                    .as(h).isInstanceOf(ChannelMetricsSourceException.class);
+        }
+    }
+
+    @Test
+    void internalSelfHostedHostIsRefusedWithoutARequest() {
+        assertThat(connector.verifyCredentials(ctx("k", Map.of("projectId", "42", "host", "https://127.0.0.1"))))
+                .hasValueSatisfying(m -> assertThat(m).contains("public hostname"));
+        server.verify();
+    }
+
+    @Test
+    void unreachableHostMessageLeaksNoExceptionText() {
+        server.expect(requestTo("https://app.posthog.com/api/projects/42/query/"))
+                .andRespond(request -> { throw new java.io.IOException("Connection refused: internal-secret:5432"); });
+
+        assertThat(connector.verifyCredentials(ctx("k", Map.of("projectId", "42"))))
+                .hasValueSatisfying(m -> assertThat(m)
+                        .isEqualTo("Could not reach PostHog at https://app.posthog.com. Check the region or self-hosted URL.")
+                        .doesNotContain("internal-secret"));
+    }
 }

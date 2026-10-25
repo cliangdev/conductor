@@ -82,6 +82,7 @@ class IntegrationControllerTest {
     // IntegrationController collaborators
     @MockitoBean private ConnectorRegistry connectorRegistry;
     @MockitoBean private ConnectionService connectionService;
+    @MockitoBean private com.conductor.service.ConnectionHealthService connectionHealthService;
     @MockitoBean private IntegrationFetchService fetchService;
     @MockitoBean private OAuthFlowService oAuthFlowService;
     @MockitoBean private com.conductor.service.ConnectionDisconnectService connectionDisconnectService;
@@ -474,6 +475,7 @@ class IntegrationControllerTest {
         org.assertj.core.api.Assertions.assertThat(ctx.getValue().accessToken()).isEqualTo("phx_new");
         org.assertj.core.api.Assertions.assertThat(ctx.getValue().config()).containsEntry("projectId", "7");
         verify(connectionService).storeTokens(conn, "phx_new", null, null);
+        verify(connectionHealthService).resetHealthy("conn-k");
     }
 
     @Test
@@ -501,6 +503,7 @@ class IntegrationControllerTest {
                 .andExpect(jsonPath("$.detail").value("PostHog refused the key"));
 
         org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never()).storeTokens(any(), any(), any(), any());
+        org.mockito.Mockito.verify(connectionHealthService, org.mockito.Mockito.never()).resetHealthy(any());
     }
 
     private com.conductor.integration.FetchConnector identityConnector() {

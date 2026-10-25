@@ -108,6 +108,7 @@ public class IntegrationController implements IntegrationsApi {
     private final ProjectSecurityService projectSecurityService;
     private final ConnectorFeedRepository connectorFeedRepository;
     private final ObjectMapper objectMapper;
+    private final ConnectionHealthService connectionHealthService;
     /**
      * Present only outside the {@code local} profile (the real {@link GcpBillingConnector} is
      * {@code @Profile("!local")}); empty locally — matching the previous {@code @Profile("!local")}
@@ -137,7 +138,9 @@ public class IntegrationController implements IntegrationsApi {
                                 ConnectorAppCredentialService appCredentialService,
                                 ConnectorAppCredentialVerificationService appCredentialVerificationService,
                                 ObjectMapper objectMapper,
-                                com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider) {
+                                com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider,
+                                ConnectionHealthService connectionHealthService) {
+        this.connectionHealthService = connectionHealthService;
         this.remoteMcpToolProvider = remoteMcpToolProvider;
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -438,6 +441,8 @@ public class IntegrationController implements IntegrationsApi {
         }
         if (newKey != null) {
             connectionService.storeTokens(conn, newKey, null, null);
+            // A stale red/amber state belongs to the old key.
+            connectionHealthService.resetHealthy(conn.getId());
         }
         if (configChanged || newKey != null) {
             reviveStalledFeeds(conn);

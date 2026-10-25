@@ -22,6 +22,7 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
 
     private final RestTemplate restTemplate;
     private final PostHogChannelMetrics channelMetrics;
+    private final OutboundUrlGuard hostGuard = new OutboundUrlGuard(false);
 
     /** HogQL over a large project can run for minutes; the default 8s connector deadline cut it off. */
     static final Duration CHANNEL_METRICS_CONNECT_TIMEOUT = Duration.ofSeconds(10);
@@ -279,6 +280,14 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
         } catch (ChannelMetricsSourceException e) {
             return Optional.of(e.getMessage());
         }
+        if (!List.of(PostHogSettings.DEFAULT_HOST, PostHogSettings.US_CLOUD, PostHogSettings.EU_CLOUD).contains(host)) {
+            // Self-hosted: refuse a name that resolves to an internal address before any request is made.
+            try {
+                hostGuard.validate(host);
+            } catch (IllegalArgumentException e) {
+                return Optional.of("PostHog host must resolve to a public address. Check the self-hosted URL.");
+            }
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(ctx.accessToken());
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -302,7 +311,8 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
             }
             return Optional.of("PostHog rejected the check query (" + status + ")");
         } catch (Exception e) {
-            return Optional.of("Could not reach PostHog at " + host + ": " + truncate(e.getMessage(), 120));
+            log.warn("PostHog credential check could not reach {}: {}", host, e.getClass().getSimpleName());
+            return Optional.of("Could not reach PostHog at " + host + ". Check the region or self-hosted URL.");
         }
     }
 

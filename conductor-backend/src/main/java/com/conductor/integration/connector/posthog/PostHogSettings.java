@@ -84,11 +84,26 @@ record PostHogSettings(String host, String filterProperty, String filterValue, S
                     || uri.getQuery() != null || uri.getFragment() != null || !plainRoot) {
                 throw new IllegalArgumentException("bad host");
             }
+            String hostName = uri.getHost().toLowerCase(Locale.ROOT);
+            if (isInternalName(hostName)) {
+                throw ChannelMetricsSourceException.setupRequired(
+                        "PostHog host must be a public hostname, not an IP address or localhost");
+            }
             return "https://" + uri.getRawAuthority().toLowerCase(Locale.ROOT);
+        } catch (ChannelMetricsSourceException e) {
+            throw e;
         } catch (IllegalArgumentException e) {
             throw ChannelMetricsSourceException.setupRequired(
                     "PostHog host must be US, EU or a self-hosted https URL such as https://posthog.example.com");
         }
+    }
+
+    /** IP literals (v4 or v6) and localhost names are never a PostHog host; resolved addresses are checked at verify. */
+    private static boolean isInternalName(String host) {
+        return host.equals("localhost") || host.endsWith(".localhost")
+                || host.startsWith("[") || host.contains(":")
+                || host.matches("\\d{1,3}(\\.\\d{1,3}){3}")
+                || host.matches("\\d+") || host.matches("(0x[0-9a-f]+)(\\.[0-9a-fx]+)*");
     }
 
     private static String text(ConnectionContext ctx, String key) {
