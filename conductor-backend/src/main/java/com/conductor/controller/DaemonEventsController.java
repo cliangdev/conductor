@@ -1,5 +1,6 @@
 package com.conductor.controller;
 
+import com.conductor.entity.User;
 import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.exception.ForbiddenException;
@@ -13,6 +14,7 @@ import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.security.WorkflowRunAuthenticationToken;
 import com.conductor.service.DaemonEventService;
+import com.conductor.service.ProjectSecurityService;
 import com.conductor.workflow.JobDispatchPayloadService;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import jakarta.persistence.EntityNotFoundException;
@@ -30,15 +32,18 @@ public class DaemonEventsController implements DaemonApi {
     private final JobDispatchPayloadService jobDispatchPayloadService;
     private final WorkflowJobOrchestrator workflowJobOrchestrator;
     private final WorkflowRunRepository runRepository;
+    private final ProjectSecurityService projectSecurityService;
 
     public DaemonEventsController(DaemonEventService daemonEventService,
                                    JobDispatchPayloadService jobDispatchPayloadService,
                                    WorkflowJobOrchestrator workflowJobOrchestrator,
-                                   WorkflowRunRepository runRepository) {
+                                   WorkflowRunRepository runRepository,
+                                   ProjectSecurityService projectSecurityService) {
         this.daemonEventService = daemonEventService;
         this.jobDispatchPayloadService = jobDispatchPayloadService;
         this.workflowJobOrchestrator = workflowJobOrchestrator;
         this.runRepository = runRepository;
+        this.projectSecurityService = projectSecurityService;
     }
 
     @Override
@@ -71,7 +76,7 @@ public class DaemonEventsController implements DaemonApi {
 
     /**
      * Daemon endpoints are authenticated by a project-scoped principal (a project API key or a
-     * run-scoped MCP token), but runId/jobId don't carry the project in the path — unlike
+     * run-scoped MCP token) or by a user (user API key / JWT) who edits the run's project, but runId/jobId don't carry the project in the path — unlike
      * getDaemonEvents/ackDaemonEvents which trust a caller-supplied projectId path segment, these load
      * the run and verify the authenticated principal's project actually matches it. A run-scoped
      * token is additionally pinned to its own run: unlike a project API key, it was minted for one
@@ -82,6 +87,12 @@ public class DaemonEventsController implements DaemonApi {
                 .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
         String projectId = run.getWorkflow().getProject().getId();
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        // A daemon logged in with `conductor login` authenticates with the user's API key, not a project
+        // key: accept an ADMIN/CREATOR member of the run's project (a non-member or REVIEWER gets a 403).
+        if (auth != null && auth.getPrincipal() instanceof User) {
+            projectSecurityService.requireProjectEditor(projectId);
+            return;
+        }
         if (!(auth instanceof ProjectScopedPrincipal scoped) || !projectId.equals(scoped.getProjectId())) {
             throw new ForbiddenException("API key does not belong to project " + projectId);
         }
