@@ -58,9 +58,11 @@ jobs:
           STRICT: ${{ github.event_name == 'workflow_run' }}
         run: |
           VERSION=$(node -p "require('./conductor-tools/package.json').version")
+          PACKAGE_VERSION="$VERSION"
           # The release publishes to npm before this runs (workflow_run) but the registry can lag a
           # moment, and a push that only touches the Dockerfile may name a version not released yet.
           FOUND=""
+          PUBLISH=true
           for attempt in $(seq 1 30); do
             if npm view "@cliangdev/conductor@${VERSION}" version >/dev/null 2>&1; then
               FOUND=1
@@ -77,14 +79,21 @@ jobs:
               echo "::error::@cliangdev/conductor@${VERSION} never appeared on npm"
               exit 1
             fi
+            # Never move :1 or tag a version for an image that does not install package.json's
+            # version. Build the latest published CLI as validation only.
             VERSION=$(npm view @cliangdev/conductor version)
-            echo "::warning::package.json's version is not published; building with the latest published ${VERSION}"
+            PUBLISH=false
+            echo "::notice::@cliangdev/conductor@${PACKAGE_VERSION} is not on npm yet; building ${VERSION} for validation only (nothing is pushed). The post-release run publishes :1."
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
 
       - name: Short SHA
         id: sha
-        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        env:
+          # The commit that was checked out above, which is not GITHUB_SHA on workflow_run.
+          BUILT_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: echo "short=${BUILT_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU (arm64 builds on an amd64 runner)
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
@@ -105,7 +114,7 @@ jobs:
         with:
           context: runner-image
           file: runner-image/Dockerfile.render
-          push: true
+          push: ${{ steps.cli.outputs.publish == 'true' }}
           platforms: linux/amd64,linux/arm64
           build-args: |
             CONDUCTOR_VERSION=${{ steps.cli.outputs.version }}
