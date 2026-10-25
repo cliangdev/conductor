@@ -185,6 +185,7 @@ conductor start
   any failed run.
 - Only one render run per Creative at a time; clicking again while one is active just shows that run.
 - **Render failed** shows the error and a link to the run's logs; fix the cause and click **Render** again.
+- If your workspace's Cloud Run runtime target is set up for rendering (Settings, AI Providers, Runtime), renders run there and you can skip the daemon; the panel shows "Rendering on <target name>". Otherwise they run on your daemon as above.
 - Nothing renders by itself: it only happens when someone clicks. Claude Code and Desktop still render
   locally on your own machine and do not need a daemon.
 

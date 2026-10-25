@@ -96,7 +96,7 @@ server can render by itself, 422 with the violations for an invalid one (nothing
 `RENDER_RUN_ACTIVE` while a run for that Creative is queued or running, and 409 `RENDER_WORKFLOW_DISABLED`
 or `RENDER_WORKFLOW_NAME_TAKEN` for a workflow someone disabled or already authored under that name.
 `CreativeResponse.renderRun` (single `GET` only) carries the latest such run's status. Claude Code and the
-CLI still render locally with no Workflow. Setup, the image and reuse in custom workflows:
+CLI still render locally with no Workflow. When the workspace has a Cloud Run runtime target set up for rendering, the run executes there as a Cloud Run Job; otherwise it runs on your self-hosted daemon (`CreativeRenderRun.runtime` says which). Setup, the image and reuse in custom workflows:
 [`workflows.md`](workflows.md#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon).
 
 `CreativeResponse.latestRender` (the last `SUCCEEDED`, non-preview render, with frames) appears on a

@@ -1278,6 +1278,24 @@ Deleting a target removes only Conductor's record — **the Cloud Run Job in you
 
 Credential-wise a runtime-target job behaves like `cloud-run`: the project's Claude Code subscription token, and — when `conductor_mcp: true` — a freshly-minted run-scoped MCP token, are injected by the backend; compute runs — and is billed — in your GCP project.
 
+
+**Rendering Creatives on a target.** A target can also run the web app's Creative **Render** button (the [system render workflow](#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon)) instead of a self-hosted daemon. It is opt-in per target and independent of the claude-code job:
+
+1. Mirror the render image into the same Artifact Registry, the same way as the claude runner above (the image is multi-arch; Cloud Run needs `linux/amd64`):
+   ```bash
+   docker pull --platform linux/amd64 ghcr.io/cliangdev/conductor-render:1
+   docker tag ghcr.io/cliangdev/conductor-render:1 us-central1-docker.pkg.dev/PROJECT/conductor/conductor-render:1
+   docker push us-central1-docker.pkg.dev/PROJECT/conductor/conductor-render:1
+   ```
+2. Set the target's **render image** (Runtime targets → the target's *Rendering* line) to that reference. It must be on `*-docker.pkg.dev`, like the main image.
+3. Conductor verifies the image and creates a second Cloud Run Job, `<job name>-render` (command `conductor-step-entrypoint`, 2 vCPU, 4Gi, 35 minute task timeout, no retries). The *Rendering* line shows **Renders creatives** with the pinned image, or the error. The default compute service account (or the Job's runtime service account) needs `roles/artifactregistry.reader`, as for the main image. A render image without the `dev.conductor.runner.protocol` label only produces a warning.
+
+Rendering readiness is separate from the target's status: a render error never changes the target from `ACTIVE`, and claude-code steps keep working. A target with no render image records no render job (an existing `<job>-render` Job is left in your project, just unused).
+
+When the workspace's designated target (Settings → AI Providers → Runtime) is `ACTIVE` and its render job is ready, **Render** runs there; otherwise it runs on a self-hosted daemon exactly as before. The choice is made when you click Render and shown on the run (`runtime`: `target` or `self-hosted`). If the target becomes unusable between the click and the step (deleted, connection removed, render job in error), the step fails with `RENDER_TARGET_UNAVAILABLE` rather than silently running elsewhere. Only the system render workflow's `render-target` job runs on a target this way; any other `docker` step on `runs-on: cloud-run` still goes to a worker VM.
+
+**After mirroring a newer render image**, use **Sync to latest image** on the target: like the main image, the Job pins the digest it saw at provisioning time, and Sync re-pins both Jobs. Step exit codes from the render Job: `20` = `STEP_CONFIG_ERROR`, `124` = `STEP_TIMEOUT`, `127` = `RENDER_IMAGE_OUTDATED` (the mirrored image has no `conductor-step-entrypoint`: mirror the current image and re-sync), anything else `STEP_FAILED`.
+
 ---
 
 ## Queued and waiting work
@@ -1579,6 +1597,8 @@ The daemon reads from `~/.conductor/config.json`, written by `conductor init`. S
 
 ## Creatives: rendering from the web app on a self-hosted daemon
 
+> **Cloud Run:** when the workspace has a designated [runtime target](#runtime-targets-bring-your-own-cloud-run) set up for rendering, the same Render runs there instead (the `render-target` job below) and no daemon is needed. The rest of this section describes the self-hosted path, which is also the fallback.
+
 Creatives that need a browser or ffmpeg to render (a still, MOTION, a CAROUSEL with a music track, a
 CLIP with track/mix/none audio) normally render **locally**: Claude Code or the `conductor` CLI drives
 Playwright on the user's machine. That is unchanged. For someone using only the web app, the **Render**
@@ -1597,7 +1617,8 @@ on:
   workflow_dispatch:
     manual: false
 jobs:
-  render:
+  render:                       # also a `render-target` job, `runs-on: cloud-run`, same step
+    if: "${{ event.runtime }} == 'self-hosted'"
     runs-on: self-hosted
     steps:
       - uses: docker://ghcr.io/cliangdev/conductor-render:1
@@ -1621,7 +1642,7 @@ How the pieces fit:
   daemons work) and is rebuilt by `.github/workflows/publish-render-image.yml` after every CLI release,
   moving the floating `:1` tag (also published as `:<cli version>` and `:sha-<commit>`). The daemon
   `docker pull`s the image at the start of every job, so `:1` stays current. Its default `CMD` exits 64
-  with a message that a daemon >= 0.41.0 is needed, so a daemon that ignores `run:` fails loudly.
+  with a message that a daemon >= 0.41.0 is needed, so a daemon that ignores `run:` fails loudly. It sets no `ENTRYPOINT`: a daemon uses `--entrypoint sh`, and a Cloud Run target's render Job uses the command `conductor-step-entrypoint` (installed in the image, labelled `dev.conductor.runner.protocol=1`), which runs the same script and reports logs and the result itself.
 - **Pass the Creative's UUID, not its display id.** A workflow's run token can't list Creatives, so `conductor creative render 12a` fails inside a workflow with "Resolve '12a' needs a user API key". `event.creativeId` is already a UUID; resolving display ids ("12a") is for people using a user API key.
 - **The creative id goes through `env`**, never into the shell string, and the script is the one
   command above, the same one Claude Code uses. `conductor creative render` works headless from
