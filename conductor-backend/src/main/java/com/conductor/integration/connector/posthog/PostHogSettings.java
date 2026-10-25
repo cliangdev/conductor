@@ -57,16 +57,29 @@ record PostHogSettings(String host, String filterProperty, String filterValue, S
         return resolveHost(text(ctx, "host"));
     }
 
+    /** The message for a key PostHog refuses (401/403) on a project: what to create, and where. */
+    static String refusedKeyMessage(Object projectId) {
+        return "PostHog refused the key for project " + projectId
+                + ": use a Personal API key (phx_…) with query:read access to that project";
+    }
+
+    /**
+     * Blank means the default (US cloud). {@code us} / {@code eu} pick the cloud region; anything else is a
+     * self-hosted https host, typed with or without the scheme and with or without a trailing slash.
+     */
     static String resolveHost(String raw) {
-        if (raw == null) {
+        if (raw == null || raw.isBlank()) {
             return DEFAULT_HOST;
         }
-        String lower = raw.toLowerCase(Locale.ROOT);
+        String trimmed = raw.trim();
+        String lower = trimmed.toLowerCase(Locale.ROOT);
         if (lower.equals("us")) return US_CLOUD;
         if (lower.equals("eu")) return EU_CLOUD;
+        String withScheme = lower.contains("://") ? trimmed : "https://" + trimmed;
         try {
-            URI uri = URI.create(raw);
-            boolean plainRoot = uri.getPath() == null || uri.getPath().isEmpty() || uri.getPath().equals("/");
+            URI uri = URI.create(withScheme);
+            String path = uri.getPath();
+            boolean plainRoot = path == null || path.isEmpty() || path.matches("/+");
             if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null
                     || uri.getQuery() != null || uri.getFragment() != null || !plainRoot) {
                 throw new IllegalArgumentException("bad host");

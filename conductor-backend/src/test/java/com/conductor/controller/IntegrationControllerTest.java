@@ -445,6 +445,64 @@ class IntegrationControllerTest {
         org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never()).updateConfig(any(), any());
     }
 
+    @Test
+    void updateConnection_newApiKey_isVerifiedThenStored_andStalledFeedsRevived() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        com.conductor.integration.FetchConnector connector = mock(com.conductor.integration.FetchConnector.class);
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        Connection conn = new Connection();
+        conn.setId("conn-k");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId(GCP_SA_CONNECTOR_ID);
+        conn.setAuthType("API_KEY");
+        when(connectionService.getById("conn-k", GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+        when(connectionService.toContext(conn)).thenReturn(new com.conductor.integration.ConnectionContext(
+                PROJECT_ID, GCP_SA_CONNECTOR_ID, "conn-k", "old-secret", null, null, Map.of("projectId", "7"), null));
+        when(connector.verifyCredentials(any())).thenReturn(Optional.empty());
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_SA_CONNECTOR_ID
+                        + "/connections/conn-k")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\" phx_new \"}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.conductor.integration.ConnectionContext> ctx =
+                org.mockito.ArgumentCaptor.forClass(com.conductor.integration.ConnectionContext.class);
+        verify(connector).verifyCredentials(ctx.capture());
+        org.assertj.core.api.Assertions.assertThat(ctx.getValue().accessToken()).isEqualTo("phx_new");
+        org.assertj.core.api.Assertions.assertThat(ctx.getValue().config()).containsEntry("projectId", "7");
+        verify(connectionService).storeTokens(conn, "phx_new", null, null);
+    }
+
+    @Test
+    void updateConnection_newApiKeyFailsTheCheck_returns400AndKeepsTheOldKey() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        com.conductor.integration.FetchConnector connector = mock(com.conductor.integration.FetchConnector.class);
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        Connection conn = new Connection();
+        conn.setId("conn-k");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId(GCP_SA_CONNECTOR_ID);
+        conn.setAuthType("API_KEY");
+        when(connectionService.getById("conn-k", GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+        when(connectionService.toContext(conn)).thenReturn(new com.conductor.integration.ConnectionContext(
+                PROJECT_ID, GCP_SA_CONNECTOR_ID, "conn-k", "old-secret", null, null, Map.of(), null));
+        when(connector.verifyCredentials(any())).thenReturn(Optional.of("PostHog refused the key"));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_SA_CONNECTOR_ID
+                        + "/connections/conn-k")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"bad\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("PostHog refused the key"));
+
+        org.mockito.Mockito.verify(connectionService, org.mockito.Mockito.never()).storeTokens(any(), any(), any(), any());
+    }
+
     private com.conductor.integration.FetchConnector identityConnector() {
         com.conductor.integration.FetchConnector connector = mock(com.conductor.integration.FetchConnector.class);
         when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(false, List.of()));

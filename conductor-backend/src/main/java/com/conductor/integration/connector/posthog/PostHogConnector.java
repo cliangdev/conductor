@@ -57,8 +57,8 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
                 "PostHog → Settings → Personal API Keys", FieldType.SECRET, true),
             ConnectorConfigField.userInput("projectId", "PostHog Project ID",
                 "Found in your PostHog project URL", FieldType.STRING, false),
-            ConnectorConfigField.userInput("host", "PostHog host",
-                "US, EU, or your self-hosted https URL. Leave empty for the default host", FieldType.STRING, false),
+            ConnectorConfigField.userInput("host", "Region",
+                "us, eu, or your self-hosted https URL. Leave empty for US cloud", FieldType.STRING, false),
             ConnectorConfigField.userInput("eventFilter", "Event filter",
                 "Only count events matching property = 'value', for example $lib = 'web'", FieldType.STRING, false),
             ConnectorConfigField.userInput("conversionEvent", "Conversion event",
@@ -123,7 +123,7 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
                 return ConnectorData.degraded("Rate limited — try again later", Map.of());
             }
             if (e.getStatusCode().value() == 401 || e.getStatusCode().value() == 403) {
-                return ConnectorData.degraded("Check credentials", Map.of());
+                return ConnectorData.setupRequired(PostHogSettings.refusedKeyMessage(projectId));
             }
             log.warn("PostHog TrendsQuery error: {}", e.getStatusCode());
         } catch (Exception e) {
@@ -256,6 +256,54 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
         Object v = row.get(idx);
         if (v instanceof Number n) return n.doubleValue();
         return 0.0;
+    }
+
+    /**
+     * Runs the cheapest HogQL query the feed itself needs, against the configured project, so a key that can
+     * read the project's metadata but not query it is refused here instead of on the first feed pull.
+     */
+    @Override
+    public Optional<String> verifyCredentials(ConnectionContext ctx) {
+        Object projectIdObj = ctx.configValue("projectId");
+        if (projectIdObj == null || projectIdObj.toString().isBlank()) {
+            return Optional.of("PostHog Project ID is required");
+        }
+        if (ctx.accessToken() == null || ctx.accessToken().isBlank()) {
+            return Optional.of("PostHog API key is required");
+        }
+        String projectId = projectIdObj.toString().trim();
+        String host;
+        try {
+            PostHogSettings.from(ctx);
+            host = PostHogSettings.hostOf(ctx);
+        } catch (ChannelMetricsSourceException e) {
+            return Optional.of(e.getMessage());
+        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(ctx.accessToken());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        PostHogQueryRequest probe = new PostHogQueryRequest(
+                new PostHogQueryRequest.PostHogInnerQuery("HogQLQuery", "SELECT 1 FROM events LIMIT 1", null, null));
+        try {
+            restTemplate.exchange(host + "/api/projects/" + projectId + "/query/", HttpMethod.POST,
+                    new HttpEntity<>(probe, headers), PostHogHogQLResponse.class);
+            return Optional.empty();
+        } catch (HttpClientErrorException e) {
+            int status = e.getStatusCode().value();
+            if (status == 401 || status == 403) {
+                return Optional.of(PostHogSettings.refusedKeyMessage(projectId));
+            }
+            if (status == 404) {
+                return Optional.of("PostHog has no project " + projectId + " at " + host
+                        + ": check the Project ID and the region");
+            }
+            if (status == 429) {
+                return Optional.empty(); // the key was accepted; only the rate limit stopped the probe
+            }
+            return Optional.of("PostHog rejected the check query (" + status + ")");
+        } catch (Exception e) {
+            return Optional.of("Could not reach PostHog at " + host + ": " + truncate(e.getMessage(), 120));
+        }
     }
 
     @Override
