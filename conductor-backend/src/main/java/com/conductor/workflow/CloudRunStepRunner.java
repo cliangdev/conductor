@@ -79,11 +79,19 @@ public class CloudRunStepRunner {
      * @param failureMessage optional: Cloud Run's failure text (launch error or execution failure) to
      *                      errorReason; returns null when the text is not recognised. Consulted before
      *                      {@code exitCode}
+     * @param silentExit    optional: errorReason (or null for "no opinion") for a non-zero exit where the
+     *                      container neither self-reported nor streamed a single log line, i.e. the
+     *                      entrypoint evidently never ran. Consulted after {@code failureMessage}
      */
     public record Reasons(String launchError, String timeout, String configError, IntFunction<String> exitCode,
-                          Function<String, String> failureMessage) {
+                          Function<String, String> failureMessage, IntFunction<String> silentExit) {
         public Reasons(String launchError, String timeout, String configError, IntFunction<String> exitCode) {
-            this(launchError, timeout, configError, exitCode, null);
+            this(launchError, timeout, configError, exitCode, null, null);
+        }
+
+        public Reasons(String launchError, String timeout, String configError, IntFunction<String> exitCode,
+                       Function<String, String> failureMessage) {
+            this(launchError, timeout, configError, exitCode, failureMessage, null);
         }
 
         /** The errorReason for Cloud Run's own failure text, or null when it is not one the runner recognises. */
@@ -423,10 +431,32 @@ public class CloudRunStepRunner {
             return StepResult.success(log, Map.of()).withWorkerJobId(workerJobId);
         }
         String errorReason = reasons.reasonForMessage(cloudRunState.failureMessage());
+        if (errorReason == null && reasons.silentExit() != null && cloudRunState.exitCode().isPresent()
+                && cloudRunState.exitCode().get() != 0 && rowOpt.isPresent()
+                && !hasContainerOutput(rowOpt.get().getLog(), log)) {
+            errorReason = reasons.silentExit().apply(cloudRunState.exitCode().get());
+        }
         if (errorReason == null) {
             errorReason = cloudRunState.exitCode().map(reasons.exitCode()::apply).orElse(reasons.launchError());
         }
         return StepResult.failed(log, errorReason).withWorkerJobId(workerJobId);
+    }
+
+    /**
+     * True when the step row's log holds a line the launcher did not write itself, i.e. the container
+     * streamed output. {@code launcherLog} is exactly the lines this runner appended to the row.
+     */
+    private static boolean hasContainerOutput(String rowLog, String launcherLog) {
+        if (rowLog == null || rowLog.isBlank()) {
+            return false;
+        }
+        java.util.Set<String> launcherLines = new java.util.HashSet<>(List.of(launcherLog.split("\n")));
+        for (String line : rowLog.split("\n")) {
+            if (!line.isBlank() && !launcherLines.contains(line)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private StepResult resultFromRow(WorkflowStepRun row, Map<String, Object> stepDef,

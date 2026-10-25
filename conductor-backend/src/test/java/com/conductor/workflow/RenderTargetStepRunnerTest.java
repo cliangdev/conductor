@@ -271,6 +271,75 @@ class RenderTargetStepRunnerTest {
         assertThat(runner.run(context(stepDef())).getErrorReason()).startsWith("RENDER_IMAGE_OUTDATED");
     }
 
+    private StepResult runSilentOrLogged(int exit, String rowLog, Optional<String> message) {
+        targetReady();
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(runTokenService.generateMcpToken(anyString(), anyString(), anyInt())).thenReturn("mcp-key");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        WorkflowStepRun row = new WorkflowStepRun();
+        row.setStatus(WorkflowStepStatus.RUNNING);
+        row.setLog(rowLog);
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty(), Optional.of(row));
+        launchesAndFinishesWith(new CloudRunJobLauncher.ExecutionState(
+                CloudRunJobLauncher.Status.FAILED, Optional.of(exit), message));
+        return runner.run(context(stepDef()));
+    }
+
+    private static final String LAUNCHER_ONLY_LOG = "→ Launching Cloud Run execution (image=us-east1-docker.pkg.dev/customer-proj/repo/render@sha256:abc, timeout=33m)\n"
+            + "← execution: exec-1\n← execution finished: FAILED\n";
+    private static final String NON_ZERO = "Task t-task0 failed with exit code: 1 and message: "
+            + "The container exited with an error.";
+
+    @Test
+    void liveCase_exit1_nonZeroExitCodeMessage_noLogs_noSelfReport_mapsToRenderImageOutdated() {
+        StepResult result = runSilentOrLogged(1, LAUNCHER_ONLY_LOG, Optional.of(NON_ZERO));
+
+        assertThat(result.getErrorReason()).startsWith("RENDER_IMAGE_OUTDATED")
+                .contains("mirror the current conductor-render image").contains("re-sync the target")
+                .contains("exited with code 1").contains("before conductor-step-entrypoint reported anything");
+    }
+
+    @Test
+    void exit1_withContainerLogChunks_staysStepFailed() {
+        StepResult result = runSilentOrLogged(1, LAUNCHER_ONLY_LOG + "rendering frame 3\n", Optional.of(NON_ZERO));
+
+        assertThat(result.getErrorReason()).isEqualTo("STEP_FAILED (exit 1)");
+    }
+
+    @Test
+    void exit127_withContainerLogs_staysCommandNotFound() {
+        StepResult result = runSilentOrLogged(127, LAUNCHER_ONLY_LOG + "sh: ffmpeg: not found\n", Optional.of(NON_ZERO));
+
+        assertThat(result.getErrorReason()).startsWith("STEP_FAILED (exit 127)");
+    }
+
+    @Test
+    void exit20_silent_staysStepConfigError() {
+        assertThat(runSilentOrLogged(20, LAUNCHER_ONLY_LOG, Optional.of(NON_ZERO)).getErrorReason())
+                .isEqualTo("STEP_CONFIG_ERROR");
+    }
+
+    @Test
+    void exit20_withSelfReport_isStepConfigError() {
+        targetReady();
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(runTokenService.generateMcpToken(anyString(), anyString(), anyInt())).thenReturn("mcp-key");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        launchesAndFinishesWith(new CloudRunJobLauncher.ExecutionState(
+                CloudRunJobLauncher.Status.FAILED, Optional.of(20), Optional.of(NON_ZERO)));
+        WorkflowStepRun reported = new WorkflowStepRun();
+        reported.setWorkerJobId("w");
+        reported.setStatus(WorkflowStepStatus.FAILED);
+        reported.setErrorReason("STEP_CONFIG_ERROR");
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty(), Optional.of(reported));
+
+        assertThat(runner.run(context(stepDef())).getErrorReason()).isEqualTo("STEP_CONFIG_ERROR");
+    }
+
     @Test
     void unrelatedExecutionFailureMessage_fallsBackToTheExitCodeMapping() {
         targetReady();

@@ -46,7 +46,7 @@ public class RenderTargetStepRunner {
 
     private static final CloudRunStepRunner.Reasons REASONS = new CloudRunStepRunner.Reasons(
             "RENDER_LAUNCH_ERROR", "STEP_TIMEOUT", "STEP_CONFIG_ERROR", RenderTargetStepRunner::mapExitCode,
-            RenderTargetStepRunner::mapFailureMessage);
+            RenderTargetStepRunner::mapFailureMessage, RenderTargetStepRunner::mapSilentExit);
 
     private final CloudRunStepRunner stepRunner;
     private final RuntimeTargetResolver runtimeTargetResolver;
@@ -219,5 +219,19 @@ public class RenderTargetStepRunner {
                 || m.contains("conductor-step-entrypoint")
                 || m.contains("container failed to start");
         return missingEntrypoint ? IMAGE_OUTDATED_REASON : null;
+    }
+
+    /**
+     * conductor-step-entrypoint always reports something (log chunks, a step-complete, or exit 20 on missing
+     * env), so a non-zero exit with no self-report and no streamed output means it never ran. Cloud Run's
+     * execution status does not say so (it reports only NonZeroExitCode), hence this signal.
+     */
+    static String mapSilentExit(int exitCode) {
+        // 20/124 are the entrypoint's own codes; 137/143 are the platform killing it (OOM, SIGTERM).
+        if (exitCode == 20 || exitCode == 124 || exitCode == 137 || exitCode == 143) {
+            return null;
+        }
+        return IMAGE_OUTDATED_REASON + " (the container exited with code " + exitCode
+                + " before conductor-step-entrypoint reported anything)";
     }
 }
