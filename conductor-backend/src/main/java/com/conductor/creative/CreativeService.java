@@ -16,6 +16,7 @@ import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeMotion;
 import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderSpec;
+import com.conductor.generated.v2.model.CreativeSlideshow;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.LocalMediaInfo;
@@ -204,7 +205,7 @@ public class CreativeService {
     }
 
     /** A validated, not-yet-saved Creative, plus what was resolved while validating it. */
-    private record PreparedCreate(BrandKit kit, Creative creative, MotionResolution motion) {
+    private record PreparedCreate(BrandKit kit, Creative creative, MotionResolution motion, SoundResolution sound) {
     }
 
     /**
@@ -241,6 +242,8 @@ public class CreativeService {
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, clipMedia);
         MotionResolution motionRes = resolveMotion(media, kind, request.getMotion(), request.getAudio());
+        SoundResolution sound = resolveSound(media, kind, motionRes, request.getAudio(), clipMedia,
+                request.getSlideshow(), slides);
         Map<String, List<CreativeValidator.SlideEntry>> slideEntries = resolveSlides(media, slides);
 
         // A draft is a render, so it is validated the way requestRender validates one: READY-level
@@ -254,7 +257,8 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(),
                 sequenceKind, toValidatorBeats(sequence), request.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())));
+                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
+                .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
@@ -287,10 +291,11 @@ public class CreativeService {
         creative.setKind(kind);
         creative.setClipMedia(clipMedia != null && !clipMedia.isEmpty() ? objectMapper.valueToTree(clipMedia) : null);
         creative.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
-        creative.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
+        creative.setAudio(sound.audio() != null ? objectMapper.valueToTree(sound.audio()) : null);
+        creative.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         creative.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         creative.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
-        return new PreparedCreate(kit, creative, motionRes);
+        return new PreparedCreate(kit, creative, motionRes, sound);
     }
 
     @Transactional
@@ -329,11 +334,20 @@ public class CreativeService {
                 ? request.getClipMedia() : toClipMediaMap(current.getClipMedia());
         CreativeMotion motionRequest = request.getMotion() != null ? request.getMotion() : toMotion(current.getMotion());
         CreativeAudio audioRequest = request.getAudio() != null ? request.getAudio() : toAudio(current.getAudio());
+        CreativeSlideshow slideshowRequest = request.getSlideshow() != null
+                ? request.getSlideshow() : toSlideshow(current.getSlideshow());
 
         // Switching to or from CAROUSEL: the media fields of the kind being left, when merely carried over
         // from the row, no longer apply and would fail kindFields. A PATCH null means "keep", so without
         // this a client could never clear them (photoId, sequenceKind) and the switch could never save.
         boolean kindChanging = request.getKind() != null && !Objects.equals(kind, current.getKind());
+        if (kindChanging) {
+            // The sound and the slideshow belong to the kind being left: a MOTION's "clip" source or a CLIP's
+            // "mix" means nothing on the new kind, and a PATCH null means "keep", so clear them unless the
+            // same request supplies new ones.
+            if (request.getAudio() == null) audioRequest = null;
+            if (request.getSlideshow() == null) slideshowRequest = null;
+        }
         if (kindChanging && Creative.KIND_CAROUSEL.equals(kind)) {
             if (request.getPhotoId() == null) photoId = null;
             if (request.getSequenceKind() == null) sequenceKind = null;
@@ -359,6 +373,7 @@ public class CreativeService {
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, clipMedia);
         MotionResolution motionRes = resolveMotion(media, kind, motionRequest, audioRequest);
+        SoundResolution sound = resolveSound(media, kind, motionRes, audioRequest, clipMedia, slideshowRequest, slides);
         Map<String, List<CreativeValidator.SlideEntry>> slideEntries = resolveSlides(media, slides);
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
@@ -367,7 +382,8 @@ public class CreativeService {
                 mainPhoto.photo() != null && mainPhoto.photo().isBlocked(), sequenceKind,
                 toValidatorBeats(sequence), carouselRatio, sequencePhotos.unknownIds(),
                 overrideBand(layoutOverrides), overridePadBottom(layoutOverrides), kind, clipMediaEntries,
-                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif()));
+                motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
+                .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -407,7 +423,8 @@ public class CreativeService {
         current.setKind(kind);
         current.setClipMedia(clipMedia.isEmpty() ? null : objectMapper.valueToTree(clipMedia));
         current.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
-        current.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
+        current.setAudio(sound.audio() != null ? objectMapper.valueToTree(sound.audio()) : null);
+        current.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         current.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         current.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
 
@@ -433,6 +450,8 @@ public class CreativeService {
         SequencePhotoResolution sequencePhotos = resolveSequencePhotos(media, sequence);
         List<CreativeValidator.ClipMediaEntry> clipMediaEntries = resolveClipMedia(media, toClipMediaMap(root.getClipMedia()));
         MotionResolution motionRes = resolveMotion(media, root.getKind(), toMotion(root.getMotion()), toAudio(root.getAudio()));
+        SoundResolution sound = resolveSound(media, root.getKind(), motionRes, toAudio(root.getAudio()),
+                toClipMediaMap(root.getClipMedia()), toSlideshow(root.getSlideshow()), toSlidesMap(root.getSlides()));
         Map<String, List<CreativeValidator.SlideEntry>> slideEntries = resolveSlides(media, toSlidesMap(root.getSlides()));
 
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
@@ -443,7 +462,8 @@ public class CreativeService {
                 root.getSequenceKind(), toValidatorBeats(sequence), root.getCarouselRatio(), sequencePhotos.unknownIds(),
                 overrideBand(root.getLayoutOverrides()), overridePadBottom(root.getLayoutOverrides()),
                 root.getKind(), clipMediaEntries, motionRes.input(), slideEntries,
-                toStringList(root.getSlideAltText())).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif()));
+                toStringList(root.getSlideAltText())).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
+                .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -472,7 +492,8 @@ public class CreativeService {
         variant.setSlides(root.getSlides());
         variant.setSlideAltText(root.getSlideAltText());
         variant.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
-        variant.setAudio(motionRes.audio() != null ? objectMapper.valueToTree(motionRes.audio()) : null);
+        variant.setAudio(sound.audio() != null ? objectMapper.valueToTree(sound.audio()) : null);
+        variant.setSlideshow(root.getSlideshow());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
@@ -523,6 +544,7 @@ public class CreativeService {
         List<ReadinessItem> items = new ArrayList<>();
         if (Creative.KIND_CAROUSEL.equals(creative.getKind())) {
             addCarouselReadinessItems(media, creative, items);
+            addAudioReadinessItems(media, creative, items);
             boolean notDraft = !Creative.STATE_DRAFT.equals(creative.getState());
             items.add(new ReadinessItem("state", notDraft, true,
                     notDraft ? "not a draft" : "Creative is still a draft"));
@@ -539,6 +561,7 @@ public class CreativeService {
 
         if (isClip) {
             addClipReadinessItems(media, creative, items);
+            addAudioReadinessItems(media, creative, items);
         } else if (isMotion) {
             addMotionReadinessItems(media, creative, items);
         } else {
@@ -654,15 +677,29 @@ public class CreativeService {
             addPhotoReadinessItems(media, creative, items);
         }
 
+        addAudioReadinessItems(media, creative, items);
+    }
+
+    /**
+     * The chosen track's provenance, for any kind that can have one: when {@code audio.source} is
+     * {@code track} (or a CLIP's {@code mix}) the AUDIO media must record a source and licence.
+     */
+    private void addAudioReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {
         CreativeAudio audio = toAudio(creative.getAudio());
-        if (audio != null && "track".equals(audio.getSource())) {
-            String trackId = audio.getTrackId();
-            MediaFacts track = notBlank(trackId)
-                    ? media.find("audio.trackId", trackId, CreativePhoto.MEDIA_KIND_AUDIO) : null;
-            boolean provenanced = track != null && notBlank(track.getSource()) && notBlank(track.getLicence());
-            items.add(new ReadinessItem("audioProvenance", provenanced, true,
-                    provenanced ? "the audio track has source and licence" : "the audio track is missing source and/or licence"));
+        if (audio == null) {
+            return;
         }
+        boolean usesTrack = "track".equals(audio.getSource())
+                || ("mix".equals(audio.getSource()) && Creative.KIND_CLIP.equals(creative.getKind()));
+        if (!usesTrack) {
+            return;
+        }
+        String trackId = audio.getTrackId();
+        MediaFacts track = notBlank(trackId)
+                ? media.find("audio.trackId", trackId, CreativePhoto.MEDIA_KIND_AUDIO) : null;
+        boolean provenanced = track != null && notBlank(track.getSource()) && notBlank(track.getLicence());
+        items.add(new ReadinessItem("audioProvenance", provenanced, true,
+                provenanced ? "the audio track has source and licence" : "the audio track is missing source and/or licence"));
     }
 
     /** Readiness for CLIP (COND-24 PR1): caption (above), alt text (advisory), the chosen clip's media
@@ -825,8 +862,27 @@ public class CreativeService {
         // Creative's own placements, and clients ignore it.
         List<String> specPlacements = Creative.KIND_CAROUSEL.equals(creative.getKind())
                 ? toStringList(creative.getPlacements()) : specBuilder.resolvePlacements(kit, creative);
-        CreativeRenderSpec spec = specBuilder.build(DRAFT_RENDER_ID, !Boolean.FALSE.equals(request.getPreviewOnly()),
-                creative, kit, mainPhoto, beatPhotos, specPlacements, motionMedia);
+        boolean previewOnly = !Boolean.FALSE.equals(request.getPreviewOnly());
+        CreativeRenderSpec spec;
+        CreativeAudio carouselAudio = prepared.sound().audio();
+        if (Creative.KIND_CAROUSEL.equals(creative.getKind()) && carouselAudio != null
+                && "track".equals(carouselAudio.getSource())) {
+            // A CAROUSEL with a track is rendered locally into a slideshow video: the full slideshow spec,
+            // with `local:<key>` slides and track passing through as they do for a MOTION.
+            Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+            String listKey = slides.containsKey("9x16") ? "9x16" : "default";
+            List<MediaFacts> slideFacts = new ArrayList<>();
+            List<String> refs = slides.getOrDefault(listKey, List.of());
+            for (int i = 0; i < refs.size(); i++) {
+                slideFacts.add(media.find("slides[\"" + listKey + "\"][" + i + "]", refs.get(i),
+                        CreativePhoto.MEDIA_KIND_IMAGE));
+            }
+            spec = specBuilder.buildCarousel(DRAFT_RENDER_ID, previewOnly, creative, kit, slideFacts,
+                    prepared.sound().track(), carouselAudio, toSlideshow(creative.getSlideshow()));
+        } else {
+            spec = specBuilder.build(DRAFT_RENDER_ID, previewOnly, creative, kit, mainPhoto, beatPhotos,
+                    specPlacements, motionMedia);
+        }
         return new DraftSpec(spec, computeReadiness(creative, media));
     }
 
@@ -861,6 +917,7 @@ public class CreativeService {
                     .slideAltText(base.getSlideAltText() != null ? new ArrayList<>(toStringList(base.getSlideAltText())) : null)
                     .motion(toMotion(base.getMotion()))
                     .audio(toAudio(base.getAudio()))
+                    .slideshow(toSlideshow(base.getSlideshow()))
                     .layoutOverrides(base.getLayoutOverrides() != null
                             ? objectMapper.convertValue(base.getLayoutOverrides(), CreativeLayoutOverrides.class) : null);
         }
@@ -886,6 +943,7 @@ public class CreativeService {
         if (draft.getSlideAltText() != null) merged.setSlideAltText(draft.getSlideAltText());
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
         if (draft.getAudio() != null) merged.setAudio(draft.getAudio());
+        if (draft.getSlideshow() != null) merged.setSlideshow(draft.getSlideshow());
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
         // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
         // or cleared there by the headline/layout rule; only a draft's own typeOverrides pass through here.
@@ -1236,6 +1294,88 @@ public class CreativeService {
 
         return new MotionResolution(motion, audio, clipMedia, trackMedia,
                 CreativeValidator.MotionInput.resolve(motion, audio, clipMedia, trackMedia));
+    }
+
+    // ── Sound on CAROUSEL / CLIP ────────────────────────────────────────────────────────────────────
+
+    /** What a write stores and judges for {@code audio} and {@code slideshow}, whichever kind it is: the
+     *  stored values (null = none), the track they name, and the validator's view of both. */
+    private record SoundResolution(CreativeAudio audio, MediaFacts track, CreativeValidator.AudioInput audioInput,
+                                   CreativeSlideshow slideshow, CreativeValidator.SlideshowInput slideshowInput) {
+    }
+
+    private static final BigDecimal TRACK_DEFAULT_VOLUME = BigDecimal.ONE;
+    private static final BigDecimal MIX_DEFAULT_VOLUME = new BigDecimal("0.3");
+
+    /**
+     * Applies CAROUSEL's and CLIP's audio defaults and resolves the track (and a CLIP's clip sound), plus the
+     * slideshow's. A MOTION's audio was already resolved by {@link #resolveMotion} and passes through.
+     * "No sound" is stored as null: a CAROUSEL's {@code none} and a CLIP's {@code clip} (its own sound) are
+     * what an absent {@code audio} already means, so the row carries one spelling of each.
+     */
+    private SoundResolution resolveSound(MediaResolver media, String kind, MotionResolution motionRes,
+                                         CreativeAudio audioRequest, Map<String, String> clipMedia,
+                                         CreativeSlideshow slideshowRequest, Map<String, List<String>> slides) {
+        CreativeSlideshow slideshow = null;
+        CreativeValidator.SlideshowInput slideshowInput = null;
+        if (slideshowRequest != null) {
+            slideshow = new CreativeSlideshow()
+                    .slideDurations(slideshowRequest.getSlideDurations())
+                    .zoom(slideshowRequest.getZoom() != null ? slideshowRequest.getZoom() : Boolean.TRUE);
+            List<String> list = slides.containsKey("9x16") ? slides.get("9x16") : slides.get("default");
+            slideshowInput = new CreativeValidator.SlideshowInput(
+                    slideshow.getSlideDurations() != null
+                            ? slideshow.getSlideDurations().stream().map(d -> d != null ? d.doubleValue() : null).toList()
+                            : null,
+                    list != null ? list.size() : 0);
+        }
+        if (Creative.KIND_MOTION.equals(kind)) {
+            // A MOTION has no slideshow; the validator refuses it where one was sent.
+            return new SoundResolution(motionRes.audio(), motionRes.track(), null, slideshow, slideshowInput);
+        }
+        if (audioRequest == null) {
+            return new SoundResolution(null, null, null, slideshow, slideshowInput);
+        }
+        boolean clipKind = Creative.KIND_CLIP.equals(kind);
+        boolean carouselKind = Creative.KIND_CAROUSEL.equals(kind);
+        CreativeAudio audio = new CreativeAudio().source(audioRequest.getSource()).trackId(audioRequest.getTrackId())
+                .volume(audioRequest.getVolume()).fadeOutSec(audioRequest.getFadeOutSec());
+        String source = notBlank(audio.getSource()) ? audio.getSource() : (clipKind ? "clip" : "none");
+        audio.setSource(source);
+        MediaFacts track = resolvePhoto(media, "audio.trackId", audio.getTrackId(), CreativePhoto.MEDIA_KIND_AUDIO).photo();
+        boolean usesTrack = "track".equals(source) || ("mix".equals(source) && clipKind);
+        if (audio.getVolume() == null) {
+            audio.setVolume("mix".equals(source) ? MIX_DEFAULT_VOLUME : TRACK_DEFAULT_VOLUME);
+        }
+        if (audio.getFadeOutSec() == null) {
+            audio.setFadeOutSec(BigDecimal.ONE);
+        }
+        Boolean clipHasAudio = null;
+        if (clipKind) {
+            for (String clipId : clipMedia.values()) {
+                MediaFacts clip = media.findLibrary(clipId);
+                if (clip == null || clip.getHasAudio() == null) {
+                    continue;
+                }
+                clipHasAudio = !Boolean.FALSE.equals(clipHasAudio) && clip.getHasAudio();
+            }
+        }
+        CreativeValidator.AudioInput input = new CreativeValidator.AudioInput(source, audio.getTrackId(),
+                audio.getTrackId() == null || track != null, track != null && track.isAudio(),
+                track != null && track.isUploaded(), track != null && track.isBlocked(),
+                audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
+                audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null, clipHasAudio);
+        // Not a track: drop a stray trackId so the row never names media it does not play.
+        if (!usesTrack) {
+            audio.setTrackId(null);
+        }
+        boolean silent = (carouselKind && "none".equals(source)) || (clipKind && "clip".equals(source));
+        return new SoundResolution(silent ? null : audio, track, input, slideshow, slideshowInput);
+    }
+
+    /** {@code creative.slideshow} JSON -&gt; the typed DTO, or null when unset. */
+    private CreativeSlideshow toSlideshow(JsonNode node) {
+        return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeSlideshow.class) : null;
     }
 
     /** {@code creative.motion} JSON -&gt; the typed DTO, or null when unset. */

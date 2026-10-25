@@ -216,6 +216,69 @@ public class CreativeValidator {
         }
     }
 
+    /**
+     * A CAROUSEL's or CLIP's {@code audio} with its track (and, for a CLIP, its clip's sound) already
+     * resolved by the caller — MOTION carries the same facts inside {@link MotionInput}. Numeric fields are
+     * defaulted by the caller; a null only means "omitted" in a unit test.
+     *
+     * @param clipHasAudio for a CLIP: false when any chosen clip is known to have no sound, true when every
+     *                     known clip has some, null when there is no clip or its sound is unknown
+     */
+    public record AudioInput(
+            String source,
+            String trackId,
+            boolean trackResolvable,
+            boolean trackIsAudio,
+            boolean trackUploaded,
+            boolean trackBlocked,
+            Double volume,
+            Double fadeOutSec,
+            Boolean clipHasAudio) {
+
+        /** A test-friendly builder: structurally valid "no sound" by default. */
+        public static final class Builder {
+            private String source = "none";
+            private String trackId;
+            private boolean trackResolvable = true;
+            private boolean trackIsAudio;
+            private boolean trackUploaded;
+            private boolean trackBlocked;
+            private Double volume = 1.0;
+            private Double fadeOutSec = 1.0;
+            private Boolean clipHasAudio;
+
+            public Builder source(String v) { this.source = v; return this; }
+            public Builder trackId(String v) { this.trackId = v; return this; }
+            public Builder trackResolvable(boolean v) { this.trackResolvable = v; return this; }
+            public Builder trackIsAudio(boolean v) { this.trackIsAudio = v; return this; }
+            public Builder trackUploaded(boolean v) { this.trackUploaded = v; return this; }
+            public Builder trackBlocked(boolean v) { this.trackBlocked = v; return this; }
+            public Builder volume(Double v) { this.volume = v; return this; }
+            public Builder fadeOutSec(Double v) { this.fadeOutSec = v; return this; }
+            public Builder clipHasAudio(Boolean v) { this.clipHasAudio = v; return this; }
+
+            /** A valid library track: resolves, is AUDIO, uploaded, unblocked. */
+            public Builder goodTrack(String id) {
+                this.trackId = id;
+                this.trackResolvable = true;
+                this.trackIsAudio = true;
+                this.trackUploaded = true;
+                this.trackBlocked = false;
+                return this;
+            }
+
+            public AudioInput build() {
+                return new AudioInput(source, trackId, trackResolvable, trackIsAudio, trackUploaded, trackBlocked,
+                        volume, fadeOutSec, clipHasAudio);
+            }
+        }
+    }
+
+    /** A CAROUSEL's {@code slideshow}; {@code slideCount} is the length of its 9x16 slide list (the
+     *  default list when there is no 9x16 one), 0 when there are no slides yet. */
+    public record SlideshowInput(List<Double> slideDurations, int slideCount) {
+    }
+
     /** Everything {@link #validate} needs to know about the intended state of a Creative. */
     public record Input(
             String layout,
@@ -241,7 +304,31 @@ public class CreativeValidator {
             MotionInput motion,
             Map<String, List<SlideEntry>> slides,
             List<String> slideAltText,
-            boolean photoGif) {
+            boolean photoGif,
+            AudioInput audio,
+            SlideshowInput slideshow) {
+
+        /** Without the audio and slideshow (MOTION keeps its audio inside {@link MotionInput}). */
+        public Input(String layout, String theme, List<String> placements, String headline, String body,
+                     String caption, String state, String photoId, boolean photoIdResolvable, boolean photoPresent,
+                     boolean photoUploaded, boolean photoBlocked, String sequenceKind, List<SequenceBeat> sequence,
+                     String carouselRatio, Set<String> unknownSequencePhotoIds,
+                     Map<String, Integer> layoutOverrideBand, Map<String, Integer> layoutOverridePadBottom,
+                     String kind, List<ClipMediaEntry> clipMedia, MotionInput motion,
+                     Map<String, List<SlideEntry>> slides, List<String> slideAltText, boolean photoGif) {
+            this(layout, theme, placements, headline, body, caption, state, photoId, photoIdResolvable,
+                    photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence, carouselRatio,
+                    unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom, kind, clipMedia, motion,
+                    slides, slideAltText, photoGif, null, null);
+        }
+
+        /** The same input with a CAROUSEL's or CLIP's audio and a CAROUSEL's slideshow. */
+        public Input withAudioAndSlideshow(AudioInput audio, SlideshowInput slideshow) {
+            return new Input(layout, theme, placements, headline, body, caption, state, photoId, photoIdResolvable,
+                    photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence, carouselRatio,
+                    unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom, kind, clipMedia, motion,
+                    slides, slideAltText, photoGif, audio, slideshow);
+        }
 
         /** Without the GIF flag: the main photo is not known to be a GIF. */
         public Input(String layout, String theme, List<String> placements, String headline, String body,
@@ -262,7 +349,7 @@ public class CreativeValidator {
             return new Input(layout, theme, placements, headline, body, caption, state, photoId, photoIdResolvable,
                     photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence, carouselRatio,
                     unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom, kind, clipMedia, motion,
-                    slides, slideAltText, gif);
+                    slides, slideAltText, gif, audio, slideshow);
         }
 
         /** The pre-CAROUSEL shape: no slides, no slide alt text. */
@@ -309,7 +396,11 @@ public class CreativeValidator {
             private Map<String, List<SlideEntry>> slides = Map.of();
             private List<String> slideAltText = List.of();
             private boolean photoGif;
+            private AudioInput audio;
+            private SlideshowInput slideshow;
 
+            public InputBuilder audio(AudioInput v) { this.audio = v; return this; }
+            public InputBuilder slideshow(SlideshowInput v) { this.slideshow = v; return this; }
             public InputBuilder photoGif(boolean v) { this.photoGif = v; return this; }
             public InputBuilder slides(Map<String, List<SlideEntry>> v) { this.slides = v; return this; }
             public InputBuilder slideAltText(List<String> v) { this.slideAltText = v; return this; }
@@ -339,7 +430,7 @@ public class CreativeValidator {
                 return new Input(layout, theme, placements, headline, body, caption, state, photoId,
                         photoIdResolvable, photoPresent, photoUploaded, photoBlocked, sequenceKind, sequence,
                         carouselRatio, unknownSequencePhotoIds, layoutOverrideBand, layoutOverridePadBottom,
-                        kind, clipMedia, motion, slides, slideAltText, photoGif);
+                        kind, clipMedia, motion, slides, slideAltText, photoGif, audio, slideshow);
             }
         }
     }
@@ -353,6 +444,7 @@ public class CreativeValidator {
             validatePlacements(input, violations);
             applyCopyRules(kit, "caption", input.caption(), violations);
             validateCarousel(input, violations);
+            validateAudioFields(input, violations);
             if (Creative.STATE_READY.equals(input.state())) {
                 validateReadyState(input, violations);
             }
@@ -387,6 +479,7 @@ public class CreativeValidator {
         validateClipMedia(input, violations);
         validateMotion(input, violations);
         validateCarousel(input, violations);
+        validateAudioFields(input, violations);
 
         if (input.photoId() != null && !input.photoIdResolvable()) {
             violations.add(new Violation("photoId", "photoNotFound",
@@ -710,8 +803,13 @@ public class CreativeValidator {
                 violations.add(new Violation("slides", "kindFields",
                         "slides only applies to a CAROUSEL creative, not " + input.kind()));
             }
+            if (input.slideshow() != null) {
+                violations.add(new Violation("slideshow", "kindFields",
+                        "slideshow only applies to a CAROUSEL creative, not " + input.kind()));
+            }
             return;
         }
+        validateSlideshow(input, slides, violations);
         if (input.clipMedia() != null && !input.clipMedia().isEmpty()) {
             violations.add(new Violation("clipMedia", "kindFields", "clipMedia does not apply to a CAROUSEL creative"));
         }
@@ -821,7 +919,6 @@ public class CreativeValidator {
     private static final Set<String> MOTION_BACKGROUND_SOURCES = Set.of("photo", "clip");
     private static final Set<String> MOTION_BACKGROUND_MOTIONS =
             Set.of("zoom-in", "zoom-out", "pan-left", "pan-right", "none");
-    private static final Set<String> MOTION_AUDIO_SOURCES = Set.of("clip", "track", "none");
 
     /**
      * MOTION structural rules (COND-24 PR2), enforced on every write regardless of state — mirrors
@@ -895,49 +992,135 @@ public class CreativeValidator {
                     "motion.background.clipStartSec must be >= 0"));
         }
 
-        String audioSource = m.audioSource();
-        if (audioSource != null && !MOTION_AUDIO_SOURCES.contains(audioSource)) {
-            violations.add(new Violation("audio.source", "audioSource",
-                    "audio.source must be one of: " + String.join(", ", MOTION_AUDIO_SOURCES)));
+        validateAudio(Creative.KIND_MOTION, new AudioFacts(m.audioSource(), m.audioTrackId(),
+                m.audioTrackResolvable(), m.audioTrackIsAudio(), m.audioTrackUploaded(), m.audioTrackBlocked(),
+                m.volume(), m.fadeOutSec(), "clip".equals(backgroundSource), m.backgroundClipHasAudio()), violations);
+    }
+
+    /** Sources each kind's {@code audio.source} may take (a MOTION's default depends on its background). */
+    private static final List<String> MOTION_AUDIO_SOURCE_LIST = List.of("clip", "none", "track");
+    private static final List<String> CAROUSEL_AUDIO_SOURCE_LIST = List.of("none", "track");
+    private static final List<String> CLIP_AUDIO_SOURCE_LIST = List.of("clip", "mix", "none", "track");
+
+    /** The audio facts {@link #validateAudio} judges, whichever kind they came from. */
+    private record AudioFacts(String source, String trackId, boolean trackResolvable, boolean trackIsAudio,
+                              boolean trackUploaded, boolean trackBlocked, Double volume, Double fadeOutSec,
+                              boolean clipBackground, Boolean clipHasAudio) {
+    }
+
+    /**
+     * CAROUSEL and CLIP audio (MOTION's runs inside {@link #validateMotion}, through the same
+     * {@link #validateAudio}); a STILL takes none. Skipped when {@code audio} is absent, which is the
+     * "no sound / the clip's own sound" default.
+     */
+    private void validateAudioFields(Input input, List<Violation> violations) {
+        String kind = input.kind();
+        AudioInput a = input.audio();
+        if (a == null) {
+            return;
         }
-        if ("track".equals(audioSource)) {
-            if (m.audioTrackId() == null || m.audioTrackId().isBlank()) {
+        if (Creative.KIND_CAROUSEL.equals(kind) || Creative.KIND_CLIP.equals(kind)) {
+            validateAudio(kind, new AudioFacts(a.source(), a.trackId(), a.trackResolvable(), a.trackIsAudio(),
+                    a.trackUploaded(), a.trackBlocked(), a.volume(), a.fadeOutSec(), true, a.clipHasAudio()), violations);
+        } else if (!Creative.KIND_MOTION.equals(kind) && a.source() != null && !"none".equals(a.source())) {
+            violations.add(new Violation("audio", "kindFields",
+                    "audio does not apply to a " + kind + " creative: it can have sound on a MOTION, CAROUSEL or CLIP"));
+        }
+    }
+
+    /**
+     * The audio rules shared by MOTION, CAROUSEL and CLIP: the source is one the kind takes, a track
+     * (source {@code track} or, for a CLIP, {@code mix}) is an uploaded, unblocked AUDIO of this project,
+     * {@code clip}/{@code mix} need a clip with sound, and volume and fade are in range.
+     */
+    private void validateAudio(String kind, AudioFacts a, List<Violation> violations) {
+        List<String> allowed = switch (kind) {
+            case Creative.KIND_CAROUSEL -> CAROUSEL_AUDIO_SOURCE_LIST;
+            case Creative.KIND_CLIP -> CLIP_AUDIO_SOURCE_LIST;
+            default -> MOTION_AUDIO_SOURCE_LIST;
+        };
+        String source = a.source();
+        if (source != null && !allowed.contains(source)) {
+            violations.add(new Violation("audio.source", "audioSource",
+                    "audio.source must be one of: " + String.join(", ", allowed)));
+        }
+        boolean needsTrack = "track".equals(source) || ("mix".equals(source) && Creative.KIND_CLIP.equals(kind));
+        if (needsTrack && allowed.contains(source)) {
+            if (a.trackId() == null || a.trackId().isBlank()) {
                 violations.add(new Violation("audio.trackId", "trackRequired",
-                        "audio.trackId is required when audio.source is \"track\""));
-            } else if (!m.audioTrackResolvable()) {
+                        "audio.trackId is required when audio.source is \"" + source + "\""));
+            } else if (!a.trackResolvable()) {
                 violations.add(new Violation("audio.trackId", "mediaNotFound",
-                        "No media with id " + m.audioTrackId() + " in this project"));
+                        "No media with id " + a.trackId() + " in this project"));
             } else {
-                if (!m.audioTrackIsAudio()) {
-                    violations.add(new Violation("audio.trackId", "mediaNotAudio",
-                            "audio.trackId must be an AUDIO"));
+                if (!a.trackIsAudio()) {
+                    violations.add(new Violation("audio.trackId", "mediaNotAudio", "audio.trackId must be an AUDIO"));
                 }
-                if (!m.audioTrackUploaded()) {
+                if (!a.trackUploaded()) {
                     violations.add(new Violation("audio.trackId", "mediaUploaded",
                             "audio.trackId has not finished uploading"));
                 }
-                if (m.audioTrackBlocked()) {
+                if (a.trackBlocked()) {
                     violations.add(new Violation("audio.trackId", "mediaBlocked",
                             "audio.trackId is blocked and cannot be used"));
                 }
             }
         }
-        if ("clip".equals(audioSource)) {
-            if (!"clip".equals(backgroundSource)) {
+        if ("clip".equals(source) && Creative.KIND_MOTION.equals(kind)) {
+            if (!a.clipBackground()) {
                 violations.add(new Violation("audio.source", "audioClipNeedsClipBackground",
                         "audio.source \"clip\" needs a clip background"));
-            } else if (Boolean.FALSE.equals(m.backgroundClipHasAudio())) {
+            } else if (Boolean.FALSE.equals(a.clipHasAudio())) {
                 violations.add(new Violation("audio.source", "audioClipHasNoAudio",
                         "the background clip has no audio track"));
             }
         }
-        if (m.volume() != null && (m.volume() < 0 || m.volume() > 1)) {
+        if ("mix".equals(source) && Creative.KIND_CLIP.equals(kind) && Boolean.FALSE.equals(a.clipHasAudio())) {
+            violations.add(new Violation("audio.source", "audioClipHasNoAudio",
+                    "audio.source \"mix\" needs a clip with sound, and a chosen clip has no audio track:"
+                            + " use \"track\" to give it music"));
+        }
+        if (a.volume() != null && (a.volume() < 0 || a.volume() > 1)) {
             violations.add(new Violation("audio.volume", "bounds", "audio.volume must be between 0 and 1"));
         }
-        if (m.fadeOutSec() != null && (m.fadeOutSec() < 0 || m.fadeOutSec() > 5)) {
+        if (a.fadeOutSec() != null && (a.fadeOutSec() < 0 || a.fadeOutSec() > 5)) {
             violations.add(new Violation("audio.fadeOutSec", "bounds", "audio.fadeOutSec must be between 0 and 5"));
         }
     }
+
+    /**
+     * A CAROUSEL's slideshow: one duration per slide of the 9x16 list (checked once that list exists), each
+     * 1..10 s; and, from READY on, a CAROUSEL with a track needs a 9x16 or default list to make its video from.
+     */
+    private void validateSlideshow(Input input, Map<String, List<SlideEntry>> slides, List<Violation> violations) {
+        SlideshowInput show = input.slideshow();
+        if (show != null && show.slideDurations() != null) {
+            List<Double> durations = show.slideDurations();
+            for (int i = 0; i < durations.size(); i++) {
+                Double d = durations.get(i);
+                if (d == null || d < SLIDE_DURATION_MIN || d > SLIDE_DURATION_MAX) {
+                    violations.add(new Violation("slideshow.slideDurations", "bounds",
+                            "slideshow.slideDurations[" + i + "] must be between " + (int) SLIDE_DURATION_MIN
+                                    + " and " + (int) SLIDE_DURATION_MAX + " seconds"));
+                }
+            }
+            if (show.slideCount() > 0 && durations.size() != show.slideCount()) {
+                violations.add(new Violation("slideshow.slideDurations", "slideshowDurations",
+                        "slideshow.slideDurations has " + durations.size() + " entries but the 9x16 slide list has "
+                                + show.slideCount() + ": give one duration per slide"));
+            }
+        }
+        AudioInput audio = input.audio();
+        if (audio != null && "track".equals(audio.source()) && Creative.STATE_READY.equals(input.state())
+                && !slides.isEmpty() && !slides.containsKey("9x16") && !slides.containsKey("default")) {
+            violations.add(new Violation("slides", "slideshowSlides",
+                    "a carousel with a music track is rendered as a 9x16 video: add slides[\"9x16\"] or a"
+                            + " slides[\"default\"] list"));
+        }
+    }
+
+    static final double SLIDE_DURATION_MIN = 1.0;
+    static final double SLIDE_DURATION_MAX = 10.0;
 
     private static String textOrNull(JsonNode node) {
         return node != null && !node.isNull() ? node.asText() : null;

@@ -768,6 +768,192 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(item(creativeService.readiness(project.getId(), patched.creative().getId(), admin), "altText").ok()).isTrue();
     }
 
+    // ── Music on CAROUSEL and CLIP ───────────────────────────────────────────────────────────────
+
+    private CreativePhoto newTrack(boolean withProvenance) {
+        CreativePhoto p = new CreativePhoto();
+        p.setProjectId(project.getId());
+        p.setGcsPath("projects/" + project.getId() + "/marketing/photos/" + UUID.randomUUID() + ".mp3");
+        p.setContentType("audio/mpeg");
+        p.setMediaKind(CreativePhoto.MEDIA_KIND_AUDIO);
+        p.setSizeBytes(500_000L);
+        p.setDurationSeconds(new java.math.BigDecimal("30"));
+        if (withProvenance) {
+            p.setSource("Pixabay");
+            p.setLicence("Pixabay licence");
+        }
+        p.setFocal(objectMapper.createObjectNode());
+        p.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        p.setCreatedBy(admin.getId());
+        return photoRepository.save(p);
+    }
+
+    private com.conductor.generated.v2.model.CreativeAudio audio(String source, String trackId) {
+        return new com.conductor.generated.v2.model.CreativeAudio().source(source).trackId(trackId);
+    }
+
+    private CreateCreativeRequest carouselWithTrack(CreativePhoto track) {
+        CreateCreativeRequest request = carouselRequest(Map.of("9x16", imageIds(3, 1080, 1920, true)));
+        request.setAudio(audio("track", track.getId()));
+        return request;
+    }
+
+    @Test
+    void aCarouselWithATrackStoresTheAudioDefaultsAndAddsAudioProvenanceToReadiness() {
+        CreativePhoto track = newTrack(true);
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), carouselWithTrack(track), admin);
+
+        JsonNode audio = created.creative().getAudio();
+        assertThat(audio.get("source").asText()).isEqualTo("track");
+        assertThat(audio.get("trackId").asText()).isEqualTo(track.getId());
+        assertThat(audio.get("volume").asDouble()).isEqualTo(1.0);
+        assertThat(audio.get("fadeOutSec").asDouble()).isEqualTo(1.0);
+
+        CreativeService.Readiness readiness = creativeService.readiness(project.getId(), created.creative().getId(), admin);
+        assertThat(item(readiness, "audioProvenance").ok()).isTrue();
+        assertThat(item(readiness, "audioProvenance").blocking()).isTrue();
+
+        // A track with no source/licence blocks, as it does on a MOTION.
+        CreativePhoto bare = newTrack(false);
+        CreativeService.CreativeView unprovenanced = creativeService.createCreative(project.getId(), carouselWithTrack(bare), admin);
+        CreativeService.Readiness blocked = creativeService.readiness(project.getId(), unprovenanced.creative().getId(), admin);
+        assertThat(item(blocked, "audioProvenance").ok()).isFalse();
+        assertThat(blocked.ready()).isFalse();
+    }
+
+    @Test
+    void aCarouselWithoutAnyAudioOrWithNoneStoresNoAudioAtAll() {
+        CreateCreativeRequest none = carouselRequest(Map.of("9x16", imageIds(2, 1080, 1920, true)));
+        none.setAudio(audio("none", null));
+        assertThat(creativeService.createCreative(project.getId(), none, admin).creative().getAudio()).isNull();
+        assertThat(creativeService.createCreative(project.getId(),
+                carouselRequest(Map.of("9x16", imageIds(2, 1080, 1920, true))), admin).creative().getAudio()).isNull();
+    }
+
+    @Test
+    void carouselAudioAndSlideshowAreValidatedOnWrite() {
+        CreateCreativeRequest notATrack = carouselRequest(Map.of("9x16", imageIds(2, 1080, 1920, true)));
+        notATrack.setAudio(audio("track", photo.getId()));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), notATrack, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).contains("mediaNotAudio"));
+
+        CreateCreativeRequest mixOnCarousel = carouselRequest(Map.of("9x16", imageIds(2, 1080, 1920, true)));
+        mixOnCarousel.setAudio(audio("mix", newTrack(true).getId()));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), mixOnCarousel, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).containsExactly("audioSource"));
+
+        CreateCreativeRequest wrongCount = carouselWithTrack(newTrack(true));
+        wrongCount.setSlideshow(new com.conductor.generated.v2.model.CreativeSlideshow()
+                .slideDurations(List.of(new java.math.BigDecimal("3"))));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), wrongCount, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).containsExactly("slideshowDurations"));
+
+        CreateCreativeRequest slideshowOnStill = concept("Plan the week in *one sentence*.", "A calm plan.");
+        slideshowOnStill.setSlideshow(new com.conductor.generated.v2.model.CreativeSlideshow().zoom(true));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), slideshowOnStill, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).contains("kindFields"));
+    }
+
+    @Test
+    void theSlideshowIsStoredWithZoomDefaultedAndCarriedToAVariant() {
+        CreateCreativeRequest request = carouselWithTrack(newTrack(true));
+        request.setSlideshow(new com.conductor.generated.v2.model.CreativeSlideshow().slideDurations(List.of(
+                new java.math.BigDecimal("4"), new java.math.BigDecimal("2"), new java.math.BigDecimal("2"))));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        assertThat(created.creative().getSlideshow().get("zoom").asBoolean()).isTrue();
+        assertThat(created.creative().getSlideshow().get("slideDurations")).hasSize(3);
+
+        CreativeService.CreativeView variant = creativeService.createVariant(project.getId(), created.creative().getId(),
+                new CreateCreativeVariantRequest(), admin);
+        assertThat(variant.creative().getAudio().get("trackId")).isEqualTo(created.creative().getAudio().get("trackId"));
+        assertThat(variant.creative().getSlideshow().get("slideDurations")).hasSize(3);
+        assertThat(variant.creative().getSlideshow().get("zoom").asBoolean()).isTrue();
+    }
+
+    @Test
+    void switchingAKindClearsTheSoundAndSlideshowOfTheKindLeft() {
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                carouselWithTrack(newTrack(true)), admin);
+
+        PatchCreativeRequest toStill = new PatchCreativeRequest(created.creative().getVersion());
+        toStill.setKind(CreativeKind.STILL);
+        toStill.setPhotoId(photo.getId());
+        toStill.setHeadline("Plan the week in *one sentence*.");
+        toStill.setSlides(Map.of());
+        CreativeService.CreativeView patched = creativeService.patchCreative(project.getId(), created.creative().getId(), toStill, admin);
+
+        assertThat(patched.creative().getAudio()).isNull();
+        assertThat(patched.creative().getSlideshow()).isNull();
+    }
+
+    @Test
+    void aClipTakesTrackMixAndNoneAndStoresTheirDefaults() {
+        CreativePhoto clip = newVideoPhoto();
+        clip.setHasAudio(true);
+        photoRepository.save(clip);
+        CreativePhoto track = newTrack(true);
+
+        CreateCreativeRequest replace = clipRequest(clip);
+        replace.setAudio(audio("track", track.getId()));
+        JsonNode replaced = creativeService.createCreative(project.getId(), replace, admin).creative().getAudio();
+        assertThat(replaced.get("volume").asDouble()).isEqualTo(1.0);
+
+        CreateCreativeRequest mix = clipRequest(clip);
+        mix.setAudio(audio("mix", track.getId()));
+        JsonNode mixed = creativeService.createCreative(project.getId(), mix, admin).creative().getAudio();
+        assertThat(mixed.get("source").asText()).isEqualTo("mix");
+        assertThat(mixed.get("volume").asDouble()).isEqualTo(0.3);
+
+        CreateCreativeRequest mute = clipRequest(clip);
+        mute.setAudio(audio("none", null));
+        assertThat(creativeService.createCreative(project.getId(), mute, admin).creative().getAudio().get("source").asText())
+                .isEqualTo("none");
+
+        // "clip" is the clip's own sound: what an absent audio already means, stored as null.
+        CreateCreativeRequest own = clipRequest(clip);
+        own.setAudio(audio("clip", null));
+        assertThat(creativeService.createCreative(project.getId(), own, admin).creative().getAudio()).isNull();
+    }
+
+    @Test
+    void mixIsRefusedOnAClipWithoutSoundAndAClipTracksProvenanceIsReadinessToo() {
+        CreativePhoto silent = newVideoPhoto();
+        silent.setHasAudio(false);
+        photoRepository.save(silent);
+        CreativePhoto track = newTrack(false);
+
+        CreateCreativeRequest mix = clipRequest(silent);
+        mix.setAudio(audio("mix", track.getId()));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), mix, admin))
+                .isInstanceOf(CreativeValidationException.class)
+                .satisfies(e -> assertThat(((CreativeValidationException) e).violations())
+                        .extracting(CreativeValidationException.Violation::ruleId).containsExactly("audioClipHasNoAudio"));
+
+        CreateCreativeRequest replace = clipRequest(silent);
+        replace.setAudio(audio("track", track.getId()));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), replace, admin);
+        CreativeService.Readiness readiness = creativeService.readiness(project.getId(), created.creative().getId(), admin);
+        assertThat(item(readiness, "audioProvenance").ok()).isFalse();
+        assertThat(item(readiness, "audioProvenance").blocking()).isTrue();
+    }
+
+    private CreateCreativeRequest clipRequest(CreativePhoto clip) {
+        CreateCreativeRequest request = new CreateCreativeRequest();
+        request.setKind(CreativeKind.CLIP);
+        request.setCaption("A caption.");
+        request.setClipMedia(Map.of("default", clip.getId()));
+        return request;
+    }
+
     private CreativeService.ReadinessItem item(CreativeService.Readiness readiness, String key) {
         return readiness.items().stream().filter(i -> i.key().equals(key)).findFirst().orElseThrow();
     }

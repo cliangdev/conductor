@@ -439,7 +439,94 @@ class CreativeValidatorTest {
         assertThat(validator.validate(kit, carousel(one, "4x5").state(Creative.STATE_READY).caption("c").build())).isEmpty();
     }
 
-    // ── MOTION (COND-24 PR2) ──────────────────────────────────────────────────
+    // ── Music on CAROUSEL and CLIP ───────────────────────────────────────────
+
+    private CreativeValidator.AudioInput.Builder audio() {
+        return new CreativeValidator.AudioInput.Builder();
+    }
+
+    private CreativeValidator.Input.InputBuilder carouselWithAudio(CreativeValidator.AudioInput audio) {
+        return carousel(Map.of("9x16", slides("9x16", 3, 1080, 1920)), "9x16").audio(audio);
+    }
+
+    private CreativeValidator.Input.InputBuilder clipWithAudio(CreativeValidator.AudioInput audio) {
+        return baseInput().kind(Creative.KIND_CLIP)
+                .clipMedia(List.of(new CreativeValidator.ClipMediaEntry("default", "v", true, true, true, false)))
+                .audio(audio);
+    }
+
+    @Test
+    void carouselAcceptsATrackOrNoneAndRefusesClipAndMix() {
+        assertThat(validator.validate(kit, carouselWithAudio(audio().source("track").goodTrack("t1").build()).build())).isEmpty();
+        assertThat(validator.validate(kit, carouselWithAudio(audio().source("none").build()).build())).isEmpty();
+        for (String source : List.of("clip", "mix", "loud")) {
+            assertThat(violationRuleIds(carouselWithAudio(audio().source(source).goodTrack("t1").build()).build()))
+                    .containsExactly("audioSource");
+        }
+    }
+
+    @Test
+    void aTrackMustBeAnUploadedUnblockedAudioOfTheProject() {
+        assertThat(violationRuleIds(carouselWithAudio(audio().source("track").build()).build()))
+                .containsExactly("trackRequired");
+        assertThat(violationRuleIds(carouselWithAudio(audio().source("track").trackId("t1").trackResolvable(false).build()).build()))
+                .containsExactly("mediaNotFound");
+        assertThat(violationRuleIds(carouselWithAudio(audio().source("track").trackId("t1").trackIsAudio(false)
+                .trackUploaded(false).trackBlocked(true).build()).build()))
+                .containsExactlyInAnyOrder("mediaNotAudio", "mediaUploaded", "mediaBlocked");
+        assertThat(violationRuleIds(carouselWithAudio(audio().source("track").goodTrack("t1").volume(1.2).fadeOutSec(9.0).build()).build()))
+                .containsExactly("bounds", "bounds");
+    }
+
+    @Test
+    void clipTakesClipTrackMixAndNoneAndMixNeedsAClipWithSound() {
+        for (String source : List.of("clip", "none")) {
+            assertThat(validator.validate(kit, clipWithAudio(audio().source(source).build()).build())).isEmpty();
+        }
+        assertThat(validator.validate(kit, clipWithAudio(audio().source("track").goodTrack("t1").build()).build())).isEmpty();
+        assertThat(validator.validate(kit, clipWithAudio(audio().source("mix").goodTrack("t1").clipHasAudio(true).build()).build())).isEmpty();
+        assertThat(violationRuleIds(clipWithAudio(audio().source("mix").goodTrack("t1").clipHasAudio(false).build()).build()))
+                .containsExactly("audioClipHasNoAudio");
+        // Replacing a silent clip's sound is fine: that is what "track" is for.
+        assertThat(validator.validate(kit, clipWithAudio(audio().source("track").goodTrack("t1").clipHasAudio(false).build()).build())).isEmpty();
+        assertThat(violationRuleIds(clipWithAudio(audio().source("mix").build()).build())).containsExactly("trackRequired");
+        assertThat(violationRuleIds(clipWithAudio(audio().source("sing").build()).build())).containsExactly("audioSource");
+    }
+
+    @Test
+    void aStillHasNoSoundButNoneIsHarmless() {
+        assertThat(violationRuleIds(baseInput().audio(audio().source("track").goodTrack("t1").build()).build()))
+                .containsExactly("kindFields");
+        assertThat(validator.validate(kit, baseInput().audio(audio().source("none").build()).build())).isEmpty();
+    }
+
+    @Test
+    void slideshowIsCarouselOnlyWithOneDurationPerNineBySixteenSlideEachOneToTenSeconds() {
+        CreativeValidator.SlideshowInput ok = new CreativeValidator.SlideshowInput(List.of(3.0, 2.5, 10.0), 3);
+        assertThat(validator.validate(kit, carouselWithAudio(audio().source("track").goodTrack("t1").build()).slideshow(ok).build()))
+                .isEmpty();
+        assertThat(violationRuleIds(carouselWithAudio(audio().source("track").goodTrack("t1").build())
+                .slideshow(new CreativeValidator.SlideshowInput(List.of(3.0, 2.5), 3)).build()))
+                .containsExactly("slideshowDurations");
+        assertThat(violationRuleIds(carouselWithAudio(audio().source("track").goodTrack("t1").build())
+                .slideshow(new CreativeValidator.SlideshowInput(List.of(0.5, 11.0, 2.0), 3)).build()))
+                .containsExactly("bounds", "bounds");
+        assertThat(violationRuleIds(baseInput().slideshow(ok).build())).containsExactly("kindFields");
+        assertThat(violationRuleIds(clipWithAudio(null).slideshow(ok).build())).containsExactly("kindFields");
+    }
+
+    @Test
+    void aReadyCarouselWithATrackNeedsANineBySixteenOrDefaultSlideList() {
+        CreativeValidator.AudioInput track = audio().source("track").goodTrack("t1").build();
+        CreativeValidator.Input fourByFiveOnly = carousel(Map.of("4x5", slides("4x5", 2, 1080, 1350)), "4x5")
+                .state(Creative.STATE_READY).caption("c").audio(track).build();
+        assertThat(violationRuleIds(fourByFiveOnly)).containsExactly("slideshowSlides");
+        CreativeValidator.Input withDefault = carousel(Map.of("default", slides("default", 2, 1080, 1920)), "9x16")
+                .state(Creative.STATE_READY).caption("c").audio(track).build();
+        assertThat(validator.validate(kit, withDefault)).isEmpty();
+    }
+
+        // ── MOTION (COND-24 PR2) ──────────────────────────────────────────────────
 
     private CreativeValidator.Input motionInput(CreativeValidator.MotionInput motion) {
         return baseInput().kind(Creative.KIND_MOTION).motion(motion).build();
