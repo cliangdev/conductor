@@ -137,6 +137,7 @@ public class JobDispatchPayloadService {
         for (int i = 0; i < steps.size(); i++) {
             stepDtos.add(buildStepDto(jobRun.getId(), i, steps.get(i), ctx));
         }
+        mintStepKeys(steps, stepDtos, runId, projectId);
 
         int ttlHours = loadTokenTtlHours(projectId);
         String runToken = runTokenService.generateRunToken(runId, ttlHours);
@@ -179,6 +180,24 @@ public class JobDispatchPayloadService {
         return result;
     }
 
+    /**
+     * A docker step with {@code with.conductor_mcp: true} gets a run-scoped key as {@code conductorApiKey},
+     * minted now (when the daemon claims the job) so queue time doesn't eat its TTL. claude-code steps are
+     * left alone: they authenticate the MCP server their own way. No {@code conductor_mcp} means no key.
+     */
+    private void mintStepKeys(List<StepSpec> steps, List<JobDispatchStepDto> stepDtos, String runId, String projectId) {
+        String key = null;
+        for (int i = 0; i < steps.size(); i++) {
+            StepSpec step = steps.get(i);
+            if ("docker".equals(step.type()) && Boolean.TRUE.equals(step.with().get("conductor_mcp"))) {
+                if (key == null) {
+                    key = runTokenService.generateMcpToken(runId, projectId, loadTokenTtlHours(projectId));
+                }
+                stepDtos.get(i).setConductorApiKey(key);
+            }
+        }
+    }
+
     private JobDispatchStepDto buildStepDto(String jobRunId, int index, StepSpec stepDef, RuntimeContext ctx) {
         JobDispatchStepDto dto = new JobDispatchStepDto();
         dto.setStepIndex(index);
@@ -192,6 +211,10 @@ public class JobDispatchPayloadService {
         Object promptVal = with.get("prompt");
         if (promptVal != null) {
             dto.setPrompt(interpolator.interpolate(promptVal.toString(), ctx));
+        }
+
+        if (stepDef.raw().get("run") instanceof String run && "docker".equals(stepDef.type())) {
+            dto.setRun(interpolator.interpolate(run, ctx));
         }
 
         Object inputsVal = with.get("inputs");

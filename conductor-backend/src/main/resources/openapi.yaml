@@ -8303,6 +8303,18 @@ components:
           type: integer
         conductorMcp:
           type: boolean
+        run:
+          type: string
+          nullable: true
+          description: >
+            A docker step's `run:` script, interpolated. The daemon starts the container with
+            `["sh", "-c", run]` (one argv element, never through a host shell). Null when absent.
+        conductorApiKey:
+          type: string
+          nullable: true
+          description: >
+            A run-scoped key for a docker step with `with.conductor_mcp: true`, minted when the daemon
+            claims the job. The daemon sets it as `CONDUCTOR_API_KEY` in the container. Null otherwise.
         allowedTools:
           type: string
         maxTurns:
