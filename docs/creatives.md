@@ -81,10 +81,23 @@ data it needs, with signed photo/logo URLs), and it records what the job did.
    noticed — and flipped to `FAILED` "timed out" — the next time anyone reads it (a render older than 30
    minutes on a `GET`).
 
-A self-hosted Workflow can run the identical CLI on the Docker-step daemon
-(`mcr.microsoft.com/playwright:v1.63.0-noble`, `--renderer workflow --workflow-run-id ...`) when a project
-wants renders produced on a schedule rather than by hand — same endpoints, same contract, just a different
-caller.
+### Rendering from the web app
+
+Someone using only the web app can still render a Creative that needs a browser or ffmpeg (a still,
+MOTION, a CAROUSEL with a music track, a CLIP with track/mix/none audio). The **Render** button calls
+`POST .../creatives/{creativeId}/render-runs` (Admin/Creator), which fires the system workflow
+`conductor-creative-render` on the workspace's self-hosted conductor daemon. That workflow is a single
+`docker` step in `ghcr.io/cliangdev/conductor-render:1` running the **identical CLI command**,
+`conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"`,
+so it hits the same endpoints with the same contract; only the caller differs, and it authenticates with
+a run-scoped token that is accepted for that Creative's renders only, stamped with the run's id
+(`requestedBy` is null on such a render). The endpoint answers 422 `RENDER_NOT_NEEDED` for a Creative the
+server can render by itself, 422 with the violations for an invalid one (nothing is dispatched), 409
+`RENDER_RUN_ACTIVE` while a run for that Creative is queued or running, and 409 `RENDER_WORKFLOW_DISABLED`
+or `RENDER_WORKFLOW_NAME_TAKEN` for a workflow someone disabled or already authored under that name.
+`CreativeResponse.renderRun` (single `GET` only) carries the latest such run's status. Claude Code and the
+CLI still render locally with no Workflow. Setup, the image and reuse in custom workflows:
+[`workflows.md`](workflows.md#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon).
 
 `CreativeResponse.latestRender` (the last `SUCCEEDED`, non-preview render, with frames) appears on a
 single-Creative `GET`; list reads carry only `latestRenderId` and `latestRenderThumbnailUrl` (the `4x5`

@@ -346,6 +346,10 @@ Then reference them as `${{ steps.run-tests.outputs.version }}` in later steps.
 
 Docker steps require either `runs-on: conductor` (Conductor-managed infrastructure) or `runs-on: self-hosted` (your own VM). See [Execution modes](#execution-modes).
 
+**`run:` on a self-hosted step.** The daemon (CLI >= 0.41.0) starts the container with the command `sh -c <run>`. The script is interpolated on the backend first, then handed to Docker as a single argument vector element — never through a shell on the daemon's host — so quotes, newlines and `$` reach the container's `sh` verbatim. A step with no `run:` starts the container with no command (the image's own `ENTRYPOINT`/`CMD`). An older daemon ignores `run:`; an image that must fail loudly in that case should say so in its default `CMD` (the [render image](#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon) does).
+
+**`conductor_mcp: true` on a docker step** asks Conductor to give the container a Conductor credential. When the daemon claims the job, the backend mints a short-lived, run-scoped token (the same kind `claude-code` steps get on `cloud-run`) and returns it in the dispatch payload as `conductorApiKey`; the daemon sets it as the container's `CONDUCTOR_API_KEY`, alongside `CONDUCTOR_API_URL`, `CONDUCTOR_PROJECT_ID` and `CONDUCTOR_WORKFLOW_RUN_ID`. It can reach only the endpoints its run is allowed to use, and expires with the run token TTL. Without `conductor_mcp`, a docker step gets **no** `CONDUCTOR_API_KEY`: the daemon's own key is never handed to a docker step. The key travels in a mode-0600 env file, never on the `docker run` command line, and is redacted from streamed logs.
+
 | Field | Default | Description |
 |-------|---------|-------------|
 | `timeout_minutes` | `5` | How long to wait for the container to finish before the step is marked failed (max `120`). |
@@ -566,7 +570,7 @@ jobs:
 |-------|---------|-------------|
 | `prompt` | — | The instruction given to Claude Code (required). Interpolated — may reference `${{ steps.* }}` / `${{ needs.* }}`. |
 | `inputs` | — | Map of `filename: content` written to `/conductor/inputs/` before Claude Code starts, so the prompt can tell it to read them. Values are interpolated; each must be a scalar (string/number/boolean), not a nested object. |
-| `conductor_mcp` | `false` | When `true`, wires up the Conductor MCP server (`npx @cliangdev/conductor mcp`) so the prompt can call Conductor tools (e.g. `scaffold_document`, `record_asset`). Requires an `allowed_tools` entry for each MCP tool you want it to use. No setup required: on `runs-on: cloud-run` and named runtime targets, the backend mints a short-lived, run-scoped token (a JWT, claim `type: "mcp"`, TTL matching the project's run-token TTL) and injects it as `CONDUCTOR_API_KEY` for the container's MCP server; on `self-hosted`, unchanged, the daemon uses its own locally-configured project API key. Project API keys (**Settings → API Keys**) remain a feature for external automations (CLI, CI, scripts) — they're no longer involved in workflow MCP auth. |
+| `conductor_mcp` | `false` | When `true`, wires up the Conductor MCP server (`npx @cliangdev/conductor mcp`) so the prompt can call Conductor tools (e.g. `scaffold_document`, `record_asset`). Requires an `allowed_tools` entry for each MCP tool you want it to use. No setup required: on `runs-on: cloud-run` and named runtime targets, the backend mints a short-lived, run-scoped token (a JWT, claim `type: "mcp"`, TTL matching the project's run-token TTL) and injects it as `CONDUCTOR_API_KEY` for the container's MCP server; on `self-hosted`, unchanged, the daemon injects its own locally-configured API key. Project API keys (**Settings → API Keys**) remain a feature for external automations (CLI, CI, scripts) — they're no longer involved in workflow MCP auth. |
 | `allowed_tools` | — | Comma-separated allowlist passed to `--allowedTools` (e.g. `"Read,Glob,mcp__conductor__scaffold_document"`). Omit to use Claude Code's own defaults. |
 | `max_turns` | — | Maximum agent turns (positive integer) before Claude Code stops itself, passed to `--max-turns`. |
 | `timeout_minutes` | `30` | Hard wall-clock timeout for the whole step (integer, 1–120). Enforced inside the container (SIGTERM, then SIGKILL) — the step fails with `CLAUDE_TIMEOUT` if exceeded. |
@@ -1433,13 +1437,17 @@ channel.
 
 Some automation workflows are provisioned automatically by a Conductor feature rather than authored by a
 project member — identified purely by a reserved workflow `name` (there's no schema-level "system" flag).
-Two ship today, both seeded the first time a project turns on the **Knowledge Center**
+Three ship today. The two `knowledge-*` ones are seeded the first time a project turns on the **Knowledge Center**
 (`knowledge_enabled` project setting — no dedicated frontend page yet, toggled via
-`PATCH /api/v1/projects/{projectId}/settings`) and re-provisioned idempotently on every subsequent enable:
+`PATCH /api/v1/projects/{projectId}/settings`) and re-provisioned idempotently on every subsequent enable;
+`conductor-creative-render` is seeded lazily the first time someone clicks **Render** on a Creative in the web app.
+System workflows don't count toward the per-project workflow limit, and the failure circuit breaker never
+auto-pauses `conductor-creative-render`:
 
 | Workflow name | Trigger | Purpose |
 |---|---|---|
 | `knowledge-librarian` | `workflow_dispatch` (`manual: false` — fired only by `LibrarianDispatchService`, see [Manual dispatch](#manual-dispatch)) | Files a batch of newly-ingested knowledge sources into wiki pages. `concurrency: single`. Its scheduler (`KnowledgeIngestScheduler`, 30s tick) also checks `enabled` before claiming sources, so an [auto-paused](#auto-pause-on-repeated-failures) librarian leaves sources untouched (not stuck mid-claim) until re-enabled. |
+| `conductor-creative-render` | `workflow_dispatch` (`manual: false` — fired only by the Creative **Render** button, `POST .../creatives/{id}/render-runs`) | Renders one Creative on the workspace's self-hosted daemon, in the `conductor-render` image. See [Creatives: rendering from the web app](#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon). Marker comment `# conductor-system-workflow: creative-render`; a user-authored workflow with the same name and no marker is never overwritten (the Render button reports it instead). |
 | `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input | Operator-triggered, once, to seed the wiki from an existing GitHub codebase. `concurrency: single` — enforced here since this is manual dispatch, so a second bootstrap can't be started while one is still running. |
 
 Both are ordinary workflows once created — visible and re-editable in the workflow list like any other —
@@ -1475,6 +1483,8 @@ conductor start
 ```
 
 The daemon receives a per-job dispatch event once a self-hosted job becomes ready to run — i.e. **after** all of its `needs` dependencies finish — not at the start of the whole workflow run. This means a single workflow run can freely mix Conductor-hosted and self-hosted jobs (`needs`/`${{ secrets.* }}` interpolate correctly across the boundary either way): only the self-hosted jobs are handed to your daemon, hosted jobs run on Conductor's infrastructure as usual, and each side waits on the other via normal `needs` ordering. On pickup, the daemon fetches the job's interpolated inputs (env, per-step prompts, a short-lived run token) directly from the backend — nothing secret sits in the dispatch event itself.
+
+**Daemon auth.** The daemon authenticates with whatever `conductor login` stored in `~/.conductor/config.json`: a *user* API key, not a project-scoped one. The backend accepts a daemon request (dispatch-payload, job complete) when the key belongs to a project **Admin or Creator** for the run's project, or when it is a project-scoped key for that project. A Reviewer or a non-member is refused with 403, so log in as a member who can create things before running `conductor start`.
 
 For each step in the job, the daemon pulls the appropriate Docker image, runs the container (or, for a `claude-code` step, runs `conductor-claude-entrypoint` inside it), streams logs back, and reports the result. No separate worker process or HTTP server is required.
 
@@ -1567,56 +1577,66 @@ The daemon reads from `~/.conductor/config.json`, written by `conductor init`. S
 
 ---
 
-## Creatives: rendering on a self-hosted Workflow
+## Creatives: rendering from the web app on a self-hosted daemon
 
-Conductor Creatives (the Marketing area's ad-artwork library — see the root `CLAUDE.md`'s pillar
-list) render **locally**: the `conductor` CLI and MCP server drive a Playwright browser on whatever
-machine runs them, talking to the ordinary external v2 creatives API with a plain API key. There is
-no Cloud Run render job and no render-specific execution mode — rendering a Creative from a Workflow
-is just running the CLI from a `docker` step, the same way any other CLI-driven job would.
+Creatives that need a browser or ffmpeg to render (a still, MOTION, a CAROUSEL with a music track, a
+CLIP with track/mix/none audio) normally render **locally**: Claude Code or the `conductor` CLI drives
+Playwright on the user's machine. That is unchanged. For someone using only the web app, the **Render**
+button on the Creative runs the same CLI command through a system workflow instead.
+
+Clicking **Render** calls `POST /api/v2/projects/{projectId}/marketing/creatives/{creativeId}/render-runs`
+(Admin or Creator). The backend validates the Creative the same way a render does (422 with the
+violations, before anything is dispatched), refuses a second run while one is queued or running for the
+same Creative (409 `RENDER_RUN_ACTIVE`, with that run's ids), and otherwise fires the system workflow
+`conductor-creative-render`. It is provisioned from `conductor-backend/src/main/resources/creative/creative-render.yaml`:
 
 ```yaml
+# conductor-system-workflow: creative-render
+name: conductor-creative-render
 on:
   workflow_dispatch:
-    inputs:
-      creativeId:
-        description: The Creative to render
-        required: true
-
+    manual: false
 jobs:
   render:
     runs-on: self-hosted
     steps:
-      - uses: docker://mcr.microsoft.com/playwright:v1.63.0-noble
+      - uses: docker://ghcr.io/cliangdev/conductor-render:1
+        with:
+          conductor_mcp: true
         env:
-          CONDUCTOR_API_KEY: ${{ secrets.CONDUCTOR_API_KEY }}
-        run: |
-          npx -y @cliangdev/conductor creative render ${{ inputs.creativeId }} \
-            --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"
+          CREATIVE_ID: ${{ event.creativeId }}
+        run: conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"
 ```
 
-A few things worth knowing before adapting this:
+How the pieces fit:
 
-- **`runs-on: self-hosted`** because a `docker` step only runs on Conductor-hosted or self-hosted
-  infrastructure (see [Execution modes](#execution-modes)) and this one needs a real browser —
-  `mcr.microsoft.com/playwright:v1.63.0-noble` ships a matching Chromium so `playwright-core` (what
-  the CLI uses to find a browser) has one to launch. Pin the image tag to the `playwright` version
-  in `conductor-creative/job/package.json` — the two are expected to move together.
-- **The API key** is a project API key (**Settings → API Keys**), passed as a
-  [workflow secret](#outputs-and-interpolation) — never embed one directly in the YAML.
-  `CONDUCTOR_API_URL` and `CONDUCTOR_PROJECT_ID` don't need to be set here: every self-hosted `docker`
-  step's container already carries them (the daemon's step-env contract), and the CLI reads them the
-  same way it would inside any other headless container with no `~/.conductor/config.json`.
-- **`--workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"`** reads the run's own id from a plain
-  environment variable, not a `${{ }}` expression — there is currently no interpolation root that
-  resolves to the run's own id (the valid roots are `event`, `secrets`, `steps`, `needs`, `inputs`
-  and `loop`; see [Outputs and interpolation](#outputs-and-interpolation)). `CONDUCTOR_WORKFLOW_RUN_ID`
-  is set directly in the container's environment for every self-hosted step regardless, so the shell
-  reads it like any other env var rather than going through the templating system. This value is
-  purely for attribution on the stored `creative_render` row — nothing reads it back — so it's safe
-  to drop the flag entirely if you don't need to trace a render back to the run that produced it.
-- Add `--preview` to render a small contact sheet instead of full-size placement frames — useful for
-  a workflow that just wants to sanity-check a Creative without producing upload-ready PNGs.
+- **`runs-on: self-hosted`**: a `conductor start` daemon on a machine with Docker must be running for
+  the workspace. Until one picks the job up the run shows **Waiting for a runner** (`AWAITING_RUNNER`).
+  A run nobody picks up is timed out after 24 to 48 hours (`DAEMON_PICKUP_TIMEOUT`); a failed or
+  timed-out run never blocks the next click.
+- **The image**: `ghcr.io/cliangdev/conductor-render:1` (`runner-image/Dockerfile.render`) is the
+  Playwright Noble image plus ffmpeg (libx264, AAC and the `xfade`, `zoompan`, `loudnorm`,
+  `sidechaincompress` filters the render core uses) and `@cliangdev/conductor` at an exact version. It
+  runs as the non-root `pwuser` in `/workspace`. It is multi-arch (amd64 and arm64, so Apple-silicon
+  daemons work) and is rebuilt by `.github/workflows/publish-render-image.yml` after every CLI release,
+  moving the floating `:1` tag (also published as `:<cli version>` and `:sha-<commit>`). The daemon
+  `docker pull`s the image at the start of every job, so `:1` stays current. Its default `CMD` exits 64
+  with a message that a daemon >= 0.41.0 is needed, so a daemon that ignores `run:` fails loudly.
+- **The creative id goes through `env`**, never into the shell string, and the script is the one
+  command above, the same one Claude Code uses. `conductor creative render` works headless from
+  `CONDUCTOR_API_URL`, `CONDUCTOR_API_KEY` and `CONDUCTOR_PROJECT_ID` alone (no `~/.conductor/config.json`);
+  if one is missing it says which.
+- **`conductor_mcp: true` provides the credential.** The key is the run-scoped token described under the
+  [`docker` step](#docker--run-a-container): it is accepted only on that Creative's render endpoints,
+  and only for renders carrying this run's id (`--workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"`, read from
+  the environment since no `${{ }}` root resolves to the run id). No project API key or workflow secret
+  is involved. Machine renders have no `requestedBy` user.
+
+**A custom workflow can reuse the image and step**, for example to render on a schedule or for a batch.
+Copy the step above into your own workflow, keeping `conductor_mcp: true` (without it the container has no
+credential) and taking the Creative id from an input or event. The run token only authorizes renders
+attributed to its own run, so the `--workflow-run-id` flag is required. Add `--preview` for a contact
+sheet instead of full-size frames.
 
 ## Building workflows with Claude
 
