@@ -9,6 +9,7 @@ import com.conductor.creative.CreativeRegistry;
 import com.conductor.creative.CreativeRenderDispatchService;
 import com.conductor.creative.CreativeRenderService;
 import com.conductor.creative.CreativeService;
+import com.conductor.creative.RenderCaller;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.security.WorkflowRunAuthenticationToken;
@@ -72,6 +73,11 @@ class CreativeControllerRunTokenTest {
         SecurityContextHolder.getContext().setAuthentication(new WorkflowRunAuthenticationToken(projectId, runId));
     }
 
+    /** The token's run is the render workflow's run for cr-1 of proj-1. */
+    private void runIsTheRenderRunForCr1() {
+        when(dispatchService.isRenderRunFor("run-1", "proj-1", "cr-1")).thenReturn(true);
+    }
+
     @Test
     void aRunTokenOnANonRenderEndpointIsA403NotA500() throws Exception {
         asRun("proj-1", "run-1");
@@ -104,6 +110,7 @@ class CreativeControllerRunTokenTest {
     @Test
     void postingARenderWithAnotherRunsIdIsRefused() throws Exception {
         asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
 
         mockMvc.perform(post(BASE + "/renders").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"renderer\":\"workflow\",\"workflowRunId\":\"run-OTHER\"}"))
@@ -112,7 +119,7 @@ class CreativeControllerRunTokenTest {
                         .content("{\"renderer\":\"workflow\"}"))
                 .andExpect(status().isForbidden());
 
-        verify(renderService, never()).requestRender(any(), any(), any(), any());
+        verify(renderService, never()).requestRender(any(), any(), any(), any(RenderCaller.class));
     }
 
     @Test
@@ -128,6 +135,7 @@ class CreativeControllerRunTokenTest {
     @Test
     void frameUploadCompleteAndFailAreRefusedOnARenderTheRunDidNotRequest() throws Exception {
         asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
         doThrow(new ForbiddenException("not yours")).when(renderService)
                 .requireRenderOfRun("proj-1", "cr-1", "rd-9", "run-1");
 
@@ -145,14 +153,15 @@ class CreativeControllerRunTokenTest {
         mockMvc.perform(get(BASE + "/renders/rd-9")).andExpect(status().isForbidden());
 
         verify(renderService, never()).putFrame(any(), any(), any(), any(), any(), anyInt(), anyInt(), any(), any(),
-                any(), any(), any());
-        verify(renderService, never()).completeRender(any(), any(), any(), any(), any());
-        verify(renderService, never()).failRender(any(), any(), any(), any(), any());
+                any(), any(), any(RenderCaller.class));
+        verify(renderService, never()).completeRender(any(), any(), any(), any(), any(RenderCaller.class));
+        verify(renderService, never()).failRender(any(), any(), any(), any(), any(RenderCaller.class));
     }
 
     @Test
     void aRunTokenReadsItsProjectsCreativeWithoutAUser() throws Exception {
         asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
         Creative creative = new Creative();
         creative.setId("cr-1");
         creative.setProjectId("proj-1");
@@ -167,14 +176,97 @@ class CreativeControllerRunTokenTest {
         creative.setTypeOverrides(om.createObjectNode());
         creative.setCreatedAt(OffsetDateTime.now());
         creative.setUpdatedAt(OffsetDateTime.now());
-        when(creativeService.getCreative(eq("proj-1"), eq("cr-1"), eq(null)))
+        when(creativeService.getCreative(eq("proj-1"), eq("cr-1"), any(RenderCaller.class)))
                 .thenReturn(new CreativeService.CreativeView(creative, null));
 
         mockMvc.perform(get(BASE)).andExpect(status().isOk());
 
-        verify(creativeService).getCreative("proj-1", "cr-1", null);
-        // The render job does not need (or pay for) the run lookup.
+        verify(creativeService).getCreative("proj-1", "cr-1", new RenderCaller.RunCaller("run-1", "proj-1", "cr-1"));
+    }
+
+    @Test
+    void theSingleCreativeReadNeverLooksUpTheRenderRun() throws Exception {
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken(userPrincipal(), null));
+        when(creativeService.getCreative(any(), any(), any(RenderCaller.class)))
+                .thenThrow(new ForbiddenException("stop"));
+
+        mockMvc.perform(get(BASE));
+
         verify(dispatchService, never()).latestRun(any(), any());
+    }
+
+    // ── a run token is scoped to the Creative its run was dispatched for ─────────────────────────
+
+    @Test
+    void aRunTokenForCreativeAIsRefusedOnCreativeBOnEveryRenderEndpoint() throws Exception {
+        asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
+        String other = "/projects/proj-1/marketing/creatives/cr-2";
+
+        mockMvc.perform(get(other)).andExpect(status().isForbidden());
+        mockMvc.perform(post(other + "/renders").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"renderer\":\"workflow\",\"workflowRunId\":\"run-1\"}")).andExpect(status().isForbidden());
+        mockMvc.perform(get(other + "/renders/rd-1")).andExpect(status().isForbidden());
+        mockMvc.perform(put(other + "/renders/rd-1/frames/9x16?width=1080&height=1920")
+                .contentType("image/jpeg").content(new byte[]{1})).andExpect(status().isForbidden());
+        mockMvc.perform(put(other + "/renders/rd-1/frames/9x16/poster")
+                .contentType("image/jpeg").content(new byte[]{1})).andExpect(status().isForbidden());
+        mockMvc.perform(post(other + "/renders/rd-1/complete").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post(other + "/renders/rd-1/fail").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"x\"}")).andExpect(status().isForbidden());
+
+        verify(creativeService, never()).getCreative(any(), any(), any(RenderCaller.class));
+        verify(renderService, never()).requestRender(any(), any(), any(), any(RenderCaller.class));
+        verify(renderService, never()).getRender(any(), any(), any(), any(RenderCaller.class));
+        verify(renderService, never()).completeRender(any(), any(), any(), any(), any(RenderCaller.class));
+        verify(renderService, never()).failRender(any(), any(), any(), any(), any(RenderCaller.class));
+    }
+
+    @Test
+    void aRunTokenOfANonRenderWorkflowIsRefusedEvenOnItsOwnWorkflowRunId() throws Exception {
+        asRun("proj-1", "run-1");
+        // isRenderRunFor defaults to false: the run belongs to some other workflow.
+
+        mockMvc.perform(get(BASE)).andExpect(status().isForbidden());
+        mockMvc.perform(post(BASE + "/renders").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"renderer\":\"workflow\",\"workflowRunId\":\"run-1\"}")).andExpect(status().isForbidden());
+        mockMvc.perform(post(BASE + "/renders/rd-1/complete").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+
+        verify(renderService, never()).requestRender(any(), any(), any(), any(RenderCaller.class));
+    }
+
+    @Test
+    void theLatestRenderRunIsNotForARunToken() throws Exception {
+        asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
+
+        mockMvc.perform(get(BASE + "/render-runs/latest")).andExpect(status().isForbidden());
+
+        verify(dispatchService, never()).latestRun(any(), any());
+    }
+
+    @Test
+    void theLatestRenderRunIs204WhenNoneAnd200WithTheRunOtherwise() throws Exception {
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken(userPrincipal(), null));
+        when(dispatchService.latestRun("proj-1", "cr-1")).thenReturn(java.util.Optional.empty());
+        mockMvc.perform(get(BASE + "/render-runs/latest")).andExpect(status().isNoContent());
+
+        when(dispatchService.latestRun("proj-1", "cr-1")).thenReturn(java.util.Optional.of(
+                new CreativeRenderDispatchService.RenderRunView("wf-1", "run-9", "RUNNING", "AWAITING_RUNNER",
+                        null, null, null)));
+        mockMvc.perform(get(BASE + "/render-runs/latest")).andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.runId").value("run-9"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.waitReason").value("AWAITING_RUNNER"));
+    }
+
+    private static com.conductor.entity.User userPrincipal() {
+        com.conductor.entity.User user = new com.conductor.entity.User();
+        user.setId("u-1");
+        return user;
     }
 
     private static int anyInt() {

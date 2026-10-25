@@ -214,6 +214,37 @@ class CreativeRenderDispatchIntegrationTest extends AbstractNoneWebIntegrationTe
     }
 
     @Test
+    void twoFirstEverDispatchesOnDifferentCreativesBothGetARunAndShareOneWorkflow() throws Exception {
+        Creative a = newStill();
+        Creative b = newStill();
+        // Deliberately NOT seeded: both threads race to insert the workflow.
+        CountDownLatch go = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        List<Future<CreativeRenderDispatchService.RenderRunView>> results = new ArrayList<>();
+        try {
+            for (Creative c : List.of(a, b)) {
+                results.add(pool.submit(() -> {
+                    actAs(admin);
+                    go.await();
+                    try {
+                        return dispatchService.dispatch(project.getId(), c.getId());
+                    } finally {
+                        SecurityContextHolder.clearContext();
+                    }
+                }));
+            }
+            go.countDown();
+            CreativeRenderDispatchService.RenderRunView first = results.get(0).get();
+            CreativeRenderDispatchService.RenderRunView second = results.get(1).get();
+            assertThat(first.runId()).isNotEqualTo(second.runId());
+            assertThat(first.workflowId()).isEqualTo(second.workflowId());
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(workflowRepository.findByProjectId(project.getId())).hasSize(1);
+    }
+
+    @Test
     void aWorkflowSwitchedOffByAPersonIsRefusedWithItsId() {
         Creative creative = newStill();
         WorkflowDefinition workflow = provisioner.ensureProvisioned(project.getId());
@@ -298,6 +329,55 @@ class CreativeRenderDispatchIntegrationTest extends AbstractNoneWebIntegrationTe
         // Another Creative has no run of its own.
         Creative other = newStill();
         assertThat(dispatchService.latestRun(project.getId(), other.getId())).isEmpty();
+    }
+
+    @Test
+    void aRunIsARenderRunOnlyForTheCreativeItWasDispatchedFor() {
+        Creative a = newStill();
+        Creative b = newStill();
+        CreativeRenderDispatchService.RenderRunView runA = dispatchService.dispatch(project.getId(), a.getId());
+
+        assertThat(dispatchService.isRenderRunFor(runA.runId(), project.getId(), a.getId())).isTrue();
+        assertThat(dispatchService.isRenderRunFor(runA.runId(), project.getId(), b.getId())).isFalse();
+        assertThat(dispatchService.isRenderRunFor(runA.runId(), "another-project", a.getId())).isFalse();
+        assertThat(dispatchService.isRenderRunFor("no-such-run", project.getId(), a.getId())).isFalse();
+        assertThat(dispatchService.isRenderRunFor(null, project.getId(), a.getId())).isFalse();
+    }
+
+    @Test
+    void aRunOfAnotherWorkflowCarryingTheSameCreativeIdIsNotARenderRun() {
+        Creative a = newStill();
+        WorkflowDefinition mine = new WorkflowDefinition();
+        mine.setProject(project);
+        mine.setName("my-own-workflow");
+        mine.setYaml("name: my-own-workflow\non:\n  workflow_dispatch: {}\njobs: {}\n");
+        mine.setEnabled(true);
+        mine = workflowRepository.save(mine);
+        WorkflowRun run = new WorkflowRun();
+        run.setWorkflow(mine);
+        run.setTriggerType("workflow_dispatch");
+        run.setEventPayload("{\"creativeId\":\"" + a.getId() + "\"}");
+        run.setStatus(WorkflowRunStatus.RUNNING);
+        run.setStartedAt(java.time.OffsetDateTime.now());
+        run = runRepository.save(run);
+
+        assertThat(dispatchService.isRenderRunFor(run.getId(), project.getId(), a.getId())).isFalse();
+    }
+
+    @Test
+    void theLatestRunIsNewestFirstAndNeedsMembershipAndAKnownCreative() {
+        Creative creative = newStill();
+        CreativeRenderDispatchService.RenderRunView first = dispatchService.dispatch(project.getId(), creative.getId());
+        settle(first.runId(), WorkflowRunStatus.FAILED);
+        CreativeRenderDispatchService.RenderRunView second = dispatchService.dispatch(project.getId(), creative.getId());
+
+        assertThat(dispatchService.latestRun(project.getId(), creative.getId()).orElseThrow().runId())
+                .isEqualTo(second.runId());
+        assertThatThrownBy(() -> dispatchService.latestRun(project.getId(), "no-such-creative"))
+                .isInstanceOf(EntityNotFoundException.class);
+        actAs(newUser());
+        assertThatThrownBy(() -> dispatchService.latestRun(project.getId(), creative.getId()))
+                .isInstanceOf(ForbiddenException.class);
     }
 
     @Test

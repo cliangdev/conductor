@@ -954,19 +954,19 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
                 .renderer("workflow").workflowRunId("run-1");
 
         CreativeRenderService.CreateRenderResult result =
-                renderService.requestRender(project.getId(), creative.getId(), request, null);
+                renderService.requestRender(project.getId(), creative.getId(), request, machine());
 
         assertThat(result.render().getRequestedBy()).isNull();
         assertThat(result.render().getWorkflowRunId()).isEqualTo("run-1");
         String renderId = result.render().getId();
         renderService.putFrame(project.getId(), creative.getId(), renderId, "9x16", null, 1080, 1920,
-                jpeg(), "image/jpeg", null);
+                jpeg(), "image/jpeg", machine());
         renderService.putFrame(project.getId(), creative.getId(), renderId, "4x5", null, 1080, 1350,
-                jpeg(), "image/jpeg", null);
+                jpeg(), "image/jpeg", machine());
         renderService.putFrame(project.getId(), creative.getId(), renderId, "1x1", null, 1080, 1080,
-                jpeg(), "image/jpeg", null);
+                jpeg(), "image/jpeg", machine());
         CreativeRenderService.RenderView done =
-                renderService.completeRender(project.getId(), creative.getId(), renderId, null, null);
+                renderService.completeRender(project.getId(), creative.getId(), renderId, null, machine());
 
         assertThat(done.render().getState()).isEqualTo(CreativeRender.STATE_SUCCEEDED);
         // Every reader copes with a null requestedBy.
@@ -989,13 +989,48 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     @Test
     void aMachineFailureRecordsTheErrorAndDiscardsFrames() {
         String renderId = renderService.requestRender(project.getId(), creative.getId(),
-                new CreateCreativeRenderRequest().renderer("workflow").workflowRunId("run-1"), null).render().getId();
+                new CreateCreativeRenderRequest().renderer("workflow").workflowRunId("run-1"), machine()).render().getId();
 
         CreativeRenderService.RenderView failed = renderService.failRender(project.getId(), creative.getId(), renderId,
-                new com.conductor.generated.v2.model.FailCreativeRenderRequest().message("ffmpeg crashed"), null);
+                new com.conductor.generated.v2.model.FailCreativeRenderRequest().message("ffmpeg crashed"), machine());
 
         assertThat(failed.render().getState()).isEqualTo(CreativeRender.STATE_FAILED);
         assertThat(failed.render().getError()).isEqualTo("ffmpeg crashed");
+    }
+
+    private RenderCaller machine() {
+        return new RenderCaller.RunCaller("run-1", project.getId(), creative.getId());
+    }
+
+    @Test
+    void aNullCallerNeverAuthorizesAnything() {
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), creative.getId(),
+                new CreateCreativeRenderRequest(), (RenderCaller) null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> renderService.requestRender(project.getId(), creative.getId(),
+                new CreateCreativeRenderRequest(), (com.conductor.entity.User) null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> renderService.getRender(project.getId(), creative.getId(), "rd", (RenderCaller) null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> renderService.listRenders(project.getId(), creative.getId(), (RenderCaller) null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> creativeService.getCreative(project.getId(), creative.getId(), (RenderCaller) null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void aRunCallerForAnotherCreativeOrProjectIsRefusedByTheService() {
+        RenderCaller otherCreative = new RenderCaller.RunCaller("run-1", project.getId(), "some-other-creative");
+        RenderCaller otherProject = new RenderCaller.RunCaller("run-1", "other-project", creative.getId());
+
+        for (RenderCaller caller : List.of(otherCreative, otherProject)) {
+            assertThatThrownBy(() -> renderService.requestRender(project.getId(), creative.getId(),
+                    new CreateCreativeRenderRequest().renderer("workflow").workflowRunId("run-1"), caller))
+                    .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+            assertThatThrownBy(() -> renderService.getRender(project.getId(), creative.getId(), "rd", caller))
+                    .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+            assertThatThrownBy(() -> creativeService.getCreative(project.getId(), creative.getId(), caller))
+                    .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        }
     }
 
     @Test

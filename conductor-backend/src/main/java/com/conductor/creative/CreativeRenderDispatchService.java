@@ -1,11 +1,8 @@
 package com.conductor.creative;
 
 import com.conductor.entity.WorkflowDefinition;
-import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
-import com.conductor.entity.WorkflowStepRun;
-import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
@@ -43,7 +40,6 @@ public class CreativeRenderDispatchService {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository runRepository;
     private final WorkflowRunQueryService runQueryService;
-    private final WorkflowJobRunRepository jobRunRepository;
     private final WorkflowStepRunRepository stepRunRepository;
     private final ObjectMapper objectMapper;
 
@@ -55,7 +51,6 @@ public class CreativeRenderDispatchService {
                                          WorkflowDefinitionRepository workflowRepository,
                                          WorkflowRunRepository runRepository,
                                          WorkflowRunQueryService runQueryService,
-                                         WorkflowJobRunRepository jobRunRepository,
                                          WorkflowStepRunRepository stepRunRepository,
                                          ObjectMapper objectMapper) {
         this.projectSecurityService = projectSecurityService;
@@ -66,7 +61,6 @@ public class CreativeRenderDispatchService {
         this.workflowRepository = workflowRepository;
         this.runRepository = runRepository;
         this.runQueryService = runQueryService;
-        this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.objectMapper = objectMapper;
     }
@@ -126,9 +120,15 @@ public class CreativeRenderDispatchService {
         return view(workflow.getId(), run, runQueryService.deriveWaitReasons(List.of(run)).get(run.getId()));
     }
 
-    /** The latest render workflow run for this Creative, or empty if none was ever dispatched. */
+    /**
+     * The latest render workflow run for this Creative, or empty if none was ever dispatched. Cheap enough to
+     * poll: the run lookup is narrowed to the one workflow definition first, newest first, one row.
+     */
     @Transactional(readOnly = true)
     public Optional<RenderRunView> latestRun(String projectId, String creativeId) {
+        projectSecurityService.requireProjectAccess(projectId);
+        creativeRepository.findByIdAndProjectId(creativeId, projectId)
+                .orElseThrow(() -> new EntityNotFoundException("Creative not found"));
         Optional<WorkflowDefinition> workflow = workflowRepository
                 .findByProjectIdAndName(projectId, CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME);
         if (workflow.isEmpty()) {
@@ -140,6 +140,30 @@ public class CreativeRenderDispatchService {
                         runQueryService.deriveWaitReasons(List.of(run)).get(run.getId())));
     }
 
+    /**
+     * Whether {@code runId} is a run of this project's render workflow dispatched for exactly this Creative.
+     * What a run token must satisfy before it may touch the Creative's render endpoints.
+     */
+    @Transactional(readOnly = true)
+    public boolean isRenderRunFor(String runId, String projectId, String creativeId) {
+        if (runId == null || creativeId == null) {
+            return false;
+        }
+        return runRepository.findByIdWithWorkflow(runId).filter(run -> {
+            WorkflowDefinition wf = run.getWorkflow();
+            if (wf == null || wf.getProject() == null || !projectId.equals(wf.getProject().getId())
+                    || !CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME.equals(wf.getName())
+                    || !CreativeWorkflowProvisioner.hasMarker(wf.getYaml())) {
+                return false;
+            }
+            try {
+                return creativeId.equals(objectMapper.readTree(run.getEventPayload()).path("creativeId").asText(null));
+            } catch (JsonProcessingException | RuntimeException e) {
+                return false;
+            }
+        }).isPresent();
+    }
+
     private RenderRunView view(String workflowId, WorkflowRun run, String waitReason) {
         String error = run.getStatus() == WorkflowRunStatus.FAILED || run.getStatus() == WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT
                 ? failureReason(run) : null;
@@ -149,17 +173,8 @@ public class CreativeRenderDispatchService {
 
     /** The first reason a step or job of the run recorded (e.g. DAEMON_PICKUP_TIMEOUT), or a generic line. */
     private String failureReason(WorkflowRun run) {
-        for (WorkflowJobRun job : jobRunRepository.findByRunId(run.getId())) {
-            for (WorkflowStepRun step : stepRunRepository.findByJobRunId(job.getId())) {
-                if (step.getErrorReason() != null && !step.getErrorReason().isBlank()) {
-                    return step.getErrorReason();
-                }
-            }
-            if (job.getSkipReason() != null && !job.getSkipReason().isBlank()) {
-                return job.getSkipReason();
-            }
-        }
-        return "The render run failed. Open the run for its log.";
+        return stepRunRepository.findFirstFailureReasonByRunId(run.getId()).stream().findFirst()
+                .orElse("The render run failed. Open the run for its log.");
     }
 
     private String toJson(Map<String, Object> payload) {
