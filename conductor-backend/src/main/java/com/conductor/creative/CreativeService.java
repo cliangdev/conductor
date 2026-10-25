@@ -870,7 +870,7 @@ public class CreativeService {
             // A CAROUSEL with a track is rendered locally into a slideshow video: the full slideshow spec,
             // with `local:<key>` slides and track passing through as they do for a MOTION.
             Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
-            String listKey = slides.containsKey("9x16") ? "9x16" : "default";
+            String listKey = CreativeSpecBuilder.slideshowKey(slides);
             List<MediaFacts> slideFacts = new ArrayList<>();
             List<String> refs = slides.getOrDefault(listKey, List.of());
             for (int i = 0; i < refs.size(); i++) {
@@ -1322,7 +1322,7 @@ public class CreativeService {
             slideshow = new CreativeSlideshow()
                     .slideDurations(slideshowRequest.getSlideDurations())
                     .zoom(slideshowRequest.getZoom() != null ? slideshowRequest.getZoom() : Boolean.TRUE);
-            List<String> list = slides.containsKey("9x16") ? slides.get("9x16") : slides.get("default");
+            List<String> list = slides.get(CreativeSpecBuilder.slideshowKey(slides));
             slideshowInput = new CreativeValidator.SlideshowInput(
                     slideshow.getSlideDurations() != null
                             ? slideshow.getSlideDurations().stream().map(d -> d != null ? d.doubleValue() : null).toList()
@@ -1354,19 +1354,11 @@ public class CreativeService {
         }
         Boolean clipHasAudio = null;
         if (clipKind) {
-            for (String clipId : clipMedia.values()) {
-                MediaFacts clip = media.findLibrary(clipId);
-                if (clip == null || clip.getHasAudio() == null) {
-                    continue;
-                }
-                clipHasAudio = !Boolean.FALSE.equals(clipHasAudio) && clip.getHasAudio();
-            }
+            List<MediaFacts> clips = new ArrayList<>();
+            clipMedia.values().forEach(clipId -> clips.add(media.findLibrary(clipId)));
+            clipHasAudio = CreativeValidator.AudioInput.clipHasAudioOf(clips);
         }
-        CreativeValidator.AudioInput input = new CreativeValidator.AudioInput(source, audio.getTrackId(),
-                audio.getTrackId() == null || track != null, track != null && track.isAudio(),
-                track != null && track.isUploaded(), track != null && track.isBlocked(),
-                audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
-                audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null, clipHasAudio);
+        CreativeValidator.AudioInput input = CreativeValidator.AudioInput.of(audio, track, clipHasAudio);
         // Not a track: drop a stray trackId so the row never names media it does not play.
         if (!usesTrack) {
             audio.setTrackId(null);

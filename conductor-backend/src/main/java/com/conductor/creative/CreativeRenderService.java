@@ -374,16 +374,25 @@ public class CreativeRenderService {
 
     private CreativeRender saveRunningRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
                                              User caller) {
+        return saveRender(projectId, creative, request, caller, CreativeRender.STATE_RUNNING);
+    }
+
+    /** A new non-preview render row in {@code state}; a SUCCEEDED one is also finished, in the same save. */
+    private CreativeRender saveRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
+                                      User caller, String state) {
         CreativeRender render = new CreativeRender();
         render.setProjectId(projectId);
         render.setCreativeId(creative.getId());
         render.setCreativeVersion(creative.getVersion());
-        render.setState(CreativeRender.STATE_RUNNING);
+        render.setState(state);
         render.setPreviewOnly(false);
         render.setRenderer(request != null ? request.getRenderer() : null);
         render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
         render.setRequestedBy(caller.getId());
         render.setRequestedAt(OffsetDateTime.now());
+        if (CreativeRender.STATE_SUCCEEDED.equals(state)) {
+            render.setFinishedAt(OffsetDateTime.now());
+        }
         return renderRepository.save(render);
     }
 
@@ -393,19 +402,10 @@ public class CreativeRenderService {
         if (audio == null) {
             return null;
         }
-        MediaFacts track = findMedia(projectId, audio.getTrackId());
-        Boolean clipHasAudio = null;
-        for (String clipId : clipMedia.values()) {
-            MediaFacts clip = findMedia(projectId, clipId);
-            if (clip != null && clip.getHasAudio() != null) {
-                clipHasAudio = !Boolean.FALSE.equals(clipHasAudio) && clip.getHasAudio();
-            }
-        }
-        return new CreativeValidator.AudioInput(audio.getSource(), audio.getTrackId(),
-                audio.getTrackId() == null || track != null, track != null && track.isAudio(),
-                track != null && track.isUploaded(), track != null && track.isBlocked(),
-                audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
-                audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null, clipHasAudio);
+        List<MediaFacts> clips = new ArrayList<>();
+        clipMedia.values().forEach(clipId -> clips.add(findMedia(projectId, clipId)));
+        return CreativeValidator.AudioInput.of(audio, findMedia(projectId, audio.getTrackId()),
+                CreativeValidator.AudioInput.clipHasAudioOf(clips));
     }
 
     /**
@@ -425,7 +425,7 @@ public class CreativeRenderService {
         Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
         CreativeAudio audio = toAudio(creative.getAudio());
         CreativeSlideshow slideshow = toSlideshow(creative.getSlideshow());
-        List<String> videoList = slides.containsKey("9x16") ? slides.get("9x16") : slides.get("default");
+        List<String> videoList = slides.get(CreativeSpecBuilder.slideshowKey(slides));
         List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
                 creative.getLayout(), creative.getTheme(), placements, creative.getHeadline(), creative.getBody(),
                 creative.getCaption(),
@@ -443,25 +443,10 @@ public class CreativeRenderService {
         }
 
         boolean local = carouselNeedsLocalRender(audio);
-        CreativeRender render;
-        if (local) {
-            // The slide images are linked now, exactly as the instant path does; the local job adds one
-            // 9x16 video frame (no index) and completes the render.
-            render = saveRunningRender(projectId, creative, request, caller);
-        } else {
-            render = new CreativeRender();
-            render.setProjectId(projectId);
-            render.setCreativeId(creative.getId());
-            render.setCreativeVersion(creative.getVersion());
-            render.setState(CreativeRender.STATE_SUCCEEDED);
-            render.setPreviewOnly(false);
-            render.setRenderer(request != null ? request.getRenderer() : null);
-            render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
-            render.setRequestedBy(caller.getId());
-            render.setRequestedAt(OffsetDateTime.now());
-            render.setFinishedAt(OffsetDateTime.now());
-            render = renderRepository.save(render);
-        }
+        // Local: the slide images are linked now, exactly as the instant path does; the local job adds one
+        // 9x16 video frame (no index) and completes the render.
+        CreativeRender render = saveRender(projectId, creative, request, caller,
+                local ? CreativeRender.STATE_RUNNING : CreativeRender.STATE_SUCCEEDED);
 
         List<CreativeRenderFrame> frames = new ArrayList<>();
         for (String placementKey : placements) {

@@ -175,6 +175,11 @@ public class CreativeSpecBuilder {
         return spec;
     }
 
+    /** The slide list a CAROUSEL's slideshow video is made from: the 9x16 list, else the default one. */
+    public static String slideshowKey(Map<String, ?> slides) {
+        return slides.containsKey("9x16") ? "9x16" : "default";
+    }
+
     /** One CLIP frame the local job renders: its placement and the clip it takes sound from. */
     public record ClipPlacement(String key, int width, int height, MediaFacts clip) {
     }

@@ -235,6 +235,33 @@ public class CreativeValidator {
             Double fadeOutSec,
             Boolean clipHasAudio) {
 
+        /**
+         * The validator's view of a CAROUSEL's or CLIP's audio against the media as it resolves now: the one
+         * assembly shared by the write path and the render request. {@code track} is null when the
+         * audio names no track or it did not resolve.
+         */
+        public static AudioInput of(CreativeAudio audio, MediaFacts track, Boolean clipHasAudio) {
+            return new AudioInput(audio.getSource(), audio.getTrackId(),
+                    audio.getTrackId() == null || track != null, track != null && track.isAudio(),
+                    track != null && track.isUploaded(), track != null && track.isBlocked(),
+                    audio.getVolume() != null ? audio.getVolume().doubleValue() : null,
+                    audio.getFadeOutSec() != null ? audio.getFadeOutSec().doubleValue() : null, clipHasAudio);
+        }
+
+        /**
+         * Whether the clips between them have sound: false when any known clip is silent, true when every
+         * known one has some, null when no clip's sound is known.
+         */
+        public static Boolean clipHasAudioOf(java.util.Collection<MediaFacts> clips) {
+            Boolean result = null;
+            for (MediaFacts clip : clips) {
+                if (clip != null && clip.getHasAudio() != null) {
+                    result = !Boolean.FALSE.equals(result) && clip.getHasAudio();
+                }
+            }
+            return result;
+        }
+
         /** A test-friendly builder: structurally valid "no sound" by default. */
         public static final class Builder {
             private String source = "none";
