@@ -118,6 +118,13 @@ public class ChannelMetricDailyStore {
         return written;
     }
 
+    /** The newest day with any stored point (value 0 included) for the connection, or null if it never had data. */
+    public LocalDate latestDay(String connectionId) {
+        Date max = jdbc.queryForObject("SELECT max(day) FROM channel_metric_daily WHERE connection_id = :c",
+                new MapSqlParameterSource("c", connectionId), Date.class);
+        return max == null ? null : max.toLocalDate();
+    }
+
     /**
      * Days before {@code provisionalFrom} are final. Repairs rows an earlier pull left provisional (the oldest
      * re-read day used to be written provisional and then left the window, never to be re-read).

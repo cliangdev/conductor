@@ -53,6 +53,7 @@ class ChannelMetricsFeedPullerTest {
     private ChannelMetricDailyStore store;
     private ChannelMetricDefinitionStore definitionStore;
     private OAuthFlowService oAuthFlowService;
+    private final com.conductor.service.ConnectionHealthService healthService = mock(com.conductor.service.ConnectionHealthService.class);
     private ChannelMetricsSource source;
     private ChannelMetricsFeedPuller puller;
     private ConnectorFeed feed;
@@ -111,7 +112,7 @@ class ChannelMetricsFeedPullerTest {
                 });
 
         puller = new ChannelMetricsFeedPuller(registry, connectionService, store, definitionStore, mock(ChannelDimensionStateStore.class),
-                new ObjectMapper(), oAuthFlowService, Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
+                new ObjectMapper(), oAuthFlowService, healthService, Clock.fixed(Instant.parse("2026-10-14T09:00:00Z"), ZoneOffset.UTC));
     }
 
     private void stubPull(ChannelMetricsPull pulled) {
@@ -669,5 +670,40 @@ class ChannelMetricsFeedPullerTest {
         assertThat(batch.errorMessage()).isEqualTo("Reconnect Google Search Console — its sign-in has expired");
         verify(source, never()).pullDaily(any(), any(), any());
         verify(store, never()).replaceWindow(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void stalledHighWaterMarkOverASevenDaysFlagsWithoutFailingTheBatch() {
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+        when(store.latestDay("conn-1")).thenReturn(TODAY.minusDays(8));
+
+        IngestBatch batch = pull(null);
+
+        verify(healthService).markNoNewData("conn-1", TODAY.minusDays(8));
+        assertThat(batch.health()).isEqualTo(com.conductor.integration.ConnectorHealth.HEALTHY);
+        assertThat(batch.errorMessage()).isNull();
+        assertThat(batch.nextCursor()).contains("\"lastDay\":\"2026-10-14\"");
+    }
+
+    @Test
+    void sevenDaysOldIsNotYetStalledAndClearsAnEarlierFlag() {
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+        when(store.latestDay("conn-1")).thenReturn(TODAY.minusDays(7));
+
+        pull(null);
+
+        verify(healthService, never()).markNoNewData(anyString(), any());
+        verify(healthService).clearNoNewData("conn-1");
+    }
+
+    @Test
+    void aConnectionThatNeverHadDataIsLeftAlone() {
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+        when(store.latestDay("conn-1")).thenReturn(null);
+
+        pull(null);
+
+        verify(healthService, never()).markNoNewData(anyString(), any());
+        verify(healthService, never()).clearNoNewData(anyString());
     }
 }

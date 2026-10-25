@@ -933,7 +933,9 @@ public class IntegrationController implements IntegrationsApi {
         // platform still be reached with these credentials at all). UNHEALTHY is the more actionable
         // of the two, so it wins; otherwise the connection's health only fills a gap the cache left.
         if (ConnectionHealthService.UNHEALTHY.equals(conn.getHealthStatus())
-                || summary.getHealthStatus() == null) {
+                || summary.getHealthStatus() == null
+                || (ConnectionHealthService.DEGRADED.equals(conn.getHealthStatus())
+                    && !"SETUP_REQUIRED".equals(summary.getHealthStatus()))) {
             summary.setHealthStatus(conn.getHealthStatus());
         }
         summary.setHealthCheckedAt(conn.getHealthCheckedAt());
