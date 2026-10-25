@@ -95,34 +95,16 @@ public class ConnectionHealthService {
      */
     @Transactional
     public void markNoNewData(String connectionId, java.time.LocalDate since) {
-        find(connectionId, DEGRADED).ifPresent(conn -> {
-            String current = conn.getHealthStatus();
-            boolean free = current == null || HEALTHY.equals(current) || isNoNewData(conn);
-            if (!free) {
-                return;
-            }
-            String message = "No new data since " + java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.ENGLISH).format(since);
-            if (isNoNewData(conn) && message.equals(conn.getHealthMessage())) {
-                return;
-            }
-            conn.setHealthStatus(DEGRADED);
-            conn.setHealthCheckedAt(OffsetDateTime.now());
-            conn.setHealthMessage(message);
-            conn.setHealthDetail(NO_NEW_DATA_DETAIL);
-            connectionRepository.save(conn);
-        });
+        String message = "No new data since "
+                + java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.ENGLISH).format(since);
+        // One conditional UPDATE: a concurrent markUnhealthy can't be overwritten by a read-then-save.
+        connectionRepository.markNoNewData(connectionId, message);
     }
 
     /** Clears the flag {@link #markNoNewData} set (and only that flag) once newer data arrives. */
     @Transactional
     public void clearNoNewData(String connectionId) {
-        connectionRepository.findById(connectionId).filter(ConnectionHealthService::isNoNewData).ifPresent(conn -> {
-            conn.setHealthStatus(HEALTHY);
-            conn.setHealthCheckedAt(OffsetDateTime.now());
-            conn.setHealthMessage(null);
-            conn.setHealthDetail(null);
-            connectionRepository.save(conn);
-        });
+        connectionRepository.clearNoNewData(connectionId);
     }
 
     private static boolean isNoNewData(Connection conn) {

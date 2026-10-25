@@ -940,7 +940,9 @@ public class IntegrationController implements IntegrationsApi {
         }
         summary.setHealthCheckedAt(conn.getHealthCheckedAt());
         summary.setHealthMessage(conn.getHealthMessage());
-        summary.setHealthDetail(conn.getHealthDetail());
+        // The NO_NEW_DATA marker is bookkeeping, not the platform's words; the message is what a person reads.
+        summary.setHealthDetail(ConnectionHealthService.NO_NEW_DATA_DETAIL.equals(conn.getHealthDetail())
+                ? null : conn.getHealthDetail());
         return summary;
     }
 
