@@ -289,4 +289,20 @@ describe('CreativeEditor — sound on a CLIP', () => {
     await waitFor(() => expect(apiPatch).toHaveBeenCalled())
     expect((apiPatch as Mock).mock.calls[0][1].audio).toEqual({ source: 'clip' })
   })
+
+  it('keeps the clip\'s own sound when switching a no-music Still to Clip', async () => {
+    mockGetsFor(creative({ kind: 'STILL' }), [KIT], [CLIP_LOUD])
+    ;(apiPatch as Mock).mockResolvedValue(creative({ kind: 'CLIP', version: 4 }))
+    render(<CreativeEditor projectId="proj-1" creativeId="cr-1" token="tok" />)
+
+    await userEvent.selectOptions(await screen.findByLabelText('Kind'), 'CLIP')
+    const panel = await screen.findByTestId('audio-panel')
+    expect(within(panel).getByLabelText('Source')).toHaveValue('clip')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+    const body = (apiPatch as Mock).mock.calls[0][1]
+    expect(body.kind).toBe('CLIP')
+    expect(body.audio).toEqual({ source: 'clip' })
+  })
 })

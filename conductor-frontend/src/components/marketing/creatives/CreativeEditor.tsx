@@ -217,6 +217,16 @@ function defaultAudioSource(kind: CreativeKind): AudioSource {
   return kind === 'CLIP' ? 'clip' : 'none'
 }
 
+/** Only a deliberate choice carries over a Kind change: a CLIP's "none" is Mute, so another kind's no-music default becomes the clip's own sound. */
+function audioForKindChange(audio: AudioFormState, kind: CreativeKind): AudioFormState {
+  let source: AudioSource = audio.source
+  if (kind === 'CLIP' && source === 'none') source = 'clip'
+  else if (kind === 'CAROUSEL' && (source === 'clip' || source === 'mix')) source = source === 'mix' && audio.trackId ? 'track' : 'none'
+  if (!audioSourcesFor(kind).includes(source)) source = defaultAudioSource(kind)
+  if (source === audio.source) return audio
+  return { ...audio, source, volume: defaultAudioVolume(kind, source) }
+}
+
 /** Contract defaults: MOTION 0.8; CAROUSEL/CLIP track 1.0, mix 0.3. */
 function defaultAudioVolume(kind: CreativeKind, source: AudioSource): number {
   if (kind === 'MOTION') return 0.8
@@ -1198,14 +1208,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                       ? {
                           ...prev,
                           kind,
-                          // A source the new kind doesn't accept falls back to its default.
-                          audio: audioSourcesFor(kind).includes(prev.audio.source)
-                            ? prev.audio
-                            : {
-                                ...prev.audio,
-                                source: defaultAudioSource(kind),
-                                volume: defaultAudioVolume(kind, defaultAudioSource(kind)),
-                              },
+                          audio: audioForKindChange(prev.audio, kind),
                         }
                       : prev,
                   )
