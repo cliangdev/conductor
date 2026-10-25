@@ -301,12 +301,32 @@ export function probeMedia(ffmpegPath, path) {
 export function parseProbe(stderr) {
   const d = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
   const durationSec = d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : null;
-  const v = /Stream #[^\n]*Video:[^\n]*?[\s,](\d{2,5})x(\d{2,5})/.exec(stderr);
-  return {
-    stderr, durationSec,
-    hasAudio: /Stream #[^\n]*Audio:/.test(stderr),
-    width: v ? Number(v[1]) : null, height: v ? Number(v[2]) : null,
-  };
+  // Line-by-line with indexOf rather than one regex over the whole of stderr: ffmpeg output is
+  // untrusted input, and a `[^\n]*` scan across it backtracks polynomially (CodeQL js/polynomial-redos).
+  let hasAudio = false;
+  let width = null;
+  let height = null;
+  for (const line of stderr.split('\n')) {
+    if (!line.includes('Stream #')) continue;
+    if (line.includes('Audio:')) hasAudio = true;
+    const at = line.indexOf('Video:');
+    if (at === -1 || width !== null) continue;
+    const size = videoSizeIn(line.slice(at + 'Video:'.length));
+    if (size) ({ width, height } = size);
+  }
+  return { stderr, durationSec, hasAudio, width, height };
+}
+
+/** The first `WxH` token (2–5 digits each) in a stream description, e.g. "h264 (High), yuv420p, 1080x1920 [SAR 1:1]". */
+function videoSizeIn(description) {
+  for (const token of description.split(/[\s,]+/)) {
+    const x = token.indexOf('x');
+    if (x < 2 || x > 5) continue;
+    const w = token.slice(0, x);
+    const h = token.slice(x + 1);
+    if (/^\d{2,5}$/.test(w) && /^\d{2,5}$/.test(h)) return { width: Number(w), height: Number(h) };
+  }
+  return null;
 }
 
 /** Runs ffmpeg to completion; resolves its stderr, rejects with the tail of stderr on a non-zero exit. */
@@ -322,9 +342,13 @@ export function runFfmpeg(ffmpegPath, args) {
 
 /** Parses loudnorm's `print_format=json` block out of ffmpeg stderr. Throws when absent or the input is silent. */
 export function parseLoudnormJson(stderr) {
-  const match = /\{[^{}]*"input_i"[^{}]*\}/.exec(stderr);
-  if (!match) throw new Error('loudnorm printed no measurement (is the audio file readable?)');
-  const json = JSON.parse(match[0]);
+  // The JSON block is the braces around the last "input_i" key; found with indexOf, not a regex
+  // over untrusted ffmpeg output (CodeQL js/polynomial-redos).
+  const key = stderr.lastIndexOf('"input_i"');
+  const open = key === -1 ? -1 : stderr.lastIndexOf('{', key);
+  const close = key === -1 ? -1 : stderr.indexOf('}', key);
+  if (open === -1 || close === -1) throw new Error('loudnorm printed no measurement (is the audio file readable?)');
+  const json = JSON.parse(stderr.slice(open, close + 1));
   if (!Number.isFinite(Number(json.input_i))) throw new Error('the audio track is silent, so it cannot be loudness-normalised');
   return json;
 }

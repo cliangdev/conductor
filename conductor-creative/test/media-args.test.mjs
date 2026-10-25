@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildAudioFilter, buildClipAudioArgs, buildClipAudioMeasureArgs, buildFfmpegArgs, buildSlideshowArgs,
-  buildSlideshowMeasureArgs, loudnormTarget, parseLoudnormJson, resolveSlideDurations, slideshowDuration,
+  buildSlideshowMeasureArgs, loudnormTarget, parseLoudnormJson, parseProbe, resolveSlideDurations, slideshowDuration,
   slideshowOffsets, AUDIO_TERMINATOR,
 } from '../job/media.mjs';
 
@@ -148,4 +148,35 @@ test('CLIP arg builders reject a non-positive duration', async () => {
     assert.throws(() => buildClipAudioMeasureArgs({ audio: { source: 'track' } }, p), /durationSec/);
     assert.throws(() => buildClipAudioArgs({ audio: { source: 'none' } }, p, null), /durationSec/);
   }
+});
+
+test('parseProbe reads duration, audio and the video size from ffmpeg -i output', () => {
+  const stderr = [
+    'Input #0, mov,mp4,m4a,3gp,3g2,mj2, from \'clip.mp4\':',
+    '  Duration: 00:01:02.50, start: 0.000000, bitrate: 1200 kb/s',
+    '  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1080x1920 [SAR 1:1 DAR 9:16], 30 fps',
+    '  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s',
+  ].join('\n');
+  const p = parseProbe(stderr);
+  assert.equal(p.durationSec, 62.5);
+  assert.equal(p.hasAudio, true);
+  assert.deepEqual([p.width, p.height], [1080, 1920]);
+});
+
+test('parseProbe: a silent clip has no audio, and hex codec tags are not mistaken for a size', () => {
+  const p = parseProbe('  Stream #0:0: Video: h264 (avc1 / 0x31637661), yuv420p, 320x568, 30 fps\n');
+  assert.equal(p.hasAudio, false);
+  assert.deepEqual([p.width, p.height], [320, 568]);
+});
+
+test('parseProbe and parseLoudnormJson stay fast on adversarial ffmpeg output', () => {
+  const t = Date.now();
+  parseProbe('Stream #'.repeat(50000) + 'Video:'.repeat(20000));
+  assert.throws(() => parseLoudnormJson('{"input_i"'.repeat(50000)));
+  assert.ok(Date.now() - t < 1000, 'parsers must be linear');
+});
+
+test('parseLoudnormJson takes the block around the last input_i', () => {
+  const block = '{\n "input_i" : "-20.10",\n "input_tp" : "-3.00",\n "input_lra" : "4.00",\n "input_thresh" : "-30.50",\n "target_offset" : "0.20"\n}';
+  assert.equal(parseLoudnormJson(`[Parsed_loudnorm_0 @ 0x1]\n${block}\nsize=N/A`).input_i, '-20.10');
 });
