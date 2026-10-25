@@ -923,13 +923,14 @@ describe('docker step run script and conductorApiKey', () => {
     const { runArgs } = await runDockerStep({})
     expect(runArgs[runArgs.length - 1]).toBe(DEFAULT_RUNNER_IMAGE)
     expect(runArgs).not.toContain('sh')
+    expect(runArgs).not.toContain('--entrypoint')
   })
 
   it('run containing quotes, newlines and $ is one verbatim argv element after sh -c (no host shell)', async () => {
     const script = 'echo "it\'s" $HOME\nconductor creative render "$CREATIVE_ID" && echo `id`'
     const { runArgs } = await runDockerStep({ run: script })
 
-    expect(runArgs.slice(-3)).toEqual(['sh', '-c', script])
+    expect(runArgs.slice(-5)).toEqual(['--entrypoint', 'sh', DEFAULT_RUNNER_IMAGE, '-c', script])
     expect(mockChildProcess.spawn.mock.calls[1][0]).toBe('docker')
     // spawn is called with an args array and no { shell: true }
     expect(mockChildProcess.spawn.mock.calls[1].length).toBe(2)
@@ -941,7 +942,7 @@ describe('docker step run script and conductorApiKey', () => {
     expect(envFileContents).not.toContain('test-api-key')
   })
 
-  it('conductorApiKey absent: CONDUCTOR_API_KEY is not set for a docker step, even with conductorMcp', () => {
+  it('conductorApiKey absent + conductorMcp: the daemon key is injected (old behaviour)', () => {
     const env = buildStepEnv(
       makeDispatchPayload(),
       makeStep({ stepType: 'docker', conductorMcp: true }),
@@ -950,9 +951,12 @@ describe('docker step run script and conductorApiKey', () => {
       'u1',
       'u2'
     )
+    expect(env.CONDUCTOR_API_KEY).toBe('test-api-key')
+  })
+
+  it('conductorApiKey absent + no conductorMcp: no CONDUCTOR_API_KEY', () => {
+    const env = buildStepEnv(makeDispatchPayload(), makeStep({ stepType: 'docker' }), mockEvent, mockConfig, 'u1', 'u2')
     expect(env.CONDUCTOR_API_KEY).toBeUndefined()
-    const env2 = buildStepEnv(makeDispatchPayload(), makeStep({ stepType: 'docker' }), mockEvent, mockConfig, 'u1', 'u2')
-    expect(env2.CONDUCTOR_API_KEY).toBeUndefined()
   })
 
   it('claude-code step behaviour unchanged: daemon key with conductorMcp', () => {

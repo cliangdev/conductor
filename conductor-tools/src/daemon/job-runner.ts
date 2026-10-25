@@ -163,12 +163,12 @@ export function buildStepEnv(
     CONDUCTOR_TIMEOUT_MINUTES: String(step.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES),
     CONDUCTOR_MCP_ENABLED: step.conductorMcp ? 'true' : 'false',
   }
-  if (step.stepType === 'docker') {
-    // A docker step only ever gets the run-scoped key the backend minted for it; the daemon's own
-    // (user-level) key must not leak into a container that runs a workflow-authored script.
-    if (step.conductorApiKey) contractEnv.CONDUCTOR_API_KEY = step.conductorApiKey
+  // A backend-minted, run-scoped key (system workflows only) always wins; otherwise keep the original
+  // behaviour: the daemon's own key goes to any step that asked for the Conductor MCP.
+  if (step.conductorApiKey) {
+    contractEnv.CONDUCTOR_API_KEY = step.conductorApiKey
   } else if (step.conductorMcp) {
-    contractEnv.CONDUCTOR_API_KEY = step.conductorApiKey || config.apiKey
+    contractEnv.CONDUCTOR_API_KEY = config.apiKey
   }
 
   if (step.stepType === 'claude-code') {
@@ -550,8 +550,10 @@ async function runStep(
     ...(artifactsDir ? ['-v', `${artifactsDir}:${ARTIFACTS_CONTAINER_DIR}`] : []),
     ...(envFilePath ? ['--env-file', envFilePath] : []),
     ...buildEnvArgs(argEnv),
+    // A `run:` script replaces the image's ENTRYPOINT (else it would be appended to it as arguments).
+    ...(command.length > 0 && !isClaudeCode ? ['--entrypoint', 'sh'] : []),
     image,
-    ...command,
+    ...(command.length > 0 && !isClaudeCode ? command.slice(1) : command),
   ]
 
   const secrets = [payload.runToken, config.apiKey, config.claudeCodeOauthToken ?? '', step.conductorApiKey ?? '']
