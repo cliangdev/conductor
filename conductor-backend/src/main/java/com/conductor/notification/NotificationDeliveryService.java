@@ -179,6 +179,13 @@ public class NotificationDeliveryService {
         private boolean delivered;
 
         void add(Delivery delivery) {
+            if (delivered) {
+                // This transaction's buffer has already gone out (a later commit callback is publishing,
+                // e.g. WORKFLOW_RUN_FAILED from an afterCommit registered after this buffer): the change is
+                // committed, so send it now rather than append to a list nobody will read again.
+                runNow(List.of(delivery));
+                return;
+            }
             buffered.add(delivery);
         }
 

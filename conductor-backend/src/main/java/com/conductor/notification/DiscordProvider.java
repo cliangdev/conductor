@@ -354,7 +354,7 @@ public class DiscordProvider implements NotificationProvider {
                 log.warn("Discord webhook returned {}: {}", response.getStatusCode().value(), response.getBody());
             }
         } catch (RestClientException e) {
-            log.warn("Discord webhook request failed: {}", e.getMessage());
+            log.warn("Discord webhook request failed: {}", redact(e.getMessage()));
         }
     }
 
@@ -376,7 +376,7 @@ public class DiscordProvider implements NotificationProvider {
         try {
             uri = UriComponentsBuilder.fromUriString(webhookUrl).replaceQueryParam("wait", "true").build().toUri();
         } catch (RuntimeException e) {
-            log.warn("Discord webhook URL is unusable: {}", e.getMessage());
+            log.warn("Discord webhook URL is unusable: {}", redact(e.getMessage()));
             return PostResult.of(PostOutcome.DEFINITE_FAILURE); // nothing was sent
         }
         try {
@@ -395,13 +395,13 @@ public class DiscordProvider implements NotificationProvider {
                 log.warn("Discord rate-limited the rollup post (retry_after={})", retryAfter(e));
                 return PostResult.of(PostOutcome.RATE_LIMITED);
             }
-            log.warn("Discord webhook post failed with {}: {}", status, e.getMessage());
+            log.warn("Discord webhook post failed with {}: {}", status, redact(e.getMessage()));
             return PostResult.of(e.getStatusCode().is4xxClientError() ? PostOutcome.DEFINITE_FAILURE
                     : PostOutcome.AMBIGUOUS);
         } catch (RuntimeException e) {
             boolean neverConnected = neverConnected(e);
             log.warn("Discord webhook post {}: {}", neverConnected ? "could not connect" : "outcome unknown",
-                    e.getMessage());
+                    redact(e.getMessage()));
             return PostResult.of(neverConnected ? PostOutcome.DEFINITE_FAILURE : PostOutcome.AMBIGUOUS);
         }
     }
@@ -447,10 +447,10 @@ public class DiscordProvider implements NotificationProvider {
                 log.warn("Discord rate-limited the rollup edit (retry_after={})", retryAfter(e));
                 return EditOutcome.RATE_LIMITED;
             }
-            log.warn("Discord message edit failed: {}", e.getMessage());
+            log.warn("Discord message edit failed: {}", redact(e.getMessage()));
             return EditOutcome.FAILED;
         } catch (RuntimeException e) {
-            log.warn("Discord message edit failed: {}", e.getMessage());
+            log.warn("Discord message edit failed: {}", redact(e.getMessage()));
             return EditOutcome.FAILED;
         }
     }
@@ -613,5 +613,16 @@ public class DiscordProvider implements NotificationProvider {
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t");
+    }
+
+    private static final Pattern WEBHOOK_TOKEN =
+            Pattern.compile("(/webhooks/[^/\\s\"]+/)[^/?\\s\"]+");
+
+    /**
+     * Masks the webhook token in an exception message. Spring's I/O errors quote the full request URL,
+     * and the token in its path is the webhook's only credential, so it must never reach the logs.
+     */
+    static String redact(String message) {
+        return message == null ? null : WEBHOOK_TOKEN.matcher(message).replaceAll("$1***");
     }
 }

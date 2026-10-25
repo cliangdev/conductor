@@ -250,4 +250,23 @@ class NotificationRollupTransactionTest extends AbstractNoneWebIntegrationTest {
 
         verify(discord).send(anyString(), anyString());
     }
+
+    @Test
+    void anEventPublishedFromAnAfterCommitCallbackAfterTheBufferWentOutStillDelivers() {
+        // The transaction already buffered (and so registered) a notification; a commit callback registered
+        // after it then publishes another. The buffer has been sent by then, so the late event must go out
+        // on its own rather than be appended to a list nobody reads again.
+        tx.executeWithoutResult(s -> {
+            delivery.deliver(comment());
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                    .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            delivery.deliver(comment());
+                        }
+                    });
+        });
+
+        verify(discord, org.mockito.Mockito.times(2)).send(anyString(), anyString());
+    }
 }

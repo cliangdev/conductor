@@ -771,4 +771,16 @@ class DiscordProviderTest {
         assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}").outcome()).isEqualTo(DiscordProvider.PostOutcome.DEFINITE_FAILURE);
         assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}").outcome()).isEqualTo(DiscordProvider.PostOutcome.AMBIGUOUS); // 2xx, no id
     }
+
+    @Test
+    void webhookTokensAreMaskedInLoggedErrorMessages() {
+        String msg = "I/O error on PATCH request for \"https://discord.com/api/webhooks/123456/s3cr3t-T0ken/messages/789\": timed out";
+
+        assertThat(DiscordProvider.redact(msg))
+                .contains("/webhooks/123456/***/messages/789")
+                .doesNotContain("s3cr3t-T0ken");
+        assertThat(DiscordProvider.redact("https://discord.com/api/webhooks/1/tok?wait=true"))
+                .isEqualTo("https://discord.com/api/webhooks/1/***?wait=true");
+        assertThat(DiscordProvider.redact(null)).isNull();
+    }
 }
