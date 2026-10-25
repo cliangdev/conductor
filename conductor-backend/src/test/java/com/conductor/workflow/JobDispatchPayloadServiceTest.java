@@ -210,6 +210,10 @@ class JobDispatchPayloadServiceTest {
     }
 
     private JobDispatchPayloadDto payloadFor(String stepYaml) {
+        return payloadFor(stepYaml, "conductor-creative-render");
+    }
+
+    private JobDispatchPayloadDto payloadFor(String stepYaml, String workflowName) {
         String yaml = """
                 jobs:
                   render:
@@ -217,6 +221,7 @@ class JobDispatchPayloadServiceTest {
                     steps:
                 """ + stepYaml.indent(6);
         WorkflowRun run = runWithYaml(yaml);
+        run.getWorkflow().setName(workflowName);
         WorkflowJobRun jobRun = awaitingPickupJobRun("render");
         stubCommonCollaborators(run, jobRun, "render");
         return service.buildPayload("run-1", "render");
@@ -264,6 +269,22 @@ class JobDispatchPayloadServiceTest {
 
         assertThat(dto.getSteps().get(0).getConductorApiKey()).isNull();
         assertThat(dto.getSteps().get(0).getConductorMcp()).isTrue();
+        org.mockito.Mockito.verify(runTokenService, org.mockito.Mockito.never())
+                .generateMcpToken(anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    void buildPayload_userWorkflowDockerStepWithConductorMcpGetsNoMintedKey() {
+        JobDispatchPayloadDto dto = payloadFor("""
+                - id: render
+                  uses: "docker://ghcr.io/example/render:1"
+                  with:
+                    conductor_mcp: true
+                  run: echo hi
+                """, "my-own-workflow");
+
+        assertThat(dto.getSteps().get(0).getConductorApiKey()).isNull();
+        assertThat(dto.getSteps().get(0).getRun()).isEqualTo("echo hi");
         org.mockito.Mockito.verify(runTokenService, org.mockito.Mockito.never())
                 .generateMcpToken(anyString(), anyString(), anyInt());
     }

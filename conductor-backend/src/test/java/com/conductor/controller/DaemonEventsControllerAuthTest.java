@@ -98,6 +98,20 @@ class DaemonEventsControllerAuthTest {
     }
 
     @Test
+    void aBrowserJwtSessionOfAnAdminIsRefused() {
+        membership("u-admin", MemberRole.ADMIN);
+        User admin = user("u-admin");
+        authenticate(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                admin, null, java.util.List.of()));
+
+        assertThatThrownBy(() -> controller.getJobDispatchPayload("run-1", "render"))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> controller.completeWorkflowJob("run-1", "render",
+                new com.conductor.generated.model.CompleteWorkflowJobRequest().status("SUCCEEDED")))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
     void aReviewerIsRefused() {
         membership("u-reviewer", MemberRole.REVIEWER);
         authenticate(new UserApiKeyAuthenticationToken(user("u-reviewer")));

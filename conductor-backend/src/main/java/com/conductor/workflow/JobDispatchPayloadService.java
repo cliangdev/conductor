@@ -137,7 +137,9 @@ public class JobDispatchPayloadService {
         for (int i = 0; i < steps.size(); i++) {
             stepDtos.add(buildStepDto(jobRun.getId(), i, steps.get(i), ctx));
         }
-        mintStepKeys(steps, stepDtos, runId, projectId);
+        if (SystemWorkflows.isSystem(workflow.getName())) {
+            mintStepKeys(steps, stepDtos, runId, projectId);
+        }
 
         int ttlHours = loadTokenTtlHours(projectId);
         String runToken = runTokenService.generateRunToken(runId, ttlHours);
@@ -183,7 +185,8 @@ public class JobDispatchPayloadService {
     /**
      * A docker step with {@code with.conductor_mcp: true} gets a run-scoped key as {@code conductorApiKey},
      * minted now (when the daemon claims the job) so queue time doesn't eat its TTL. claude-code steps are
-     * left alone: they authenticate the MCP server their own way. No {@code conductor_mcp} means no key.
+     * left alone: they authenticate the MCP server their own way. No {@code conductor_mcp} means no key. Only
+     * Conductor's own system workflows are minted one: a user's workflow keeps the daemon's own key, as before.
      */
     private void mintStepKeys(List<StepSpec> steps, List<JobDispatchStepDto> stepDtos, String runId, String projectId) {
         String key = null;
