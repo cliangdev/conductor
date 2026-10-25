@@ -36,6 +36,8 @@ interface ConnectionRowProps {
   onDisconnect?: (connectionId: string) => void;
   /** Reopens the account picker for a grant whose selection never happened. */
   onChooseAccount?: (connectionId: string) => void;
+  /** Opens the settings editor (config fields + replace key) for an API-key connection. */
+  onEditSettings?: (connectionId: string) => void;
 }
 
 /** One connected instance of a connector, with the error state an unhealthy connection needs. */
@@ -49,6 +51,7 @@ export function ConnectionRow({
   disconnecting = false,
   onDisconnect,
   onChooseAccount,
+  onEditSettings,
 }: ConnectionRowProps) {
   const unhealthy = isUnhealthy(connection);
   // DEGRADED = the account works but its data has stopped advancing: say so, never ask for a reconnect.
@@ -106,6 +109,11 @@ export function ConnectionRow({
       {awaitingAccount && canMutate && onChooseAccount && (
         <Button type="button" size="sm" onClick={() => onChooseAccount(connection.id)}>
           Choose account
+        </Button>
+      )}
+      {canMutate && onEditSettings && (
+        <Button type="button" size="sm" variant="outline" onClick={() => onEditSettings(connection.id)}>
+          Edit settings
         </Button>
       )}
       {canMutate && onDisconnect && (

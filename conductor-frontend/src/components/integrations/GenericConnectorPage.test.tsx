@@ -21,6 +21,7 @@ vi.mock('@/lib/api', () => ({
   apiPost: vi.fn(),
   apiGet: vi.fn(),
   apiPut: vi.fn(),
+  patchConnection: vi.fn(),
   apiErrorMessage: (err: unknown, fallback: string) => {
     const detail = (err as { detail?: unknown })?.detail
     return typeof detail === 'string' && detail.trim() ? detail : fallback
@@ -106,6 +107,35 @@ describe('GenericConnectorPage', () => {
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Disconnect' }))
     await waitFor(() =>
       expect(api.deleteConnection).toHaveBeenCalledWith('proj-1', 'app-store-connect', 'c1', 'test-token'),
+    )
+  })
+
+  it('lets an API-key connector with settings edit them and replace its key', async () => {
+    const item = {
+      ...discordConnector,
+      connectorId: 'product-metrics',
+      name: 'Product metrics',
+      singleInstance: false,
+      configFields: [
+        { key: 'baseUrl', label: 'Metrics URL', hint: null, type: 'STRING' as const, source: 'USER_INPUT' as const, required: true, secret: false },
+        { key: 'apiKey', label: 'API key', hint: null, type: 'SECRET' as const, source: 'USER_INPUT' as const, required: true, secret: true },
+      ],
+      connections: [{ id: 'c9', status: 'ACTIVE' as const, label: 'Prod', config: { baseUrl: 'https://old.example.com' } }],
+    }
+    vi.mocked(api.listIntegrations).mockResolvedValue([item])
+    vi.mocked(api.patchConnection).mockResolvedValue({} as never)
+    renderPage('product-metrics')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit settings' }))
+    const url = within(await screen.findByRole('dialog')).getByLabelText('Metrics URL')
+    expect(url).toHaveValue('https://old.example.com')
+    fireEvent.change(url, { target: { value: 'https://new.example.com' } })
+    fireEvent.change(screen.getByLabelText(/Replace API key/), { target: { value: 'k2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(api.patchConnection).toHaveBeenCalledWith(
+        'proj-1', 'product-metrics', 'c9', { config: { baseUrl: 'https://new.example.com' }, apiKey: 'k2' }, 'test-token'),
     )
   })
 

@@ -16,12 +16,15 @@ export function ConnectorConfigFields({
   setFormValues,
   jsonFieldErrors,
   applyJsonField,
+  idPrefix = 'connector-field',
 }: {
   fields: ConnectorConfigField[];
   formValues: Record<string, string>;
   setFormValues: (update: (prev: Record<string, string>) => Record<string, string>) => void;
   jsonFieldErrors: Record<string, string>;
   applyJsonField: (key: string, value: string) => void;
+  /** Distinguishes the ids when two forms for the same connector are on screen at once. */
+  idPrefix?: string;
 }) {
   return (
     <>
@@ -40,7 +43,7 @@ export function ConnectorConfigFields({
               />
             ) : field.type === 'SECRET_TEXT' ? (
               <SecretTextField
-                id={`connector-field-${field.key}`}
+                id={`${idPrefix}-${field.key}`}
                 label={field.label}
                 hint={field.hint}
                 required={field.required}
@@ -49,11 +52,11 @@ export function ConnectorConfigFields({
               />
             ) : field.type === 'SELECT' ? (
               <>
-                <Label htmlFor={`connector-field-${field.key}`}>{field.label}</Label>
+                <Label htmlFor={`${idPrefix}-${field.key}`}>{field.label}</Label>
                 {/* No connector currently ships enumerated options for the backend to send;
                     this is a structural placeholder ready for that data. */}
                 <Select
-                  id={`connector-field-${field.key}`}
+                  id={`${idPrefix}-${field.key}`}
                   value={formValues[field.key] || ''}
                   onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                   required={field.required}
@@ -65,9 +68,9 @@ export function ConnectorConfigFields({
               </>
             ) : (
               <>
-                <Label htmlFor={`connector-field-${field.key}`}>{field.label}</Label>
+                <Label htmlFor={`${idPrefix}-${field.key}`}>{field.label}</Label>
                 <Input
-                  id={`connector-field-${field.key}`}
+                  id={`${idPrefix}-${field.key}`}
                   type={field.secret ? 'password' : 'text'}
                   value={formValues[field.key] || ''}
                   onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}

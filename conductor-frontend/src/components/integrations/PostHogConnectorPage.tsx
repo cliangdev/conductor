@@ -8,7 +8,21 @@ import {
   fetchConnectionData,
   apiErrorMessage,
   type ConnectionDataResponse,
+  type ConnectionSummary,
 } from '@/lib/api';
+import { useCan } from '@/contexts/PermissionsContext';
+import {
+  buildPostHogConfig,
+  buildPostHogConfigPatch,
+  effectiveHealth,
+  EMPTY_POSTHOG_FORM,
+  formatChartTick,
+  formFromConfig,
+  validatePostHogForm,
+  type PostHogFormValues,
+} from '@/lib/posthogSettings';
+import { PostHogSettingsFields } from './PostHogSettingsFields';
+import { ConnectionSettingsDialog } from './ConnectionSettingsDialog';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { ExternalLink } from 'lucide-react';
 import { ConnectorHeader } from './ConnectorHeader';
@@ -28,36 +42,47 @@ interface IntegrationData {
   queryErrors?: string[];
 }
 
-interface ConnectFormState {
-  apiKey: string;
-  posthogProjectId: string;
-}
-
 export default function PostHogConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
+  const canMutate = useCan('integration.manage');
+  const [connection, setConnection] = useState<ConnectionSummary | null>(null);
   const [response, setResponse] = useState<ConnectionDataResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [connectForm, setConnectForm] = useState<ConnectFormState>({ apiKey: '', posthogProjectId: '' });
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [connectForm, setConnectForm] = useState<PostHogFormValues>(EMPTY_POSTHOG_FORM);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState<PostHogFormValues>(EMPTY_POSTHOG_FORM);
 
+  // Whether a connection exists is decided by the connection list alone. The data fetch only grades
+  // the numbers; a failed or setup-required fetch must never send a connected workspace back to the form.
   const loadData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
     if (isRefresh) setRefreshing(true); else setLoading(true);
+    setLoadError(null);
     try {
       const conns = await listConnections(projectId, 'posthog', accessToken);
-      const connId = conns[0]?.id ?? null;
-      if (!connId) { setResponse(null); return; }
-      const cached = await fetchConnectionData(projectId, 'posthog', connId, accessToken, false);
-      setResponse(cached);
-      if (isRefresh || cached.isStale || !cached.healthStatus) {
-        if (!isRefresh) setRefreshing(true);
-        const fresh = await fetchConnectionData(projectId, 'posthog', connId, accessToken, true);
-        setResponse(fresh);
+      const conn = conns[0] ?? null;
+      setConnection(conn);
+      if (!conn) { setResponse(null); return; }
+      try {
+        const cached = await fetchConnectionData(projectId, 'posthog', conn.id, accessToken, false);
+        setResponse(cached);
+        if (isRefresh || cached.isStale || !cached.healthStatus) {
+          if (!isRefresh) setRefreshing(true);
+          const fresh = await fetchConnectionData(projectId, 'posthog', conn.id, accessToken, true);
+          setResponse(fresh);
+        }
+      } catch (e) {
+        console.error(e);
+        setLoadError(apiErrorMessage(e, 'Could not load PostHog data'));
       }
     } catch (e) {
       console.error(e);
+      setLoadError(apiErrorMessage(e, 'Could not load the PostHog connection'));
     } finally {
       setRefreshing(false);
       setLoading(false);
@@ -69,22 +94,29 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!accessToken) return;
+    const invalid = validatePostHogForm(connectForm);
+    if (invalid) { setConnectError(invalid); return; }
     setConnecting(true);
     setConnectError(null);
     try {
-      const created = await createConnection(
+      await createConnection(
         projectId,
         'posthog',
-        { apiKey: connectForm.apiKey, configJson: { projectId: connectForm.posthogProjectId } },
+        { apiKey: apiKey.trim(), configJson: buildPostHogConfig(connectForm) },
         accessToken
       );
-      const data = await fetchConnectionData(projectId, 'posthog', created.id, accessToken, true);
-      setResponse(data);
+      setApiKey('');
+      await loadData(true);
     } catch (err: unknown) {
       setConnectError(apiErrorMessage(err, 'Connection failed'));
     } finally {
       setConnecting(false);
     }
+  };
+
+  const openEdit = () => {
+    setEditForm(formFromConfig(connection?.config));
+    setEditing(true);
   };
 
   if (loading) {
@@ -98,12 +130,13 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
     );
   }
 
-  const health = response?.healthStatus;
+  const { status: health, message: healthNote } = effectiveHealth(
+    connection, response?.healthStatus, response?.errorMessage);
   const data = (response?.data ?? null) as IntegrationData | null;
   const series = data?.series ?? [];
   const total = data?.total ?? 0;
 
-  if (health === 'SETUP_REQUIRED' || !response) {
+  if (!connection) {
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6 flex items-start justify-between">
@@ -126,27 +159,20 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
           <p className="text-sm text-muted-foreground mb-6">Enter your PostHog API key to view pageview trends.</p>
           <form onSubmit={handleConnect} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1">API Key</label>
+              <label htmlFor="posthog-api-key" className="block text-sm font-medium text-foreground mb-1">Personal API key</label>
               <input
+                id="posthog-api-key"
                 type="password"
-                value={connectForm.apiKey}
-                onChange={e => setConnectForm(f => ({ ...f, apiKey: e.target.value }))}
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
                 placeholder="phx_..."
                 required
+                autoComplete="off"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
+              <p className="mt-1 text-xs text-muted-foreground">Needs query:read access to the project.</p>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Project ID</label>
-              <input
-                type="text"
-                value={connectForm.posthogProjectId}
-                onChange={e => setConnectForm(f => ({ ...f, posthogProjectId: e.target.value }))}
-                placeholder="12345"
-                required
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
+            <PostHogSettingsFields values={connectForm} onChange={setConnectForm} idPrefix="connect" />
             {connectError && <p className="text-sm text-destructive">{connectError}</p>}
             <button
               type="submit"
@@ -166,12 +192,42 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
       <ConnectorHeader
         title="PostHog"
         subtitle="Analytics · 30-day web analytics"
-        status={health ?? null}
+        status={health}
         externalUrl="https://app.posthog.com"
         externalLabel="Open PostHog"
         onRefresh={() => loadData(true)}
         refreshing={refreshing}
+        onEditSettings={canMutate ? openEdit : undefined}
       />
+
+      {health && health !== 'HEALTHY' && (
+        <Alert variant={health === 'UNHEALTHY' ? 'destructive' : 'warning'} className="mb-6 text-sm">
+          {healthNote
+            || (health === 'SETUP_REQUIRED'
+              ? 'PostHog needs attention. Check the settings and the API key.'
+              : 'PostHog is not delivering data right now.')}
+        </Alert>
+      )}
+      {loadError && <Alert variant="warning" className="mb-6 text-sm">{loadError}</Alert>}
+
+      {connection && (
+        <ConnectionSettingsDialog
+          open={editing}
+          onOpenChange={setEditing}
+          title="PostHog settings"
+          projectId={projectId}
+          connectorId="posthog"
+          connectionId={connection.id}
+          apiKeyLabel="Personal API key"
+          getConfigPatch={() => {
+            const invalid = validatePostHogForm(editForm);
+            return invalid ? { error: invalid } : { config: buildPostHogConfigPatch(editForm) };
+          }}
+          onSaved={() => loadData(true)}
+        >
+          <PostHogSettingsFields values={editForm} onChange={setEditForm} idPrefix="edit" />
+        </ConnectionSettingsDialog>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
         <StatCard label="Visitors" value={data?.visitors != null ? data.visitors.toLocaleString() : '—'} />
@@ -202,15 +258,16 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
                 <XAxis
                   dataKey="date"
                   tick={{ fontSize: 10 }}
-                  tickFormatter={d => d.slice(5)}
+                  tickFormatter={formatChartTick}
                   interval="preserveStartEnd"
+                  minTickGap={32}
                   tickLine={false}
                   axisLine={false}
                 />
                 <YAxis hide />
                 <Tooltip
                   formatter={(value) => [Number(value).toLocaleString(), 'Pageviews']}
-                  labelFormatter={l => `Date: ${l}`}
+                  labelFormatter={l => formatChartTick(String(l))}
                 />
                 <Line
                   type="monotone"
@@ -227,12 +284,12 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
             No data available
           </div>
         )}
-        {response.isStale && (
+        {response?.isStale && (
           <p className="text-xs text-muted-foreground mt-3">
-            Showing cached data{response.errorMessage ? ' — the latest refresh failed (see below).' : '.'}
+            Showing cached data{response?.errorMessage ? ' — the latest refresh failed (see below).' : '.'}
           </p>
         )}
-        {response.errorMessage && (
+        {response?.errorMessage && response.errorMessage !== healthNote && (
           <Alert variant="warning" className="mt-2 text-xs">{response.errorMessage}</Alert>
         )}
       </div>
@@ -283,7 +340,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
         </div>
       )}
 
-      {response.fetchedAt && (
+      {response?.fetchedAt && (
         <p className="text-xs text-muted-foreground">
           Last updated: {new Date(response.fetchedAt).toLocaleString()}
         </p>

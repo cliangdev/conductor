@@ -13,6 +13,7 @@ import {
   type ConnectorAppCredentialStatus,
 } from './ConnectorAppCredentialPanel';
 import { ConnectorConfigFields } from './ConnectorConfigFields';
+import { ConnectionSettingsDialog } from './ConnectionSettingsDialog';
 import { ConnectionRow } from './ConnectionRow';
 import { OAuthAccountPicker } from './OAuthAccountPicker';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -47,6 +48,8 @@ export default function GenericConnectorPage({
   const { item, refetch } = useConnectorCatalogItem();
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [jsonFieldErrors, setJsonFieldErrors] = useState<Record<string, string>>({});
+  const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -197,6 +200,21 @@ export default function GenericConnectorPage({
     );
   }
 
+  // API-key connectors that declare plain (non-secret) settings can be edited in place, and their key replaced.
+  const editableFields = item && item.authType === 'API_KEY'
+    ? item.configFields.filter((f) => f.source === 'USER_INPUT' && !f.secret && f.type !== 'JSON')
+    : [];
+  const openEdit = (connectionId: string) => {
+    const conn = item?.connections.find((c) => c.id === connectionId);
+    const values: Record<string, string> = {};
+    editableFields.forEach((f) => {
+      const v = conn?.config?.[f.key];
+      if (v != null) values[f.key] = String(v);
+    });
+    setEditValues(values);
+    setEditingConnectionId(connectionId);
+  };
+
   const showsConnectForm = (!item.singleInstance || item.connections.length === 0) && canMutate;
   const overviewChannel = OVERVIEW_CHANNELS[item.connectorId];
   const confirmingConnection = item.connections.find((c) => c.id === confirmingDisconnect);
@@ -255,6 +273,7 @@ export default function GenericConnectorPage({
               disconnecting={disconnecting === conn.id}
               onDisconnect={setConfirmingDisconnect}
               onChooseAccount={setPendingAccountConnectionId}
+              onEditSettings={editableFields.length > 0 ? openEdit : undefined}
             />
           ))}
         </div>
@@ -304,6 +323,38 @@ export default function GenericConnectorPage({
             </form>
           )}
         </div>
+      )}
+
+      {item && editingConnectionId && (
+        <ConnectionSettingsDialog
+          open
+          onOpenChange={(o) => { if (!o) setEditingConnectionId(null); }}
+          title={`${item.name} settings`}
+          projectId={projectId}
+          connectorId={connectorId}
+          connectionId={editingConnectionId}
+          getConfigPatch={() => {
+            const config: Record<string, string> = {};
+            const original = item.connections.find((c) => c.id === editingConnectionId)?.config ?? {};
+            editableFields.forEach((f) => {
+              const next = (editValues[f.key] ?? '').trim();
+              const prev = original[f.key] != null ? String(original[f.key]) : '';
+              if (next !== prev) config[f.key] = next;
+            });
+            const missing = editableFields.find((f) => f.required && !(editValues[f.key] ?? '').trim());
+            return missing ? { error: `${missing.label} is required` } : { config };
+          }}
+          onSaved={() => { void refetch(); }}
+        >
+          <ConnectorConfigFields
+            fields={editableFields}
+            idPrefix="edit-field"
+            formValues={editValues}
+            setFormValues={(update) => setEditValues(update)}
+            jsonFieldErrors={{}}
+            applyJsonField={() => {}}
+          />
+        </ConnectionSettingsDialog>
       )}
 
       <ConfirmModal
