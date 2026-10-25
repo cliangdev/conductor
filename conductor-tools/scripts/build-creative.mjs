@@ -63,6 +63,7 @@ export const CREATIVE_RUNTIME_FILES = [
   'layouts/split/layout.json',
   'layouts/split/layout.css',
   'job/render.mjs',
+  'job/media.mjs',
   'job/server.mjs',
   'job/transport.mjs',
   'job/file-transport.mjs',

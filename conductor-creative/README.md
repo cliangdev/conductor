@@ -88,9 +88,10 @@ type Creative = {
 
   // MOTION only (creative.kind === 'MOTION'; everything above still applies for copy/look — a MOTION
   // creative is a STILL creative plus an animation timeline). See motion.js's Public API section below.
-  kind?: 'STILL' | 'MOTION' | 'CLIP' | 'CAROUSEL'; // this package only branches on 'MOTION'; CLIP is raw video
-                                       // and CAROUSEL finished images, both assembled server-side with no
-                                       // rendering, so CAROUSEL never reaches this package
+  kind?: 'STILL' | 'MOTION' | 'CLIP' | 'CAROUSEL'; // this package renders STILL/MOTION pages; CAROUSEL and CLIP only
+                                       // reach job/ when a track is chosen (CAROUSEL: a 9:16 slideshow
+                                       // mp4; CLIP: its sound replaced/mixed/muted) and are ffmpeg-only
+                                       // (no browser) — see job/media.mjs
   motion?: Motion;
   audio?: Audio;
   backgroundVideoUrl?: string;  // a clip background's signed URL (motion.background.source === 'clip')
@@ -459,6 +460,14 @@ that package via a `file:` dependency and must stay dependency-free.
   bootstrap is a convenience for running the job directly; `@cliangdev/conductor`'s
   CLI and MCP server call `run()` themselves with their own Playwright-Core
   browser discovery instead of shelling out to this file.
+
+  **CAROUSEL / CLIP with music** (`job/media.mjs`; no browser, `ffmpegPath` required, previews included):
+  a CAROUSEL spec (`slides[]`, `slideshow`, `audio.source: 'track'`) becomes one 1080x1920 30 fps
+  H.264/AAC slideshow (zoompan per slide, 0.5 s xfade joins, total = sum(d) - 0.5(n-1)) plus a JPEG
+  poster of slide 1, PUT as the `9x16` frame with no `index`. A CLIP spec (`audio.source`
+  `track | mix | none`, placements with `clipUrl`) gets its sound replaced, ducked under the track, or
+  stripped, with the video stream copied (re-encoded only when `clipStartSec` > 0). Track audio is
+  loudness-normalised in two passes (loudnorm, target `-14 LUFS + 20*log10(volume)`, TP -2).
 
   **MOTION** (`creative.kind === 'MOTION'`, not `previewOnly`) takes a different path per placement,
   at `deviceScaleFactor: 1` (the placement's true pixel size — doubling a video's resolution for no
