@@ -3,6 +3,22 @@ import { getConfig, resolveProject } from '../mcp/config.js'
 import { resolveCreativeId } from '../lib/creative-id.js'
 import { renderCreative } from '../lib/creative-render.js'
 
+/**
+ * Headless runs (a workflow's docker step) have no ~/.conductor/config.json; the step supplies
+ * CONDUCTOR_API_URL, CONDUCTOR_API_KEY and CONDUCTOR_PROJECT_ID instead. When config can't be loaded,
+ * say which of those is missing rather than only "run conductor login".
+ */
+export function describeConfigFailure(err: unknown, env: NodeJS.ProcessEnv = process.env): string {
+  const message = err instanceof Error ? err.message : String(err)
+  if (!message.startsWith('Config not found')) return message
+  const missing = ['CONDUCTOR_API_URL', 'CONDUCTOR_API_KEY'].filter((name) => !env[name])
+  if (missing.length === 0) return message
+  return (
+    `${message}. Without a login, set the environment variable${missing.length > 1 ? 's' : ''} ` +
+    `${missing.join(' and ')} (and CONDUCTOR_PROJECT_ID) instead.`
+  )
+}
+
 export function registerCreative(program: Command): void {
   const creative = program.command('creative').description('Render Conductor Creatives locally with Playwright')
 
@@ -25,7 +41,7 @@ Examples:
       try {
         config = getConfig()
       } catch (err) {
-        console.error(err instanceof Error ? err.message : String(err))
+        console.error(describeConfigFailure(err))
         process.exitCode = 1
         return
       }
@@ -40,6 +56,11 @@ Examples:
         return
       }
       config.projectId = resolution.projectId
+      if (!config.projectId) {
+        console.error('No project selected — set CONDUCTOR_PROJECT_ID (or run `conductor login`).')
+        process.exitCode = 1
+        return
+      }
 
       try {
         const result = await renderCreative(
