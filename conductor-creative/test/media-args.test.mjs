@@ -131,3 +131,21 @@ test('parseLoudnormJson pulls the block out of ffmpeg stderr and rejects silence
   assert.throws(() => parseLoudnormJson('no json here'), /no measurement/);
   assert.throws(() => parseLoudnormJson('{ "input_i" : "-inf" }'), /silent/);
 });
+
+test('CLIP arg builders reject a non-positive duration', async () => {
+  const { buildClipAudioArgs, buildClipAudioMeasureArgs } = await import('../job/media.mjs');
+  for (const durationSec of [0, -1, null, undefined, NaN]) {
+    const p = { clipPath: 'c.mp4', trackPath: 't.wav', outPath: 'o.mp4', durationSec };
+    assert.throws(() => buildClipAudioMeasureArgs({ audio: { source: 'track' } }, p), /durationSec/);
+    assert.throws(() => buildClipAudioArgs({ audio: { source: 'none' } }, p, null), /durationSec/);
+  }
+});
+
+test('CLIP arg builders reject a non-positive duration', async () => {
+  const { buildClipAudioArgs, buildClipAudioMeasureArgs } = await import('../job/media.mjs');
+  for (const durationSec of [0, -1, null, undefined, NaN]) {
+    const p = { clipPath: 'c.mp4', trackPath: 't.wav', outPath: 'o.mp4', durationSec };
+    assert.throws(() => buildClipAudioMeasureArgs({ audio: { source: 'track' } }, p), /durationSec/);
+    assert.throws(() => buildClipAudioArgs({ audio: { source: 'none' } }, p, null), /durationSec/);
+  }
+});

@@ -224,7 +224,13 @@ export function buildSlideshowArgs(spec, inputs, measured) {
 
 /* ── CLIP audio ───────────────────────────────────────────────────────────── */
 
+function requireDuration(placement) {
+  const d = placement.durationSec;
+  if (!Number.isFinite(d) || d <= 0) throw new Error(`CLIP audio: durationSec must be a positive number, got ${d}`);
+}
+
 function clipInputs(placement) {
+  requireDuration(placement);
   const args = [];
   if (placement.clipStartSec) args.push('-ss', num(placement.clipStartSec));
   args.push('-t', num(placement.durationSec), '-i', placement.clipPath);
@@ -280,6 +286,28 @@ export function buildClipAudioArgs(spec, placement, measured) {
 }
 
 /* ── Running ffmpeg / loudnorm ────────────────────────────────────────────── */
+
+/** `ffmpeg -i file` (no output exits non-zero by design): resolves { stderr, hasAudio, durationSec, width, height }. */
+export function probeMedia(ffmpegPath, path) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegPath, ['-hide_banner', '-nostdin', '-i', path], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', (c) => { err += c.toString(); });
+    child.on('error', reject);
+    child.on('close', () => resolve(parseProbe(err)));
+  });
+}
+
+export function parseProbe(stderr) {
+  const d = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
+  const durationSec = d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : null;
+  const v = /Stream #[^\n]*Video:[^\n]*?[\s,](\d{2,5})x(\d{2,5})/.exec(stderr);
+  return {
+    stderr, durationSec,
+    hasAudio: /Stream #[^\n]*Audio:/.test(stderr),
+    width: v ? Number(v[1]) : null, height: v ? Number(v[2]) : null,
+  };
+}
 
 /** Runs ffmpeg to completion; resolves its stderr, rejects with the tail of stderr on a non-zero exit. */
 export function runFfmpeg(ffmpegPath, args) {

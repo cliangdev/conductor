@@ -27,7 +27,7 @@ import { createApiTransport } from './transport.mjs';
 import { motionKeyTimes, normalizeMotionCreative } from '../motion.js';
 import {
   audioSourceUrl, buildClipAudioArgs, buildClipAudioMeasureArgs, buildFfmpegArgs, buildSlideshowArgs,
-  buildSlideshowMeasureArgs, resolveSlideDurations, runFfmpeg, runLoudnormTwoPass, slideshowDuration,
+  buildSlideshowMeasureArgs, resolveSlideDurations, probeMedia, runFfmpeg, runLoudnormTwoPass, slideshowDuration,
   SLIDE_FPS, SLIDE_H, SLIDE_W,
 } from './media.mjs';
 
@@ -323,7 +323,6 @@ export async function renderClipAudio({ spec, placement, ffmpegPath, log = () =>
   const audio = spec.creative.audio || {};
   let source = audio.source;
   if (!placement.clipUrl) throw new Error(`placement ${placement.key}: the spec has no clipUrl`);
-  if (source === 'mix' && placement.clipHasAudio === false) source = 'track'; // nothing to mix under
   if (source !== 'track' && source !== 'mix' && source !== 'none') throw new Error(`a CLIP render has nothing to do for audio source "${source}"`);
   if (source !== 'none' && !audio.trackUrl) throw new Error('the spec has no trackUrl for the chosen audio source');
 
@@ -332,8 +331,21 @@ export async function renderClipAudio({ spec, placement, ffmpegPath, log = () =>
     const clipPath = await downloadToTemp(placement.clipUrl, dir, 'clip.mp4', 'clip');
     const trackPath = source === 'none' ? null : await downloadToTemp(audio.trackUrl, dir, 'track');
     const outPath = join(dir, 'out.mp4');
-    const durationSec = placement.durationSec;
-    const encSpec = { audio: { ...audio, source } };
+    const info = await probeMedia(ffmpegPath, clipPath);
+    let encAudio = { ...audio, source };
+    if (source === 'mix' && (placement.clipHasAudio === false || !info.hasAudio)) {
+      log(`${placement.key}: the clip has no sound to mix under; using the track alone`);
+      source = 'track';
+      encAudio = { ...audio, source, volume: 1.0 };
+    }
+    let durationSec = placement.durationSec;
+    if (!(Number.isFinite(durationSec) && durationSec > 0)) {
+      if (!(info.durationSec > 0)) throw new Error(`placement ${placement.key}: the clip's duration is unknown`);
+      durationSec = Math.round((info.durationSec - (placement.clipStartSec || 0)) * 1000) / 1000;
+      log(`${placement.key}: duration probed from the clip: ${durationSec}s`);
+    }
+    if (!(durationSec > 0)) throw new Error(`placement ${placement.key}: clipStartSec is past the end of the clip`);
+    const encSpec = { audio: encAudio };
     const p = { clipPath, trackPath, outPath, clipStartSec: placement.clipStartSec, durationSec };
     log(`${placement.key}: clip audio ${source}, ${durationSec}s`);
     if (source === 'none') {
@@ -347,9 +359,10 @@ export async function renderClipAudio({ spec, placement, ffmpegPath, log = () =>
     }
     const posterPath = join(dir, 'poster.jpg');
     await runFfmpeg(ffmpegPath, ['-i', outPath, '-frames:v', '1', '-q:v', '2', '-update', '1', '-y', posterPath]);
+    const outInfo = await probeMedia(ffmpegPath, outPath);
     return {
       bytes: await readFile(outPath), posterBytes: await readFile(posterPath),
-      width: placement.width, height: placement.height, durationSeconds: durationSec, hasAudio: source !== 'none',
+      width: outInfo.width || info.width || placement.width, height: outInfo.height || info.height || placement.height, durationSeconds: durationSec, hasAudio: source !== 'none',
     };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});

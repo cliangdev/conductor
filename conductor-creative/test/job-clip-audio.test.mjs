@@ -89,3 +89,42 @@ test('run(): CLIP none strips the audio and copies the video; clipStartSec re-en
     server.close();
   }
 });
+
+test('run(): CLIP with no durationSec probes it (minus clipStartSec) and reports the source size', async (t) => {
+  if (!skipUnlessFfmpeg(t)) return;
+  const { server, origin } = await setup();
+  try {
+    const spec = clipSpec(origin, { source: 'track', volume: 1 }, { durationSec: null, width: 1080, height: 1920 });
+    const transport = fakeTransport(spec);
+    assert.equal(await run({ transport, ffmpegPath: FFMPEG, log: () => {} }), true, JSON.stringify(transport.calls.fail));
+    const frame = transport.calls.putFrame[0];
+    assert.ok(Math.abs(frame.durationSeconds - 5) < 0.2, `got ${frame.durationSeconds}`);
+    assert.deepEqual([frame.width, frame.height], [320, 568]);
+
+    const cut = fakeTransport(clipSpec(origin, { source: 'track', volume: 1 }, { durationSec: null, clipStartSec: 2, width: 1080, height: 1920 }));
+    assert.equal(await run({ transport: cut, ffmpegPath: FFMPEG, log: () => {} }), true, JSON.stringify(cut.calls.fail));
+    const cf = cut.calls.putFrame[0];
+    assert.ok(Math.abs(cf.durationSeconds - 3) < 0.2, `got ${cf.durationSeconds}`);
+    assert.deepEqual([cf.width, cf.height], [320, 568]);
+  } finally {
+    server.close();
+  }
+});
+
+test('run(): CLIP mix on a silent clip falls back to the track alone at ~-14 LUFS', async (t) => {
+  if (!skipUnlessFfmpeg(t)) return;
+  const { server, origin } = await serveBytes({
+    '/clip.mp4': { type: 'video/mp4', bytes: genClip({ seconds: 5, withAudio: false }) },
+    '/music.wav': { type: 'audio/wav', bytes: genMusic(20) },
+  });
+  try {
+    const transport = fakeTransport(clipSpec(origin, { source: 'mix', volume: 0.3 }));
+    assert.equal(await run({ transport, ffmpegPath: FFMPEG, log: () => {} }), true, JSON.stringify(transport.calls.fail));
+    const frame = transport.calls.putFrame[0];
+    assert.equal(frame.hasAudio, true);
+    const lufs = await measureLufs(frame.bytes);
+    assert.ok(Math.abs(lufs - -14) < 1, `expected -14 LUFS +/- 1, got ${lufs}`);
+  } finally {
+    server.close();
+  }
+});
