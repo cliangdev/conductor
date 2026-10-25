@@ -21,6 +21,7 @@ import com.google.cloud.run.v2.JobName;
 import com.google.cloud.run.v2.JobsClient;
 import com.google.cloud.run.v2.JobsSettings;
 import com.google.cloud.run.v2.LocationName;
+import com.google.cloud.run.v2.ResourceRequirements;
 import com.google.cloud.run.v2.TaskTemplate;
 import com.google.protobuf.Timestamp;
 import org.slf4j.Logger;
@@ -320,8 +321,23 @@ public class GcpConnector implements FetchConnector {
                 .toList();
     }
 
+    /**
+     * @param command            container command; null/empty = {@link #CLAUDE_COMMAND}
+     * @param cpu                CPU limit (e.g. {@code "2"}); null = Cloud Run's default
+     * @param memory             memory limit (e.g. {@code "4Gi"}); null = Cloud Run's default
+     * @param taskTimeoutSeconds per-task timeout; null = Cloud Run's default
+     */
     public record EnsureJobSpec(String gcpProjectId, String region, String jobName, String image,
-                                String runtimeServiceAccountEmail) {}
+                                String runtimeServiceAccountEmail, List<String> command, String cpu,
+                                String memory, Integer taskTimeoutSeconds) {
+        /** The claude-code job: default command, Cloud Run's default resources and timeout. */
+        public EnsureJobSpec(String gcpProjectId, String region, String jobName, String image,
+                             String runtimeServiceAccountEmail) {
+            this(gcpProjectId, region, jobName, image, runtimeServiceAccountEmail, null, null, null, null);
+        }
+    }
+
+    public static final List<String> CLAUDE_COMMAND = List.of("conductor-claude-entrypoint");
 
     /**
      * @param jobName Job resource name.
@@ -380,13 +396,30 @@ public class GcpConnector implements FetchConnector {
         return Instant.ofEpochSecond(ts.getSeconds(), ts.getNanos()).atOffset(ZoneOffset.UTC);
     }
 
-    private Job.Builder buildJob(EnsureJobSpec spec) {
+    // package-private: directly unit-tested.
+    static Job.Builder buildJob(EnsureJobSpec spec) {
         Container.Builder container = Container.newBuilder()
                 .setImage(spec.image())
-                .addCommand("conductor-claude-entrypoint");
+                .addAllCommand(spec.command() == null || spec.command().isEmpty() ? CLAUDE_COMMAND : spec.command());
+        ResourceRequirements.Builder resources = ResourceRequirements.newBuilder();
+        boolean hasLimits = false;
+        if (spec.cpu() != null && !spec.cpu().isBlank()) {
+            resources.putLimits("cpu", spec.cpu());
+            hasLimits = true;
+        }
+        if (spec.memory() != null && !spec.memory().isBlank()) {
+            resources.putLimits("memory", spec.memory());
+            hasLimits = true;
+        }
+        if (hasLimits) {
+            container.setResources(resources);
+        }
         TaskTemplate.Builder taskTemplate = TaskTemplate.newBuilder()
                 .addContainers(container)
                 .setMaxRetries(0);
+        if (spec.taskTimeoutSeconds() != null) {
+            taskTemplate.setTimeout(com.google.protobuf.Duration.newBuilder().setSeconds(spec.taskTimeoutSeconds()));
+        }
         if (spec.runtimeServiceAccountEmail() != null && !spec.runtimeServiceAccountEmail().isBlank()) {
             taskTemplate.setServiceAccount(spec.runtimeServiceAccountEmail());
         }

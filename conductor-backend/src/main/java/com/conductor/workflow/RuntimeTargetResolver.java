@@ -120,6 +120,59 @@ public class RuntimeTargetResolver {
                 .orElse(null);
     }
 
+    /**
+     * The project's designated runtime target as a place to run a Creative render: ACTIVE, with a live
+     * connection, and its render job {@code READY}. Deliberately NOT {@code resolve("cloud-run")} — that
+     * falls back to the operator's builtin target, which has no render job. Never throws: when the target
+     * can't render, {@link RenderTargetResolution#unavailableReason()} says why (and, when a target is
+     * designated, {@link RenderTargetResolution#targetName()} names it).
+     */
+    public RenderTargetResolution resolveRenderTarget(String projectId) {
+        String targetId = designatedTargetId(projectId);
+        if (targetId == null) {
+            return RenderTargetResolution.unavailable(null, "the workspace has no designated runtime target");
+        }
+        RuntimeTarget target;
+        try {
+            target = runtimeTargetService.get(projectId, targetId);
+        } catch (jakarta.persistence.EntityNotFoundException e) {
+            return RenderTargetResolution.unavailable(null, "its designated runtime target no longer exists");
+        }
+        String name = target.getName();
+        if (target.getStatus() != RuntimeTargetStatus.ACTIVE) {
+            return RenderTargetResolution.unavailable(name, "runtime target '" + name + "' is not ready (status: "
+                    + target.getStatus() + ")");
+        }
+        if (target.getConnectionId() == null) {
+            return RenderTargetResolution.unavailable(name,
+                    "runtime target '" + name + "' has lost its GCP connection");
+        }
+        RuntimeTargetService.TargetRuntimeConfig config = runtimeTargetService.configOf(target);
+        RuntimeTargetService.RenderConfig render = config.render();
+        if (render == null || !render.ready()) {
+            String detail = render != null && "ERROR".equals(render.status()) && render.error() != null
+                    ? ": " + render.error() : "";
+            return RenderTargetResolution.unavailable(name, "runtime target '" + name
+                    + "' is not set up for rendering" + detail);
+        }
+        CloudRunTarget cloudRunTarget = new CloudRunTarget(
+                config.gcpProjectId(), config.region(), config.renderJobName(), target.getConnectionId());
+        String image = render.resolvedImage() != null ? render.resolvedImage() : config.renderImage();
+        return new RenderTargetResolution(cloudRunTarget, image, name, null);
+    }
+
+    /** Outcome of {@link #resolveRenderTarget}: either a usable {@code target}/{@code image}, or an {@code unavailableReason}. */
+    public record RenderTargetResolution(CloudRunTarget target, String image, String targetName,
+                                         String unavailableReason) {
+        static RenderTargetResolution unavailable(String targetName, String reason) {
+            return new RenderTargetResolution(null, null, targetName, reason);
+        }
+
+        public boolean available() {
+            return target != null;
+        }
+    }
+
     private ResolvedRuntime resolveCloudRun(String projectId) {
         String designatedTargetId = designatedTargetId(projectId);
 

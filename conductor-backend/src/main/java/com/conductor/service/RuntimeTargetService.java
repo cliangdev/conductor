@@ -7,6 +7,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateRuntimeTargetRequest;
+import com.conductor.generated.model.RuntimeTargetRender;
 import com.conductor.generated.model.RuntimeTargetResponse;
 import com.conductor.generated.model.UpdateRuntimeTargetRequest;
 import com.conductor.integration.ConnectionContext;
@@ -53,6 +54,10 @@ public class RuntimeTargetService {
     private static final Pattern SLUG_PATTERN = Pattern.compile("^[a-z0-9][a-z0-9-]{0,63}$");
     private static final Set<String> RESERVED_NAMES = Set.of("conductor", "self-hosted", "cloud-run");
     private static final String GCP_CONNECTOR_ID = "gcp";
+    /** The render Job: 2 vCPU / 4Gi (headless Chromium + ffmpeg), 35 minutes per task. */
+    private static final String RENDER_CPU = "2";
+    private static final String RENDER_MEMORY = "4Gi";
+    private static final int RENDER_TASK_TIMEOUT_SECONDS = 35 * 60;
 
     private final RuntimeTargetRepository repository;
     private final ConnectionService connectionService;
@@ -103,8 +108,12 @@ public class RuntimeTargetService {
         target.setProvider(request.getProvider().getValue());
         target.setConnectionId(connection.getId());
         target.setStatus(RuntimeTargetStatus.PROVISIONING);
-        target.setConfigJson(writeConfig(configMap(
-                request.getGcpProjectId(), request.getRegion(), jobName, request.getImage())));
+        Map<String, Object> createConfig = configMap(
+                request.getGcpProjectId(), request.getRegion(), jobName, request.getImage());
+        if (request.getRenderImage() != null && !request.getRenderImage().isBlank()) {
+            createConfig.put("renderImage", request.getRenderImage().trim());
+        }
+        target.setConfigJson(writeConfig(createConfig));
         RuntimeTarget saved = repository.save(target);
 
         provision(saved);
@@ -127,6 +136,18 @@ public class RuntimeTargetService {
         if (request.getJobName() != null && !request.getJobName().equals(config.get("jobName"))) {
             config.put("jobName", request.getJobName());
             changed = true;
+        }
+        if (request.getRenderImage() != null) {
+            // Blank clears the render image (the target stops rendering; the render job is left in place).
+            String renderImage = request.getRenderImage().trim();
+            if (renderImage.isEmpty()) {
+                if (config.remove("renderImage") != null) {
+                    changed = true;
+                }
+            } else if (!renderImage.equals(config.get("renderImage"))) {
+                config.put("renderImage", renderImage);
+                changed = true;
+            }
         }
         if (!changed) {
             return target;
@@ -212,6 +233,14 @@ public class RuntimeTargetService {
         if (!config.warnings().isEmpty()) {
             config.warnings().forEach(response::addWarningsItem);
         }
+        RenderConfig render = config.render();
+        RuntimeTargetRender renderResponse = new RuntimeTargetRender()
+                .status(RuntimeTargetRender.StatusEnum.fromValue(render.status()))
+                .error(render.error())
+                .resolvedImage(render.resolvedImage())
+                .lastProvisionedAt(render.lastProvisionedAt());
+        render.warnings().forEach(renderResponse::addWarningsItem);
+        response.renderImage(config.renderImage()).renderJobName(config.renderJobName()).render(renderResponse);
         return response;
     }
 
@@ -223,13 +252,65 @@ public class RuntimeTargetService {
         String lastProvisionedAtRaw = str(config, "lastProvisionedAt");
         OffsetDateTime lastProvisionedAt = lastProvisionedAtRaw != null
                 ? OffsetDateTime.parse(lastProvisionedAtRaw) : null;
+        String jobName = str(config, "jobName");
+        String renderJobName = str(config, "renderJobName");
+        if (renderJobName == null || renderJobName.isBlank()) {
+            renderJobName = jobName != null ? jobName + "-render" : null;
+        }
+        String renderImage = str(config, "renderImage");
         return new TargetRuntimeConfig(str(config, "gcpProjectId"), str(config, "region"),
-                str(config, "jobName"), str(config, "image"), warnings,
-                str(config, "resolvedImage"), lastProvisionedAt);
+                jobName, str(config, "image"), warnings,
+                str(config, "resolvedImage"), lastProvisionedAt,
+                renderImage, renderJobName, renderOf(config, renderImage));
+    }
+
+    private RenderConfig renderOf(Map<String, Object> config, String renderImage) {
+        if (renderImage == null || renderImage.isBlank()) {
+            return RenderConfig.NONE;
+        }
+        if (!(config.get("render") instanceof Map<?, ?> raw)) {
+            return RenderConfig.NONE;
+        }
+        String status = String.valueOf(raw.get("status"));
+        if (!RENDER_STATUSES.contains(status)) {
+            return RenderConfig.NONE;
+        }
+        List<String> warnings = raw.get("warnings") instanceof List<?> list
+                ? list.stream().map(String::valueOf).toList() : List.of();
+        String lastRaw = raw.get("lastProvisionedAt") != null ? raw.get("lastProvisionedAt").toString() : null;
+        return new RenderConfig(status,
+                raw.get("error") != null ? raw.get("error").toString() : null,
+                warnings,
+                raw.get("resolvedImage") != null ? raw.get("resolvedImage").toString() : null,
+                lastRaw != null ? OffsetDateTime.parse(lastRaw) : null);
+    }
+
+    private static final Set<String> RENDER_STATUSES = Set.of("NONE", "READY", "ERROR");
+
+    /**
+     * A target's render-job readiness, separate from the target's own status: a render failure never
+     * takes a working claude-code target out of ACTIVE.
+     *
+     * @param status {@code NONE}, {@code READY} or {@code ERROR}
+     */
+    public record RenderConfig(String status, String error, List<String> warnings, String resolvedImage,
+                               OffsetDateTime lastProvisionedAt) {
+        public static final RenderConfig NONE = new RenderConfig("NONE", null, List.of(), null, null);
+
+        public boolean ready() {
+            return "READY".equals(status);
+        }
     }
 
     public record TargetRuntimeConfig(String gcpProjectId, String region, String jobName, String image,
-                                      List<String> warnings, String resolvedImage, OffsetDateTime lastProvisionedAt) {}
+                                      List<String> warnings, String resolvedImage, OffsetDateTime lastProvisionedAt,
+                                      String renderImage, String renderJobName, RenderConfig render) {
+        public TargetRuntimeConfig(String gcpProjectId, String region, String jobName, String image,
+                                   List<String> warnings, String resolvedImage, OffsetDateTime lastProvisionedAt) {
+            this(gcpProjectId, region, jobName, image, warnings, resolvedImage, lastProvisionedAt,
+                    null, null, RenderConfig.NONE);
+        }
+    }
 
     // ---- provisioning ----
 
@@ -270,6 +351,7 @@ public class RuntimeTargetService {
                 config.put("resolvedImage", ensured.resolvedImage());
                 config.put("lastProvisionedAt",
                         ensured.updatedAt() != null ? ensured.updatedAt().toString() : null);
+                provisionRender(ctx, config, gcpProjectId, region, jobName);
                 target.setConfigJson(writeConfig(config));
                 target.setStatus(RuntimeTargetStatus.ACTIVE);
                 target.setErrorMessage(null);
@@ -280,6 +362,49 @@ public class RuntimeTargetService {
             target.setErrorMessage(e.getMessage());
         }
         repository.save(target);
+    }
+
+    /**
+     * Verifies the render image and ensures the render Job, recording the outcome under
+     * {@code config.render}. Never throws and never touches the target's status: a render failure leaves
+     * the claude-code job working. With no {@code renderImage} the state is NONE; an existing render Job
+     * is deliberately left in place (Conductor never deletes customer infrastructure), just no longer used.
+     */
+    private void provisionRender(ConnectionContext ctx, Map<String, Object> config, String gcpProjectId,
+                                 String region, String jobName) {
+        String renderImage = str(config, "renderImage");
+        Map<String, Object> render = new LinkedHashMap<>();
+        if (renderImage == null || renderImage.isBlank()) {
+            render.put("status", "NONE");
+            config.put("render", render);
+            return;
+        }
+        String renderJobName = str(config, "renderJobName");
+        if (renderJobName == null || renderJobName.isBlank()) {
+            renderJobName = jobName + "-render";
+        }
+        try {
+            GcpConnector.VerifyImageResult verify = verifyImage(ctx, renderImage);
+            if (!verify.exists()) {
+                render.put("status", "ERROR");
+                render.put("error", verify.message());
+            } else {
+                GcpConnector.EnsureJobResult ensured = ensureJob(ctx, new GcpConnector.EnsureJobSpec(
+                        gcpProjectId, region, renderJobName, renderImage, null,
+                        List.of("conductor-step-entrypoint"), RENDER_CPU, RENDER_MEMORY, RENDER_TASK_TIMEOUT_SECONDS));
+                render.put("status", "READY");
+                render.put("warnings", verify.message() != null && !verify.protocolLabelPresent()
+                        ? List.of(verify.message()) : List.of());
+                render.put("resolvedImage", ensured.resolvedImage());
+                render.put("lastProvisionedAt", ensured.updatedAt() != null ? ensured.updatedAt().toString() : null);
+            }
+        } catch (RuntimeException e) {
+            log.info("Runtime target render provisioning failed: {}", e.getMessage());
+            render.clear();
+            render.put("status", "ERROR");
+            render.put("error", e.getMessage());
+        }
+        config.put("render", render);
     }
 
     private GcpConnector.VerifyImageResult verifyImage(ConnectionContext ctx, String imageRef) {

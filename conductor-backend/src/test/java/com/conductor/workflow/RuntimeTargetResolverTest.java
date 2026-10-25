@@ -180,4 +180,111 @@ class RuntimeTargetResolverTest {
         assertThat(cloudRunTarget.connectionId()).isEqualTo("conn-1");
         assertThat(resolved.get().image()).isEqualTo("us-east1-docker.pkg.dev/customer-proj/repo/image:1");
     }
+
+    // ---- resolveRenderTarget: the designated target as a place to render ----
+
+    private RuntimeTarget designated(RuntimeTargetStatus status, String connectionId) {
+        ProjectSettings settings = new ProjectSettings();
+        settings.setClaudeRuntimeTargetId("target-1");
+        when(projectSettingsRepository.findByProjectId("proj-1")).thenReturn(Optional.of(settings));
+        RuntimeTarget target = new RuntimeTarget();
+        target.setName("acme-run");
+        target.setStatus(status);
+        target.setConnectionId(connectionId);
+        when(runtimeTargetService.get("proj-1", "target-1")).thenReturn(target);
+        return target;
+    }
+
+    private void withRender(RuntimeTarget target, RuntimeTargetService.RenderConfig render) {
+        when(runtimeTargetService.configOf(target)).thenReturn(new RuntimeTargetService.TargetRuntimeConfig(
+                "customer-proj", "us-east1", "conductor-acme-run", "claude-image", java.util.List.of(), null, null,
+                "us-east1-docker.pkg.dev/customer-proj/repo/render:1", "conductor-acme-run-render", render));
+    }
+
+    @Test
+    void resolveRenderTarget_noDesignatedTarget_isUnavailable_andNeverFallsBackToBuiltin() {
+        when(projectSettingsRepository.findByProjectId("proj-1")).thenReturn(Optional.empty());
+
+        RuntimeTargetResolver.RenderTargetResolution resolution = resolver.resolveRenderTarget("proj-1");
+
+        assertThat(resolution.available()).isFalse();
+        assertThat(resolution.unavailableReason()).contains("no designated runtime target");
+        assertThat(resolution.target()).isNull();
+    }
+
+    @Test
+    void resolveRenderTarget_readyTarget_returnsTheRenderJobNotTheClaudeJob() {
+        RuntimeTarget target = designated(RuntimeTargetStatus.ACTIVE, "conn-1");
+        withRender(target, new RuntimeTargetService.RenderConfig("READY", null, java.util.List.of(),
+                "us-east1-docker.pkg.dev/customer-proj/repo/render@sha256:abc", null));
+
+        RuntimeTargetResolver.RenderTargetResolution resolution = resolver.resolveRenderTarget("proj-1");
+
+        assertThat(resolution.available()).isTrue();
+        assertThat(resolution.target().jobName()).isEqualTo("conductor-acme-run-render");
+        assertThat(resolution.target().connectionId()).isEqualTo("conn-1");
+        assertThat(resolution.target().gcpProjectId()).isEqualTo("customer-proj");
+        assertThat(resolution.targetName()).isEqualTo("acme-run");
+        assertThat(resolution.image()).endsWith("@sha256:abc");
+    }
+
+    @Test
+    void resolveRenderTarget_renderNone_isUnavailable() {
+        RuntimeTarget target = designated(RuntimeTargetStatus.ACTIVE, "conn-1");
+        withRender(target, RuntimeTargetService.RenderConfig.NONE);
+
+        RuntimeTargetResolver.RenderTargetResolution resolution = resolver.resolveRenderTarget("proj-1");
+
+        assertThat(resolution.available()).isFalse();
+        assertThat(resolution.targetName()).isEqualTo("acme-run");
+        assertThat(resolution.unavailableReason()).contains("acme-run").contains("not set up for rendering");
+    }
+
+    @Test
+    void resolveRenderTarget_renderError_isUnavailableAndCarriesTheError() {
+        RuntimeTarget target = designated(RuntimeTargetStatus.ACTIVE, "conn-1");
+        withRender(target, new RuntimeTargetService.RenderConfig("ERROR", "image not found", java.util.List.of(), null, null));
+
+        RuntimeTargetResolver.RenderTargetResolution resolution = resolver.resolveRenderTarget("proj-1");
+
+        assertThat(resolution.available()).isFalse();
+        assertThat(resolution.unavailableReason()).contains("image not found");
+    }
+
+    @Test
+    void resolveRenderTarget_targetErrorOrProvisioning_isUnavailable() {
+        for (RuntimeTargetStatus status : new RuntimeTargetStatus[] {RuntimeTargetStatus.ERROR, RuntimeTargetStatus.PROVISIONING}) {
+            org.mockito.Mockito.reset(runtimeTargetService, projectSettingsRepository);
+            designated(status, "conn-1");
+
+            RuntimeTargetResolver.RenderTargetResolution resolution = resolver.resolveRenderTarget("proj-1");
+
+            assertThat(resolution.available()).as(status.name()).isFalse();
+            assertThat(resolution.unavailableReason()).contains("acme-run").contains(status.name());
+        }
+    }
+
+    @Test
+    void resolveRenderTarget_connectionRemoved_isUnavailable() {
+        designated(RuntimeTargetStatus.ACTIVE, null);
+
+        RuntimeTargetResolver.RenderTargetResolution resolution = resolver.resolveRenderTarget("proj-1");
+
+        assertThat(resolution.available()).isFalse();
+        assertThat(resolution.unavailableReason()).contains("acme-run").contains("connection");
+    }
+
+    @Test
+    void resolveRenderTarget_designatedTargetDeleted_isUnavailable() {
+        ProjectSettings settings = new ProjectSettings();
+        settings.setClaudeRuntimeTargetId("target-1");
+        when(projectSettingsRepository.findByProjectId("proj-1")).thenReturn(Optional.of(settings));
+        when(runtimeTargetService.get("proj-1", "target-1"))
+                .thenThrow(new jakarta.persistence.EntityNotFoundException("gone"));
+
+        RuntimeTargetResolver.RenderTargetResolution resolution = resolver.resolveRenderTarget("proj-1");
+
+        assertThat(resolution.available()).isFalse();
+        assertThat(resolution.unavailableReason()).contains("no longer exists");
+    }
 }

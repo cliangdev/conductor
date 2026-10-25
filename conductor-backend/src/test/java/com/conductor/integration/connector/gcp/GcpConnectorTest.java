@@ -299,4 +299,46 @@ class GcpConnectorTest {
         Job job = jobWithImage("img:1");
         assertThat(GcpConnector.updateTimeOf(job)).isNull();
     }
+
+    // ---- buildJob (the Job spec ensureJob pins) ----
+
+    @Test
+    void buildJob_claudeSpec_keepsTodaysDefaults() {
+        Job job = GcpConnector.buildJob(new GcpConnector.EnsureJobSpec(
+                "p", "us-central1", "conductor-x", "us-central1-docker.pkg.dev/p/r/claude:1", null)).build();
+
+        TaskTemplate task = job.getTemplate().getTemplate();
+        assertThat(task.getContainers(0).getCommandList()).containsExactly("conductor-claude-entrypoint");
+        assertThat(task.getContainers(0).getImage()).isEqualTo("us-central1-docker.pkg.dev/p/r/claude:1");
+        assertThat(task.getContainers(0).hasResources()).isFalse();
+        assertThat(task.hasTimeout()).isFalse();
+        assertThat(task.getMaxRetries()).isZero();
+        assertThat(task.getServiceAccount()).isEmpty();
+    }
+
+    @Test
+    void buildJob_renderSpec_setsCommandResourcesAndTimeout() {
+        Job job = GcpConnector.buildJob(new GcpConnector.EnsureJobSpec(
+                "p", "us-central1", "conductor-x-render", "us-central1-docker.pkg.dev/p/r/render:1", null,
+                List.of("conductor-step-entrypoint"), "2", "4Gi", 35 * 60)).build();
+
+        TaskTemplate task = job.getTemplate().getTemplate();
+        Container container = task.getContainers(0);
+        assertThat(container.getCommandList()).containsExactly("conductor-step-entrypoint");
+        assertThat(container.getResources().getLimitsMap()).containsEntry("cpu", "2").containsEntry("memory", "4Gi");
+        assertThat(task.getTimeout().getSeconds()).isEqualTo(2100);
+        assertThat(task.getMaxRetries()).isZero();
+    }
+
+    @Test
+    void buildJob_blankResourcesAndEmptyCommand_fallBackToDefaults() {
+        Job job = GcpConnector.buildJob(new GcpConnector.EnsureJobSpec(
+                "p", "us-central1", "j", "us-central1-docker.pkg.dev/p/r/i:1", "sa@p.iam.gserviceaccount.com",
+                List.of(), " ", "", null)).build();
+
+        TaskTemplate task = job.getTemplate().getTemplate();
+        assertThat(task.getContainers(0).getCommandList()).containsExactly("conductor-claude-entrypoint");
+        assertThat(task.getContainers(0).hasResources()).isFalse();
+        assertThat(task.getServiceAccount()).isEqualTo("sa@p.iam.gserviceaccount.com");
+    }
 }
