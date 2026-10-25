@@ -14,7 +14,7 @@ export interface RenderMotion {
 }
 
 export interface RenderAudio {
-  source?: 'clip' | 'track' | 'none'
+  source?: 'clip' | 'track' | 'mix' | 'none'
   trackUrl?: string
   volume?: number
   fadeOutSec?: number

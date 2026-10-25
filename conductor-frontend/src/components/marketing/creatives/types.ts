@@ -23,7 +23,7 @@ export type CreativeKind = 'STILL' | 'MOTION' | 'CLIP' | 'CAROUSEL'
 export type MotionPreset = 'fade-up' | 'word-by-word' | 'accent-pop' | 'none'
 export type MotionBackgroundSource = 'photo' | 'clip'
 export type MotionBackgroundMotion = 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'none'
-export type AudioSource = 'clip' | 'track' | 'none'
+export type AudioSource = 'clip' | 'track' | 'mix' | 'none'
 
 /** A MOTION creative's animated background — see conductor-creative/motion.js's header comment for
  *  the timing/easing this drives. `clipMediaId`/`clipStartSec` only apply when `source` is "clip". */
@@ -43,9 +43,10 @@ export interface CreativeMotion {
   endCard?: boolean | null
 }
 
-/** A MOTION creative's audio track. `trackId` only applies when `source` is "track"; a "clip"
- *  source plays the background clip's own sound as recorded (never mixed in the browser preview —
- *  see CreativeEditor's live preview). */
+/** A creative's audio. MOTION: clip | track | none. CAROUSEL: track | none. CLIP: clip (default) |
+ *  track (replace) | mix (track under the clip's sound) | none (mute). `trackId` applies only to
+ *  "track" and "mix". A "clip" source plays the clip's own sound as recorded (never mixed in the
+ *  browser preview — see CreativeEditor's live preview). */
 export interface CreativeAudio {
   source?: AudioSource | null
   trackId?: string | null
@@ -69,6 +70,24 @@ export interface SequenceBeat {
   body?: string | null
   photoId?: string | null
   cta?: boolean | null
+}
+
+/** A CAROUSEL's slideshow-video settings (used when the carousel has a music track). Defaults: first
+ *  slide 3.0 s, the rest 2.5 s, each 1-10 s; zoom on. */
+export interface CreativeSlideshow {
+  slideDurations?: number[] | null
+  zoom?: boolean | null
+}
+
+/** The video/mp4 frame of the latest SUCCEEDED non-preview render — CAROUSEL and CLIP only. */
+export interface CreativeRenderedVideo {
+  renderId: string
+  frameId: string
+  placementKey: string
+  url: string
+  posterUrl?: string | null
+  durationSeconds?: number | null
+  hasAudio?: boolean | null
 }
 
 export interface Creative {
@@ -103,8 +122,12 @@ export interface Creative {
   slideAltText?: string[] | null
   /** MOTION only. */
   motion?: CreativeMotion | null
-  /** MOTION only. */
+  /** MOTION, CAROUSEL and CLIP. */
   audio?: CreativeAudio | null
+  /** CAROUSEL only. */
+  slideshow?: CreativeSlideshow | null
+  /** CAROUSEL and CLIP: the latest render's video frame, null otherwise. */
+  renderedVideo?: CreativeRenderedVideo | null
   placements: string[]
   sequenceKind?: SequenceKind | null
   sequence: SequenceBeat[]
@@ -144,6 +167,7 @@ export interface CreateCreativeRequest {
   slideAltText?: string[] | null
   motion?: CreativeMotion | null
   audio?: CreativeAudio | null
+  slideshow?: CreativeSlideshow | null
   placements?: string[]
   sequenceKind?: SequenceKind | null
   sequence?: SequenceBeat[]
@@ -171,6 +195,7 @@ export interface PatchCreativeRequest {
   slideAltText?: string[] | null
   motion?: CreativeMotion | null
   audio?: CreativeAudio | null
+  slideshow?: CreativeSlideshow | null
   placements?: string[]
   sequenceKind?: SequenceKind | null
   sequence?: SequenceBeat[]

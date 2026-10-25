@@ -320,4 +320,66 @@ describe('RendersPanel', () => {
     await waitFor(() => expect(screen.getByText('No renders yet')).toBeInTheDocument())
     expect(screen.queryByRole('button', { name: /prepare for posting/i })).not.toBeInTheDocument()
   })
+
+  it('shows the "renders locally" guidance and no Prepare button for a CAROUSEL with music', async () => {
+    ;(apiGet as Mock).mockResolvedValue([])
+    setup({ creativeKind: 'CAROUSEL', localRender: true })
+    await waitFor(() => expect(screen.getByText('No renders yet')).toBeInTheDocument())
+    expect(screen.getByText(/runs locally, on your own machine/)).toBeInTheDocument()
+    expect(screen.getByText('conductor creative render 12a')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /prepare for posting/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the same guidance for a CLIP whose sound is replaced', async () => {
+    ;(apiGet as Mock).mockResolvedValue([])
+    setup({ creativeKind: 'CLIP', localRender: true })
+    await waitFor(() => expect(screen.getByText('No renders yet')).toBeInTheDocument())
+    expect(screen.getByText(/clip with changed sound runs locally/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /prepare for posting/i })).not.toBeInTheDocument()
+  })
+
+  it('plays the slideshow video frame of a music CAROUSEL next to its slide images', async () => {
+    ;(apiGet as Mock).mockResolvedValue([
+      render_('r-1', {
+        frames: [
+          {
+            id: 'slide-0',
+            placementKey: '9x16',
+            platform: 'tiktok',
+            sequenceIndex: 0,
+            url: 'https://storage.example/slide0.png',
+            width: 1080,
+            height: 1920,
+            sizeBytes: 1000,
+            warnings: [],
+          },
+          {
+            id: 'slideshow',
+            placementKey: '9x16',
+            platform: 'tiktok',
+            sequenceIndex: null,
+            url: 'https://storage.example/slideshow.mp4',
+            width: 1080,
+            height: 1920,
+            sizeBytes: 3_000_000,
+            warnings: [],
+            durationSeconds: 8,
+            hasAudio: true,
+            posterUrl: 'https://storage.example/slideshow.jpg',
+            contentType: 'video/mp4',
+          },
+        ],
+      }),
+    ])
+    setup({ creativeKind: 'CAROUSEL', localRender: true })
+    const video = (await screen.findByTestId('render-frame-video-slideshow')) as HTMLVideoElement
+    expect(video.src).toBe('https://storage.example/slideshow.mp4')
+    expect(screen.getByAltText('9:16 · slide 1')).toBeInTheDocument()
+  })
+
+  it('keeps the Prepare button for a CAROUSEL without music', async () => {
+    ;(apiGet as Mock).mockResolvedValue([])
+    setup({ creativeKind: 'CAROUSEL', localRender: false })
+    expect(await screen.findByRole('button', { name: /prepare for posting/i })).toBeInTheDocument()
+  })
 })

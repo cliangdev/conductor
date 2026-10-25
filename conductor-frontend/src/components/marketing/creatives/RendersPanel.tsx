@@ -59,6 +59,9 @@ export interface RendersPanelProps {
    *  frame copy, not a local Playwright job, so there's no reason to make the marketer leave the
    *  browser for it. STILL/MOTION keep the local-only flow (Claude Code/Desktop or the CLI). */
   creativeKind: CreativeKind
+  /** CLIP/CAROUSEL whose render happens locally (a music track, or a replaced/mixed/muted clip sound):
+   *  no "Prepare for posting" button, the same "renders locally" guidance MOTION shows. */
+  localRender?: boolean
   token: string
   registry?: CreativeRegistry | null
   /** Told the latest SUCCEEDED render whenever the list (re)loads, so the page can gate "Use in Post". */
@@ -76,6 +79,7 @@ export function RendersPanel({
   creativeDisplayId,
   creativeVersion,
   creativeKind,
+  localRender = false,
   token,
   registry,
   onLatestSucceededChange,
@@ -164,7 +168,7 @@ export function RendersPanel({
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Renders</h3>
         <div className="flex items-center gap-2">
-          {(creativeKind === 'CLIP' || creativeKind === 'CAROUSEL') && canManage && (
+          {(creativeKind === 'CLIP' || creativeKind === 'CAROUSEL') && !localRender && canManage && (
             <Button size="sm" onClick={() => void handlePrepare()} disabled={preparing}>
               <SparklesIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
               {preparing ? 'Preparing…' : 'Prepare for posting'}
@@ -183,7 +187,11 @@ export function RendersPanel({
           icon={ImagesIcon}
           title="No renders yet"
           description={
-            creativeKind === 'CAROUSEL'
+            localRender && (creativeKind === 'CAROUSEL' || creativeKind === 'CLIP')
+              ? creativeKind === 'CAROUSEL'
+                ? 'Rendering the slideshow video for a carousel with music runs locally, on your own machine, through Claude Code/Desktop or the CLI. There is nothing to click here.'
+                : 'Rendering a clip with changed sound runs locally, on your own machine, through Claude Code/Desktop or the CLI. There is nothing to click here.'
+              : creativeKind === 'CAROUSEL'
               ? 'Preparing finished images is instant — Prepare for posting above, or from Claude Code/Desktop or the CLI.'
               : creativeKind === 'CLIP'
               ? 'Rendering a clip is instant — Prepare for posting above, or from Claude Code/Desktop or the CLI.'

@@ -60,15 +60,31 @@ export function hasRender(c: Pick<Creative, 'latestRenderId'>): boolean {
 }
 
 /**
- * Whether a Creative can be used in a Post from the chooser. CLIP and CAROUSEL renders are assembled by
- * the backend in one synchronous call, so a READY one is usable even before its first render; STILL and
- * MOTION need a local render (Claude Code / CLI) first.
+ * Whether this Creative's render happens on this machine (Claude Code / CLI) rather than instantly on
+ * the server. MOTION and STILL always do; a CAROUSEL does when it has a music track (the slideshow
+ * video); a CLIP does when its sound is replaced, mixed or muted. Must match the backend's rule.
  */
-export function canUseInPost(c: Pick<Creative, 'latestRenderId' | 'kind' | 'state'>): boolean {
-  return hasRender(c) || (c.state === 'READY' && (c.kind === 'CLIP' || c.kind === 'CAROUSEL'))
+export function needsLocalRender(c: Pick<Creative, 'kind' | 'audio'>): boolean {
+  const source = c.audio?.source ?? null
+  if (c.kind === 'CAROUSEL') return source === 'track'
+  if (c.kind === 'CLIP') return source === 'track' || source === 'mix' || source === 'none'
+  return true
 }
 
-/** Whether using this Creative means the backend must assemble its render first. */
-export function needsServerRender(c: Pick<Creative, 'kind'>): boolean {
-  return c.kind === 'CLIP' || c.kind === 'CAROUSEL'
+/**
+ * Whether a Creative can be used in a Post from the chooser. A plain CLIP or CAROUSEL render is
+ * assembled by the backend in one synchronous call, so a READY one is usable even before its first
+ * render; STILL, MOTION and any Creative with music or a changed clip sound need a local render
+ * (Claude Code / CLI) first.
+ */
+export function canUseInPost(c: Pick<Creative, 'latestRenderId' | 'kind' | 'state' | 'audio'>): boolean {
+  return (
+    hasRender(c) ||
+    (c.state === 'READY' && (c.kind === 'CLIP' || c.kind === 'CAROUSEL') && !needsLocalRender(c))
+  )
+}
+
+/** Whether using this Creative means the backend must assemble its render first (instant server render). */
+export function needsServerRender(c: Pick<Creative, 'kind' | 'audio'>): boolean {
+  return (c.kind === 'CLIP' || c.kind === 'CAROUSEL') && !needsLocalRender(c)
 }

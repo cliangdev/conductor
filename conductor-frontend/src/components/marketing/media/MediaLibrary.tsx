@@ -365,10 +365,16 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                   </span>
                   {item.blocked && <span className="text-status-failed">Blocked</span>}
                   {item.aiGenerated && <span className="text-muted-foreground">AI</span>}
-                  {(item.postCount ?? 0) > 0 && (
-                    <span className="text-muted-foreground">
-                      {item.postCount} {item.postCount === 1 ? 'post' : 'posts'}
+                  {item.mediaKind === 'AUDIO' ? (
+                    <span className="text-muted-foreground" data-testid="audio-usage">
+                      {audioUsageLabel(item.creativeCount ?? 0, item.postCount ?? 0)}
                     </span>
+                  ) : (
+                    (item.postCount ?? 0) > 0 && (
+                      <span className="text-muted-foreground">
+                        {item.postCount} {item.postCount === 1 ? 'post' : 'posts'}
+                      </span>
+                    )
                   )}
                   {!item.checked && <span className="text-muted-foreground">Unchecked</span>}
                 </div>
@@ -455,4 +461,10 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
       )}
     </div>
   )
+}
+
+/** A track's use, for its tile footer: "2 creatives · 1 post", or "Unused". */
+function audioUsageLabel(creatives: number, posts: number): string {
+  if (creatives === 0 && posts === 0) return 'Unused'
+  return `${creatives} ${creatives === 1 ? 'creative' : 'creatives'} · ${posts} ${posts === 1 ? 'post' : 'posts'}`
 }

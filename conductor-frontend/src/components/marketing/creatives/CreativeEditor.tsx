@@ -36,6 +36,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Modal } from '@/components/ui/modal'
 import { Select } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Slider } from '@/components/ui/slider'
 import { StatusBadge } from '@/components/ui/status-badge'
@@ -54,6 +55,7 @@ import { CreativePerformancePanel } from '@/components/marketing/creatives/Creat
 import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
 import { MediaPicker } from '@/components/marketing/creatives/MediaPicker'
 import { PhotoPicker } from '@/components/marketing/creatives/PhotoPicker'
+import { needsLocalRender } from '@/components/marketing/creatives/creativeCopy'
 import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
 import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
 import {
@@ -66,6 +68,7 @@ import {
   listCreativePhotos,
   patchCreative,
   type AudioSource,
+  type CreativeSlideshow,
   type Creative,
   type CreativeKind,
   type CreativeLockup,
@@ -106,13 +109,24 @@ interface MotionFormState {
   endCard: boolean
 }
 
-/** MOTION only. */
+/** MOTION, CAROUSEL and CLIP — which sources apply depends on the kind (see {@link audioSourcesFor}). */
 interface AudioFormState {
   source: AudioSource
   trackId: string | null
   volume: number
   fadeOutSec: number
 }
+
+/** CAROUSEL only. `slideDurations` are text inputs (blank = the default for that slide); absent
+ *  entries past the end are blank too. */
+interface SlideshowFormState {
+  zoom: boolean
+  slideDurations: string[]
+}
+
+const SLIDE_MIN_SEC = 1
+const SLIDE_MAX_SEC = 10
+const defaultSlideSec = (i: number) => (i === 0 ? 3 : 2.5)
 
 interface FormState {
   brandKitId: string
@@ -134,6 +148,8 @@ interface FormState {
   slideAltText: string[]
   motion: MotionFormState
   audio: AudioFormState
+  /** CAROUSEL only — the slideshow video made when a track is chosen. */
+  slideshow: SlideshowFormState
   placements: string[]
   sequenceKind: SequenceKind | null
   sequence: SequenceBeat[]
@@ -179,13 +195,53 @@ function toMotionForm(motion: Creative['motion']): MotionFormState {
 /** See {@link toMotionForm} — `source` defaults to "none" here; the contract's data-dependent default
  *  ("clip" when the background clip has sound) is instead expressed by disabling the "Clip sound"
  *  option until it applies (see the Audio panel below), not by guessing a selection for the marketer. */
-function toAudioForm(audio: Creative['audio']): AudioFormState {
+function toAudioForm(audio: Creative['audio'], kind: CreativeKind = 'MOTION'): AudioFormState {
+  const source = audio?.source && audioSourcesFor(kind).includes(audio.source) ? audio.source : defaultAudioSource(kind)
   return {
-    source: audio?.source ?? 'none',
+    source,
     trackId: audio?.trackId ?? null,
-    volume: audio?.volume ?? 0.8,
+    volume: audio?.volume ?? defaultAudioVolume(kind, source),
     fadeOutSec: audio?.fadeOutSec ?? 1,
   }
+}
+
+/** Sources each kind accepts: MOTION clip|track|none, CAROUSEL track|none, CLIP clip|track|mix|none. */
+function audioSourcesFor(kind: CreativeKind): AudioSource[] {
+  if (kind === 'CAROUSEL') return ['track', 'none']
+  if (kind === 'CLIP') return ['clip', 'track', 'mix', 'none']
+  return ['clip', 'track', 'none']
+}
+
+/** A CLIP keeps its own sound unless told otherwise; everything else starts silent. */
+function defaultAudioSource(kind: CreativeKind): AudioSource {
+  return kind === 'CLIP' ? 'clip' : 'none'
+}
+
+/** Contract defaults: MOTION 0.8; CAROUSEL/CLIP track 1.0, mix 0.3. */
+function defaultAudioVolume(kind: CreativeKind, source: AudioSource): number {
+  if (kind === 'MOTION') return 0.8
+  return source === 'mix' ? 0.3 : 1
+}
+
+/** How many 9x16 slides the slideshow video is built from (its list, else the default list). */
+function slideshowSlideCount(slides: Record<string, string[]>): number {
+  return (slides['9x16'] ?? slides.default ?? []).length
+}
+
+function toSlideshowForm(slideshow: CreativeSlideshow | null | undefined): SlideshowFormState {
+  return {
+    zoom: slideshow?.zoom ?? true,
+    slideDurations: (slideshow?.slideDurations ?? []).map((d) => String(d)),
+  }
+}
+
+/** Resolved per-slide seconds to save, or undefined when every slide is left at its default. */
+function slideshowDurationsToSave(form: SlideshowFormState, count: number): number[] | undefined {
+  if (!form.slideDurations.some((d) => d.trim() !== '')) return undefined
+  return Array.from({ length: count }, (_, i) => {
+    const n = Number(form.slideDurations[i])
+    return form.slideDurations[i]?.trim() && Number.isFinite(n) ? n : defaultSlideSec(i)
+  })
 }
 
 function toForm(creative: Creative): FormState {
@@ -206,7 +262,8 @@ function toForm(creative: Creative): FormState {
     slides: Object.fromEntries(Object.entries(creative.slides ?? {}).map(([k, v]) => [k, [...v]])),
     slideAltText: [...(creative.slideAltText ?? [])],
     motion: toMotionForm(creative.motion),
-    audio: toAudioForm(creative.audio),
+    audio: toAudioForm(creative.audio, creative.kind ?? 'STILL'),
+    slideshow: toSlideshowForm(creative.slideshow),
     placements: [...creative.placements],
     sequenceKind: creative.sequenceKind ?? null,
     sequence: creative.sequence.map((b) => ({ ...b })),
@@ -215,6 +272,20 @@ function toForm(creative: Creative): FormState {
     layoutOverrideBand: toStringMap(creative.layoutOverrides?.band),
     layoutOverridePadBottom: toStringMap(creative.layoutOverrides?.padBottom),
   }
+}
+
+/** The `audio` to PATCH. MOTION is unchanged. CAROUSEL/CLIP send the contract shape: trackId only for
+ *  track/mix, and a CLIP's own sound ("clip") is just the default. Other kinds clear it. */
+function audioToSave(form: FormState): Creative['audio'] {
+  const { source, trackId, volume, fadeOutSec } = form.audio
+  if (form.kind === 'MOTION') {
+    return { source, trackId: source === 'track' ? trackId : null, volume, fadeOutSec }
+  }
+  if (form.kind === 'CAROUSEL' || form.kind === 'CLIP') {
+    if (source === 'none' || source === 'clip') return { source }
+    return { source, trackId, volume, fadeOutSec }
+  }
+  return null
 }
 
 function prefersReducedMotion(): boolean {
@@ -936,15 +1007,17 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                   endCard: form.motion.endCard,
                 }
               : null,
-          audio:
-            form.kind === 'MOTION'
-              ? {
-                  source: form.audio.source,
-                  trackId: form.audio.source === 'track' ? form.audio.trackId : null,
-                  volume: form.audio.volume,
-                  fadeOutSec: form.audio.fadeOutSec,
-                }
-              : null,
+          audio: audioToSave(form),
+          ...(isCarousel
+            ? {
+                slideshow: {
+                  zoom: form.slideshow.zoom,
+                  slideDurations: slideshowDurationsToSave(form.slideshow, slideshowSlideCount(form.slides)),
+                },
+              }
+            : creative.kind === 'CAROUSEL'
+              ? { slideshow: null }
+              : {}),
           ...(isCarousel ? {} : { placements: form.placements }),
           sequenceKind: isCarousel ? null : form.sequenceKind,
           sequence: isCarousel ? [] : form.sequence,
@@ -1036,8 +1109,15 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     form.kind === 'MOTION' && form.motion.backgroundSource === 'clip' && form.motion.clipMediaId
       ? photoById.get(form.motion.clipMediaId)
       : undefined
-  const clipHasAudio = motionClip?.hasAudio === true
-  const audioTrack = form.kind === 'MOTION' && form.audio.trackId ? photoById.get(form.audio.trackId) : undefined
+  // MOTION: its background clip. CLIP: every clip it uses (strict — an unknown counts as silent).
+  const clipKindClips = form.kind === 'CLIP' ? Object.values(form.clipMedia).map((id) => photoById.get(id)) : []
+  const clipHasAudio =
+    form.kind === 'CLIP'
+      ? clipKindClips.length > 0 && clipKindClips.every((m) => m?.hasAudio === true)
+      : motionClip?.hasAudio === true
+  const hasAudioPanel = form.kind === 'MOTION' || form.kind === 'CAROUSEL' || form.kind === 'CLIP'
+  const audioTrack = hasAudioPanel && form.audio.trackId ? photoById.get(form.audio.trackId) : undefined
+  const hasTrackSource = form.audio.source === 'track' || form.audio.source === 'mix'
 
   return (
     <div className="space-y-4">
@@ -1111,7 +1191,25 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               <Select
                 id="creative-kind"
                 value={form.kind}
-                onChange={(e) => update('kind', e.target.value as CreativeKind)}
+                onChange={(e) => {
+                  const kind = e.target.value as CreativeKind
+                  setForm((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          kind,
+                          // A source the new kind doesn't accept falls back to its default.
+                          audio: audioSourcesFor(kind).includes(prev.audio.source)
+                            ? prev.audio
+                            : {
+                                ...prev.audio,
+                                source: defaultAudioSource(kind),
+                                volume: defaultAudioVolume(kind, defaultAudioSource(kind)),
+                              },
+                        }
+                      : prev,
+                  )
+                }}
               >
                 <option value="STILL">Still</option>
                 <option value="MOTION">Motion</option>
@@ -1464,7 +1562,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             </Card>
           )}
 
-          {form.kind === 'MOTION' && (
+          {hasAudioPanel && (
             <Card className="space-y-3 p-4" data-testid="audio-panel">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Audio</h3>
 
@@ -1473,20 +1571,41 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                 <Select
                   id="audio-source"
                   value={form.audio.source}
-                  onChange={(e) => update('audio', { ...form.audio, source: e.target.value as AudioSource })}
+                  onChange={(e) => {
+                    const source = e.target.value as AudioSource
+                    update('audio', { ...form.audio, source, volume: defaultAudioVolume(form.kind, source) })
+                  }}
                 >
-                  <option value="clip" disabled={!clipHasAudio}>
-                    Clip sound{!clipHasAudio ? ' (clip has no audio)' : ''}
-                  </option>
-                  <option value="track">Music track</option>
-                  <option value="none">None</option>
+                  {form.kind === 'CAROUSEL' ? (
+                    <>
+                      <option value="none">No music</option>
+                      <option value="track">Music track</option>
+                    </>
+                  ) : form.kind === 'CLIP' ? (
+                    <>
+                      <option value="clip">Clip sound</option>
+                      <option value="track">Replace with a track</option>
+                      <option value="mix" disabled={!clipHasAudio}>
+                        Track under clip sound{!clipHasAudio ? ' (clip has no audio)' : ''}
+                      </option>
+                      <option value="none">Mute</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="clip" disabled={!clipHasAudio}>
+                        Clip sound{!clipHasAudio ? ' (clip has no audio)' : ''}
+                      </option>
+                      <option value="track">Music track</option>
+                      <option value="none">None</option>
+                    </>
+                  )}
                 </Select>
                 {violationsFor(saveError, 'audio.source').map((m) => (
                   <p key={m} className="mt-1 text-xs text-destructive">{m}</p>
                 ))}
               </div>
 
-              {form.audio.source === 'track' && (
+              {hasTrackSource && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Track</Label>
@@ -1510,6 +1629,16 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                       {audioTrack ? audioTrack.label || 'Untitled track' : 'Choose a track…'}
                     </span>
                   </button>
+                  {audioTrack && (
+                    <p className="text-xs text-muted-foreground" data-testid="audio-track-meta">
+                      {[
+                        audioTrack.durationSeconds != null ? formatDuration(audioTrack.durationSeconds) : null,
+                        audioTrack.licence ? `Licence: ${audioTrack.licence}` : 'No licence recorded',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  )}
                   {audioTrack?.url && (
                     <audio controls src={audioTrack.url} data-testid="audio-track-audition" className="w-full">
                       Your browser does not support the audio element.
@@ -1521,7 +1650,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                 </div>
               )}
 
-              {form.audio.source !== 'none' && (
+              {form.audio.source !== 'none' && !(form.kind === 'CLIP' && form.audio.source === 'clip') ? (
                 <>
                   <div>
                     <div className="flex items-center justify-between">
@@ -1558,6 +1687,57 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                     ))}
                   </div>
                 </>
+              ) : null}
+
+              {form.kind === 'CAROUSEL' && form.audio.source === 'track' && (
+                <div className="space-y-3 border-t border-border pt-3" data-testid="slideshow-settings">
+                  <h4 className="text-xs font-semibold text-foreground">Slideshow video</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Music turns the slides into a 9:16 video with crossfades. Photo posts still use the slides as they are.
+                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="slideshow-zoom">Slow zoom on each slide</Label>
+                    <Switch
+                      id="slideshow-zoom"
+                      checked={form.slideshow.zoom}
+                      onCheckedChange={(zoom) => update('slideshow', { ...form.slideshow, zoom })}
+                    />
+                  </div>
+                  {slideshowSlideCount(form.slides) > 0 && (
+                    <div className="space-y-1.5">
+                      <Label>Seconds per slide</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {Array.from({ length: slideshowSlideCount(form.slides) }, (_, i) => (
+                          <Input
+                            key={i}
+                            type="number"
+                            inputMode="decimal"
+                            min={SLIDE_MIN_SEC}
+                            max={SLIDE_MAX_SEC}
+                            step={0.5}
+                            aria-label={`Slide ${i + 1} seconds`}
+                            placeholder={String(defaultSlideSec(i))}
+                            value={form.slideshow.slideDurations[i] ?? ''}
+                            onChange={(e) => {
+                              const next = Array.from(
+                                { length: slideshowSlideCount(form.slides) },
+                                (_, j) => form.slideshow.slideDurations[j] ?? '',
+                              )
+                              next[i] = e.target.value
+                              update('slideshow', { ...form.slideshow, slideDurations: next })
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {SLIDE_MIN_SEC}-{SLIDE_MAX_SEC} s each. Blank uses the default: 3 s for the first slide, 2.5 s for the rest.
+                      </p>
+                    </div>
+                  )}
+                  {violationsFor(saveError, 'slideshow.slideDurations').map((m) => (
+                    <p key={m} className="text-xs text-destructive">{m}</p>
+                  ))}
+                </div>
               )}
             </Card>
           )}
@@ -1761,6 +1941,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             creativeDisplayId={creative.displayId}
             creativeVersion={creative.version}
             creativeKind={form.kind}
+            localRender={needsLocalRender({ kind: creative.kind, audio: creative.audio })}
             token={token}
             registry={registry}
             onLatestSucceededChange={setLatestSucceededRender}
