@@ -4,33 +4,23 @@ import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.entity.Connection;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.WorkflowJobRun;
-import com.conductor.entity.WorkflowRunStatus;
-import com.conductor.entity.WorkflowStepRun;
-import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.CredentialConnector;
 import com.conductor.integration.CredentialRequest;
 import com.conductor.integration.RuntimeCredential;
 import com.conductor.repository.ProjectSettingsRepository;
-import com.conductor.repository.WorkflowRunRepository;
-import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ActiveConnectionResolver;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Runs a single headless Claude Code container execution to completion: resolves the {@code runs-on}
@@ -70,14 +60,8 @@ import java.util.UUID;
  * their job just to pick the claude-code runtime.
  *
  * <h2>Crash recovery</h2>
- * The Cloud Run RunJob operation name is persisted onto the step-run row as soon as
- * {@link CloudRunJobLauncher#startExecution} returns — even before the execution name itself is
- * confirmed, since that confirmation is genuinely async and can outlast a single request. The execution
- * name is persisted as soon as it resolves (immediately, if prompt; otherwise once
- * {@link CloudRunJobLauncher#tryResolveExecutionName} succeeds). Either way, a backend restart re-attaches
- * via whichever of the two is known rather than relaunching a duplicate execution — Cloud Run's
- * RunJobRequest has no idempotency key, so a blind retry risks starting a second, real container. See
- * {@link #resolveOrCreateStepRun} and the resume branches at the top of {@link #run}.
+ * Launch, polling, resume and cancel mechanics live in {@link CloudRunStepRunner}, shared with
+ * {@link RenderTargetStepRunner}; this class owns target resolution, credentials and the Claude env.
  */
 @Component
 public class ClaudeCodeContainerRunner {
@@ -88,50 +72,40 @@ public class ClaudeCodeContainerRunner {
     private static final String CLAUDE_CODE_PROVIDER = "claude-code";
     private static final int DEFAULT_TIMEOUT_MINUTES = 30;
     private static final int MAX_TIMEOUT_MINUTES = 120;
-    private static final int POLL_INTERVAL_SECONDS = 10;
-    /** How long to keep looking for an execution belonging to a launch Cloud Run never acknowledged.
-     *  Sized well past the 41s lag observed in production between giving up and the execution appearing. */
-    private static final int RECONCILE_WINDOW_SECONDS = 180;
-    private static final int RECONCILE_POLL_SECONDS = 15;
     private static final List<String> CONTAINER_COMMAND = List.of("conductor-claude-entrypoint");
 
-    private final CloudRunJobLauncher launcher;
+    private static final CloudRunStepRunner.Reasons REASONS = new CloudRunStepRunner.Reasons(
+            "CLAUDE_LAUNCH_ERROR", "CLAUDE_TIMEOUT", "CLAUDE_CREDENTIAL_ERROR",
+            ClaudeCodeContainerRunner::mapExitCode);
+
+    private final CloudRunStepRunner stepRunner;
     private final RuntimeTargetResolver runtimeTargetResolver;
     private final ProviderCredentialService credentialService;
-    private final WorkflowStepRunRepository stepRunRepository;
-    private final WorkflowRunRepository runRepository;
     private final RunTokenService runTokenService;
     private final ProjectSettingsRepository projectSettingsRepository;
     private final WorkflowInterpolator interpolator;
     private final ObjectMapper objectMapper;
-    private final WorkflowRunLogBroker logBroker;
     private final ActiveConnectionResolver activeConnectionResolver;
     private final ConnectorRegistry connectorRegistry;
     private final String backendBaseUrl;
 
-    public ClaudeCodeContainerRunner(CloudRunJobLauncher launcher,
+    public ClaudeCodeContainerRunner(CloudRunStepRunner stepRunner,
                                       RuntimeTargetResolver runtimeTargetResolver,
                                       ProviderCredentialService credentialService,
-                                      WorkflowStepRunRepository stepRunRepository,
-                                      WorkflowRunRepository runRepository,
                                       RunTokenService runTokenService,
                                       ProjectSettingsRepository projectSettingsRepository,
                                       WorkflowInterpolator interpolator,
                                       ObjectMapper objectMapper,
-                                      WorkflowRunLogBroker logBroker,
                                       ActiveConnectionResolver activeConnectionResolver,
                                       ConnectorRegistry connectorRegistry,
                                       @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
-        this.launcher = launcher;
+        this.stepRunner = stepRunner;
         this.runtimeTargetResolver = runtimeTargetResolver;
         this.credentialService = credentialService;
-        this.stepRunRepository = stepRunRepository;
-        this.runRepository = runRepository;
         this.runTokenService = runTokenService;
         this.projectSettingsRepository = projectSettingsRepository;
         this.interpolator = interpolator;
         this.objectMapper = objectMapper;
-        this.logBroker = logBroker;
         this.activeConnectionResolver = activeConnectionResolver;
         this.connectorRegistry = connectorRegistry;
         this.backendBaseUrl = backendBaseUrl;
@@ -203,210 +177,16 @@ public class ClaudeCodeContainerRunner {
         boolean conductorMcp = Boolean.TRUE.equals(inv.conductorMcp());
         String conductorApiKey = conductorMcp ? runTokenService.generateMcpToken(runId, projectId, ttlHours) : null;
 
-        WorkflowStepRun stepRun = resolveOrCreateStepRun(jobRun, stepId, stepDef, inv.stepType());
-        String workerJobId = stepRun.getWorkerJobId();
-
-        Optional<WorkflowStepRun> priorRow = stepRunRepository.findByJobRunIdAndWorkerJobId(jobRun.getId(), workerJobId);
-        if (priorRow.isPresent() && isTerminal(priorRow.get().getStatus())) {
-            log.info("claude-code step {} already terminal on resume (workerJobId={}), skipping relaunch",
-                    stepId, workerJobId);
-            return resultFromRow(priorRow.get(), stepDef, Optional.empty(), "Resumed from prior run\n");
-        }
-
         int timeoutMinutes = resolveTimeoutMinutes(inv.timeoutMinutes());
-        StringBuilder logBuilder = new StringBuilder();
-
-        if (priorRow.isPresent() && priorRow.get().getExecutionName() != null) {
-            WorkflowStepRun inFlightRow = priorRow.get();
-            String executionName = inFlightRow.getExecutionName();
-            int remainingMinutes = remainingTimeoutMinutes(inFlightRow, timeoutMinutes);
-            log.info("claude-code step {} resuming poll on prior Cloud Run execution {} (workerJobId={}, "
-                    + "{}m remaining of {}m budget), skipping relaunch",
-                    stepId, executionName, workerJobId, remainingMinutes, timeoutMinutes);
-            appendLauncherLine(inFlightRow, projectId, logBuilder,
-                    "→ Resuming poll on prior Cloud Run execution: " + executionName);
-            return pollUntilTerminal(target, executionName, null, runId, jobRun.getId(), workerJobId, stepDef,
-                    remainingMinutes, logBuilder, inFlightRow, projectId);
-        }
-
-        // The launch was previously accepted by Cloud Run (operationName persisted) but never resolved
-        // to a confirmed executionName before this row was last touched — e.g. a backend restart mid-
-        // launch. Resume checking rather than relaunching: RunJobRequest has no idempotency key, so a
-        // blind retry here risks starting a second, duplicate execution.
-        if (priorRow.isPresent() && priorRow.get().getOperationName() != null) {
-            WorkflowStepRun inFlightRow = priorRow.get();
-            String operationName = inFlightRow.getOperationName();
-            int remainingMinutes = remainingTimeoutMinutes(inFlightRow, timeoutMinutes);
-            log.info("claude-code step {} resuming unconfirmed Cloud Run launch (operation {}, workerJobId={}, "
-                    + "{}m remaining of {}m budget), skipping relaunch",
-                    stepId, operationName, workerJobId, remainingMinutes, timeoutMinutes);
-            appendLauncherLine(inFlightRow, projectId, logBuilder,
-                    "→ Resuming check on unconfirmed Cloud Run launch: " + operationName);
-            return pollUntilTerminal(target, null, operationName, runId, jobRun.getId(), workerJobId, stepDef,
-                    remainingMinutes, logBuilder, inFlightRow, projectId);
-        }
-
-        Map<String, String> env;
-        try {
-            env = buildEnv(inv, stepDef, ctx, projectId, runId, jobRun, workerJobId,
-                    timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get(), context.getConsumes(), ttlHours);
-        } catch (CredentialResolutionException e) {
-            log.warn("claude-code step {} credential resolution failed: {}", stepId, e.getMessage());
-            return StepResult.failed("", "CLAUDE_CREDENTIAL_ERROR: " + e.getMessage()).withWorkerJobId(workerJobId);
-        }
-        ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
-
-        appendLauncherLine(stepRun, projectId, logBuilder,
-                "→ Launching Cloud Run execution (image=" + image + ", timeout=" + timeoutMinutes + "m)");
-
-        CloudRunJobLauncher.LaunchResult launch;
-        try {
-            launch = launcher.startExecution(target, task);
-        } catch (CloudRunJobLauncher.LaunchUnconfirmedException e) {
-            // Genuinely inconclusive, not a confirmed failure (see the exception's javadoc): no
-            // operationName was ever obtained, so there is nothing to poll/resume by. But the request may
-            // still land after we stop waiting — observed 41s late in production — and the execution it
-            // creates carries this step's workerJobId in its env, so search for it before concluding
-            // anything. Finding it converts a guess into a fact and recovers the step outright.
-            log.warn("Cloud Run did not acknowledge the RunJob request for claude-code step {}: {}", stepId, e.getMessage());
-            appendLauncherLine(stepRun, projectId, logBuilder, "⚠ " + e.getMessage());
-            appendLauncherLine(stepRun, projectId, logBuilder,
-                    "→ Searching Cloud Run for an execution matching this step before giving up");
-            LateExecutionSearch reconciled = findLateExecution(target, workerJobId, stepId);
-            if (reconciled.executionName().isEmpty()) {
-                // A container that self-reported while we were searching has already answered the
-                // question the search was asking — don't overwrite its verdict with our ignorance.
-                Optional<WorkflowStepRun> selfReported = stepRunRepository.findById(stepRun.getId())
-                        .filter(row -> isTerminal(row.getStatus()));
-                if (selfReported.isPresent()) {
-                    appendLauncherLine(stepRun, projectId, logBuilder,
-                            "← Container self-reported while searching; adopting its result");
-                    return resultFromRow(selfReported.get(), stepDef, Optional.empty(), logBuilder.toString());
-                }
-                appendLauncherLine(stepRun, projectId, logBuilder, reconciled.reachedApi()
-                        ? "✗ Cloud Run reported no execution matching this step within "
-                                + RECONCILE_WINDOW_SECONDS + "s — evidence the launch never happened"
-                        : "✗ Could not reach Cloud Run to search for a late execution within "
-                                + RECONCILE_WINDOW_SECONDS + "s — the launch is unverified, and a container "
-                                + "may be running unobserved. Check the Cloud Run console for this step's "
-                                + "start time.");
-                return StepResult.failed(logBuilder.toString(), "CLOUD_RUN_LAUNCH_UNCONFIRMED").withWorkerJobId(workerJobId);
-            }
-            String executionName = reconciled.executionName().get();
-            appendLauncherLine(stepRun, projectId, logBuilder,
-                    "← Recovered unacknowledged launch: " + executionName);
-            // Re-read before writing: `stepRun` has been detached for the launch wait plus the search
-            // above, and the container may have self-reported its status and outputs onto the row in
-            // that window. Merging the stale snapshot would silently revert them — same reason
-            // WorkflowRunLogBroker.appendToStepLog re-reads.
-            WorkflowStepRun fresh = stepRunRepository.findById(stepRun.getId()).orElse(stepRun);
-            fresh.setExecutionName(executionName);
-            stepRunRepository.save(fresh);
-            stepRun.setExecutionName(executionName);
-            // The launch wait and the search that followed it can together burn four minutes, and the
-            // container has been running for most of that. Poll on what's left of the step's budget, as
-            // the resume branches above do — not a fresh copy of it.
-            return pollUntilTerminal(target, executionName, null, runId, jobRun.getId(), workerJobId, stepDef,
-                    remainingTimeoutMinutes(stepRun, timeoutMinutes), logBuilder, stepRun, projectId);
-        } catch (Exception e) {
-            log.warn("Failed to start Cloud Run execution for claude-code step {}: {}", stepId, e.getMessage());
-            appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
-            return StepResult.failed(logBuilder.toString(), "CLAUDE_LAUNCH_ERROR").withWorkerJobId(workerJobId);
-        }
-
-        // operationName is persisted unconditionally, before executionName is even known — the
-        // durability point that lets a backend restart mid-launch resume checking instead of
-        // relaunching a duplicate execution (see the operationName-only resume branch above).
-        stepRun.setOperationName(launch.operationName());
-        if (launch.executionName().isPresent()) {
-            String executionName = launch.executionName().get();
-            appendLauncherLine(stepRun, projectId, logBuilder, "← execution: " + executionName);
-            stepRun.setExecutionName(executionName);
-        } else {
-            appendLauncherLine(stepRun, projectId, logBuilder,
-                    "⚠ Cloud Run accepted the launch but hasn't confirmed the execution yet — will keep checking");
-        }
-        stepRunRepository.save(stepRun);
-
-        return pollUntilTerminal(target, launch.executionName().orElse(null), launch.operationName(),
-                runId, jobRun.getId(), workerJobId, stepDef, timeoutMinutes, logBuilder, stepRun, projectId);
+        List<String> consumes = context.getConsumes();
+        CloudRunStepRunner.Spec spec = new CloudRunStepRunner.Spec(target, image, CONTAINER_COMMAND,
+                timeoutMinutes, inv.stepType(),
+                workerJobId -> buildEnv(inv, stepDef, ctx, projectId, runId, jobRun, workerJobId,
+                        timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get(), consumes, ttlHours),
+                REASONS);
+        return stepRunner.run(context, spec);
     }
 
-    /**
-     * Polls Cloud Run for an execution carrying this step's {@code workerJobId}, over a window sized to
-     * outlast the observed lag between giving up on the RunJob acknowledgement and the execution
-     * actually appearing (41s in the production case this was written for). Returns empty when the
-     * launch really never happened — the only case in which failing the step is honest.
-     *
-     * <p>Bounded by iteration count rather than wall clock, and sleeping via {@link #sleepSeconds}, so
-     * the not-found path is unit-testable with that hook overridden — the same shape
-     * {@link #pollUntilTerminal} uses for its own timeout path.
-     */
-    private LateExecutionSearch findLateExecution(CloudRunTarget target, String workerJobId, String stepId) {
-        int attempts = Math.max(1, RECONCILE_WINDOW_SECONDS / RECONCILE_POLL_SECONDS);
-        boolean everReachedApi = false;
-        for (int i = 0; i < attempts; i++) {
-            CloudRunJobLauncher.ExecutionSearch search = launcher.findExecutionByWorkerJobId(target, workerJobId);
-            everReachedApi |= search.reachedApi();
-            if (search.executionName().isPresent()) {
-                log.info("Recovered unacknowledged Cloud Run launch for claude-code step {}: execution {} "
-                        + "matched workerJobId {}", stepId, search.executionName().get(), workerJobId);
-                return new LateExecutionSearch(true, search.executionName());
-            }
-            // No sleep after the final check — it would add a pointless RECONCILE_POLL_SECONDS to a
-            // failure path that already holds a pooled job thread for minutes.
-            if (i < attempts - 1) {
-                sleepSeconds(RECONCILE_POLL_SECONDS);
-            }
-        }
-        return new LateExecutionSearch(everReachedApi, Optional.empty());
-    }
-
-    /**
-     * @param reachedApi whether any attempt actually got an answer out of Cloud Run. When false the
-     *                   search establishes nothing, and the step log must say so rather than implying
-     *                   we looked and found nothing.
-     */
-    private record LateExecutionSearch(boolean reachedApi, Optional<String> executionName) {
-    }
-
-    /**
-     * Appends one launcher-side status line both to the in-memory buffer that becomes
-     * {@link StepResult#getLog()} and to the step row's persisted log (via
-     * {@link WorkflowRunLogBroker#appendToStepLog}), so the run-detail UI reflects launcher progress
-     * without waiting for the step to reach a terminal state. {@code stepRun} must be the same row
-     * {@link WorkflowJobOrchestrator#persistStepRun} will later match by workerJobId — its log-clobber
-     * guard relies on this row already carrying content by the time the terminal {@link StepResult} is
-     * persisted, so every line added to {@code logBuilder} in this class must also flow through here.
-     */
-    private void appendLauncherLine(WorkflowStepRun stepRun, String projectId, StringBuilder logBuilder, String line) {
-        logBuilder.append(line).append("\n");
-        logBroker.appendToStepLog(stepRun, List.of(line), projectId);
-    }
-
-    /**
-     * Looks up the pre-created row for this step by {@code (jobRunId, stepId)}. Reuses it (whatever
-     * its status or stored execution name — resume path) if found; otherwise creates a new RUNNING
-     * row with a fresh {@code workerJobId}, recording {@code stepType} as given by the caller.
-     */
-    private WorkflowStepRun resolveOrCreateStepRun(WorkflowJobRun jobRun, String stepId, Map<String, Object> stepDef,
-                                                     String stepType) {
-        Optional<WorkflowStepRun> existing = stepRunRepository.findByJobRunIdAndStepId(jobRun.getId(), stepId);
-        if (existing.isPresent() && existing.get().getWorkerJobId() != null) {
-            return existing.get();
-        }
-
-        WorkflowStepRun stepRun = existing.orElseGet(WorkflowStepRun::new);
-        stepRun.setJobRun(jobRun);
-        stepRun.setStepId(stepId);
-        stepRun.setStepName((String) stepDef.getOrDefault("name", "unnamed"));
-        stepRun.setStepType(stepType);
-        stepRun.setStatus(WorkflowStepStatus.RUNNING);
-        stepRun.setWorkerJobId(UUID.randomUUID().toString());
-        stepRun.setStartedAt(OffsetDateTime.now());
-        stepRunRepository.save(stepRun);
-        return stepRun;
-    }
 
     @SuppressWarnings("unchecked")
     private Map<String, String> buildEnv(ClaudeCodeInvocation inv, Map<String, Object> stepDef, RuntimeContext ctx,
@@ -548,127 +328,8 @@ public class ClaudeCodeContainerRunner {
         return null;
     }
 
-    /**
-     * Bounded-iteration poll loop (not a wall-clock deadline) — matches {@link DockerStepExecutor}'s
-     * shape so the timeout path is fast to unit test with {@link #sleepSeconds} overridden to a no-op.
-     *
-     * <p>{@code executionName} may be {@code null} on entry — meaning Cloud Run accepted the launch
-     * (({@code operationName} known) but hasn't confirmed the execution yet (see
-     * {@link CloudRunJobLauncher#startExecution}'s {@code LaunchResult}). In that phase, each tick both
-     * checks whether the container already self-reported completion (the primary signal, keyed on
-     * {@code workerJobId} alone — it doesn't need {@code executionName}) and tries
-     * {@link CloudRunJobLauncher#tryResolveExecutionName} to resolve it; once resolved, the same loop
-     * continues on into the normal Cloud-Run-execution-status polling below, sharing the remainder of
-     * this one bounded budget rather than getting a fresh timeout window of its own.
-     */
-    private StepResult pollUntilTerminal(CloudRunTarget target, String executionName, String operationName,
-                                          String runId, String jobRunId, String workerJobId,
-                                          Map<String, Object> stepDef, int timeoutMinutes, StringBuilder logBuilder,
-                                          WorkflowStepRun stepRun, String projectId) {
-        // timeoutMinutes may already be <= 0 here (a resumed step whose budget elapsed while the
-        // backend was down) -- 0 iterations falls straight through to the timeout tail below rather
-        // than looping at least once, so a step that resumes past its deadline fails immediately
-        // instead of getting a bonus poll.
-        int maxIterations = timeoutMinutes <= 0 ? 0 : Math.max(1, (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS);
-        for (int i = 0; i < maxIterations; i++) {
-            sleepSeconds(POLL_INTERVAL_SECONDS);
-
-            if (runRepository.findStatusById(runId).orElse(null) == WorkflowRunStatus.CANCELLING) {
-                if (executionName != null) {
-                    launcher.cancelExecution(target, executionName);
-                } else {
-                    // Cloud Run accepted the launch but hasn't named the execution yet, so there's
-                    // nothing to cancel by name. The execution it eventually starts is orphaned and
-                    // runs to completion; Conductor still treats the step as cancelled.
-                    log.warn("Run {} cancelled before its Cloud Run execution name resolved (operation {}) — "
-                            + "the execution may run to completion orphaned", runId, operationName);
-                }
-                appendLauncherLine(stepRun, projectId, logBuilder, "✗ Cancelled");
-                return StepResult.cancelled(logBuilder.toString()).withWorkerJobId(workerJobId);
-            }
-
-            if (executionName == null) {
-                Optional<WorkflowStepRun> current = stepRunRepository.findByJobRunIdAndWorkerJobId(jobRunId, workerJobId);
-                if (current.isPresent() && isTerminal(current.get().getStatus())) {
-                    log.info("claude-code step (workerJobId={}) self-reported terminal before its Cloud Run "
-                            + "execution name resolved", workerJobId);
-                    return resultFromRow(current.get(), stepDef, Optional.empty(), logBuilder.toString());
-                }
-
-                Optional<String> resolved;
-                try {
-                    resolved = launcher.tryResolveExecutionName(target, operationName);
-                } catch (Exception e) {
-                    log.warn("Error resolving Cloud Run execution name for operation {}: {}", operationName, e.getMessage());
-                    continue;
-                }
-                if (resolved.isEmpty()) {
-                    continue;
-                }
-                executionName = resolved.get();
-                appendLauncherLine(stepRun, projectId, logBuilder, "← execution confirmed: " + executionName);
-                stepRun.setExecutionName(executionName);
-                stepRunRepository.save(stepRun);
-                continue;
-            }
-
-            CloudRunJobLauncher.ExecutionState state;
-            try {
-                state = launcher.pollExecution(target, executionName);
-            } catch (Exception e) {
-                log.warn("Poll error for Cloud Run execution {}: {}", executionName, e.getMessage());
-                continue;
-            }
-
-            if (state.status() != CloudRunJobLauncher.Status.RUNNING) {
-                appendLauncherLine(stepRun, projectId, logBuilder, "← execution finished: " + state.status());
-                return terminalResult(jobRunId, workerJobId, stepDef, state, logBuilder.toString());
-            }
-        }
-
-        appendLauncherLine(stepRun, projectId, logBuilder, "✗ Timed out after " + timeoutMinutes + " minutes");
-        if (executionName != null) {
-            launcher.cancelExecution(target, executionName);
-        }
-        return StepResult.failed(logBuilder.toString(), "CLAUDE_TIMEOUT").withWorkerJobId(workerJobId);
-    }
-
-    private StepResult terminalResult(String jobRunId, String workerJobId, Map<String, Object> stepDef,
-                                       CloudRunJobLauncher.ExecutionState cloudRunState, String log) {
-        Optional<WorkflowStepRun> rowOpt = stepRunRepository.findByJobRunIdAndWorkerJobId(jobRunId, workerJobId);
-        if (rowOpt.isPresent() && isTerminal(rowOpt.get().getStatus())) {
-            return resultFromRow(rowOpt.get(), stepDef, cloudRunState.exitCode(), log);
-        }
-
-        // The container never got to self-report (OOM, image pull failure, task killed by Cloud
-        // Run) — fall back entirely to what Cloud Run itself observed.
-        if (cloudRunState.status() == CloudRunJobLauncher.Status.SUCCEEDED) {
-            return StepResult.success(log, Map.of()).withWorkerJobId(workerJobId);
-        }
-        String errorReason = cloudRunState.exitCode().map(this::mapExitCode).orElse("CLAUDE_LAUNCH_ERROR");
-        return StepResult.failed(log, errorReason).withWorkerJobId(workerJobId);
-    }
-
-    private StepResult resultFromRow(WorkflowStepRun row, Map<String, Object> stepDef,
-                                      Optional<Integer> exitCodeFallback, String log) {
-        String workerJobId = row.getWorkerJobId();
-        if (row.getStatus() == WorkflowStepStatus.SUCCESS) {
-            Map<String, String> outputs = row.getOutputJson() != null
-                    ? parseOutputs(row.getOutputJson())
-                    : new HashMap<>();
-            StepOutputMapper.applyDeclaredOutputs(stepDef,
-                    StepOutputMapper.outputsTree(objectMapper, outputs), outputs);
-            return StepResult.success(log, outputs).withWorkerJobId(workerJobId);
-        }
-
-        String errorReason = row.getErrorReason() != null
-                ? row.getErrorReason()
-                : exitCodeFallback.map(this::mapExitCode).orElse("CLAUDE_LAUNCH_ERROR");
-        return StepResult.failed(log, errorReason).withWorkerJobId(workerJobId);
-    }
-
     /** Container exit-code → errorReason fallback, used only when the container never self-reported one. */
-    private String mapExitCode(int exitCode) {
+    private static String mapExitCode(int exitCode) {
         return switch (exitCode) {
             case 10 -> "CLAUDE_AGENT_ERROR";
             case 11 -> "CLAUDE_AUTH_ERROR";
@@ -679,18 +340,6 @@ public class ClaudeCodeContainerRunner {
         };
     }
 
-    private boolean isTerminal(WorkflowStepStatus status) {
-        return status == WorkflowStepStatus.SUCCESS || status == WorkflowStepStatus.FAILED;
-    }
-
-    private Map<String, String> parseOutputs(String outputJson) {
-        try {
-            return objectMapper.readValue(outputJson, new TypeReference<Map<String, String>>() {});
-        } catch (Exception e) {
-            log.warn("Failed to parse step outputs JSON: {}", e.getMessage());
-            return new HashMap<>();
-        }
-    }
 
     private int loadTokenTtlHours(String projectId) {
         return projectSettingsRepository.findByProjectId(projectId)
@@ -698,24 +347,6 @@ public class ClaudeCodeContainerRunner {
                 .orElse(24);
     }
 
-    /**
-     * Minutes left in {@code fullTimeoutMinutes}' budget, measured from {@code stepRun.getStartedAt()}
-     * (set once, at first launch, and never touched again by {@link #resolveOrCreateStepRun} on
-     * resume) rather than from now. Without this, a step resumed after a backend restart --
-     * {@link #run}'s two resume branches, which skip relaunching and poll the existing execution --
-     * would hand {@link #pollUntilTerminal} a fresh full budget every time, so a step that resumes
-     * repeatedly (e.g. across several redeploys) could run for a multiple of its declared timeout
-     * before ever actually being cancelled. A missing {@code startedAt} (shouldn't happen in
-     * production -- every row is created through {@link #resolveOrCreateStepRun} -- but keeps this
-     * defensive rather than crashing) falls back to the full budget.
-     */
-    private int remainingTimeoutMinutes(WorkflowStepRun stepRun, int fullTimeoutMinutes) {
-        if (stepRun.getStartedAt() == null) {
-            return fullTimeoutMinutes;
-        }
-        long elapsedMinutes = Duration.between(stepRun.getStartedAt(), OffsetDateTime.now()).toMinutes();
-        return (int) Math.max(0, fullTimeoutMinutes - elapsedMinutes);
-    }
 
     private int resolveTimeoutMinutes(Integer requested) {
         int minutes = requested != null ? requested : DEFAULT_TIMEOUT_MINUTES;
@@ -729,14 +360,6 @@ public class ClaudeCodeContainerRunner {
             return objectMapper.writeValueAsString(obj);
         } catch (Exception e) {
             return "{}";
-        }
-    }
-
-    protected void sleepSeconds(int seconds) {
-        try {
-            Thread.sleep(seconds * 1000L);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
     }
 }
