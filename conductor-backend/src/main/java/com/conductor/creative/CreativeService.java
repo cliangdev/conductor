@@ -186,7 +186,10 @@ public class CreativeService {
 
     @Transactional(readOnly = true)
     public CreativeView getCreative(String projectId, String creativeId, User caller) {
-        requireMember(projectId, caller);
+        // A null caller is a workflow run's token, already checked against the project by the controller.
+        if (caller != null) {
+            requireMember(projectId, caller);
+        }
         Creative creative = findCreative(projectId, creativeId);
         CreativeView view = toView(projectId, creative, loadPhotos(List.of(creative)));
         // Only the single-Creative read pays for the full render + its frames (contract item 6).

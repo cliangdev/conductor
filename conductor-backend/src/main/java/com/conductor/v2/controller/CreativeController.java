@@ -8,11 +8,13 @@ import com.conductor.creative.CreativePerformanceService;
 import com.conductor.creative.CreativePhoto;
 import com.conductor.creative.CreativePhotoService;
 import com.conductor.creative.CreativeRegistry;
+import com.conductor.creative.CreativeRenderDispatchService;
 import com.conductor.creative.CreativeRenderService;
 import com.conductor.creative.CreativeService;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.CreativesApi;
 import com.conductor.generated.v2.model.AttachCreativeRequest;
+import com.conductor.generated.v2.model.CreativeRenderRun;
 import com.conductor.generated.v2.model.AttachCreativeResponse;
 import com.conductor.generated.v2.model.AttachCreativeTargetSkip;
 import com.conductor.generated.v2.model.AttachCreativeTargetUpdate;
@@ -66,7 +68,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import com.conductor.security.WorkflowRunAuthenticationToken;
+import com.conductor.exception.ForbiddenException;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -93,11 +98,13 @@ public class CreativeController implements CreativesApi {
     private final CreativeAttachService attachService;
     private final CreativePerformanceService performanceService;
     private final CreativeExperimentService experimentService;
+    private final CreativeRenderDispatchService renderDispatchService;
 
     public CreativeController(CreativePhotoService photoService, CreativeService creativeService,
                               CreativeRegistry registry, ObjectMapper objectMapper,
                               CreativeRenderService renderService, CreativeAttachService attachService,
-                              CreativePerformanceService performanceService, CreativeExperimentService experimentService) {
+                              CreativePerformanceService performanceService, CreativeExperimentService experimentService,
+                              CreativeRenderDispatchService renderDispatchService) {
         this.photoService = photoService;
         this.creativeService = creativeService;
         this.registry = registry;
@@ -106,6 +113,7 @@ public class CreativeController implements CreativesApi {
         this.attachService = attachService;
         this.performanceService = performanceService;
         this.experimentService = experimentService;
+        this.renderDispatchService = renderDispatchService;
     }
 
     // ── Photos ───────────────────────────────────────────────────────────
@@ -222,7 +230,13 @@ public class CreativeController implements CreativesApi {
 
     @Override
     public ResponseEntity<CreativeResponse> getCreative(String projectId, String creativeId) {
-        return ResponseEntity.ok(toResponse(creativeService.getCreative(projectId, creativeId, currentUser())));
+        CreativeResponse response = toResponse(creativeService.getCreative(projectId, creativeId, renderCaller(projectId)));
+        // Only the single read pays for the run lookup, like latestRender; a run token (the render job) skips it.
+        if (callerRunId() == null) {
+            renderDispatchService.latestRun(projectId, creativeId)
+                    .ifPresent(run -> response.renderRun(toRunResponse(run)));
+        }
+        return ResponseEntity.ok(response);
     }
 
     @Override
@@ -267,11 +281,31 @@ public class CreativeController implements CreativesApi {
     @Override
     public ResponseEntity<CreativeRenderResponse> createCreativeRender(String projectId, String creativeId,
                                                                        CreateCreativeRenderRequest request) {
+        User caller = renderCaller(projectId);
+        String runId = callerRunId();
+        if (runId != null && (request == null || !runId.equals(request.getWorkflowRunId()))) {
+            throw new ForbiddenException("A run token can only request renders for its own run (workflowRunId)");
+        }
         CreativeRenderService.CreateRenderResult result =
-                renderService.requestRender(projectId, creativeId, request, currentUser());
+                renderService.requestRender(projectId, creativeId, request, caller);
         CreativeRenderResponse response = renderService.toResponse(
                 new CreativeRenderService.RenderView(result.render(), result.frames()), result.spec());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @Override
+    public ResponseEntity<CreativeRenderRun> createCreativeRenderRun(String projectId, String creativeId) {
+        if (callerRunId() != null) {
+            throw new ForbiddenException("A workflow run token cannot dispatch renders");
+        }
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(toRunResponse(renderDispatchService.dispatch(projectId, creativeId)));
+    }
+
+    private CreativeRenderRun toRunResponse(CreativeRenderDispatchService.RenderRunView run) {
+        return new CreativeRenderRun(run.workflowId(), run.runId(), run.status())
+                .waitReason(run.waitReason()).startedAt(run.startedAt()).finishedAt(run.finishedAt())
+                .error(run.error());
     }
 
     @Override
@@ -284,8 +318,10 @@ public class CreativeController implements CreativesApi {
 
     @Override
     public ResponseEntity<CreativeRenderResponse> getCreativeRender(String projectId, String creativeId, String renderId) {
+        User caller = renderCaller(projectId);
+        pinRenderToRun(projectId, creativeId, renderId);
         return ResponseEntity.ok(renderService.toResponse(
-                renderService.getRender(projectId, creativeId, renderId, currentUser())));
+                renderService.getRender(projectId, creativeId, renderId, caller)));
     }
 
     @Override
@@ -293,16 +329,20 @@ public class CreativeController implements CreativesApi {
                                                        String placementKey, Integer width, Integer height,
                                                        Resource body, Integer index, BigDecimal durationSeconds,
                                                        Boolean hasAudio) {
+        User caller = renderCaller(projectId);
+        pinRenderToRun(projectId, creativeId, renderId);
         renderService.putFrame(projectId, creativeId, renderId, placementKey, index, width, height,
-                readAllBytes(body), currentRequestContentType(), durationSeconds, hasAudio, currentUser());
+                readAllBytes(body), currentRequestContentType(), durationSeconds, hasAudio, caller);
         return ResponseEntity.noContent().build();
     }
 
     @Override
     public ResponseEntity<Void> putCreativeRenderFramePoster(String projectId, String creativeId, String renderId,
                                                              String placementKey, Resource body, Integer index) {
+        User caller = renderCaller(projectId);
+        pinRenderToRun(projectId, creativeId, renderId);
         renderService.putFramePoster(projectId, creativeId, renderId, placementKey, index,
-                readAllBytes(body), currentRequestContentType(), currentUser());
+                readAllBytes(body), currentRequestContentType(), caller);
         return ResponseEntity.noContent().build();
     }
 
@@ -310,15 +350,19 @@ public class CreativeController implements CreativesApi {
     public ResponseEntity<CreativeRenderResponse> completeCreativeRender(String projectId, String creativeId,
                                                                          String renderId,
                                                                          CompleteCreativeRenderRequest request) {
+        User caller = renderCaller(projectId);
+        pinRenderToRun(projectId, creativeId, renderId);
         return ResponseEntity.ok(renderService.toResponse(
-                renderService.completeRender(projectId, creativeId, renderId, request, currentUser())));
+                renderService.completeRender(projectId, creativeId, renderId, request, caller)));
     }
 
     @Override
     public ResponseEntity<CreativeRenderResponse> failCreativeRender(String projectId, String creativeId,
                                                                      String renderId, FailCreativeRenderRequest request) {
+        User caller = renderCaller(projectId);
+        pinRenderToRun(projectId, creativeId, renderId);
         return ResponseEntity.ok(renderService.toResponse(
-                renderService.failRender(projectId, creativeId, renderId, request, currentUser())));
+                renderService.failRender(projectId, creativeId, renderId, request, caller)));
     }
 
     // ── Attach (COND-24 T3) ──────────────────────────────────────────────
@@ -540,7 +584,42 @@ public class CreativeController implements CreativesApi {
         return node != null ? objectMapper.convertValue(node, CreativeAudio.class) : null;
     }
 
+    /** The signed-in person. Any other principal (a project key, a workflow run token) gets a clean 403
+     *  here rather than a ClassCastException: only the render endpoints below accept a run token. */
     private User currentUser() {
-        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof User user) {
+            return user;
+        }
+        throw new ForbiddenException("This endpoint needs a signed-in user or a user API key");
+    }
+
+    /**
+     * The caller of a render endpoint: the person, or {@code null} for a workflow run's token minted for this
+     * project (a machine -- the services skip the membership lookup and the controller pins the run).
+     */
+    private User renderCaller(String projectId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth instanceof WorkflowRunAuthenticationToken token) {
+            if (!projectId.equals(token.getProjectId())) {
+                throw new ForbiddenException("This run token does not belong to project " + projectId);
+            }
+            return null;
+        }
+        return currentUser();
+    }
+
+    /** The run id when the caller is a workflow run token, else null (a person). */
+    private String callerRunId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth instanceof WorkflowRunAuthenticationToken token ? token.getRunId() : null;
+    }
+
+    /** A run token may only touch renders its own run requested. */
+    private void pinRenderToRun(String projectId, String creativeId, String renderId) {
+        String runId = callerRunId();
+        if (runId != null) {
+            renderService.requireRenderOfRun(projectId, creativeId, renderId, runId);
+        }
     }
 }

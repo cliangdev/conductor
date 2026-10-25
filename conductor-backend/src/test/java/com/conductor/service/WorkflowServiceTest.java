@@ -27,6 +27,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -176,7 +177,7 @@ class WorkflowServiceTest {
     void createWorkflowRejectsReservedAreaName() {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
-        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
 
         WorkflowCreateRequest request = new WorkflowCreateRequest("My Flow");
@@ -193,7 +194,7 @@ class WorkflowServiceTest {
     void createWorkflowRejectsReservedDefinitionSlug() {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
-        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
 
         WorkflowCreateRequest request = new WorkflowCreateRequest("My Flow");
@@ -214,7 +215,7 @@ class WorkflowServiceTest {
     void createWorkflowRejectsASecondLifecycleOnTheSameAreaAndNoun() throws Exception {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
-        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "Marketing autopilot")).thenReturn(Optional.empty());
         when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "MARKETING_AUTOPILOT")).thenReturn(false);
         WorkflowDefinition marketing = new WorkflowDefinition();
@@ -242,7 +243,7 @@ class WorkflowServiceTest {
     void createWorkflowAllowsASecondLifecycleInTheSameAreaWithADifferentNoun() throws Exception {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
-        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "MARKETING_CHANGES")).thenReturn(Optional.empty());
         when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "MARKETING_CHANGES")).thenReturn(false);
         when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -266,7 +267,7 @@ class WorkflowServiceTest {
     void createWorkflowRejectsDuplicateSlug() {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
-        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "Eng v2")).thenReturn(Optional.empty());
         // A workflow with the same statechart slug already exists — the slug is the workflow's identity.
         when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "ENGINEERING")).thenReturn(true);
@@ -284,7 +285,7 @@ class WorkflowServiceTest {
     void createWorkflowAllowsNonReservedAreaAndSlug() {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
-        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
         when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -425,5 +426,21 @@ class WorkflowServiceTest {
         when(yamlParser.parse("on: {}")).thenReturn(spec);
 
         assertThat(service.allowsManualDispatch("on: {}")).isFalse();
+    }
+
+    @Test
+    void createWorkflowCountsEverythingExceptSystemWorkflowsTowardTheLimit() {
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
+        // 20 user workflows already: the limit refuses, whatever system workflows exist on top.
+        when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(20L);
+
+        assertThatThrownBy(() -> service.createWorkflow("proj-1", "user-1", new WorkflowCreateRequest("One More")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("limit");
+
+        org.mockito.ArgumentCaptor<java.util.Collection<String>> excluded = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(workflowRepository).countByProjectIdAndNameNotIn(eq("proj-1"), excluded.capture());
+        assertThat(excluded.getValue()).contains("knowledge-librarian", "knowledge-bootstrap", "conductor-creative-render");
     }
 }

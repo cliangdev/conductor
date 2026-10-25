@@ -119,4 +119,15 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
                                                              @Param("runningJobStatus") WorkflowJobStatus runningJobStatus,
                                                              @Param("terminalStatuses") Collection<WorkflowRunStatus> terminalStatuses,
                                                              Pageable pageable);
+
+    /**
+     * Runs of {@code workflowId} whose event payload names {@code creativeId}, newest first -- the render
+     * workflow's runs for one Creative.
+     */
+    @Query(value = "SELECT * FROM workflow_runs WHERE workflow_id = :workflowId "
+            + "AND event_payload ->> 'creativeId' = :creativeId ORDER BY started_at DESC LIMIT :limit",
+            nativeQuery = true)
+    List<WorkflowRun> findByWorkflowIdAndEventCreativeId(@Param("workflowId") String workflowId,
+                                                         @Param("creativeId") String creativeId,
+                                                         @Param("limit") int limit);
 }

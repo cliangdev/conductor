@@ -16,6 +16,9 @@ public interface WorkflowDefinitionRepository extends JpaRepository<WorkflowDefi
 
     long countByProjectId(String projectId);
 
+    /** The workflows that count toward the per-project limit: everything but Conductor's own system workflows. */
+    long countByProjectIdAndNameNotIn(String projectId, java.util.Collection<String> names);
+
     /** Columns the sidebar nav needs, without the heavy yaml / definition / webhook_token. */
     interface SidebarRow {
         String getId();

@@ -1,0 +1,27 @@
+# conductor-system-workflow: creative-render
+name: conductor-creative-render
+
+# System-managed workflow (see CreativeWorkflowProvisioner) -- fired by CreativeRenderDispatchService when
+# someone clicks Render on a Creative that needs a browser or ffmpeg. It runs on the workspace's
+# self-hosted conductor daemon (`conductor start`, Docker required) in the render image, which executes the
+# same `conductor creative render` Claude Code uses. `with.conductor_mcp: true` makes the dispatch payload
+# carry a run-scoped key (CONDUCTOR_API_KEY) for it. The creative id goes in through env, never into the
+# shell string.
+#
+# `manual: false` keeps it out of the generic Run button: it needs a creativeId event field.
+on:
+  workflow_dispatch:
+    manual: false
+
+jobs:
+  render:
+    runs-on: self-hosted
+    steps:
+      - id: render
+        uses: docker://ghcr.io/cliangdev/conductor-render:1
+        with:
+          conductor_mcp: true
+          timeout_minutes: 30
+        env:
+          CREATIVE_ID: ${{ event.creativeId }}
+        run: conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"

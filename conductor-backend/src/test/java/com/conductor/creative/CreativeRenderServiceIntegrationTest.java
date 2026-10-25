@@ -946,6 +946,91 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         return ("mp4-bytes-" + UUID.randomUUID()).getBytes();
     }
 
+    // ── PR 2: a workflow run's token renders as a machine (no user) ───────────────────────────────
+
+    @Test
+    void aMachineCallerRendersWithNoRequestedByAndTheRunPinsItsOwnRender() {
+        CreateCreativeRenderRequest request = new CreateCreativeRenderRequest()
+                .renderer("workflow").workflowRunId("run-1");
+
+        CreativeRenderService.CreateRenderResult result =
+                renderService.requestRender(project.getId(), creative.getId(), request, null);
+
+        assertThat(result.render().getRequestedBy()).isNull();
+        assertThat(result.render().getWorkflowRunId()).isEqualTo("run-1");
+        String renderId = result.render().getId();
+        renderService.putFrame(project.getId(), creative.getId(), renderId, "9x16", null, 1080, 1920,
+                jpeg(), "image/jpeg", null);
+        renderService.putFrame(project.getId(), creative.getId(), renderId, "4x5", null, 1080, 1350,
+                jpeg(), "image/jpeg", null);
+        renderService.putFrame(project.getId(), creative.getId(), renderId, "1x1", null, 1080, 1080,
+                jpeg(), "image/jpeg", null);
+        CreativeRenderService.RenderView done =
+                renderService.completeRender(project.getId(), creative.getId(), renderId, null, null);
+
+        assertThat(done.render().getState()).isEqualTo(CreativeRender.STATE_SUCCEEDED);
+        // Every reader copes with a null requestedBy.
+        assertThat(renderService.toResponse(done)).isNotNull();
+        assertThat(renderService.listRenders(project.getId(), creative.getId(), admin)).hasSize(1);
+        renderService.requireRenderOfRun(project.getId(), creative.getId(), renderId, "run-1");
+        assertThatThrownBy(() -> renderService.requireRenderOfRun(project.getId(), creative.getId(), renderId, "run-2"))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+    }
+
+    @Test
+    void aRunTokenCannotTouchARenderAPersonStarted() {
+        String renderId = renderService.requestRender(project.getId(), creative.getId(),
+                new CreateCreativeRenderRequest(), admin).render().getId();
+
+        assertThatThrownBy(() -> renderService.requireRenderOfRun(project.getId(), creative.getId(), renderId, "run-1"))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+    }
+
+    @Test
+    void aMachineFailureRecordsTheErrorAndDiscardsFrames() {
+        String renderId = renderService.requestRender(project.getId(), creative.getId(),
+                new CreateCreativeRenderRequest().renderer("workflow").workflowRunId("run-1"), null).render().getId();
+
+        CreativeRenderService.RenderView failed = renderService.failRender(project.getId(), creative.getId(), renderId,
+                new com.conductor.generated.v2.model.FailCreativeRenderRequest().message("ffmpeg crashed"), null);
+
+        assertThat(failed.render().getState()).isEqualTo(CreativeRender.STATE_FAILED);
+        assertThat(failed.render().getError()).isEqualTo("ffmpeg crashed");
+    }
+
+    @Test
+    void needsLocalRenderIsTrueForStillAndMotionAndForAudioBearingCarouselsAndClipsOnly() {
+        Creative still = new Creative();
+        still.setKind(Creative.KIND_STILL);
+        Creative motion = new Creative();
+        motion.setKind(Creative.KIND_MOTION);
+        Creative carousel = new Creative();
+        carousel.setKind(Creative.KIND_CAROUSEL);
+        Creative carouselTrack = new Creative();
+        carouselTrack.setKind(Creative.KIND_CAROUSEL);
+        carouselTrack.setAudio(objectMapper.valueToTree(Map.of("source", "track", "trackId", "t-1")));
+        Creative clip = new Creative();
+        clip.setKind(Creative.KIND_CLIP);
+        Creative clipOwnSound = new Creative();
+        clipOwnSound.setKind(Creative.KIND_CLIP);
+        clipOwnSound.setAudio(objectMapper.valueToTree(Map.of("source", "clip")));
+        Creative clipMuted = new Creative();
+        clipMuted.setKind(Creative.KIND_CLIP);
+        clipMuted.setAudio(objectMapper.valueToTree(Map.of("source", "none")));
+        Creative clipMix = new Creative();
+        clipMix.setKind(Creative.KIND_CLIP);
+        clipMix.setAudio(objectMapper.valueToTree(Map.of("source", "mix", "trackId", "t-1")));
+
+        assertThat(renderService.needsLocalRender(still)).isTrue();
+        assertThat(renderService.needsLocalRender(motion)).isTrue();
+        assertThat(renderService.needsLocalRender(carouselTrack)).isTrue();
+        assertThat(renderService.needsLocalRender(clipMuted)).isTrue();
+        assertThat(renderService.needsLocalRender(clipMix)).isTrue();
+        assertThat(renderService.needsLocalRender(carousel)).isFalse();
+        assertThat(renderService.needsLocalRender(clip)).isFalse();
+        assertThat(renderService.needsLocalRender(clipOwnSound)).isFalse();
+    }
+
     private Creative newCreative(CreativePhoto photo) {
         Creative c = new Creative();
         c.setProjectId(project.getId());

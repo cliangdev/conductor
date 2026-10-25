@@ -1,5 +1,6 @@
 package com.conductor.workflow;
 
+import com.conductor.creative.CreativeWorkflowProvisioner;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
@@ -72,6 +73,11 @@ public class WorkflowFailureCircuitBreaker {
             return;
         }
         if (status != WorkflowRunStatus.FAILED) {
+            return;
+        }
+        // Never auto-pause the render workflow: failures here are a missing daemon or a bad Creative, and a
+        // paused workflow would refuse every later Render click until someone found the toggle.
+        if (CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME.equals(workflow.getName())) {
             return;
         }
 
