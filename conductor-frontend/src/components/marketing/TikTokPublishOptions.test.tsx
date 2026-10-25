@@ -144,6 +144,16 @@ describe('TikTokPublishOptions', () => {
     expect(screen.queryByRole('switch', { name: 'Stitch' })).not.toBeInTheDocument()
   })
 
+  it('offers music and cover only on a photo post, never on a video (a carousel posted as video)', () => {
+    const { unmount } = renderOptions({ isVideo: false })
+    expect(screen.getByRole('switch', { name: 'Add TikTok music automatically' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Cover image')).toBeInTheDocument()
+    unmount()
+    renderOptions({ isVideo: true })
+    expect(screen.queryByRole('switch', { name: 'Add TikTok music automatically' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Cover image')).not.toBeInTheDocument()
+  })
+
   it('greys out and switches off an interaction the creator has disabled in TikTok', () => {
     renderOptions({
       isVideo: true,

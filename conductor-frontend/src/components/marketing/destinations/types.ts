@@ -51,7 +51,14 @@ export interface PublishTargetOption {
 /** The union of every platform's own option bag. Field names never collide across platforms. */
 export type PublishOptionsBag = Partial<TikTokPublishOptionValues> &
   Partial<InstagramPublishOptionValues> &
-  Partial<YouTubePublishOptionValues>
+  Partial<YouTubePublishOptionValues> & {
+    /** A music CAROUSEL goes out as its slides (`photos`) or as its slideshow MP4 (`video`). The backend
+     *  writes it on attach whenever the Creative has a track; never sent to a connector. */
+    carouselAs?: CarouselAs
+  }
+
+/** How a CAROUSEL with a music track is posted. */
+export type CarouselAs = 'photos' | 'video'
 
 /** One destination actually selected on this Post (a persisted post_publish_target row). */
 export interface SelectedPublishTarget {

@@ -82,6 +82,7 @@ export function useDraftDestinations({
       setTikTokOptions: (row, next) => setDraft((d) => ({ ...d, tiktok: { ...d.tiktok, [row.key]: next } })),
       setInstagramOptions: (row, next) => setDraft((d) => ({ ...d, instagram: { ...d.instagram, [row.key]: next } })),
       setYouTubeOptions: (row, next) => setDraft((d) => ({ ...d, youtube: { ...d.youtube, [row.key]: next } })),
+      setCarouselAs: (row, next) => setDraft((d) => ({ ...d, carouselAs: { ...d.carouselAs, [row.key]: next } })),
       setContent: (row, next) => setDraft((d) => ({ ...d, content: { ...d.content, [row.key]: next } })),
       retry: async () => {},
       completeManual: async () => {},

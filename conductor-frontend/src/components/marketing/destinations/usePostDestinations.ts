@@ -302,6 +302,8 @@ export function usePostDestinations({
         void save({ ...draftRef.current, instagram: { ...draftRef.current.instagram, [row.key]: next } }),
       setYouTubeOptions: (row, next) =>
         void save({ ...draftRef.current, youtube: { ...draftRef.current.youtube, [row.key]: next } }),
+      setCarouselAs: (row, next) =>
+        void save({ ...draftRef.current, carouselAs: { ...draftRef.current.carouselAs, [row.key]: next } }),
       setContent: (row, next) =>
         void save({ ...draftRef.current, content: { ...draftRef.current.content, [row.key]: next } }),
       retry: async () => {
