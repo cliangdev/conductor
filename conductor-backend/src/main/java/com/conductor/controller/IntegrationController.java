@@ -41,7 +41,9 @@ import com.conductor.integration.AuthType;
 import com.conductor.integration.Capability;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.Connector;
+import com.conductor.integration.ConnectorConfigField;
 import com.conductor.integration.ConnectorData;
+import com.conductor.integration.FieldSource;
 import com.conductor.integration.ConnectorHealth;
 import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorRegistry;
@@ -88,6 +90,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 @RestController
@@ -105,6 +108,7 @@ public class IntegrationController implements IntegrationsApi {
     private final ProjectSecurityService projectSecurityService;
     private final ConnectorFeedRepository connectorFeedRepository;
     private final ObjectMapper objectMapper;
+    private final ConnectionHealthService connectionHealthService;
     /**
      * Present only outside the {@code local} profile (the real {@link GcpBillingConnector} is
      * {@code @Profile("!local")}); empty locally — matching the previous {@code @Profile("!local")}
@@ -134,7 +138,9 @@ public class IntegrationController implements IntegrationsApi {
                                 ConnectorAppCredentialService appCredentialService,
                                 ConnectorAppCredentialVerificationService appCredentialVerificationService,
                                 ObjectMapper objectMapper,
-                                com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider) {
+                                com.conductor.agent.tool.RemoteMcpToolProvider remoteMcpToolProvider,
+                                ConnectionHealthService connectionHealthService) {
+        this.connectionHealthService = connectionHealthService;
         this.remoteMcpToolProvider = remoteMcpToolProvider;
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -407,23 +413,39 @@ public class IntegrationController implements IntegrationsApi {
             String projectId, String connectorId, String connectionId, UpdateConnectionRequest request) {
         requireAdminOrCreator(projectId);
         Connection conn = requireConnection(projectId, connectorId, connectionId);
-        if (request != null && request.getConfig() != null && !request.getConfig().isEmpty()
+        boolean configChanged = request != null && request.getConfig() != null && !request.getConfig().isEmpty();
+        String newKey = request != null && request.getApiKey() != null && !request.getApiKey().isBlank()
+                ? request.getApiKey().trim() : null;
+        if (newKey != null && !AuthType.API_KEY.name().equals(conn.getAuthType())) {
+            throw new BusinessException("This connection does not use an API key");
+        }
+        if ((configChanged || newKey != null)
                 && connectorRegistry.getById(connectorId).orElse(null) instanceof FetchConnector fetchConnector) {
-            // Re-check with the merged config and the stored secret before anything is changed.
+            // Re-check with the merged config and the new (or stored) secret before anything is changed.
             ConnectionContext stored = connectionService.toContext(conn);
             Map<String, Object> merged = new java.util.HashMap<>(stored.config() != null ? stored.config() : Map.of());
-            merged.putAll(request.getConfig());
+            if (configChanged) {
+                merged.putAll(request.getConfig());
+            }
             ConnectionContext edited = new ConnectionContext(projectId, connectorId,
-                    "verify-" + java.util.UUID.randomUUID(), stored.accessToken(), stored.refreshToken(),
-                    stored.expiresAt(), merged, stored.webhookSecret());
+                    "verify-" + java.util.UUID.randomUUID(), newKey != null ? newKey : stored.accessToken(),
+                    stored.refreshToken(), stored.expiresAt(), merged, stored.webhookSecret());
             refuseIfAlreadyConnected(fetchConnector, edited, conn.getId());
             refuseIfCredentialsFail(fetchConnector, edited);
         }
         if (request != null && request.getLabel() != null) {
             connectionService.updateLabel(conn, request.getLabel());
         }
-        if (request != null && request.getConfig() != null && !request.getConfig().isEmpty()) {
+        if (configChanged) {
             connectionService.updateConfig(conn, request.getConfig());
+        }
+        if (newKey != null) {
+            connectionService.storeTokens(conn, newKey, null, null);
+            // A stale red/amber state belongs to the old key.
+            connectionHealthService.resetHealthy(conn.getId());
+        }
+        if (configChanged || newKey != null) {
+            reviveStalledFeeds(conn);
         }
         return ResponseEntity.ok(toConnectionResponse(conn, null));
     }
@@ -706,6 +728,17 @@ public class IntegrationController implements IntegrationsApi {
      * is still unauthenticated the next pull re-marks it within one tick, which is honest feedback
      * rather than a permanently un-retryable row.
      */
+    /** A fix to the settings or the key should be tried now, not after the 6h setup-required back-off. */
+    private void reviveStalledFeeds(Connection conn) {
+        for (ConnectorFeed feed : connectorFeedRepository.findByConnectionId(conn.getId())) {
+            if (feed.getStatus() == ConnectorFeedStatus.SETUP_REQUIRED || feed.getStatus() == ConnectorFeedStatus.DEAD) {
+                resumeFeed(feed);
+                feed.setNextRunAt(OffsetDateTime.now());
+                connectorFeedRepository.save(feed);
+            }
+        }
+    }
+
     private void resumeFeed(ConnectorFeed feed) {
         feed.setStatus(ConnectorFeedStatus.ACTIVE);
         feed.setConsecutiveFailures(0);
@@ -917,6 +950,27 @@ public class IntegrationController implements IntegrationsApi {
                 .toList();
     }
 
+    /** The stored settings the connector declares as plain user input; secrets and generated values stay out. */
+    private Map<String, Object> editableConfig(Connection conn) {
+        Set<String> keys = connectorRegistry.getById(conn.getConnectorId())
+                .map(c -> c.getSpec().fields().stream()
+                        .filter(f -> f.source() == FieldSource.USER_INPUT && !f.secret())
+                        .map(ConnectorConfigField::key)
+                        .collect(java.util.stream.Collectors.toSet()))
+                .orElse(Set.of());
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        if (keys.isEmpty() || conn.getConfigJson() == null || conn.getConfigJson().isBlank()) {
+            return out;
+        }
+        try {
+            Map<String, Object> all = objectMapper.readValue(conn.getConfigJson(), new TypeReference<Map<String, Object>>() {});
+            all.forEach((k, v) -> { if (keys.contains(k) && v != null) out.put(k, v); });
+        } catch (Exception e) {
+            log.warn("Unreadable config for connection {}: {}", conn.getId(), e.getMessage());
+        }
+        return out;
+    }
+
     private ConnectionSummary toConnectionSummary(Connection conn) {
         ConnectionSummary summary = new ConnectionSummary()
                 .id(conn.getId())
@@ -938,6 +992,7 @@ public class IntegrationController implements IntegrationsApi {
                     && !"SETUP_REQUIRED".equals(summary.getHealthStatus()))) {
             summary.setHealthStatus(conn.getHealthStatus());
         }
+        summary.setConfig(editableConfig(conn));
         summary.setHealthCheckedAt(conn.getHealthCheckedAt());
         summary.setHealthMessage(conn.getHealthMessage());
         // The NO_NEW_DATA marker is bookkeeping, not the platform's words; the message is what a person reads.

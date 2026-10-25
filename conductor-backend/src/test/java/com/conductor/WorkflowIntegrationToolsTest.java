@@ -66,6 +66,7 @@ class WorkflowIntegrationToolsTest {
 
     @MockitoBean private ConnectorRegistry connectorRegistry;
     @MockitoBean private ConnectionService connectionService;
+    @MockitoBean private com.conductor.service.ConnectionHealthService connectionHealthService;
     @MockitoBean private IntegrationFetchService fetchService;
     @MockitoBean private OAuthFlowService oAuthFlowService;
     @MockitoBean private ConnectionDataCacheRepository cacheRepository;

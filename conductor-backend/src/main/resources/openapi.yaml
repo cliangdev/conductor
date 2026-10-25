@@ -6730,6 +6730,12 @@ components:
           description: >
             The platform's full error behind healthMessage — JSON body and all — for support and
             debugging. Null while healthy.
+        config:
+          type: object
+          additionalProperties: true
+          description: >
+            The connection's non-secret settings, limited to the fields the connector declares as
+            user input (never the API key), so an edit form can show the current values.
         fetchedAt:
           type: string
           format: date-time
@@ -6770,6 +6776,13 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+        apiKey:
+          type: string
+          nullable: true
+          description: >
+            Replaces the stored API key (API_KEY connectors). Write-only; never returned. The new key is
+            checked with the connector's credential check, together with the merged config, before it is
+            saved; a key that fails is refused with a 400 and nothing changes.
 
     ConnectionResponse:
       type: object

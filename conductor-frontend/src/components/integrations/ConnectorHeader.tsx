@@ -4,12 +4,14 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-type HealthStatus = 'HEALTHY' | 'DEGRADED' | 'SETUP_REQUIRED' | null;
+type HealthStatus = 'HEALTHY' | 'DEGRADED' | 'SETUP_REQUIRED' | 'UNHEALTHY' | null;
 
 const HEALTH_STATUS: Record<Exclude<HealthStatus, null>, { status: string; label: string }> = {
   HEALTHY: { status: 'done', label: 'Connected' },
   DEGRADED: { status: 'in_progress', label: 'Degraded' },
   SETUP_REQUIRED: { status: 'in_progress', label: 'Setup required' },
+  // "ERROR" only selects the red hue from the status ramp.
+  UNHEALTHY: { status: 'ERROR', label: 'Needs reconnect' },
 };
 
 /**
@@ -26,6 +28,7 @@ export function ConnectorHeader({
   externalLabel,
   onRefresh,
   refreshing,
+  onEditSettings,
 }: {
   title: string;
   subtitle?: string;
@@ -34,6 +37,8 @@ export function ConnectorHeader({
   externalLabel: string;
   onRefresh: () => void;
   refreshing: boolean;
+  /** Opens the connection's settings editor; the button is hidden when omitted. */
+  onEditSettings?: () => void;
 }) {
   const health = status ? HEALTH_STATUS[status] : null;
   return (
@@ -53,6 +58,11 @@ export function ConnectorHeader({
             <ExternalLink className="h-3 w-3" />
             {externalLabel}
           </a>
+          {onEditSettings && (
+            <Button variant="outline" size="sm" onClick={onEditSettings}>
+              Edit settings
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>

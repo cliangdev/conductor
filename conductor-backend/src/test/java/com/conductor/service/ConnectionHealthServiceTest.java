@@ -164,6 +164,19 @@ class ConnectionHealthServiceTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void resetHealthyClearsEvenANoNewDataFlagAndTheDetail() {
+        Connection conn = persistedConnection();
+        connectionHealthService.markUnhealthy(conn.getId(), "Token has been expired or revoked.");
+
+        connectionHealthService.resetHealthy(conn.getId());
+
+        Connection reloaded = reload(conn.getId());
+        assertThat(reloaded.getHealthStatus()).isEqualTo("HEALTHY");
+        assertThat(reloaded.getHealthMessage()).isNull();
+        assertThat(reloaded.getHealthDetail()).isNull();
+    }
+
+    @Test
     void markUnhealthyTruncatesAnOverlongProviderMessage() {
         Connection conn = persistedConnection();
 

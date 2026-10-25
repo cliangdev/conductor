@@ -20,6 +20,10 @@ export interface ConnectionSummary {
   authType?: string | null
   tokenExpiresAt?: string | null
   healthStatus?: string | null
+  /** The platform's explanation of a non-healthy verdict (e.g. "No new data since Sep 10"). */
+  healthMessage?: string | null
+  /** Non-secret settings the connector declares as user input, for the edit form. */
+  config?: Record<string, unknown> | null
   fetchedAt?: string | null
   /** The OAuth grant is stored but no account was chosen for it; the picker has to run again. */
   awaitingAccountSelection?: boolean
@@ -93,7 +97,7 @@ export function patchConnection(
   projectId: string,
   connectorId: string,
   connectionId: string,
-  body: { label?: string; config?: Record<string, unknown> },
+  body: { label?: string; config?: Record<string, unknown>; apiKey?: string },
   token: string,
 ): Promise<ConnectionResponse> {
   return apiPatch<ConnectionResponse>(

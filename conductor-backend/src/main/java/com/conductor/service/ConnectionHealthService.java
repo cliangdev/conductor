@@ -88,6 +88,18 @@ public class ConnectionHealthService {
         });
     }
 
+    /** Clears any verdict unconditionally: new credentials were just verified, so the old state no longer applies. */
+    @Transactional
+    public void resetHealthy(String connectionId) {
+        find(connectionId, HEALTHY).ifPresent(conn -> {
+            conn.setHealthStatus(HEALTHY);
+            conn.setHealthCheckedAt(OffsetDateTime.now());
+            conn.setHealthMessage(null);
+            conn.setHealthDetail(null);
+            connectionRepository.save(conn);
+        });
+    }
+
     /**
      * Flags a connection whose feed keeps pulling successfully but whose newest stored day is {@code since}.
      * Purely informational (DEGRADED + message): it never touches the feed, and it never overwrites a more

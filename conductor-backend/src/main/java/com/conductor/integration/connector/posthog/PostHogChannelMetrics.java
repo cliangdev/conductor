@@ -111,6 +111,7 @@ final class PostHogChannelMetrics {
     }
 
     private List<List<Object>> query(String url, ConnectionContext ctx, String sql, Map<String, Object> values) {
+        Object projectId = ctx.configValue("projectId");
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(ctx.accessToken());
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -124,7 +125,7 @@ final class PostHogChannelMetrics {
         } catch (HttpStatusCodeException e) {
             int status = e.getStatusCode().value();
             if (status == 401 || status == 403) {
-                throw ChannelMetricsSourceException.setupRequired("PostHog refused the API key (" + status + ")");
+                throw ChannelMetricsSourceException.setupRequired(PostHogSettings.refusedKeyMessage(projectId));
             }
             if (status == 429) {
                 throw ChannelMetricsSourceException.degraded("PostHog rate limited the query, retrying later");
