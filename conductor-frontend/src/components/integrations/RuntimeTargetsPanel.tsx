@@ -18,6 +18,7 @@ import {
   provisionRuntimeTarget,
   apiErrorMessage,
 } from '@/lib/api'
+import { renderAvailability } from '@/lib/runtimeRender'
 import type { ConnectionSummary, RuntimeTarget } from '@/lib/api'
 
 interface EditFormState {
@@ -72,13 +73,20 @@ function RenderLine({
   onEdit: () => void
 }) {
   const render = target.render ?? { status: 'NONE' as const }
+  const availability = renderAvailability(target)
   return (
     <div className="mt-1 text-xs" data-testid={`render-line-${target.id}`}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-muted-foreground">Rendering</span>
         {render.status === 'READY' ? (
           <>
-            <span className="text-foreground">Renders creatives</span>
+            {availability.available ? (
+              <span className="text-foreground">Renders creatives</span>
+            ) : (
+              <span className="text-muted-foreground">
+                {availability.reason}: creatives render on your self-hosted daemon
+              </span>
+            )}
             {render.resolvedImage && (
               <span className="font-mono text-muted-foreground truncate" title={render.resolvedImage}>
                 {shortDigest(render.resolvedImage)}
@@ -102,6 +110,9 @@ function RenderLine({
       </div>
       {render.status === 'ERROR' && target.status === 'ACTIVE' && (
         <p className="mt-0.5 text-muted-foreground">Fix the image, then use “Sync to latest image” to retry.</p>
+      )}
+      {render.status !== 'READY' && (
+        <p className="mt-0.5 text-muted-foreground">Creatives render on your self-hosted daemon.</p>
       )}
       {render.warnings && render.warnings.length > 0 && (
         <p className="mt-0.5 text-status-progress">{render.warnings.join(' ')}</p>
@@ -138,6 +149,7 @@ export default function RuntimeTargetsPanel({
   const [renderImage, setRenderImage] = useState('')
   const [renderSaving, setRenderSaving] = useState(false)
   const [renderError, setRenderError] = useState<string | null>(null)
+  const [confirmStop, setConfirmStop] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState<RuntimeTarget | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -202,29 +214,39 @@ export default function RuntimeTargetsPanel({
     setRenderTarget(target)
     setRenderImage(target.renderImage ?? '')
     setRenderError(null)
+    setConfirmStop(false)
   }
 
   async function handleRenderSave(e: React.FormEvent) {
     e.preventDefault()
     if (!accessToken || !renderTarget) return
+    if (renderImage.trim() === '') {
+      setRenderError('Enter the Artifact Registry address of your conductor-render image.')
+      return
+    }
     const invalid = renderImageError(renderImage)
     if (invalid) {
       setRenderError(invalid)
       return
     }
+    await submitRenderImage(renderImage.trim(), 'Failed to update the render image.')
+  }
+
+  /** Stop rendering on this target: an empty renderImage clears it (render.status NONE). */
+  async function handleRenderStop() {
+    await submitRenderImage('', 'Failed to stop rendering on this target.')
+  }
+
+  async function submitRenderImage(value: string, failureMessage: string) {
+    if (!accessToken || !renderTarget) return
     setRenderSaving(true)
     setRenderError(null)
     try {
-      const updated = await updateRuntimeTarget(
-        projectId,
-        renderTarget.id,
-        { renderImage: renderImage.trim() },
-        accessToken,
-      )
+      const updated = await updateRuntimeTarget(projectId, renderTarget.id, { renderImage: value }, accessToken)
       setTargets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
       setRenderTarget(null)
     } catch (err) {
-      setRenderError(apiErrorMessage(err, 'Failed to update the render image.'))
+      setRenderError(apiErrorMessage(err, failureMessage))
     } finally {
       setRenderSaving(false)
     }
@@ -471,10 +493,10 @@ export default function RuntimeTargetsPanel({
         open={renderTarget !== null}
         onOpenChange={(o) => { if (!o) setRenderTarget(null) }}
         title={renderTarget ? `Rendering on ${renderTarget.name}` : ''}
-        description="Mirror ghcr.io/cliangdev/conductor-render into your Artifact Registry, then enter its address. Saving creates the render Cloud Run Job; until it is ready, creatives render on your self-hosted daemon."
+        description="Mirror ghcr.io/cliangdev/conductor-render into your Artifact Registry, then enter its address. Saving creates the render Cloud Run Job (saving the same address again re-syncs it); until it is ready, creatives render on your self-hosted daemon."
       >
         {renderTarget && (
-          <form onSubmit={handleRenderSave} className="space-y-4">
+          <form onSubmit={handleRenderSave} noValidate className="space-y-4">
             <div>
               <label htmlFor="render-image" className="block text-sm font-medium text-foreground mb-1">Render image</label>
               <input
@@ -483,7 +505,6 @@ export default function RuntimeTargetsPanel({
                 value={renderImage}
                 onChange={(e) => setRenderImage(e.target.value)}
                 placeholder="us-docker.pkg.dev/my-project/conductor/conductor-render:1"
-                required
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
@@ -493,9 +514,39 @@ export default function RuntimeTargetsPanel({
                 Cancel
               </Button>
               <Button type="submit" className="flex-1" disabled={renderSaving}>
-                {renderSaving ? 'Saving…' : 'Save'}
+                {renderSaving
+                  ? 'Saving…'
+                  : renderTarget.renderImage && renderImage.trim() === renderTarget.renderImage
+                    ? 'Save and sync'
+                    : 'Save'}
               </Button>
             </div>
+            {renderTarget.renderImage && (
+              confirmStop ? (
+                <div className="rounded-md border border-border p-3 space-y-2" data-testid="stop-render-confirm">
+                  <p className="text-sm text-foreground">
+                    Stop rendering on <strong>{renderTarget.name}</strong>? Creatives will render on your self-hosted
+                    daemon. The render Cloud Run Job is left in place.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setConfirmStop(false)} disabled={renderSaving}>
+                      Keep rendering
+                    </Button>
+                    <Button type="button" variant="destructive" size="sm" onClick={handleRenderStop} disabled={renderSaving}>
+                      Confirm stop
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmStop(true)}
+                  className="text-sm text-destructive underline-offset-2 hover:underline"
+                >
+                  Stop rendering on this target
+                </button>
+              )
+            )}
           </form>
         )}
       </Modal>

@@ -220,6 +220,108 @@ describe('RuntimeTargetsPanel', () => {
       expect(await within(line('t-active')).findByText('Renders creatives')).toBeInTheDocument()
     })
 
+    it.each([
+      ['PROVISIONING', 'conn-1', 'Target is provisioning'],
+      ['ERROR', 'conn-1', 'Target is error'],
+      ['ACTIVE', null, 'No GCP connection'],
+    ] as const)(
+      'READY but target %s / connection %s: explains the fallback instead of "Renders creatives"',
+      async (status, connectionId, reason) => {
+        vi.mocked(api.listRuntimeTargets).mockResolvedValue([
+          { ...activeTarget, status, connectionId, render: { status: 'READY' } } as never,
+        ])
+        render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+        await screen.findByText('active-target')
+        expect(within(line('t-active')).queryByText('Renders creatives')).toBeNull()
+        expect(line('t-active')).toHaveTextContent(`${reason}: creatives render on your self-hosted daemon`)
+      },
+    )
+
+    it('NONE: says creatives render on the self-hosted daemon', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      expect(line('t-active')).toHaveTextContent('Creatives render on your self-hosted daemon.')
+    })
+
+    const readyWithImage = {
+      ...activeTarget,
+      renderImage: 'us-docker.pkg.dev/p/r/conductor-render:1',
+      render: { status: 'READY' as const, resolvedImage: 'us-docker.pkg.dev/p/r/conductor-render@sha256:abcdefabcdefabcd' },
+    }
+
+    it('empty input gets an explicit validation message, not the browser required bubble', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Set up rendering' }))
+      expect(screen.getByLabelText('Render image')).not.toBeRequired()
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Enter the Artifact Registry address')
+      expect(api.updateRuntimeTarget).not.toHaveBeenCalled()
+    })
+
+    it('unchanged value: button reads "Save and sync" and re-sends the same image', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([readyWithImage])
+      vi.mocked(api.updateRuntimeTarget).mockResolvedValue(readyWithImage)
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Edit render image' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Save and sync' }))
+      await waitFor(() =>
+        expect(api.updateRuntimeTarget).toHaveBeenCalledWith(
+          'proj-1',
+          't-active',
+          { renderImage: 'us-docker.pkg.dev/p/r/conductor-render:1' },
+          'test-token',
+        ),
+      )
+    })
+
+    it('changed value: button reads "Save"', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([readyWithImage])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Edit render image' }))
+      fireEvent.change(screen.getByLabelText('Render image'), { target: { value: 'us-docker.pkg.dev/p/r/conductor-render:2' } })
+      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Save and sync' })).toBeNull()
+    })
+
+    it('no stop action when nothing is set', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Set up rendering' }))
+      expect(screen.queryByRole('button', { name: 'Stop rendering on this target' })).toBeNull()
+    })
+
+    it('stop rendering: asks for confirmation, then sends { renderImage: "" }', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([readyWithImage])
+      vi.mocked(api.updateRuntimeTarget).mockResolvedValue({ ...activeTarget, renderImage: null, render: { status: 'NONE' } })
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Edit render image' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Stop rendering on this target' }))
+      expect(api.updateRuntimeTarget).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }))
+      await waitFor(() =>
+        expect(api.updateRuntimeTarget).toHaveBeenCalledWith('proj-1', 't-active', { renderImage: '' }, 'test-token'),
+      )
+      expect(await within(line('t-active')).findByText('Not set up for rendering')).toBeInTheDocument()
+    })
+
+    it('stop rendering: "Keep rendering" backs out without calling the API', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([readyWithImage])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Edit render image' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Stop rendering on this target' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Keep rendering' }))
+      expect(api.updateRuntimeTarget).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Stop rendering on this target' })).toBeInTheDocument()
+    })
+
     it('shows a backend error from the update inside the modal', async () => {
       vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
       vi.mocked(api.updateRuntimeTarget).mockRejectedValue({ detail: 'Update refused' })

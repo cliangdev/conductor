@@ -24,7 +24,7 @@ interface StubRuntimeTarget {
   id: string
   name: string
   provider: 'gcp-cloud-run'
-  connectionId: string
+  connectionId: string | null
   gcpProjectId: string
   region: string
   jobName: string
@@ -139,6 +139,25 @@ describe('ClaudeRuntimeSection', () => {
         'href',
         '/app/projects/proj-1/integrations/gcp',
       )
+    },
+  )
+
+  it.each([
+    ['PROVISIONING', 'conn-1', 'Target is provisioning'],
+    ['ERROR', 'conn-1', 'Target is error'],
+    ['ACTIVE', null, 'No GCP connection'],
+  ] as const)(
+    'does not claim creatives render here when render is READY but the target is %s / connection %s',
+    async (status, connectionId, reason) => {
+      const t = { ...activeTarget, status, connectionId, render: { status: 'READY' as const } }
+      getRuntimeBehavior = () =>
+        Promise.resolve({ source: 'project-target', runtimeTargetId: 'target-1', runtimeTarget: t, builtinConfigured: true })
+      listTargetsBehavior = () => Promise.resolve([t])
+      render(<ClaudeRuntimeSection projectId="proj-1" />)
+      const line = await screen.findByTestId('runtime-render-line')
+      expect(line).toHaveTextContent('Creatives render on your self-hosted daemon')
+      expect(line).toHaveTextContent(reason)
+      expect(screen.queryByText('Creatives render here')).toBeNull()
     },
   )
 

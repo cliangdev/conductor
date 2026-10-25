@@ -5,7 +5,8 @@
 // panel is read-only: it lists what a local render produced, shows the latest SUCCEEDED render's
 // frames as a grid, and polls while a render is in flight. For a Creative that needs a local render
 // (`webRender`) there is also an explicit "Render" button that dispatches the `conductor-creative-render`
-// system Workflow onto the workspace's self-hosted daemon; it is never fired automatically.
+// system Workflow, which runs on the workspace's BYO Cloud Run runtime target when that target is set
+// up for rendering and otherwise on its self-hosted daemon; it is never fired automatically.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -72,7 +73,8 @@ export interface RendersPanelProps {
    *  no "Prepare for posting" button, the same "renders locally" guidance MOTION shows. */
   localRender?: boolean
   /** The Creative needs a browser/ffmpeg render (`needsLocalRender`): show the Render button, which
-   *  runs it on the workspace's self-hosted daemon through the `conductor-creative-render` Workflow. */
+   *  runs it through the `conductor-creative-render` Workflow: on the designated Cloud Run runtime target
+   *  when its render job is ready, otherwise on the workspace's self-hosted daemon. */
   webRender?: boolean
   token: string
   registry?: CreativeRegistry | null
