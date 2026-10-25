@@ -7,7 +7,11 @@ import com.conductor.repository.WorkflowDefinitionRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
@@ -33,11 +37,16 @@ public class CreativeWorkflowProvisioner {
 
     private final WorkflowDefinitionRepository workflowRepository;
     private final ProjectRepository projectRepository;
+    /** Inserts commit on their own, so a lost race on the unique (project_id, name) index poisons nothing. */
+    private final TransactionTemplate insertTx;
 
     public CreativeWorkflowProvisioner(WorkflowDefinitionRepository workflowRepository,
-                                       ProjectRepository projectRepository) {
+                                       ProjectRepository projectRepository,
+                                       PlatformTransactionManager transactionManager) {
         this.workflowRepository = workflowRepository;
         this.projectRepository = projectRepository;
+        this.insertTx = new TransactionTemplate(transactionManager);
+        this.insertTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /** True if {@code yaml} is a seeded system workflow (marker on its first line). */
@@ -71,17 +80,31 @@ public class CreativeWorkflowProvisioner {
             }
             return def;
         }
+        try {
+            WorkflowDefinition created = insertTx.execute(status -> insert(projectId, classpathYaml));
+            log.info("Provisioned system workflow '{}' for project {}", RENDER_WORKFLOW_NAME, projectId);
+            return created;
+        } catch (DataIntegrityViolationException raced) {
+            // Another first dispatch inserted it between our read and our insert: use theirs.
+            WorkflowDefinition winner = workflowRepository.findByProjectIdAndName(projectId, RENDER_WORKFLOW_NAME)
+                    .orElseThrow(() -> raced);
+            if (!hasMarker(winner.getYaml())) {
+                throw new NameTakenException(winner.getId());
+            }
+            return winner;
+        }
+    }
+
+    private WorkflowDefinition insert(String projectId, String yaml) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
         WorkflowDefinition def = new WorkflowDefinition();
         def.setProject(project);
         def.setName(RENDER_WORKFLOW_NAME);
-        def.setYaml(classpathYaml);
+        def.setYaml(yaml);
         def.setEnabled(true);
         def.setArea("marketing");
-        def = workflowRepository.save(def);
-        log.info("Provisioned system workflow '{}' for project {}", RENDER_WORKFLOW_NAME, projectId);
-        return def;
+        return workflowRepository.saveAndFlush(def);
     }
 
     /** A user's own workflow already uses the system workflow's name. */
