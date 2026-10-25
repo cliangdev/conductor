@@ -54,6 +54,13 @@ class NotificationDeliveryServiceTest {
     @InjectMocks
     private NotificationDeliveryService deliveryService;
 
+    /** Unless a test says otherwise the roll-up declines, so rolled-up events are sent plainly as before. */
+    @org.junit.jupiter.api.BeforeEach
+    void rollupDeclinesByDefault() {
+        org.mockito.Mockito.lenient().when(rollupService.rollup(any(), anyList()))
+                .thenAnswer(inv -> RollupResult.fallback(inv.getArgument(1)));
+    }
+
     @Test
     void deliverDoesNothingWhenNoGroupConfigFound() {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
@@ -228,7 +235,8 @@ class NotificationDeliveryServiceTest {
                 Set.of(EventType.WORK_ITEM_STATUS_CHANGED.name()));
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
-        when(rollupService.rollup(any(), anyList())).thenReturn(false);
+        when(rollupService.rollup(any(), anyList()))
+                .thenAnswer(inv -> RollupResult.fallback(inv.getArgument(1)));
         when(discordProvider.format(any())).thenReturn("{}");
 
         deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
@@ -242,7 +250,7 @@ class NotificationDeliveryServiceTest {
                 Set.of(EventType.WORK_ITEM_STATUS_CHANGED.name()));
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
-        when(rollupService.rollup(any(), anyList())).thenReturn(true);
+        when(rollupService.rollup(any(), anyList())).thenReturn(RollupResult.handled());
 
         deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
 
@@ -280,7 +288,7 @@ class NotificationDeliveryServiceTest {
             deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
             verify(rollupService, never()).rollup(any(), anyList());
 
-            when(rollupService.rollup(any(), anyList())).thenReturn(true);
+            when(rollupService.rollup(any(), anyList())).thenReturn(RollupResult.handled());
             TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
 
             verify(rollupService).rollup(eq("cfg-1"), anyList());
@@ -339,7 +347,7 @@ class NotificationDeliveryServiceTest {
                 Map.of("workItemId", ISSUE_ID));
         NotificationMessage approved = statusEvent(ISSUE_ID);
         NotificationMessage scheduled = statusEvent(ISSUE_ID);
-        when(rollupService.rollup(any(), anyList())).thenReturn(true);
+        when(rollupService.rollup(any(), anyList())).thenReturn(RollupResult.handled());
 
         TransactionSynchronizationManager.initSynchronization();
         try {
@@ -366,7 +374,7 @@ class NotificationDeliveryServiceTest {
         NotificationMessage a = statusEvent("a");
         NotificationMessage b = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 Map.of("workItemId", "b", ChannelGroup.META_PUBLISHES, "true"));
-        when(rollupService.rollup(any(), anyList())).thenReturn(true);
+        when(rollupService.rollup(any(), anyList())).thenReturn(RollupResult.handled());
 
         TransactionSynchronizationManager.initSynchronization();
         try {
@@ -387,7 +395,8 @@ class NotificationDeliveryServiceTest {
         groupedConfigFor(ChannelGroup.ISSUES, "cfg-1");
         NotificationMessage one = statusEvent("a");
         NotificationMessage two = statusEvent("b");
-        when(rollupService.rollup(any(), anyList())).thenReturn(false);
+        when(rollupService.rollup(any(), anyList()))
+                .thenAnswer(inv -> RollupResult.fallback(inv.getArgument(1)));
         when(discordProvider.format(any())).thenReturn("{}");
 
         TransactionSynchronizationManager.initSynchronization();
@@ -408,7 +417,7 @@ class NotificationDeliveryServiceTest {
     @Test
     void aRolledBackTransactionMakesNoCallsAndTheNextOneStartsClean() {
         groupedConfigFor(ChannelGroup.ISSUES, "cfg-1");
-        when(rollupService.rollup(any(), anyList())).thenReturn(true);
+        when(rollupService.rollup(any(), anyList())).thenReturn(RollupResult.handled());
 
         TransactionSynchronizationManager.initSynchronization();
         try {

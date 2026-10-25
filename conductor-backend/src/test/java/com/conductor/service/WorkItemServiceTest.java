@@ -575,6 +575,20 @@ class WorkItemServiceTest {
     }
 
     @Test
+    void aStatusChangeStampsItsContextThroughTheSharedHelperWithTheStatechartAlreadyResolved() {
+        testIssue.setCurrentStatus("IN_PROGRESS");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, "CODE_REVIEW", null, null, null, caller);
+
+        verify(workItemWorkflowService).stampItemContext(any(), org.mockito.ArgumentMatchers.eq("proj-1"),
+                org.mockito.ArgumentMatchers.eq(testIssue), any(Statechart.class),
+                org.mockito.ArgumentMatchers.eq(false));
+    }
+
+    @Test
     void patchIssueStatusChangeOmitsPrUrlFromMetadata() {
         // PR links live in github_pr Assets now; a human status change carries no prUrl.
         testIssue.setCurrentStatus("IN_PROGRESS");

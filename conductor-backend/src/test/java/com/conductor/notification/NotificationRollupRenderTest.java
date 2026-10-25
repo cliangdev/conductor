@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -56,7 +57,7 @@ class NotificationRollupRenderTest {
         Map<String, String> review = new HashMap<>(Map.of(
                 "workItemId", "w1", "workItemTitle", "Launch post", "noun", "Post", "displayId", "RE-1",
                 "verdict", "APPROVED", "reviewerName", "Bryan", "status", "IN_REVIEW", "statusLabel", "In Review"));
-        service.rollup("cfg", NotificationMessage.of(EventType.REVIEW_SUBMITTED, "p", review));
+        service.rollup("cfg", List.of(NotificationMessage.of(EventType.REVIEW_SUBMITTED, "p", review)));
         ArgumentCaptor<NotificationRollup> saved = ArgumentCaptor.forClass(NotificationRollup.class);
         verify(rollups).save(saved.capture());
         NotificationRollup row = saved.getValue();
@@ -68,7 +69,9 @@ class NotificationRollupRenderTest {
         Map<String, String> moved = new HashMap<>(Map.of(
                 "workItemId", "w1", "workItemTitle", "Launch post", "noun", "Post", "displayId", "RE-1",
                 "toStatus", "SCHEDULED", "toStatusLabel", "Scheduled", "toCategory", "in_progress"));
-        service.rollup("cfg", NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, "p", moved));
+        // the approval and its auto-move are one transaction, so they arrive as one batch
+        service.rollup("cfg", List.of(NotificationMessage.of(EventType.REVIEW_SUBMITTED, "p", review),
+                NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, "p", moved)));
 
         ArgumentCaptor<HttpEntity> patch = ArgumentCaptor.forClass(HttpEntity.class);
         verify(rollupTemplate).exchange(any(java.net.URI.class), eq(HttpMethod.PATCH), patch.capture(), eq(String.class));

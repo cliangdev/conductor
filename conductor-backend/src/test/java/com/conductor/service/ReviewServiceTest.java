@@ -176,6 +176,22 @@ class ReviewServiceTest {
     }
 
     @Test
+    void submitReviewStampsItsRollupContextThroughTheSharedHelper() {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(reviewerMember));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.of(issueReviewer));
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
+                .thenReturn(Optional.empty());
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+        when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "Ship it", reviewerUser);
+
+        verify(workItemWorkflowService).stampRollupContext(any(), eq(PROJECT_ID), eq(workItem));
+    }
+
+    @Test
     void submitReviewSecondCallUpdatesExistingReview() {
         OffsetDateTime originalTime = OffsetDateTime.now().minusHours(1);
 

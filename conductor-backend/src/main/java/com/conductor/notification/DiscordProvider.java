@@ -73,18 +73,37 @@ public class DiscordProvider implements NotificationProvider {
     }
 
     /**
+     * How a post of a new rolling message ended, judged by whether Discord could have created the message.
+     *
+     * <ul>
+     *   <li>{@code POSTED}: Discord returned the new message's id.</li>
+     *   <li>{@code DEFINITE_FAILURE}: the request certainly was not accepted -- the connection could not
+     *       be made (refused, unknown host, connect timeout), a malformed URL, or any 4xx other than 429.
+     *       Nothing was created, so the caller may send the same content some other way.</li>
+     *   <li>{@code AMBIGUOUS}: Discord may have created the message and we cannot tell -- a read timeout,
+     *       a 5xx, a dropped connection, or a 2xx whose body has no usable id. The caller must NOT send it
+     *       again: a duplicate message is worse than a late or missing line, and the next event repairs
+     *       the rolling message anyway. This is the at-most-once choice.</li>
+     *   <li>{@code RATE_LIMITED}: 429. The webhook is refusing us, so the caller must not send anything
+     *       else to it either.</li>
+     * </ul>
+     */
+    public enum PostOutcome { POSTED, DEFINITE_FAILURE, AMBIGUOUS, RATE_LIMITED }
+
+    /**
      * What came of posting a new rolling message.
      *
-     * @param messageId   the id Discord gave it, or null when nothing was posted
-     * @param rateLimited true when Discord answered 429 -- the caller must not pile a second request on
+     * @param messageId the id Discord gave it; non-null exactly when {@code outcome} is {@code POSTED}
      */
-    public record PostResult(String messageId, boolean rateLimited) {
-        static PostResult failed() { return new PostResult(null, false); }
+    public record PostResult(String messageId, PostOutcome outcome) {
+        static PostResult posted(String id) { return new PostResult(id, PostOutcome.POSTED); }
+        static PostResult of(PostOutcome outcome) { return new PostResult(null, outcome); }
     }
 
     private static final Pattern RETRY_AFTER = Pattern.compile("\"retry_after\"\\s*:\\s*([0-9.]+)");
     private static final String NO_MENTIONS = "\"allowed_mentions\":{\"parse\":[]}";
-    private static final int MAX_REVIEWER_NAME = 80;
+    /** The one cap on a person's name (reviewer, assignee) shown in a rolled-up line. */
+    static final int MAX_NAME = 80;
 
     private final RestTemplate restTemplate;
     private final RestTemplate rollupTemplate;
@@ -344,36 +363,60 @@ public class DiscordProvider implements NotificationProvider {
      *
      * <p>Discord only returns the created message when the webhook is called with {@code wait=true}; the
      * parameter is added to whatever query the configured URL already has (a {@code thread_id}, say)
-     * rather than appended blindly. Like {@link #send}, a failure is logged and swallowed -- here it
-     * surfaces as a result without an id, which the caller must treat as "nothing was posted" and not
-     * record an id. A 429 is flagged separately so the caller does not follow it with another request.
-     * The payload is sent with mentions disabled.
+     * rather than appended blindly. A failure is logged and swallowed; it surfaces as a {@link PostOutcome}
+     * that says whether anything could have been created (see there). Only {@code DEFINITE_FAILURE} may be
+     * followed by sending the same content another way -- anything ambiguous would risk a duplicate. The
+     * payload is sent with mentions disabled.
      */
     public PostResult postReturningId(String webhookUrl, String formattedMessage) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<String> request = new HttpEntity<>(withNoMentions(formattedMessage), headers);
+        URI uri;
         try {
-            URI uri = UriComponentsBuilder.fromUriString(webhookUrl).replaceQueryParam("wait", "true")
-                    .build().toUri();
-            var response = rollupTemplate.postForEntity(uri, request, Map.class);
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                log.warn("Discord webhook returned {} without a message", response.getStatusCode().value());
-                return PostResult.failed();
-            }
-            Object id = response.getBody().get("id");
-            return new PostResult(id == null ? null : String.valueOf(id), false);
-        } catch (RestClientResponseException e) {
-            if (e.getStatusCode().value() == 429) {
-                log.warn("Discord rate-limited the rollup post (retry_after={})", retryAfter(e));
-                return new PostResult(null, true);
-            }
-            log.warn("Discord webhook request failed: {}", e.getMessage());
-            return PostResult.failed();
+            uri = UriComponentsBuilder.fromUriString(webhookUrl).replaceQueryParam("wait", "true").build().toUri();
         } catch (RuntimeException e) {
-            log.warn("Discord webhook request failed: {}", e.getMessage());
-            return PostResult.failed();
+            log.warn("Discord webhook URL is unusable: {}", e.getMessage());
+            return PostResult.of(PostOutcome.DEFINITE_FAILURE); // nothing was sent
         }
+        try {
+            var response = rollupTemplate.postForEntity(uri, request, Map.class);
+            Object id = response.getBody() == null ? null : response.getBody().get("id");
+            if (response.getStatusCode().is2xxSuccessful() && id != null && !String.valueOf(id).isBlank()) {
+                return PostResult.posted(String.valueOf(id));
+            }
+            // Accepted (or something odd) but no id to edit by: a message may well exist.
+            log.warn("Discord webhook returned {} without a message id; not retrying",
+                    response.getStatusCode().value());
+            return PostResult.of(PostOutcome.AMBIGUOUS);
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            if (status == 429) {
+                log.warn("Discord rate-limited the rollup post (retry_after={})", retryAfter(e));
+                return PostResult.of(PostOutcome.RATE_LIMITED);
+            }
+            log.warn("Discord webhook post failed with {}: {}", status, e.getMessage());
+            return PostResult.of(e.getStatusCode().is4xxClientError() ? PostOutcome.DEFINITE_FAILURE
+                    : PostOutcome.AMBIGUOUS);
+        } catch (RuntimeException e) {
+            boolean neverConnected = neverConnected(e);
+            log.warn("Discord webhook post {}: {}", neverConnected ? "could not connect" : "outcome unknown",
+                    e.getMessage());
+            return PostResult.of(neverConnected ? PostOutcome.DEFINITE_FAILURE : PostOutcome.AMBIGUOUS);
+        }
+    }
+
+    /** True when the cause chain shows the connection was never established, so the request was not sent. */
+    private static boolean neverConnected(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof java.net.http.HttpConnectTimeoutException
+                    || t instanceof java.net.ConnectException
+                    || t instanceof java.net.UnknownHostException
+                    || t instanceof java.net.NoRouteToHostException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -445,7 +488,24 @@ public class DiscordProvider implements NotificationProvider {
     public String buildRollupPayload(Collection<RollupLine> lines) {
         List<RollupLine> ordered = new ArrayList<>(lines);
         ordered.sort(Comparator.comparingLong(RollupLine::seq));
+        String body = rollupBody(ordered);
 
+        long distinctNouns = ordered.stream().map(l -> l.noun() == null ? "" : l.noun()).distinct().count();
+        String noun = distinctNouns == 1 && ordered.get(0).noun() != null && !ordered.get(0).noun().isBlank()
+                ? pluralize(ordered.get(0).noun()) : "Work Items";
+        String title = ordered.size() + " " + noun + " updated";
+        String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        return String.format("{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"}]}",
+                escapeJson(title), escapeJson(body), COLOR_DEFAULT, timestamp);
+    }
+
+    /**
+     * The description text of a roll-up embed: a heading per status with a line per item under it. The one
+     * renderer for it, so the capacity check can measure exactly what will be sent.
+     */
+    static String rollupBody(Collection<RollupLine> lines) {
+        List<RollupLine> ordered = new ArrayList<>(lines);
+        ordered.sort(Comparator.comparingLong(RollupLine::seq));
         Map<String, List<RollupLine>> groups = new LinkedHashMap<>();
         for (RollupLine line : ordered) {
             groups.computeIfAbsent(groupKey(line), k -> new ArrayList<>()).add(line);
@@ -457,21 +517,17 @@ public class DiscordProvider implements NotificationProvider {
         StringBuilder body = new StringBuilder();
         for (var entry : entries) {
             if (body.length() > 0) body.append("\n");
-            RollupLine first = entry.getValue().get(0);
-            String label = first.statusLabel() == null || first.statusLabel().isBlank() ? "Updated" : first.statusLabel();
-            body.append("**").append(label).append("**\n");
+            body.append("**").append(labelOrDefault(entry.getValue().get(0).statusLabel())).append("**\n");
             for (RollupLine l : entry.getValue()) {
                 body.append(lineText(l, false)).append("\n");
             }
         }
+        return body.toString().stripTrailing();
+    }
 
-        long distinctNouns = ordered.stream().map(l -> l.noun() == null ? "" : l.noun()).distinct().count();
-        String noun = distinctNouns == 1 && ordered.get(0).noun() != null && !ordered.get(0).noun().isBlank()
-                ? pluralize(ordered.get(0).noun()) : "Work Items";
-        String title = ordered.size() + " " + noun + " updated";
-        String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        return String.format("{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"}]}",
-                escapeJson(title), escapeJson(body.toString().stripTrailing()), COLOR_DEFAULT, timestamp);
+    /** The single place a blank status label falls back to a generic word. */
+    static String labelOrDefault(String label) {
+        return label == null || label.isBlank() ? "Updated" : label;
     }
 
     /**
@@ -481,14 +537,18 @@ public class DiscordProvider implements NotificationProvider {
      */
     public String buildSinglePayload(RollupLine l) {
         String noun = l.noun() == null || l.noun().isBlank() ? "Work Item" : l.noun();
-        String label = l.statusLabel() == null || l.statusLabel().isBlank() ? "Updated" : l.statusLabel();
-        String description = (l.title() == null ? "" : l.title())
+        String title = l.title() == null ? "" : l.title();
+        String assignee = cleanName(l.assigneeName());
+        String description = (assignee.isEmpty() ? title : "Assigned to " + assignee + " \u2014 " + title)
                 + (l.verdictNote() == null || l.verdictNote().isBlank() ? "" : " \u00b7 " + l.verdictNote());
         String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        String fields = l.prUrl() == null || l.prUrl().isBlank() ? "" : String.format(
+                ",\"fields\":[{\"name\":\"Pull Request\",\"value\":\"[View PR](%s)\",\"inline\":false}]",
+                escapeJson(l.prUrl()));
         return String.format(
-                "{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"url\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"}]}",
-                escapeJson(noun + " moved to " + label), escapeJson(description), escapeJson(l.link()),
-                colorForCategory(l.category()), timestamp);
+                "{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"url\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"%s}]}",
+                escapeJson(noun + " moved to " + labelOrDefault(l.statusLabel())), escapeJson(description),
+                escapeJson(l.link()), colorForCategory(l.category()), timestamp, fields);
     }
 
     /**
@@ -510,7 +570,22 @@ public class DiscordProvider implements NotificationProvider {
         if (l.verdictNote() != null && !l.verdictNote().isBlank()) {
             sb.append(" \u00b7 ").append(l.verdictNote());
         }
+        String assignee = cleanName(l.assigneeName());
+        if (!assignee.isEmpty()) {
+            // Plain text, never an @mention: allowed_mentions is empty, and a name is not a Discord user.
+            sb.append(" \u00b7 assigned to ").append(assignee);
+        }
+        if (l.prUrl() != null && !l.prUrl().isBlank()) {
+            sb.append(" \u00b7 [PR](").append(l.prUrl().trim().replace(" ", "%20").replace(")", "%29")).append(")");
+        }
         return sb.toString();
+    }
+
+    /** A person's name on one line, capped at {@link #MAX_NAME}; empty when there is none. */
+    static String cleanName(String name) {
+        if (name == null) return "";
+        String n = name.replace('\n', ' ').replace('\r', ' ').strip();
+        return n.length() > MAX_NAME ? n.substring(0, MAX_NAME - 3) + "..." : n;
     }
 
     /** Backslash-escapes what would end or restart a markdown link label. */

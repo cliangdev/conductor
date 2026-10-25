@@ -126,6 +126,31 @@ class WorkItemWorkflowServiceTest {
         assertThat(meta).isEmpty();
     }
 
+    @Test
+    void stampItemContextUsesTheStatechartItIsGivenWithoutResolvingAgain() {
+        WorkItem item = workItemAt("IN_REVIEW");
+        java.util.Map<String, Object> meta = new java.util.HashMap<>();
+
+        var chart = service.resolveFor(PROJECT_ID, item);
+        org.mockito.Mockito.clearInvocations(versionRepository);
+
+        service.stampItemContext(meta, PROJECT_ID, item, chart, false);
+
+        org.mockito.Mockito.verifyNoInteractions(versionRepository); // nothing resolved a second time
+        assertThat(meta).containsKey("noun").doesNotContainKey("status");
+    }
+
+    @Test
+    void stampItemContextNeverThrowsEvenWhenResolutionBlowsUp() {
+        WorkItem item = workItemAt("IN_REVIEW");
+        when(versionRepository.findByProjectSlugAndVersion(any(), any(), any()))
+                .thenThrow(new IllegalStateException("db down"));
+        item.setWorkflowVersion(3);
+        java.util.Map<String, Object> meta = new java.util.HashMap<>();
+
+        assertThatCode(() -> service.stampItemContext(meta, PROJECT_ID, item, null, true)).doesNotThrowAnyException();
+    }
+
     private WorkflowDefinitionVersion engineeringSnapshot() {
         return snapshot("/schema/examples/engineering.workflow.json");
     }

@@ -67,7 +67,7 @@ class NotificationRollupTransactionTest extends AbstractNoneWebIntegrationTest {
 
         discord = mock(DiscordProvider.class);
         when(discord.format(any())).thenReturn("SINGLE");
-        when(discord.postReturningId(anyString(), anyString())).thenReturn(new DiscordProvider.PostResult("m-1", false));
+        when(discord.postReturningId(anyString(), anyString())).thenReturn(DiscordProvider.PostResult.posted("m-1"));
 
         NotificationRollupService rollup = (NotificationRollupService) beans.applyBeanPostProcessorsAfterInitialization(
                 new NotificationRollupService(rollupRepository, configRepository, discord), "rollupUnderTest");
@@ -93,7 +93,7 @@ class NotificationRollupTransactionTest extends AbstractNoneWebIntegrationTest {
             c.setChannelGroup(ChannelGroup.ISSUES);
             c.setProvider(ProviderType.DISCORD);
             c.setWebhookUrl("https://discord.com/api/webhooks/1/t");
-            c.setEnabledEventTypes(new HashSet<>(Set.of(EventType.WORK_ITEM_STATUS_CHANGED.name())));
+            c.setEnabledEventTypes(new HashSet<>(Set.of(EventType.WORK_ITEM_STATUS_CHANGED.name(), EventType.COMMENT_ADDED.name())));
             return configRepository.save(c);
         });
     }
@@ -190,5 +190,64 @@ class NotificationRollupTransactionTest extends AbstractNoneWebIntegrationTest {
         verify(discord, never()).postReturningId(anyString(), anyString());
         verify(discord).send(anyString(), anyString());
         assertThat(rollupRepository.findById(config.getId())).isEmpty();
+    }
+
+    private NotificationMessage comment() {
+        return NotificationMessage.of(EventType.COMMENT_ADDED, project.getId(), Map.of(
+                "workItemId", "w-" + UUID.randomUUID(), "workItemTitle", "T"));
+    }
+
+    @Test
+    void mixedEventsGoOutInEmissionOrderAfterTheCommit() {
+        when(discord.buildRollupPayload(any())).thenReturn("ROLLUP"); // two items
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(discord);
+
+        tx.executeWithoutResult(s -> {
+            delivery.deliver(comment());   // plain, first
+            delivery.deliver(event());     // rolled up
+            delivery.deliver(comment());   // plain, between the rolled-up ones
+            delivery.deliver(event());     // coalesced into the first rolled-up event's call
+            verifyNoInteractions(discord); // nothing mid-transaction, plain events included
+        });
+
+        order.verify(discord).send(anyString(), anyString());
+        order.verify(discord).postReturningId(anyString(), anyString()); // both status events, one call
+        order.verify(discord).send(anyString(), anyString());
+        verify(discord, times(1)).postReturningId(anyString(), anyString());
+        verify(discord, times(2)).send(anyString(), anyString());
+    }
+
+    @Test
+    void aRolledBackCallerSendsNoPlainEventsEither() {
+        tx.executeWithoutResult(s -> {
+            delivery.deliver(comment());
+            delivery.deliver(event());
+            s.setRollbackOnly();
+        });
+
+        verify(discord, never()).send(anyString(), anyString());
+        verify(discord, never()).postReturningId(anyString(), anyString());
+    }
+
+    @Test
+    void withNoTransactionADeliveryIsImmediate() {
+        delivery.deliver(comment());
+
+        verify(discord).send(anyString(), anyString());
+    }
+
+    @Test
+    void anEventPublishedFromAnAfterCommitCallbackStillDelivers() {
+        // WORKFLOW_RUN_FAILED / WORKFLOW_AUTO_PAUSED are published from afterCommit, where Spring no longer
+        // runs afterCommit for a synchronization registered during it.
+        tx.executeWithoutResult(s -> org.springframework.transaction.support.TransactionSynchronizationManager
+                .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        delivery.deliver(comment());
+                    }
+                }));
+
+        verify(discord).send(anyString(), anyString());
     }
 }

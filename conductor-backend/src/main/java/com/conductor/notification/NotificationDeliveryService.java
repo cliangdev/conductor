@@ -9,9 +9,12 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Delivers a {@link NotificationMessage} to a project's configured chat channel. This is *only* the
@@ -85,39 +88,38 @@ public class NotificationDeliveryService {
             return;
         }
         // Status changes and review events fold into the channel's rolling message; everything else is
-        // sent as its own message, as before.
-        if (NotificationRollupService.appliesTo(config, event)) {
-            rollupAfterCommit(config, event);
-        } else {
-            send(config, event);
-        }
+        // sent as its own message, as before. Either way nothing leaves until the caller's transaction has
+        // committed, and in the order the events were emitted (see deferOrRun).
+        Delivery delivery = new Delivery(config, event, NotificationRollupService.appliesTo(config, event));
+        deferOrRun(delivery);
     }
 
     /**
-     * Runs the roll-up once the caller's transaction has committed, or straight away when there is none.
+     * Sends once the caller's transaction has committed, or straight away when there is none.
      *
-     * <p>The roll-up locks the channel's config row and makes Discord calls, so it must not run inside
-     * the caller's transaction: it would hold that lock until the caller commits, could deadlock with
-     * lifecycle cascades that update parent Work Items after this ran, and a database error swallowed in
-     * it would still mark the caller rollback-only and fail the user's status change or review. After
-     * commit it opens its own short transaction (two connections are held, but briefly, and the first has
-     * no locks), and whatever it does can no longer affect the caller's data -- a failure can only cost
-     * the notification. If the caller rolls back, nothing is sent: no notification for a change that did
-     * not happen.
+     * <p>Every delivery waits, not only the rolled-up ones. A change that rolls back must send nothing at
+     * all -- no "moved to Scheduled", no "needs publishing by hand" for something that did not happen --
+     * and the order of messages must be the order of events: deferring only some would send the rest
+     * mid-transaction, ahead of the ones that wait. The roll-up in particular locks the channel's config
+     * row and makes Discord calls, so it must not run inside the caller's transaction: it would hold that
+     * lock until the caller commits, could deadlock with lifecycle cascades that update parent Work Items
+     * after this ran, and a database error swallowed in it would still mark the caller rollback-only. After
+     * commit it opens its own short transaction, and whatever it does can no longer affect the caller's
+     * data -- a failure can only cost the notification.
      *
-     * <p>Events are buffered per transaction and per channel, so one request that emits several (approving
-     * a Post is a review, then Approved, then Scheduled) costs one roll-up transaction and one Discord
-     * call per channel rather than one of each per event.
-     *
-     * <p>Nothing thrown here escapes: by then there is nobody to tell, and {@code afterCommit} exceptions
-     * would otherwise surface from the caller's commit.
+     * <p>Delivered immediately when there is no transaction to wait for, or registering with it is not
+     * possible.
      */
-    private void rollupAfterCommit(NotificationGroupConfig config, NotificationMessage event) {
+    private void deferOrRun(Delivery delivery) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            pendingRollups().add(config, event);
-        } else {
-            rollupNow(config.getId(), List.of(new Buffered(config, event)));
+            try {
+                pendingDeliveries().add(delivery);
+                return;
+            } catch (IllegalStateException e) {
+                log.debug("Could not defer a notification to commit; delivering now: {}", e.getMessage());
+            }
         }
+        runNow(List.of(delivery));
     }
 
     /**
@@ -125,52 +127,84 @@ public class NotificationDeliveryService {
      * itself, so it is per transaction by construction (a suspended outer transaction keeps its own) and
      * the framework drops it with the synchronizations -- nothing is left on a pooled thread.
      */
-    private PendingRollups pendingRollups() {
+    private PendingDeliveries pendingDeliveries() {
         for (TransactionSynchronization sync : TransactionSynchronizationManager.getSynchronizations()) {
-            if (sync instanceof PendingRollups pending) {
+            if (sync instanceof PendingDeliveries pending) {
                 return pending;
             }
         }
-        PendingRollups pending = new PendingRollups();
+        PendingDeliveries pending = new PendingDeliveries();
         TransactionSynchronizationManager.registerSynchronization(pending);
         return pending;
     }
 
-    private void rollupNow(String configId, List<Buffered> buffered) {
-        try {
-            // false means the roll-up declined (or could not post anything): send each event the ordinary
-            // way, in order. Safe because nothing reached Discord.
-            List<NotificationMessage> events = buffered.stream().map(Buffered::event).toList();
-            if (!rollupService.rollup(configId, events)) {
-                buffered.forEach(b -> send(b.config(), b.event()));
+    /**
+     * Delivers buffered events in emission order. A plain event is sent at its position. The rolled-up
+     * events of one grouped channel are folded into one roll-up, run at the position of that channel's
+     * first rolled-up event. Nothing thrown here escapes: by then there is nobody to tell, and exceptions
+     * from {@code afterCommit} would otherwise surface from the caller's commit.
+     */
+    private void runNow(List<Delivery> deliveries) {
+        Set<String> rolledUp = new HashSet<>();
+        for (Delivery d : deliveries) {
+            try {
+                if (!d.rollup()) {
+                    send(d.config(), d.event());
+                } else if (rolledUp.add(d.config().getId())) {
+                    rollupNow(d.config().getId(), deliveries.stream()
+                            .filter(o -> o.rollup() && Objects.equals(o.config().getId(), d.config().getId())).toList());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to deliver {} notification for project {}: {}",
+                        d.event().getEventType(), d.event().getProjectId(), e.getMessage());
             }
-        } catch (Exception e) {
-            NotificationMessage first = buffered.get(0).event();
-            log.warn("Failed to roll up {} notification(s) for project {}: {}",
-                    first.getEventType(), first.getProjectId(), e.getMessage());
         }
     }
 
-    private record Buffered(NotificationGroupConfig config, NotificationMessage event) { }
+    private void rollupNow(String configId, List<Delivery> group) {
+        List<NotificationMessage> events = group.stream().map(Delivery::event).toList();
+        RollupResult result = rollupService.rollup(configId, events);
+        // Only the events the roll-up says definitely did not reach Discord, in their original order.
+        Set<NotificationMessage> plain = Collections.newSetFromMap(new IdentityHashMap<>());
+        plain.addAll(result.fallbackToPlain());
+        group.stream().filter(d -> plain.contains(d.event())).forEach(d -> send(d.config(), d.event()));
+    }
 
-    /** Rolled-up events of one transaction by channel, in the order they were emitted. */
-    private final class PendingRollups implements TransactionSynchronization {
+    private record Delivery(NotificationGroupConfig config, NotificationMessage event, boolean rollup) { }
 
-        private final Map<String, List<Buffered>> byConfig = new LinkedHashMap<>();
+    /** The events of one transaction, in the order they were emitted. */
+    private final class PendingDeliveries implements TransactionSynchronization {
 
-        void add(NotificationGroupConfig config, NotificationMessage event) {
-            byConfig.computeIfAbsent(config.getId(), id -> new ArrayList<>()).add(new Buffered(config, event));
+        private final List<Delivery> buffered = new ArrayList<>();
+        private boolean delivered;
+
+        void add(Delivery delivery) {
+            buffered.add(delivery);
         }
 
         @Override
         public void afterCommit() {
-            byConfig.forEach(NotificationDeliveryService.this::rollupNow);
+            deliver();
         }
 
         @Override
         public void afterCompletion(int status) {
-            // Commit or rollback: either way the buffer is done with.
-            byConfig.clear();
+            // Registered while the commit callbacks were already running (WORKFLOW_RUN_FAILED is published
+            // from an afterCommit), Spring never calls afterCommit on this one but does call this, so a
+            // commit that reaches here with events still buffered delivers them now. A rollback sends
+            // nothing. Either way the buffer is done with.
+            if (status == STATUS_COMMITTED) {
+                deliver();
+            }
+            buffered.clear();
+        }
+
+        private void deliver() {
+            if (delivered) {
+                return;
+            }
+            delivered = true;
+            runNow(List.copyOf(buffered));
         }
     }
 

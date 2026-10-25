@@ -621,7 +621,7 @@ class DiscordProviderTest {
         DiscordProvider.PostResult result = discordProvider.postReturningId(WEBHOOK_URL, "{}");
 
         assertThat(result.messageId()).isNull();
-        assertThat(result.rateLimited()).isFalse();
+        assertThat(result.outcome()).isEqualTo(DiscordProvider.PostOutcome.DEFINITE_FAILURE);
     }
 
     @Test
@@ -633,7 +633,7 @@ class DiscordProviderTest {
         DiscordProvider.PostResult result = discordProvider.postReturningId(WEBHOOK_URL, "{}");
 
         assertThat(result.messageId()).isNull();
-        assertThat(result.rateLimited()).isTrue();
+        assertThat(result.outcome()).isEqualTo(DiscordProvider.PostOutcome.RATE_LIMITED);
     }
 
     @SuppressWarnings("unchecked")
@@ -701,5 +701,74 @@ class DiscordProviderTest {
         String payload = discordProvider.buildSinglePayload(l);
 
         assertThat(payload).contains("Post moved to Scheduled").contains("approved by Bryan").contains("Title 1");
+    }
+
+    private static RollupLine lineWithExtras(String note) {
+        return new RollupLine("w1", "RE-1", "Launch post", "Post", "SCHEDULED", "Scheduled", "in_progress",
+                "https://app/x", note, 0, true, "https://github.com/o/r/pull/7", "Bryan");
+    }
+
+    @Test
+    void aRollupLineCarriesThePrLinkAndAssigneeAsPlainText() {
+        String text = DiscordProvider.lineText(lineWithExtras("approved by Ann"), false);
+
+        assertThat(text).contains("[RE-1](https://app/x) Launch post")
+                .contains("approved by Ann")
+                .contains("assigned to Bryan")
+                .contains("[PR](https://github.com/o/r/pull/7)")
+                .doesNotContain("@");
+    }
+
+    @Test
+    void aSingleItemGroupedMessageCarriesTheAssigneeAndPrFieldLikeThePlainStatusMessage() {
+        String payload = discordProvider.buildSinglePayload(lineWithExtras("approved by Ann"));
+
+        assertThat(payload).contains("Post moved to Scheduled")
+                .contains("Assigned to Bryan")
+                .contains("approved by Ann")
+                .contains("\"name\":\"Pull Request\"")
+                .contains("[View PR](https://github.com/o/r/pull/7)");
+    }
+
+    @Test
+    void aLineWithoutPrOrAssigneeRendersAsBefore() {
+        RollupLine plain = new RollupLine("w1", "RE-1", "Launch post", "Post", "S", "Scheduled", "in_progress",
+                "https://app/x", null, 0);
+
+        assertThat(DiscordProvider.lineText(plain, false)).isEqualTo("[RE-1](https://app/x) Launch post");
+        assertThat(discordProvider.buildSinglePayload(plain)).doesNotContain("fields").doesNotContain("Assigned to");
+    }
+
+    @Test
+    void rowsStoredBeforePrAndAssigneeExistedStillDeserialize() throws Exception {
+        String legacy = "{\"workItemId\":\"w1\",\"displayId\":\"RE-1\",\"title\":\"T\",\"noun\":\"Post\","
+                + "\"status\":\"S\",\"statusLabel\":\"S\",\"category\":\"open\",\"link\":\"l\","
+                + "\"verdictNote\":null,\"seq\":0,\"moved\":true}";
+
+        RollupLine l = new com.fasterxml.jackson.databind.ObjectMapper().readValue(legacy, RollupLine.class);
+
+        assertThat(l.prUrl()).isNull();
+        assertThat(l.assigneeName()).isNull();
+        assertThat(l.moved()).isTrue();
+    }
+
+    @Test
+    void postReturningIdClassifiesAmbiguousAndDefiniteOutcomes() {
+        // 5xx and a read timeout may have created the message; a refused connection and a 4xx cannot have
+        when(rollupTemplate.postForEntity(any(java.net.URI.class), any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "bad", HttpHeaders.EMPTY, new byte[0], null))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("read",
+                        new java.net.http.HttpTimeoutException("request timed out")))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("connect",
+                        new java.net.ConnectException("refused")))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("connect",
+                        new java.net.http.HttpConnectTimeoutException("connect timed out")))
+                .thenReturn(ResponseEntity.ok(Map.of("nope", "x")));
+
+        assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}").outcome()).isEqualTo(DiscordProvider.PostOutcome.AMBIGUOUS);
+        assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}").outcome()).isEqualTo(DiscordProvider.PostOutcome.AMBIGUOUS);
+        assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}").outcome()).isEqualTo(DiscordProvider.PostOutcome.DEFINITE_FAILURE);
+        assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}").outcome()).isEqualTo(DiscordProvider.PostOutcome.DEFINITE_FAILURE);
+        assertThat(discordProvider.postReturningId(WEBHOOK_URL, "{}").outcome()).isEqualTo(DiscordProvider.PostOutcome.AMBIGUOUS); // 2xx, no id
     }
 }

@@ -595,12 +595,16 @@ in place, with **one line per Post** showing its latest state:
 (review approved, moved to Approved, moved to Scheduled) is now one line; a review verdict sets the
 "approved by" / "changes requested by" suffix and the next status change keeps it.
 
-- **One item** in the message renders exactly as the single message always did, except once it has both
-  moved and been reviewed: then it reads from the item's whole line ("Post moved to Scheduled · approved by
-  Bryan"), so an approval followed by an auto-move to Scheduled does not make the approval disappear.
-  **Two or more** render as
-  "N Posts updated" (or "N Work Items updated" when the nouns are mixed), lines grouped under a heading per
-  status — ordered open, in progress, terminal, then first seen.
+- **One item** in the message renders as the single message always did (assignee in the description, a
+  Pull Request field), except once it has both moved and been reviewed: then it reads from the item's whole
+  line ("Post moved to Scheduled · approved by Bryan"), so an approval followed by an auto-move to Scheduled
+  does not make the approval disappear. **Two or more** render as "N Posts updated" (or "N Work Items
+  updated" when the nouns are mixed), lines grouped under a heading per status — ordered open, in progress,
+  terminal, then first seen. A line also carries `· assigned to Bryan` (plain text, never a mention) and
+  `· [PR](url)` when the latest status change had them.
+- **The note is news for one batch.** A verdict sets "approved by …" / "changes requested by …" and a
+  reviewer assignment sets "reviewer: Bob"; a status change in the **same transaction** keeps it (an approval
+  and its auto-chain stay one line), a status change in a later one clears it.
 - **A per-channel setting.** In Settings → Notifications, each Issues or Publishing channel chooses
   **Every event** (`EACH`: one message per event, as before) or **Grouped** (`GROUPED`, the default) with a
   window of 5 minutes, 15 minutes, 30 minutes, 1 hour or 4 hours (`deliveryMode` / `groupWindowMinutes` on the
@@ -618,16 +622,31 @@ in place, with **one line per Post** showing its latest state:
   `updated_at` compared with the clock when an event arrives, so a quiet channel simply stops being edited.
   State lives in `notification_rollup` (one row per channel config), locked per event so two arriving together
   cannot fork the message.
-- **After commit, in its own transaction.** The roll-up runs once the change that caused it has committed (a
-  rolled-back change sends nothing), in a short transaction of its own with a 3 s lock timeout, and re-reads
-  the channel's settings after taking the lock. Its Discord calls use a 3 s connect / 5 s read timeout
+- **After commit, in order, in its own transaction.** *Every* notification of a change — rolled up or not,
+  and in both delivery modes — waits for the change to commit: a rolled-back change sends nothing at all.
+  They then go out in the order they were emitted; one channel's rolled-up events are folded into a single
+  roll-up at the position of its first. With no transaction in play a notification is sent immediately. The
+  roll-up runs in a short transaction of its own with a 3 s lock timeout and re-reads the channel's settings
+  after taking the lock. Its Discord calls use a 3 s connect / 5 s read timeout
   (`conductor.notifications.discord.connect-timeout-ms` / `read-timeout-ms`). A failure in it can only cost
-  the notification, never the status change or review; where nothing was posted it falls back to a plain
-  message.
-- **Failed edits do not fork or lose lines.** Only a 404 (the message or webhook was deleted) posts a fresh
-  message, carrying every current line. A 429 or any other error keeps the message id and still saves the
-  lines, so the next successful edit includes everything; the rate-limit `retry_after` is logged, nothing
-  sleeps or retries, and no extra message is sent. Every post and edit carries `allowed_mentions: {parse: []}`.
+  the notification, never the status change or review.
+- **At most once, never silently lost.** A batch that outgrows a message is split into as many messages as
+  needed, each under the line and character caps: one edit finishes the current one, then one post per new
+  one. What happens when a call goes wrong:
+  - **Edit rate-limited (429):** the message still exists, so its id and the new lines are kept and the next
+    edit carries everything. If it was the edit that *finishes* a full message, the batch stops there and the
+    rest is dropped with a warning.
+  - **Post rate-limited (429):** nothing is written, nothing more is sent to that webhook, the events are
+    dropped with a warning that includes `retry_after`. The stored message is never given lines it was not
+    posted with.
+  - **404 or another failed edit:** that message is abandoned and a fresh one is posted with every current
+    line. If that post definitely fails, the affected events are sent as plain messages.
+  - **Post failed for certain** (connection refused or timed out while connecting, any 4xx other than 429):
+    the events whose lines were in the unsent messages are sent as plain messages.
+  - **Post outcome unknown** (read timeout, 5xx, a reply with no message id): the message may exist, so it is
+    dropped with a warning and **not** re-sent — a missing line is repaired by the next event, a duplicate
+    message is not.
+  Nothing sleeps or retries. Every post and edit carries `allowed_mentions: {parse: []}`.
 - **Never rolled up:** comments (their text is the content), `AUTO_TRANSITION_BLOCKED` and
   `POST_AWAITING_MANUAL` (they ask someone to act), and workflow failures. The "send a test notification"
   button is also unchanged.
