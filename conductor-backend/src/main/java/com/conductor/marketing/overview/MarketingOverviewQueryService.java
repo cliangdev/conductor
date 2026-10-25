@@ -688,14 +688,12 @@ public class MarketingOverviewQueryService {
         Set<String> connectionIds = new HashSet<>();
         connections.forEach(c -> connectionIds.add(c.getId()));
         List<ChannelMetricDaily> rows = load(ctx, channel, connectionIds);
-        LocalDate completeThrough = dataCompleteThrough(ctx, channel, rows);
+        LocalDate settled = dataCompleteThrough(ctx, channel, rows);
         // Nothing settled inside the lookback: report the real last settled day (older than the lookback) and
         // call the channel STALE, rather than inventing an end date that hides the gap.
-        LocalDate olderSettled = completeThrough.equals(ctx.fallbackEnd)
-                ? lastSettledBeforeLookback(ctx, channel, connectionIds) : null;
-        if (olderSettled != null) {
-            completeThrough = olderSettled;
-        }
+        LocalDate olderSettled = settled == null ? lastSettledBeforeLookback(ctx, channel, connectionIds) : null;
+        LocalDate completeThrough = settled != null ? settled
+                : olderSettled != null ? olderSettled : ctx.fallbackEnd;
         Window window = windowEnding(ctx, completeThrough);
         ChannelData data = new ChannelData(channel, rows);
         List<MetricView> metrics = new ArrayList<>();
@@ -802,9 +800,9 @@ public class MarketingOverviewQueryService {
      * (Search Console lags about three days) must not have its short window compared with a full previous
      * one. The slowest connection wins. Only flows count: a snapshot (a level such as followers) is a
      * point-in-time reading with nothing to restate, so it never holds the date back. A channel with only
-     * snapshots is as current as its latest reading, no later than yesterday (the complete days); one with no settled data at all ends at {@code fallbackEnd}.
+     * snapshots is as current as its latest reading, no later than yesterday (the complete days); one with no settled data at all returns null (the caller picks the end).
      */
-    private static LocalDate dataCompleteThrough(Context ctx, MetricCatalog.Channel channel,
+    private static @org.springframework.lang.Nullable LocalDate dataCompleteThrough(Context ctx, MetricCatalog.Channel channel,
                                                  List<ChannelMetricDaily> rows) {
         Map<String, LocalDate> latestByConnection = new HashMap<>();
         LocalDate latestSnapshot = null;
@@ -823,7 +821,7 @@ public class MarketingOverviewQueryService {
             }
         }
         return latestByConnection.values().stream().min(Comparator.naturalOrder())
-                .orElse(latestSnapshot != null ? latestSnapshot : ctx.fallbackEnd);
+                .orElse(latestSnapshot);
     }
 
     private List<ChannelMetricDaily> load(Context ctx, MetricCatalog.Channel channel, Set<String> connectionIds) {

@@ -129,13 +129,6 @@ public class ChannelMetricDailyStore {
                         .addValue("provisionalFrom", Date.valueOf(provisionalFrom)));
     }
 
-    /** The latest day this connection has any stored row for, or null. */
-    public LocalDate latestDay(String connectionId) {
-        Date d = jdbc.queryForObject("SELECT max(day) FROM channel_metric_daily WHERE connection_id = :c",
-                new MapSqlParameterSource("c", connectionId), Date.class);
-        return d == null ? null : d.toLocalDate();
-    }
-
     /** Dimension rows in the window, for a (metric, day) this pull returned, whose key it did not return. */
     private void deleteDroppedDimensions(String connectionId, LocalDate from, LocalDate to,
                                          List<ChannelMetricPoint> points, Set<String> skippedCampaignIds) {

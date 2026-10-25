@@ -612,6 +612,38 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void aChannelWhoseRealSettledEndIsTwoDaysBackStaysLiveWithThatWindow() {
+        String store = connectFresh("app-store-connect");
+        for (int d = 1; d <= 13; d++) {
+            put(store, "app-store-connect", "STORE", "downloads", day(d), 1);
+        }
+
+        var detail = service.channel(project.getId(), MetricCatalog.channel("STORE").orElseThrow(), 7, TODAY, NOW);
+
+        assertThat(detail.channel().status()).isEqualTo("LIVE");
+        assertThat(detail.channel().dataCompleteThrough()).isEqualTo(day(13));
+        assertThat(channel(overview7(), "STORE").status()).isEqualTo("LIVE");
+    }
+
+    @Test
+    void aConnectedChannelWithOnlyOldSettledRowsIsStaleOnTheOverviewToo() {
+        String web = connectFresh("posthog");
+        put(web, "posthog", "WEB", "visitors", LocalDate.of(2026, 8, 10), 5);
+
+        ChannelView view = channel(overview7(), "WEB");
+
+        assertThat(view.status()).isEqualTo("STALE");
+        assertThat(view.dataCompleteThrough()).isEqualTo(LocalDate.of(2026, 8, 10));
+    }
+
+    @Test
+    void aConnectedChannelWithNoRowsAtAllKeepsTheTwoDayFallback() {
+        connectFresh("posthog");
+
+        assertThat(channel(overview7(), "WEB").dataCompleteThrough()).isEqualTo(day(13));
+    }
+
+    @Test
     void aConnectedChannelMissingOneFunnelMetricSaysNoDataNotConnect() {
         String web = connectFresh("posthog");
         String store = connectFresh("app-store-connect");
