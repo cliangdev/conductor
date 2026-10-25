@@ -199,7 +199,12 @@ public class FeedPullService {
             return false;
         }
         if (batch.health() == ConnectorHealth.DEGRADED) {
-            // Never advance the cursor on a degraded (possibly stale-cache) pull.
+            // Never advance the cursor on a degraded (possibly stale-cache) pull -- except a source that hands
+            // back a cursor with its degraded batch on purpose (a stalled channel-metrics feed keeps its counter).
+            if (batch.nextCursor() != null) {
+                feed.setCursorState(batch.nextCursor());
+                feed.setCursorUpdatedAt(now);
+            }
             feed.setConsecutiveFailures(feed.getConsecutiveFailures() + 1);
             feed.setLastError(batch.errorMessage());
             feed.setLastRunAt(now);

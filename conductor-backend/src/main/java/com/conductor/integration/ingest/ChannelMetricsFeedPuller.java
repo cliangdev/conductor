@@ -131,7 +131,9 @@ public class ChannelMetricsFeedPuller {
         if (from.isBefore(floor)) {
             from = floor;
         }
-        LocalDate provisionalFrom = today.minusDays(trailing);
+        // The oldest day a later pull re-reads is the last chance to restate it, so it is written settled:
+        // [today - trailing, today] is re-read now, but tomorrow's window starts a day later.
+        LocalDate provisionalFrom = today.minusDays(trailing).plusDays(1);
 
         // One chunk per pull, never wider than the source's per-request cap -- a long restatement window is
         // walked forward over successive pulls (resumeFrom in the cursor), each chunk replacing only its own days.
