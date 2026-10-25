@@ -341,4 +341,55 @@ class GcpConnectorTest {
         assertThat(task.getContainers(0).hasResources()).isFalse();
         assertThat(task.getServiceAccount()).isEqualTo("sa@p.iam.gserviceaccount.com");
     }
+
+    // ---- mergeExisting (updating a Job must keep the customer's settings) ----
+
+    private static Job existingJob(String serviceAccount, String cpu, String memory) {
+        Container.Builder c = Container.newBuilder().setImage("old");
+        com.google.cloud.run.v2.ResourceRequirements.Builder r = com.google.cloud.run.v2.ResourceRequirements.newBuilder();
+        if (cpu != null) r.putLimits("cpu", cpu);
+        if (memory != null) r.putLimits("memory", memory);
+        c.setResources(r);
+        TaskTemplate.Builder t = TaskTemplate.newBuilder().addContainers(c);
+        if (serviceAccount != null) t.setServiceAccount(serviceAccount);
+        return Job.newBuilder().setTemplate(com.google.cloud.run.v2.ExecutionTemplate.newBuilder().setTemplate(t)).build();
+    }
+
+    private static final GcpConnector.EnsureJobSpec RENDER_SPEC = new GcpConnector.EnsureJobSpec(
+            "p", "us-central1", "j-render", "us-central1-docker.pkg.dev/p/r/render:1", null,
+            List.of("conductor-step-entrypoint"), "2", "4Gi", 38 * 60);
+
+    @Test
+    void mergeExisting_keepsCustomerServiceAccountAndLargerResources() {
+        Job.Builder built = GcpConnector.buildJob(RENDER_SPEC);
+        GcpConnector.mergeExisting(built, existingJob("custom@p.iam.gserviceaccount.com", "4", "8Gi"), RENDER_SPEC);
+
+        TaskTemplate task = built.build().getTemplate().getTemplate();
+        assertThat(task.getServiceAccount()).isEqualTo("custom@p.iam.gserviceaccount.com");
+        assertThat(task.getContainers(0).getResources().getLimitsMap())
+                .containsEntry("cpu", "4").containsEntry("memory", "8Gi");
+        assertThat(task.getContainers(0).getImage()).isEqualTo(RENDER_SPEC.image());
+    }
+
+    @Test
+    void mergeExisting_raisesBelowMinimumResources_andOurServiceAccountWins() {
+        GcpConnector.EnsureJobSpec spec = new GcpConnector.EnsureJobSpec("p", "r", "j", "img", "ours@p.iam.gserviceaccount.com",
+                List.of("conductor-step-entrypoint"), "2", "4Gi", 60);
+        Job.Builder built = GcpConnector.buildJob(spec);
+        GcpConnector.mergeExisting(built, existingJob("custom@p.iam.gserviceaccount.com", "1000m", "512Mi"), spec);
+
+        TaskTemplate task = built.build().getTemplate().getTemplate();
+        assertThat(task.getServiceAccount()).isEqualTo("ours@p.iam.gserviceaccount.com");
+        assertThat(task.getContainers(0).getResources().getLimitsMap())
+                .containsEntry("cpu", "2").containsEntry("memory", "4Gi");
+    }
+
+    @Test
+    void mergeExisting_claudeSpecWithNoResources_addsNoLimits() {
+        GcpConnector.EnsureJobSpec spec = new GcpConnector.EnsureJobSpec("p", "r", "j", "img", null);
+        Job.Builder built = GcpConnector.buildJob(spec);
+        GcpConnector.mergeExisting(built, existingJob(null, "4", "8Gi"), spec);
+
+        assertThat(built.build().getTemplate().getTemplate().getContainers(0).hasResources()).isFalse();
+    }
 }

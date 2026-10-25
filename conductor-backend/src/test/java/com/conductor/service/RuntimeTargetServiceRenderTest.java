@@ -60,10 +60,10 @@ class RuntimeTargetServiceRenderTest {
         connection.setProjectId(PROJECT_ID);
         connection.setConnectorId("gcp");
         connection.setStatus("ACTIVE");
-        when(connectionService.getById(CONNECTION_ID)).thenReturn(Optional.of(connection));
+        org.mockito.Mockito.lenient().when(connectionService.getById(CONNECTION_ID)).thenReturn(Optional.of(connection));
         ctx = new ConnectionContext(PROJECT_ID, "gcp", CONNECTION_ID, "key", null, null, Map.of(), null);
-        when(connectionService.toContext(connection)).thenReturn(ctx);
-        when(repository.save(any(RuntimeTarget.class))).thenAnswer(inv -> inv.getArgument(0));
+        org.mockito.Mockito.lenient().when(connectionService.toContext(connection)).thenReturn(ctx);
+        org.mockito.Mockito.lenient().when(repository.save(any(RuntimeTarget.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     private CreateRuntimeTargetRequest createRequest(String renderImage) {
@@ -141,7 +141,7 @@ class RuntimeTargetServiceRenderTest {
         assertThat(render.command()).containsExactly("conductor-step-entrypoint");
         assertThat(render.cpu()).isEqualTo("2");
         assertThat(render.memory()).isEqualTo("4Gi");
-        assertThat(render.taskTimeoutSeconds()).isEqualTo(35 * 60);
+        assertThat(render.taskTimeoutSeconds()).isEqualTo(38 * 60);
         // the claude job keeps its defaults
         GcpConnector.EnsureJobSpec claude = captor.getAllValues().get(0);
         assertThat(claude.command()).isNull();
@@ -221,7 +221,6 @@ class RuntimeTargetServiceRenderTest {
     @Test
     void updatingRenderImage_reprovisionsTheRenderJob() {
         RuntimeTarget target = existingTarget("{" + BASE_CONFIG + "}");
-        claudeProvisionsFine();
         when(gcpConnector.verifyImage(any(), eq(RENDER_IMAGE))).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
         when(gcpConnector.ensureJob(any(), org.mockito.ArgumentMatchers.argThat(
                 (GcpConnector.EnsureJobSpec s) -> s != null && s.jobName().endsWith("-render"))))
@@ -241,7 +240,6 @@ class RuntimeTargetServiceRenderTest {
     void clearingRenderImage_rendersNone_andDoesNotDeleteOrTouchTheExistingRenderJob() {
         existingTarget("{" + BASE_CONFIG + ",\"renderImage\":\"" + RENDER_IMAGE + "\",\"render\":"
                 + "{\"status\":\"READY\",\"resolvedImage\":\"x\"}}");
-        claudeProvisionsFine();
 
         UpdateRuntimeTargetRequest request = new UpdateRuntimeTargetRequest();
         request.setRenderImage("");
@@ -250,7 +248,105 @@ class RuntimeTargetServiceRenderTest {
         RuntimeTargetService.TargetRuntimeConfig config = service.configOf(result);
         assertThat(config.renderImage()).isNull();
         assertThat(config.render().status()).isEqualTo("NONE");
+        assertThat(result.getStatus()).isEqualTo(RuntimeTargetStatus.ACTIVE);
+        verify(gcpConnector, never()).ensureJob(any(), any());
+    }
+
+    @Test
+    void renderOnlyUpdate_keepsTargetActive_andNeverReverifiesOrReensuresTheClaudeJob() {
+        RuntimeTarget target = existingTarget("{" + BASE_CONFIG + "}");
+        List<RuntimeTargetStatus> seen = new java.util.ArrayList<>();
+        when(repository.save(any(RuntimeTarget.class))).thenAnswer(inv -> {
+            RuntimeTarget t = inv.getArgument(0);
+            seen.add(t.getStatus());
+            return t;
+        });
+        when(gcpConnector.verifyImage(any(), eq(RENDER_IMAGE))).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
+        when(gcpConnector.ensureJob(any(), org.mockito.ArgumentMatchers.argThat(
+                (GcpConnector.EnsureJobSpec s) -> s != null && s.jobName().endsWith("-render"))))
+                .thenReturn(ensured("conductor-my-target-render", RENDER_IMAGE + "@sha256:r"));
+
+        UpdateRuntimeTargetRequest request = new UpdateRuntimeTargetRequest();
+        request.setRenderImage(RENDER_IMAGE);
+        service.update(PROJECT_ID, "target-1", request);
+
+        assertThat(seen).isNotEmpty().containsOnly(RuntimeTargetStatus.ACTIVE);
+        assertThat(target.getStatus()).isEqualTo(RuntimeTargetStatus.ACTIVE);
+        verify(gcpConnector, never()).verifyImage(any(), eq(IMAGE));
         verify(gcpConnector, times(1)).ensureJob(any(), any());
+    }
+
+    @Test
+    void renderOnlyUpdate_renderFailure_leavesTargetActive() {
+        RuntimeTarget target = existingTarget("{" + BASE_CONFIG + "}");
+        when(gcpConnector.verifyImage(any(), eq(RENDER_IMAGE))).thenThrow(new IllegalStateException("boom"));
+
+        UpdateRuntimeTargetRequest request = new UpdateRuntimeTargetRequest();
+        request.setRenderImage(RENDER_IMAGE);
+        RuntimeTarget result = service.update(PROJECT_ID, "target-1", request);
+
+        assertThat(result.getStatus()).isEqualTo(RuntimeTargetStatus.ACTIVE);
+        assertThat(target.getErrorMessage()).isNull();
+        assertThat(service.configOf(result).render().status()).isEqualTo("ERROR");
+        verify(gcpConnector, never()).verifyImage(any(), eq(IMAGE));
+    }
+
+    @Test
+    void resavingTheSameRenderImage_resyncsTheRenderJob() {
+        existingTarget("{" + BASE_CONFIG + ",\"renderImage\":\"" + RENDER_IMAGE + "\",\"render\":"
+                + "{\"status\":\"ERROR\",\"error\":\"old\"}}");
+        when(gcpConnector.verifyImage(any(), eq(RENDER_IMAGE))).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
+        when(gcpConnector.ensureJob(any(), any())).thenReturn(ensured("conductor-my-target-render", RENDER_IMAGE + "@sha256:n"));
+
+        UpdateRuntimeTargetRequest request = new UpdateRuntimeTargetRequest();
+        request.setRenderImage(RENDER_IMAGE);
+        RuntimeTarget result = service.update(PROJECT_ID, "target-1", request);
+
+        verify(gcpConnector, times(1)).ensureJob(any(), any());
+        assertThat(service.configOf(result).render().status()).isEqualTo("READY");
+    }
+
+    @Test
+    void omittingRenderImage_withNoOtherChange_doesNothing() {
+        existingTarget("{" + BASE_CONFIG + ",\"renderImage\":\"" + RENDER_IMAGE + "\"}");
+
+        service.update(PROJECT_ID, "target-1", new UpdateRuntimeTargetRequest());
+
+        verify(gcpConnector, never()).ensureJob(any(), any());
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void renderJobName_longTargetName_isDerivedWithinSixtyThreeCharsAndStable() {
+        String longJob = "conductor-" + "a".repeat(52);
+        String derived = RuntimeTargetService.renderJobNameFor(longJob);
+
+        assertThat(derived).hasSizeLessThanOrEqualTo(63).endsWith("-render").startsWith("conductor-aaa");
+        assertThat(derived).matches("^[a-z]([-a-z0-9]*[a-z0-9])?$");
+        assertThat(RuntimeTargetService.renderJobNameFor(longJob)).isEqualTo(derived);
+        assertThat(RuntimeTargetService.renderJobNameFor(longJob + "b")).isNotEqualTo(derived);
+        assertThat(RuntimeTargetService.renderJobNameFor("conductor-my-target")).isEqualTo("conductor-my-target-render");
+    }
+
+    @Test
+    void longJobName_provisionsRenderJobUnderDerivedName() {
+        String longName = "a".repeat(50);
+        String job = "conductor-" + longName;
+        when(gcpConnector.verifyImage(any(), eq(IMAGE))).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
+        when(gcpConnector.verifyImage(any(), eq(RENDER_IMAGE))).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
+        when(gcpConnector.ensureJob(any(), any())).thenReturn(ensured(job, IMAGE));
+        CreateRuntimeTargetRequest request = new CreateRuntimeTargetRequest(longName,
+                CreateRuntimeTargetRequest.ProviderEnum.GCP_CLOUD_RUN, CONNECTION_ID, "customer-proj", "us-central1", IMAGE);
+        request.setRenderImage(RENDER_IMAGE);
+
+        RuntimeTarget saved = service.create(PROJECT_ID, request);
+
+        ArgumentCaptor<GcpConnector.EnsureJobSpec> specs = ArgumentCaptor.forClass(GcpConnector.EnsureJobSpec.class);
+        verify(gcpConnector, times(2)).ensureJob(any(), specs.capture());
+        String renderJob = specs.getAllValues().get(1).jobName();
+        assertThat(renderJob).hasSizeLessThanOrEqualTo(63).isEqualTo(RuntimeTargetService.renderJobNameFor(job));
+        assertThat(service.configOf(saved).renderJobName()).isEqualTo(renderJob);
+        assertThat(service.configOf(saved).render().status()).isEqualTo("READY");
     }
 
     @Test

@@ -362,8 +362,9 @@ public class GcpConnector implements FetchConnector {
             Job.Builder jobBuilder = buildJob(spec);
             boolean exists;
             try {
-                jobsClient.getJob(jobName);
+                Job existing = jobsClient.getJob(jobName);
                 exists = true;
+                mergeExisting(jobBuilder, existing, spec);
             } catch (NotFoundException e) {
                 exists = false;
             }
@@ -394,6 +395,77 @@ public class GcpConnector implements FetchConnector {
         if (!result.hasUpdateTime()) return null;
         Timestamp ts = result.getUpdateTime();
         return Instant.ofEpochSecond(ts.getSeconds(), ts.getNanos()).atOffset(ZoneOffset.UTC);
+    }
+
+    /**
+     * An update replaces the whole template, so settings the customer made on the existing Job must be
+     * carried over: its service account when the spec names none, and its cpu/memory whenever they are at
+     * least our defaults (below-minimum values are raised to ours). Package-private: directly unit-tested.
+     */
+    static void mergeExisting(Job.Builder built, Job existing, EnsureJobSpec spec) {
+        TaskTemplate existingTask = existing.getTemplate().getTemplate();
+        TaskTemplate.Builder task = built.getTemplateBuilder().getTemplateBuilder();
+        if (task.getServiceAccount().isEmpty() && !existingTask.getServiceAccount().isEmpty()) {
+            task.setServiceAccount(existingTask.getServiceAccount());
+        }
+        if (existingTask.getContainersCount() == 0 || task.getContainersCount() == 0) {
+            return;
+        }
+        Map<String, String> existingLimits = existingTask.getContainers(0).getResources().getLimitsMap();
+        String cpu = keepIfLarger(spec.cpu(), existingLimits.get("cpu"), GcpConnector::cpuMillis);
+        String memory = keepIfLarger(spec.memory(), existingLimits.get("memory"), GcpConnector::memoryBytes);
+        if (cpu == null && memory == null) {
+            return;
+        }
+        ResourceRequirements.Builder resources = task.getContainersBuilder(0).getResourcesBuilder();
+        if (cpu != null) {
+            resources.putLimits("cpu", cpu);
+        }
+        if (memory != null) {
+            resources.putLimits("memory", memory);
+        }
+    }
+
+    private static String keepIfLarger(String ours, String existing, java.util.function.Function<String, Long> parse) {
+        if (ours == null || ours.isBlank()) {
+            return null;
+        }
+        if (existing == null || existing.isBlank()) {
+            return ours;
+        }
+        Long existingValue = parse.apply(existing);
+        Long ourValue = parse.apply(ours);
+        if (existingValue == null || ourValue == null) {
+            return existingValue == null ? ours : existing;
+        }
+        return existingValue >= ourValue ? existing : ours;
+    }
+
+    static Long cpuMillis(String cpu) {
+        try {
+            String v = cpu.trim();
+            return v.endsWith("m") ? Long.parseLong(v.substring(0, v.length() - 1))
+                    : Math.round(Double.parseDouble(v) * 1000);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    static Long memoryBytes(String memory) {
+        String v = memory.trim();
+        String[][] units = {{"Ki", "1024"}, {"Mi", "1048576"}, {"Gi", "1073741824"}, {"Ti", "1099511627776"},
+                {"K", "1000"}, {"M", "1000000"}, {"G", "1000000000"}, {"T", "1000000000000"}};
+        try {
+            for (String[] u : units) {
+                if (v.endsWith(u[0])) {
+                    return Math.round(Double.parseDouble(v.substring(0, v.length() - u[0].length()))
+                            * Long.parseLong(u[1]));
+                }
+            }
+            return Long.parseLong(v);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // package-private: directly unit-tested.

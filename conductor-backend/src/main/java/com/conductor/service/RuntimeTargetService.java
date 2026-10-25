@@ -54,10 +54,10 @@ public class RuntimeTargetService {
     private static final Pattern SLUG_PATTERN = Pattern.compile("^[a-z0-9][a-z0-9-]{0,63}$");
     private static final Set<String> RESERVED_NAMES = Set.of("conductor", "self-hosted", "cloud-run");
     private static final String GCP_CONNECTOR_ID = "gcp";
-    /** The render Job: 2 vCPU / 4Gi (headless Chromium + ffmpeg), 35 minutes per task. */
+    /** The render Job: 2 vCPU / 4Gi (headless Chromium + ffmpeg); 35 minute max step budget + 3 minutes of grace per task. */
     private static final String RENDER_CPU = "2";
     private static final String RENDER_MEMORY = "4Gi";
-    private static final int RENDER_TASK_TIMEOUT_SECONDS = 35 * 60;
+    private static final int RENDER_TASK_TIMEOUT_SECONDS = (35 + 3) * 60;
 
     private final RuntimeTargetRepository repository;
     private final ConnectionService connectionService;
@@ -124,42 +124,70 @@ public class RuntimeTargetService {
         RuntimeTarget target = requireInProject(projectId, targetId);
         Map<String, Object> config = readConfig(target.getConfigJson());
 
-        boolean changed = false;
+        boolean claudeChanged = false;
         if (request.getRegion() != null && !request.getRegion().equals(config.get("region"))) {
             config.put("region", request.getRegion());
-            changed = true;
+            claudeChanged = true;
         }
         if (request.getImage() != null && !request.getImage().equals(config.get("image"))) {
             config.put("image", request.getImage());
-            changed = true;
+            claudeChanged = true;
         }
         if (request.getJobName() != null && !request.getJobName().equals(config.get("jobName"))) {
             config.put("jobName", request.getJobName());
-            changed = true;
+            claudeChanged = true;
         }
-        if (request.getRenderImage() != null) {
-            // Blank clears the render image (the target stops rendering; the render job is left in place).
+        // An explicit renderImage is always a resync request, even when unchanged (it is how a user
+        // re-provisions the render Job after mirroring a newer image). Blank clears it.
+        boolean renderRequested = request.getRenderImage() != null;
+        if (renderRequested) {
             String renderImage = request.getRenderImage().trim();
             if (renderImage.isEmpty()) {
-                if (config.remove("renderImage") != null) {
-                    changed = true;
-                }
-            } else if (!renderImage.equals(config.get("renderImage"))) {
+                config.remove("renderImage");
+            } else {
                 config.put("renderImage", renderImage);
-                changed = true;
             }
         }
-        if (!changed) {
+        if (!claudeChanged && !renderRequested) {
             return target;
         }
 
         target.setConfigJson(writeConfig(config));
+        if (!claudeChanged) {
+            // Render-only edit: the claude-code job and the target's status are untouched.
+            RuntimeTarget saved = repository.save(target);
+            provisionRenderOnly(saved);
+            return saved;
+        }
         target.setStatus(RuntimeTargetStatus.PROVISIONING);
         target.setErrorMessage(null);
         RuntimeTarget saved = repository.save(target);
         evictClients(saved.getConnectionId());
         provision(saved);
         return saved;
+    }
+
+    /** Re-provisions only the render Job and updates {@code config.render}; never touches status/errorMessage. */
+    private void provisionRenderOnly(RuntimeTarget target) {
+        Map<String, Object> config = readConfig(target.getConfigJson());
+        Optional<Connection> connectionOpt = target.getConnectionId() == null
+                ? Optional.empty() : connectionService.getById(target.getConnectionId());
+        if (connectionOpt.isEmpty()) {
+            Map<String, Object> render = new LinkedHashMap<>();
+            if (str(config, "renderImage") == null) {
+                render.put("status", "NONE");
+            } else {
+                render.put("status", "ERROR");
+                render.put("error", "Runtime target's connection no longer exists");
+            }
+            config.put("render", render);
+        } else {
+            provisionRender(connectionService.toContext(connectionOpt.get()), config,
+                    str(config, "gcpProjectId"), str(config, "region"), str(config, "jobName"));
+            evictClients(target.getConnectionId());
+        }
+        target.setConfigJson(writeConfig(config));
+        repository.save(target);
     }
 
     @Transactional
@@ -255,7 +283,7 @@ public class RuntimeTargetService {
         String jobName = str(config, "jobName");
         String renderJobName = str(config, "renderJobName");
         if (renderJobName == null || renderJobName.isBlank()) {
-            renderJobName = jobName != null ? jobName + "-render" : null;
+            renderJobName = jobName != null ? renderJobNameFor(jobName) : null;
         }
         String renderImage = str(config, "renderImage");
         return new TargetRuntimeConfig(str(config, "gcpProjectId"), str(config, "region"),
@@ -381,7 +409,14 @@ public class RuntimeTargetService {
         }
         String renderJobName = str(config, "renderJobName");
         if (renderJobName == null || renderJobName.isBlank()) {
-            renderJobName = jobName + "-render";
+            renderJobName = renderJobNameFor(jobName);
+        }
+        if (!JOB_NAME_PATTERN.matcher(renderJobName).matches()) {
+            render.put("status", "ERROR");
+            render.put("error", "Render job name '" + renderJobName + "' is not a valid Cloud Run Job name "
+                    + "(lowercase letters, digits and hyphens, starting with a letter, at most 63 characters)");
+            config.put("render", render);
+            return;
         }
         try {
             GcpConnector.VerifyImageResult verify = verifyImage(ctx, renderImage);
@@ -405,6 +440,40 @@ public class RuntimeTargetService {
             render.put("error", e.getMessage());
         }
         config.put("render", render);
+    }
+
+    private static final Pattern JOB_NAME_PATTERN = Pattern.compile("^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$");
+    private static final int MAX_JOB_NAME_LENGTH = 63;
+
+    /**
+     * {@code <jobName>-render}, kept within Cloud Run's 63-character Job name limit: a longer name is
+     * truncated and disambiguated with a stable 6-character hash of the full job name.
+     */
+    public static String renderJobNameFor(String jobName) {
+        String plain = jobName + "-render";
+        if (plain.length() <= MAX_JOB_NAME_LENGTH) {
+            return plain;
+        }
+        String suffix = "-" + shortHash(jobName) + "-render";
+        String prefix = jobName.substring(0, MAX_JOB_NAME_LENGTH - suffix.length());
+        while (prefix.endsWith("-")) {
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
+        return prefix + suffix;
+    }
+
+    private static String shortHash(String value) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (int i = 0; i < 3; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private GcpConnector.VerifyImageResult verifyImage(ConnectionContext ctx, String imageRef) {
