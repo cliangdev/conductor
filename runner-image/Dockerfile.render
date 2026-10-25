@@ -1,0 +1,44 @@
+# Image for rendering Conductor Creatives on a self-hosted daemon (the system workflow
+# `conductor-creative-render`; see docs/workflows.md, "Creatives: rendering on a self-hosted Workflow").
+#
+# It is the stock Playwright image (Chromium + its system libraries, at the version the render core
+# pins in conductor-creative/job/package.json) plus ffmpeg and the Conductor CLI, so the step script is
+# just `conductor creative render <id> --renderer workflow --workflow-run-id <run>`, the same command
+# Claude Code runs locally. The CLI is installed from npm at an exact version (CONDUCTOR_VERSION):
+# publish-render-image.yml builds this after each CLI release and moves the floating `:1` tag.
+#
+# The image has no useful default command. It needs a conductor daemon >= 0.41.0, which runs the
+# step's `run:` script as `sh -c`; an older daemon ignores `run` and lands in the CMD below, which
+# fails loudly instead of hanging.
+FROM mcr.microsoft.com/playwright:v1.63.0-noble
+
+ARG CONDUCTOR_VERSION
+RUN test -n "$CONDUCTOR_VERSION" || (echo "build-arg CONDUCTOR_VERSION is required" >&2; exit 1)
+
+# Ubuntu's ffmpeg is built with libx264 and AAC and has the filters the render core uses.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g "@cliangdev/conductor@${CONDUCTOR_VERSION}" \
+    && npm cache clean --force
+
+# Build-time self-check: fail the build rather than ship an image that cannot encode.
+RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 \
+    && ffmpeg -hide_banner -encoders 2>/dev/null | grep -qw aac \
+    && for f in xfade zoompan loudnorm sidechaincompress; do \
+         ffmpeg -hide_banner -filters 2>/dev/null | grep -qw "$f" || { echo "ffmpeg is missing filter $f" >&2; exit 1; }; \
+       done \
+    && conductor --version \
+    && conductor creative --help >/dev/null
+
+LABEL org.opencontainers.image.source="https://github.com/cliangdev/conductor" \
+      org.opencontainers.image.description="Renders Conductor Creatives: Playwright Chromium, ffmpeg and the conductor CLI" \
+      dev.conductor.cli.version="${CONDUCTOR_VERSION}"
+
+# pwuser ships with the Playwright image; the render needs no root.
+RUN mkdir -p /workspace && chown pwuser:pwuser /workspace
+USER pwuser
+WORKDIR /workspace
+
+CMD ["sh", "-c", "echo 'This image needs a conductor daemon >= 0.41.0 that runs the step run: script (update with: npm install -g @cliangdev/conductor).' >&2; exit 64"]
