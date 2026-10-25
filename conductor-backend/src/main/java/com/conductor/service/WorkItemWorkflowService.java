@@ -42,6 +42,8 @@ import java.util.Optional;
 @Service
 public class WorkItemWorkflowService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(WorkItemWorkflowService.class);
+
     static final String DEFAULT_WORKFLOW = "ENGINEERING";
     static final String APPROVED_VERDICT = "APPROVED";
 
@@ -239,6 +241,66 @@ public class WorkItemWorkflowService {
     public Statechart resolveFor(String projectId, WorkItem workItem) {
         String slug = workItem.getWorkflow() != null ? workItem.getWorkflow() : DEFAULT_WORKFLOW;
         return resolver.resolveRequired(projectId, slug, workItem.getWorkflowVersion());
+    }
+
+    /**
+     * Stamps what a notification about a Work Item needs to name and link it: the Workflow's {@code noun},
+     * its {@code area}, and the item's {@code displayId}; with {@code withCurrentStatus} also the item's
+     * <em>current</em> status ({@code status}, {@code statusLabel}, {@code statusCategory}).
+     *
+     * <p>The one place this is done, for every emitter -- a status change, a blocked auto-transition, a
+     * review verdict and a reviewer assignment -- so the keys cannot drift apart. The status keys are
+     * named {@code status*} so a reader never mistakes them for a transition's {@code toStatus*}. A review
+     * or an assignment carries the item's id and title but not where it stands, and the rolling Discord
+     * message shows one line per item at its latest status.
+     *
+     * <p>Tolerant: it never throws. Pass the {@code statechart} when the caller has already resolved it so
+     * nothing is resolved twice; pass null to have it resolved here, where an unresolvable Workflow just
+     * stamps nothing (review submission and reviewer assignment must not fail over it).
+     */
+    public void stampItemContext(Map<String, Object> meta, String projectId, WorkItem workItem,
+                                 Statechart statechart, boolean withCurrentStatus) {
+        try {
+            if (workItem == null) {
+                return;
+            }
+            Statechart chart = statechart;
+            if (chart == null) {
+                String slug = workItem.getWorkflow() != null ? workItem.getWorkflow() : DEFAULT_WORKFLOW;
+                chart = resolver.resolve(projectId, slug, workItem.getWorkflowVersion()).orElse(null);
+            }
+            if (chart == null) {
+                return;
+            }
+            meta.put("noun", chart.noun());
+            // The Work Item detail route is workflow-scoped, so a notification link needs the area and the
+            // display id to be clickable at all.
+            if (chart.area() != null) {
+                meta.put("area", chart.area());
+            }
+            if (workItem.getProject() != null && workItem.getProject().getKey() != null
+                    && workItem.getSequenceNumber() != null) {
+                meta.put("displayId", workItem.getProject().getKey() + "-" + workItem.getSequenceNumber());
+            }
+            String current = workItem.getCurrentStatus();
+            if (withCurrentStatus && current != null) {
+                meta.put("status", current);
+                chart.status(current).ifPresent(st -> {
+                    meta.put("statusLabel", st.displayLabel());
+                    if (st.category() != null) {
+                        meta.put("statusCategory", st.category());
+                    }
+                });
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not stamp notification context for work item {}: {}",
+                    workItem == null ? null : workItem.getId(), e.getMessage());
+        }
+    }
+
+    /** {@link #stampItemContext} for an event that is not a status change: resolves the Workflow itself and adds the current status. */
+    public void stampRollupContext(Map<String, Object> meta, String projectId, WorkItem workItem) {
+        stampItemContext(meta, projectId, workItem, null, true);
     }
 
     private boolean isReviewer(String projectId, String callerId) {

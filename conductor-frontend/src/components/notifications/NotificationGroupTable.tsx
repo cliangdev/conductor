@@ -1,7 +1,13 @@
 'use client'
 
 import { cn } from '@/lib/utils'
-import type { NotificationGroupResponse } from '@/hooks/useNotifications'
+import {
+  DEFAULT_DELIVERY_MODE,
+  DEFAULT_GROUP_WINDOW_MINUTES,
+  ROLLED_UP_EVENT_TYPES,
+  groupWindowLabel,
+  type NotificationGroupResponse,
+} from '@/hooks/useNotifications'
 
 interface NotificationGroupTableProps {
   groups: NotificationGroupResponse[]
@@ -59,6 +65,15 @@ function GroupRow({
 }) {
   const enabledCount = group.events?.filter((e) => e.enabled).length ?? 0
   const totalCount = group.events?.length ?? 0
+  // Only worth saying when something can actually be delivered that way: a disabled channel, or one
+  // with no rolled-up event type switched on, never produces a grouped message.
+  const hasRolledUpEvents =
+    group.enabled &&
+    (group.events?.some((e) => e.enabled && ROLLED_UP_EVENT_TYPES.includes(e.eventType)) ?? false)
+  const deliveryHint =
+    (group.deliveryMode ?? DEFAULT_DELIVERY_MODE) === 'EACH'
+      ? 'Every event'
+      : `Grouped · ${groupWindowLabel(group.groupWindowMinutes ?? DEFAULT_GROUP_WINDOW_MINUTES)}`
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -78,6 +93,9 @@ function GroupRow({
             )}>
               {group.enabled ? 'Enabled' : 'Disabled'}
             </span>
+            {hasRolledUpEvents && (
+              <span className="text-xs text-muted-foreground">{deliveryHint}</span>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 truncate" title={group.webhookUrl}>
             {group.webhookUrl}

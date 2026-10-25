@@ -63,6 +63,7 @@ class SignalFanOutCharacterizationTest {
 
     @Mock private NotificationGroupConfigRepository groupConfigRepository;
     @Mock private DiscordProvider discordProvider;
+    @Mock private com.conductor.notification.NotificationRollupService rollupService;
     @Mock private WorkflowTriggerService workflowTriggerService;
     @Mock private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
     @Mock private KnowledgeIngestionService knowledgeIngestionService;
@@ -79,7 +80,7 @@ class SignalFanOutCharacterizationTest {
         // notificationLookupFailurePropagates... is that the genuine, unguarded config lookup is in the
         // path. Mocking the delivery service would make that test assert nothing about production code.
         NotificationDeliveryService deliveryService =
-                new NotificationDeliveryService(groupConfigRepository, discordProvider);
+                new NotificationDeliveryService(groupConfigRepository, discordProvider, rollupService);
 
         List<SignalSubscriber> subscribers = List.of(
                 new NotificationSignalSink(deliveryService, new NotificationSignalMapper()),

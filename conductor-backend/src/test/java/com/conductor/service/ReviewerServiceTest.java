@@ -57,6 +57,9 @@ class ReviewerServiceTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
+    @Mock
+    private WorkItemWorkflowService workItemWorkflowService;
+
     @InjectMocks
     private ReviewerService reviewerService;
 
@@ -146,6 +149,8 @@ class ReviewerServiceTest {
 
         ArgumentCaptor<com.conductor.signal.Signal> signal = ArgumentCaptor.forClass(com.conductor.signal.Signal.class);
         verify(signalBus).publish(signal.capture());
+        // the roll-up line needs the item's noun/display id/current status, stamped where the statechart is known
+        verify(workItemWorkflowService).stampRollupContext(any(), org.mockito.ArgumentMatchers.eq(PROJECT_ID), any());
         assertThat(signal.getValue().payload())
                 .containsEntry("publishes", "true")
                 .containsEntry("reviewerId", reviewerUser.getId());

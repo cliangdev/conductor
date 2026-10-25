@@ -37,6 +37,7 @@ public class ReviewerService {
     private final UserRepository userRepository;
     private final SignalBus signalBus;
     private final PublishingWorkflow publishingWorkflow;
+    private final WorkItemWorkflowService workItemWorkflowService;
 
     public ReviewerService(
             WorkItemReviewerRepository workItemReviewerRepository,
@@ -45,7 +46,8 @@ public class ReviewerService {
             ProjectSecurityService projectSecurityService,
             UserRepository userRepository,
             SignalBus signalBus,
-            PublishingWorkflow publishingWorkflow) {
+            PublishingWorkflow publishingWorkflow,
+            WorkItemWorkflowService workItemWorkflowService) {
         this.workItemReviewerRepository = workItemReviewerRepository;
         this.workItemRepository = workItemRepository;
         this.projectMemberRepository = projectMemberRepository;
@@ -53,6 +55,7 @@ public class ReviewerService {
         this.userRepository = userRepository;
         this.signalBus = signalBus;
         this.publishingWorkflow = publishingWorkflow;
+        this.workItemWorkflowService = workItemWorkflowService;
     }
 
     @Transactional
@@ -90,6 +93,7 @@ public class ReviewerService {
                 "workItemId", workItemId, "workItemTitle", workItemTitle,
                 "reviewerId", targetUserId, "reviewerName", reviewerName));
         meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(publishingWorkflow.publishes(workItem)));
+        workItemWorkflowService.stampRollupContext(meta, projectId, workItem);
         signalBus.publish(Signal.of(
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEWER_ASSIGNED, projectId, workItemId, Instant.now(),
                 meta, new SignalOrigin("work_item", workItemId)));

@@ -818,14 +818,7 @@ public class WorkItemService {
         Map<String, Object> meta = new HashMap<>();
         meta.put("workItemId", workItem.getId());
         meta.put("workItemTitle", workItem.getTitle());
-        meta.put("noun", statechart.noun());
-        if (statechart.area() != null) {
-            meta.put("area", statechart.area());
-        }
-        if (workItem.getProject() != null && workItem.getProject().getKey() != null
-                && workItem.getSequenceNumber() != null) {
-            meta.put("displayId", workItem.getProject().getKey() + "-" + workItem.getSequenceNumber());
-        }
+        workItemWorkflowService.stampItemContext(meta, projectId, workItem, statechart, false);
         meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(declaresPublishTargets(statechart)));
         meta.put("fromStatus", fromStatus);
         meta.put("toStatus", toStatus);
@@ -913,16 +906,9 @@ public class WorkItemService {
         if (workItem.getWorkflow() != null) {
             meta.put("workflow", workItem.getWorkflow());
         }
-        meta.put("noun", statechart.noun());
-        // The Work Item detail route is workflow-scoped, so a notification link needs the area and the
-        // display id to be clickable at all — without them a card about a Post pointed at /issues/{uuid}.
-        if (statechart.area() != null) {
-            meta.put("area", statechart.area());
-        }
-        if (workItem.getProject() != null && workItem.getProject().getKey() != null
-                && workItem.getSequenceNumber() != null) {
-            meta.put("displayId", workItem.getProject().getKey() + "-" + workItem.getSequenceNumber());
-        }
+        // noun, area and displayId: without the area and display id a card about a Post pointed at
+        // /issues/{uuid}. The shared helper, with the statechart already resolved above.
+        workItemWorkflowService.stampItemContext(meta, projectId, workItem, statechart, false);
         // Lets notification routing prefer a Publishing channel without knowing any Workflow's area name:
         // the same asset_types rule the publishing validators use, decided here where the statechart is.
         meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(declaresPublishTargets(statechart)));

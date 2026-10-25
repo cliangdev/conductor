@@ -7529,6 +7529,15 @@ components:
           type: array
           items:
             type: string
+        deliveryMode:
+          type: string
+          enum: [EACH, GROUPED]
+          description: EACH sends every event as its own message; GROUPED folds status and review events into one message that is edited as things change. Omitted on update keeps the stored value; omitted on create is GROUPED.
+        groupWindowMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          description: How long after its last update a GROUPED channel's message keeps being edited. Omitted on update keeps the stored value; omitted on create is 15.
 
     NotificationEventConfig:
       type: object
@@ -7553,6 +7562,13 @@ components:
           type: string
         enabled:
           type: boolean
+        deliveryMode:
+          type: string
+          enum: [EACH, GROUPED]
+        groupWindowMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
         events:
           type: array
           items:
