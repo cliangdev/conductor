@@ -162,6 +162,7 @@ class ChannelMetricsFeedPullerTest {
                 point("clicks", TODAY.minusDays(10), 5),
                 point("clicks", TODAY.minusDays(5), 6),
                 point("clicks", TODAY.minusDays(4), 7),
+                point("clicks", TODAY.minusDays(3), 7),
                 point("clicks", TODAY, 8)));
 
         pull("{\"lastDay\":\"2026-10-13\"}");
@@ -169,9 +170,51 @@ class ChannelMetricsFeedPullerTest {
         assertThat(upserts).extracting(Upsert::day, Upsert::provisional).containsExactly(
                 org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(10), false),
                 org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(5), false),
-                org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(4), true),
+                org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(4), false),
+                org.assertj.core.groups.Tuple.tuple(TODAY.minusDays(3), true),
                 org.assertj.core.groups.Tuple.tuple(TODAY, true));
         assertThat(upserts).allMatch(u -> u.channel().equals("SEARCH") && u.dimension().isEmpty());
+    }
+
+    @Test
+    void theOldestReReadDayIsWrittenSettledBecauseTomorrowsWindowNoLongerReachesIt() {
+        // trailing 4, today Oct 14: window Oct 10..14 is re-read, but tomorrow's starts Oct 11
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of(
+                point("clicks", LocalDate.of(2026, 10, 10), 1), point("clicks", LocalDate.of(2026, 10, 11), 1)));
+
+        pull("{\"lastDay\":\"2026-10-13\"}");
+
+        assertThat(upserts).extracting(Upsert::day, Upsert::provisional).containsExactly(
+                org.assertj.core.groups.Tuple.tuple(LocalDate.of(2026, 10, 10), false),
+                org.assertj.core.groups.Tuple.tuple(LocalDate.of(2026, 10, 11), true));
+    }
+
+    @Test
+    void emptyPullsAreCountedInTheCursorAndStallOnceTheFeedHasReturnedNothingForTwoDays() {
+        // 360-minute interval: 8 empty pulls = 2 days
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+        when(store.latestDay("conn-1")).thenReturn(LocalDate.of(2026, 10, 9));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-14\",\"emptyPulls\":6}");
+        assertThat(batch.health()).isEqualTo(ConnectorHealth.HEALTHY);
+        assertThat(batch.nextCursor()).contains("\"emptyPulls\":7");
+
+        batch = pull("{\"lastDay\":\"2026-10-14\",\"emptyPulls\":7}");
+        assertThat(batch.health()).isEqualTo(ConnectorHealth.DEGRADED);
+        assertThat(batch.errorMessage()).contains("No new data since 2026-10-09");
+        assertThat(batch.nextCursor()).contains("\"emptyPulls\":8");
+    }
+
+    @Test
+    void aFeedThatNeverHadDataIsNotReportedAsStalledAndAPullWithDataResetsTheCount() {
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of());
+        when(store.latestDay("conn-1")).thenReturn(null);
+        assertThat(pull("{\"lastDay\":\"2026-10-14\",\"emptyPulls\":20}").health()).isEqualTo(ConnectorHealth.HEALTHY);
+
+        when(source.pullDaily(any(), any(), any())).thenReturn(List.of(point("clicks", TODAY, 1)));
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-14\",\"emptyPulls\":20}");
+        assertThat(batch.health()).isEqualTo(ConnectorHealth.HEALTHY);
+        assertThat(batch.nextCursor()).doesNotContain("emptyPulls");
     }
 
     @Test
@@ -302,7 +345,7 @@ class ChannelMetricsFeedPullerTest {
         pull(null);
 
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(4)), any(), eq(true), any(), any());
+                eq(TODAY.minusDays(90)), eq(TODAY), eq(TODAY.minusDays(3)), any(), eq(true), any(), any());
     }
 
     // ---- source-declared provisional boundary, trailing hint and definitions ----
@@ -347,7 +390,7 @@ class ChannelMetricsFeedPullerTest {
         IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"trailingDays\":7}");
 
         verify(source).pull(any(), eq(TODAY.minusDays(7)), eq(TODAY));
-        assertThat(batch.nextCursor()).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":7}");
+        assertThat(batch.nextCursor()).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":7,\"emptyPulls\":1}");
     }
 
     @Test
@@ -428,7 +471,7 @@ class ChannelMetricsFeedPullerTest {
 
         assertThat(calls).hasSize(4);
         assertContiguousWithinCap(calls, TODAY.minusDays(45));
-        assertThat(lastCursor).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":45}");
+        assertThat(lastCursor).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":45,\"emptyPulls\":1}");
     }
 
     @Test
@@ -551,7 +594,7 @@ class ChannelMetricsFeedPullerTest {
             assertThat(to.getAllValues().get(i)).isAfter(to.getAllValues().get(i - 1));
         }
         assertThat(to.getAllValues().get(pulls - 1)).isEqualTo(TODAY);
-        assertThat(cursor).isEqualTo("{\"lastDay\":\"2026-10-14\"}");
+        assertThat(cursor).isEqualTo("{\"lastDay\":\"2026-10-14\",\"emptyPulls\":1}");
         assertThat(batch.hasMore()).isFalse();
     }
 
@@ -566,7 +609,7 @@ class ChannelMetricsFeedPullerTest {
         LocalDate to = from.plusDays(13);
         verify(source).pullDaily(any(), eq(from), eq(to));
         verify(store).replaceWindow(eq("proj-1"), eq("conn-1"), eq("gsc"), eq("SEARCH"),
-                eq(from), eq(to), eq(TODAY.minusDays(4)), any(), anyBoolean(), any(), any());
+                eq(from), eq(to), eq(TODAY.minusDays(3)), any(), anyBoolean(), any(), any());
         assertThat(batch.hasMore()).isTrue();
         assertThat(batch.nextCursor())
                 .isEqualTo("{\"lastDay\":\"" + to + "\",\"resumeFrom\":\"" + to.plusDays(1) + "\"}");
@@ -587,7 +630,7 @@ class ChannelMetricsFeedPullerTest {
             assertThat(pulls).isLessThan(200);
         } while (batch.hasMore());
 
-        assertThat(cursor).isEqualTo("{\"lastDay\":\"2026-10-14\"}");
+        assertThat(cursor).isEqualTo("{\"lastDay\":\"2026-10-14\",\"emptyPulls\":1}");
     }
 
     @Test

@@ -48,4 +48,13 @@ public interface ChannelMetricDailyRepository extends JpaRepository<ChannelMetri
 
     List<ChannelMetricDaily> findByProjectIdAndChannelAndMetricInAndDayBetween(
             String projectId, String channel, java.util.Collection<String> metrics, LocalDate from, LocalDate to);
+
+    /** Per connection, the latest settled day on or before {@code upTo}: [connectionId, day] rows. */
+    @Query("select d.connectionId, max(d.day) from ChannelMetricDaily d where d.projectId = :projectId"
+            + " and d.channel = :channel and d.connectionId in :connectionIds and d.provisional = false"
+            + " and d.day <= :upTo group by d.connectionId")
+    List<Object[]> latestSettledDayByConnection(@Param("projectId") String projectId,
+                                                @Param("channel") String channel,
+                                                @Param("connectionIds") java.util.Collection<String> connectionIds,
+                                                @Param("upTo") LocalDate upTo);
 }

@@ -44,6 +44,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
     @Autowired private MarketingOverviewQueryService service;
     @Autowired private ChannelMetricDailyRepository dailyRepository;
+    @Autowired private com.conductor.integration.ingest.ChannelMetricDailyStore store;
+    @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager em;
     @Autowired private ConnectionRepository connectionRepository;
     @Autowired private ConnectorFeedRepository feedRepository;
     @Autowired private com.conductor.integration.ingest.ChannelDimensionStateStore stateStore;
@@ -543,6 +545,70 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
         assertThat(webDetail.channel().status()).isEqualTo("STALE");
         assertThat(storeDetail.channel().status()).isEqualTo("LIVE");
+    }
+
+    /** One daily pull of a trailing-3 connector the way the puller issues it: window [d-3, d], provisional from d-2. */
+    private void dailyPull(String connectionId, LocalDate pullDay) {
+        java.util.List<com.conductor.integration.ChannelMetricPoint> points = new java.util.ArrayList<>();
+        for (int i = 3; i >= 0; i--) {
+            points.add(com.conductor.integration.ChannelMetricPoint.total("downloads", pullDay.minusDays(i), 10));
+        }
+        store.replaceWindow(project.getId(), connectionId, "app-store-connect", "STORE", pullDay.minusDays(3), pullDay,
+                pullDay.minusDays(3).plusDays(1), points);
+    }
+
+    @Test
+    void consecutiveDailyPullsAdvanceDataCompleteThroughByOneDayEach() {
+        String store = connectFresh("app-store-connect");
+        dailyPull(store, day(10));
+        dailyPull(store, day(11));
+        dailyPull(store, day(12));
+        dailyPull(store, day(13));
+        dailyPull(store, day(14));
+
+        // pulled on Oct 14: Oct 11 (the oldest re-read day) is settled, Oct 12-14 are still restating
+        assertThat(service.overview(project.getId(), 7, day(15), NOW).channels().stream()
+                .filter(c -> c.channel().equals("STORE")).findFirst().orElseThrow().dataCompleteThrough())
+                .isEqualTo(day(11));
+        dailyPull(store, day(15));
+        em.clear();
+        assertThat(service.overview(project.getId(), 7, day(16), NOW.plusDays(1)).channels().stream()
+                .filter(c -> c.channel().equals("STORE")).findFirst().orElseThrow().dataCompleteThrough())
+                .isEqualTo(day(12));
+    }
+
+    @Test
+    void aPullSettlesRowsAnEarlierPullLeftProvisionalButNeverTouchesOtherConnections() {
+        String stuck = connectFresh("app-store-connect");
+        String other = connectFresh("apple-search-ads");
+        for (int d = 1; d <= 12; d++) {
+            put(stuck, "app-store-connect", "STORE", "downloads", "", day(d), 1, true);
+            put(other, "apple-search-ads", "ADS", "spend", "", day(d), 1, true);
+        }
+
+        dailyPull(stuck, day(14));
+        dailyPull(stuck, day(14));
+
+        em.clear();
+        var rows = dailyRepository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(stuck);
+        assertThat(rows).filteredOn(r -> r.getDay().isBefore(day(12))).allMatch(r -> !r.isProvisional());
+        assertThat(rows).filteredOn(r -> r.getDay().isAfter(day(11))).allMatch(r -> r.isProvisional());
+        assertThat(dailyRepository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(other))
+                .allMatch(r -> r.isProvisional());
+    }
+
+    @Test
+    void theChannelDetailReportsTheRealLastSettledDayAndStaleWhenTheLookbackHoldsNoSettledRows() {
+        String web = connectFresh("posthog");
+        for (int d = 1; d <= 10; d++) {
+            put(web, "posthog", "WEB", "visitors", LocalDate.of(2026, 8, d), 5);
+        }
+
+        var detail = service.channel(project.getId(), MetricCatalog.channel("WEB").orElseThrow(), 7, TODAY, NOW);
+
+        assertThat(detail.channel().status()).isEqualTo("STALE");
+        assertThat(detail.channel().dataCompleteThrough()).isEqualTo(LocalDate.of(2026, 8, 10));
+        assertThat(detail.window().to()).isEqualTo(LocalDate.of(2026, 8, 10));
     }
 
     @Test

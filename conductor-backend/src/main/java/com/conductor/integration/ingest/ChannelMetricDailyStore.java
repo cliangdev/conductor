@@ -114,7 +114,26 @@ public class ChannelMetricDailyStore {
             jdbc.batchUpdate(UPSERT, batch);
             written += chunk.size();
         }
+        settleBefore(connectionId, provisionalFrom);
         return written;
+    }
+
+    /**
+     * Days before {@code provisionalFrom} are final. Repairs rows an earlier pull left provisional (the oldest
+     * re-read day used to be written provisional and then left the window, never to be re-read).
+     */
+    private void settleBefore(String connectionId, LocalDate provisionalFrom) {
+        jdbc.update("UPDATE channel_metric_daily SET provisional = false"
+                        + " WHERE connection_id = :connectionId AND provisional AND day < :provisionalFrom",
+                new MapSqlParameterSource().addValue("connectionId", connectionId)
+                        .addValue("provisionalFrom", Date.valueOf(provisionalFrom)));
+    }
+
+    /** The latest day this connection has any stored row for, or null. */
+    public LocalDate latestDay(String connectionId) {
+        Date d = jdbc.queryForObject("SELECT max(day) FROM channel_metric_daily WHERE connection_id = :c",
+                new MapSqlParameterSource("c", connectionId), Date.class);
+        return d == null ? null : d.toLocalDate();
     }
 
     /** Dimension rows in the window, for a (metric, day) this pull returned, whose key it did not return. */

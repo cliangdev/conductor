@@ -688,7 +688,15 @@ public class MarketingOverviewQueryService {
         Set<String> connectionIds = new HashSet<>();
         connections.forEach(c -> connectionIds.add(c.getId()));
         List<ChannelMetricDaily> rows = load(ctx, channel, connectionIds);
-        Window window = windowEnding(ctx, dataCompleteThrough(ctx, channel, rows));
+        LocalDate completeThrough = dataCompleteThrough(ctx, channel, rows);
+        // Nothing settled inside the lookback: report the real last settled day (older than the lookback) and
+        // call the channel STALE, rather than inventing an end date that hides the gap.
+        LocalDate olderSettled = completeThrough.equals(ctx.fallbackEnd)
+                ? lastSettledBeforeLookback(ctx, channel, connectionIds) : null;
+        if (olderSettled != null) {
+            completeThrough = olderSettled;
+        }
+        Window window = windowEnding(ctx, completeThrough);
         ChannelData data = new ChannelData(channel, rows);
         List<MetricView> metrics = new ArrayList<>();
         for (Metric metric : channel.visibleMetrics()) {
@@ -698,11 +706,19 @@ public class MarketingOverviewQueryService {
             metrics.add(metricView(ctx, channel, data, metric, window));
         }
         MismatchView mismatch = mismatch(ctx, channel, data, window);
-        String status = mismatch != null ? "MISMATCH" : anyLive ? "LIVE" : "STALE";
+        String status = olderSettled != null ? "STALE"
+                : mismatch != null ? "MISMATCH" : anyLive ? "LIVE" : "STALE";
         ChannelBuild built = new ChannelBuild(channel, status, lastFetchedAt, connectionViews, hint, metrics, window,
                 mismatch);
         built.data = data;
         return built;
+    }
+
+    /** The slowest connection's latest settled day before the lookback began, or null if none has one. */
+    private LocalDate lastSettledBeforeLookback(Context ctx, MetricCatalog.Channel channel, Set<String> connectionIds) {
+        List<Object[]> latest = dailyRepository.latestSettledDayByConnection(ctx.projectId,
+                channel.channel().name(), connectionIds, ctx.historyStart.minusDays(1));
+        return latest.stream().map(r -> (LocalDate) r[1]).min(Comparator.naturalOrder()).orElse(null);
     }
 
     /**

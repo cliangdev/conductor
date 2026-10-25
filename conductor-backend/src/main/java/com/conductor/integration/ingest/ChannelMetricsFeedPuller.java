@@ -55,6 +55,10 @@ public class ChannelMetricsFeedPuller {
     static final String CURSOR_RESUME_FROM = "resumeFrom";
     /** The source's contract version at the last pull; a change schedules a history backfill. */
     static final String CURSOR_CONTRACT_VERSION = "contractVersion";
+    /** Consecutive caught-up pulls that returned no points; reset by any pull that returns some. */
+    static final String CURSOR_EMPTY_PULLS = "emptyPulls";
+    /** A feed that returns nothing for this long (a couple of days of pulls) is reported as stalled. */
+    static final int STALL_MINUTES = 2 * 24 * 60;
 
     private final ConnectorRegistry connectorRegistry;
     private final ConnectionService connectionService;
@@ -131,7 +135,9 @@ public class ChannelMetricsFeedPuller {
         if (from.isBefore(floor)) {
             from = floor;
         }
-        LocalDate provisionalFrom = today.minusDays(trailing);
+        // The oldest day a later pull re-reads is the last chance to restate it, so it is written settled:
+        // [today - trailing, today] is re-read now, but tomorrow's window starts a day later.
+        LocalDate provisionalFrom = today.minusDays(trailing).plusDays(1);
 
         // One chunk per pull, never wider than the source's per-request cap -- a long restatement window is
         // walked forward over successive pulls (resumeFrom in the cursor), each chunk replacing only its own days.
@@ -192,10 +198,28 @@ public class ChannelMetricsFeedPuller {
         } else if (to.isBefore(today)) {
             next = to.plusDays(1);
         }
+        int emptyPulls = parseInt(request.cursor(), CURSOR_EMPTY_PULLS) == null ? 0
+                : parseInt(request.cursor(), CURSOR_EMPTY_PULLS);
+        if (written > 0) {
+            emptyPulls = 0;
+        } else if (next == null && lastDay != null) {
+            emptyPulls++;
+        }
         String cursor = "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\""
                 + (next == null ? "" : ",\"" + CURSOR_RESUME_FROM + "\":\"" + next + "\"")
                 + (hint == null ? "" : ",\"" + CURSOR_TRAILING_DAYS + "\":" + hint)
-                + (version == null ? "" : ",\"" + CURSOR_CONTRACT_VERSION + "\":" + version) + "}";
+                + (version == null ? "" : ",\"" + CURSOR_CONTRACT_VERSION + "\":" + version)
+                + (emptyPulls == 0 ? "" : ",\"" + CURSOR_EMPTY_PULLS + "\":" + emptyPulls) + "}";
+        int interval = Math.max(1, feed.getIntervalMinutes());
+        int stallAfter = Math.max(2, (STALL_MINUTES + interval - 1) / interval);
+        if (emptyPulls >= stallAfter) {
+            LocalDate lastData = store.latestDay(connection.getId());
+            if (lastData != null) {
+                // Persist the counter (the cursor is otherwise unchanged) but do not report a healthy pull.
+                return new IngestBatch(java.util.List.of(), cursor, false, false, ConnectorHealth.DEGRADED,
+                        "No new data since " + lastData + " (" + emptyPulls + " empty pulls)");
+            }
+        }
         return new IngestBatch(java.util.List.of(), cursor, next != null, false, ConnectorHealth.HEALTHY, null);
     }
 
