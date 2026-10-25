@@ -213,8 +213,11 @@ public class CreativeAttachService {
             String altText = CreativePlacementMedia.hasAltText(options) ? null : placements.altTextFor(target, matched);
             // A CAROUSEL with a track: record how this destination takes it (photos or the slideshow video)
             // so the person and the skills can see it. An explicit choice of the author is never overwritten.
+            // A fallback to photos because no video exists yet is reported but never written: it would read
+            // as an explicit choice and the video default would not apply once the carousel is re-rendered.
             String resolvedCarouselAs = placements.carouselAsFor(target);
-            boolean writeCarouselAs = resolvedCarouselAs != null
+            String persistedCarouselAs = placements.carouselAsToPersist(target);
+            boolean writeCarouselAs = persistedCarouselAs != null
                     && (options == null || options.get(PublishPlatformRegistry.OPTION_CAROUSEL_AS) == null);
             String warning = placements.videoMissingFor(target)
                     ? "This carousel has a music track but no video was rendered, so it goes out as photos:"

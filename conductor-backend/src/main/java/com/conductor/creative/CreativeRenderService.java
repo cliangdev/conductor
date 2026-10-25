@@ -745,6 +745,18 @@ public class CreativeRenderService {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
         }
         // AC-P0-3.2: a failed render leaves no frame behind for attach to find.
+        discardFrames(renderId);
+
+        render.setState(CreativeRender.STATE_FAILED);
+        render.setError(request.getMessage());
+        render.setLog(request.getLog());
+        render.setFinishedAt(OffsetDateTime.now());
+        render = renderRepository.save(render);
+        return new RenderView(render, List.of());
+    }
+
+    /** Deletes a render's frames and, after commit, the stored objects nothing else references. */
+    private void discardFrames(String renderId) {
         List<String> framePaths = new ArrayList<>();
         for (CreativeRenderFrame frame : frameRepository.findAllByRenderId(renderId)) {
             framePaths.add(frame.getGcsPath());
@@ -755,13 +767,6 @@ public class CreativeRenderService {
         frameRepository.deleteAllByRenderId(renderId);
         // Frames may link Media objects: only objects nothing else references are removed, after commit.
         storageReferences.deleteUnreferencedAfterCommit(framePaths, log);
-
-        render.setState(CreativeRender.STATE_FAILED);
-        render.setError(request.getMessage());
-        render.setLog(request.getLog());
-        render.setFinishedAt(OffsetDateTime.now());
-        render = renderRepository.save(render);
-        return new RenderView(render, List.of());
     }
 
     @Transactional
@@ -977,6 +982,9 @@ public class CreativeRenderService {
             render.setError("timed out");
             render.setFinishedAt(OffsetDateTime.now());
             renderRepository.save(render);
+            // Same as failRender: a CAROUSEL links its slide frames at request time, and a failed render
+            // leaves no frame behind for attach to find.
+            discardFrames(render.getId());
         }
     }
 

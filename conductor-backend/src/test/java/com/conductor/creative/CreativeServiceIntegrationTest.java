@@ -822,6 +822,16 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aTrackNamedWithoutASourceIsPlayedNotSilentlyDropped() {
+        CreativePhoto track = newTrack(true);
+        CreateCreativeRequest carousel = carouselRequest(Map.of("9x16", imageIds(3, 1080, 1920, true)));
+        carousel.setAudio(audio(null, track.getId()));
+        JsonNode stored = creativeService.createCreative(project.getId(), carousel, admin).creative().getAudio();
+        assertThat(stored.get("source").asText()).isEqualTo("track");
+        assertThat(stored.get("trackId").asText()).isEqualTo(track.getId());
+    }
+
+    @Test
     void aCarouselWithoutAnyAudioOrWithNoneStoresNoAudioAtAll() {
         CreateCreativeRequest none = carouselRequest(Map.of("9x16", imageIds(2, 1080, 1920, true)));
         none.setAudio(audio("none", null));

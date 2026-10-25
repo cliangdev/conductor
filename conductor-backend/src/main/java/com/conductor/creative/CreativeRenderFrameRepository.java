@@ -28,6 +28,10 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
     @Query("SELECT f.id, f.creativeId, f.gcsPath, f.audioMediaId FROM CreativeRenderFrame f WHERE f.id IN :ids")
     List<Object[]> findRefsByIdIn(@Param("ids") java.util.Collection<String> ids);
 
+    /** (frame id, Creative kind, Creative audio) of the given frames — a narrow read instead of whole Creative rows. */
+    @Query("SELECT f.id, c.kind, c.audio FROM CreativeRenderFrame f, Creative c WHERE c.id = f.creativeId AND f.id IN :ids")
+    List<Object[]> findCreativeKindAndAudioByIdIn(@Param("ids") java.util.Collection<String> ids);
+
     /** Every frame this Creative has ever produced, across every render — COND-24 T5 attribution reads
      *  this rather than following {@code CreativeRenderRepository}'s "latest succeeded" view because a
      *  Post can be attached from an older render whose frames are still the ones actually published. */

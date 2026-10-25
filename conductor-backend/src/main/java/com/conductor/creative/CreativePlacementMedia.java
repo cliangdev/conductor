@@ -105,6 +105,15 @@ public class CreativePlacementMedia {
                     ? "video" : "photos";
         }
 
+        /**
+         * {@link #carouselAsFor} for writing into the target's options: null when {@code photos} is only a
+         * fallback because the video has not been rendered yet. Persisting that fallback would later read
+         * as an explicit author choice and the video default would never apply after a re-render.
+         */
+        public String carouselAsToPersist(PostPublishTarget target) {
+            return videoMissingFor(target) ? null : carouselAsFor(target);
+        }
+
         /** Video was asked for (explicitly or by default) on a target that can take it, but none was rendered. */
         public boolean videoMissingFor(PostPublishTarget target) {
             return carousel && hasTrack && videoAssetId == null && wantsVideo(target)
@@ -242,8 +251,12 @@ public class CreativePlacementMedia {
 
     /** Whether a Creative's audio is a music track (a CAROUSEL then also has a slideshow video). */
     public static boolean hasTrack(Creative creative) {
-        return creative != null && creative.getAudio() != null && creative.getAudio().hasNonNull("source")
-                && "track".equals(creative.getAudio().get("source").asText());
+        return creative != null && hasTrack(creative.getAudio());
+    }
+
+    /** {@link #hasTrack(Creative)} for a bare audio JSON value. */
+    public static boolean hasTrack(com.fasterxml.jackson.databind.JsonNode audio) {
+        return audio != null && audio.hasNonNull("source") && "track".equals(audio.get("source").asText());
     }
 
     /** The first Creative's match for {@code target}, empty when none of the Post's Creatives has a size for it. */

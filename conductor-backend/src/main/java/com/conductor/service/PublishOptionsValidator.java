@@ -5,11 +5,8 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
-import com.conductor.creative.Creative;
 import com.conductor.creative.CreativePlacementMedia;
-import com.conductor.creative.CreativeRenderFrame;
 import com.conductor.creative.CreativeRenderFrameRepository;
-import com.conductor.creative.CreativeRepository;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
@@ -161,7 +158,6 @@ public class PublishOptionsValidator {
     private final AssetRepository assetRepository;
     /** Null when constructed without them (a unit test): which Creative a file came from is then unknown. */
     private final CreativeRenderFrameRepository frameRepository;
-    private final CreativeRepository creativeRepository;
 
     public PublishOptionsValidator(PublishPlatformRegistry platformRegistry,
                                    PostPublishTargetRepository postPublishTargetRepository,
@@ -171,7 +167,7 @@ public class PublishOptionsValidator {
                                    PublishTargetMediaResolver mediaResolver,
                                    AssetRepository assetRepository) {
         this(platformRegistry, postPublishTargetRepository, connectionRepository, publishConsentService,
-                objectMapper, mediaResolver, assetRepository, null, null);
+                objectMapper, mediaResolver, assetRepository, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -182,8 +178,7 @@ public class PublishOptionsValidator {
                                    ObjectMapper objectMapper,
                                    PublishTargetMediaResolver mediaResolver,
                                    AssetRepository assetRepository,
-                                   CreativeRenderFrameRepository frameRepository,
-                                   CreativeRepository creativeRepository) {
+                                   CreativeRenderFrameRepository frameRepository) {
         this.platformRegistry = platformRegistry;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
@@ -192,7 +187,6 @@ public class PublishOptionsValidator {
         this.mediaResolver = mediaResolver;
         this.assetRepository = assetRepository;
         this.frameRepository = frameRepository;
-        this.creativeRepository = creativeRepository;
     }
 
     /**
@@ -343,11 +337,11 @@ public class PublishOptionsValidator {
      */
     private void inspectCarouselAs(PostPublishTarget target, PublishPlatform platform, JsonNode value,
                                    List<Asset> media, PublishCheckContext ctx, List<PublishFinding> findings) {
-        if (frameRepository == null || creativeRepository == null) {
+        if (frameRepository == null) {
             return;
         }
         List<Asset> source = media.isEmpty() ? ctx.assets() : media;
-        Set<String> carouselFrameIds = carouselTrackFrameIds(source);
+        Set<String> carouselFrameIds = ctx.carouselTrackFrameIds(frameRepository);
         boolean fromCarouselWithTrack = source.stream().anyMatch(a -> carouselFrameIds.contains(a.getCreativeFrameId()));
         if (!fromCarouselWithTrack) {
             findings.add(PublishFinding.warning(OPTION_IGNORED, describe(target)
@@ -379,27 +373,6 @@ public class PublishOptionsValidator {
                         + " keep it to " + YOUTUBE_SHORT_MAX_SECONDS + " seconds or less", target.getId()));
             }
         }
-    }
-
-    /** Ids of the render frames among {@code assets} that belong to a CAROUSEL Creative whose audio is a track. */
-    private Set<String> carouselTrackFrameIds(List<Asset> assets) {
-        List<String> frameIds = assets.stream().map(Asset::getCreativeFrameId)
-                .filter(id -> id != null).distinct().toList();
-        Set<String> result = new HashSet<>();
-        if (frameIds.isEmpty()) {
-            return result;
-        }
-        List<CreativeRenderFrame> frames = frameRepository.findAllById(frameIds);
-        Set<String> creativeIds = new HashSet<>();
-        frames.forEach(f -> creativeIds.add(f.getCreativeId()));
-        Set<String> trackCreatives = new HashSet<>();
-        for (Creative c : creativeRepository.findAllById(creativeIds)) {
-            if (Creative.KIND_CAROUSEL.equals(c.getKind()) && CreativePlacementMedia.hasTrack(c)) {
-                trackCreatives.add(c.getId());
-            }
-        }
-        frames.stream().filter(f -> trackCreatives.contains(f.getCreativeId())).forEach(f -> result.add(f.getId()));
-        return result;
     }
 
     /** A value that is the right shape but that the rest of the target's own content makes moot. */

@@ -767,32 +767,23 @@ class PublishOptionsValidatorTest {
     // --- carouselAs: a Conductor-only option (music on carousels) ---
 
     private com.conductor.creative.CreativeRenderFrameRepository frameRepository;
-    private com.conductor.creative.CreativeRepository creativeRepository;
 
     /** Re-builds the validator with the repositories that tell it which Creative a file came from. */
     private void withCreativeLookups() {
         frameRepository = Mockito.mock(com.conductor.creative.CreativeRenderFrameRepository.class);
-        creativeRepository = Mockito.mock(com.conductor.creative.CreativeRepository.class);
         validator = new PublishOptionsValidator(new PublishPlatformRegistry(), postPublishTargetRepository,
                 connectionRepository, publishConsentService, new ObjectMapper(),
                 new PublishTargetMediaResolver(assetRepository, targetAssetRepository), assetRepository,
-                frameRepository, creativeRepository);
+                frameRepository);
     }
 
     /** {@code asset} is a frame of a CAROUSEL Creative whose audio is (or is not) a track. */
     private void fromCarousel(Asset asset, boolean withTrack) {
         asset.setCreativeFrameId("frame-" + asset.getId());
-        com.conductor.creative.CreativeRenderFrame frame = Mockito.mock(com.conductor.creative.CreativeRenderFrame.class);
-        when(frame.getId()).thenReturn(asset.getCreativeFrameId());
-        when(frame.getCreativeId()).thenReturn("creative-1");
-        when(frameRepository.findAllById(any())).thenReturn(List.of(frame));
-        com.conductor.creative.Creative creative = new com.conductor.creative.Creative();
-        creative.setId("creative-1");
-        creative.setKind(com.conductor.creative.Creative.KIND_CAROUSEL);
-        if (withTrack) {
-            creative.setAudio(new ObjectMapper().createObjectNode().put("source", "track").put("trackId", "t1"));
-        }
-        when(creativeRepository.findAllById(any())).thenReturn(List.of(creative));
+        com.fasterxml.jackson.databind.JsonNode audio = withTrack
+                ? new ObjectMapper().createObjectNode().put("source", "track").put("trackId", "t1") : null;
+        when(frameRepository.findCreativeKindAndAudioByIdIn(any())).thenReturn(List.<Object[]>of(
+                new Object[]{asset.getCreativeFrameId(), com.conductor.creative.Creative.KIND_CAROUSEL, audio}));
     }
 
     @Test
@@ -875,6 +866,22 @@ class PublishOptionsValidatorTest {
         givenSelection(lastTarget(), mp4);
         assertThat(validator.inspect(workItem("MARKETING", "IN_REVIEW")))
                 .anySatisfy(f -> assertThat(f.code()).isEqualTo("VIDEO_LENGTH"));
+    }
+
+    @Test
+    void theCarouselFactsAreReadOncePerCheckNoMatterHowManyTargetsSetCarouselAs() {
+        withCreativeLookups();
+        givenTargets(target("instagram", "conn-meta", "@acme", "{\"carouselAs\":\"video\"}"),
+                target("youtube", "conn-yt", "Acme Channel", "{\"carouselAs\":\"video\"}"),
+                target("facebook", "conn-fb", "Acme Page", "{\"carouselAs\":\"photos\"}"));
+        Asset mp4 = video("slideshow.mp4");
+        mp4.setDurationSeconds(new java.math.BigDecimal("30"));
+        givenAssets(mp4);
+        fromCarousel(mp4, true);
+
+        validator.inspect(workItem("MARKETING", "IN_REVIEW"));
+
+        verify(frameRepository, org.mockito.Mockito.times(1)).findCreativeKindAndAudioByIdIn(any());
     }
 
     // --- helpers for the option-type and ignored-option tests ---

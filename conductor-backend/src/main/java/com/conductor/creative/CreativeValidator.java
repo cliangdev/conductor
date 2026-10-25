@@ -1104,7 +1104,10 @@ public class CreativeValidator {
                                     + " and " + (int) SLIDE_DURATION_MAX + " seconds"));
                 }
             }
-            if (show.slideCount() > 0 && durations.size() != show.slideCount()) {
+            // Only a carousel with a track renders a slideshow; stored durations of one without are ignored
+            // (the spec builder falls back to defaults on a mismatch), so they must not block slide edits.
+            boolean hasTrack = input.audio() != null && "track".equals(input.audio().source());
+            if (hasTrack && show.slideCount() > 0 && durations.size() != show.slideCount()) {
                 violations.add(new Violation("slideshow.slideDurations", "slideshowDurations",
                         "slideshow.slideDurations has " + durations.size() + " entries but the 9x16 slide list has "
                                 + show.slideCount() + ": give one duration per slide"));

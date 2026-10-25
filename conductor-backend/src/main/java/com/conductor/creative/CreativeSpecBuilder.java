@@ -193,11 +193,19 @@ public class CreativeSpecBuilder {
         for (ClipPlacement clip : clips) {
             Map<String, Object> placement = new LinkedHashMap<>();
             placement.put("key", clip.key());
-            placement.put("width", clip.width());
-            placement.put("height", clip.height());
+            // The video stream is copied unchanged, so the clip's real size wins over the registry's.
+            Integer realWidth = clip.clip().getWidth();
+            Integer realHeight = clip.clip().getHeight();
+            boolean realSize = realWidth != null && realHeight != null && realWidth > 0 && realHeight > 0;
+            placement.put("width", realSize ? realWidth : clip.width());
+            placement.put("height", realSize ? realHeight : clip.height());
             placement.put("clipUrl", mediaUrl(clip.clip()));
-            placement.put("durationSec", clip.clip().getDurationSeconds());
-            placement.put("clipHasAudio", Boolean.TRUE.equals(clip.clip().getHasAudio()));
+            // Unknown duration: omit the key, the job probes the file.
+            if (clip.clip().getDurationSeconds() != null) {
+                placement.put("durationSec", clip.clip().getDurationSeconds());
+            }
+            // Unknown audio counts as present; the job verifies the actual stream.
+            placement.put("clipHasAudio", !Boolean.FALSE.equals(clip.clip().getHasAudio()));
             placements.add(placement);
         }
         spec.setPlacements(placements);

@@ -185,6 +185,28 @@ class CreativeSpecBuilderTest {
     }
 
     @Test
+    void anUnknownClipDurationIsOmittedUnknownAudioCountsAsPresentAndTheRealSizeWins() {
+        Creative clipCreative = creative();
+        clipCreative.setKind(Creative.KIND_CLIP);
+        MediaFacts clip = MediaFacts.local("clip", CreativePhoto.MEDIA_KIND_VIDEO, null, null, 720, 1280);
+        CreativeRenderSpec spec = builder.buildClip("r-1", clipCreative, kit,
+                List.of(new CreativeSpecBuilder.ClipPlacement("9x16", 1080, 1920, clip)), null,
+                new CreativeAudio().source("mix").trackId("t").volume(new BigDecimal("0.3")).fadeOutSec(BigDecimal.ONE));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> placement = (Map<String, Object>) spec.getPlacements().get(0);
+        assertThat(placement).doesNotContainKey("durationSec").containsEntry("clipHasAudio", true)
+                .containsEntry("width", 720).containsEntry("height", 1280);
+
+        MediaFacts silent = MediaFacts.local("clip", CreativePhoto.MEDIA_KIND_VIDEO, new BigDecimal("5"), false, null, null);
+        CreativeRenderSpec silentSpec = builder.buildClip("r-1", clipCreative, kit,
+                List.of(new CreativeSpecBuilder.ClipPlacement("9x16", 1080, 1920, silent)), null,
+                new CreativeAudio().source("none").volume(BigDecimal.ONE).fadeOutSec(BigDecimal.ONE));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> silentPlacement = (Map<String, Object>) silentSpec.getPlacements().get(0);
+        assertThat(silentPlacement).containsEntry("clipHasAudio", false).containsEntry("width", 1080);
+    }
+
+    @Test
     void aMutedClipHasNoTrackUrl() {
         Creative clipCreative = creative();
         clipCreative.setKind(Creative.KIND_CLIP);

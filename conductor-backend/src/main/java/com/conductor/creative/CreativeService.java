@@ -1340,7 +1340,9 @@ public class CreativeService {
         boolean carouselKind = Creative.KIND_CAROUSEL.equals(kind);
         CreativeAudio audio = new CreativeAudio().source(audioRequest.getSource()).trackId(audioRequest.getTrackId())
                 .volume(audioRequest.getVolume()).fadeOutSec(audioRequest.getFadeOutSec());
-        String source = notBlank(audio.getSource()) ? audio.getSource() : (clipKind ? "clip" : "none");
+        // A track named without a source means "play this track" — never silently drop it.
+        String source = notBlank(audio.getSource()) ? audio.getSource()
+                : notBlank(audio.getTrackId()) ? "track" : (clipKind ? "clip" : "none");
         audio.setSource(source);
         MediaFacts track = resolvePhoto(media, "audio.trackId", audio.getTrackId(), CreativePhoto.MEDIA_KIND_AUDIO).photo();
         boolean usesTrack = "track".equals(source) || ("mix".equals(source) && clipKind);

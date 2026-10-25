@@ -511,6 +511,10 @@ class CreativeValidatorTest {
         assertThat(violationRuleIds(carouselWithAudio(audio().source("track").goodTrack("t1").build())
                 .slideshow(new CreativeValidator.SlideshowInput(List.of(0.5, 11.0, 2.0), 3)).build()))
                 .containsExactly("bounds", "bounds");
+        // Without a track the stored durations are not used, so a stale count never blocks.
+        CreativeValidator.SlideshowInput stale = new CreativeValidator.SlideshowInput(List.of(3.0, 2.5), 3);
+        assertThat(validator.validate(kit, carouselWithAudio(audio().source("none").build()).slideshow(stale).build())).isEmpty();
+        assertThat(validator.validate(kit, carouselWithAudio(null).slideshow(stale).build())).isEmpty();
         assertThat(violationRuleIds(baseInput().slideshow(ok).build())).containsExactly("kindFields");
         assertThat(violationRuleIds(clipWithAudio(null).slideshow(ok).build())).containsExactly("kindFields");
     }

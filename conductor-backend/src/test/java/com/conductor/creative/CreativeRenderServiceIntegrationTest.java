@@ -715,6 +715,23 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
+    void aTimedOutLocalCarouselRenderLeavesNoLinkedSlideFramesBehind() {
+        Creative carousel = carouselWithTrack(newAudioMedia(), 2);
+        CreativeRenderService.CreateRenderResult result = renderService.requestRender(
+                project.getId(), carousel.getId(), new CreateCreativeRenderRequest(), admin);
+        String renderId = result.render().getId();
+        assertThat(frameRepository.findAllByRenderId(renderId)).hasSize(2);
+        CreativeRender render = renderRepository.findById(renderId).orElseThrow();
+        render.setRequestedAt(OffsetDateTime.now().minusMinutes(31));
+        renderRepository.saveAndFlush(render);
+
+        renderService.getRender(project.getId(), carousel.getId(), renderId, admin);
+
+        assertThat(renderRepository.findById(renderId).orElseThrow().getState()).isEqualTo(CreativeRender.STATE_FAILED);
+        assertThat(frameRepository.findAllByRenderId(renderId)).isEmpty();
+    }
+
+    @Test
     void aCarouselWithATrackIsARunningRenderWithTheSlideFramesLinkedAndTheSlideshowSpec() {
         CreativePhoto track = newAudioMedia();
         Creative carousel = carouselWithTrack(track, 3);

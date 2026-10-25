@@ -758,6 +758,37 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
+    void aVideoFallbackToPhotosIsNotPersistedSoTheVideoDefaultAppliesAfterARerender() {
+        CreativeRender full = renderCarouselWithTrack();
+        // An older render with the slides but no video frame.
+        CreativeRender older = newRender();
+        creative = creativeRepository.save(creative);
+        List<CreativeRenderFrame> slideFrames = frameRepository.findAllByRenderIdOrdered(full.getId()).stream()
+                .filter(f -> f.getContentType().startsWith("image/") && "9x16".equals(f.getPlacementKey())).toList();
+        for (CreativeRenderFrame f : slideFrames) {
+            newFrame(older, "9x16", f.getSequenceIndex(), "tiktok", 1080, 1920);
+        }
+
+        CreativeAttachService.AttachResult first = attachService.attach(project.getId(), creative.getId(),
+                older.getId(), post.getId(), admin);
+        assertThat(first.targetsUpdated()).anySatisfy(u -> {
+            assertThat(u.platform()).isEqualTo("tiktok");
+            assertThat(u.warning()).contains("no video was rendered");
+        });
+        assertThat(optionOf(targetOf("tiktok"), "carouselAs")).isNull();
+
+        // The person clears the destination's media (as after a deselect) and attaches the re-render.
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId,
+                        null, null, List.of(), null, true)), admin);
+        attachService.attach(project.getId(), creative.getId(), full.getId(), post.getId(), admin);
+
+        assertThat(assetsOf(targetOf("tiktok").getId())).singleElement()
+                .satisfies(a -> assertThat(a.getContentType()).isEqualTo("video/mp4"));
+        assertThat(optionOf(targetOf("tiktok"), "carouselAs")).isEqualTo("video");
+    }
+
+    @Test
     void aCarouselWithoutATrackNeverGetsACarouselAsOption() {
         creative.setKind(Creative.KIND_CAROUSEL);
         creativeRepository.save(creative);

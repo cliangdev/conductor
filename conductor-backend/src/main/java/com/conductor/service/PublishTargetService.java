@@ -848,7 +848,7 @@ public class PublishTargetService {
             }
             String alt = CreativePlacementMedia.hasAltText(options) ? null : p.altTextFor(probe, media);
             String carouselAs = options != null && options.get(PublishPlatformRegistry.OPTION_CAROUSEL_AS) != null
-                    ? null : p.carouselAsFor(probe);
+                    ? null : p.carouselAsToPersist(probe);
             if (alt == null && carouselAs == null) {
                 return optionsJson;
             }
