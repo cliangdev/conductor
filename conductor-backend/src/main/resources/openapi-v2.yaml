@@ -4655,6 +4655,136 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/creatives/{creativeId}/render-runs:
+    post:
+      tags:
+        - creatives
+      summary: Render a Creative on the workspace's self-hosted daemon
+      description: >-
+        Dispatches the system workflow `conductor-creative-render` (seeded on first use) for a Creative that
+        needs a browser or ffmpeg: a STILL or MOTION, a CAROUSEL with a music track, or a CLIP whose sound is
+        replaced, mixed or muted. The run executes on the workspace's conductor daemon, which renders and
+        uploads the result as a normal render. Requires ADMIN or CREATOR. Returns 202 with the run; follow it
+        through `GET .../render-runs/latest`. Refused with 422 `RENDER_NOT_NEEDED` when the render is assembled
+        in the backend (use the normal render), 422 with `violations` when the Creative fails the render
+        validation, 409 `RENDER_RUN_ACTIVE` while a run for this Creative is queued or running, 409
+        `RENDER_WORKFLOW_DISABLED` when the workflow was switched off, 409 `RENDER_WORKFLOW_NAME_TAKEN` when a
+        user workflow already uses the name.
+      operationId: createCreativeRenderRun
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: The render run was queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRenderRun"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an ADMIN or CREATOR of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            `RENDER_RUN_ACTIVE` (body carries the active run's `workflowId` and `runId`),
+            `RENDER_WORKFLOW_DISABLED` or `RENDER_WORKFLOW_NAME_TAKEN` (body carries `workflowId`).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - type: object
+                    properties:
+                      workflowId:
+                        type: string
+                      runId:
+                        type: string
+        "422":
+          description: >-
+            `RENDER_NOT_NEEDED`, or the Creative failed the render validation (body carries `violations`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/render-runs/latest:
+    get:
+      tags:
+        - creatives
+      summary: The latest render run of a Creative
+      description: >-
+        The most recent `conductor-creative-render` run dispatched for this Creative, with its status, why it
+        is waiting (`waitReason`, e.g. `AWAITING_RUNNER`) and, once it failed, the reason. 204 when none was
+        ever dispatched. Cheap enough to poll.
+      operationId: getLatestCreativeRenderRun
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The latest render run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRenderRun"
+        "204":
+          description: No render run was ever dispatched for this Creative
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/marketing/creatives/{creativeId}/renders:
     get:
       tags:
@@ -9478,6 +9608,35 @@ components:
           type: string
           nullable: true
           description: The family's RUNNING hook experiment, if any (COND-24 T5). Same value on every letter in the family.
+
+    CreativeRenderRun:
+      type: object
+      description: A run of the `conductor-creative-render` system workflow for one Creative.
+      required: [workflowId, runId, status]
+      properties:
+        workflowId:
+          type: string
+        runId:
+          type: string
+        status:
+          type: string
+          description: The workflow run's status (PENDING, PENDING_LOCAL_PICKUP, RUNNING, CANCELLING, SUCCESS, FAILED, CANCELLED, LOCAL_PICKUP_TIMEOUT).
+        waitReason:
+          type: string
+          nullable: true
+          description: "`AWAITING_RUNNER` while no daemon has picked the job up yet."
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true
+          description: Why a FAILED run failed (e.g. DAEMON_PICKUP_TIMEOUT when no daemon claimed it).
 
     CreateCreativeRequest:
       type: object

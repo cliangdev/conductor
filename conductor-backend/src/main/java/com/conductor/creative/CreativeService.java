@@ -186,7 +186,20 @@ public class CreativeService {
 
     @Transactional(readOnly = true)
     public CreativeView getCreative(String projectId, String creativeId, User caller) {
-        requireMember(projectId, caller);
+        return getCreative(projectId, creativeId, RenderCaller.of(caller));
+    }
+
+    /** A person must be a member; a run token only its own Creative. There is no null caller: it fails. */
+    @Transactional(readOnly = true)
+    public CreativeView getCreative(String projectId, String creativeId, RenderCaller caller) {
+        switch (java.util.Objects.requireNonNull(caller, "caller")) {
+            case RenderCaller.UserCaller u -> requireMember(projectId, u.user());
+            case RenderCaller.RunCaller r -> {
+                if (!r.projectId().equals(projectId) || !r.creativeId().equals(creativeId)) {
+                    throw new ForbiddenException("This run token is for another Creative");
+                }
+            }
+        }
         Creative creative = findCreative(projectId, creativeId);
         CreativeView view = toView(projectId, creative, loadPhotos(List.of(creative)));
         // Only the single-Creative read pays for the full render + its frames (contract item 6).

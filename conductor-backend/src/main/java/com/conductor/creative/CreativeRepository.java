@@ -13,6 +13,11 @@ public interface CreativeRepository extends JpaRepository<Creative, String> {
 
     Optional<Creative> findByIdAndProjectId(String id, String projectId);
 
+    /** Row lock, so two concurrent render dispatches for one Creative run one after the other. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Creative c WHERE c.id = :id AND c.projectId = :projectId")
+    Optional<Creative> findByIdAndProjectIdForUpdate(@Param("id") String id, @Param("projectId") String projectId);
+
     List<Creative> findAllByProjectIdOrderByNumberDescVariantLetterAsc(String projectId);
 
     /**

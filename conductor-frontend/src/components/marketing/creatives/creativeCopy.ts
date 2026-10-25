@@ -1,7 +1,7 @@
 // Small read-only helpers over a Creative that the chooser and the compose page both need.
 
 import { placementLabel } from './placementMap'
-import type { Creative, CreativeKind } from './types'
+import type { Creative, CreativeKind, CreativeRenderRun } from './types'
 
 /** The Creative's caption, falling back to its headline and body when the caption is empty. */
 export function creativeCaption(c: Pick<Creative, 'caption' | 'headline' | 'body'>): string {
@@ -87,4 +87,28 @@ export function canUseInPost(c: Pick<Creative, 'latestRenderId' | 'kind' | 'stat
 /** Whether using this Creative means the backend must assemble its render first (instant server render). */
 export function needsServerRender(c: Pick<Creative, 'kind' | 'audio'>): boolean {
   return (c.kind === 'CLIP' || c.kind === 'CAROUSEL') && !needsLocalRender(c)
+}
+
+// ── Web render runs (the `conductor-creative-render` system Workflow) ────────────────────────────
+
+export type RenderRunPhase = 'rendering' | 'waiting' | 'failed' | 'succeeded'
+
+/**
+ * Collapses a WorkflowRun's `status` + `waitReason` into the four states the Renders panel shows.
+ * Both spellings of success (SUCCESS from the engine, SUCCEEDED from the contract) are accepted;
+ * a run nobody claimed (PENDING_LOCAL_PICKUP / waitReason AWAITING_RUNNER) is "waiting".
+ */
+export function renderRunPhase(run: Pick<CreativeRenderRun, 'status' | 'waitReason'>): RenderRunPhase {
+  const status = run.status.toUpperCase()
+  if (status === 'SUCCESS' || status === 'SUCCEEDED') return 'succeeded'
+  if (status === 'FAILED' || status === 'CANCELLED' || status === 'LOCAL_PICKUP_TIMEOUT') return 'failed'
+  if (run.waitReason === 'AWAITING_RUNNER' || status === 'PENDING_LOCAL_PICKUP') return 'waiting'
+  return 'rendering'
+}
+
+/** Whether the run is still in flight (the panel keeps polling and blocks a second dispatch). */
+export function isRenderRunActive(run: Pick<CreativeRenderRun, 'status' | 'waitReason'> | null | undefined): boolean {
+  if (!run) return false
+  const phase = renderRunPhase(run)
+  return phase === 'rendering' || phase === 'waiting'
 }

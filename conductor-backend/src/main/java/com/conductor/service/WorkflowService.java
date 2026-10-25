@@ -97,7 +97,7 @@ public class WorkflowService {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
-        long count = workflowRepository.countByProjectId(projectId);
+        long count = workflowRepository.countByProjectIdAndNameNotIn(projectId, com.conductor.workflow.SystemWorkflows.NAMES);
         if (count >= MAX_WORKFLOWS_PER_PROJECT) {
             throw new BusinessException("Workflow limit (20) reached");
         }

@@ -162,10 +162,31 @@ renders is still on a Post (remove it from the Post first) or, for a family root
 its lettered variants (`12b`, `12c`, …) still exist. A photo in the picker can be deleted the same
 way, refused while any Creative still uses it.
 
-The web editor never renders final images itself — that always happens from Claude Code/Desktop or
-the CLI (`conductor creative render 12a`). The **Renders** panel on the editor page lists what's
-been rendered and shows both the exact prompt and the CLI command, ready to copy, for whenever you
-want a fresh one.
+The web editor never renders final images in your browser. Final renders happen either from Claude
+Code/Desktop or the CLI (`conductor creative render 12a`), or by clicking **Render** (see below). The
+**Renders** panel on the editor page lists what's been rendered and shows both the exact prompt and the
+CLI command, ready to copy, for whenever you want a fresh one.
+
+#### Rendering from the web app
+
+For a Creative that needs a real render (a still, Motion, a carousel with a music track, or a clip with
+replaced, mixed or muted sound), the **Renders** panel has a **Render** button. It starts a render on a
+**conductor daemon**, so it needs one running on a machine with Docker:
+
+```bash
+conductor start
+```
+
+- While the run is working you'll see **Rendering…** and a **View run** link. When it succeeds the new
+  render appears in the panel like any other.
+- **Waiting for a runner** means no daemon has picked the job up yet: start `conductor start` on a machine
+  with Docker (log in as a workspace Admin or Creator). It picks the job up on its own. A run nobody
+  picks up is given up on after 24 to 48 hours, and you can click **Render** again after that, or after
+  any failed run.
+- Only one render run per Creative at a time; clicking again while one is active just shows that run.
+- **Render failed** shows the error and a link to the run's logs; fix the cause and click **Render** again.
+- Nothing renders by itself: it only happens when someone clicks. Claude Code and Desktop still render
+  locally on your own machine and do not need a daemon.
 
 ### Let a content team choose the idea
 
@@ -413,8 +434,9 @@ audio.
 
 Rendering a Clip that keeps its own sound is instant — there's no local Playwright job, because
 there's nothing to draw: the server just copies your uploaded clip(s) into one render frame per
-placement they cover. A Clip with replaced, mixed or muted sound renders on your machine instead
-(ffmpeg makes the new MP4), the same way Motion does, so use Claude Code/Desktop or the CLI for it.
+placement they cover. A Clip with replaced, mixed or muted sound renders outside the server instead
+(ffmpeg makes the new MP4), the same way Motion does: use Claude Code/Desktop or the CLI on your machine,
+or the web **Render** button (needs a running `conductor start` daemon, see "Rendering from the web app").
 Otherwise, do it however's convenient:
 
 - **Prepare for posting**, in the Renders panel on the Creative's editor page — a plain button, web
@@ -422,8 +444,9 @@ Otherwise, do it however's convenient:
 - From Claude Code/Desktop or the CLI, the same `render_creative` tool and `conductor creative
   render <id>` command a Still creative uses — it recognizes a Clip and renders it the fast way.
 
-**Motion renders locally**, same as a Still creative — there's no "Prepare for posting" button for
-it, because drawing and encoding each frame takes real compute. From Claude Code/Desktop's
+**Motion renders outside the server**, same as a Still creative — there's no "Prepare for posting" button
+for it, because drawing and encoding each frame takes real compute. Use the web **Render** button (on a
+conductor daemon) or, from Claude Code/Desktop's
 `render_creative` tool or `conductor creative render <id>` on the CLI, expect roughly 20 seconds per
 placement. The Renders panel shows each finished placement as a playable MP4 with its duration once
 it's done.
@@ -462,6 +485,10 @@ Conductor never silently overwrites a concurrent edit.
 **A photo warning about being under 2160px** — the photo still uploaded and can still be used; this
 is a quality heads-up, not a block. Swap in a higher-resolution source if the platform crop looks
 soft.
+
+**"Waiting for a runner" never goes away** — the web **Render** button needs a conductor daemon running
+on a machine with Docker (`conductor start`), logged in as a workspace Admin or Creator, with CLI 0.41.0
+or later. The run is abandoned after 24 to 48 hours.
 
 **No browser found for rendering** — rendering needs a local Chromium-family browser. Install
 Google Chrome or Microsoft Edge, or run `npx playwright install chromium` once, then try again.

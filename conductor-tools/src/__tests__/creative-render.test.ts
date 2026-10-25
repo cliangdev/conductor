@@ -49,6 +49,19 @@ describe('renderCreative kind branching', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/creatives/c1', config)
   })
 
+  it('sends renderer and workflowRunId on the POST renders body (a CLIP that needs no local encode)', async () => {
+    mocked(apiGet).mockResolvedValueOnce({ kind: 'CLIP' })
+    mocked(apiPost).mockResolvedValueOnce({ id: 'r1', state: 'SUCCEEDED', frames: [] })
+
+    await renderCreative({ creativeId: 'c1', renderer: 'workflow', workflowRunId: 'run-77' }, config)
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/creatives/c1/renders',
+      { previewOnly: false, renderer: 'workflow', workflowRunId: 'run-77' },
+      config
+    )
+  })
+
   it('POSTs the render directly and never touches the browser for a CLIP creative', async () => {
     mocked(apiGet).mockResolvedValueOnce({ kind: 'CLIP' })
     mocked(apiPost).mockResolvedValueOnce({

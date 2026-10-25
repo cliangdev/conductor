@@ -124,8 +124,8 @@ public class CreativeRenderService {
 
     @Transactional
     public CreateRenderResult requestRender(String projectId, String creativeId, CreateCreativeRenderRequest request,
-                                            User caller) {
-        requireEditor(projectId, caller);
+                                            RenderCaller caller) {
+        requireEditor(projectId, creativeId, caller);
         Creative creative = findCreative(projectId, creativeId);
         prefetchMedia(creative);
         if (Creative.KIND_CLIP.equals(creative.getKind())) {
@@ -144,27 +144,14 @@ public class CreativeRenderService {
      * is allowed for both (unlike CLIP, which has no local job to preview).
      */
     private CreateRenderResult requestStillRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
-                                                  User caller) {
+                                                  RenderCaller caller) {
         BrandKit kit = requireKit(projectId, creative.getBrandKitId());
         MediaFacts mainPhoto = findMedia(projectId, creative.getPhotoId());
         CreativeSpecBuilder.MotionMedia motionRes = Creative.KIND_MOTION.equals(creative.getKind())
                 ? resolveMotionForRender(projectId, creative) : null;
 
-        List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
-                creative.getLayout(), creative.getTheme(), toStringList(creative.getPlacements()),
-                creative.getHeadline(), creative.getBody(), creative.getCaption(),
-                // Force the READY-only checks regardless of the Creative's own state: a render is refused
-                // the moment it lacks a photo or headline, not only once someone flips it to READY.
-                Creative.STATE_READY, creative.getPhotoId(), creative.getPhotoId() == null || mainPhoto != null,
-                mainPhoto != null, mainPhoto != null && mainPhoto.isUploaded(),
-                mainPhoto != null && mainPhoto.isBlocked(), creative.getSequenceKind(),
-                toValidatorBeats(toSequenceBeats(creative.getSequence())), creative.getCarouselRatio(), Set.of(),
-                extractOverrideInts(creative.getLayoutOverrides(), "band"),
-                extractOverrideInts(creative.getLayoutOverrides(), "padBottom"),
-                creative.getKind(), List.of(),
-                motionRes != null ? CreativeValidator.MotionInput.resolve(motionRes.motion(), motionRes.audio(),
-                        motionRes.backgroundClip(), motionRes.audioTrack()) : null)
-                .withPhotoGif(mainPhoto != null && mainPhoto.isGif()));
+        List<CreativeValidationException.Violation> violations =
+                stillViolations(kit, creative, mainPhoto, motionRes);
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -180,7 +167,7 @@ public class CreativeRenderService {
         render.setPreviewOnly(request != null && Boolean.TRUE.equals(request.getPreviewOnly()));
         render.setRenderer(request != null ? request.getRenderer() : null);
         render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
-        render.setRequestedBy(caller.getId());
+        render.setRequestedBy(caller.requestedBy());
         render.setRequestedAt(OffsetDateTime.now());
         render = renderRepository.save(render);
 
@@ -267,7 +254,7 @@ public class CreativeRenderService {
      * there is no RUNNING interval and no frame PUT.
      */
     private CreateRenderResult requestClipRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
-                                                 User caller) {
+                                                 RenderCaller caller) {
         if (request != null && Boolean.TRUE.equals(request.getPreviewOnly())) {
             throw new UnprocessableEntityException(
                     "CLIP renders are assembled directly from the chosen media; there is no preview-only sheet");
@@ -275,15 +262,7 @@ public class CreativeRenderService {
         Map<String, String> clipMedia = toClipMediaMap(creative.getClipMedia());
         BrandKit kit = requireKit(projectId, creative.getBrandKitId());
         CreativeAudio audio = toAudio(creative.getAudio());
-        List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
-                creative.getLayout(), creative.getTheme(), toStringList(creative.getPlacements()),
-                creative.getHeadline(), creative.getBody(), creative.getCaption(),
-                // Force the READY-only checks (caption + at least one clip) regardless of the Creative's
-                // own state, exactly as the STILL path forces its own READY checks above.
-                Creative.STATE_READY, null, true, true, true, false, creative.getSequenceKind(), List.of(),
-                creative.getCarouselRatio(), Set.of(), Map.of(), Map.of(),
-                Creative.KIND_CLIP, resolveClipMediaEntries(projectId, clipMedia), null)
-                .withAudioAndSlideshow(audioInputFor(projectId, creative, clipMedia), null));
+        List<CreativeValidationException.Violation> violations = clipViolations(projectId, creative, kit, clipMedia);
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -301,7 +280,7 @@ public class CreativeRenderService {
         render.setPreviewOnly(false);
         render.setRenderer(request != null ? request.getRenderer() : null);
         render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
-        render.setRequestedBy(caller.getId());
+        render.setRequestedBy(caller.requestedBy());
         render.setRequestedAt(OffsetDateTime.now());
         render.setFinishedAt(OffsetDateTime.now());
         render = renderRepository.save(render);
@@ -337,6 +316,44 @@ public class CreativeRenderService {
         return new CreateRenderResult(render, null, frames);
     }
 
+    /** Whether rendering this Creative needs a browser or ffmpeg (a local render): STILL and MOTION always,
+     *  CAROUSEL with a track, CLIP with replaced, mixed or muted sound. The rest is assembled in the backend. */
+    public boolean needsLocalRender(Creative creative) {
+        String kind = creative.getKind();
+        if (Creative.KIND_CLIP.equals(kind)) {
+            return clipNeedsLocalRender(toAudio(creative.getAudio()));
+        }
+        if (Creative.KIND_CAROUSEL.equals(kind)) {
+            return carouselNeedsLocalRender(toAudio(creative.getAudio()));
+        }
+        return true;
+    }
+
+    /**
+     * Runs the same validation {@link #requestRender} runs, without creating a render, so a dispatcher can
+     * refuse before it queues a run. Throws {@link CreativeValidationException} (422) with the violations.
+     */
+    @Transactional(readOnly = true)
+    public void validateForRender(String projectId, String creativeId) {
+        Creative creative = findCreative(projectId, creativeId);
+        prefetchMedia(creative);
+        BrandKit kit = requireKit(projectId, creative.getBrandKitId());
+        List<CreativeValidationException.Violation> violations;
+        if (Creative.KIND_CLIP.equals(creative.getKind())) {
+            violations = clipViolations(projectId, creative, kit, toClipMediaMap(creative.getClipMedia()));
+        } else if (Creative.KIND_CAROUSEL.equals(creative.getKind())) {
+            violations = carouselViolations(projectId, creative, kit);
+        } else {
+            MediaFacts mainPhoto = findMedia(projectId, creative.getPhotoId());
+            CreativeSpecBuilder.MotionMedia motionRes = Creative.KIND_MOTION.equals(creative.getKind())
+                    ? resolveMotionForRender(projectId, creative) : null;
+            violations = stillViolations(kit, creative, mainPhoto, motionRes);
+        }
+        if (!violations.isEmpty()) {
+            throw new CreativeValidationException(violations);
+        }
+    }
+
     /** A CLIP whose sound is replaced, mixed or muted is rendered into a new MP4 on the person's machine. */
     static boolean clipNeedsLocalRender(CreativeAudio audio) {
         return audio != null && ("track".equals(audio.getSource()) || "mix".equals(audio.getSource())
@@ -354,7 +371,7 @@ public class CreativeRenderService {
      * {@link #putFrame} like a MOTION's.
      */
     private CreateRenderResult requestLocalClipRender(String projectId, Creative creative,
-                                                      CreateCreativeRenderRequest request, User caller, BrandKit kit,
+                                                      CreateCreativeRenderRequest request, RenderCaller caller, BrandKit kit,
                                                       CreativeAudio audio, Map<String, String> framePlacements) {
         List<CreativeSpecBuilder.ClipPlacement> clips = new ArrayList<>();
         for (Map.Entry<String, String> entry : framePlacements.entrySet()) {
@@ -373,13 +390,13 @@ public class CreativeRenderService {
     }
 
     private CreativeRender saveRunningRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
-                                             User caller) {
+                                             RenderCaller caller) {
         return saveRender(projectId, creative, request, caller, CreativeRender.STATE_RUNNING);
     }
 
     /** A new non-preview render row in {@code state}; a SUCCEEDED one is also finished, in the same save. */
     private CreativeRender saveRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
-                                      User caller, String state) {
+                                      RenderCaller caller, String state) {
         CreativeRender render = new CreativeRender();
         render.setProjectId(projectId);
         render.setCreativeId(creative.getId());
@@ -388,7 +405,7 @@ public class CreativeRenderService {
         render.setPreviewOnly(false);
         render.setRenderer(request != null ? request.getRenderer() : null);
         render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
-        render.setRequestedBy(caller.getId());
+        render.setRequestedBy(caller.requestedBy());
         render.setRequestedAt(OffsetDateTime.now());
         if (CreativeRender.STATE_SUCCEEDED.equals(state)) {
             render.setFinishedAt(OffsetDateTime.now());
@@ -415,7 +432,7 @@ public class CreativeRenderService {
      * settles, SUCCEEDED in this one call — no layout, overlay or safe-zone check runs.
      */
     private CreateRenderResult requestCarouselRender(String projectId, Creative creative,
-                                                     CreateCreativeRenderRequest request, User caller) {
+                                                     CreateCreativeRenderRequest request, RenderCaller caller) {
         if (request != null && Boolean.TRUE.equals(request.getPreviewOnly())) {
             throw new UnprocessableEntityException(
                     "CAROUSEL renders are assembled directly from the chosen images; there is no preview-only sheet");
@@ -426,18 +443,7 @@ public class CreativeRenderService {
         CreativeAudio audio = toAudio(creative.getAudio());
         CreativeSlideshow slideshow = toSlideshow(creative.getSlideshow());
         List<String> videoList = slides.get(CreativeSpecBuilder.slideshowKey(slides));
-        List<CreativeValidationException.Violation> violations = validator.validate(kit, new CreativeValidator.Input(
-                creative.getLayout(), creative.getTheme(), placements, creative.getHeadline(), creative.getBody(),
-                creative.getCaption(),
-                // Force the READY-only checks (caption + at least one slide), as the CLIP path does.
-                Creative.STATE_READY, null, true, true, true, false, null, List.of(), null, Set.of(), Map.of(),
-                Map.of(), Creative.KIND_CAROUSEL, List.of(), null, resolveSlideEntries(projectId, slides),
-                toStringList(creative.getSlideAltText()))
-                .withAudioAndSlideshow(audioInputFor(projectId, creative, Map.of()),
-                        slideshow != null ? new CreativeValidator.SlideshowInput(
-                                slideshow.getSlideDurations() != null
-                                        ? slideshow.getSlideDurations().stream().map(BigDecimal::doubleValue).toList() : null,
-                                videoList != null ? videoList.size() : 0) : null));
+        List<CreativeValidationException.Violation> violations = carouselViolations(projectId, creative, kit);
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -576,7 +582,7 @@ public class CreativeRenderService {
     @Transactional
     public RenderView putFrame(String projectId, String creativeId, String renderId, String placementKey,
                                Integer index, int width, int height, byte[] frameBytes, String contentType,
-                               User caller) {
+                               RenderCaller caller) {
         return putFrame(projectId, creativeId, renderId, placementKey, index, width, height, frameBytes,
                 contentType, null, null, caller);
     }
@@ -586,8 +592,8 @@ public class CreativeRenderService {
     @Transactional
     public RenderView putFrame(String projectId, String creativeId, String renderId, String placementKey,
                                Integer index, int width, int height, byte[] frameBytes, String contentType,
-                               BigDecimal durationSeconds, Boolean hasAudio, User caller) {
-        requireEditor(projectId, caller);
+                               BigDecimal durationSeconds, Boolean hasAudio, RenderCaller caller) {
+        requireEditor(projectId, creativeId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         if (!render.isRunning()) {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
@@ -659,8 +665,8 @@ public class CreativeRenderService {
      */
     @Transactional
     public RenderView putFramePoster(String projectId, String creativeId, String renderId, String placementKey,
-                                     Integer index, byte[] posterBytes, String contentType, User caller) {
-        requireEditor(projectId, caller);
+                                     Integer index, byte[] posterBytes, String contentType, RenderCaller caller) {
+        requireEditor(projectId, creativeId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         if (!render.isRunning()) {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
@@ -695,8 +701,8 @@ public class CreativeRenderService {
 
     @Transactional
     public RenderView completeRender(String projectId, String creativeId, String renderId,
-                                     CompleteCreativeRenderRequest request, User caller) {
-        requireEditor(projectId, caller);
+                                     CompleteCreativeRenderRequest request, RenderCaller caller) {
+        requireEditor(projectId, creativeId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         if (!render.isRunning()) {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
@@ -723,8 +729,8 @@ public class CreativeRenderService {
 
     @Transactional
     public RenderView failRender(String projectId, String creativeId, String renderId,
-                                 FailCreativeRenderRequest request, User caller) {
-        requireEditor(projectId, caller);
+                                 FailCreativeRenderRequest request, RenderCaller caller) {
+        requireEditor(projectId, creativeId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         if (!render.isRunning()) {
             throw new ConflictException("Render " + renderId + " is no longer RUNNING (" + render.getState() + ")");
@@ -755,16 +761,16 @@ public class CreativeRenderService {
     }
 
     @Transactional
-    public RenderView getRender(String projectId, String creativeId, String renderId, User caller) {
-        requireMember(projectId, caller);
+    public RenderView getRender(String projectId, String creativeId, String renderId, RenderCaller caller) {
+        requireMember(projectId, creativeId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         applyLazyTimeout(render);
         return new RenderView(render, frameRepository.findAllByRenderIdOrdered(renderId));
     }
 
     @Transactional
-    public List<RenderView> listRenders(String projectId, String creativeId, User caller) {
-        requireMember(projectId, caller);
+    public List<RenderView> listRenders(String projectId, String creativeId, RenderCaller caller) {
+        requireMember(projectId, creativeId, caller);
         findCreative(projectId, creativeId);
         List<CreativeRender> renders = renderRepository.findAllByCreativeIdOrderByRequestedAtDesc(
                 creativeId, PageRequest.of(0, MAX_RENDERS_LISTED));
@@ -1047,18 +1053,155 @@ public class CreativeRenderService {
         return warnings;
     }
 
-    // ── auth ─────────────────────────────────────────────────────────────────────────────────────
+    private List<CreativeValidationException.Violation> stillViolations(BrandKit kit, Creative creative,
+                                                                        MediaFacts mainPhoto,
+                                                                        CreativeSpecBuilder.MotionMedia motionRes) {
+        return validator.validate(kit, new CreativeValidator.Input(
+                creative.getLayout(), creative.getTheme(), toStringList(creative.getPlacements()),
+                creative.getHeadline(), creative.getBody(), creative.getCaption(),
+                // Force the READY-only checks regardless of the Creative's own state: a render is refused
+                // the moment it lacks a photo or headline, not only once someone flips it to READY.
+                Creative.STATE_READY, creative.getPhotoId(), creative.getPhotoId() == null || mainPhoto != null,
+                mainPhoto != null, mainPhoto != null && mainPhoto.isUploaded(),
+                mainPhoto != null && mainPhoto.isBlocked(), creative.getSequenceKind(),
+                toValidatorBeats(toSequenceBeats(creative.getSequence())), creative.getCarouselRatio(), Set.of(),
+                extractOverrideInts(creative.getLayoutOverrides(), "band"),
+                extractOverrideInts(creative.getLayoutOverrides(), "padBottom"),
+                creative.getKind(), List.of(),
+                motionRes != null ? CreativeValidator.MotionInput.resolve(motionRes.motion(), motionRes.audio(),
+                        motionRes.backgroundClip(), motionRes.audioTrack()) : null)
+                .withPhotoGif(mainPhoto != null && mainPhoto.isGif()));
+    }
 
-    private void requireMember(String projectId, User caller) {
-        if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
-            throw new EntityNotFoundException("Project not found");
+    private List<CreativeValidationException.Violation> clipViolations(String projectId, Creative creative, BrandKit kit,
+                                                                       Map<String, String> clipMedia) {
+        return validator.validate(kit, new CreativeValidator.Input(
+                creative.getLayout(), creative.getTheme(), toStringList(creative.getPlacements()),
+                creative.getHeadline(), creative.getBody(), creative.getCaption(),
+                // Force the READY-only checks (caption + at least one clip) regardless of the Creative's
+                // own state, exactly as the STILL path forces its own READY checks above.
+                Creative.STATE_READY, null, true, true, true, false, creative.getSequenceKind(), List.of(),
+                creative.getCarouselRatio(), Set.of(), Map.of(), Map.of(),
+                Creative.KIND_CLIP, resolveClipMediaEntries(projectId, clipMedia), null)
+                .withAudioAndSlideshow(audioInputFor(projectId, creative, clipMedia), null));
+    }
+
+    private List<CreativeValidationException.Violation> carouselViolations(String projectId, Creative creative, BrandKit kit) {
+        List<String> placements = toStringList(creative.getPlacements());
+        Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+        CreativeSlideshow slideshow = toSlideshow(creative.getSlideshow());
+        List<String> videoList = slides.get(CreativeSpecBuilder.slideshowKey(slides));
+        return validator.validate(kit, new CreativeValidator.Input(
+                creative.getLayout(), creative.getTheme(), placements, creative.getHeadline(), creative.getBody(),
+                creative.getCaption(),
+                // Force the READY-only checks (caption + at least one slide), as the CLIP path does.
+                Creative.STATE_READY, null, true, true, true, false, null, List.of(), null, Set.of(), Map.of(),
+                Map.of(), Creative.KIND_CAROUSEL, List.of(), null, resolveSlideEntries(projectId, slides),
+                toStringList(creative.getSlideAltText()))
+                .withAudioAndSlideshow(audioInputFor(projectId, creative, Map.of()),
+                        slideshow != null ? new CreativeValidator.SlideshowInput(
+                                slideshow.getSlideDurations() != null
+                                        ? slideshow.getSlideDurations().stream().map(BigDecimal::doubleValue).toList() : null,
+                                videoList != null ? videoList.size() : 0) : null));
+    }
+
+    /**
+     * A workflow run's token may only touch renders its own run requested: 403 for any other render of the
+     * Creative, including one a person started (no workflowRunId).
+     */
+    @Transactional(readOnly = true)
+    public void requireRenderOfRun(String projectId, String creativeId, String renderId, String runId) {
+        CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
+        if (render.getWorkflowRunId() == null || !render.getWorkflowRunId().equals(runId)) {
+            throw new ForbiddenException("This run token did not request render " + renderId);
         }
     }
 
-    private void requireEditor(String projectId, User caller) {
-        requireMember(projectId, caller);
-        if (!projectSecurityService.isAdminOrCreator(projectId, caller.getId())) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can manage Creative renders");
+    // ── auth ─────────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * A person must be a member; a run token must be for exactly this project and Creative (the controller has
+     * already proven the run is the render workflow's run for it). There is no null caller: it fails.
+     */
+    private void requireMember(String projectId, String creativeId, RenderCaller caller) {
+        switch (java.util.Objects.requireNonNull(caller, "caller")) {
+            case RenderCaller.UserCaller u -> {
+                if (!projectSecurityService.isProjectMember(projectId, u.user().getId())) {
+                    throw new EntityNotFoundException("Project not found");
+                }
+            }
+            case RenderCaller.RunCaller r -> requireRunScope(projectId, creativeId, r);
         }
+    }
+
+    private void requireEditor(String projectId, String creativeId, RenderCaller caller) {
+        switch (java.util.Objects.requireNonNull(caller, "caller")) {
+            case RenderCaller.UserCaller u -> {
+                requireMember(projectId, creativeId, caller);
+                if (!projectSecurityService.isAdminOrCreator(projectId, u.user().getId())) {
+                    throw new ForbiddenException("Only ADMIN or CREATOR can manage Creative renders");
+                }
+            }
+            case RenderCaller.RunCaller r -> requireRunScope(projectId, creativeId, r);
+        }
+    }
+
+    private static void requireRunScope(String projectId, String creativeId, RenderCaller.RunCaller run) {
+        if (!run.projectId().equals(projectId) || !run.creativeId().equals(creativeId)) {
+            throw new ForbiddenException("This run token is for another Creative");
+        }
+    }
+
+    // ── person-facing overloads (a null user fails; it never authorizes) ────────────────────────
+
+    @Transactional
+    public CreateRenderResult requestRender(String projectId, String creativeId, CreateCreativeRenderRequest request,
+                                            User caller) {
+        return requestRender(projectId, creativeId, request, RenderCaller.of(caller));
+    }
+
+    @Transactional
+    public RenderView putFrame(String projectId, String creativeId, String renderId, String placementKey,
+                               Integer index, int width, int height, byte[] frameBytes, String contentType,
+                               User caller) {
+        return putFrame(projectId, creativeId, renderId, placementKey, index, width, height, frameBytes,
+                contentType, RenderCaller.of(caller));
+    }
+
+    @Transactional
+    public RenderView putFrame(String projectId, String creativeId, String renderId, String placementKey,
+                               Integer index, int width, int height, byte[] frameBytes, String contentType,
+                               BigDecimal durationSeconds, Boolean hasAudio, User caller) {
+        return putFrame(projectId, creativeId, renderId, placementKey, index, width, height, frameBytes,
+                contentType, durationSeconds, hasAudio, RenderCaller.of(caller));
+    }
+
+    @Transactional
+    public RenderView putFramePoster(String projectId, String creativeId, String renderId, String placementKey,
+                                     Integer index, byte[] posterBytes, String contentType, User caller) {
+        return putFramePoster(projectId, creativeId, renderId, placementKey, index, posterBytes, contentType,
+                RenderCaller.of(caller));
+    }
+
+    @Transactional
+    public RenderView completeRender(String projectId, String creativeId, String renderId,
+                                     CompleteCreativeRenderRequest request, User caller) {
+        return completeRender(projectId, creativeId, renderId, request, RenderCaller.of(caller));
+    }
+
+    @Transactional
+    public RenderView failRender(String projectId, String creativeId, String renderId,
+                                 FailCreativeRenderRequest request, User caller) {
+        return failRender(projectId, creativeId, renderId, request, RenderCaller.of(caller));
+    }
+
+    @Transactional
+    public RenderView getRender(String projectId, String creativeId, String renderId, User caller) {
+        return getRender(projectId, creativeId, renderId, RenderCaller.of(caller));
+    }
+
+    @Transactional
+    public List<RenderView> listRenders(String projectId, String creativeId, User caller) {
+        return listRenders(projectId, creativeId, RenderCaller.of(caller));
     }
 }

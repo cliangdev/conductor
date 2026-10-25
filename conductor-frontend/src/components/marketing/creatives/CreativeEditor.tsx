@@ -1945,6 +1945,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             creativeVersion={creative.version}
             creativeKind={form.kind}
             localRender={needsLocalRender({ kind: creative.kind, audio: creative.audio })}
+            webRender={needsLocalRender({ kind: creative.kind, audio: creative.audio })}
             token={token}
             registry={registry}
             onLatestSucceededChange={setLatestSucceededRender}

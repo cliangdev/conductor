@@ -53,6 +53,8 @@ function makeStep(overrides: Partial<{
   env: Record<string, string>
   timeoutMinutes: number
   conductorMcp: boolean
+  run: string
+  conductorApiKey: string
   allowedTools: string
   maxTurns: number
   inputsJson: string
@@ -878,5 +880,117 @@ describe('runWorkflowJob - artifacts', () => {
     const jobCompleteCall = mockFetch.mock.calls.find((c) => (c[0] as string).includes('/jobs/job_1/complete'))
     const jobBody = JSON.parse((jobCompleteCall![1] as RequestInit).body as string)
     expect(jobBody.status).toBe('FAILED')
+  })
+})
+
+
+// ─── docker step: run script + run-scoped key ───────────────────────────────
+
+describe('docker step run script and conductorApiKey', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.unstubAllGlobals()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  async function runDockerStep(stepOverrides: Parameters<typeof makeStep>[0], config = mockConfig) {
+    const payload = makeDispatchPayload({
+      steps: [makeStep({ stepType: 'docker', workerJobId: 'jobrun_1:0', ...stepOverrides })],
+    })
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/dispatch-payload')) return Promise.resolve(jsonResponse(200, payload))
+      return Promise.resolve(jsonResponse(200, {}))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    let envFileContents = ''
+    mockChildProcess.spawn
+      .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
+      .mockImplementationOnce((_cmd, args) => {
+        const a = args as string[]
+        const i = a.indexOf('--env-file')
+        if (i >= 0) envFileContents = fs.readFileSync(a[i + 1], 'utf8')
+        return makeAutoClosingProcess(0)
+      }) // docker run
+    await runWorkflowJob(mockEvent, config)
+    const runArgs = mockChildProcess.spawn.mock.calls[1][1] as string[]
+    return { runArgs, envFileContents, mockFetch }
+  }
+
+  it('docker step with no run: container started with no command', async () => {
+    const { runArgs } = await runDockerStep({})
+    expect(runArgs[runArgs.length - 1]).toBe(DEFAULT_RUNNER_IMAGE)
+    expect(runArgs).not.toContain('sh')
+    expect(runArgs).not.toContain('--entrypoint')
+  })
+
+  it('run containing quotes, newlines and $ is one verbatim argv element after sh -c (no host shell)', async () => {
+    const script = 'echo "it\'s" $HOME\nconductor creative render "$CREATIVE_ID" && echo `id`'
+    const { runArgs } = await runDockerStep({ run: script })
+
+    expect(runArgs.slice(-5)).toEqual(['--entrypoint', 'sh', DEFAULT_RUNNER_IMAGE, '-c', script])
+    expect(mockChildProcess.spawn.mock.calls[1][0]).toBe('docker')
+    // spawn is called with an args array and no { shell: true }
+    expect(mockChildProcess.spawn.mock.calls[1].length).toBe(2)
+  })
+
+  it('conductorApiKey present: CONDUCTOR_API_KEY is it, not config.apiKey', async () => {
+    const { envFileContents } = await runDockerStep({ conductorMcp: true, conductorApiKey: 'minted-run-key' })
+    expect(envFileContents).toContain('CONDUCTOR_API_KEY=minted-run-key\n')
+    expect(envFileContents).not.toContain('test-api-key')
+  })
+
+  it('conductorApiKey absent + conductorMcp: the daemon key is injected (old behaviour)', () => {
+    const env = buildStepEnv(
+      makeDispatchPayload(),
+      makeStep({ stepType: 'docker', conductorMcp: true }),
+      mockEvent,
+      mockConfig,
+      'u1',
+      'u2'
+    )
+    expect(env.CONDUCTOR_API_KEY).toBe('test-api-key')
+  })
+
+  it('conductorApiKey absent + no conductorMcp: no CONDUCTOR_API_KEY', () => {
+    const env = buildStepEnv(makeDispatchPayload(), makeStep({ stepType: 'docker' }), mockEvent, mockConfig, 'u1', 'u2')
+    expect(env.CONDUCTOR_API_KEY).toBeUndefined()
+  })
+
+  it('claude-code step behaviour unchanged: daemon key with conductorMcp', () => {
+    const env = buildStepEnv(makeDispatchPayload(), makeStep({ conductorMcp: true }), mockEvent, mockConfig, 'u1', 'u2')
+    expect(env.CONDUCTOR_API_KEY).toBe('test-api-key')
+  })
+
+  it('the minted key never appears in docker argv or in posted logs', async () => {
+    const key = 'minted-run-key-SECRET'
+    const payload = makeDispatchPayload({
+      steps: [makeStep({ stepType: 'docker', workerJobId: 'jobrun_1:0', conductorMcp: true, conductorApiKey: key, run: 'env' })],
+    })
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/dispatch-payload')) return Promise.resolve(jsonResponse(200, payload))
+      return Promise.resolve(jsonResponse(200, {}))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    mockChildProcess.spawn
+      .mockImplementationOnce(() => makeAutoClosingProcess(0))
+      .mockImplementationOnce(() => {
+        const { proc, stdout, close } = makeControllableProcess()
+        Promise.resolve().then(() => {
+          stdout.emit('data', Buffer.from(`CONDUCTOR_API_KEY=${key}\n`))
+          close(0)
+        })
+        return proc
+      })
+
+    await runWorkflowJob(mockEvent, mockConfig)
+
+    for (const call of mockChildProcess.spawn.mock.calls) {
+      expect((call[1] as string[]).join(' ')).not.toContain(key)
+    }
+    const logCalls = mockFetch.mock.calls.filter((c) => (c[0] as string).includes('/log-chunk'))
+    for (const c of logCalls) expect((c[1] as RequestInit).body as string).not.toContain(key)
   })
 })

@@ -124,4 +124,16 @@ class WorkflowFailureCircuitBreakerTest {
         assertThat(wf.getConsecutiveFailures()).isEqualTo(2);
         verify(workflowRepository, never()).save(org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void creativeRenderWorkflow_neverTripsEvenPastTheThreshold() {
+        WorkflowDefinition wf = workflow(WorkflowFailureCircuitBreaker.TRIP_THRESHOLD + 3);
+        wf.setName("conductor-creative-render");
+
+        breaker.recordOutcome(run(wf, WorkflowRunStatus.FAILED, "run-render"));
+
+        assertThat(wf.isEnabled()).isTrue();
+        assertThat(wf.getAutoPausedAt()).isNull();
+        verify(signalBus, never()).publish(org.mockito.ArgumentMatchers.any());
+    }
 }

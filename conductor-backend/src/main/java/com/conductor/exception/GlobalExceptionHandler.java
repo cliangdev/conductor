@@ -113,6 +113,16 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(com.conductor.creative.CreativeRenderDispatchException.class)
+    public ProblemDetail handleCreativeRenderDispatchException(com.conductor.creative.CreativeRenderDispatchException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(e.status());
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        problem.setProperty("code", e.code());
+        e.properties().forEach(problem::setProperty);
+        return problem;
+    }
+
     @ExceptionHandler(UnprocessableEntityException.class)
     public ProblemDetail handleUnprocessableEntityException(UnprocessableEntityException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);

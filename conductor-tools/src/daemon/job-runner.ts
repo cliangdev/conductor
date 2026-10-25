@@ -48,6 +48,14 @@ export interface DispatchStep {
   env?: Record<string, string>
   timeoutMinutes?: number
   conductorMcp?: boolean
+  /** A docker step's `run:` script (interpolated server-side). Executed as `sh -c <run>` inside the container. */
+  run?: string | null
+  /**
+   * Run-scoped API key the backend mints at dispatch-payload time for a docker step with
+   * `conductor_mcp: true`. When present it is the container's `CONDUCTOR_API_KEY` — the daemon's own
+   * long-lived key is never handed to a docker step. A secret: never logged, never on argv.
+   */
+  conductorApiKey?: string | null
   allowedTools?: string
   maxTurns?: number
   inputsJson?: string
@@ -155,7 +163,11 @@ export function buildStepEnv(
     CONDUCTOR_TIMEOUT_MINUTES: String(step.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES),
     CONDUCTOR_MCP_ENABLED: step.conductorMcp ? 'true' : 'false',
   }
-  if (step.conductorMcp) {
+  // A backend-minted, run-scoped key (system workflows only) always wins; otherwise keep the original
+  // behaviour: the daemon's own key goes to any step that asked for the Conductor MCP.
+  if (step.conductorApiKey) {
+    contractEnv.CONDUCTOR_API_KEY = step.conductorApiKey
+  } else if (step.conductorMcp) {
     contractEnv.CONDUCTOR_API_KEY = config.apiKey
   }
 
@@ -517,7 +529,14 @@ async function runStep(
   const envFilePath = Object.keys(fileEnv).length > 0 ? writeSecretEnvFile(fileEnv) : null
   const image = payload.image ?? DEFAULT_RUNNER_IMAGE
   const containerName = `conductor-job-${payload.jobRunId}-${step.stepIndex}`
-  const command = isClaudeCode ? ['conductor-claude-entrypoint'] : []
+  // A docker step's `run:` goes to the container as ONE argv element of `sh -c` (spawn() has no host
+  // shell), so quotes, newlines and `$` reach the container's shell verbatim and are never expanded on
+  // the host. No `run` -> no command, i.e. the image's own entrypoint/CMD.
+  const command = isClaudeCode
+    ? ['conductor-claude-entrypoint']
+    : step.run
+      ? ['sh', '-c', step.run]
+      : []
   // `claude-code` steps self-upload their declared artifacts over the network before exiting, so
   // `--rm` is always safe for them. A `docker` step's produced files must be `docker cp`'d out
   // AFTER it exits (see uploadDockerStepArtifacts), so its container is kept around and removed
@@ -531,11 +550,13 @@ async function runStep(
     ...(artifactsDir ? ['-v', `${artifactsDir}:${ARTIFACTS_CONTAINER_DIR}`] : []),
     ...(envFilePath ? ['--env-file', envFilePath] : []),
     ...buildEnvArgs(argEnv),
+    // A `run:` script replaces the image's ENTRYPOINT (else it would be appended to it as arguments).
+    ...(command.length > 0 && !isClaudeCode ? ['--entrypoint', 'sh'] : []),
     image,
-    ...command,
+    ...(command.length > 0 && !isClaudeCode ? command.slice(1) : command),
   ]
 
-  const secrets = [payload.runToken, config.apiKey, config.claudeCodeOauthToken ?? '']
+  const secrets = [payload.runToken, config.apiKey, config.claudeCodeOauthToken ?? '', step.conductorApiKey ?? '']
   const logBatcher = createLogBatcher(logChunkUrl, payload.runToken, secrets)
   logBatcher.start()
 
