@@ -300,13 +300,21 @@ public class CreativePhotoService {
      * A Post counts once per item however many of its Assets point at it, directly or through a frame.
      */
     private Map<String, UsageCounts> usageCounts(String projectId, Set<String> onlyIds) {
-        // Only the five columns that name Media, not whole Creative rows (copy, overrides, motion, ...).
+        // Only the columns that name Media, not whole Creative rows (copy, overrides, ...).
         Map<String, Set<String>> mediaByCreative = new HashMap<>();
         Map<String, Integer> creativeCounts = new HashMap<>();
         for (Object[] row : creativeRepository.findMediaReferencesByProjectId(projectId)) {
-            Set<String> ids = referencedPhotoIds((String) row[1], (JsonNode) row[2], (JsonNode) row[3], (JsonNode) row[4]);
+            Set<String> ids = referencedPhotoIds((String) row[1], (JsonNode) row[2], (JsonNode) row[3], (JsonNode) row[4],
+                    (JsonNode) row[6]);
+            String trackId = trackIdOf((JsonNode) row[5]);
+            // A track counts as a Creative's use, but its Posts are counted through the frames it is mixed
+            // into (audio_media_id), not through every frame of the Creative.
+            Set<String> creativeUses = new HashSet<>(ids);
+            if (trackId != null) {
+                creativeUses.add(trackId);
+            }
             mediaByCreative.put((String) row[0], ids);
-            ids.forEach(id -> creativeCounts.merge(id, 1, Integer::sum));
+            creativeUses.forEach(id -> creativeCounts.merge(id, 1, Integer::sum));
         }
 
         Map<String, Set<String>> postsByMedia = new HashMap<>();
@@ -317,10 +325,14 @@ public class CreativePhotoService {
         if (!frameLinks.isEmpty()) {
             Map<String, String> creativeByFrame = new HashMap<>();
             Map<String, String> pathByFrame = new HashMap<>();
+            Map<String, String> audioByFrame = new HashMap<>();
             for (Object[] f : frameRepository.findRefsByIdIn(
                     frameLinks.stream().map(r -> (String) r[0]).collect(java.util.stream.Collectors.toSet()))) {
                 creativeByFrame.put((String) f[0], (String) f[1]);
                 pathByFrame.put((String) f[0], (String) f[2]);
+                if (f[3] != null) {
+                    audioByFrame.put((String) f[0], (String) f[3]);
+                }
             }
             // A frame also counts for the Media item whose object it reuses, even if its Creative dropped it.
             Map<String, List<String>> mediaIdsByPath = new HashMap<>();
@@ -330,6 +342,10 @@ public class CreativePhotoService {
             for (Object[] row : frameLinks) {
                 for (String mediaId : mediaIdsByPath.getOrDefault(pathByFrame.get((String) row[0]), List.of())) {
                     postsByMedia.computeIfAbsent(mediaId, k -> new HashSet<>()).add((String) row[1]);
+                }
+                String audioId = audioByFrame.get((String) row[0]);
+                if (audioId != null) {
+                    postsByMedia.computeIfAbsent(audioId, k -> new HashSet<>()).add((String) row[1]);
                 }
                 String creativeId = creativeByFrame.get((String) row[0]);
                 if (creativeId == null) {
@@ -365,8 +381,14 @@ public class CreativePhotoService {
         List<Creative> creatives = creativesReferencing(projectId, photoId);
         // Frames of those Creatives, plus frames that reuse this media's object even when their Creative
         // no longer references it: one id query rather than one per Creative.
-        Set<String> frameIds = new HashSet<>(frameRepository.findIdsByCreativeIdInOrGcsPath(
-                creatives.stream().map(Creative::getId).toList(), photo.getGcsPath()));
+        Set<String> frameIds;
+        if (photo.isAudio()) {
+            // A track is on a Post only through a video frame it is mixed into.
+            frameIds = new HashSet<>(frameRepository.findIdsByAudioMediaId(photoId));
+        } else {
+            frameIds = new HashSet<>(frameRepository.findIdsByCreativeIdInOrGcsPath(
+                    creatives.stream().map(Creative::getId).toList(), photo.getGcsPath()));
+        }
         Map<String, WorkItem> posts = new java.util.LinkedHashMap<>();
         for (Asset a : assetRepository.findUsageAssets(photoId, frameIds)) {
             posts.putIfAbsent(a.getWorkItem().getId(), a.getWorkItem());
@@ -729,8 +751,8 @@ public class CreativePhotoService {
         return paths;
     }
 
-    /** Every Creative in the project that uses this media: main photo, sequence beat, {@code clipMedia}
-     *  or CAROUSEL {@code slides}. */
+    /** Every Creative in the project that uses this media: main photo, sequence beat, {@code clipMedia},
+     *  CAROUSEL {@code slides}, a MOTION's background clip, or an {@code audio} track. */
     private List<Creative> creativesReferencing(String projectId, String photoId) {
         Map<String, Creative> used = new LinkedHashMap<>();
         for (Creative c : creativeRepository.findAllByPhotoId(photoId)) {
@@ -740,18 +762,39 @@ public class CreativePhotoService {
         }
         for (Creative c : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId)) {
             if (sequenceReferencesPhoto(c.getSequence(), photoId) || clipMediaReferencesPhoto(c.getClipMedia(), photoId)
-                    || slidesReferencePhoto(c.getSlides(), photoId)) {
+                    || slidesReferencePhoto(c.getSlides(), photoId)
+                    || photoId.equals(trackIdOf(c.getAudio()))
+                    || photoId.equals(backgroundClipIdOf(c.getMotion()))) {
                 used.put(c.getId(), c);
             }
         }
         return new ArrayList<>(used.values());
     }
 
-    /** Every Media id a Creative uses: main photo, sequence beats, clip media and carousel slides. */
-    private Set<String> referencedPhotoIds(String photoId, JsonNode sequence, JsonNode clipMedia, JsonNode slides) {
+    /** A Creative's {@code audio.trackId}, or null when it has none. */
+    private static String trackIdOf(JsonNode audio) {
+        return audio != null && audio.hasNonNull("trackId") && audio.get("trackId").isTextual()
+                ? audio.get("trackId").asText() : null;
+    }
+
+    /** A MOTION's {@code motion.background.clipMediaId}, or null. */
+    private static String backgroundClipIdOf(JsonNode motion) {
+        JsonNode background = motion != null ? motion.get("background") : null;
+        return background != null && background.hasNonNull("clipMediaId") && background.get("clipMediaId").isTextual()
+                ? background.get("clipMediaId").asText() : null;
+    }
+
+    /** Every visual Media id a Creative uses: main photo, sequence beats, clip media, carousel slides and a
+     *  MOTION's background clip (its audio track is counted separately: see {@link #usageCounts}). */
+    private Set<String> referencedPhotoIds(String photoId, JsonNode sequence, JsonNode clipMedia, JsonNode slides,
+                                           JsonNode motion) {
         Set<String> ids = new HashSet<>();
         if (photoId != null) {
             ids.add(photoId);
+        }
+        String backgroundClip = backgroundClipIdOf(motion);
+        if (backgroundClip != null) {
+            ids.add(backgroundClip);
         }
         if (sequence != null && sequence.isArray()) {
             for (JsonNode beat : sequence) {

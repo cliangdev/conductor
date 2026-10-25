@@ -24,8 +24,8 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
 
     List<CreativeRenderFrame> findAllByRenderId(String renderId);
 
-    /** (id, creativeId, gcsPath) of the given frames — the columns Media usage counting needs. */
-    @Query("SELECT f.id, f.creativeId, f.gcsPath FROM CreativeRenderFrame f WHERE f.id IN :ids")
+    /** (id, creativeId, gcsPath, audioMediaId) of the given frames — the columns Media usage counting needs. */
+    @Query("SELECT f.id, f.creativeId, f.gcsPath, f.audioMediaId FROM CreativeRenderFrame f WHERE f.id IN :ids")
     List<Object[]> findRefsByIdIn(@Param("ids") java.util.Collection<String> ids);
 
     /** Every frame this Creative has ever produced, across every render — COND-24 T5 attribution reads
@@ -40,6 +40,10 @@ public interface CreativeRenderFrameRepository extends JpaRepository<CreativeRen
     @Query("SELECT f.id FROM CreativeRenderFrame f WHERE f.creativeId IN :creativeIds OR f.gcsPath = :gcsPath")
     List<String> findIdsByCreativeIdInOrGcsPath(@Param("creativeIds") java.util.Collection<String> creativeIds,
                                                 @Param("gcsPath") String gcsPath);
+
+    /** Ids of every video frame that has this library AUDIO item mixed in. */
+    @Query("SELECT f.id FROM CreativeRenderFrame f WHERE f.audioMediaId = :audioMediaId")
+    List<String> findIdsByAudioMediaId(@Param("audioMediaId") String audioMediaId);
 
     /** Every frame whose stored object is this path (frames reuse the Media item's object). */
     List<CreativeRenderFrame> findAllByGcsPath(String gcsPath);

@@ -356,6 +356,137 @@ class MediaLibraryRefsIntegrationTest extends AbstractNoneWebIntegrationTest {
         assetRepository.save(asset);
     }
 
+    // ── a track used by CAROUSEL, CLIP and MOTION Creatives ─────────────────────────────────────────
+
+    private CreativePhoto uploadedTrack() {
+        CreateCreativePhotoRequest request = new CreateCreativePhotoRequest();
+        request.setLabel("Track");
+        request.setContentType(CreateCreativePhotoRequest.ContentTypeEnum.AUDIO_MPEG);
+        request.setSizeBytes(100L);
+        request.setDurationSeconds(new BigDecimal("30"));
+        CreativePhoto audio = photoService.createPhoto(project.getId(), request, admin).photo();
+        return photoService.confirmPhoto(project.getId(), audio.getId(), null, admin).photo();
+    }
+
+    private Creative creativeUsingTrack(String kind, String trackId, int number, String state) {
+        Creative c = new Creative();
+        c.setProjectId(project.getId());
+        c.setBrandKitId(brandKitService.resolveDefault(project.getId()).getId());
+        c.setVariantLetter("a");
+        c.setState(state);
+        c.setLayout("stacked");
+        c.setTheme(Creative.THEME_DARK);
+        c.setKind(kind);
+        c.setPlacements(objectMapper.valueToTree(List.of()));
+        c.setSequence(objectMapper.valueToTree(List.of()));
+        c.setTypeOverrides(objectMapper.createObjectNode());
+        c.setAudio(objectMapper.createObjectNode().put("source", "track").put("trackId", trackId));
+        c.setCreatedBy(admin.getId());
+        c.setNumber(number);
+        return creativeRepository.save(c);
+    }
+
+    @Test
+    void aTrackIsCountedAndProtectedForEveryKindOfCreativeThatPlaysIt() {
+        CreativePhoto track = uploadedTrack();
+        CreativePhoto unusedTrack = uploadedTrack();
+        Creative carousel = creativeUsingTrack(Creative.KIND_CAROUSEL, track.getId(), 801, Creative.STATE_DRAFT);
+        Creative clip = creativeUsingTrack(Creative.KIND_CLIP, track.getId(), 802, Creative.STATE_DRAFT);
+        Creative motion = creativeUsingTrack(Creative.KIND_MOTION, track.getId(), 803, Creative.STATE_DRAFT);
+
+        CreativePhotoService.PhotoView listed = view(photoService.listPhotos(project.getId(), false, null, admin), track);
+        assertThat(listed.creativeCount()).isEqualTo(3);
+        assertThat(listed.postCount()).isZero();
+        assertThat(photoService.getPhoto(project.getId(), track.getId(), admin).creativeCount()).isEqualTo(3);
+        assertThat(photoService.getUsage(project.getId(), track.getId(), admin).creatives())
+                .extracting(CreativePhotoService.UsageCreative::id)
+                .containsExactlyInAnyOrder(carousel.getId(), clip.getId(), motion.getId());
+        assertThat(view(photoService.listPhotos(project.getId(), false, null, admin), unusedTrack).creativeCount()).isZero();
+
+        assertThatThrownBy(() -> photoService.deletePhoto(project.getId(), track.getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(carousel.displayId()).hasMessageContaining(clip.displayId())
+                .hasMessageContaining(motion.displayId());
+        assertThat(photoRepository.findById(track.getId())).isPresent();
+        photoService.deletePhoto(project.getId(), unusedTrack.getId(), admin);
+        assertThat(photoRepository.findById(unusedTrack.getId())).isEmpty();
+    }
+
+    @Test
+    void aTrackCannotBeBlockedWhileAReadyCreativePlaysIt() {
+        CreativePhoto track = uploadedTrack();
+        creativeUsingTrack(Creative.KIND_CAROUSEL, track.getId(), 804, Creative.STATE_READY);
+
+        PatchCreativePhotoRequest block = new PatchCreativePhotoRequest();
+        block.setBlocked(true);
+        assertThatThrownBy(() -> photoService.patchPhoto(project.getId(), track.getId(), block, admin))
+                .isInstanceOf(ConflictException.class).hasMessageContaining("READY");
+    }
+
+    @Test
+    void aMotionsBackgroundClipIsNowCountedAndProtectedToo() {
+        CreativePhoto clip = uploadedMedia("Background");
+        Creative motion = creativeUsingTrack(Creative.KIND_MOTION, uploadedTrack().getId(), 805, Creative.STATE_DRAFT);
+        motion.setMotion(objectMapper.createObjectNode().set("background",
+                objectMapper.createObjectNode().put("source", "clip").put("clipMediaId", clip.getId())));
+        creativeRepository.save(motion);
+
+        assertThat(view(photoService.listPhotos(project.getId(), false, null, admin), clip).creativeCount()).isEqualTo(1);
+        assertThatThrownBy(() -> photoService.deletePhoto(project.getId(), clip.getId(), admin))
+                .isInstanceOf(ConflictException.class).hasMessageContaining(motion.displayId());
+    }
+
+    @Test
+    void aTracksPostCountComesFromTheVideoFramesItIsMixedInto() {
+        CreativePhoto track = uploadedTrack();
+        Creative carousel = creativeUsingTrack(Creative.KIND_CAROUSEL, track.getId(), 806, Creative.STATE_DRAFT);
+        CreativeRender render = new CreativeRender();
+        render.setProjectId(project.getId());
+        render.setCreativeId(carousel.getId());
+        render.setCreativeVersion(carousel.getVersion());
+        render.setState(CreativeRender.STATE_SUCCEEDED);
+        render.setPreviewOnly(false);
+        render.setRequestedBy(admin.getId());
+        render = renderRepository.save(render);
+        CreativeRenderFrame slide = new CreativeRenderFrame();
+        slide.setRenderId(render.getId());
+        slide.setCreativeId(carousel.getId());
+        slide.setPlacementKey("9x16");
+        slide.setSequenceIndex(0);
+        slide.setGcsPath("projects/" + project.getId() + "/slide-0.jpg");
+        slide.setContentType("image/jpeg");
+        slide.setWidth(1080);
+        slide.setHeight(1920);
+        slide.setSizeBytes(10L);
+        slide.setWarnings(objectMapper.createArrayNode());
+        slide = frameRepository.save(slide);
+        CreativeRenderFrame video = new CreativeRenderFrame();
+        video.setRenderId(render.getId());
+        video.setCreativeId(carousel.getId());
+        video.setPlacementKey("9x16");
+        video.setGcsPath("projects/" + project.getId() + "/video.mp4");
+        video.setContentType("video/mp4");
+        video.setWidth(1080);
+        video.setHeight(1920);
+        video.setSizeBytes(10L);
+        video.setAudioMediaId(track.getId());
+        video.setWarnings(objectMapper.createArrayNode());
+        video = frameRepository.save(video);
+
+        // A Post that only carries a slide does not play the track...
+        linkFrameToPost(slide);
+        assertThat(photoService.getPhoto(project.getId(), track.getId(), admin).postCount()).isZero();
+        assertThat(view(photoService.listPhotos(project.getId(), false, null, admin), track).postCount()).isZero();
+
+        // ...a Post that carries the video does.
+        linkFrameToPost(video);
+        assertThat(photoService.getPhoto(project.getId(), track.getId(), admin).postCount()).isEqualTo(1);
+        assertThat(view(photoService.listPhotos(project.getId(), false, null, admin), track).postCount()).isEqualTo(1);
+        assertThat(photoService.getUsage(project.getId(), track.getId(), admin).posts())
+                .extracting(CreativePhotoService.UsagePost::displayId)
+                .containsExactly(project.getKey() + "-" + post.getSequenceNumber());
+    }
+
     // ── usage and counts ─────────────────────────────────────────────────────────────────────────
 
     @Test
