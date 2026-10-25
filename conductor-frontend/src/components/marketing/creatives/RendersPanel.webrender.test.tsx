@@ -110,6 +110,39 @@ describe('RendersPanel web render', () => {
     expect(screen.getByRole('button', { name: 'Render' })).toBeDisabled()
   })
 
+  it('on a target run shows "Rendering on <targetName>" and never the daemon hint, even if waiting', async () => {
+    mockGets(() =>
+      run({ status: 'PENDING_LOCAL_PICKUP', waitReason: 'AWAITING_RUNNER', runtime: 'target', targetName: 'acme-run' }),
+    )
+    setup()
+    expect(await screen.findByText('Rendering on acme-run')).toBeInTheDocument()
+    expect(screen.queryByText('Waiting for a runner')).toBeNull()
+    expect(screen.queryByText('conductor start')).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Self-hosted setup' })).toBeNull()
+  })
+
+  it('on a running target run shows "Rendering on <targetName>"', async () => {
+    mockGets(() => run({ status: 'RUNNING', runtime: 'target', targetName: 'acme-run' }))
+    setup()
+    expect(await screen.findByText('Rendering on acme-run')).toBeInTheDocument()
+    expect(screen.queryByText('Rendering…')).toBeNull()
+  })
+
+  it('a self-hosted run keeps the plain "Rendering…" copy and the daemon hint when waiting', async () => {
+    mockGets(() => run({ status: 'RUNNING', runtime: 'self-hosted' }))
+    setup()
+    expect(await screen.findByText('Rendering…')).toBeInTheDocument()
+    expect(screen.queryByText(/Rendering on/)).toBeNull()
+  })
+
+  it('before any dispatch the copy is neutral about where it renders', async () => {
+    mockGets(() => null)
+    setup()
+    await screen.findByText('No renders yet')
+    expect(screen.queryByText(/daemon/i)).toBeNull()
+    expect(screen.queryByText(/Rendering on/)).toBeNull()
+  })
+
   it('shows "Render failed" with the error and a run link, and re-enables Render', async () => {
     mockGets(() => run({ status: 'FAILED', error: 'ffmpeg exited 1' }))
     setup()

@@ -111,6 +111,127 @@ describe('RuntimeTargetsPanel', () => {
     expect(screen.getByText(/Synced 5m ago · sha256:abcdef01…/)).toBeInTheDocument()
   })
 
+  describe('rendering line', () => {
+    const line = (id: string) => screen.getByTestId(`render-line-${id}`)
+
+    it('NONE: shows "Not set up for rendering" with a set-up action', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      expect(within(line('t-active')).getByText('Not set up for rendering')).toBeInTheDocument()
+      expect(within(line('t-active')).getByRole('button', { name: 'Set up rendering' })).toBeInTheDocument()
+    })
+
+    it('missing render field is treated as NONE', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([activeTarget])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      expect(within(line('t-active')).getByText('Not set up for rendering')).toBeInTheDocument()
+    })
+
+    it('NONE: hides the set-up action without integration.manage', async () => {
+      mockCanMutate = false
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      expect(within(line('t-active')).queryByRole('button')).toBeNull()
+    })
+
+    it('READY: shows "Renders creatives", the resolved digest and any warnings', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([
+        {
+          ...activeTarget,
+          renderImage: 'us-docker.pkg.dev/p/r/conductor-render:1',
+          render: {
+            status: 'READY',
+            resolvedImage: 'us-docker.pkg.dev/p/r/conductor-render@sha256:1234567890abcdef',
+            warnings: ['Image has no protocol label.'],
+          },
+        },
+      ])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      expect(within(line('t-active')).getByText('Renders creatives')).toBeInTheDocument()
+      expect(within(line('t-active')).getByText('sha256:12345678…')).toBeInTheDocument()
+      expect(within(line('t-active')).getByText('Image has no protocol label.')).toBeInTheDocument()
+    })
+
+    it('ERROR: shows the error in destructive text and points at Sync to latest image', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([
+        { ...activeTarget, render: { status: 'ERROR', error: 'Image not found' } },
+      ])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      expect(within(line('t-active')).getByText('Image not found')).toHaveClass('text-destructive')
+      // the target itself stays Active
+      expect(screen.getByText('Active')).toBeInTheDocument()
+      expect(within(line('t-active')).getByText(/Sync to latest image/)).toBeInTheDocument()
+    })
+
+    it('ERROR: Sync to latest image re-provisions the target', async () => {
+      const errored = { ...activeTarget, render: { status: 'ERROR' as const, error: 'Image not found' } }
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([errored])
+      vi.mocked(api.provisionRuntimeTarget).mockResolvedValue({
+        ...activeTarget,
+        render: { status: 'READY', resolvedImage: 'x@sha256:abcdefabcdefabcdef' },
+      })
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Sync to latest image' }))
+      expect(await within(line('t-active')).findByText('Renders creatives')).toBeInTheDocument()
+      expect(api.provisionRuntimeTarget).toHaveBeenCalledWith('proj-1', 't-active', 'test-token')
+    })
+
+    it('rejects a non Artifact Registry image client-side with the backend message', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Set up rendering' }))
+      fireEvent.change(screen.getByLabelText('Render image'), { target: { value: 'ghcr.io/cliangdev/conductor-render:1' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Not an Artifact Registry image reference (expected a *-docker.pkg.dev host): ghcr.io/cliangdev/conductor-render:1',
+      )
+      expect(api.updateRuntimeTarget).not.toHaveBeenCalled()
+    })
+
+    it('saves a valid render image with { renderImage } only and shows the returned state', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      vi.mocked(api.updateRuntimeTarget).mockResolvedValue({
+        ...activeTarget,
+        renderImage: 'us-docker.pkg.dev/p/r/conductor-render:1',
+        render: { status: 'READY', resolvedImage: 'us-docker.pkg.dev/p/r/conductor-render@sha256:abcdefabcdefabcd' },
+      })
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Set up rendering' }))
+      fireEvent.change(screen.getByLabelText('Render image'), {
+        target: { value: ' us-docker.pkg.dev/p/r/conductor-render:1 ' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(api.updateRuntimeTarget).toHaveBeenCalledWith(
+          'proj-1',
+          't-active',
+          { renderImage: 'us-docker.pkg.dev/p/r/conductor-render:1' },
+          'test-token',
+        ),
+      )
+      expect(await within(line('t-active')).findByText('Renders creatives')).toBeInTheDocument()
+    })
+
+    it('shows a backend error from the update inside the modal', async () => {
+      vi.mocked(api.listRuntimeTargets).mockResolvedValue([{ ...activeTarget, render: { status: 'NONE' } }])
+      vi.mocked(api.updateRuntimeTarget).mockRejectedValue({ detail: 'Update refused' })
+      render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+      await screen.findByText('active-target')
+      fireEvent.click(screen.getByRole('button', { name: 'Set up rendering' }))
+      fireEvent.change(screen.getByLabelText('Render image'), { target: { value: 'us-docker.pkg.dev/p/r/i:1' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Update refused')
+    })
+  })
+
   it('shows a fallback sync label for an ACTIVE target provisioned before this was tracked', async () => {
     const untracked = { ...activeTarget, id: 't-untracked', name: 'untracked-target', resolvedImage: null, lastProvisionedAt: null }
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([untracked])

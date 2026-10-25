@@ -146,6 +146,21 @@ export function ClaudeRuntimeSection({
           )}
         </div>
       )}
+      {config.source === 'project-target' && target && (
+        target.render?.status === 'READY' ? (
+          <p className="text-xs text-muted-foreground" data-testid="runtime-render-line">Creatives render here</p>
+        ) : (
+          <p className="text-xs text-muted-foreground" data-testid="runtime-render-line">
+            Creatives render on your self-hosted daemon (this target isn&apos;t set up for rendering).{' '}
+            <Link
+              href={`/app/projects/${projectId}/integrations/gcp`}
+              className="text-primary hover:underline"
+            >
+              Set up rendering
+            </Link>
+          </p>
+        )
+      )}
       {config.source === 'project-target' && target?.errorMessage && (
         <p className="text-xs text-destructive">{target.errorMessage}</p>
       )}

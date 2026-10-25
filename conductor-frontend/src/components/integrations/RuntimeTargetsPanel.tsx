@@ -53,6 +53,63 @@ function syncedLabel(target: RuntimeTarget): string {
   return target.resolvedImage ? `${when} · ${shortDigest(target.resolvedImage)}` : when
 }
 
+/** Same rule and message as the backend's GcpConnector.parseImageRef — null when the ref is acceptable. */
+export function renderImageError(ref: string): string | null {
+  const host = ref.trim().split('/')[0]
+  if (!host.endsWith('-docker.pkg.dev')) {
+    return `Not an Artifact Registry image reference (expected a *-docker.pkg.dev host): ${ref.trim()}`
+  }
+  return null
+}
+
+function RenderLine({
+  target,
+  canMutate,
+  onEdit,
+}: {
+  target: RuntimeTarget
+  canMutate: boolean
+  onEdit: () => void
+}) {
+  const render = target.render ?? { status: 'NONE' as const }
+  return (
+    <div className="mt-1 text-xs" data-testid={`render-line-${target.id}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-muted-foreground">Rendering</span>
+        {render.status === 'READY' ? (
+          <>
+            <span className="text-foreground">Renders creatives</span>
+            {render.resolvedImage && (
+              <span className="font-mono text-muted-foreground truncate" title={render.resolvedImage}>
+                {shortDigest(render.resolvedImage)}
+              </span>
+            )}
+          </>
+        ) : render.status === 'ERROR' ? (
+          <span className="text-destructive">{render.error || 'Render setup failed.'}</span>
+        ) : (
+          <span className="text-muted-foreground">Not set up for rendering</span>
+        )}
+        {canMutate && (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            {render.status === 'NONE' ? 'Set up rendering' : 'Edit render image'}
+          </button>
+        )}
+      </div>
+      {render.status === 'ERROR' && target.status === 'ACTIVE' && (
+        <p className="mt-0.5 text-muted-foreground">Fix the image, then use “Sync to latest image” to retry.</p>
+      )}
+      {render.warnings && render.warnings.length > 0 && (
+        <p className="mt-0.5 text-status-progress">{render.warnings.join(' ')}</p>
+      )}
+    </div>
+  )
+}
+
 export default function RuntimeTargetsPanel({
   projectId,
   connections,
@@ -76,6 +133,11 @@ export default function RuntimeTargetsPanel({
   const [editForm, setEditForm] = useState<EditFormState>({ region: '', image: '', jobName: '' })
   const [updating, setUpdating] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+
+  const [renderTarget, setRenderTarget] = useState<RuntimeTarget | null>(null)
+  const [renderImage, setRenderImage] = useState('')
+  const [renderSaving, setRenderSaving] = useState(false)
+  const [renderError, setRenderError] = useState<string | null>(null)
 
   const [deleteTarget, setDeleteTarget] = useState<RuntimeTarget | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -133,6 +195,38 @@ export default function RuntimeTargetsPanel({
       setEditError(apiErrorMessage(err, 'Failed to update runtime target.'))
     } finally {
       setUpdating(false)
+    }
+  }
+
+  function openRenderModal(target: RuntimeTarget) {
+    setRenderTarget(target)
+    setRenderImage(target.renderImage ?? '')
+    setRenderError(null)
+  }
+
+  async function handleRenderSave(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !renderTarget) return
+    const invalid = renderImageError(renderImage)
+    if (invalid) {
+      setRenderError(invalid)
+      return
+    }
+    setRenderSaving(true)
+    setRenderError(null)
+    try {
+      const updated = await updateRuntimeTarget(
+        projectId,
+        renderTarget.id,
+        { renderImage: renderImage.trim() },
+        accessToken,
+      )
+      setTargets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+      setRenderTarget(null)
+    } catch (err) {
+      setRenderError(apiErrorMessage(err, 'Failed to update the render image.'))
+    } finally {
+      setRenderSaving(false)
     }
   }
 
@@ -292,6 +386,7 @@ export default function RuntimeTargetsPanel({
                     {syncedLabel(target)}
                   </p>
                 )}
+                <RenderLine target={target} canMutate={canMutate} onEdit={() => openRenderModal(target)} />
                 {target.errorMessage && (
                   <Alert variant="destructive" className="mt-1 py-1.5 text-xs">
                     {target.errorMessage}
@@ -365,6 +460,40 @@ export default function RuntimeTargetsPanel({
               </Button>
               <Button type="submit" className="flex-1" disabled={updating}>
                 {updating ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Render image modal */}
+      <Modal
+        open={renderTarget !== null}
+        onOpenChange={(o) => { if (!o) setRenderTarget(null) }}
+        title={renderTarget ? `Rendering on ${renderTarget.name}` : ''}
+        description="Mirror ghcr.io/cliangdev/conductor-render into your Artifact Registry, then enter its address. Saving creates the render Cloud Run Job; until it is ready, creatives render on your self-hosted daemon."
+      >
+        {renderTarget && (
+          <form onSubmit={handleRenderSave} className="space-y-4">
+            <div>
+              <label htmlFor="render-image" className="block text-sm font-medium text-foreground mb-1">Render image</label>
+              <input
+                id="render-image"
+                type="text"
+                value={renderImage}
+                onChange={(e) => setRenderImage(e.target.value)}
+                placeholder="us-docker.pkg.dev/my-project/conductor/conductor-render:1"
+                required
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            {renderError && <p className="text-sm text-destructive" role="alert">{renderError}</p>}
+            <div className="flex gap-3 pt-1">
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setRenderTarget(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={renderSaving}>
+                {renderSaving ? 'Saving…' : 'Save'}
               </Button>
             </div>
           </form>
