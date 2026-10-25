@@ -9637,6 +9637,17 @@ components:
           type: string
           nullable: true
           description: Why a FAILED run failed (e.g. DAEMON_PICKUP_TIMEOUT when no daemon claimed it).
+        runtime:
+          type: string
+          enum: [self-hosted, target]
+          description: >-
+            Where the render runs: `target` is the workspace's designated Cloud Run runtime target (its render
+            job was READY at dispatch), `self-hosted` is the workspace's daemon. Runs from before this field
+            existed report `self-hosted`.
+        targetName:
+          type: string
+          nullable: true
+          description: The runtime target's name when `runtime` is `target`.
 
     CreateCreativeRequest:
       type: object

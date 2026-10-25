@@ -1,6 +1,8 @@
 package com.conductor.workflow;
 
+import com.conductor.creative.CreativeWorkflowProvisioner;
 import com.conductor.entity.ProjectSettings;
+import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowRunRepository;
@@ -28,6 +30,7 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
     private final ProjectSettingsRepository projectSettingsRepository;
     private final WorkflowRunRepository runRepository;
     private final WorkflowInterpolator interpolator;
+    private final RenderTargetStepRunner renderTargetStepRunner;
     private final String backendBaseUrl;
 
     public DockerStepExecutor(
@@ -36,12 +39,14 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
             ProjectSettingsRepository projectSettingsRepository,
             WorkflowRunRepository runRepository,
             WorkflowInterpolator interpolator,
+            RenderTargetStepRunner renderTargetStepRunner,
             @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.workerVmClient = workerVmClient;
         this.runTokenService = runTokenService;
         this.projectSettingsRepository = projectSettingsRepository;
         this.runRepository = runRepository;
         this.interpolator = interpolator;
+        this.renderTargetStepRunner = renderTargetStepRunner;
         this.backendBaseUrl = backendBaseUrl;
     }
 
@@ -52,6 +57,9 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
 
     @Override
     public StepResult execute(StepExecutionContext context) {
+        if (isRenderOnTarget(context)) {
+            return renderTargetStepRunner.run(context);
+        }
         Map<String, Object> stepDef = context.getStepDefinition();
         RuntimeContext ctx = context.getRuntimeContext();
         String runId = context.getRun().getId();
@@ -85,6 +93,23 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
 
         int timeoutMinutes = resolveTimeoutMinutes(stepDef);
         return pollForCompletion(runId, workerJobId, image, timeoutMinutes);
+    }
+
+    /**
+     * The system Creative-render workflow's {@code runs-on: cloud-run} job runs on the workspace's BYO
+     * render target. Every other docker step — including a user's own {@code runs-on: cloud-run} one —
+     * keeps going to the worker VM.
+     */
+    private boolean isRenderOnTarget(StepExecutionContext context) {
+        if (!"cloud-run".equals(context.getRunsOn())) {
+            return false;
+        }
+        // Loaded by query (fetch-joined workflow): the step context's run is detached from its session.
+        return runRepository.findByIdWithWorkflow(context.getRun().getId())
+                .map(WorkflowRun::getWorkflow)
+                .filter(wf -> CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME.equals(wf.getName())
+                        && CreativeWorkflowProvisioner.hasMarker(wf.getYaml()))
+                .isPresent();
     }
 
     private StepResult pollForCompletion(String runId, String workerJobId, String image, int timeoutMinutes) {

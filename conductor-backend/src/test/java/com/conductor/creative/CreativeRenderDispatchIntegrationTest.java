@@ -4,6 +4,8 @@ import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
+import com.conductor.entity.RuntimeTarget;
+import com.conductor.entity.RuntimeTargetStatus;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
@@ -58,6 +60,9 @@ class CreativeRenderDispatchIntegrationTest extends AbstractNoneWebIntegrationTe
     @Autowired private WorkflowRunRepository runRepository;
     @Autowired private WorkflowValidator workflowValidator;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private com.conductor.repository.RuntimeTargetRepository runtimeTargetRepository;
+    @Autowired private com.conductor.repository.ConnectionRepository connectionRepository;
+    @Autowired private com.conductor.repository.ProjectSettingsRepository projectSettingsRepository;
 
     private User admin;
     private Project project;
@@ -93,7 +98,10 @@ class CreativeRenderDispatchIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(yaml).contains("CREATIVE_ID: ${{ event.creativeId }}")
                 .contains("conductor_mcp: true")
                 .contains("docker://ghcr.io/cliangdev/conductor-render:1")
-                .contains("runs-on: self-hosted");
+                .contains("runs-on: self-hosted")
+                .contains("runs-on: cloud-run")
+                .contains("if: \"${{ event.runtime }} == 'self-hosted'\"")
+                .contains("if: \"${{ event.runtime }} == 'target'\"");
         // The id travels by env, never inside the shell string.
         assertThat(yaml).doesNotContain("${{ event.creativeId }}\"");
     }
@@ -114,6 +122,134 @@ class CreativeRenderDispatchIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(run.getEventPayload()).contains("\"creative.render\"").contains(creative.getId())
                 .contains(project.getId());
         assertThat(view.status()).isEqualTo(run.getStatus().name());
+    }
+
+    // ---- where the render runs: the designated runtime target, or the daemon ----
+
+    private static final String READY_RENDER = "\"renderImage\":\"us-east1-docker.pkg.dev/acme/repo/render:1\","
+            + "\"render\":{\"status\":\"READY\",\"resolvedImage\":\"us-east1-docker.pkg.dev/acme/repo/render@sha256:a\"}";
+
+    /** Designates a gcp-cloud-run target on the project: status, with/without a connection, and render config. */
+    private RuntimeTarget designateTarget(RuntimeTargetStatus status, boolean withConnection, String renderConfig) {
+        String connectionId = null;
+        if (withConnection) {
+            com.conductor.entity.Connection connection = new com.conductor.entity.Connection();
+            connection.setProjectId(project.getId());
+            connection.setConnectorId("gcp");
+            connection.setAuthType("SERVICE_ACCOUNT");
+            connectionId = connectionRepository.saveAndFlush(connection).getId();
+        }
+        RuntimeTarget target = new RuntimeTarget();
+        target.setProjectId(project.getId());
+        target.setName("acme-run");
+        target.setProvider("gcp-cloud-run");
+        target.setConnectionId(connectionId);
+        target.setStatus(status);
+        target.setConfigJson("{\"gcpProjectId\":\"acme\",\"region\":\"us-east1\",\"jobName\":\"conductor-acme-run\","
+                + "\"image\":\"us-east1-docker.pkg.dev/acme/repo/claude:1\"" + (renderConfig.isEmpty() ? "" : "," + renderConfig) + "}");
+        target = runtimeTargetRepository.saveAndFlush(target);
+        com.conductor.entity.ProjectSettings settings = projectSettingsRepository.findByProjectId(project.getId())
+                .orElseGet(() -> {
+                    com.conductor.entity.ProjectSettings fresh = new com.conductor.entity.ProjectSettings();
+                    fresh.setProjectId(project.getId());
+                    return fresh;
+                });
+        settings.setClaudeRuntimeTargetId(target.getId());
+        projectSettingsRepository.saveAndFlush(settings);
+        return target;
+    }
+
+    private String payloadOf(CreativeRenderDispatchService.RenderRunView view) throws Exception {
+        return runRepository.findById(view.runId()).orElseThrow().getEventPayload();
+    }
+
+    @Test
+    void noDesignatedTarget_rendersOnTheDaemon() throws Exception {
+        CreativeRenderDispatchService.RenderRunView view = dispatchService.dispatch(project.getId(), newStill().getId());
+
+        assertThat(objectMapper.readTree(payloadOf(view)).path("runtime").asText()).isEqualTo("self-hosted");
+        assertThat(objectMapper.readTree(payloadOf(view)).has("targetName")).isFalse();
+        assertThat(view.runtime()).isEqualTo("self-hosted");
+        assertThat(view.targetName()).isNull();
+    }
+
+    @Test
+    void activeTargetWithRenderNone_rendersOnTheDaemon() throws Exception {
+        designateTarget(RuntimeTargetStatus.ACTIVE, true, "");
+        assertThat(dispatchService.dispatch(project.getId(), newStill().getId()).runtime()).isEqualTo("self-hosted");
+    }
+
+    @Test
+    void activeTargetWithRenderError_rendersOnTheDaemon() {
+        designateTarget(RuntimeTargetStatus.ACTIVE, true,
+                "\"renderImage\":\"x-docker.pkg.dev/a/b/c:1\",\"render\":{\"status\":\"ERROR\",\"error\":\"nope\"}");
+        assertThat(dispatchService.dispatch(project.getId(), newStill().getId()).runtime()).isEqualTo("self-hosted");
+    }
+
+    @Test
+    void targetInErrorOrProvisioning_rendersOnTheDaemon() {
+        for (RuntimeTargetStatus status : new RuntimeTargetStatus[] {RuntimeTargetStatus.ERROR, RuntimeTargetStatus.PROVISIONING}) {
+            clearDesignation();
+            designateTarget(status, true, READY_RENDER);
+            assertThat(dispatchService.dispatch(project.getId(), newStill().getId()).runtime())
+                    .as(status.name()).isEqualTo("self-hosted");
+        }
+    }
+
+    @Test
+    void targetWithoutAConnection_rendersOnTheDaemon() {
+        designateTarget(RuntimeTargetStatus.ACTIVE, false, READY_RENDER);
+        assertThat(dispatchService.dispatch(project.getId(), newStill().getId()).runtime()).isEqualTo("self-hosted");
+    }
+
+    @Test
+    void readyTarget_rendersThereAndTheRunReportsItsName_andItsRunTokenIsAcceptedForThatCreativeOnly() throws Exception {
+        designateTarget(RuntimeTargetStatus.ACTIVE, true, READY_RENDER);
+        Creative a = newStill();
+        Creative b = newStill();
+
+        CreativeRenderDispatchService.RenderRunView view = dispatchService.dispatch(project.getId(), a.getId());
+
+        assertThat(view.runtime()).isEqualTo("target");
+        assertThat(view.targetName()).isEqualTo("acme-run");
+        assertThat(objectMapper.readTree(payloadOf(view)).path("runtime").asText()).isEqualTo("target");
+        assertThat(objectMapper.readTree(payloadOf(view)).path("targetName").asText()).isEqualTo("acme-run");
+        assertThat(view.waitReason()).isNull(); // never "waiting for a runner": no daemon is involved
+        CreativeRenderDispatchService.RenderRunView latest =
+                dispatchService.latestRun(project.getId(), a.getId()).orElseThrow();
+        assertThat(latest.runtime()).isEqualTo("target");
+        assertThat(latest.targetName()).isEqualTo("acme-run");
+        // The run token minted for the render-target job is a render run's token for this Creative only.
+        assertThat(dispatchService.isRenderRunFor(view.runId(), project.getId(), a.getId())).isTrue();
+        assertThat(dispatchService.isRenderRunFor(view.runId(), project.getId(), b.getId())).isFalse();
+    }
+
+    @Test
+    void aRunFromBeforeTheRuntimeFieldExistedReportsSelfHosted() {
+        Creative a = newStill();
+        WorkflowDefinition wf = provisioner.ensureProvisioned(project.getId());
+        WorkflowRun run = new WorkflowRun();
+        run.setWorkflow(wf);
+        run.setTriggerType("workflow_dispatch");
+        run.setEventPayload("{\"type\":\"creative.render\",\"creativeId\":\"" + a.getId() + "\"}");
+        run.setStatus(WorkflowRunStatus.FAILED);
+        run.setStartedAt(java.time.OffsetDateTime.now());
+        run.setCompletedAt(java.time.OffsetDateTime.now());
+        runRepository.save(run);
+
+        CreativeRenderDispatchService.RenderRunView latest =
+                dispatchService.latestRun(project.getId(), a.getId()).orElseThrow();
+
+        assertThat(latest.runtime()).isEqualTo("self-hosted");
+        assertThat(latest.targetName()).isNull();
+    }
+
+    private void clearDesignation() {
+        projectSettingsRepository.findByProjectId(project.getId()).ifPresent(settings -> {
+            settings.setClaudeRuntimeTargetId(null);
+            projectSettingsRepository.saveAndFlush(settings);
+        });
+        runtimeTargetRepository.deleteAll(runtimeTargetRepository.findByProjectId(project.getId()));
     }
 
     @Test

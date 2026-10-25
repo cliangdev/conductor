@@ -2,11 +2,14 @@
 name: conductor-creative-render
 
 # System-managed workflow (see CreativeWorkflowProvisioner) -- fired by CreativeRenderDispatchService when
-# someone clicks Render on a Creative that needs a browser or ffmpeg. It runs on the workspace's
-# self-hosted conductor daemon (`conductor start`, Docker required) in the render image, which executes the
-# same `conductor creative render` Claude Code uses. `with.conductor_mcp: true` makes the dispatch payload
-# carry a run-scoped key (CONDUCTOR_API_KEY) for it. The creative id goes in through env, never into the
-# shell string.
+# someone clicks Render on a Creative that needs a browser or ffmpeg. Two jobs, exactly one of which runs:
+# the dispatcher sets `event.runtime` to `target` when the workspace's designated Cloud Run runtime target
+# has a READY render job (the `render-target` job runs it there as a Cloud Run Job execution), otherwise to
+# `self-hosted` (the `render` job runs on the workspace's conductor daemon, `conductor start`, Docker
+# required). Both execute the same `conductor creative render` Claude Code uses, in the render image.
+# `with.conductor_mcp: true` makes the dispatch payload carry a run-scoped key (CONDUCTOR_API_KEY) for it.
+# The creative id goes in through env, never into the shell string. The `if` must use this split form:
+# `${{ event.runtime }} == '...'` -- a whole-expression `${{ event.runtime == '...' }}` always evaluates false.
 #
 # `manual: false` keeps it out of the generic Run button: it needs a creativeId event field.
 on:
@@ -15,7 +18,21 @@ on:
 
 jobs:
   render:
+    if: "${{ event.runtime }} == 'self-hosted'"
     runs-on: self-hosted
+    steps:
+      - id: render
+        uses: docker://ghcr.io/cliangdev/conductor-render:1
+        with:
+          conductor_mcp: true
+          timeout_minutes: 30
+        env:
+          CREATIVE_ID: ${{ event.creativeId }}
+        run: conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"
+
+  render-target:
+    if: "${{ event.runtime }} == 'target'"
+    runs-on: cloud-run
     steps:
       - id: render
         uses: docker://ghcr.io/cliangdev/conductor-render:1

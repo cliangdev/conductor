@@ -29,6 +29,9 @@ class DockerStepExecutorTest {
     @Mock
     private WorkflowRunRepository runRepository;
 
+    @Mock
+    private RenderTargetStepRunner renderTargetStepRunner;
+
     private WorkflowInterpolator interpolator = new WorkflowInterpolator();
 
     private DockerStepExecutor executor;
@@ -37,7 +40,7 @@ class DockerStepExecutorTest {
     void setUp() {
         executor = new DockerStepExecutor(
                 workerVmClient, runTokenService, projectSettingsRepository, runRepository,
-                interpolator, "http://localhost:8080") {
+                interpolator, renderTargetStepRunner, "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
                 // no-op for fast tests
@@ -323,5 +326,70 @@ class DockerStepExecutorTest {
 
         // 120 minutes cap → 120*60/5 = 1440 polls, not 999*60/5.
         verify(workerVmClient, times(1440)).getJobStatus("worker-job-10");
+    }
+
+    // ---- routing: the system render workflow's cloud-run job goes to the BYO target ----
+
+    private StepExecutionContext cloudRunContext(Map<String, Object> stepDef, String runsOn) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-123");
+        WorkflowJobRun jobRun = new WorkflowJobRun();
+        jobRun.setJobId("render-target");
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        return new StepExecutionContext(run, jobRun, stepDef, ctx, "project-abc", runsOn);
+    }
+
+    private void stubRunsOfWorkflow(String name, String yaml) {
+        WorkflowDefinition wf = new WorkflowDefinition();
+        wf.setName(name);
+        wf.setYaml(yaml);
+        WorkflowRun loaded = new WorkflowRun();
+        loaded.setId("run-123");
+        loaded.setWorkflow(wf);
+        when(runRepository.findByIdWithWorkflow("run-123")).thenReturn(Optional.of(loaded));
+    }
+
+    @Test
+    void execute_systemRenderWorkflowOnCloudRun_goesToRenderTargetRunner() {
+        stubRunsOfWorkflow(com.conductor.creative.CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME,
+                com.conductor.creative.CreativeWorkflowProvisioner.MARKER + "\nname: x\n");
+        StepResult expected = StepResult.success("ok", Map.of());
+        StepExecutionContext context = cloudRunContext(new HashMap<>(), "cloud-run");
+        when(renderTargetStepRunner.run(context)).thenReturn(expected);
+
+        assertThat(executor.execute(context)).isSameAs(expected);
+        verifyNoInteractions(workerVmClient);
+    }
+
+    @Test
+    void execute_userWorkflowOnCloudRun_stillGoesToWorkerVm() {
+        stubRunsOfWorkflow("my-own-workflow", "name: my-own-workflow\n");
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-9");
+        when(workerVmClient.getJobStatus("worker-job-9"))
+                .thenReturn(new WorkerVmClient.WorkerJobStatus("SUCCESS", 0));
+
+        StepResult result = executor.execute(cloudRunContext(new HashMap<>(), "cloud-run"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        verify(workerVmClient).submitJob(any());
+        verifyNoInteractions(renderTargetStepRunner);
+    }
+
+    @Test
+    void execute_userWorkflowNamedLikeTheRenderWorkflow_butWithoutMarker_staysOnWorkerVm() {
+        stubRunsOfWorkflow(com.conductor.creative.CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME,
+                "name: conductor-creative-render\n");
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-10");
+        when(workerVmClient.getJobStatus("worker-job-10"))
+                .thenReturn(new WorkerVmClient.WorkerJobStatus("SUCCESS", 0));
+
+        executor.execute(cloudRunContext(new HashMap<>(), "cloud-run"));
+
+        verify(workerVmClient).submitJob(any());
+        verifyNoInteractions(renderTargetStepRunner);
     }
 }

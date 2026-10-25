@@ -263,6 +263,26 @@ class CreativeControllerRunTokenTest {
                         .jsonPath("$.waitReason").value("AWAITING_RUNNER"));
     }
 
+    @Test
+    void theLatestRenderRunReportsWhereItRuns() throws Exception {
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken(userPrincipal(), null));
+        when(dispatchService.latestRun("proj-1", "cr-1")).thenReturn(java.util.Optional.of(
+                new CreativeRenderDispatchService.RenderRunView("wf-1", "run-9", "RUNNING", null,
+                        null, null, null, "target", "acme-run")));
+        mockMvc.perform(get(BASE + "/render-runs/latest")).andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.runtime").value("target"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.targetName").value("acme-run"));
+
+        when(dispatchService.latestRun("proj-1", "cr-1")).thenReturn(java.util.Optional.of(
+                new CreativeRenderDispatchService.RenderRunView("wf-1", "run-8", "RUNNING", "AWAITING_RUNNER",
+                        null, null, null)));
+        mockMvc.perform(get(BASE + "/render-runs/latest")).andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.runtime").value("self-hosted"));
+    }
+
     private static com.conductor.entity.User userPrincipal() {
         com.conductor.entity.User user = new com.conductor.entity.User();
         user.setId("u-1");
