@@ -21,9 +21,10 @@ import java.util.Set;
  *   <li>{@code story} → any platform's {@code STORY} format.</li>
  * </ul>
  *
- * <p>A target this mapper does not match (a Facebook or Instagram Reel, say — reels are video, and a
- * Creative's frames are always still images) is simply never touched by attach: it is neither updated nor
- * reported as skipped, because nothing here claims to have an opinion about it.
+ * <p>A target this mapper does not match for a still image (a Facebook or Instagram Reel, say — reels are
+ * video) is simply never touched by attach: it is neither updated nor reported as skipped, because nothing
+ * here claims to have an opinion about it. Video frames (a CLIP's, or a CAROUSEL's companion slideshow) go
+ * through {@link #matchesVideo} and {@link #carouselVideoFor} instead.
  */
 public final class CreativePlacementTargetMapper {
 
@@ -101,6 +102,37 @@ public final class CreativePlacementTargetMapper {
             case PLACEMENT_STORY -> format == PostFormat.STORY;
             default -> false;
         };
+    }
+
+    /**
+     * Whether {@code target} can publish a CAROUSEL's companion 9x16 slideshow video: TikTok, YouTube, and an
+     * Instagram or Facebook feed or Reel (a single video there already goes out as a Reel). A story takes
+     * one item, so it never does. Returns the placement the video was rendered for.
+     */
+    public static String carouselVideoFor(PostPublishTarget target) {
+        if (target == null || target.getPlatform() == null) {
+            return null;
+        }
+        String platform = target.getPlatform().trim().toLowerCase(Locale.ROOT);
+        PostFormat format = PostFormat.parse(target.getFormat());
+        boolean takesVideo = TIKTOK.equals(platform) || YOUTUBE.equals(platform)
+                || ((INSTAGRAM.equals(platform) || FACEBOOK.equals(platform))
+                && (format == PostFormat.FEED || format == PostFormat.REEL));
+        return takesVideo ? PLACEMENT_9X16 : null;
+    }
+
+    /**
+     * What a CAROUSEL with a music track goes out as when the target does not say: the video for TikTok,
+     * YouTube and any Reel-format target (they have no multi-image post, or are video-first), the slide
+     * images for an Instagram or Facebook feed post.
+     */
+    public static String defaultCarouselAs(PostPublishTarget target) {
+        if (target == null || target.getPlatform() == null) {
+            return "photos";
+        }
+        String platform = target.getPlatform().trim().toLowerCase(Locale.ROOT);
+        PostFormat format = PostFormat.parse(target.getFormat());
+        return TIKTOK.equals(platform) || YOUTUBE.equals(platform) || format == PostFormat.REEL ? "video" : "photos";
     }
 
     /**

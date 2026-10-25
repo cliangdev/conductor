@@ -624,6 +624,7 @@ public class PublishTargetService {
 
         keepHumanOnlyTikTokOptions(desired, existingByKey);
         giveNewTargetsTheirCreativeSize(postAssets, desired, existingByKey.keySet());
+        reselectCarouselMediaOnCarouselAsChange(postAssets, desired, existingByKey, storedAssetIds);
 
         List<PostPublishTarget> removed = existingByKey.entrySet().stream()
                 .filter(entry -> !desired.containsKey(entry.getKey()))
@@ -766,6 +767,7 @@ public class PublishTargetService {
             PostPublishTarget probe = new PostPublishTarget();
             probe.setPlatform(wanted.option().platform());
             probe.setFormat(wanted.format().name());
+            probe.setPublishOptions(wanted.optionsJson());
             List<String> media = CreativePlacementMedia.mediaFor(placements, probe);
             if (!media.isEmpty()) {
                 entry.setValue(new DesiredTarget(wanted.option(), withCreativeAltText(wanted.optionsJson(), placements, probe, media),
@@ -779,8 +781,57 @@ public class PublishTargetService {
     }
 
     /**
+     * An existing destination whose {@code carouselAs} option was just changed gets its media re-selected
+     * from the Post's CAROUSEL Creative (the slide images for {@code photos}, the slideshow video for
+     * {@code video}) — unless the same request also changed that destination's media, which then stands.
+     */
+    private void reselectCarouselMediaOnCarouselAsChange(List<Asset> postAssets, Map<String, DesiredTarget> desired,
+                                                         Map<String, PostPublishTarget> existingByKey,
+                                                         Map<String, List<String>> storedAssetIds) {
+        List<CreativePlacementMedia.Placements> placements = null;
+        for (Map.Entry<String, DesiredTarget> entry : desired.entrySet()) {
+            PostPublishTarget stored = existingByKey.get(entry.getKey());
+            DesiredTarget wanted = entry.getValue();
+            if (stored == null) {
+                continue;
+            }
+            Object incoming = readOptionsMap(wanted.optionsJson()).get(PublishPlatformRegistry.OPTION_CAROUSEL_AS);
+            Object before = readOptionsMap(stored.getPublishOptions()).get(PublishPlatformRegistry.OPTION_CAROUSEL_AS);
+            if (incoming == null || Objects.equals(incoming, before)) {
+                continue;
+            }
+            boolean mediaUntouched = !wanted.customMedia()
+                    || wanted.assetIds().equals(storedAssetIds.getOrDefault(stored.getId(), List.of()));
+            if (!mediaUntouched) {
+                continue;
+            }
+            if (placements == null) {
+                placements = creativePlacementMedia.forPostAssets(postAssets.stream()
+                        .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
+                        .toList());
+            }
+            PostPublishTarget probe = new PostPublishTarget();
+            probe.setPlatform(wanted.option().platform());
+            probe.setFormat(wanted.format().name());
+            probe.setPublishOptions(wanted.optionsJson());
+            for (CreativePlacementMedia.Placements p : placements) {
+                if (p.carouselAsFor(probe) == null) {
+                    continue;
+                }
+                List<String> media = p.mediaFor(probe);
+                if (!media.isEmpty()) {
+                    entry.setValue(new DesiredTarget(wanted.option(), wanted.optionsJson(), wanted.captionOverride(),
+                            media, wanted.format(), false));
+                }
+                break;
+            }
+        }
+    }
+
+    /**
      * The same Instagram alt-text rule attach applies: a lone still from a Creative becomes the new
-     * destination's {@code altText} option unless the author already supplied one.
+     * destination's {@code altText} option unless the author already supplied one. A new destination of a
+     * CAROUSEL with a track also gets its resolved {@code carouselAs} written, like attach does.
      */
     private static String withCreativeAltText(String optionsJson, List<CreativePlacementMedia.Placements> placements,
                                               PostPublishTarget probe, List<String> media) {
@@ -791,20 +842,24 @@ public class PublishTargetService {
         } catch (Exception e) {
             return optionsJson;
         }
-        if (CreativePlacementMedia.hasAltText(options)) {
-            return optionsJson;
-        }
         for (CreativePlacementMedia.Placements p : placements) {
             if (p.mediaFor(probe).isEmpty()) {
                 continue;
             }
-            String alt = p.altTextFor(probe, media);
-            if (alt == null) {
+            String alt = CreativePlacementMedia.hasAltText(options) ? null : p.altTextFor(probe, media);
+            String carouselAs = options != null && options.get(PublishPlatformRegistry.OPTION_CAROUSEL_AS) != null
+                    ? null : p.carouselAsFor(probe);
+            if (alt == null && carouselAs == null) {
                 return optionsJson;
             }
-            Map<String, Object> withAlt = options == null ? new LinkedHashMap<>() : new LinkedHashMap<>(options);
-            withAlt.put("altText", alt);
-            return canonicalOptions(withAlt);
+            Map<String, Object> merged = options == null ? new LinkedHashMap<>() : new LinkedHashMap<>(options);
+            if (alt != null) {
+                merged.put("altText", alt);
+            }
+            if (carouselAs != null) {
+                merged.put(PublishPlatformRegistry.OPTION_CAROUSEL_AS, carouselAs);
+            }
+            return canonicalOptions(merged);
         }
         return optionsJson;
     }
@@ -1101,7 +1156,11 @@ public class PublishTargetService {
     }
 
     private static List<String> optionKeys(PublishPlatform platform) {
-        return List.copyOf(platform.optionParams().keySet());
+        List<String> keys = new ArrayList<>(platform.optionParams().keySet());
+        if (PublishPlatformRegistry.acceptsConductorOnlyOption(platform.id(), PublishPlatformRegistry.OPTION_CAROUSEL_AS)) {
+            keys.add(PublishPlatformRegistry.OPTION_CAROUSEL_AS);
+        }
+        return List.copyOf(keys);
     }
 
     /** Never leave a row unlabelled: an account with no name still has to be pickable. */

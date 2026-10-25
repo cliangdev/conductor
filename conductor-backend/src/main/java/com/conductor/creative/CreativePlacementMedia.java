@@ -22,6 +22,9 @@ import java.util.stream.Collectors;
 @Component
 public class CreativePlacementMedia {
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper OPTIONS_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final CreativeRenderFrameRepository frameRepository;
     private final CreativeRepository creativeRepository;
 
@@ -64,6 +67,12 @@ public class CreativePlacementMedia {
         // video mapping rule applies, and feeds the video rule's "only when nothing more specific" fallbacks.
         private final Set<String> videoPlacementKeys = new LinkedHashSet<>();
 
+        // A CAROUSEL's companion slideshow video (its video/mp4 frame), kept out of the per-placement slide
+        // lists so a photo selection can never pick it up.
+        private String videoAssetId;
+        // Whether the carousel's audio is a track, i.e. whether a per-target photos/video choice exists.
+        private boolean hasTrack;
+
         // Asset ids whose frame is a still image (content type image/*).
         private final Set<String> imageAssetIds = new LinkedHashSet<>();
         // The Creative's alt text for a single still: its own altText, else slideAltText[0]. Null when blank.
@@ -71,6 +80,58 @@ public class CreativePlacementMedia {
 
         public Placements(boolean carousel) {
             this.carousel = carousel;
+        }
+
+        public Placements withTrack(boolean hasTrack) {
+            this.hasTrack = hasTrack;
+            return this;
+        }
+
+        public boolean hasTrack() {
+            return hasTrack;
+        }
+
+        /**
+         * How a CAROUSEL with a track goes out on {@code target}, or null when there is no choice to make
+         * (no track, or not a carousel). The target's own {@code carouselAs} option wins; otherwise the
+         * default for its platform and format. {@code video} needs a slideshow frame and a target that can
+         * publish it, and falls back to {@code photos} without them.
+         */
+        public String carouselAsFor(PostPublishTarget target) {
+            if (!carousel || !hasTrack) {
+                return null;
+            }
+            return wantsVideo(target) && videoAssetId != null && CreativePlacementTargetMapper.carouselVideoFor(target) != null
+                    ? "video" : "photos";
+        }
+
+        /** Video was asked for (explicitly or by default) on a target that can take it, but none was rendered. */
+        public boolean videoMissingFor(PostPublishTarget target) {
+            return carousel && hasTrack && videoAssetId == null && wantsVideo(target)
+                    && CreativePlacementTargetMapper.carouselVideoFor(target) != null;
+        }
+
+        private static boolean wantsVideo(PostPublishTarget target) {
+            String explicit = explicitCarouselAs(target);
+            return explicit != null ? "video".equals(explicit)
+                    : "video".equals(CreativePlacementTargetMapper.defaultCarouselAs(target));
+        }
+
+        /** The target's own {@code carouselAs} option, lower-cased, when it is a valid value. */
+        static String explicitCarouselAs(PostPublishTarget target) {
+            if (target == null || target.getPublishOptions() == null || target.getPublishOptions().isBlank()) {
+                return null;
+            }
+            try {
+                var node = OPTIONS_MAPPER.readTree(target.getPublishOptions()).get("carouselAs");
+                if (node != null && node.isTextual()) {
+                    String value = node.asText().trim().toLowerCase(java.util.Locale.ROOT);
+                    return "photos".equals(value) || "video".equals(value) ? value : null;
+                }
+            } catch (Exception e) {
+                // An unreadable bag is reported elsewhere; here it simply states no preference.
+            }
+            return null;
         }
 
         public Placements withStillAltText(String altText) {
@@ -93,6 +154,12 @@ public class CreativePlacementMedia {
         }
 
         public void add(CreativeRenderFrame frame, String assetId) {
+            if (carousel && frame.getContentType() != null && frame.getContentType().startsWith("video/")) {
+                if (videoAssetId == null) {
+                    videoAssetId = assetId;
+                }
+                return;
+            }
             if (frame.getContentType() != null && frame.getContentType().startsWith("image/")) {
                 imageAssetIds.add(assetId);
             }
@@ -107,7 +174,7 @@ public class CreativePlacementMedia {
         }
 
         public boolean isEmpty() {
-            return assetIdsByPlacement.isEmpty();
+            return assetIdsByPlacement.isEmpty() && videoAssetId == null;
         }
 
         /**
@@ -118,6 +185,9 @@ public class CreativePlacementMedia {
          */
         public List<String> mediaFor(PostPublishTarget target) {
             if (carousel) {
+                if ("video".equals(carouselAsFor(target))) {
+                    return List.of(videoAssetId);
+                }
                 String placement = CreativePlacementTargetMapper.carouselPlacementFor(target, assetIdsByPlacement.keySet());
                 return placement != null ? assetIdsByPlacement.get(placement) : List.of();
             }
@@ -162,11 +232,18 @@ public class CreativePlacementMedia {
         byCreative.forEach((creativeId, frames) -> {
             Creative creative = creativeRepository.findById(creativeId).orElse(null);
             boolean carousel = creative != null && Creative.KIND_CAROUSEL.equals(creative.getKind());
-            Placements placements = new Placements(carousel).withStillAltText(stillAltTextOf(creative));
+            Placements placements = new Placements(carousel).withStillAltText(stillAltTextOf(creative))
+                    .withTrack(carousel && hasTrack(creative));
             frames.forEach(f -> placements.add(f, assetIdByFrameId.get(f.getId())));
             result.add(placements);
         });
         return result;
+    }
+
+    /** Whether a Creative's audio is a music track (a CAROUSEL then also has a slideshow video). */
+    public static boolean hasTrack(Creative creative) {
+        return creative != null && creative.getAudio() != null && creative.getAudio().hasNonNull("source")
+                && "track".equals(creative.getAudio().get("source").asText());
     }
 
     /** The first Creative's match for {@code target}, empty when none of the Post's Creatives has a size for it. */

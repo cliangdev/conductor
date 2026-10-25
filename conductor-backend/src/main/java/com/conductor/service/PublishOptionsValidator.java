@@ -5,6 +5,11 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
+import com.conductor.creative.Creative;
+import com.conductor.creative.CreativePlacementMedia;
+import com.conductor.creative.CreativeRenderFrame;
+import com.conductor.creative.CreativeRenderFrameRepository;
+import com.conductor.creative.CreativeRepository;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
@@ -23,10 +28,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -109,7 +116,14 @@ public class PublishOptionsValidator {
     public static final String OPTION_IGNORED = "OPTION_IGNORED";
 
     /** What shape a generic option value must have, beyond "the platform accepts this key at all". */
-    private enum OptionType { BOOLEAN, ALT_TEXT, COLLABORATORS, PLAYLIST_IDS, NON_NEGATIVE_INT, PHOTO_COVER_INDEX, IMAGE_ASSET_ID }
+    private enum OptionType { BOOLEAN, ALT_TEXT, COLLABORATORS, PLAYLIST_IDS, NON_NEGATIVE_INT, PHOTO_COVER_INDEX, IMAGE_ASSET_ID, CAROUSEL_AS }
+
+    /** A slideshow video's length against the platform's own limits (warnings: the media checks block the Reel ones). */
+    public static final String VIDEO_LENGTH = "VIDEO_LENGTH";
+    private static final int REEL_MIN_SECONDS = 3;
+    private static final int FACEBOOK_REEL_MAX_SECONDS = 90;
+    /** A YouTube Short over this length with any copyright claim is blocked outright. */
+    private static final int YOUTUBE_SHORT_MAX_SECONDS = 60;
 
     /** Alt text's own ceiling — Instagram's own limit for the field, independent of any caption ceiling. */
     private static final int ALT_TEXT_MAX_CHARS = 1000;
@@ -135,7 +149,8 @@ public class PublishOptionsValidator {
             Map.entry("videoCoverTimestampMs", OptionType.NON_NEGATIVE_INT),
             Map.entry("photoCoverIndex", OptionType.PHOTO_COVER_INDEX),
             Map.entry("coverAssetId", OptionType.IMAGE_ASSET_ID),
-            Map.entry("thumbnailAssetId", OptionType.IMAGE_ASSET_ID));
+            Map.entry("thumbnailAssetId", OptionType.IMAGE_ASSET_ID),
+            Map.entry(PublishPlatformRegistry.OPTION_CAROUSEL_AS, OptionType.CAROUSEL_AS));
 
     private final PublishPlatformRegistry platformRegistry;
     private final PostPublishTargetRepository postPublishTargetRepository;
@@ -144,6 +159,9 @@ public class PublishOptionsValidator {
     private final ObjectMapper objectMapper;
     private final PublishTargetMediaResolver mediaResolver;
     private final AssetRepository assetRepository;
+    /** Null when constructed without them (a unit test): which Creative a file came from is then unknown. */
+    private final CreativeRenderFrameRepository frameRepository;
+    private final CreativeRepository creativeRepository;
 
     public PublishOptionsValidator(PublishPlatformRegistry platformRegistry,
                                    PostPublishTargetRepository postPublishTargetRepository,
@@ -152,6 +170,20 @@ public class PublishOptionsValidator {
                                    ObjectMapper objectMapper,
                                    PublishTargetMediaResolver mediaResolver,
                                    AssetRepository assetRepository) {
+        this(platformRegistry, postPublishTargetRepository, connectionRepository, publishConsentService,
+                objectMapper, mediaResolver, assetRepository, null, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public PublishOptionsValidator(PublishPlatformRegistry platformRegistry,
+                                   PostPublishTargetRepository postPublishTargetRepository,
+                                   ConnectionRepository connectionRepository,
+                                   PublishConsentService publishConsentService,
+                                   ObjectMapper objectMapper,
+                                   PublishTargetMediaResolver mediaResolver,
+                                   AssetRepository assetRepository,
+                                   CreativeRenderFrameRepository frameRepository,
+                                   CreativeRepository creativeRepository) {
         this.platformRegistry = platformRegistry;
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
@@ -159,6 +191,8 @@ public class PublishOptionsValidator {
         this.objectMapper = objectMapper;
         this.mediaResolver = mediaResolver;
         this.assetRepository = assetRepository;
+        this.frameRepository = frameRepository;
+        this.creativeRepository = creativeRepository;
     }
 
     /**
@@ -280,7 +314,8 @@ public class PublishOptionsValidator {
         while (keys.hasNext()) {
             String key = keys.next();
             JsonNode value = options.get(key);
-            if (!platform.optionParams().containsKey(key)) {
+            if (!platform.optionParams().containsKey(key)
+                    && !PublishPlatformRegistry.acceptsConductorOnlyOption(platform.id(), key)) {
                 findings.add(PublishFinding.warning(OPTION_UNKNOWN, describe(target) + " sets '" + key
                         + "', which " + platform.label() + " does not accept — it will be dropped rather than"
                         + " sent", target.getId()));
@@ -295,7 +330,76 @@ public class PublishOptionsValidator {
                 }
             }
             inspectIgnoredOption(target, platform, key, media.size(), hasVideo, postTypeKnown, findings);
+            if (PublishPlatformRegistry.OPTION_CAROUSEL_AS.equals(key)) {
+                inspectCarouselAs(target, platform, value, media, ctx, findings);
+            }
         }
+    }
+
+    /**
+     * {@code carouselAs} only means something for media that comes from a CAROUSEL Creative with a music
+     * track (which then has a slideshow video as well as slides): anywhere else it is ignored, with a
+     * warning. When it asks for the video, the video's length is checked against the platform's limits.
+     */
+    private void inspectCarouselAs(PostPublishTarget target, PublishPlatform platform, JsonNode value,
+                                   List<Asset> media, PublishCheckContext ctx, List<PublishFinding> findings) {
+        if (frameRepository == null || creativeRepository == null) {
+            return;
+        }
+        List<Asset> source = media.isEmpty() ? ctx.assets() : media;
+        Set<String> carouselFrameIds = carouselTrackFrameIds(source);
+        boolean fromCarouselWithTrack = source.stream().anyMatch(a -> carouselFrameIds.contains(a.getCreativeFrameId()));
+        if (!fromCarouselWithTrack) {
+            findings.add(PublishFinding.warning(OPTION_IGNORED, describe(target)
+                    + " sets 'carouselAs', which only applies to a carousel Creative with a music track — it will"
+                    + " be ignored", target.getId()));
+            return;
+        }
+        if (!value.isTextual() || !"video".equalsIgnoreCase(value.asText().trim())) {
+            return;
+        }
+        for (Asset asset : media) {
+            if (!isVideo(asset) || !carouselFrameIds.contains(asset.getCreativeFrameId())
+                    || asset.getDurationSeconds() == null) {
+                continue;
+            }
+            double seconds = asset.getDurationSeconds().doubleValue();
+            String id = platform.id();
+            String length = asset.getDurationSeconds().stripTrailingZeros().toPlainString();
+            if (("facebook".equals(id) && (seconds < REEL_MIN_SECONDS || seconds > FACEBOOK_REEL_MAX_SECONDS))
+                    || ("instagram".equals(id) && seconds < REEL_MIN_SECONDS)) {
+                findings.add(PublishFinding.warning(VIDEO_LENGTH, describe(target) + " sends the carousel as a "
+                        + length + " second video, outside " + platform.label() + "'s Reel length ("
+                        + REEL_MIN_SECONDS + (("facebook".equals(id)) ? " to " + FACEBOOK_REEL_MAX_SECONDS + " seconds)"
+                        : " seconds or more)") + " — change the slide durations or the number of slides", target.getId()));
+            } else if ("youtube".equals(id) && seconds > YOUTUBE_SHORT_MAX_SECONDS) {
+                findings.add(PublishFinding.warning(VIDEO_LENGTH, describe(target) + " sends the carousel as a "
+                        + length + " second video with a music track — a YouTube Short over "
+                        + YOUTUBE_SHORT_MAX_SECONDS + " seconds is blocked if the track draws a copyright claim;"
+                        + " keep it to " + YOUTUBE_SHORT_MAX_SECONDS + " seconds or less", target.getId()));
+            }
+        }
+    }
+
+    /** Ids of the render frames among {@code assets} that belong to a CAROUSEL Creative whose audio is a track. */
+    private Set<String> carouselTrackFrameIds(List<Asset> assets) {
+        List<String> frameIds = assets.stream().map(Asset::getCreativeFrameId)
+                .filter(id -> id != null).distinct().toList();
+        Set<String> result = new HashSet<>();
+        if (frameIds.isEmpty()) {
+            return result;
+        }
+        List<CreativeRenderFrame> frames = frameRepository.findAllById(frameIds);
+        Set<String> creativeIds = new HashSet<>();
+        frames.forEach(f -> creativeIds.add(f.getCreativeId()));
+        Set<String> trackCreatives = new HashSet<>();
+        for (Creative c : creativeRepository.findAllById(creativeIds)) {
+            if (Creative.KIND_CAROUSEL.equals(c.getKind()) && CreativePlacementMedia.hasTrack(c)) {
+                trackCreatives.add(c.getId());
+            }
+        }
+        frames.stream().filter(f -> trackCreatives.contains(f.getCreativeId())).forEach(f -> result.add(f.getId()));
+        return result;
     }
 
     /** A value that is the right shape but that the rest of the target's own content makes moot. */
@@ -366,6 +470,9 @@ public class PublishOptionsValidator {
                         : null;
             }
             case IMAGE_ASSET_ID -> validateImageAssetId(ctx, where, key, value);
+            case CAROUSEL_AS -> value.isTextual() && ("photos".equalsIgnoreCase(value.asText().trim())
+                    || "video".equalsIgnoreCase(value.asText().trim())) ? null
+                    : where + " sets '" + key + "' to something other than \"photos\" or \"video\"";
         };
     }
 

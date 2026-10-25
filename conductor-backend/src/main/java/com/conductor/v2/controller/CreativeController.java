@@ -37,6 +37,7 @@ import com.conductor.generated.v2.model.CreativeAudio;
 import com.conductor.generated.v2.model.CreativeLayoutOverrides;
 import com.conductor.generated.v2.model.CreativeLockup;
 import com.conductor.generated.v2.model.CreativeMotion;
+import com.conductor.generated.v2.model.CreativeSlideshow;
 import com.conductor.generated.v2.model.ConfirmCreativePhotoPosterRequest;
 import com.conductor.generated.v2.model.CreativeKind;
 import com.conductor.generated.v2.model.CreativeReadinessItem;
@@ -332,7 +333,10 @@ public class CreativeController implements CreativesApi {
                         .sequenceIndex(a.sequenceIndex()))
                 .toList();
         List<AttachCreativeTargetUpdate> updated = result.targetsUpdated().stream()
-                .map(u -> new AttachCreativeTargetUpdate(u.targetId(), u.platform(), u.assetIds()).altText(u.altText()))
+                .map(u -> new AttachCreativeTargetUpdate(u.targetId(), u.platform(), u.assetIds()).altText(u.altText())
+                        .carouselAs(u.carouselAs() != null
+                                ? AttachCreativeTargetUpdate.CarouselAsEnum.fromValue(u.carouselAs()) : null)
+                        .warning(u.warning()))
                 .toList();
         List<AttachCreativeTargetSkip> skipped = result.targetsSkipped().stream()
                 .map(s -> new AttachCreativeTargetSkip(s.targetId(), s.platform(), s.reason()))
@@ -485,12 +489,15 @@ public class CreativeController implements CreativesApi {
                 .slideAltText(c.getSlideAltText() != null ? toStringList(c.getSlideAltText()) : null)
                 .motion(toMotion(c.getMotion()))
                 .audio(toAudio(c.getAudio()))
+                .slideshow(c.getSlideshow() != null
+                        ? objectMapper.convertValue(c.getSlideshow(), CreativeSlideshow.class) : null)
                 .createdBy(c.getCreatedBy())
                 .activeExperimentId(view.activeExperimentId());
         if (view.latestRenderSummary() != null) {
             response.latestRenderId(view.latestRenderSummary().render().getId())
                     .latestRenderThumbnailUrl(renderService.thumbnailUrl(view.latestRenderSummary(),
-                            toStringList(c.getPlacements())));
+                            toStringList(c.getPlacements())))
+                    .renderedVideo(renderService.renderedVideo(view.latestRenderSummary(), c.getKind()));
         }
         if (view.latestRenderFull() != null) {
             response.latestRender(renderService.toResponse(view.latestRenderFull()));

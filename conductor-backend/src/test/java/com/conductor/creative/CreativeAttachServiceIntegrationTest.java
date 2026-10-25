@@ -587,6 +587,214 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         }
     }
 
+    // ── a CAROUSEL with a music track: slides or the companion slideshow video, per target ─────────
+
+    @Autowired private CreativeRenderService renderService;
+
+    private CreativePhoto trackMedia() {
+        CreativePhoto p = new CreativePhoto();
+        p.setProjectId(project.getId());
+        p.setGcsPath("projects/" + project.getId() + "/marketing/photos/" + UUID.randomUUID() + ".mp3");
+        p.setContentType("audio/mpeg");
+        p.setMediaKind(CreativePhoto.MEDIA_KIND_AUDIO);
+        p.setSizeBytes(500_000L);
+        p.setDurationSeconds(new java.math.BigDecimal("30"));
+        p.setSource("Pixabay");
+        p.setLicence("Pixabay licence");
+        p.setFocal(objectMapper.createObjectNode());
+        p.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        p.setCreatedBy(admin.getId());
+        return photoRepository.save(p);
+    }
+
+    private CreativePhoto slideImage() {
+        return slideImage(1080, 1920);
+    }
+
+    private CreativePhoto slideImage(int width, int height) {
+        CreativePhoto p = new CreativePhoto();
+        p.setProjectId(project.getId());
+        String path = "projects/" + project.getId() + "/marketing/photos/" + UUID.randomUUID() + ".jpg";
+        p.setGcsPath(path);
+        storageService.upload(path, new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9}, "image/jpeg");
+        p.setContentType("image/jpeg");
+        p.setMediaKind(CreativePhoto.MEDIA_KIND_IMAGE);
+        p.setSizeBytes(4L);
+        p.setWidth(width);
+        p.setHeight(height);
+        p.setSource("own");
+        p.setLicence("Own work");
+        p.setChecked(true);
+        p.setFocal(objectMapper.createObjectNode());
+        p.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        p.setCreatedBy(admin.getId());
+        return photoRepository.save(p);
+    }
+
+    /** Makes {@link #creative} a CAROUSEL of three 9x16 and three 4x5 slides with a track, then renders it locally the way
+     *  the MCP job does: request (slides linked), PUT the 9x16 mp4 with no index, complete. */
+    private CreativeRender renderCarouselWithTrack() {
+        CreativePhoto track = trackMedia();
+        List<String> tall = List.of(slideImage().getId(), slideImage().getId(), slideImage().getId());
+        List<String> portrait = List.of(slideImage(1080, 1350).getId(), slideImage(1080, 1350).getId(),
+                slideImage(1080, 1350).getId());
+        creative.setKind(Creative.KIND_CAROUSEL);
+        creative.setCaption("Seven ways.");
+        creative.setPlacements(objectMapper.valueToTree(List.of("9x16", "4x5")));
+        creative.setSlides(objectMapper.valueToTree(java.util.Map.of("9x16", tall, "4x5", portrait)));
+        creative.setAudio(objectMapper.createObjectNode().put("source", "track").put("trackId", track.getId())
+                .put("volume", 1.0).put("fadeOutSec", 1.0));
+        creative = creativeRepository.save(creative);
+
+        CreativeRenderService.CreateRenderResult requested = renderService.requestRender(project.getId(),
+                creative.getId(), new com.conductor.generated.v2.model.CreateCreativeRenderRequest(), admin);
+        assertThat(requested.render().getState()).isEqualTo(CreativeRender.STATE_RUNNING);
+        String renderId = requested.render().getId();
+        renderService.putFrame(project.getId(), creative.getId(), renderId, "9x16", null, 1080, 1920,
+                "mp4-bytes".getBytes(), "video/mp4", new java.math.BigDecimal("8"), true, admin);
+        renderService.completeRender(project.getId(), creative.getId(), renderId, null, admin);
+        return renderRepository.findById(renderId).orElseThrow();
+    }
+
+    private String optionOf(PostPublishTarget target, String key) {
+        try {
+            var node = objectMapper.readTree(target.getPublishOptions() == null ? "{}" : target.getPublishOptions()).get(key);
+            return node == null ? null : node.asText();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private List<Asset> assetsOf(String targetId) {
+        return storedAssetIds(targetId).stream().map(id -> assetRepository.findById(id).orElseThrow()).toList();
+    }
+
+    @Test
+    void aCarouselWithATrackGivesTikTokOnlyTheVideoAndInstagramFeedOnlyTheSlidesAndFlippingReSelects() {
+        CreativeRender render = renderCarouselWithTrack();
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        // TikTok (default video): exactly the one mp4; the choice is written into its options.
+        PostPublishTarget tiktok = targetOf("tiktok");
+        assertThat(assetsOf(tiktok.getId())).singleElement()
+                .satisfies(a -> assertThat(a.getContentType()).isEqualTo("video/mp4"));
+        assertThat(optionOf(tiktok, "carouselAs")).isEqualTo("video");
+
+        // Instagram feed (default photos): the three slides, never the mp4.
+        PostPublishTarget instagram = targetOf("instagram");
+        assertThat(assetsOf(instagram.getId())).hasSize(3)
+                .allSatisfy(a -> assertThat(a.getContentType()).isEqualTo("image/jpeg"));
+        assertThat(optionOf(instagram, "carouselAs")).isEqualTo("photos");
+        // Facebook feed behaves like Instagram feed.
+        assertThat(assetsOf(targetOf("facebook").getId())).hasSize(3);
+        assertThat(optionOf(targetOf("facebook"), "carouselAs")).isEqualTo("photos");
+
+        assertThat(result.targetsUpdated()).extracting(CreativeAttachService.TargetUpdate::carouselAs)
+                .containsExactlyInAnyOrder("video", "photos", "photos");
+        assertThat(result.targetsUpdated()).allSatisfy(u -> assertThat(u.warning()).isNull());
+
+        // Flip Instagram to video through the ordinary selection write: its media is re-selected.
+        java.util.Map<String, Object> instagramOptions = new java.util.LinkedHashMap<>();
+        instagramOptions.put("carouselAs", "video");
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("facebook", metaConnectionId,
+                        java.util.Map.of("carouselAs", "photos"), null, storedAssetIds(targetOf("facebook").getId())),
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId, instagramOptions),
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId,
+                        java.util.Map.of("carouselAs", "video"), null, storedAssetIds(tiktok.getId()))), admin);
+
+        assertThat(assetsOf(targetOf("instagram").getId())).singleElement()
+                .satisfies(a -> assertThat(a.getContentType()).isEqualTo("video/mp4"));
+        assertThat(optionOf(targetOf("instagram"), "carouselAs")).isEqualTo("video");
+        // The others kept their selections.
+        assertThat(assetsOf(targetOf("facebook").getId())).hasSize(3);
+        assertThat(assetsOf(targetOf("tiktok").getId())).hasSize(1);
+
+        // And back to photos.
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("facebook", metaConnectionId,
+                        java.util.Map.of("carouselAs", "photos"), null, storedAssetIds(targetOf("facebook").getId())),
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId,
+                        java.util.Map.of("carouselAs", "photos")),
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId,
+                        java.util.Map.of("carouselAs", "video"), null, storedAssetIds(tiktok.getId()))), admin);
+        assertThat(assetsOf(targetOf("instagram").getId())).hasSize(3);
+    }
+
+    @Test
+    void anExplicitCarouselAsWinsAndVideoWithNoRenderedVideoFallsBackToPhotosWithAWarning() {
+        // TikTok asks for photos explicitly: the slides, even though the platform default is video.
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId,
+                        java.util.Map.of("carouselAs", "photos"))), admin);
+        CreativeRender render = renderCarouselWithTrack();
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+        assertThat(assetsOf(targetOf("tiktok").getId())).hasSize(3)
+                .allSatisfy(a -> assertThat(a.getContentType()).isEqualTo("image/jpeg"));
+        assertThat(optionOf(targetOf("tiktok"), "carouselAs")).isEqualTo("photos");
+
+        // A render with the slides but no video frame (an older render): video is wanted, photos are sent.
+        CreativeRender older = newRender();
+        creative = creativeRepository.save(creative);
+        List<CreativeRenderFrame> slideFrames = frameRepository.findAllByRenderIdOrdered(render.getId()).stream()
+                .filter(f -> f.getContentType().startsWith("image/") && "9x16".equals(f.getPlacementKey())).toList();
+        for (CreativeRenderFrame f : slideFrames) {
+            newFrame(older, "9x16", f.getSequenceIndex(), "tiktok", 1080, 1920);
+        }
+        // Explicitly media-less (as after a deselect) is eligible for attach to fill again.
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId,
+                        java.util.Map.of("carouselAs", "video"), null, List.of(), null, true)), admin);
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                older.getId(), post.getId(), admin);
+        assertThat(result.targetsUpdated()).singleElement().satisfies(u -> {
+            assertThat(u.warning()).contains("no video was rendered");
+            assertThat(u.carouselAs()).isEqualTo("photos");
+        });
+        // The author's explicit choice stays in the options.
+        assertThat(optionOf(targetOf("tiktok"), "carouselAs")).isEqualTo("video");
+    }
+
+    @Test
+    void aCarouselWithoutATrackNeverGetsACarouselAsOption() {
+        creative.setKind(Creative.KIND_CAROUSEL);
+        creativeRepository.save(creative);
+        CreativeRender render = newRender();
+        for (int i = 0; i < 2; i++) {
+            newFrame(render, "4x5", i, "instagram", 1080, 1350);
+        }
+
+        CreativeAttachService.AttachResult result = attachService.attach(project.getId(), creative.getId(),
+                render.getId(), post.getId(), admin);
+
+        assertThat(result.targetsUpdated()).allSatisfy(u -> assertThat(u.carouselAs()).isNull());
+        assertThat(optionOf(targetOf("instagram"), "carouselAs")).isNull();
+        assertThat(optionOf(targetOf("tiktok"), "carouselAs")).isNull();
+    }
+
+    @Test
+    void aNewDestinationAddedAfterAttachGetsItsCarouselMediaAndResolvedCarouselAs() {
+        CreativeRender render = renderCarouselWithTrack();
+        attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+        Connection youtube = connection("youtube", "{\"channelId\":\"UC123\",\"channelTitle\":\"Acme Channel\"}");
+        String youtubeConnectionId = connectionRepository.saveAndFlush(youtube).getId();
+
+        publishTargetService.replaceSelection(project.getId(), post.getId(), List.of(
+                new PublishTargetService.TargetSelection("facebook", metaConnectionId,
+                        java.util.Map.of("carouselAs", "photos"), null, storedAssetIds(targetOf("facebook").getId())),
+                new PublishTargetService.TargetSelection("instagram", metaConnectionId,
+                        java.util.Map.of("carouselAs", "photos"), null, storedAssetIds(targetOf("instagram").getId())),
+                new PublishTargetService.TargetSelection("tiktok", tiktokConnectionId,
+                        java.util.Map.of("carouselAs", "video"), null, storedAssetIds(targetOf("tiktok").getId())),
+                new PublishTargetService.TargetSelection("youtube", youtubeConnectionId)), admin);
+
+        assertThat(assetsOf(targetOf("youtube").getId())).singleElement()
+                .satisfies(a -> assertThat(a.getContentType()).isEqualTo("video/mp4"));
+        assertThat(optionOf(targetOf("youtube"), "carouselAs")).isEqualTo("video");
+    }
+
     // ── a story sequence publishes as N stories: the STORY target takes all beats, in order ─────
 
     @Test
