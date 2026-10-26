@@ -398,6 +398,8 @@ public class TikTokPublishAction {
         for (int attempt = 1; attempt <= maxPollAttempts; attempt++) {
             PublishStatus status = client.fetchPublishStatus(accessToken, publishId);
             lastStatus = status.status();
+            log.info("TikTok publish {} status poll {}/{}: status={} failReason={} postId={}", publishId, attempt,
+                    maxPollAttempts, status.status(), status.failReason(), status.postId());
             if (status.complete() || status.sentToInbox()) {
                 return status;
             }
@@ -487,6 +489,9 @@ public class TikTokPublishAction {
                     .map(photo -> publicMediaUrl(signedUrl(photo), publicBase))
                     .toList();
             int coverIndex = resolvePhotoCoverIndex(input, photos.size());
+            log.info("TikTok photo post init: {} images (assets {}), cover {}, hosts {}", photos.size(),
+                    photos.stream().map(p -> p.getId() + ":" + p.getContentType()).toList(), coverIndex,
+                    urls.stream().map(TikTokPublishAction::hostOf).distinct().toList());
             try {
                 publishId = client.initPhotoPost(accessToken, buildPhotoPostInfo(input, ctx), urls, coverIndex);
             } catch (TikTokApiException e) {
@@ -534,6 +539,15 @@ public class TikTokPublishAction {
         String encoded = java.util.Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(storageUrl.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         return publicBase.replaceAll("/+$", "") + "/media/" + encoded;
+    }
+
+    /** The host of a URL, for logs: the query string of a signed link is a credential and must not be logged. */
+    private static String hostOf(String url) {
+        try {
+            return java.net.URI.create(url).getHost();
+        } catch (IllegalArgumentException e) {
+            return "unparseable";
+        }
     }
 
     /** A read URL for one image, minted now — TikTok fetches it during the init call. */
