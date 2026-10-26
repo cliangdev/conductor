@@ -23,6 +23,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Every TikTok Content Posting API call the TikTok connector makes, behind one seam so
  * {@code TikTokConnector} is unit-testable against a stub. Anti-corruption layer: TikTok's
@@ -46,6 +49,8 @@ import java.util.Set;
  * <p>API reference: https://developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
  */
 public class TikTokClient {
+
+    private static final Logger log = LoggerFactory.getLogger(TikTokClient.class);
 
     static final String API_BASE = "https://open.tiktokapis.com/v2";
     static final String CREATOR_INFO_PATH = "/post/publish/creator_info/query/";
@@ -602,6 +607,16 @@ public class TikTokClient {
      * though TikTok returned HTTP 200 alongside it.
      */
     private static void requireOk(String operation, ErrorEnvelope error) {
+        if (error != null) {
+            // TikTok support asks for the log_id when a post goes missing, and it is on every response.
+            // Status polls repeat every few seconds and already have a line of their own, so they stay at debug.
+            String line = "TikTok {} responded: code={} log_id={} message={}";
+            if ("status fetch".equals(operation)) {
+                log.debug(line, operation, error.code(), error.logId(), error.message());
+            } else {
+                log.info(line, operation, error.code(), error.logId(), error.message());
+            }
+        }
         if (error == null || error.code() == null || ERROR_CODE_OK.equalsIgnoreCase(error.code())) {
             return;
         }
