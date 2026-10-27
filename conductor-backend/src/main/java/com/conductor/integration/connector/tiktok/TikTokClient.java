@@ -303,6 +303,12 @@ public class TikTokClient {
         }
         long chunkSize = Math.max(TARGET_CHUNK_BYTES, ceilDiv(videoSize, MAX_CHUNK_COUNT));
         chunkSize = Math.min(Math.max(chunkSize, MIN_CHUNK_BYTES), MAX_CHUNK_BYTES);
+        // A chunk can never be bigger than the file: below two chunks' worth, TikTok's floor rule would
+        // count one chunk but the declared chunk_size would exceed video_size ("The chunk size is invalid").
+        // The whole file is one legal chunk (up to 64 MB), so send it as such.
+        if (videoSize < 2 * chunkSize && videoSize <= MAX_CHUNK_BYTES) {
+            return new ChunkPlan(videoSize, videoSize, 1);
+        }
         int totalChunkCount = (int) Math.max(1, videoSize / chunkSize);
         return new ChunkPlan(videoSize, chunkSize, totalChunkCount);
     }

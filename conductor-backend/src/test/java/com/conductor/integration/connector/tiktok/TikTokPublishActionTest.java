@@ -136,6 +136,8 @@ class TikTokPublishActionTest {
             1_000L,
             TikTokClient.MIN_CHUNK_BYTES,
             TikTokClient.MIN_CHUNK_BYTES + 1,
+            7_927_414L,
+            9_200_502L,
             12L * 1024 * 1024,
             VIDEO_SIZE,
             700L * 1024 * 1024,
@@ -146,7 +148,9 @@ class TikTokPublishActionTest {
 
             assertThat(plan.videoSize()).isEqualTo(size);
             assertThat(plan.totalChunkCount()).isBetween(1, TikTokClient.MAX_CHUNK_COUNT);
-            if (size > TikTokClient.MIN_CHUNK_BYTES) {
+            assertThat(plan.chunkSize()).as("chunk never exceeds the file for %d bytes", size)
+                    .isLessThanOrEqualTo(size);
+            if (size > 2 * TikTokClient.TARGET_CHUNK_BYTES) {
                 assertThat(plan.chunkSize())
                         .as("chunk size for %d bytes", size)
                         .isBetween(TikTokClient.MIN_CHUNK_BYTES, TikTokClient.MAX_CHUNK_BYTES);
