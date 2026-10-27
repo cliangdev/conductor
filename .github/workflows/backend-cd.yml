@@ -44,7 +44,9 @@ jobs:
       # dispatch has no other path. See docs/workflows.md#queued-and-waiting-work and the Aug 2026 cost report.
       # Timed publishing (scheduled Posts) rides the same mechanism on its own queue, publish-tasks — see
       # docs/publishing.md#firing-on-time. The publishing pollers only sweep behind it.
-      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }},OAUTH_CALLBACK_BASE_URL=${{ vars.OAUTH_CALLBACK_BASE_URL }} --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
+      # CONDUCTOR_SCHEDULER_* authenticate Cloud Scheduler's OIDC calls (scripts/setup-cloud-scheduler.sh creates the
+      # jobs and the service account). Mode is NOT set here: it stays in-app until flipped, see docs/workflows.md#timed-jobs.
+      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }},OAUTH_CALLBACK_BASE_URL=${{ vars.OAUTH_CALLBACK_BASE_URL }},CONDUCTOR_SCHEDULER_OIDC_AUDIENCE=${{ vars.BACKEND_URL }}/internal/v1/scheduler,CONDUCTOR_SCHEDULER_INVOKER_EMAIL=conductor-scheduler@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
       # The TIKTOK_*, META_* and YOUTUBE_OAUTH_* bindings below are Conductor's own TikTok, Meta and
       # YouTube apps. Those platforms review an app once and every workspace authorizes its own
       # account through it, so the app belongs to the deployment. YOUTUBE_OAUTH_* is Conductor's own
