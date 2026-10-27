@@ -1256,7 +1256,7 @@ export const TOOLS = [
   // --- Creatives: Brand Kit + Creative library + local rendering ---
   {
     name: 'get_brand_kit',
-    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit. Also carries `configured: false` plus a `nextStep` when the kit looks unset — check this before writing a Creative against it.",
+    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit; when the project has several kits, that response also carries `otherKits` ([{id, name, configured}], every kit except the one returned) so you can offer a choice — pass the chosen kit's id as `brandKitId` on preview_creative_draft / create_creative. Also carries `configured: false` plus a `nextStep` when the kit looks unset — check this before writing a Creative against it.",
     inputSchema: {
       type: 'object',
       properties: {

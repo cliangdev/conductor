@@ -101,24 +101,37 @@ async function withBrandKitErrors<T>(fn: () => Promise<T>): Promise<T> {
 /** The project's default Brand Kit — the "no kitId given" resolution shared by `getBrandKit`,
  * `updateBrandKit` and `uploadBrandImage`. */
 async function resolveDefaultBrandKit(config: Config): Promise<Record<string, unknown>> {
+  return (await listKitsWithDefault(config)).kit
+}
+
+async function listKitsWithDefault(config: Config): Promise<{ kit: Record<string, unknown>; kits: Array<Record<string, unknown>> }> {
   const kits = await apiGet<Array<Record<string, unknown>>>(`${V2_PROJECT(config)}/marketing/brand-kits`, config)
   const found = kits.find((k) => k['isDefault']) ?? kits[0]
   if (!found) {
     throw new Error('This project has no Brand Kit yet — one is created for every workspace by default; check Settings.')
   }
-  return found
+  return { kit: found, kits }
 }
 
 export async function getBrandKit(params: { kitId?: string }, config: Config): Promise<Record<string, unknown>> {
-  const kit = params.kitId
-    ? await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
-    : await resolveDefaultBrandKit(config)
+  let kit: Record<string, unknown>
+  let otherKits: Array<{ id: unknown; name: unknown; configured: unknown }> | undefined
+  if (params.kitId) {
+    kit = await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
+  } else {
+    const listed = await listKitsWithDefault(config)
+    kit = listed.kit
+    // Small fields only: the caller picks by name, then passes the id as `brandKitId`.
+    const others = listed.kits.filter((k) => k !== listed.kit).map((k) => ({ id: k['id'], name: k['name'], configured: k['configured'] }))
+    if (others.length > 0) otherKits = others
+  }
+  const base = otherKits ? { ...kit, otherKits } : kit
 
   // A self-hosted backend that predates this field simply won't send it — treat that as configured
   // (nothing to warn about) rather than as unset. Only an explicit `false` means "looks unset".
-  if (kit['configured'] !== false) return kit
+  if (kit['configured'] !== false) return base
   return {
-    ...kit,
+    ...base,
     nextStep:
       'This Brand Kit looks unset — call update_brand_kit (name, tokens, font, CTA claim, copy rules) ' +
       'and upload_brand_image (logo) before creating a Creative with it.',

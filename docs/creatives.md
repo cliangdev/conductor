@@ -8,7 +8,7 @@ concept → render → upload flow (COND-24).
 A **Brand Kit** (`brand_kit`, `com.conductor.creative.BrandKit`) is per-project brand truth: colour
 tokens, font, logo/wordmark/badge object paths, a CTA claim, copy rules (regex + message + fields +
 exception pattern), an accent-phrase requirement, approved lines and the enabled placements a Creative
-renders at by default. A project may hold several kits; exactly one is `isDefault`. Nothing brand-specific
+renders at by default. A project may hold several kits; exactly one is `isDefault`. With several kits, the marketing create skill asks which one to use (it reads the others from `get_brand_kit`'s `otherKits`) and passes it as `brandKitId`. Nothing brand-specific
 ever lives in product code — every rule a Creative is checked against is data on the kit it renders with.
 A kit's accent phrase always renders in italic, so its `fontUrl` must include that font's italic face
 (for Google Fonts, the `ital` axis, e.g. `family=Poppins:ital,wght@0,400;0,800;1,800`) — without it the

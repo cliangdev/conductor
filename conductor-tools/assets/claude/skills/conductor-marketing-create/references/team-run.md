@@ -22,7 +22,9 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   writes reasoning before scores, compares finalists pairwise in both orders, and argues against its
   own leader.
 - **One gate.** The person is asked only at the final draft preview. Do not stop to ask which idea.
-  The one exception is S5b's disclosure question, asked only when disclosure cannot be inferred.
+  Two exceptions: S5b's disclosure question, asked only when disclosure cannot be inferred; and the
+  kit question, asked once before S0 only when the workspace has several kits and the person named
+  none (SKILL.md "Brand kit first"). A resumed run reuses the `brandKitId` stored in `run.json`.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script).
 - **Organic posts default to a slideshow.** A `RENDER` idea for an organic post (not an ad) is a
   native-looking slideshow built by `compose_slideshow` and posted as a CAROUSEL; see
@@ -72,6 +74,7 @@ shoot/     shoot-script.md  (FILM winner only)
              "S3b": "pending", "S3c": "pending", "S4": "pending", "S5": "pending", "S5b": "pending",
              "S6": "pending"},
   "idMap": {"I1": {"angle": "story/emotion", "file": "ideas/angle-1.md", "n": 3}},
+  "brandKitId": null,
   "finalists": [], "winner": null, "tag": null, "runnerUps": [],
   "tags": {"hookType": null, "angle": null, "format": null},
   "drafts": {"finalist-I3": "<absolute dir>", "final": "<absolute dir>"},
@@ -85,7 +88,8 @@ linked to IDs; it is never shown to the director.
 **Resume check (first thing).** Glob `.conductor/content-runs/*/run.json`. If one has a stage that is
 not `done` or `skipped` and no `creativeId` or `shootDoc`, ask with `AskUserQuestion` whether to
 **Resume** that run (name it and its last finished stage) or **Start a new run**. On resume, skip
-done stages and continue from the first pending one.
+done stages and continue from the first pending one, using the `brandKitId` already in
+`run.json`; never ask the kit question again for a run that has one stored.
 
 ## Delegation prompt template
 
@@ -113,7 +117,9 @@ has failed the stage: retry once with a one-line reminder, then tell the person.
 
 Write `request.md` (the request verbatim, `--quick` if given, the platform if stated). Then:
 
-1. `get_brand_kit` -> `context/brand-kit.json`. If `configured` is false and the person already
+1. Resolve the kit (SKILL.md "Brand kit first": the named kit, else ask once when `otherKits` is
+   non-empty), store its id in `run.json` as `brandKitId`, and write `get_brand_kit({kitId})` ->
+   `context/brand-kit.json`. Use that kit's `knowledgePagePath` and copy rules below. If `configured` is false and the person already
    skipped setup in the command, note that in the brief's constraints.
 2. Knowledge, for `context/knowledge.md`: `read_knowledge_pages` for the kit's `knowledgePagePath`
    and `marketing/what-works.md`; `search_knowledge` for persona/audience, campaign and positioning
@@ -195,7 +201,7 @@ Draft each finalist the judge named (up to three).
 A slideshow finalist has no cheap draft: judge it from its idea text (archetype and slide-by-slide
 text) unless its slides can be composed from photos already on hand. In that case write its spec to
 `<run>/drafts/finalist-<id>/slideshow-spec.json`, call `compose_slideshow` with `draftDir` set to
-that folder and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` with that idea's draft spec (map the
+that folder and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` (with `brandKitId` from `run.json`) with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
 `full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
 `imagePrompt`, write the prompt by the prompt-writing rules in `references/realism-check.md` and
@@ -319,7 +325,7 @@ does not apply is answered "not applicable".
 Resolution gate first: confirm S5's gate passed for every photo in the spec. A photo above 1.0x at
 any placement is fixed now, not shown.
 
-1. `preview_creative_draft` with the fields from `creative-spec.json`, `full: false`, and no
+1. `preview_creative_draft` with the fields from `creative-spec.json`, `brandKitId` from `run.json`, `full: false`, and no
    `draftDir` (the default location is cleaned up automatically after the commit). Record the
    returned `draftDir` as `drafts.final`. Local files (`photoPath`, `clipPath`, `audioPath`) go in
    as given in the spec.

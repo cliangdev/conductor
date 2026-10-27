@@ -44,8 +44,10 @@ only what the choice needs: one or two follow-up questions, not a form.
 
 ### 1. Read the brand
 
-Call `get_brand_kit` (a project may have more than one — pass `kitId` if the person named a
-specific brand, otherwise the default). It gives you the colour tokens, font, logo/wordmark/badge
+Pick the kit as in SKILL.md "Brand kit first": `get_brand_kit` with `kitId` if the person named a
+brand; otherwise with no `kitId`, and if `otherKits` is non-empty ask once which kit to use. Remember
+the chosen kit's id and pass it as `brandKitId` on every `preview_creative_draft` and
+`create_creative` call. The kit gives you the colour tokens, font, logo/wordmark/badge
 URLs, the CTA claim, the copy rules (each a regex, a message, and which fields it applies to), the
 approved lines, the enabled placements, and `knowledgePagePath` — the wiki page holding this
 brand's positioning, message hierarchy, approved verbatim lines and voice in prose. Read that page

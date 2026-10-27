@@ -778,7 +778,7 @@
     },
     {
       "name": "get_brand_kit",
-      "description": "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Carries configured: false plus a nextStep when the kit has never been edited.",
+      "description": "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Carries configured: false plus a nextStep when the kit has never been edited. Without kitId and with several kits, also carries otherKits ([{id, name, configured}]); pass the chosen id as brandKitId on preview_creative_draft / create_creative.",
       "category": "marketing"
     },
     {
