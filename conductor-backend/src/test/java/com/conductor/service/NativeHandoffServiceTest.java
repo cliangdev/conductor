@@ -296,11 +296,8 @@ class NativeHandoffServiceTest {
 
     @Test
     void theDeferredSweepTicksOftenEnoughToCloseAThirtyDayBoundary() throws Exception {
-        Method sweep = NativeHandoffService.class.getMethod("sweepDeferredHandoffs");
-        Scheduled scheduled = sweep.getAnnotation(Scheduled.class);
-
-        assertThat(scheduled).isNotNull();
-        assertThat(scheduled.fixedDelay()).isEqualTo(60_000L);
+        assertThat(com.conductor.scheduling.TestRegistries.fixedDelay("native-handoff-sweep"))
+                .isEqualTo(java.time.Duration.ofMillis(60_000L));
     }
 
     @ParameterizedTest

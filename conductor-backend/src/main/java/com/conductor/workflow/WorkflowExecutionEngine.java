@@ -13,7 +13,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -85,7 +84,6 @@ public class WorkflowExecutionEngine {
      * Daily: mark runs stuck in RUNNING for >24h as FAILED, and fail any self-hosted job still
      * AWAITING_PICKUP after 24h — the daemon never claimed it (stopped, never upgraded, etc.).
      */
-    @Scheduled(cron = "0 0 2 * * *")
     @Transactional
     public void cleanupStuckRuns() {
         OffsetDateTime cutoff = OffsetDateTime.now().minusHours(24);

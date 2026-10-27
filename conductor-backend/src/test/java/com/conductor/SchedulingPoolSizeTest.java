@@ -36,7 +36,10 @@ class SchedulingPoolSizeTest {
         int scheduled = 0;
         try (Stream<Path> files = Files.walk(MAIN_JAVA)) {
             for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
-                int count = countOccurrences(Files.readString(file), "@Scheduled");
+                String source = Files.readString(file);
+                int count = (int) Pattern.compile("^\\s*@Scheduled\\(", Pattern.MULTILINE).matcher(source).results().count();
+                // Timed jobs declared in the registry each take a pool thread when run in-app.
+                count += countOccurrences(source, "    fixedDelay(\"") + countOccurrences(source, "    cron(\"");
                 if (count > 0) {
                     scheduled += count;
                     owners.add(file.getFileName() + " x" + count);
@@ -45,7 +48,7 @@ class SchedulingPoolSizeTest {
         }
 
         assertThat(poolSize())
-                .as("spring.task.scheduling.pool.size must cover all %d @Scheduled methods (%s). "
+                .as("spring.task.scheduling.pool.size must cover all %d @Scheduled methods and registry jobs (%s). "
                         + "Add a thread when you add a scheduler.", scheduled, String.join(", ", owners))
                 .isGreaterThanOrEqualTo(scheduled);
     }

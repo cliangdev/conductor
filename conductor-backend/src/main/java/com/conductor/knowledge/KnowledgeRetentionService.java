@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -82,7 +81,6 @@ public class KnowledgeRetentionService {
         this.deleteSkippedAfterDays = deleteSkippedAfterDays;
     }
 
-    @Scheduled(fixedDelay = 3_600_000, initialDelay = 90_000)
     public void sweep() {
         try {
             compactProcessed();

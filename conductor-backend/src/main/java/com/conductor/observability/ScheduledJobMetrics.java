@@ -60,6 +60,9 @@ public final class ScheduledJobMetrics {
     }
 
     static String jobName(Runnable runnable) {
+        if (runnable instanceof com.conductor.scheduling.NamedJob named) {
+            return named.jobName();
+        }
         if (runnable instanceof ScheduledMethodRunnable smr) {
             return AopUtils.getTargetClass(smr.getTarget()).getSimpleName() + "." + smr.getMethod().getName();
         }

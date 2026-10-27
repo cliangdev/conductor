@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,7 +93,6 @@ public class ConnectorFeedScheduler {
         this.enabled = enabled;
     }
 
-    @Scheduled(fixedDelay = 60_000, initialDelay = 45_000)
     public void poll() {
         if (!enabled) {
             return;

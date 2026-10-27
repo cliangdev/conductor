@@ -167,12 +167,8 @@ class PostPublishSchedulerTest {
 
     @Test
     void tickIntervalIsWellInsideTheSixtySecondPublishingSlo() throws Exception {
-        Method poll = PostPublishScheduler.class.getMethod("poll");
-        Scheduled scheduled = poll.getAnnotation(Scheduled.class);
-
-        assertThat(scheduled).isNotNull();
-        assertThat(scheduled.fixedDelay()).isEqualTo(30_000L);
-        assertThat(scheduled.fixedDelay()).isLessThan(60_000L);
+        assertThat(com.conductor.scheduling.TestRegistries.fixedDelay("post-publish-poll"))
+                .isEqualTo(java.time.Duration.ofMillis(30_000L));
     }
 
     @Test
