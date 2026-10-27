@@ -56,8 +56,9 @@ default kit, and never delete anything.
    - A Creative (display id such as `12a`): `get_creative` and read `slideStyle`. A CAROUSEL with a
      null `slideStyle` was made before styles were recorded: treat it as the native defaults and say so.
    - A local slideshow folder (`.conductor/slideshows/*/spec.json`): read the spec's top-level `resolvedStyle`
-     (the full look that was composed; the spec's own `style` is only the partial input, and
-     older folders that have no `resolvedStyle` carry the full object as `style`).
+     (the full look that was composed; the spec's own `style` is only the partial input). A folder
+     with neither `resolvedStyle` nor `style` was made before styles were recorded: treat it as the
+     native defaults and say so (the same as a Creative with a null `slideStyle`).
    - Images designed elsewhere: look at them, sample the colours (text box, text, outline, accent),
      and ask the person for the font name (and a Google Fonts link if it is one). Compose one sample
      slide with `compose_slideshow` and that inline `style`, show it, and continue only once they

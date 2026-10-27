@@ -726,6 +726,26 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void replacingSlidesWithoutAStyleClearsTheRecordedStyleButSendingBothKeepsTheSent() {
+        CreateCreativeRequest request = carouselRequest(Map.of("default", imageIds(2, 1080, 1920, true)));
+        request.setSlideStyle(new SlideshowStyle().fontFamily("Poppins"));
+        Creative created = creativeService.createCreative(project.getId(), request, admin).creative();
+
+        PatchCreativeRequest both = new PatchCreativeRequest();
+        both.setVersion(created.getVersion());
+        both.setSlides(Map.of("default", imageIds(3, 1080, 1920, true)));
+        both.setSlideStyle(new SlideshowStyle().accent("#FF5A5F"));
+        Creative withBoth = creativeService.patchCreative(project.getId(), created.getId(), both, admin).creative();
+        assertThat(withBoth.getSlideStyle().get("accent").asText()).isEqualTo("#FF5A5F");
+
+        PatchCreativeRequest slidesOnly = new PatchCreativeRequest();
+        slidesOnly.setVersion(withBoth.getVersion());
+        slidesOnly.setSlides(Map.of("default", imageIds(2, 1080, 1920, true)));
+        Creative cleared = creativeService.patchCreative(project.getId(), created.getId(), slidesOnly, admin).creative();
+        assertThat(cleared.getSlideStyle()).isNull();
+    }
+
+    @Test
     void aSlideStyleOnANonCarouselIsRefusedWith422() {
         CreateCreativeRequest request = new CreateCreativeRequest();
         request.setHeadline("Hello");

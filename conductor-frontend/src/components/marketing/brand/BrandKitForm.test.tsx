@@ -289,14 +289,17 @@ describe('BrandKitForm', () => {
       expect(payload).not.toHaveProperty('slideshowStyle')
     })
 
-    it('loads the font URL in the preview and removes it on change', async () => {
+    it('loads the font URL in the preview on blur and keeps the link', async () => {
       withStyle(STYLE)
       render(<BrandKitForm projectId="proj-1" token="tok" />)
       const url = await screen.findByLabelText('Slide font URL')
       await userEvent.type(url, 'https://fonts.googleapis.com/css?family=Lora')
-      expect(document.head.querySelector('link[href="https://fonts.googleapis.com/css?family=Lora"]')).not.toBeNull()
+      await userEvent.tab()
+      await waitFor(() =>
+        expect(document.head.querySelector('link[href="https://fonts.googleapis.com/css?family=Lora"]')).not.toBeNull(),
+      )
       await userEvent.clear(url)
-      expect(document.head.querySelector('link[href^="https://fonts.googleapis.com"]')).toBeNull()
+      expect(document.head.querySelector('link[href="https://fonts.googleapis.com/css?family=Lora"]')).not.toBeNull()
     })
   })
 })

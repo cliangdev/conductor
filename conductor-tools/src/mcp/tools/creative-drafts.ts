@@ -163,9 +163,9 @@ export function stamp(now: Date): string {
   return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
 }
 
-export function slugify(text: string | undefined): string {
-  const slug = (text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '')
-  return slug || 'draft'
+export function slugify(text: string | undefined, max = 40, fallback = 'draft'): string {
+  const slug = (text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '')
+  return slug || fallback
 }
 
 async function readDraftFile(draftDir: string): Promise<DraftFile | undefined> {

@@ -120,9 +120,29 @@ describe('composeSlideshowTool', () => {
       writeFileSync(join(tmp, 'spec.json'), JSON.stringify({ id: 'a', slides: [{}], resolvedStyle: old }))
       await composeSlideshowTool({ specPath: 'spec.json' }, { projectRoot: tmp })
       expect(styleArg()).toEqual(NATIVE_STYLE)
-      expect(compose.mock.calls[0]![0]).not.toHaveProperty('resolvedStyle')
       await composeSlideshowTool({ specPath: 'spec.json', brandKitId: 'k2' }, { projectRoot: tmp, loadKit: kit({ accent: '#00ff88' }) })
       expect(styleArg(1)).toEqual({ ...NATIVE_STYLE, accent: '#00ff88' })
+    })
+
+    it('inline null resets to native over a kit; a kit style: null in the spec is no layer', async () => {
+      compose.mockResolvedValue(result(true))
+      const loadKit = kit({ fontFamily: 'Lora', fontUrl: 'https://f.example/l.css', accent: '#111111' })
+      await composeSlideshowTool({ spec, brandKitId: 'k1', style: { fontFamily: null } }, { projectRoot: tmp, loadKit })
+      expect(styleArg()).toEqual({ ...NATIVE_STYLE, accent: '#111111' })
+      await composeSlideshowTool({ spec: { id: 'a', slides: [{}], style: null }, brandKitId: 'k1' }, { projectRoot: tmp, loadKit })
+      expect(styleArg(1)).toMatchObject({ fontFamily: 'Lora', accent: '#111111' })
+      // nulls inside a kit mean "not set by the kit"
+      await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit({ fontFamily: null, accent: '#222222' }) })
+      expect(styleArg(2)).toEqual({ ...NATIVE_STYLE, accent: '#222222' })
+    })
+
+    it('names the Brand Kit when its style is invalid', async () => {
+      const res = await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit({ fontFamily: ',', fontUrl: 'ftp://x' }) })
+      expect(res).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/Brand Kit "Warm".*update_brand_kit.*inline style/s),
+        errors: [expect.stringMatching(/^Brand Kit "Warm" slideshowStyle\.fontFamily/), expect.stringMatching(/^Brand Kit "Warm" slideshowStyle\.fontUrl/)],
+      })
     })
 
     it('ignores unknown fields in a kit style but rejects them in an inline style', async () => {

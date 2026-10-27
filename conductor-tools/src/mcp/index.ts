@@ -1611,7 +1611,7 @@ export const TOOLS = [
         specPath: { type: 'string', description: 'A spec .json file; relative image paths resolve against its folder (use this or spec)' },
         ratios: { type: 'array', items: { type: 'string', enum: ['9x16', '4x5'] }, description: 'Default both' },
         brandKitId: { type: 'string', description: "Style the slides from this Brand Kit's slideshowStyle (optional; errors if the kit has none; omit for the native look)" },
-        style: { ...SLIDESHOW_STYLE_SCHEMA, description: 'One-off style, applied over the kit style or the native look (optional). Overrides the kit and the spec\'s own style.' },
+        style: { ...SLIDESHOW_STYLE_SCHEMA, type: ['object', 'null'], description: 'One-off style, applied over the kit style, the spec\'s own style and the native look (optional). A field you leave out inherits from the layer below; a field set to null resets that field to the native value (fontFamily: null = bundled TikTok Sans and no fontUrl).' },
         draftDir: { type: 'string', description: 'Output folder (optional; defaults to <project>/.conductor/slideshows/<timestamp>-<id>/)' },
       },
     },

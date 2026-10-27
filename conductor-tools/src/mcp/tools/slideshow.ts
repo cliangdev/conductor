@@ -5,9 +5,8 @@ import {
   composeSlideshow,
   SLIDE_RATIOS,
   SlideshowSpecError,
-  SlideshowStyleError,
-  resolveSlideshowStyle,
-  pickKnownStyleFields,
+  kitStyleLayer,
+  mergeSlideshowStyles,
   validateSlideshowStyle,
   type ResolvedSlideshowStyle,
   type SlideshowStyle,
@@ -33,8 +32,8 @@ export interface ComposeSlideshowParams {
   draftDir?: string
   /** Style the slides from this Brand Kit's slideshowStyle (omit for the native look). */
   brandKitId?: string
-  /** One-off style, applied over the kit's style (or the native look). */
-  style?: SlideshowStyle
+  /** One-off style over the kit's style (or the native look): absent field = inherit, null = reset to native. */
+  style?: SlideshowStyle | null
 }
 
 export interface ComposeSlideshowOptions {
@@ -102,16 +101,15 @@ export async function composeSlideshowTool(
   }
   if (typeof spec !== 'object' || spec === null) return { ok: false, error: 'spec must be an object with { id, slides }.' }
 
-  // Style layers: native look < Brand Kit < the spec's own `style` < inline `style`. An earlier output's
-  // `resolvedStyle` is never read, so re-composing does not carry the old kit's style forward.
-  const { resolvedStyle: _old, ...specIn } = spec as Record<string, unknown>
-  void _old
-  spec = specIn
+  // Style layers: native look < Brand Kit < the spec's own `style` < inline `style`. Each layer is validated
+  // once, here; an absent field inherits, an explicit null resets that field to the native value (a kit's
+  // nulls mean "not set"). An earlier output's `resolvedStyle` is never read.
+  const specStyle = (spec as { style?: unknown }).style
+  const inlineProblems = params.style == null ? [] : validateSlideshowStyle(params.style, 'style')
+  if (inlineProblems.length > 0) return { ok: false, error: 'The style is invalid.', errors: inlineProblems }
+  const specProblems = specStyle == null ? [] : validateSlideshowStyle(specStyle, 'spec.style')
+  if (specProblems.length > 0) return { ok: false, error: 'The style is invalid.', errors: specProblems }
   let kitStyle: SlideshowStyle | undefined
-  if (params.style !== undefined && params.style !== null) {
-    const problems = validateSlideshowStyle(params.style, 'style')
-    if (problems.length > 0) return { ok: false, error: 'The style is invalid.', errors: problems }
-  }
   if (params.brandKitId) {
     const load = options.loadKit ?? (options.config ? (kitId: string) => getBrandKit({ kitId }, options.config!) : undefined)
     if (!load) return { ok: false, error: 'brandKitId needs a connected project; run conductor login or omit brandKitId.' }
@@ -121,22 +119,25 @@ export async function composeSlideshowTool(
     } catch (err) {
       return { ok: false, error: `Could not read Brand Kit ${params.brandKitId}: ${err instanceof Error ? err.message : String(err)}` }
     }
+    const kitName = String(kit['name'] ?? params.brandKitId)
     const ss = kit['slideshowStyle']
     if (ss === null || ss === undefined || (typeof ss === 'object' && Object.keys(ss as object).length === 0)) {
       return {
         ok: false,
-        error: `Brand Kit "${String(kit['name'] ?? params.brandKitId)}" has no slideshow style. Compose without brandKitId for the native look, pass an inline style, or set one with update_brand_kit({kitId, slideshowStyle}).`,
+        error: `Brand Kit "${kitName}" has no slideshow style. Compose without brandKitId for the native look, pass an inline style, or set one with update_brand_kit({kitId, slideshowStyle}).`,
       }
     }
-    kitStyle = pickKnownStyleFields(ss)
+    const kitProblems = validateSlideshowStyle(ss, `Brand Kit "${kitName}" slideshowStyle`, true)
+    if (kitProblems.length > 0) {
+      return {
+        ok: false,
+        error: `Brand Kit "${kitName}" has an invalid slideshow style. Fix it with update_brand_kit({kitId, slideshowStyle}) or pass an inline style instead.`,
+        errors: kitProblems,
+      }
+    }
+    kitStyle = kitStyleLayer(ss)
   }
-  let resolvedStyle: ResolvedSlideshowStyle
-  try {
-    resolvedStyle = resolveSlideshowStyle(kitStyle, (spec as { style?: SlideshowStyle }).style, params.style)
-  } catch (err) {
-    if (err instanceof SlideshowStyleError) return { ok: false, error: 'The style is invalid.', errors: err.errors }
-    throw err
-  }
+  const resolvedStyle: ResolvedSlideshowStyle = mergeSlideshowStyles(kitStyle, specStyle as SlideshowStyle | null | undefined, params.style)
 
   const id = String((spec as { id?: unknown }).id ?? 'slideshow').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 40)
   const outDir = params.draftDir

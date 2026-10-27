@@ -20,10 +20,12 @@ do not post it.
   non-empty `otherKits`, ask once with `AskUserQuestion` which kit to use: the default first, labelled
   as the default, then up to 3 others (up to 4 options; "Other" covers the rest by name). Pass the
   chosen kit's id as `brandKitId` on every `preview_creative_draft` and `create_creative` call for
-  the run, and take the Knowledge page and copy rules from that same kit. If the chosen kit's
+  the run (the default kit needs none), and take the Knowledge page and copy rules from that same kit. If the chosen kit's
   `configured` is `false` the brand has never been set up: follow `references/brand-kit-setup.md`
   and offer setup before making anything. Copy and visuals come from the Brand Kit and its Knowledge
-  page, not from invention.
+  page, not from invention. For slideshows the *style source* (native, or a kit's `slideshowStyle`)
+  is a separate choice: that kit's id goes only to `compose_slideshow`, never onto the Creative
+  unless it is also the brand kit (`references/slideshow-formats.md`, "Style").
 - **Draft first, save after approval.** `preview_creative_draft` renders on this machine and writes
   nothing to Conductor. Only after the person has seen the draft and approved it does
   `commit_creative_draft` upload the media, save the Creative and run the full render. Never commit

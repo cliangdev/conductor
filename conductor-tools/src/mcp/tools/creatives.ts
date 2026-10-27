@@ -2,7 +2,8 @@ import { readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Config } from '../config.js'
-import { validateSlideshowStyle } from '../../lib/slideshow/style.js'
+import { SlideshowStyleError, validateSlideshowStyle } from '../../lib/slideshow/style.js'
+import { slugify } from './creative-drafts.js'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
@@ -234,7 +235,7 @@ export async function updateBrandKit(params: UpdateBrandKitParams, config: Confi
 function assertStyle(style: unknown): void {
   if (style === null) return
   const errors = validateSlideshowStyle(style, 'slideshowStyle')
-  if (errors.length > 0) throw new Error(`Invalid slideshowStyle:\n${errors.map((e) => `  - ${e}`).join('\n')}`)
+  if (errors.length > 0) throw new SlideshowStyleError(errors)
 }
 
 export interface CreateBrandKitParams {
@@ -268,21 +269,13 @@ const COPIED_KIT_FIELDS = [
   'knowledgePagePath',
 ] as const
 
-export const slugifyKitName = (name: string): string =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
-    .replace(/-+$/g, '')
-
 /** Creates a Brand Kit (never the default one). With `copyFrom`, starts from that kit's voice and
  * tokens; any field passed here wins over the copied one. */
 export async function createBrandKit(params: CreateBrandKitParams, config: Config): Promise<Record<string, unknown>> {
   const name = typeof params.name === 'string' ? params.name.trim() : ''
   if (!name) throw new Error('name is required.')
   const explicitSlug = params.slug?.trim()
-  const slug = explicitSlug || slugifyKitName(name)
+  const slug = explicitSlug || slugify(name, 60, '')
   if (!slug) throw new Error('Could not derive a slug from the name; pass slug (letters, digits, hyphens).')
 
   const body: Record<string, unknown> = { slug, name }

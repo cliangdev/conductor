@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -75,6 +76,8 @@ public final class SlideshowStyles {
         if (family != null) {
             if (family.length() > 200) {
                 out.add(new Problem(prefix + ".fontFamily", "must be at most 200 characters"));
+            } else if (Arrays.stream(family.split(",")).noneMatch(f -> !f.isBlank())) {
+                out.add(new Problem(prefix + ".fontFamily", "must name at least one font family"));
             } else if (!FAMILY_OK.matcher(family).matches()) {
                 out.add(new Problem(prefix + ".fontFamily",
                         "must be a CSS font-family list without quotes, semicolons, braces, angle brackets, backslashes or control characters"));

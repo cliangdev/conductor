@@ -128,11 +128,12 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
   const specDir = resolve(options.specDir ?? process.cwd())
   // The caller (compose_slideshow) may have layered a Brand Kit / inline style already; else the spec's own.
   const style = options.resolvedStyle ?? resolveSlideshowStyle(specInput.style)
-  // spec.json keeps the input `style` as given and records the outcome beside it as `resolvedStyle`.
+  // spec.json keeps the input `style` as given and records the outcome beside it as `resolvedStyle`; an
+  // earlier output's `resolvedStyle` is dropped here, the only place that happens.
   const { resolvedStyle: _ignored, ...input } = specInput as SlideshowSpec & { resolvedStyle?: unknown }
   void _ignored
   const resolved: SlideshowSpec & { resolvedStyle: ResolvedSlideshowStyle } = { ...resolveSpecImages(input, specDir), resolvedStyle: style }
-  const htmlSpec = mapImages({ ...resolved, style }, (v) => toUrl(v))
+  const htmlSpec = mapImages(resolved, (v) => toUrl(v))
   const out = resolve(outDir)
   await mkdir(out, { recursive: true })
   const specPath = join(out, 'spec.json')
@@ -168,7 +169,7 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
       for (let i = 0; i < htmlSpec.slides.length; i++) {
         const nn = String(i + 1).padStart(2, '0')
         const htmlFile = join(out, `.slide-${ratio}-${nn}.html`)
-        await writeFile(htmlFile, buildSlideHtml(htmlSpec, i, ratio, assetBase))
+        await writeFile(htmlFile, buildSlideHtml(htmlSpec, i, ratio, assetBase, style))
         try {
           await page.goto(pathToFileURL(htmlFile).href)
           await page.waitForFunction('window.__READY === true', null, { timeout: 30000 })

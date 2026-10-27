@@ -25,13 +25,14 @@ const CHECK_SCRIPT = String.raw`
   function add(rule, severity, message) { out.push({ slide: M.slide, ratio: M.ratio, rule: rule, severity: severity, message: message }); }
   function label(el) { var nm = el.getAttribute('data-name'); if (nm) return nm; var t = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 32); return t ? '"' + t + '"' : '<' + el.tagName.toLowerCase() + '>'; }
   async function run() {
-    var FF = M.fontFamily, FQ = FF ? '"' + FF + '"' : 'TT', faces = [];
+    var FF = M.fontFamily, FQ = M.firstFamily ? '"' + M.firstFamily + '"' : 'TT', faces = [];
+    // load the first real family even when no text on this slide uses it, so the check can tell loaded from missing
     try { faces = await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px ' + FQ); })); } catch (e) {}
     try { await document.fonts.ready; } catch (e) {}
     await Promise.all(Array.prototype.map.call(document.images, function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); }));
     if (!FF) {
       if (!document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
-    } else if (M.firstFamily && M.generics.indexOf(M.firstFamily.toLowerCase()) < 0) {
+    } else if (M.firstFamily) {
       var loaded = faces.some(function (f) { return f && f.length > 0; });
       var probe = document.createElement('span');
       probe.textContent = 'mmmmmmmmmmlliWW@#';
@@ -221,12 +222,19 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style:
  * The full HTML document for one slide. Pure: image sources are used as given (the composer resolves them
  * to file URLs first); `assetBase` is the URL, ending in "/", of the folder holding the bundled fonts.
  */
-export function buildSlideHtml(spec: SlideshowSpec, index: number, ratio: SlideRatio, assetBase: string): string {
+export function buildSlideHtml(
+  spec: SlideshowSpec,
+  index: number,
+  ratio: SlideRatio,
+  assetBase: string,
+  style: ResolvedSlideshowStyle = resolveSlideshowStyle(spec.style)
+): string {
   const sl = spec.slides[index]
   if (!sl) throw new Error(`No slide at index ${index}`)
   const lines = (sl.texts ?? []).flatMap((t) => String(t.t).split('\n'))
-  const style = resolveSlideshowStyle(spec.style)
-  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily: style.fontFamily ? fontFamilyNames(style.fontFamily)[0] : null, generics: GENERIC_FAMILIES, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
+  // the family list is parsed once: the first non-generic name drives the font check and load
+  const firstFamily = style.fontFamily ? (fontFamilyNames(style.fontFamily).find((f) => !(GENERIC_FAMILIES as readonly string[]).includes(f.toLowerCase())) ?? null) : null
+  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
     `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style)}</style></head>\n` +

@@ -71,7 +71,8 @@ export function fontFamilyCss(family: string): string {
     .join(',')
 }
 
-const sameFamily = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase()
+/** The first family of each list, compared case-insensitively and trimmed. */
+const sameFamily = (a: string, b: string): boolean => (fontFamilyNames(a)[0] ?? '').toLowerCase() === (fontFamilyNames(b)[0] ?? '').toLowerCase()
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /**
@@ -99,14 +100,7 @@ export function validateSlideshowStyle(style: unknown, at = 'style', ignoreUnkno
   if (v('fontUrl') != null) {
     const url = v('fontUrl')
     const t = typeof url === 'string' ? url.trim() : ''
-    let ok = typeof url === 'string' && (t === '' || (t.length <= 2048 && FONT_URL.test(t)))
-    if (ok && t !== '') {
-      try {
-        new URL(t)
-      } catch {
-        ok = false
-      }
-    }
+    const ok = typeof url === 'string' && (t === '' || (t.length <= 2048 && FONT_URL.test(t)))
     if (!ok) errors.push(`${at}.fontUrl must be an http(s) URL to a CSS stylesheet (for example a Google Fonts link)`)
   }
   for (const k of STYLE_COLOR_KEYS) {
@@ -142,27 +136,48 @@ export function pickKnownStyleFields(style: unknown): SlideshowStyle | undefined
 const blank = (s: string | null | undefined): string | null => (typeof s === 'string' && s.trim() !== '' ? s.trim() : null)
 
 /**
- * Layers the given styles over the native look, later layers winning. A layer's null/absent field leaves the
- * layer below untouched, except a layer that sets a *different* `fontFamily` (case-insensitive) and gives no
- * `fontUrl` clears the inherited `fontUrl`, so a new family never inherits the previous layer's stylesheet.
+ * Layers already-validated styles over the native look, later layers winning. In a layer an absent field (or a
+ * blank font) inherits from the layer below; a field explicitly `null` resets that field to the native value
+ * (`fontFamily: null` is TikTok Sans and also clears `fontUrl`). A layer that sets a *different* first
+ * `fontFamily` (case-insensitive) and gives no `fontUrl` clears the inherited `fontUrl`.
  */
-export function resolveSlideshowStyle(...layers: Array<SlideshowStyle | null | undefined>): ResolvedSlideshowStyle {
+export function mergeSlideshowStyles(...layers: Array<SlideshowStyle | null | undefined>): ResolvedSlideshowStyle {
   const out: ResolvedSlideshowStyle = { ...NATIVE_STYLE }
-  layers.forEach((layer, i) => {
-    if (layer == null) return
-    const errors = validateSlideshowStyle(layer, layers.length > 1 ? `style[${i}]` : 'style')
-    if (errors.length > 0) throw new SlideshowStyleError(errors)
-    for (const k of STYLE_COLOR_KEYS) if (layer[k] != null) out[k] = layer[k]!.toLowerCase()
-    if (layer.defaultText != null) out.defaultText = layer.defaultText
-    if (layer.textSize != null) out.textSize = layer.textSize
-    if (layer.subSize != null) out.subSize = layer.subSize
+  for (const layer of layers) {
+    if (layer == null) continue
+    for (const k of STYLE_COLOR_KEYS) {
+      if (layer[k] === null) out[k] = NATIVE_STYLE[k]
+      else if (layer[k] !== undefined) out[k] = layer[k]!.toLowerCase()
+    }
+    for (const k of ['defaultText', 'textSize', 'subSize'] as const) {
+      if (layer[k] === null) (out as unknown as Record<string, unknown>)[k] = NATIVE_STYLE[k]
+      else if (layer[k] !== undefined) (out as unknown as Record<string, unknown>)[k] = layer[k]
+    }
     const family = blank(layer.fontFamily)
     const url = blank(layer.fontUrl)
-    if (family != null) {
+    if (layer.fontFamily === null) {
+      out.fontFamily = null
+      out.fontUrl = null
+    } else if (family != null) {
       if (out.fontFamily == null || !sameFamily(out.fontFamily, family)) out.fontUrl = null
       out.fontFamily = family
     }
-    if (url != null) out.fontUrl = url
-  })
+    if (layer.fontUrl === null) out.fontUrl = null
+    else if (url != null) out.fontUrl = url
+  }
   return out
+}
+
+/** Validates then merges the layers (labelled style[i], or `style` for one); throws SlideshowStyleError. */
+export function resolveSlideshowStyle(...layers: Array<SlideshowStyle | null | undefined>): ResolvedSlideshowStyle {
+  const errors = layers.flatMap((layer, i) => (layer == null ? [] : validateSlideshowStyle(layer, layers.length > 1 ? `style[${i}]` : 'style')))
+  if (errors.length > 0) throw new SlideshowStyleError(errors)
+  return mergeSlideshowStyles(...layers)
+}
+
+/** A Brand Kit's style: unknown fields dropped, nulls removed (a kit's null means "not set by the kit"). */
+export function kitStyleLayer(style: unknown): SlideshowStyle | undefined {
+  const picked = pickKnownStyleFields(style)
+  if (!picked) return undefined
+  return Object.fromEntries(Object.entries(picked).filter(([, v]) => v !== null)) as SlideshowStyle
 }

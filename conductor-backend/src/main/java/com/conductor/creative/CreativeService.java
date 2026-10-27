@@ -443,11 +443,14 @@ public class CreativeService {
         current.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         current.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         current.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
-        // null/absent keeps the recorded style; it belongs to CAROUSEL, so leaving that kind drops it.
+        // The recorded style describes the current slides: replacing the slides without sending a style clears
+        // it; sending one records it; changing neither keeps it. It belongs to CAROUSEL, so leaving that kind drops it.
         if (!Creative.KIND_CAROUSEL.equals(kind)) {
             current.setSlideStyle(null);
         } else if (request.getSlideStyle() != null) {
             current.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
+        } else if (request.getSlides() != null) {
+            current.setSlideStyle(null);
         }
 
         current = creativeRepository.save(current);
@@ -915,7 +918,7 @@ public class CreativeService {
      * a list is present when it is non-empty (the generated model cannot tell an omitted list from an empty
      * one), so a draft cannot clear a base Creative's placements or sequence — only replace them.
      */
-    private CreateCreativeRequest overlayOnBase(Creative base, CreativeDraftSpecRequest draft) {
+    CreateCreativeRequest overlayOnBase(Creative base, CreativeDraftSpecRequest draft) {
         CreateCreativeRequest merged = new CreateCreativeRequest();
         if (base != null) {
             merged.brandKitId(base.getBrandKitId())
@@ -963,7 +966,11 @@ public class CreativeService {
         if (draft.getLockup() != null) merged.setLockup(draft.getLockup());
         if (draft.getKind() != null) merged.setKind(draft.getKind());
         if (draft.getClipMedia() != null) merged.setClipMedia(draft.getClipMedia());
-        if (draft.getSlides() != null) merged.setSlides(draft.getSlides());
+        if (draft.getSlides() != null) {
+            merged.setSlides(draft.getSlides());
+            // New slides without a style do not inherit the base's look.
+            if (draft.getSlideStyle() == null) merged.setSlideStyle(null);
+        }
         if (draft.getSlideAltText() != null) merged.setSlideAltText(draft.getSlideAltText());
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
         if (draft.getAudio() != null) merged.setAudio(draft.getAudio());

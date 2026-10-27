@@ -40,6 +40,13 @@ class SlideshowStylesTest {
     }
 
     @Test
+    void fontFamilyNeedsAtLeastOneName() {
+        assertThat(fields(new SlideshowStyle().fontFamily(","))).containsExactly("slideshowStyle.fontFamily");
+        assertThat(fields(new SlideshowStyle().fontFamily(" , "))).containsExactly("slideshowStyle.fontFamily");
+        assertThat(fields(new SlideshowStyle().fontFamily("8bit Wonder, "))).isEmpty();
+    }
+
+    @Test
     void blankFontFieldsAreAbsent() {
         SlideshowStyle s = new SlideshowStyle().fontFamily("  ").fontUrl("");
         assertThat(fields(s)).isEmpty();

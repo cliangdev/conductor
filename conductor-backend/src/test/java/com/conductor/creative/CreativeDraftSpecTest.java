@@ -236,6 +236,24 @@ class CreativeDraftSpecTest {
     }
 
     @Test
+    void draftOverlayClearsTheBaseSlideStyleOnlyWhenSlidesChangeWithoutAStyle() {
+        Creative base = baseCreative();
+        base.setKind(Creative.KIND_CAROUSEL);
+        base.setSlideStyle(objectMapper.valueToTree(Map.of("fontFamily", "Poppins")));
+
+        var keep = service.overlayOnBase(base, draftRequest("x").caption("changed"));
+        assertThat(keep.getSlideStyle().getFontFamily()).isEqualTo("Poppins");
+
+        var cleared = service.overlayOnBase(base, draftRequest("x").slides(Map.of("9x16", List.of("local:s1"))));
+        assertThat(cleared.getSlideStyle()).isNull();
+
+        var sent = service.overlayOnBase(base, draftRequest("x").slides(Map.of("9x16", List.of("local:s1")))
+                .slideStyle(new com.conductor.generated.v2.model.SlideshowStyle().accent("#FF5A5F")));
+        assertThat(sent.getSlideStyle().getAccent()).isEqualTo("#FF5A5F");
+        assertThat(sent.getSlideStyle().getFontFamily()).isNull();
+    }
+
+    @Test
     void aCarouselDraftWithALocalTrackGetsTheFullSlideshowSpec() {
         LocalMediaInfo slide = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1920);
         CreativeDraftSpecRequest request = draftRequest("x")

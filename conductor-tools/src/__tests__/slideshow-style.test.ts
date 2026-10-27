@@ -70,12 +70,29 @@ describe('resolveSlideshowStyle', () => {
     expect(resolveSlideshowStyle(kit, { fontFamily: 'Other' }).fontUrl).toBeNull()
   })
 
+  it('compares the first family, so a list with generics keeps the inherited fontUrl', () => {
+    const kit = { fontFamily: 'Poppins', fontUrl: 'https://x.example/p.css' }
+    expect(resolveSlideshowStyle(kit, { fontFamily: 'Poppins, sans-serif' }).fontUrl).toBe('https://x.example/p.css')
+    expect(resolveSlideshowStyle({ ...kit, fontFamily: 'poppins , serif' }, { fontFamily: ' Poppins' }).fontUrl).toBe('https://x.example/p.css')
+    expect(resolveSlideshowStyle(kit, { fontFamily: 'Inter, Poppins' }).fontUrl).toBeNull()
+  })
+
+  it('an explicit null resets that field to native; an absent field inherits', () => {
+    const kit = { fontFamily: 'Lora', fontUrl: 'https://x.example/l.css', boxBg: '#112233', textSize: 80 }
+    expect(resolveSlideshowStyle(kit, { fontFamily: null })).toMatchObject({ fontFamily: null, fontUrl: null, boxBg: '#112233', textSize: 80 })
+    expect(resolveSlideshowStyle(kit, { boxBg: null, textSize: null })).toMatchObject({ fontFamily: 'Lora', boxBg: NATIVE_STYLE.boxBg, textSize: 60 })
+    expect(resolveSlideshowStyle(kit, { fontUrl: null })).toMatchObject({ fontFamily: 'Lora', fontUrl: null })
+    expect(resolveSlideshowStyle(kit, {})).toMatchObject(kit)
+  })
+
   it('validates font family lists and URLs like the backend', () => {
     for (const ok of ['Inter, sans-serif', 'Söhne', '  Lora  ', '', '   ']) expect(validateSlideshowStyle({ fontFamily: ok })).toEqual([])
     for (const bad of ['a"b', "a'b", 'a;b', 'a{b', 'a}b', 'a<b', 'a>b', 'a\\b', 'a\u0001b', 'x'.repeat(201), ',,']) expect(validateSlideshowStyle({ fontFamily: bad })).toHaveLength(1)
     expect(validateSlideshowStyle({ fontFamily: 'x'.repeat(200) })).toEqual([])
     expect(validateSlideshowStyle({ fontUrl: 'https://fonts.googleapis.com/css?family=Open+Sans|Lora' })).toEqual([])
     expect(validateSlideshowStyle({ fontUrl: '' })).toEqual([])
+    expect(validateSlideshowStyle({ fontUrl: 'http://x' })).toEqual([]) // only the backend's pattern: no URL parse
+    expect(validateSlideshowStyle({ fontFamily: ', ,' })).toHaveLength(1)
     for (const bad of ['ftp://x.example/a.css', 'https://x.example/a b', 'https://x.example/a"b', 'https://x.example/' + 'a'.repeat(2048)]) expect(validateSlideshowStyle({ fontUrl: bad })).toHaveLength(1)
     expect(resolveSlideshowStyle({ fontFamily: '   ', fontUrl: '' }).fontFamily).toBeNull()
   })
@@ -97,6 +114,11 @@ describe('resolveSlideshowStyle', () => {
     expect(errors.join('\n')).toMatch(/textSize.*24 to 120/)
     expect(errors.join('\n')).toMatch(/subSize.*16 to 96/)
     expect(() => resolveSlideshowStyle({ boxBg: 'red' })).toThrow(SlideshowStyleError)
+  })
+
+  it('treats style: null in a spec like no layer', () => {
+    expect(validateSlideshowSpec({ id: 'a', style: null, slides: [{}] })).toEqual([])
+    expect(buildSlideHtml({ id: 't', style: null, slides: [{}] }, 0, '9x16', base)).toContain('"fontFamily":null')
   })
 
   it('is validated inside a spec', () => {
@@ -195,6 +217,12 @@ describe.skipIf(!hasBrowser)('composeSlideshow with a custom font (real browser)
       const noUrl = await composeSlideshow({ ...spec, style: { fontFamily: 'Missing Sans, sans-serif' } }, join(out, 'nourl'), { ratios: ['9x16'] })
       expect(noUrl.passed).toBe(false)
       expect(noUrl.checks.find((c) => c.rule === 'font')?.message).toMatch(/"Missing Sans" is not installed.*fontUrl/)
+      // a font list on a slide with no styled text still loads and passes the check
+      const list = { fontFamily: 'Test Sans, sans-serif', fontUrl: `http://127.0.0.1:${port}/good.css` }
+      const notes = await composeSlideshow({ id: 'n', style: list, slides: [{ type: 'notes', title: 'Plain notes', items: ['one'] }] }, join(out, 'notes'), { ratios: ['9x16'] })
+      expect(notes.checks.filter((c) => c.rule === 'font')).toEqual([])
+      const photo = await composeSlideshow({ id: 'p', style: list, slides: [{ bgColor: '#336699' }] }, join(out, 'photo'), { ratios: ['9x16'] })
+      expect(photo.checks.filter((c) => c.rule === 'font')).toEqual([])
       const generic = await composeSlideshow({ ...spec, style: { fontFamily: 'sans-serif' } }, join(out, 'generic'), { ratios: ['9x16'] })
       expect(generic.checks.filter((c) => c.rule === 'font')).toEqual([])
     } finally {

@@ -37,7 +37,8 @@ only what the choice needs: one or two follow-up questions, not a form.
   `references/slideshow-formats.md` first; it covers the spec, archetypes, text rules and the flow.
   No logo, badge or offer goes on the slides, and the brand layouts below do not apply.
   Style is native unless the person asks for a kit's look or a kit has a slideshow style; the
-  "Style" section there says how to offer it once and pass it through.
+  "Style" section there says how to offer it once and pass it through. The brand kit (the
+  Creative's `brandKitId`) and the style source (`compose_slideshow`'s `brandKitId`) are separate.
 - **An ad** (a paid placement, or art that must carry the brand lockup and CTA): use the brand
   layouts (STILL) as described below.
 - **A video**, a **clip** or **finished images**: see their sections below.
