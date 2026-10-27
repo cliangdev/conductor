@@ -172,6 +172,7 @@ public class BrandKitService {
         }
         List<BrandKitValidationException.FieldError> errors = new ArrayList<>();
         JsonNode copyRules = validateAndConvertCopyRules(request.getCopyRules(), errors);
+        addStyleErrors(request.getSlideshowStyle(), errors);
         if (!errors.isEmpty()) {
             throw new BrandKitValidationException(errors);
         }
@@ -184,6 +185,7 @@ public class BrandKitService {
         kit.setTokens(request.getTokens() != null ? objectMapper.valueToTree(request.getTokens()) : DEFAULT_TOKENS_NODE);
         kit.setFontFamily(request.getFontFamily());
         kit.setFontUrl(request.getFontUrl());
+        kit.setSlideshowStyle(SlideshowStyles.toStored(objectMapper, request.getSlideshowStyle()));
         kit.setCtaClaim(request.getCtaClaim());
         kit.setAccentPhraseRequired(Boolean.TRUE.equals(request.getAccentPhraseRequired()));
         kit.setCopyRules(copyRules);
@@ -201,6 +203,7 @@ public class BrandKitService {
 
         List<BrandKitValidationException.FieldError> errors = new ArrayList<>();
         JsonNode copyRules = request.getCopyRules() != null ? validateAndConvertCopyRules(request.getCopyRules(), errors) : null;
+        addStyleErrors(request.getSlideshowStyle(), errors);
         if (request.getApprovedLines() != null && request.getAddApprovedLines() != null) {
             errors.add(new BrandKitValidationException.FieldError("addApprovedLines",
                     "cannot be sent together with approvedLines"));
@@ -220,6 +223,10 @@ public class BrandKitService {
         }
         if (request.getFontUrl() != null) {
             kit.setFontUrl(request.getFontUrl());
+        }
+        // Present replaces the whole style; an explicit null (or {}) arrives as an empty style and clears it.
+        if (request.getSlideshowStyle() != null) {
+            kit.setSlideshowStyle(SlideshowStyles.toStored(objectMapper, request.getSlideshowStyle()));
         }
         if (request.getCtaClaim() != null) {
             kit.setCtaClaim(request.getCtaClaim());
@@ -411,6 +418,12 @@ public class BrandKitService {
             }
         }
         return false;
+    }
+
+    private static void addStyleErrors(com.conductor.generated.v2.model.SlideshowStyle style,
+                                       List<BrandKitValidationException.FieldError> errors) {
+        SlideshowStyles.validate(style, "slideshowStyle")
+                .forEach(p -> errors.add(new BrandKitValidationException.FieldError(p.field(), p.message())));
     }
 
     private static String normalizeHex(String value) {

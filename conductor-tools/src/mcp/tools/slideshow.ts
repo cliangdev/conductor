@@ -5,10 +5,17 @@ import {
   composeSlideshow,
   SLIDE_RATIOS,
   SlideshowSpecError,
+  SlideshowStyleError,
+  resolveSlideshowStyle,
+  validateSlideshowStyle,
+  type ResolvedSlideshowStyle,
+  type SlideshowStyle,
   type SlideRatio,
   type SlideshowCheck,
 } from '../../lib/slideshow/index.js'
 import { findProjectRoot, stamp } from './creative-drafts.js'
+import type { Config } from '../config.js'
+import { getBrandKit } from './creatives.js'
 
 /**
  * compose_slideshow: builds native-looking organic slideshow slides (TikTok / Reels style) on this machine and
@@ -23,11 +30,19 @@ export interface ComposeSlideshowParams {
   specPath?: string
   ratios?: string[]
   draftDir?: string
+  /** Style the slides from this Brand Kit's slideshowStyle (omit for the native look). */
+  brandKitId?: string
+  /** One-off style, applied over the kit's style (or the native look). */
+  style?: SlideshowStyle
 }
 
 export interface ComposeSlideshowOptions {
   projectRoot?: string
   now?: Date
+  /** Needed only when brandKitId is passed. */
+  config?: Config
+  /** Tests: supply the kit lookup. */
+  loadKit?: (kitId: string) => Promise<Record<string, unknown>>
   log?: (message: string) => void
 }
 
@@ -40,6 +55,8 @@ export type ComposeSlideshowToolResult =
       checks: SlideshowCheck[]
       passed: boolean
       provenance: { recorded: number; needed: number[]; aiGenerated: boolean }
+      /** The full style used; pass it as `slideStyle` on preview_creative_draft / create_creative. */
+      style: ResolvedSlideshowStyle
       nextStep: string
       image?: { data: Buffer; mimeType: string }
     }
@@ -84,6 +101,39 @@ export async function composeSlideshowTool(
   }
   if (typeof spec !== 'object' || spec === null) return { ok: false, error: 'spec must be an object with { id, slides }.' }
 
+  // Style: native look <- the spec's own style <- the kit's slideshowStyle <- inline `style`.
+  let kitStyle: SlideshowStyle | undefined
+  if (params.style !== undefined && params.style !== null) {
+    const problems = validateSlideshowStyle(params.style, 'style')
+    if (problems.length > 0) return { ok: false, error: 'The style is invalid.', errors: problems }
+  }
+  if (params.brandKitId) {
+    const load = options.loadKit ?? (options.config ? (kitId: string) => getBrandKit({ kitId }, options.config!) : undefined)
+    if (!load) return { ok: false, error: 'brandKitId needs a connected project; run conductor login or omit brandKitId.' }
+    let kit: Record<string, unknown>
+    try {
+      kit = await load(params.brandKitId)
+    } catch (err) {
+      return { ok: false, error: `Could not read Brand Kit ${params.brandKitId}: ${err instanceof Error ? err.message : String(err)}` }
+    }
+    const ss = kit['slideshowStyle']
+    if (ss === null || ss === undefined || (typeof ss === 'object' && Object.keys(ss as object).length === 0)) {
+      return {
+        ok: false,
+        error: `Brand Kit "${String(kit['name'] ?? params.brandKitId)}" has no slideshow style. Compose without brandKitId for the native look, pass an inline style, or set one with update_brand_kit({kitId, slideshowStyle}).`,
+      }
+    }
+    kitStyle = ss as SlideshowStyle
+  }
+  let resolvedStyle: ResolvedSlideshowStyle
+  try {
+    resolvedStyle = resolveSlideshowStyle((spec as { style?: SlideshowStyle }).style, kitStyle, params.style)
+  } catch (err) {
+    if (err instanceof SlideshowStyleError) return { ok: false, error: 'The style is invalid.', errors: err.errors }
+    throw err
+  }
+  spec = { ...(spec as object), style: resolvedStyle }
+
   const id = String((spec as { id?: unknown }).id ?? 'slideshow').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 40)
   const outDir = params.draftDir
     ? resolve(projectRoot, params.draftDir)
@@ -101,8 +151,9 @@ export async function composeSlideshowTool(
       checks: result.checks,
       passed: result.passed,
       provenance: result.provenance,
+      style: result.style,
       nextStep: result.passed
-        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap.' +
+        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle: style, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap.' +
           provenanceNote(result.provenance)
         : 'Fix the spec for every check with severity "error" and call compose_slideshow again BEFORE showing anything to the person.',
       ...(image ? { image } : {}),

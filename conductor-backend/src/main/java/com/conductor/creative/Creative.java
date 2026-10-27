@@ -152,6 +152,11 @@ public class Creative {
     @Column(name = "slideshow", columnDefinition = "jsonb")
     private JsonNode slideshow;
 
+    /** {@code SlideshowStyle} JSON a CAROUSEL was built with; null when none recorded. See V164__slideshow_style.sql. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "slide_style", columnDefinition = "jsonb")
+    private JsonNode slideStyle;
+
     @Version
     @Column(name = "version", nullable = false)
     private int version;
@@ -280,6 +285,9 @@ public class Creative {
 
     public JsonNode getAudio() { return audio; }
     public void setAudio(JsonNode audio) { this.audio = audio; }
+
+    public JsonNode getSlideStyle() { return slideStyle; }
+    public void setSlideStyle(JsonNode slideStyle) { this.slideStyle = slideStyle; }
 
     public JsonNode getSlideshow() { return slideshow; }
     public void setSlideshow(JsonNode slideshow) { this.slideshow = slideshow; }

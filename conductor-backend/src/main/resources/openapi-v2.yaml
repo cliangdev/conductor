@@ -8649,6 +8649,45 @@ components:
             When set, every match of this pattern is stripped from the field's text before `pattern`
             is tested, e.g. to exempt one exact, quotable button name from a banned-phrase rule.
 
+    SlideshowStyle:
+      type: object
+      description: >-
+        How organic slideshow slides are styled. Every property is optional. Constraints are enforced by
+        the service, not by OpenAPI keywords, so a violation answers 422 naming the field (RFC 7807)
+        rather than a generic 400 — the same reasoning as `CreativeAudio.source`.
+        `fontFamily`: max 200 chars; null/absent means the bundled TikTok Sans.
+        `fontUrl`: an http(s) URL to a CSS stylesheet (e.g. Google Fonts), max 2048 chars.
+        `boxBg`, `boxInk`, `darkBg`, `darkInk`, `outline`, `accent`: `#RRGGBB` hex colours (pattern
+        `^#[0-9A-Fa-f]{6}$`).
+        `defaultText`: one of `box`, `dark`, `stroke`.
+        `textSize`: headline text in px, integer 24-120. `subSize`: sub text in px, integer 16-96.
+      properties:
+        fontFamily:
+          type: string
+          nullable: true
+        fontUrl:
+          type: string
+          nullable: true
+        boxBg:
+          type: string
+        boxInk:
+          type: string
+        darkBg:
+          type: string
+        darkInk:
+          type: string
+        outline:
+          type: string
+        accent:
+          type: string
+        defaultText:
+          type: string
+          description: "`box` | `dark` | `stroke`."
+        textSize:
+          type: integer
+        subSize:
+          type: integer
+
     BrandKitResponse:
       type: object
       required:
@@ -8709,6 +8748,12 @@ components:
         badgeUrl:
           type: string
           nullable: true
+        slideshowStyle:
+          allOf:
+            - $ref: "#/components/schemas/SlideshowStyle"
+          nullable: true
+          description: >-
+            How organic slideshow slides are styled; null means slides use the native look. Does not affect `configured`.
         ctaClaim:
           type: string
           nullable: true
@@ -8757,6 +8802,12 @@ components:
         fontUrl:
           type: string
           nullable: true
+        slideshowStyle:
+          allOf:
+            - $ref: "#/components/schemas/SlideshowStyle"
+          nullable: true
+          description: >-
+            Optional slideshow style. Null or absent means none.
         ctaClaim:
           type: string
           nullable: true
@@ -8808,6 +8859,14 @@ components:
         fontUrl:
           type: string
           nullable: true
+        slideshowStyle:
+          allOf:
+            - $ref: "#/components/schemas/SlideshowStyle"
+          nullable: true
+          description: >-
+            Present: replaces the whole style. Explicit JSON `null` (or an empty object `{}`): clears
+            it. Absent: unchanged.
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.AS_EMPTY)"
         ctaClaim:
           type: string
           nullable: true
@@ -9567,6 +9626,12 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative, defaults already applied. Null when none was set.
+        slideStyle:
+          allOf:
+            - $ref: "#/components/schemas/SlideshowStyle"
+          nullable: true
+          description: >-
+            The slide style a CAROUSEL was built with (so a Brand Kit style can later be made from it); null when none was recorded. CAROUSEL only — 422 on any other kind.
         slideshow:
           allOf:
             - $ref: "#/components/schemas/CreativeSlideshow"
@@ -9738,6 +9803,12 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        slideStyle:
+          allOf:
+            - $ref: "#/components/schemas/SlideshowStyle"
+          nullable: true
+          description: >-
+            The slide style a CAROUSEL was built with (so a Brand Kit style can later be made from it); null when none was recorded. CAROUSEL only — 422 on any other kind.
         slideshow:
           allOf:
             - $ref: "#/components/schemas/CreativeSlideshow"
@@ -9865,6 +9936,12 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        slideStyle:
+          allOf:
+            - $ref: "#/components/schemas/SlideshowStyle"
+          nullable: true
+          description: >-
+            The slide style a CAROUSEL was built with (so a Brand Kit style can later be made from it); null when none was recorded. CAROUSEL only — 422 on any other kind. On a patch, null/absent leaves it unchanged; it is cleared when the kind changes away from CAROUSEL.
         slideshow:
           allOf:
             - $ref: "#/components/schemas/CreativeSlideshow"

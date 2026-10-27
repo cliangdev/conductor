@@ -320,6 +320,25 @@ YouTube default to the video, Instagram and Facebook feed to the photos. You can
 between **photos** and **video** before it publishes; the confirmation table shows which one it
 is.
 
+### Slideshow style
+
+Slideshows look native (TikTok's own font and white/black text boxes) unless you say otherwise.
+Three ways to choose:
+
+- **Native, the default.** Nothing to do. You can always pick it, even when your brand has a style.
+- **A kit's style.** A Brand Kit can hold a slideshow style (font, text box and outline colours, an
+  accent for callouts, text sizes). When a kit has one, or you ask for "the Summer look", Claude asks
+  once: native or that kit's style. Skipping the kit never forces its look onto a slideshow.
+- **A one-off style.** Describe it ("cream boxes, Lora font, green callouts") and Claude applies it to
+  this slideshow only.
+
+**Make a kit style from slides you like.** Say "I like these slides, make a kit style from it" and name
+the slides (a Creative like `12a`, or a slideshow Claude just made). Claude reads the style they were
+made with, then asks whether to start a new kit (it can copy your current kit's copy rules and voice;
+logos are not copied, so upload them after) or add the style to an existing kit, warning you if it
+would replace one. Slides designed elsewhere work too: Claude samples the colours, asks you the font
+name, and shows one sample slide before saving anything. Your default kit is never changed.
+
 Ads are different: ask `/conductor:marketing create` for a static ad to get a brand-layout ad.
 
 ## 3. Put it on a Post

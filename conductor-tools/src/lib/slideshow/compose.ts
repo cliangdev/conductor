@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { findBrowserFactory, type BrowserFactory } from '../creative-browser.js'
 import { readProvenanceSidecar, writeProvenanceSidecar, type SidecarProvenance } from '../provenance-sidecar.js'
 import { buildSlideHtml, FRAME_H, FRAME_W } from './html.js'
+import { resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
 import { assertValidSlideshowSpec, SLIDE_RATIOS, type SlideRatio, type SlideshowSpec } from './spec.js'
 
 export interface SlideshowCheck {
@@ -32,6 +33,8 @@ export interface ComposeResult {
   provenance: { recorded: number; needed: number[]; aiGenerated: boolean }
   specPath: string
   outDir: string
+  /** The full style the slides were composed with (spec.json carries it as `style`). */
+  style: ResolvedSlideshowStyle
 }
 
 /** Bundled TikTok Sans lives in <package>/assets/fonts; this file is at src/lib/slideshow or dist/lib/slideshow. */
@@ -121,7 +124,8 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
   if (ratios.length === 0) throw new Error('ratios must name at least one of 9x16, 4x5')
 
   const specDir = resolve(options.specDir ?? process.cwd())
-  const resolved = resolveSpecImages(specInput, specDir)
+  const style = resolveSlideshowStyle(specInput.style)
+  const resolved: SlideshowSpec = { ...resolveSpecImages(specInput, specDir), style }
   const htmlSpec = mapImages(resolved, (v) => toUrl(v))
   const out = resolve(outDir)
   await mkdir(out, { recursive: true })
@@ -181,5 +185,5 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
   } finally {
     await browser.close()
   }
-  return { slidePaths, checks, passed: !checks.some((c) => c.severity === 'error'), provenance, specPath, outDir: out }
+  return { slidePaths, checks, passed: !checks.some((c) => c.severity === 'error'), provenance, specPath, outDir: out, style }
 }

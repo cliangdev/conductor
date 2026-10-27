@@ -71,6 +71,7 @@ import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } f
 import {
   getBrandKit,
   updateBrandKit,
+  createBrandKit,
   uploadBrandImage,
   listCreatives,
   listCreativeMedia,
@@ -87,6 +88,7 @@ import {
   type CreateCreativeParams,
   type UpdateCreativeParams,
   type UpdateBrandKitParams,
+  type CreateBrandKitParams,
   type UploadBrandImageParams,
   type ListCreativeMediaParams,
 } from './tools/creatives.js'
@@ -128,6 +130,26 @@ import {
   moveProjectFolder,
   deleteProjectFolder,
 } from './tools/project-docs.js'
+
+/** SlideshowStyle: the look of composed slideshows (native TikTok Sans/black-and-white by default). */
+const SLIDESHOW_STYLE_SCHEMA = {
+  type: 'object',
+  description:
+    'Slideshow look, all fields optional: fontFamily (null = TikTok Sans), fontUrl (http(s) CSS stylesheet such as a Google Fonts link), boxBg, boxInk, darkBg, darkInk, outline, accent (#RRGGBB), defaultText (box|dark|stroke, for text with no style), textSize (24-120 px), subSize (16-96 px).',
+  properties: {
+    fontFamily: { type: ['string', 'null'] },
+    fontUrl: { type: ['string', 'null'] },
+    boxBg: { type: ['string', 'null'] },
+    boxInk: { type: ['string', 'null'] },
+    darkBg: { type: ['string', 'null'] },
+    darkInk: { type: ['string', 'null'] },
+    outline: { type: ['string', 'null'] },
+    accent: { type: ['string', 'null'] },
+    defaultText: { type: ['string', 'null'], enum: ['box', 'dark', 'stroke', null] },
+    textSize: { type: ['integer', 'null'] },
+    subSize: { type: ['integer', 'null'] },
+  },
+} as const
 
 /** The Creative fields shared by create_creative and preview_creative_draft (everything but variantOf). */
 const CREATIVE_FIELD_PROPERTIES = {
@@ -181,6 +203,11 @@ const CREATIVE_FIELD_PROPERTIES = {
       volume: { type: 'number' },
       fadeOutSec: { type: 'number' },
     },
+  },
+  slideStyle: {
+    type: 'object',
+    description: "CAROUSEL only: the look the slides were composed with. Pass compose_slideshow's returned `style` so the look can be reused as a Brand Kit style later.",
+    properties: SLIDESHOW_STYLE_SCHEMA.properties,
   },
   slideshow: {
     type: 'object',
@@ -1256,7 +1283,7 @@ export const TOOLS = [
   // --- Creatives: Brand Kit + Creative library + local rendering ---
   {
     name: 'get_brand_kit',
-    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit; when the project has several kits, that response also carries `otherKits` ([{id, name, configured}], every kit except the one returned) so you can offer a choice — pass the chosen kit's id as `brandKitId` on preview_creative_draft / create_creative. Also carries `configured: false` plus a `nextStep` when the kit looks unset — check this before writing a Creative against it.",
+    description: "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Omit kitId for the project's default kit; when the project has several kits, that response also carries `otherKits` ([{id, name, configured, hasSlideshowStyle}], every kit except the one returned) so you can offer a choice — pass the chosen kit's id as `brandKitId` on preview_creative_draft / create_creative. Carries `slideshowStyle` (null when unset). Also carries `configured: false` plus a `nextStep` when the kit looks unset — check this before writing a Creative against it.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1266,7 +1293,7 @@ export const TOOLS = [
   },
   {
     name: 'update_brand_kit',
-    description: "Patch a workspace Brand Kit's name, tokens, font, CTA claim, copy rules, approved lines, enabled placements or Knowledge page path. Every field is set-replace and optional — omit to leave it unchanged — except tokens, which merges onto the kit's existing set (only the keys given change). A 422 names the failing field. Call get_brand_kit after to verify.",
+    description: "Patch a workspace Brand Kit's name, tokens, font, CTA claim, copy rules, approved lines, enabled placements, Knowledge page path or slideshow style. Every field is set-replace and optional — omit to leave it unchanged — except tokens, which merges onto the kit's existing set (only the keys given change). A 422 names the failing field. Call get_brand_kit after to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1301,7 +1328,31 @@ export const TOOLS = [
         addApprovedLines: { type: 'array', items: { type: 'string' }, description: 'Appends to the existing approved lines instead of replacing them (optional). Mutually exclusive with approvedLines.' },
         enabledPlacements: { type: 'array', items: { type: 'string' }, description: 'Placement keys (from the creative registry) this kit exports by default (optional)' },
         knowledgePagePath: { type: 'string', description: "Wiki page path holding this brand's prose context (optional)" },
+        slideshowStyle: { ...SLIDESHOW_STYLE_SCHEMA, type: ['object', 'null'], description: 'Replaces the kit\'s whole slideshow style; null clears it (optional). Fields: see compose_slideshow style.' },
       },
+    },
+  },
+  {
+    name: 'create_brand_kit',
+    description: "Create an additional Brand Kit (never the default). name is required; slug is derived from it. copyFrom (a kit id) starts from that kit's tokens, font, CTA claim, copy rules, approved lines, placements and Knowledge page so the voice carries over; anything passed here wins. Images are not copied: add them with upload_brand_image. slideshowStyle sets the look of composed slideshows. Call get_brand_kit after to verify.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Kit display name' },
+        slug: { type: 'string', description: 'URL-safe id (optional; derived from name)' },
+        copyFrom: { type: 'string', description: 'Brand Kit id to copy the voice, tokens and font from (optional)' },
+        slideshowStyle: SLIDESHOW_STYLE_SCHEMA,
+        tokens: { type: 'object', additionalProperties: { type: 'string' }, description: 'CSS colour tokens, #RRGGBB (optional)' },
+        fontFamily: { type: 'string' },
+        fontUrl: { type: 'string' },
+        ctaClaim: { type: 'string' },
+        accentPhraseRequired: { type: 'boolean' },
+        copyRules: { type: 'array', items: { type: 'object' }, description: 'Same shape as update_brand_kit copyRules (optional)' },
+        approvedLines: { type: 'array', items: { type: 'string' } },
+        enabledPlacements: { type: 'array', items: { type: 'string' } },
+        knowledgePagePath: { type: 'string' },
+      },
+      required: ['name'],
     },
   },
   {
@@ -1423,6 +1474,7 @@ export const TOOLS = [
         },
         audio: CREATIVE_FIELD_PROPERTIES.audio,
         slideshow: CREATIVE_FIELD_PROPERTIES.slideshow,
+        slideStyle: CREATIVE_FIELD_PROPERTIES.slideStyle,
         layout: { type: 'string' },
         theme: { type: 'string', enum: ['dark', 'light'] },
         photoId: { type: 'string' },
@@ -1552,13 +1604,15 @@ export const TOOLS = [
   },
   {
     name: 'compose_slideshow',
-    description: 'Compose native-looking organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Slide types: photo (bg + texts), screen (phone screenshot, callouts), notes, grid, stack (labelled panels), tier, week, receipt, placard, messages. Returns the paths, the checks, passed and the first slide as an image. If passed is false, fix the spec and call again before showing anything. Next: preview_creative_draft({kind: "CAROUSEL", slidePaths}). Nothing is sent to Conductor.',
+    description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (also in spec.json) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}). Nothing is sent to Conductor.",
     inputSchema: {
       type: 'object',
       properties: {
         spec: { type: 'object', description: 'The slideshow: { id, grain?, slides: [{ type?, bg?, texts?: [{t, y?, fs?, style?}], ...type fields }] } (use this or specPath). y is % of the 9:16 frame; max 35 slides; image paths are local files.' },
         specPath: { type: 'string', description: 'A spec .json file; relative image paths resolve against its folder (use this or spec)' },
         ratios: { type: 'array', items: { type: 'string', enum: ['9x16', '4x5'] }, description: 'Default both' },
+        brandKitId: { type: 'string', description: "Style the slides from this Brand Kit's slideshowStyle (optional; errors if the kit has none; omit for the native look)" },
+        style: { ...SLIDESHOW_STYLE_SCHEMA, description: 'One-off style, applied over the kit style or the native look (optional). Fields as in update_brand_kit slideshowStyle.' },
         draftDir: { type: 'string', description: 'Output folder (optional; defaults to <project>/.conductor/slideshows/<timestamp>-<id>/)' },
       },
     },
@@ -2483,6 +2537,9 @@ export async function runMcpServer(): Promise<void> {
         case 'get_brand_kit': {
           return successResponse(await getBrandKit({ kitId: params['kitId'] as string | undefined }, config))
         }
+        case 'create_brand_kit': {
+          return successResponse(await createBrandKit(params as unknown as CreateBrandKitParams, config))
+        }
         case 'update_brand_kit': {
           return successResponse(await updateBrandKit(params as unknown as UpdateBrandKitParams, config))
         }
@@ -2610,7 +2667,7 @@ export async function runMcpServer(): Promise<void> {
           }
         }
         case 'compose_slideshow': {
-          const result = await composeSlideshowTool(params as unknown as ComposeSlideshowParams)
+          const result = await composeSlideshowTool(params as unknown as ComposeSlideshowParams, { config })
           if (!result.ok) return errorResponse(result)
           const { image, ...meta } = result
           return image ? imageResponse(image, meta) : successResponse(meta)

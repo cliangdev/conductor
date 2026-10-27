@@ -52,6 +52,29 @@ export const BRAND_TOKEN_KEYS = [
 
 export type BrandTokenKey = (typeof BRAND_TOKEN_KEYS)[number]
 
+export type SlideshowDefaultText = 'box' | 'dark' | 'stroke'
+
+export const SLIDESHOW_COLOUR_KEYS = ['boxBg', 'boxInk', 'darkBg', 'darkInk', 'outline', 'accent'] as const
+export type SlideshowColourKey = (typeof SLIDESHOW_COLOUR_KEYS)[number]
+
+/** How organic slideshow slides are styled (openapi-v2 `SlideshowStyle`). Every property is optional;
+ *  a kit with no style (`null`) makes slides use the native look. Colours are #RRGGBB. */
+export interface SlideshowStyle {
+  fontFamily?: string | null
+  fontUrl?: string | null
+  boxBg?: string
+  boxInk?: string
+  darkBg?: string
+  darkInk?: string
+  outline?: string
+  accent?: string
+  defaultText?: SlideshowDefaultText
+  /** Headline px, 24-120. */
+  textSize?: number
+  /** Sub text px, 16-96. */
+  subSize?: number
+}
+
 export interface BrandKit {
   id: string
   projectId: string
@@ -61,6 +84,7 @@ export interface BrandKit {
   tokens: Record<string, string>
   fontFamily?: string | null
   fontUrl?: string | null
+  slideshowStyle?: SlideshowStyle | null
   markUrl?: string | null
   wordmarkDarkUrl?: string | null
   wordmarkLightUrl?: string | null
@@ -85,6 +109,7 @@ export interface CreateBrandKitRequest {
   tokens?: Record<string, string> | null
   fontFamily?: string | null
   fontUrl?: string | null
+  slideshowStyle?: SlideshowStyle | null
   ctaClaim?: string | null
   accentPhraseRequired?: boolean
   copyRules?: CopyRule[] | null
@@ -99,6 +124,8 @@ export interface PatchBrandKitRequest {
   tokens?: Record<string, string> | null
   fontFamily?: string | null
   fontUrl?: string | null
+  /** Present replaces the whole style; explicit `null` clears it; absent leaves it unchanged. */
+  slideshowStyle?: SlideshowStyle | null
   ctaClaim?: string | null
   accentPhraseRequired?: boolean
   copyRules?: CopyRule[] | null

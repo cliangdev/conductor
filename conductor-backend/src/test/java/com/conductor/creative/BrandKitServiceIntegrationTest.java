@@ -9,6 +9,7 @@ import com.conductor.generated.v2.model.CopyRule;
 import com.conductor.generated.v2.model.CopyRuleField;
 import com.conductor.generated.v2.model.CreateBrandKitRequest;
 import com.conductor.generated.v2.model.PatchBrandKitRequest;
+import com.conductor.generated.v2.model.SlideshowStyle;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
@@ -352,6 +353,86 @@ class BrandKitServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThatThrownBy(() -> brandKitService.createKit(project.getId(), request, admin))
                 .isInstanceOf(BrandKitValidationException.class)
                 .satisfies(e -> assertThat(e.getMessage()).startsWith("copyRules[0].pattern:"));
+    }
+
+    // ── Slideshow style ────────────────────────────────────────────────────────────────────────
+
+    private static SlideshowStyle style() {
+        return new SlideshowStyle().fontFamily("Poppins").fontUrl("https://fonts.googleapis.com/css2?family=Poppins")
+                .boxBg("#FFFFFF").boxInk("#111111").darkBg("#000000").darkInk("#FAFAFA").outline("#222222")
+                .accent("#FF5A5F").defaultText("stroke").textSize(64).subSize(36);
+    }
+
+    @Test
+    void slideshowStyleRoundTripsThroughCreateAndPatchAndClearsWithNull() {
+        CreateBrandKitRequest create = new CreateBrandKitRequest("styled", "Styled");
+        create.setSlideshowStyle(style());
+        BrandKit kit = brandKitService.createKit(project.getId(), create, admin);
+        BrandKit read = brandKitService.getKit(project.getId(), kit.getId(), admin);
+        assertThat(read.getSlideshowStyle().get("defaultText").asText()).isEqualTo("stroke");
+        assertThat(read.getSlideshowStyle().get("textSize").asInt()).isEqualTo(64);
+
+        // Absent leaves it unchanged.
+        PatchBrandKitRequest rename = new PatchBrandKitRequest();
+        rename.setName("Styled 2");
+        assertThat(brandKitService.patchKit(project.getId(), kit.getId(), rename, admin).getSlideshowStyle()).isNotNull();
+
+        // Present replaces the whole object.
+        PatchBrandKitRequest replace = new PatchBrandKitRequest();
+        replace.setSlideshowStyle(new SlideshowStyle().accent("#00FF00"));
+        BrandKit replaced = brandKitService.patchKit(project.getId(), kit.getId(), replace, admin);
+        assertThat(replaced.getSlideshowStyle().has("fontFamily")).isFalse();
+        assertThat(replaced.getSlideshowStyle().get("accent").asText()).isEqualTo("#00FF00");
+
+        // An explicit null deserializes to an empty style, which clears.
+        PatchBrandKitRequest clear = new PatchBrandKitRequest();
+        clear.setSlideshowStyle(new SlideshowStyle());
+        assertThat(brandKitService.patchKit(project.getId(), kit.getId(), clear, admin).getSlideshowStyle()).isNull();
+    }
+
+    @Test
+    void anExplicitNullSlideshowStyleInJsonArrivesAsAnEmptyStyleAndAbsentStaysNull() throws Exception {
+        tools.jackson.databind.json.JsonMapper mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        PatchBrandKitRequest explicitNull = mapper.readValue("{\"slideshowStyle\":null}", PatchBrandKitRequest.class);
+        assertThat(explicitNull.getSlideshowStyle()).isNotNull();
+        assertThat(SlideshowStyles.isEmpty(explicitNull.getSlideshowStyle())).isTrue();
+        assertThat(mapper.readValue("{\"name\":\"x\"}", PatchBrandKitRequest.class).getSlideshowStyle()).isNull();
+        // Same under Jackson 2, in case the web layer is configured with it.
+        com.fasterxml.jackson.databind.ObjectMapper v2 = new com.fasterxml.jackson.databind.ObjectMapper();
+        assertThat(v2.readValue("{\"slideshowStyle\":null}", PatchBrandKitRequest.class).getSlideshowStyle()).isNotNull();
+        assertThat(v2.readValue("{\"name\":\"x\"}", PatchBrandKitRequest.class).getSlideshowStyle()).isNull();
+    }
+
+    @Test
+    void invalidSlideshowStyleFieldsAreRefusedWith422NamingEachField() {
+        SlideshowStyle bad = new SlideshowStyle().boxBg("red").accent("#12345").defaultText("neon")
+                .textSize(10).subSize(97).fontUrl("ftp://example.com/x.css");
+        CreateBrandKitRequest request = new CreateBrandKitRequest("badstyle", "Bad");
+        request.setSlideshowStyle(bad);
+        assertThatThrownBy(() -> brandKitService.createKit(project.getId(), request, admin))
+                .isInstanceOf(BrandKitValidationException.class)
+                .satisfies(e -> assertThat(((BrandKitValidationException) e).fieldErrors())
+                        .extracting(BrandKitValidationException.FieldError::field)
+                        .containsExactlyInAnyOrder("slideshowStyle.boxBg", "slideshowStyle.accent",
+                                "slideshowStyle.defaultText", "slideshowStyle.textSize",
+                                "slideshowStyle.subSize", "slideshowStyle.fontUrl"));
+
+        BrandKit kit = brandKitService.resolveDefault(project.getId());
+        PatchBrandKitRequest patch = new PatchBrandKitRequest();
+        patch.setSlideshowStyle(new SlideshowStyle().fontFamily("x".repeat(201)).fontUrl("not a url"));
+        assertThatThrownBy(() -> brandKitService.patchKit(project.getId(), kit.getId(), patch, admin))
+                .isInstanceOf(BrandKitValidationException.class)
+                .satisfies(e -> assertThat(e.getMessage()).contains("slideshowStyle.fontFamily", "slideshowStyle.fontUrl"));
+    }
+
+    @Test
+    void aSlideshowStyleDoesNotMakeTheKitConfigured() {
+        BrandKit kit = brandKitService.resolveDefault(project.getId());
+        PatchBrandKitRequest patch = new PatchBrandKitRequest();
+        patch.setSlideshowStyle(style());
+        BrandKit updated = brandKitService.patchKit(project.getId(), kit.getId(), patch, admin);
+        assertThat(updated.getSlideshowStyle()).isNotNull();
+        assertThat(brandKitService.isConfigured(updated)).isFalse();
     }
 
     private User newUser() {

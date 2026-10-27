@@ -25,11 +25,14 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   Two exceptions: S5b's disclosure question, asked only when disclosure cannot be inferred; and the
   kit question, asked once before S0 only when the workspace has several kits and the person named
   none (SKILL.md "Brand kit first"). A resumed run reuses the `brandKitId` stored in `run.json`.
+  For a slideshow the same question also settles the look (`references/slideshow-formats.md`,
+  "Style"): native or a styled kit, folded into that one question, never a second gate.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script).
 - **Organic posts default to a slideshow.** A `RENDER` idea for an organic post (not an ad) is a
   native-looking slideshow built by `compose_slideshow` and posted as a CAROUSEL; see
   `references/slideshow-formats.md`. STILL and MOTION stay for ideas that really are one still, an
-  ad, or a motion piece. A slideshow never carries a logo, badge or offer.
+  ad, or a motion piece. A slideshow never carries a logo, badge or offer; its text look is native
+  unless the run's choice names a kit style or an inline `style`.
 - **Rejected copy stays rejected.** A CTA or offer line on a card or in a caption is opt-in per
   request, never a default. That means a sales line: the kit's `ctaClaim`, a trial, price, plan or
   discount. Naming the app so it can be searched is not one. Approved lines in the knowledge pages are allowed, not required. When the
@@ -330,8 +333,9 @@ any placement is fixed now, not shown.
    returned `draftDir` as `drafts.final`. Local files (`photoPath`, `clipPath`, `audioPath`) go in
    as given in the spec.
    **Slideshow winner:** `compose_slideshow({specPath})` on `slideshow-spec.json`; while `passed` is
-   false, fix the spec and compose again. Then `preview_creative_draft({kind: "CAROUSEL", slidePaths,
-   caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
+   false, fix the spec and compose again. Pass `brandKitId` and/or `style` from the run's choice
+   (the spec may also carry a top-level `style`); keep the result's `style`. Then
+   `preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle: style, caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
    the caption from `publish-pack.json` and the alt text from `direction.md`. Record the preview's
    `draftDir` as `drafts.final`.
    **Music:** a slideshow or clip with music uses `audio` on the Creative, and a track from

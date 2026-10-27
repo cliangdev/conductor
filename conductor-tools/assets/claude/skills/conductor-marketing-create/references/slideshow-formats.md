@@ -4,8 +4,8 @@ For organic posts: a native-looking photo slideshow (TikTok photo post, Instagra
 promotes an app or product by being worth watching first. Build it with `compose_slideshow`, then
 post it as a CAROUSEL Creative. Ads use the brand layouts (STILL) instead; this is not the ad path.
 
-Branding is light: no logo, badge or offer on the slides. The product appears as the payoff, not the
-opener.
+Branding is light: no logo, badge or offer on the slides, and the product appears as the payoff, not
+the opener. The look of the text (font, colours, sizes) is separate and optional: see Style.
 
 ## Post anatomy
 
@@ -103,6 +103,30 @@ photo full-bleed at 9:16 uses 675x1200 source pixels, a 1.6x upscale. Check ever
 the largest size in that aspect (`aspect: "9:16"`), use a different photo, or use a slide type that
 shows the photo framed at or below native size (such as `grid` or `stack`).
 
+## Style
+
+The native look (TikTok Sans, white and black text boxes, a pink callout accent) is the default and
+needs no setup. A slideshow can instead take the look of a Brand Kit's `slideshowStyle`, or a one-off
+inline `style`, or both (the kit's style first, the inline fields on top).
+
+- **When to offer the choice.** Ask once, never twice in a run, when the person asks for a kit's look
+  or when kits with a slideshow style exist (`get_brand_kit`'s `slideshowStyle` is set, or an
+  `otherKits[]` entry has `hasSlideshowStyle: true`). Options: "Native look" first, then each styled
+  kit (up to 4 options in all). No styled kit and no request: do not ask, use native.
+- **Team mode.** Fold it into the single kit question before S0 (the kit the person picks decides
+  whether it is also the slideshow look); never add a second gate. Store the choice in `run.json`
+  as `slideshowStyle: {"brandKitId": "<id>" | null, "style": {...} | null}`.
+- **Compose.** Pass `brandKitId` (a kit with no slideshow style is refused with a clear error: fall
+  back to native or set one with `update_brand_kit`) and/or `style` (`fontFamily`, `fontUrl` for a
+  Google Fonts stylesheet, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `outline`, `accent` as `#RRGGBB`,
+  `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96). Notes, week, receipt,
+  placard and messages slides keep their system-UI fonts by design. A custom font that fails to load
+  is a blocking `font` check naming the family.
+- **Record it.** The result and the output `spec.json` carry the resolved `style` (the full object,
+  native defaults included). Pass it as `slideStyle` on `preview_creative_draft` / `create_creative`
+  so every composed slideshow has a style that can later become a kit style
+  (`references/brand-kit-setup.md`, "Make a kit style from slides").
+
 ## Honesty and brand
 
 - No logo, badge or offer on the slides. The offer, if any, goes in the caption.
@@ -125,10 +149,11 @@ Captions on TikTok and Instagram cannot hold clickable links, so do not rely on 
 
 ## Flow
 
-1. Write the spec (`slideshow-spec.json`); call `compose_slideshow({specPath})`.
+1. Write the spec (`slideshow-spec.json`); call `compose_slideshow({specPath})`, adding `brandKitId`
+   and/or `style` per Style above.
 2. If `passed` is false, fix every `error` check and compose again. Warnings are advisory.
-3. `preview_creative_draft({kind: "CAROUSEL", slidePaths, caption, slideAltText})` using the
-   returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram). Look at the contact sheet and show
+3. `preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle, caption, slideAltText})` using the
+   returned `slidePaths` and `style` (as `slideStyle`) (`9x16` for TikTok, `4x5` for Instagram). Look at the contact sheet and show
    it.
    With music (`audio: {source: "track", trackId}`, a library track from
    `list_creative_media({kind: "AUDIO"})`; a new file is uploaded there first with its source and

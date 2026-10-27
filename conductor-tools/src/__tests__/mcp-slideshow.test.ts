@@ -7,7 +7,7 @@ vi.mock('../lib/slideshow/compose.js', async (orig) => ({ ...(await orig<typeof 
 vi.mock('../lib/image-common.js', async (orig) => ({ ...(await orig<typeof import('../lib/image-common.js')>()), jpegPreview: vi.fn(async () => ({ data: Buffer.from('x'), mimeType: 'image/jpeg' })) }))
 
 import { composeSlideshow } from '../lib/slideshow/compose.js'
-import { SlideshowSpecError } from '../lib/slideshow/index.js'
+import { NATIVE_STYLE, SlideshowSpecError } from '../lib/slideshow/index.js'
 import { composeSlideshowTool } from '../mcp/tools/slideshow.js'
 
 const compose = vi.mocked(composeSlideshow)
@@ -76,5 +76,54 @@ describe('composeSlideshowTool', () => {
     compose.mockRejectedValue(new SlideshowSpecError(['slides[0] (screen): shot (the screenshot path) is required']))
     const res = await composeSlideshowTool({ spec: { id: 'a', slides: [{ type: 'screen' }] } }, { projectRoot: tmp })
     expect(res).toEqual({ ok: false, error: 'The slideshow spec is invalid.', errors: [expect.stringMatching(/shot/)] })
+  })
+
+  describe('style', () => {
+    const spec = { id: 'a', slides: [{}] }
+    const kit = (slideshowStyle: unknown) => vi.fn(async () => ({ id: 'k1', name: 'Warm', slideshowStyle }))
+    const styleArg = () => (compose.mock.calls[0]![0] as { style: Record<string, unknown> }).style
+
+    it('composes the native look when neither brandKitId nor style is given, and returns the style', async () => {
+      compose.mockResolvedValue({ ...result(true), style: NATIVE_STYLE })
+      const res = (await composeSlideshowTool({ spec }, { projectRoot: tmp })) as { style: unknown; nextStep: string }
+      expect(styleArg()).toEqual(NATIVE_STYLE)
+      expect(res.style).toEqual(NATIVE_STYLE)
+      expect(res.nextStep).toMatch(/slideStyle: style/)
+    })
+
+    it("uses the kit's slideshowStyle, with inline style on top", async () => {
+      compose.mockResolvedValue(result(true))
+      const loadKit = kit({ fontFamily: 'Lora', fontUrl: 'https://f.example/l.css', boxBg: '#fff8e7' })
+      await composeSlideshowTool({ spec, brandKitId: 'k1', style: { boxBg: '#123456', textSize: 70 } }, { projectRoot: tmp, loadKit })
+      expect(loadKit).toHaveBeenCalledWith('k1')
+      expect(styleArg()).toMatchObject({ fontFamily: 'Lora', fontUrl: 'https://f.example/l.css', boxBg: '#123456', textSize: 70, subSize: 44 })
+    })
+
+    it('applies an inline style alone over the native look', async () => {
+      compose.mockResolvedValue(result(true))
+      await composeSlideshowTool({ spec, style: { accent: '#00FF88' } }, { projectRoot: tmp })
+      expect(styleArg()).toEqual({ ...NATIVE_STYLE, accent: '#00ff88' })
+    })
+
+    it('errors clearly when the kit has no slideshow style', async () => {
+      for (const ss of [null, undefined, {}]) {
+        const res = await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit(ss) })
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/"Warm" has no slideshow style.*native look.*update_brand_kit/s) })
+      }
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('reports an unreadable kit and an invalid inline style without composing', async () => {
+      const failing = vi.fn(async () => { throw new Error('404') })
+      expect(await composeSlideshowTool({ spec, brandKitId: 'nope' }, { projectRoot: tmp, loadKit: failing })).toMatchObject({ ok: false, error: expect.stringMatching(/Could not read Brand Kit nope: 404/) })
+      const bad = await composeSlideshowTool({ spec, style: { boxBg: 'red', textSize: 5 } }, { projectRoot: tmp })
+      expect(bad).toMatchObject({ ok: false, error: 'The style is invalid.', errors: [expect.stringMatching(/boxBg/), expect.stringMatching(/textSize/)] })
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('rejects an invalid style that arrives from a kit', async () => {
+      const res = await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit({ accent: 'zzz' }) })
+      expect(res).toMatchObject({ ok: false, errors: [expect.stringMatching(/accent/)] })
+    })
   })
 })

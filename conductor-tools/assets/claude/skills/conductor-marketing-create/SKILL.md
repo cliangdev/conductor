@@ -35,7 +35,7 @@ do not post it.
 
 | The person has | Mode | Read |
 |---|---|---|
-| A headline, photo, clip or finished images, an existing Creative to vary, or wants the brand set up | **Direct** | `references/direct.md` |
+| A headline, photo, clip or finished images, an existing Creative to vary, wants the brand set up, or wants a kit style made from slides they like ("Make a kit style from slides") | **Direct** | `references/direct.md` |
 | A goal or topic ("a post about X for Y") and wants the idea chosen for them | **Team** (honours `--quick`: two ideators, no finalist renders) | `references/team-run.md` |
 
 Infer the mode from the request. A concrete headline, photo, clip or existing Creative (including a
@@ -49,14 +49,14 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 
 - `references/direct.md`: the Direct flow (read the brand, angle, headline, photo, preview, critique, commit), sequences, video, finished images, short videos, music, cleanup.
 - `references/team-run.md`: the Team flow (run folder, stages S0 to S6, FILM ideas, final message, failure handling).
-- `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers.
+- `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers; "Make a kit style from slides" (Direct mode) turns slides the person likes into a slideshow style on a new or existing kit.
 - `references/hooks.md`: writing and scoring headline candidates.
 - `references/voice.md`: making every line read like a person posted it, with the self-check every
   hook, card and caption passes (both modes).
 - `references/layout-guide.md`: choosing a layout, resolution and safe zones.
 - `references/design-critique.md`: the six-criterion score applied to every draft before it is shown.
 - `references/realism-check.md`: the check every generated or library photo passes.
-- `references/slideshow-formats.md`: native slideshow spec, archetypes and text rules for organic posts.
+- `references/slideshow-formats.md`: native slideshow spec, style (native default, kit style, one-off style), archetypes and text rules for organic posts.
 - `references/rubric.md`: the judging rubric the creative director uses (Team).
 - `references/capabilities.md`: what Conductor can render, and what needs filming (Team).
 - `references/platform-specs.md`: per-platform formats, lengths and limits (Team).

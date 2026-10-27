@@ -390,6 +390,19 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   finished images.
 - **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
   `conductor-tools/assets/fonts/` with `OFL.txt`.
+- **Style.** The native look is the default. A `SlideshowStyle` (`fontFamily`, `fontUrl` for a CSS
+  stylesheet such as Google Fonts, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `outline`, `accent` as
+  `#RRGGBB`, `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96; all optional)
+  restyles the text boxes, stroke text and callouts. It can live on a Brand Kit (`slideshowStyle`,
+  nullable; set with `create_brand_kit` / `update_brand_kit`) or be passed one-off to
+  `compose_slideshow`. Resolution is native, then the kit's style (`brandKitId`; refused with a clear
+  error when the kit has none), then the inline `style` on top. A custom font loads from `fontUrl`
+  and a font that fails to load is a blocking `font` check naming the family; notes, week, receipt,
+  placard and messages slides keep their system-UI fonts. The resolved (full) style is written to
+  `spec.json` as `style`, returned by the tool, and recorded on the Creative as `slideStyle`
+  (CAROUSEL only; native slides record the native defaults) so a look can be reused later.
+  `create_brand_kit` with `copyFrom` starts a new kit from another kit's voice, tokens and font
+  (images are not copied).
 - **Local rendering:** like Creatives, slides render on the user's machine with the system Chrome; no
   backend job.
 - **Not the ad path.** Slides carry no logo, badge or offer; branded ads still use the brand layouts

@@ -56,6 +56,10 @@ and nothing else; the orchestrator passes it to `compose_slideshow`. Rules:
   text sits between y 16 and 75. No logo, badge or offer on any slide. No invented numbers.
 - In `direction.md`, the Publish assets section still lists the cover frame (card 1), alt text for
   every slide in order, and the sound. Alt text describes each slide for someone who cannot see it.
+- If the run chose a slideshow look, the object may also carry a top-level `style` (the fields in
+  `references/slideshow-formats.md`, "Style") and the orchestrator is given `brandKitId`; write colours
+  and sizes only from that choice, never invent a look. The orchestrator passes `brandKitId`/`style` to
+  `compose_slideshow` and the resolved style as `slideStyle` on the preview. Absent: native.
 - Do not use `creative-spec.json` for it, and do not write layout, theme or headline fields.
 
 ## creative-spec.json (RENDER only; STILL and MOTION)

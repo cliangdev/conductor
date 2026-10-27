@@ -17,6 +17,7 @@ import com.conductor.generated.v2.model.CreativeMotion;
 import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderSpec;
 import com.conductor.generated.v2.model.CreativeSlideshow;
+import com.conductor.generated.v2.model.SlideshowStyle;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.LocalMediaInfo;
@@ -272,6 +273,7 @@ public class CreativeService {
                 motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
+        violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -307,6 +309,7 @@ public class CreativeService {
         creative.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         creative.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         creative.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
+        creative.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
         return new PreparedCreate(kit, creative, motionRes, sound);
     }
 
@@ -397,6 +400,7 @@ public class CreativeService {
                 motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
+        violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -439,6 +443,12 @@ public class CreativeService {
         current.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         current.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         current.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
+        // null/absent keeps the recorded style; it belongs to CAROUSEL, so leaving that kind drops it.
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            current.setSlideStyle(null);
+        } else if (request.getSlideStyle() != null) {
+            current.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
+        }
 
         current = creativeRepository.save(current);
         return toView(projectId, current, loadPhotos(List.of(current)));
@@ -506,6 +516,7 @@ public class CreativeService {
         variant.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
         variant.setAudio(sound.audio() != null ? objectMapper.valueToTree(sound.audio()) : null);
         variant.setSlideshow(root.getSlideshow());
+        variant.setSlideStyle(root.getSlideStyle());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
@@ -930,6 +941,8 @@ public class CreativeService {
                     .motion(toMotion(base.getMotion()))
                     .audio(toAudio(base.getAudio()))
                     .slideshow(toSlideshow(base.getSlideshow()))
+                    .slideStyle(base.getSlideStyle() != null && !base.getSlideStyle().isNull()
+                            ? objectMapper.convertValue(base.getSlideStyle(), SlideshowStyle.class) : null)
                     .layoutOverrides(base.getLayoutOverrides() != null
                             ? objectMapper.convertValue(base.getLayoutOverrides(), CreativeLayoutOverrides.class) : null);
         }
@@ -956,6 +969,7 @@ public class CreativeService {
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
         if (draft.getAudio() != null) merged.setAudio(draft.getAudio());
         if (draft.getSlideshow() != null) merged.setSlideshow(draft.getSlideshow());
+        if (draft.getSlideStyle() != null) merged.setSlideStyle(draft.getSlideStyle());
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
         // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
         // or cleared there by the headline/layout rule; only a draft's own typeOverrides pass through here.
@@ -1377,6 +1391,22 @@ public class CreativeService {
         }
         boolean silent = (carouselKind && "none".equals(source)) || (clipKind && "clip".equals(source));
         return new SoundResolution(silent ? null : audio, track, input, slideshow, slideshowInput);
+    }
+
+    /** A slide style is CAROUSEL-only and field-validated; violations name {@code slideStyle}. */
+    private static List<Violation> slideStyleViolations(String kind, SlideshowStyle style) {
+        List<Violation> out = new ArrayList<>();
+        if (style == null) {
+            return out;
+        }
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            out.add(new Violation("slideStyle", "kindFields",
+                    "slideStyle only applies to a CAROUSEL creative, not " + kind));
+            return out;
+        }
+        SlideshowStyles.validate(style, "slideStyle")
+                .forEach(p -> out.add(new Violation(p.field(), "bounds", p.message())));
+        return out;
     }
 
     /** {@code creative.slideshow} JSON -&gt; the typed DTO, or null when unset. */

@@ -19,7 +19,7 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
-import { apiGet, apiPost } from '@/lib/api'
+import { apiGet, apiPatch, apiPost } from '@/lib/api'
 import { BrandKitForm } from './BrandKitForm'
 import type { BrandKit } from './types'
 
@@ -184,5 +184,83 @@ describe('BrandKitForm', () => {
       ),
     )
     expect(toastSpy).toHaveBeenCalledWith('Brand kit created')
+  })
+
+  describe('slideshow style', () => {
+    const STYLE = { accent: '#FF5A5F', boxBg: '#FFFFFF', defaultText: 'stroke' as const, textSize: 64, subSize: 36 }
+
+    function withStyle(style: typeof STYLE | null) {
+      ;(apiGet as Mock).mockImplementation((path: string) => {
+        if (path.includes('/creative-registry')) return Promise.resolve(REGISTRY)
+        return Promise.resolve([kit({ slideshowStyle: style })])
+      })
+    }
+
+    it('is off with the native-look note when the kit has no style', async () => {
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const toggle = await screen.findByRole('switch', { name: 'Use a slideshow style' })
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByText(/slideshow slides use the native look/)).toBeInTheDocument()
+      expect(screen.queryByLabelText('Slide font family')).not.toBeInTheDocument()
+    })
+
+    it('renders the stored style, the preview and every control', async () => {
+      withStyle(STYLE)
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      expect(await screen.findByLabelText('Accent')).toHaveValue('#FF5A5F')
+      expect(screen.getByLabelText('Default text style')).toHaveValue('stroke')
+      expect(screen.getByLabelText('Headline size (px)')).toHaveValue(64)
+      expect(screen.getByLabelText('Sub text size (px)')).toHaveValue(36)
+      expect(screen.getByLabelText('Slide font URL')).toBeInTheDocument()
+      expect(screen.getByTestId('slideshow-style-preview')).toBeInTheDocument()
+    })
+
+    it('sends slideshowStyle: null when the toggle is turned off', async () => {
+      withStyle(STYLE)
+      ;(apiPatch as Mock).mockResolvedValue(kit({ slideshowStyle: null }))
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      await userEvent.click(await screen.findByRole('switch', { name: 'Use a slideshow style' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      expect((apiPatch as Mock).mock.calls[0][1]).toHaveProperty('slideshowStyle', null)
+    })
+
+    it('flows edits into the save payload', async () => {
+      withStyle(STYLE)
+      ;(apiPatch as Mock).mockResolvedValue(kit({ slideshowStyle: STYLE }))
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const family = await screen.findByLabelText('Slide font family')
+      await userEvent.type(family, 'Poppins')
+      await userEvent.selectOptions(screen.getByLabelText('Default text style'), 'dark')
+      const size = screen.getByLabelText('Headline size (px)')
+      await userEvent.clear(size)
+      await userEvent.type(size, '80')
+      const accent = screen.getByLabelText('Accent')
+      await userEvent.clear(accent)
+      await userEvent.type(accent, '#00FF00')
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      expect((apiPatch as Mock).mock.calls[0][1].slideshowStyle).toEqual({
+        ...STYLE,
+        fontFamily: 'Poppins',
+        defaultText: 'dark',
+        textSize: 80,
+        accent: '#00FF00',
+      })
+    })
+
+    it('turning it on starts from a neutral style and omits cleared fields', async () => {
+      ;(apiPatch as Mock).mockResolvedValue(kit())
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      await userEvent.click(await screen.findByRole('switch', { name: 'Use a slideshow style' }))
+      const sub = screen.getByLabelText('Sub text size (px)')
+      await userEvent.clear(sub)
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      const sent = (apiPatch as Mock).mock.calls[0][1].slideshowStyle
+      expect(sent.defaultText).toBe('box')
+      expect(sent.textSize).toBe(64)
+      expect(sent).not.toHaveProperty('subSize')
+    })
   })
 })

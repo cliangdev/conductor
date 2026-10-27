@@ -39,7 +39,9 @@ import {
   type BrandKit,
   type CopyRule,
   type CopyRuleField,
+  type SlideshowStyle,
 } from '@/components/marketing/brand/types'
+import { SlideshowStyleSection } from '@/components/marketing/brand/SlideshowStyleSection'
 import { getCreativeRegistry, type CreativeRegistry } from '@/components/marketing/creatives/types'
 import { putToSignedUrl } from '@/components/workitems/MediaUploadPanel'
 
@@ -48,6 +50,7 @@ interface Draft {
   tokens: Record<string, string>
   fontFamily: string
   fontUrl: string
+  slideshowStyle: SlideshowStyle | null
   ctaClaim: string
   accentPhraseRequired: boolean
   copyRules: CopyRule[]
@@ -62,6 +65,7 @@ function toDraft(kit: BrandKit): Draft {
     tokens: { ...kit.tokens },
     fontFamily: kit.fontFamily ?? '',
     fontUrl: kit.fontUrl ?? '',
+    slideshowStyle: kit.slideshowStyle ? { ...kit.slideshowStyle } : null,
     ctaClaim: kit.ctaClaim ?? '',
     accentPhraseRequired: kit.accentPhraseRequired,
     copyRules: kit.copyRules.map((r) => ({ ...r, fields: [...r.fields] })),
@@ -186,6 +190,8 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
           tokens: draft.tokens,
           fontFamily: draft.fontFamily || null,
           fontUrl: draft.fontUrl || null,
+          // null (style off) clears it on the server; an object replaces the whole style.
+          slideshowStyle: draft.slideshowStyle,
           ctaClaim: draft.ctaClaim || null,
           accentPhraseRequired: draft.accentPhraseRequired,
           copyRules: draft.copyRules,
@@ -503,6 +509,12 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
               ))}
             </div>
           </section>
+
+          <SlideshowStyleSection
+            value={draft.slideshowStyle}
+            onChange={(next) => updateDraft('slideshowStyle', next)}
+            errorFor={(field) => fieldError(error, field)}
+          />
 
           <section className="space-y-3 rounded-lg border border-border p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Placements</h3>

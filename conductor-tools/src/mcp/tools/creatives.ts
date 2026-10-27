@@ -115,14 +115,16 @@ async function listKitsWithDefault(config: Config): Promise<{ kit: Record<string
 
 export async function getBrandKit(params: { kitId?: string }, config: Config): Promise<Record<string, unknown>> {
   let kit: Record<string, unknown>
-  let otherKits: Array<{ id: unknown; name: unknown; configured: unknown }> | undefined
+  let otherKits: Array<{ id: unknown; name: unknown; configured: unknown; hasSlideshowStyle: boolean }> | undefined
   if (params.kitId) {
     kit = await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
   } else {
     const listed = await listKitsWithDefault(config)
     kit = listed.kit
     // Small fields only: the caller picks by name, then passes the id as `brandKitId`.
-    const others = listed.kits.filter((k) => k !== listed.kit).map((k) => ({ id: k['id'], name: k['name'], configured: k['configured'] }))
+    const others = listed.kits
+      .filter((k) => k !== listed.kit)
+      .map((k) => ({ id: k['id'], name: k['name'], configured: k['configured'], hasSlideshowStyle: k['slideshowStyle'] != null }))
     if (others.length > 0) otherKits = others
   }
   const base = otherKits ? { ...kit, otherKits } : kit
@@ -162,6 +164,8 @@ export interface UpdateBrandKitParams {
   addApprovedLines?: string[]
   enabledPlacements?: string[]
   knowledgePagePath?: string
+  /** Replaces the kit's whole slideshow style (the look of composed slideshows); null clears it. */
+  slideshowStyle?: Record<string, unknown> | null
 }
 
 /**
@@ -194,6 +198,7 @@ export async function updateBrandKit(params: UpdateBrandKitParams, config: Confi
   if (params.copyRules !== undefined) patch['copyRules'] = params.copyRules
   if (params.enabledPlacements !== undefined) patch['enabledPlacements'] = params.enabledPlacements
   if (params.knowledgePagePath !== undefined) patch['knowledgePagePath'] = params.knowledgePagePath
+  if (params.slideshowStyle !== undefined) patch['slideshowStyle'] = params.slideshowStyle
 
   if (params.tokens !== undefined) {
     if (supportsPartialMerge) {
@@ -220,6 +225,72 @@ export async function updateBrandKit(params: UpdateBrandKitParams, config: Confi
   }
 
   return withBrandKitErrors(() => apiPatch(`${V2_PROJECT(config)}/marketing/brand-kits/${kitId}`, patch, config))
+}
+
+export interface CreateBrandKitParams {
+  name: string
+  /** Defaults to a slug derived from the name. */
+  slug?: string
+  /** Copy tokens, font, CTA claim, copy rules, approved lines, placements and Knowledge page from this kit
+   * unless given here. Logos and other images are not copied. */
+  copyFrom?: string
+  tokens?: Record<string, string>
+  fontFamily?: string
+  fontUrl?: string
+  ctaClaim?: string
+  accentPhraseRequired?: boolean
+  copyRules?: Array<Record<string, unknown>>
+  approvedLines?: string[]
+  enabledPlacements?: string[]
+  knowledgePagePath?: string
+  slideshowStyle?: Record<string, unknown> | null
+}
+
+const COPIED_KIT_FIELDS = [
+  'tokens',
+  'fontFamily',
+  'fontUrl',
+  'ctaClaim',
+  'accentPhraseRequired',
+  'copyRules',
+  'approvedLines',
+  'enabledPlacements',
+  'knowledgePagePath',
+] as const
+
+export const slugifyKitName = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+
+/** Creates a Brand Kit (never the default one). With `copyFrom`, starts from that kit's voice and
+ * tokens; any field passed here wins over the copied one. */
+export async function createBrandKit(params: CreateBrandKitParams, config: Config): Promise<Record<string, unknown>> {
+  const name = typeof params.name === 'string' ? params.name.trim() : ''
+  if (!name) throw new Error('name is required.')
+  const slug = params.slug?.trim() || slugifyKitName(name)
+  if (!slug) throw new Error('Could not derive a slug from the name; pass slug (letters, digits, hyphens).')
+
+  const body: Record<string, unknown> = { slug, name }
+  let source: Record<string, unknown> | undefined
+  if (params.copyFrom) {
+    source = await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.copyFrom}`, config)
+    for (const f of COPIED_KIT_FIELDS) if (source[f] !== undefined && source[f] !== null) body[f] = source[f]
+  }
+  for (const f of COPIED_KIT_FIELDS) if (params[f] !== undefined) body[f] = params[f]
+  if (params.slideshowStyle !== undefined) body['slideshowStyle'] = params.slideshowStyle
+
+  const created = await withBrandKitErrors(() => apiPost<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits`, body, config))
+  const copied = source ? ` Copied the voice, tokens and font from "${String(source['name'] ?? params.copyFrom)}"; its logos and other images were NOT copied.` : ''
+  return {
+    ...created,
+    nextStep:
+      'Call get_brand_kit to verify.' +
+      copied +
+      ' Add the logo, wordmark and badge with upload_brand_image (kitId = this kit); the default kit is unchanged.',
+  }
 }
 
 // --- Creatives --------------------------------------------------------------
@@ -321,6 +392,8 @@ export interface CreativeFields {
   audio?: Record<string, unknown>
   /** CAROUSEL only: slide pacing and zoom of the slideshow video made when audio.source is track. */
   slideshow?: Record<string, unknown>
+  /** CAROUSEL only: the look the slides were composed with (compose_slideshow's `style`), so it can be reused as a kit style. */
+  slideStyle?: Record<string, unknown>
   focalOverride?: Record<string, string>
   headline?: string
   body?: string

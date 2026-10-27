@@ -1,4 +1,5 @@
 import { slideCss } from './css.js'
+import { resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
 import type { SlideRatio, SlideshowSpec, SlideSpec } from './spec.js'
 
 export const FRAME_W = 1080
@@ -24,10 +25,15 @@ const CHECK_SCRIPT = String.raw`
   function add(rule, severity, message) { out.push({ slide: M.slide, ratio: M.ratio, rule: rule, severity: severity, message: message }); }
   function label(el) { var nm = el.getAttribute('data-name'); if (nm) return nm; var t = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 32); return t ? '"' + t + '"' : '<' + el.tagName.toLowerCase() + '>'; }
   async function run() {
-    try { await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px TT'); })); } catch (e) {}
+    var FF = M.fontFamily, FQ = FF ? '"' + FF + '"' : 'TT', faces = [];
+    try { faces = await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px ' + FQ); })); } catch (e) {}
     try { await document.fonts.ready; } catch (e) {}
     await Promise.all(Array.prototype.map.call(document.images, function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); }));
-    if (!document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
+    if (!FF) {
+      if (!document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
+    } else if (M.fontUrl && !faces.some(function (f) { return f && f.length > 0; })) {
+      add('font', 'error', 'font "' + FF + '" did not load from ' + M.fontUrl + ' (check the family name and the stylesheet URL, or use the native look)');
+    }
     Array.prototype.forEach.call(document.images, function (im) {
       if (!im.naturalWidth) add('image', 'error', 'image failed to load: ' + (im.getAttribute('src') || '').slice(0, 120));
     });
@@ -62,7 +68,7 @@ const CHECK_SCRIPT = String.raw`
 })();
 `
 
-function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio): string {
+function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style: ResolvedSlideshowStyle): string {
   const r4 = ratio === '4x5'
   const objTop = (d: number) => (r4 ? (sl.top4 ?? 60) : (sl.top ?? d))
   let html = ''
@@ -187,7 +193,8 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio): strin
   for (const g of groups) {
     const inner = g.items
       .map((t) => {
-        const cls = t.style === 'stroke' ? 'stroke' : t.style === 'sub' ? 'sub' : `box ${t.style === 'dark' ? 'dark' : ''}`
+        const kind = t.style ?? style.defaultText
+        const cls = kind === 'stroke' ? 'stroke' : kind === 'sub' ? 'sub' : `box ${kind === 'dark' ? 'dark' : ''}`
         const lines = String(t.t).split('\n').map(esc).join('<br>')
         return `<div style="${t.fs ? `--fs:${Number(t.fs)}px;` : ''}${t.ss ? `--ss:${Number(t.ss)}px;` : ''}"><span class="${cls}" data-fg data-right data-ts>${lines}</span></div>`
       })
@@ -206,11 +213,12 @@ export function buildSlideHtml(spec: SlideshowSpec, index: number, ratio: SlideR
   const sl = spec.slides[index]
   if (!sl) throw new Error(`No slide at index ${index}`)
   const lines = (sl.texts ?? []).flatMap((t) => String(t.t).split('\n'))
-  const meta = JSON.stringify({ slide: index + 1, ratio, lines }).replace(/</g, '\\u003c')
+  const style = resolveSlideshowStyle(spec.style)
+  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
-    `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8"><style>${slideCss(base)}</style></head>\n` +
-    `<body><div id="s">${slideBody(sl, spec, ratio)}</div>\n` +
+    `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style)}</style></head>\n` +
+    `<body><div id="s">${slideBody(sl, spec, ratio, style)}</div>\n` +
     `<script>window.__META=${meta};</script><script>${CHECK_SCRIPT}</script></body></html>\n`
   )
 }

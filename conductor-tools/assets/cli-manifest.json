@@ -778,13 +778,21 @@
     },
     {
       "name": "get_brand_kit",
-      "description": "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, and the Knowledge page path holding its prose context. Carries configured: false plus a nextStep when the kit has never been edited. Without kitId and with several kits, also carries otherKits ([{id, name, configured}]); pass the chosen id as brandKitId on preview_creative_draft / create_creative.",
+      "description": "Read a workspace Brand Kit: colour tokens, font, logo/wordmark/badge URLs, CTA claim, copy rules, approved lines, enabled placements, slideshow style, and the Knowledge page path holding its prose context. Carries configured: false plus a nextStep when the kit has never been edited. Without kitId and with several kits, also carries otherKits ([{id, name, configured, hasSlideshowStyle}]); pass the chosen id as brandKitId on preview_creative_draft / create_creative.",
       "category": "marketing"
     },
     {
       "name": "update_brand_kit",
-      "description": "Patch a workspace Brand Kit's name, tokens, font, CTA claim, copy rules, approved lines or enabled placements. tokens merges onto the existing set; every other field is set-replace.",
+      "description": "Patch a workspace Brand Kit's name, tokens, font, CTA claim, copy rules, approved lines, enabled placements or slideshow style. tokens merges onto the existing set; every other field is set-replace.",
       "category": "marketing"
+    },
+    {
+      "name": "create_brand_kit",
+      "description": "Create an additional Brand Kit (never the default). copyFrom starts from another kit's tokens, font, CTA claim, copy rules, approved lines and placements; images are not copied. slideshowStyle sets the look of composed slideshows.",
+      "category": "marketing",
+      "requiredParams": [
+        "name"
+      ]
     },
     {
       "name": "upload_brand_image",
@@ -878,7 +886,7 @@
     },
     {
       "name": "compose_slideshow",
-      "description": "Compose native-looking organic slideshow slides (TikTok/Reels style) from a spec on this machine, with layout checks. Pass the PNG paths to preview_creative_draft as a CAROUSEL.",
+      "description": "Compose organic slideshow slides (TikTok/Reels style) from a spec on this machine, with layout checks. Native look by default; brandKitId applies a kit's slideshow style and style overrides on top. Returns the resolved style to pass as slideStyle to preview_creative_draft as a CAROUSEL.",
       "category": "marketing"
     },
     {
