@@ -12,7 +12,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class ScheduledJobLeaseRepositoryIT extends AbstractNoneWebIntegrationTest {
+class ScheduledJobLeaseRepositoryIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @Autowired ScheduledJobLeaseRepository leases;
     @Autowired JdbcTemplate jdbc;
