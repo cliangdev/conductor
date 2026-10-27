@@ -1,6 +1,6 @@
 # Judging rubric
 
-Used by the `conductor-content-creative-director` agent in `text-round` and `visual-round`, and by
+Used by the `conductor-marketing-creative-director` agent in `text-round` and `visual-round`, and by
 the orchestrator when it needs to break a tie. Everything here exists to counter a known judge
 failure mode, so follow it as written.
 

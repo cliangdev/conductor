@@ -1,6 +1,6 @@
 ---
-name: conductor-content-strategist
-description: Turns a content request and a snapshot of workspace context (brand kit, knowledge, performance, media) into a one-page content brief. Used by the conductor-content-studio skill as stage S1, before any ideas are generated. Reads files only; never calls Conductor.
+name: conductor-marketing-strategist
+description: Turns a content request and a snapshot of workspace context (brand kit, knowledge, performance, media) into a one-page content brief. Used by the conductor-marketing-create skill (team mode) as stage S1, before any ideas are generated. Reads files only; never calls Conductor.
 tools: Read, Write, Glob
 model: opus
 ---

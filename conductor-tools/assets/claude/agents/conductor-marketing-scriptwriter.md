@@ -1,6 +1,6 @@
 ---
-name: conductor-content-scriptwriter
-description: Writes the script for the winning idea (hook, timed beats, payoff, call to action, publish copy per platform with alternate hooks) in the fixed script template. Used by the conductor-content-studio skill as stage S4, and again when the user picks a runner-up or asks for copy changes.
+name: conductor-marketing-scriptwriter
+description: Writes the script for the winning idea (hook, timed beats, payoff, call to action, publish copy per platform with alternate hooks) in the fixed script template. Used by the conductor-marketing-create skill (team mode) as stage S4, and again when the user picks a runner-up or asks for copy changes.
 tools: Read, Write
 model: sonnet
 ---

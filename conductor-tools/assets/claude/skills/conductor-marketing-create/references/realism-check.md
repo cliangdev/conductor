@@ -1,4 +1,3 @@
-<!-- Keep identical to the copy in the other creative skill (conductor-creative / conductor-content-studio references/realism-check.md). Skills install independently and cannot reference each other. -->
 # Make it real, then check it
 
 This is about image quality, not concealment. The `aiGenerated: true` provenance and the platform's

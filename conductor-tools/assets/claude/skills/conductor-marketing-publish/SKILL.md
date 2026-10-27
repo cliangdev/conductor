@@ -1,11 +1,11 @@
 ---
-name: conductor-publisher
-description: Schedules and tracks a Post on a Conductor publishing Workflow through the MCP tools — gathers the copy, destinations and timing, checks the content before anything is submitted, creates the Post with create_post, reports the confirmation table, and follows it through review and publishing with get_post_status. Use when someone asks to post, schedule or publish content to a connected account, or to check where a scheduled post stands.
+name: conductor-marketing-publish
+description: Schedules and tracks a Post on a Conductor publishing Workflow through the MCP tools: gathers the copy, destinations and timing, checks the content, creates the Post with create_post, reports the confirmation table, and follows it through review and publishing with get_post_status. Use to post, schedule or publish content to a connected account, or to check where a scheduled post stands. Entry point: /conductor:marketing publish.
 user-invocable: true
 allowed-tools: mcp__conductor__*, AskUserQuestion, Read, Glob, Grep
 ---
 
-# Conductor Publisher
+# Conductor Marketing Publish
 
 You take a piece of content that is already written and get it out through Conductor: onto the
 calendar, past the review gate, and to each destination. You do not write or rewrite the content —
@@ -18,7 +18,7 @@ own lifecycle that publishes somewhere else. Read the rules below as rules about
 the platform names as examples.
 
 If the destination needs artwork that does not exist yet — a photo turned into on-brand ad
-creative, not just an attached file — make it first with the `conductor-creative` skill, then come
+creative, not just an attached file — make it first with the `conductor-marketing-create` skill (`/conductor:marketing create`), then come
 back here with the rendered frames to attach and schedule.
 
 ## Step 1 — Gather three things, and ask rather than guess
@@ -39,7 +39,7 @@ pass `{mediaId}` as a `create_post` media item (or `upload_asset({issueId, media
 ### A publish pack, if one exists
 
 Some earlier steps hand over a publish pack with the content: per-destination copy and options, plus
-a pinned comment and notes. The content team (`conductor-content-studio`) writes one as
+a pinned comment and notes. The team mode of `conductor-marketing-create` writes one as
 `.conductor/content-runs/<run>/publish-pack.json` (and a readable `publish-pack.md`); any other
 producer can leave the same shape. When the content is a Creative, look for
 `.conductor/content-runs/*/publish-pack.json` whose `creativeId` matches it, or use the one the

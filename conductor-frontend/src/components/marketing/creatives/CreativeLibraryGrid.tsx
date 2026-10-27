@@ -52,13 +52,13 @@ const STATE_LABEL: Record<CreativeState, string> = {
   ARCHIVED: 'Archived',
 }
 
-/** The empty state's copyable examples. `/conductor:creative` is the CLI's skill-driven slash
+/** The empty state's copyable examples. `/conductor:marketing create` is the CLI's skill-driven slash
  *  command (conductor-tools 0.25.0+) — slash commands only exist in Claude Code, so Claude Desktop
  *  gets the same request phrased as a plain ask; either way Claude drives the same MCP tools the
  *  "Make a creative" docs walk through. */
 const CREATIVE_EXAMPLE_PROMPT =
   "Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'"
-const CREATIVE_SLASH_PROMPT = `/conductor:creative ${CREATIVE_EXAMPLE_PROMPT}`
+const CREATIVE_SLASH_PROMPT = `/conductor:marketing create ${CREATIVE_EXAMPLE_PROMPT}`
 
 /** STILL and MOTION both mount a live board when there's no rendered thumbnail yet. A MOTION tile
  *  additionally overlays a play badge + duration (a still frame of a video, not a photo) and, once

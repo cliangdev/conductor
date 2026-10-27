@@ -1,8 +1,7 @@
 # Brand Kit check and setup
 
-Shared by `/conductor:creative` and the `conductor-creative` skill: check whether this workspace's
-Brand Kit has been set up, and offer to set it up if not. The text below is the command's Step 1,
-unchanged.
+Used by the `conductor-marketing-create` skill (both modes): check whether this workspace's
+Brand Kit has been set up, and offer to set it up if not.
 
 ## Step 1 — Check the brand
 

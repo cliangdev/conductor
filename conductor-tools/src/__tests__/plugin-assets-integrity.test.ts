@@ -166,7 +166,8 @@ describe('plugin assets integrity', () => {
       byName.set(m[2]!, [...(byName.get(m[2]!) ?? []), f])
     }
     const shared = [...byName.entries()].filter(([, files]) => files.length > 1)
-    expect(shared.length).toBeGreaterThan(0)
+    // Currently none: each reference lives once, in conductor-marketing-create. The check stays so a
+    // future second copy can't drift.
     const drifted: string[] = []
     for (const [name, files] of shared) {
       const first = fs.readFileSync(path.join(assetDir, files[0]!))
@@ -175,6 +176,16 @@ describe('plugin assets integrity', () => {
       }
     }
     expect(drifted, `Shared reference files must stay identical — edit both copies:\n${drifted.join('\n')}`).toEqual([])
+  })
+
+  it('every skill description is at most 1024 characters and names the /conductor:marketing entry point', () => {
+    const marketing = skills.filter(s => s.rel.includes('conductor-marketing-'))
+    expect(marketing.length).toBe(3)
+    for (const s of marketing) {
+      const desc = s.text.match(/^description: (.*)$/m)?.[1] ?? ''
+      expect(desc.length, s.rel).toBeLessThanOrEqual(1024)
+      expect(desc, s.rel).toContain('/conductor:marketing')
+    }
   })
 
   it('every SKILL.md stays within 500 lines', () => {

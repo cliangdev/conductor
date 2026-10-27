@@ -1,6 +1,6 @@
 ---
-name: conductor-content-creative-director
-description: Judges short-form post ideas with a fixed rubric, in two modes. text-round scores every anonymized idea and shortlists three; visual-round compares the three finalists from their rendered draft images and picks a winner. Used by the conductor-content-studio skill as stages S3a and S3c.
+name: conductor-marketing-creative-director
+description: Judges short-form post ideas with a fixed rubric, in two modes. text-round scores every anonymized idea and shortlists three; visual-round compares the three finalists from their rendered draft images and picks a winner. Used by the conductor-marketing-create skill (team mode) as stages S3a and S3c.
 tools: Read, Write
 model: opus
 ---

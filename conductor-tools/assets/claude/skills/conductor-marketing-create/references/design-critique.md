@@ -1,4 +1,3 @@
-<!-- Keep identical to the copy in the other creative skill (conductor-creative / conductor-content-studio references/design-critique.md). Skills install independently and cannot reference each other. -->
 # Design critique
 
 Passing checks does not make an ad good. `checks` and `passed` cover text spill, safe zones, contrast

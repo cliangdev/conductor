@@ -1,4 +1,3 @@
-<!-- Keep identical to the copy in the other creative skill (conductor-creative / conductor-content-studio references/layout-guide.md). Skills install independently and cannot reference each other. -->
 # Layout guide
 
 Pick the layout on purpose. A Creative has one layout across all its placements (9:16, 4:5, 1:1), so

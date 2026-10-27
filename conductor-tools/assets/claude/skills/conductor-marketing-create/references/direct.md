@@ -1,29 +1,34 @@
----
-name: conductor-creative
-description: Creates on-brand marketing creative through the Conductor MCP tools — static ads and short videos alike, rendered locally on this machine as a draft, checked by eye and approved before anything is saved to Conductor. Covers a photo-plus-headline ad at every enabled placement (e.g. TikTok/Reels 9:16, Instagram feed 4:5, Facebook 1:1); a short video made from a still photo or an existing clip (animated text, zoom/pan, background music, a TikTok/Reels/Shorts-ready cut); posting a finished video as-is; an organic post as a native slideshow (compose_slideshow, then a CAROUSEL); posting finished images as-is (a carousel or single still designed elsewhere, or an existing media set); a story or carousel sequence; a lettered headline/hook variant for testing; and, when a workspace's Brand Kit has never been set up, setting one up first (colours, font, logo, copy rules) from a website, a brand doc, or a few direct answers. Use when asked to make, design, write or export a social ad, a promo image, a short-form video, an animated ad, or to configure/update a project's brand.
-user-invocable: true
-allowed-tools: mcp__conductor__*, AskUserQuestion, Read, Glob, Grep, WebFetch
----
+# Direct mode: making a Creative from what is in hand
 
-# Conductor Creative
+Read when the person already has the headline, photo, clip or finished images (or wants a lettered
+headline variant). The shared rules in `SKILL.md` (brand kit first, draft first, no Post) apply.
 
-Turns one concept — a photo and a headline — into upload-ready artwork at every placement a
-workspace's Brand Kit enables. This is the front half of Conductor's marketing pillar: what this
-skill produces becomes a Post's media, and `conductor-publisher` takes it from there through review
-and out to each destination. You write the ad here; you do not post it.
+The copy and the visual language both come from things that already exist for this workspace: a
+Brand Kit (data: tokens, copy rules, approved lines) and a Knowledge page (prose: positioning, voice,
+facts). Read them rather than inventing. Rendering happens locally through this MCP server with a
+browser on this machine; a preview typically finishes in well under a minute.
 
-You are writing the ad, not just running a tool. The copy and the visual language both come from
-things that already exist for this workspace — a Brand Kit (data: tokens, copy rules, approved
-lines) and a Knowledge page (prose: positioning, voice, facts). Read them rather than inventing.
+## What to make
 
-Rendering happens locally, through this MCP server, with a browser on this machine — there is no
-separate render service to wait on. A preview typically finishes in well under a minute.
+If the request does not already say, ask once with `AskUserQuestion` (single select), then gather
+only what the choice needs: one or two follow-up questions, not a form.
 
-**Draft first, save after approval.** Every Creative here goes draft, look, approve, commit:
-`preview_creative_draft` renders the artwork on this machine and writes **nothing** to Conductor — no
-Creative, no upload — then the person looks at it, and only on their approval does
-`commit_creative_draft` upload the media, save the Creative and do the full render. Never commit a
-draft the person has not seen and approved.
+- **Static ad** (photo + headline in the brand layout, at every enabled placement; not for organic
+  posts). Needs a headline (or draft one from the Knowledge page) and a photo: call
+  `list_creative_media({kind: "IMAGE"})` first and offer what is on hand before asking for a new one.
+  Nothing fits and none is offered? Offer `generate_creative_image` (step 5). A new photo is a local
+  file path (a URL: download it first); it is only uploaded after the person approves the preview.
+- **Short video from a photo** (animated text over a still or a moving background): same inputs as a
+  static ad; see "Short videos from a photo or clip".
+- **Video from a clip I have** (brand layout animated over an existing video) and **post an existing
+  video as-is** (no layout): call `list_creative_media({kind: "VIDEO"})` first; if nothing fits, ask
+  for a local path (a URL: download it first). A clip used as a MOTION background is previewed from
+  the local file too.
+- **Organic post or slideshow** (a TikTok or Instagram photo post that is not an ad): skip the brand
+  layouts and follow the slideshow path below. Ask for the topic, the photos and a real app
+  screenshot if there is one.
+- **Headline variant** of an existing Creative: ask which one (id or display id like `12a`) and the
+  new headline; flow in step 6.
 
 ## Which path
 
@@ -58,8 +63,8 @@ default, not this workspace's actual brand. Set it up before writing any ad rath
 against placeholder tokens: gather colours, font, CTA claim and any copy rules or approved lines
 (from a website via `WebFetch`, a brand doc via `Read`, or by asking directly), then call
 `update_brand_kit` for the data fields and `upload_brand_image` for the mark/wordmark/badge. Confirm
-with `get_brand_kit` afterward — `configured` should now read `true`. (`/conductor:creative` walks
-a person through exactly this when invoked with no brand set up yet, if you'd rather hand it off.)
+with `get_brand_kit` afterward — `configured` should now read `true`. (`references/brand-kit-setup.md`
+walks a person through exactly this.)
 
 ### 2. Pick the angle
 
@@ -143,7 +148,7 @@ concealment: the AI label still applies.
 **Open the photo and look at it before using it** — a generated one most of all (pseudo-text, warped
 hands or faces, a fake product or app screen; the realism check covers the rest). A picture can break every copy rule with text,
 a logo or a claim burned into its pixels, and no automated check can see that — this is the first
-of this skill's silent failure modes (the full list is below). A human or a prior pass marks a bad
+of this skill's silent failure modes (the full list is in `SKILL.md`). A human or a prior pass marks a bad
 photo `blocked`; if you notice one that should be, say so rather than using it anyway.
 
 Match the crop to the subject. A layout that lays copy over the photo (`bleed`) can put a face in
@@ -252,8 +257,19 @@ Creative is already saved — call `render_creative`, don't commit again. Verify
 Then `attach_creative_to_post` with the Post's Work Item id — it maps each placement to the right
 destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to Facebook, story to story targets)
 for every destination that has not set its own custom media, and never touches one that has. Verify
-with `get_post_status`. From here, use the `conductor-publisher` skill for scheduling, review and
-publishing — this skill's job ends at attaching the artwork.
+with `get_post_status`. From here, use the `conductor-marketing-publish` skill for scheduling, review and
+publishing — this skill's job ends at attaching the artwork. If there is no Post yet, say so plainly
+and name the next step (creating one with `conductor-marketing-publish`) rather than leaving the artwork with
+no stated destination.
+
+When the Creative came from a team run, or the person points to a publish pack, look for
+`.conductor/content-runs/*/publish-pack.json` whose `creativeId` matches. It carries per-destination
+captions and publish options (disclosure, AI label, cover frame, alt text) and a pinned comment. When
+you go on to create or edit the Post with `conductor-marketing-publish`, pre-fill each target's
+`captionOverride` and options from it, show them in the confirmation table and let the person change
+them. Mention the pinned comment (and, for a post that promotes an app, the Stories repost with a link
+sticker) as manual steps, since Conductor cannot post comments. The Post still goes through the normal
+review.
 
 ## Making a sequence instead of a single ad
 
@@ -347,7 +363,7 @@ thing).
    accepts a chosen track on photos, so each destination sends it as `carouselAs: "photos"`
    (silent) or `"video"` (the slideshow MP4 with the track). Attach defaults to video for TikTok
    and YouTube and photos for Instagram and Facebook feed, and writes the choice into the target's
-   options; change it with `set_publish_targets` (publisher skill). Mind each platform's length limit
+   options; change it with `set_publish_targets` (`conductor-marketing-publish` skill). Mind each platform's length limit
    for the video.
 
 ## Short videos from a photo or clip
@@ -412,30 +428,3 @@ are the same for all three:
 ## Cleaning up
 
 `delete_creative` and `delete_media` are permanent. Never call them unless the person asked or confirmed that exact item; the server refuses a Creative still on a Post or with other variants, and Media still in use.
-
-## Failures that are silent (carried over from this skill's predecessor)
-
-Automated checks are real but incomplete. These are the ones worth remembering to look for by eye:
-
-- **A photo with text, a logo or a claim burned into its pixels** passes every copy-rule and
-  render check, because none of them look at pixels for meaning — only step 5's "open and look at
-  it" catches this.
-- **A generated image depicting a product, result or claim that isn't real** (a made-up app screen,
-  a before/after, an invented package) passes every check — only looking at it catches it.
-- **A structurally valid render is not necessarily a good one.** The render's own assertions check
-  spill, safe zones, fonts and contrast — never whether the headline reads at a glance or the copy
-  sits on the subject's face. Step 7 exists because of this gap.
-- **A Brand Kit with no copy rules, or no accent-phrase requirement, never fails a save on that
-  account.** That is permissive by design, not a bug — but it means the model, not the platform, is
-  the only check on brand voice for that workspace until someone configures rules.
-- **A draft is not a saved Creative.** `preview_creative_draft` writes nothing to Conductor, so a
-  Creative or media id does not exist until `commit_creative_draft` runs — don't hand a draft's
-  folder to `attach_creative_to_post` or a Post.
-- **A stale write is refused, not silently overwritten.** `update_creative` requires the Creative's
-  current `version`; a mismatch comes back as a 409 naming the conflict rather than clobbering a
-  concurrent edit — reread with `get_creative` and reapply, don't retry blind.
-
-## Related skills
-
-- `conductor-publisher`: schedules and tracks the Post this Creative's artwork attaches to, through
-  review and out to each destination. This skill hands off to it, never the reverse.
