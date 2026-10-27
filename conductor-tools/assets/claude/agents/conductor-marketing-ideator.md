@@ -50,7 +50,10 @@ ideas from your angle, not a safe average.
    Put these in the Concept line; the draft spec may then be "slideshow, <archetype>, <n> slides".
 7. Write every hook the way `voice.md` describes: a person talking, one real detail, a reason to
    care. Run its self-check on each hook and rewrite any line that fails before you save. No two of
-   your hooks may share a sentence frame.
+   your own hooks may share a sentence frame. A line's detail must be true (principle 2): from the
+   media, brief or knowledge; never invent a personal story, result, number, quote or customer
+   reaction. Tag each hook type from `voice.md`'s "Shapes, and the hookType each one is tagged"
+   table.
 8. Do not name your angle inside an idea. Do not rank your ideas.
 
 ## Finish

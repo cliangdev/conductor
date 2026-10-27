@@ -1,62 +1,78 @@
 <!-- Used by both modes of conductor-marketing-create: the ideators, the scriptwriter, the creative director and Direct-mode headlines. -->
 # Voice: write it like a person posted it
 
-Every line on a card, in a caption or spoken on camera should read as if a real person typed it on
-their phone, for people they know. The test is simple: would someone say this out loud to a friend?
-Copy that reads like a prompt or a brand deck loses the scroll even when the idea is good.
+Every hook, card and caption should read as if a real person typed it on their phone for people they
+know. The test: would someone say this out loud to a friend? Copy that reads like a prompt or a brand
+deck loses the scroll even when the idea is good.
 
-The Brand Kit's copy rules and approved lines still win. This file is about register and shape, not
-about overriding the brand.
+## What wins over this guide
+
+In order: the Brand Kit's copy rules and approved lines (used verbatim), then wording the person
+explicitly asked for, then this guide. If a line the person asked for trips a tell below, keep it and
+say so; do not rewrite it.
+
+## What it applies to
+
+- **Creative lines:** hooks, card text, the caption's opening line, spoken lines. All of this guide
+  applies.
+- **Functional lines:** the call to action, the save or follow ask, "link in bio", the pinned comment,
+  the plain app mention ("I keep mine in <App>"), disclosure text, approved lines. Their wording is
+  set by other rules; check them only against **Tells to cut**.
 
 ## Why lines come out robotic
 
 A template stitched onto a topic. "It's a Halloween dinner but a snake" and "Ghost brownies but the
 ghosts are toasted" are the "X but Y" frame applied mechanically: two nouns joined by "but", no
-person, no reason to care. They describe a picture instead of reacting to it. The fix is never a
-better template; it is a person with a point of view and one real detail.
+point of view, no reason to care. They describe the picture instead of reacting to it. The fix is
+never a better template; it is a point of view and one true detail.
 
 ## Principles
 
-1. **Someone is talking.** A line has a speaker (I, we, you, a quote) and an attitude: proud,
-   embarrassed, smug, tired, delighted. Pronouns and a casual register tend to lift engagement on
-   brand posts (observational studies, so treat it as a lean, not a law).
-2. **One real detail.** A count, an action, a reaction, an object only this post has: "made it 11
-   times this month", "my kids refused to eat the head". Do not stack details; one sharp specific
-   beside a held-back payoff beats a line packed with specifics (Upworthy headline tests, 8,977 A/B
-   tests: concreteness helps only when the rest is vague).
-3. **A reason to care.** A stake (money, time, embarrassment, a craving, a small win) or a
-   confession. A clever construction is not a reason.
-4. **React, don't describe.** The image already shows what it is. The words say what it meant to
-   someone: "it looks cursed. it's incredible", not "a snake-shaped pizza".
+1. **Someone is talking.** A line has a point of view: a person, the brand, or a quote, with an
+   attitude (proud, tired, smug, delighted, deadpan). Pronouns and a casual register tend to lift
+   engagement on brand posts (observational studies, so a lean, not a law).
+2. **One true detail.** A thing only this post has: something visible in the media, a fact from the
+   brief or knowledge, or something the person told you. Never invent a story, a result, a number, a
+   quote or a customer reaction to make a line feel real; a made-up testimonial is a false claim
+   (see `compliance-checklist.md`). A first-person aside is fine when it is plainly a reaction to what
+   the image shows ("these ghosts have seen things"), not a factual report ("my kids refused to eat
+   it"). One sharp detail beats several (Upworthy headline tests, 8,977 A/B tests: concreteness helps
+   only when the rest is vague).
+3. **A reason to care.** A stake (time, money, embarrassment, a craving, a small win), a confession
+   the brief supports, or a reaction. A clever construction is not a reason.
+4. **React, don't describe.** The image already shows what it is. The words add what it means.
 5. **Fragments are fine.** People post fragments, lowercase and mid-thought lines. Full brand
-   sentences in Title Case read as an ad. Match how people on that platform type, unless the brand's
-   copy rules say otherwise.
+   sentences in Title Case read as an ad. Match how people on that platform type, unless the copy
+   rules say otherwise.
 6. **Leave the joke alone.** Never explain it, add "(because…)", or pair a pun with its gloss.
-7. **Vary the shape.** Never reuse a sentence frame from the brand's last few posts or from another
-   idea in the same run. The frame is a tell once it repeats.
-8. **The first slide or first line is the whole hook.** It must work with the sound off, in about two
-   seconds: aim for 6 to 10 words on the artwork, and keep the caption's point inside its first 125
-   characters (where Instagram cuts to "more"), with the search keyword (what the post is about, by
-   the name people search for) in it.
+7. **Vary the shape.** No two lines you write in one pass share a sentence frame, and none repeats a
+   frame from recent posts when the brief lists them.
+8. **Short enough to read in two seconds.** On the artwork, about 8 words or fewer (the idea template's
+   hard cap is 12; a slideshow card is at most 8 words a line). The caption's point sits inside its
+   first 125 characters, where Instagram cuts to "more", with the search keyword in it.
 
-## Shapes that sound human
+## Shapes, and the hookType each one is tagged
 
-Each is one instance of the rules above; vary them. Examples come from different domains on purpose.
+A shape is how a line is said; the `hookType` is what it does. Tag the hookType from this table so
+results stay comparable. Examples are instances from different domains; each assumes its facts are
+true for that brand.
 
-| Shape | What it does | Example |
+| Shape | hookType | Example |
 |---|---|---|
-| Specific detail | a real action and a real reaction | "i braided pizza dough into a snake and my kids refused to eat the head" |
-| Confession | the mistake or the habit is the hook | "i meant to make cute ghosts. these are survivors" |
-| POV | a real scenario the viewer steps into; only with a scenario, never as a decoration | "pov: you promised a 'quick sync' and it's minute 47" |
-| Understatement | deadpan; lets the image do the work | "slightly burnt ghosts. still gone in ten minutes" |
-| Dialogue | a two-line quote is a micro-story | "'why does dinner have a face' 'eat it before it eats you'" |
-| Challenge | invites a comment or a try | "torch one ghost. just one. try to stop" |
-| Plea or complaint | a real feeling aimed at someone | "PLEASE bring back your balsamic date vinaigrette it was the only reason I came" (Cava) |
-| Self-aware brand | says the blunt thing out loud | "Don't be scared. It's just water." (Liquid Death) |
+| Observation | pattern-interrupt | "dinner tonight has a face" |
+| Understatement | pattern-interrupt | "slightly toasted ghosts. zero survivors" |
+| POV, with a real scenario | relatable-pain | "pov: minute 47 of the quick sync" |
+| Confession the brief supports | relatable-pain | "we finally read our own terms of service" |
+| Dialogue | story | "'are ghosts supposed to be brown?'" |
+| Challenge | question | "can you eat the tail first?" |
+| Enemy, with attitude | relatable-pain | "the subscription you forgot you pay for" |
+| Exact result, from the record | number | "dinner in 22 minutes. dishes: one pan" |
+| Self-aware brand | bold-claim | "Don't be scared. It's just water." (Liquid Death) |
 
-Real accounts that write this way, worth reading before a run: Cava and foodpanda on TikTok (plain
-pleas, pov lines with a stake), Scrub Daddy (self-aware), Wendy's (one blunt line), Liquid Death
-(deadpan).
+Longer real lines that work as captions, not artwork: "PLEASE bring back your balsamic date
+vinaigrette it was the only reason why I came" (Cava, a plea); "When the tweets are as broken as the
+ice cream machine." (Wendy's, self-aware). Accounts worth reading for register: Cava and foodpanda on
+TikTok, Scrub Daddy, Wendy's, Liquid Death, Duolingo.
 
 ## Tells to cut
 
@@ -67,35 +83,32 @@ pleas, pov lines with a stake), Scrub Daddy (self-aware), Wendy's (one blunt lin
 - Rhythm tics: three-item lists, adjective stacks ("creamy, dreamy, indulgent"), em dashes,
   exclamation marks on every line, emoji as punctuation on every line.
 - Title Case On Every Word, and hashtags inside the hook.
-- Puns that need the image to make sense of them, and any line that describes the picture.
+- Puns that need the image to make sense, and any line that only describes the picture.
 
 No single tell proves a line is machine-written; a pile of them does.
 
-## Self-check (any "no" means rewrite before handing the line on)
+## Self-check (creative lines; any "no" means rewrite)
 
 1. Would a person say this out loud to a friend?
-2. Is there a speaker and an attitude?
-3. Does it hold one detail that could not open any other post?
-4. Is there a reason to care: a stake, a confession or a reaction?
+2. Does it have a point of view, not just a label?
+3. Does it hold one detail that could not open any other post, and is that detail true (from the
+   media, the brief, knowledge or the person)?
+4. Is there a reason to care: a stake, a confession the brief supports, or a reaction?
 5. Is it free of every tell above?
-6. Does it leave the joke unexplained and avoid describing the picture?
-7. Does the artwork line read in about two seconds (about 6 to 10 words)?
-8. Is its sentence shape different from the other ideas in this run and the brand's recent posts?
+6. Does it leave the joke unexplained and avoid only describing the picture?
+7. Does the artwork line read in about two seconds (about 8 words or fewer)?
+8. Is its sentence shape different from the other lines you wrote in this pass?
 
-## Rewrites, as one worked instance
+## Rewrites, as one worked instance (a recipe brand)
 
-"It's a Halloween dinner but a snake" becomes:
-- "i braided pizza dough into a snake and my kids refused to eat the head"
-- "i made a snake for halloween dinner. it looks cursed. it's incredible"
-- "pov: you promised halloween dinner and brought out a 3-foot snake"
-- "can you eat the tail first? nobody can"
+"It's a Halloween dinner but a snake" becomes "dinner tonight has a face" (observation), "pov: halloween
+dinner is staring back" (POV) or "can you eat the tail first?" (challenge).
 
-"Ghost brownies but the ghosts are toasted" becomes:
-- "i torched marshmallow ghosts onto brownies and now they all look hungover"
-- "i meant to make cute ghosts. these are survivors"
-- "'are the ghosts supposed to be brown?' 'they're well done'"
+"Ghost brownies but the ghosts are toasted" becomes "these ghosts have seen things" (reaction),
+"slightly toasted ghosts. zero survivors" (understatement) or "'are ghosts supposed to be brown?'"
+(dialogue).
 
-Each keeps the subject and adds what the original lacked: a person, one real detail and a reaction.
+Each keeps the subject, drops the frame, and adds a point of view and a detail the photo proves.
 
 ## Sources
 

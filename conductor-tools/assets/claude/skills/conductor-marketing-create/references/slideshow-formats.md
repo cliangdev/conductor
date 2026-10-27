@@ -69,17 +69,19 @@ A five-slide "stop doing X" post. Paths are relative to the spec file or absolut
 ## Hook archetypes
 
 Pick one per post and name it in the idea. Change one thing per post so results are comparable.
+The slide-1 examples are shapes only: each must pass `voice.md`'s self-check with your own true
+detail, and none may state a fact the brief does not support.
 
 | Archetype | Slide 1 | Slides |
 |---|---|---|
-| Saved-but-never-used guilt | "Camera-roll graveyard." | `grid` (one tile `restore`d at the end), `photo`, `screen`, ask |
-| Doubt or conflict | What someone said to you (needs a true story) | `messages`, `photo`, `notes`, `screen`, ask |
-| Stop doing X | "Stop doing X." | `photo` with the reason per slide, `screen`, ask |
-| Numbered list | "5 things worth saving" | `photo` per item, `screen` last, ask |
-| Tier list | "Ranking everything I tried" | `tier`, `photo` close-ups, `screen`, ask |
-| Notes-app plan | "My plan for the week" | `notes`, `week`, `screen`, ask |
-| POV | "POV: you finally did it" | `photo` (hands or a real scene), `screen`, `photo`, ask |
-| Before / after | "Week 1 vs week 4" | `stack` with `label`s, `photo`, `screen`, ask |
+| Saved-but-never-used guilt | "the recipes folder is a graveyard" | `grid` (one tile `restore`d at the end), `photo`, `screen`, ask |
+| Doubt or conflict | A real message someone sent you (needs a true story) | `messages`, `photo`, `notes`, `screen`, ask |
+| Stop doing X | "stop checking your balance at midnight" | `photo` with the reason per slide, `screen`, ask |
+| Numbered list | "5 stretches for desk-bound shoulders" | `photo` per item, `screen` last, ask |
+| Tier list | "ranking airport snacks. no appeals" | `tier`, `photo` close-ups, `screen`, ask |
+| Notes-app plan | "my monday plan, aka the optimistic draft" | `notes`, `week`, `screen`, ask |
+| POV | "pov: it's sunday and the week is meal-prepped" | `photo` (hands or a real scene), `screen`, `photo`, ask |
+| Before / after | "week 1 vs week 4, same grocery run" (needs real before and after) | `stack` with `label`s, `photo`, `screen`, ask |
 
 ## Text rules
 

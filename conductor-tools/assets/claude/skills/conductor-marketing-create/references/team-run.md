@@ -169,7 +169,7 @@ Three `Agent` calls in ONE message so they run in parallel, `subagent_type:
 
 Each gets `brief.md`, `context/media.json`, `references/idea-template.md`,
 `references/capabilities.md` (the `RENDER`/`FILM` test) and `references/voice.md`, and writes 4 ideas.
-With `--quick`: only angles 1 and 2, 3 ideas each.
+With `--quick`: only angles 1 and 2, 3 ideas each. Any ideator rerun passes the same inputs, `references/voice.md` included.
 
 ### Merge (you) -> `ideas/pool.md`
 
@@ -186,9 +186,11 @@ Build one pool from all the angle files:
 
 `Agent(subagent_type: "conductor-marketing-creative-director")`, mode `text-round`. Inputs:
 `brief.md`, `ideas/pool.md`, `references/rubric.md`, `references/voice.md`. It scores every idea independently, reasoning
-before each score, and names the top 3. Store the finalists in `run.json`.
+before each score, and names the top 3 eligible ideas (fewer when the rubric's gates leave fewer; it says so). Store the finalists in `run.json`.
 
 ### S3b — Finalist drafts (you; skipped in `--quick`)
+
+Draft each finalist the judge named (up to three).
 
 A slideshow finalist has no cheap draft: judge it from its idea text (archetype and slide-by-slide
 text) unless its slides can be composed from photos already on hand. In that case write its spec to
@@ -214,7 +216,7 @@ path as `photoPath` (generate only for finalists, not the whole pool).
 
 Same agent, mode `visual-round`. Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, the
 finalist image paths (`drafts/finalist-<id>/sheet.jpg`; the director views them with Read), the
-rubric, `references/design-critique.md` and `references/compliance-checklist.md`. It compares finalists pairwise in both orders, runs
+rubric, `references/voice.md`, `references/design-critique.md` and `references/compliance-checklist.md`. It compares finalists pairwise in both orders (a single finalist wins outright and is only checked), runs
 the devil's-advocate pass against the leader (including the veto questions: an unsubstantiated
 claim, trademark or parody risk, a representation or sensitivity problem, disclosure needed), and
 writes `decision.md`: the winner, why it won, the runners-up, one line per cut idea and the veto
@@ -230,7 +232,7 @@ which idea to take; show the decision at the gate.
 
 First copy the winning idea's block from `ideas/pool.md` to `ideas/winner.md`. Then
 `Agent(subagent_type: "conductor-marketing-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md`,
-`references/publish-pack-template.md` and `references/voice.md`. Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
+`references/publish-pack-template.md` and `references/voice.md` (required on every scriptwriter run, including the reruns below). Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
 caption per platform whose call to action names the app so it can be searched, hashtags, a pinned
 comment and 2 to 3 alternate hooks with a hookType each.
 For a `MOTION` winner tell it that the render shows one headline and one optional body, animated
@@ -299,7 +301,7 @@ does not apply is answered "not applicable".
    sets `brandContentToggle`; gifted or affiliate sets `brandContentToggle` and adds the
    disclosure to the caption's first line.
 4. A claims or trademark check that fails and cannot be fixed by you in one word goes back to the
-   scriptwriter once, with the failing line; re-run S4's merge and S5 only if the copy changed. If
+   scriptwriter once, with the failing line and `references/voice.md`; re-run S4's merge and S5 only if the copy changed. If
    it still fails, show it at the gate as a known issue and never hide it.
 5. Fact lint: merge the scriptwriter's "Numbers and sources" into the pack and check each number
    against its source record (checklist item 9). Fix a mismatch before the gate.
@@ -364,10 +366,10 @@ any placement is fixed now, not shown.
      its state into `publish-pack.json` as `creativeState` (and both into `run.json`).
    - **Use a runner-up**: ask a second `AskUserQuestion` listing the runners-up by title (with
      their tag; label one that could not be rendered as such and say why, rather than offering it as
-     if it would work). Then set the chosen idea as `winner` and re-run S4 onward for it (S5, S5b and S6,
-     or the FILM path if it is tagged `FILM`).
+     if it would work). Then set the chosen idea as `winner` and re-run S4 onward for it, passing
+     `references/voice.md` again (S5, S5b and S6, or the FILM path if it is tagged `FILM`).
    - **Request changes**: take the free text. If it is about the copy, send it with the current
-     script to the scriptwriter (S4), then the art director (S5); if only about the look, send it to
+     script and `references/voice.md` to the scriptwriter (S4), then the art director (S5); if only about the look, send it to
      the art director. Redo S5b, then re-preview. Do not commit the old draft.
    - **Stop**: upload nothing. Tell the person where the drafts are
      (`drafts.final` and the finalist folders) and that the run can be resumed.

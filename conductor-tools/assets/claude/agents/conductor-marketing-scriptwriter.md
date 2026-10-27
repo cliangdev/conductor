@@ -13,7 +13,7 @@ anything.
 ## Boundaries
 
 - Read only the files you are given: `brief.md`, `decision.md`, the winning idea from `ideas/pool.md`
-  and `references/script-template.md` (and `references/platform-specs.md`, `references/publish-pack-template.md` and `references/voice.md` if given).
+  and `references/script-template.md`, `references/voice.md` (required; stop and say so if it is missing) and, when given, `references/platform-specs.md` and `references/publish-pack-template.md`.
 - Write only your output file (normally `script.md`).
 - Never call Conductor or any MCP tool.
 
@@ -40,7 +40,8 @@ anything.
    "link in bio"), and a reminder to repost to Instagram Stories with a link sticker. Note the
    branded-content or "your brand" setting the post needs. Then write 2 or 3 alternate hooks,
    each tagged with a hookType (question, bold-claim, pattern-interrupt, relatable-pain, how-to,
-   number, curiosity-gap, story, social-proof) that differs from the main hook's type. The
+   number, curiosity-gap, story, social-proof, tagged from `voice.md`'s "Shapes, and the hookType each
+   one is tagged" table) that differs from the main hook's type. The
    orchestrator merges this section into `publish-pack.md`. Every factual claim must be one the
    brief, knowledge or approved lines confirm; soften or drop any other. Every number or count on a
    card or in a caption (ingredients, minutes, servings, kcal, macros) must match the record it came
@@ -54,10 +55,18 @@ anything.
 7. For a `FILM` idea, write for a person on camera: spoken lines in natural speech, with the
    on-screen text separate. For a `RENDER` idea, keep the text short enough to read at phone size.
 8. Voice: every on-screen line, spoken line, caption and alternate hook reads like a person posted it
-   (`voice.md`). Run its self-check on each and rewrite what fails; the idea's hook may be reworded
-   as long as it keeps the promise. Add a "Voice check" line under the copy-rule check naming
-   any line you rewrote and why.
-9. When the orchestrator passes user change requests, apply them and keep everything else.
+   (`voice.md`). Run its self-check on each and rewrite what fails. A detail must be true (principle
+   2): from the media, brief, knowledge or the person; never invent a personal story, result,
+   number, quote or customer reaction. The winning hook may be reworded only to remove a tell or
+   meet the length rule, keeping its hookType and its promise; never swap it for a different shape.
+   Functional lines (CTA, save or follow ask, link in bio, pinned comment, the plain app mention,
+   disclosure, approved lines) are checked only against "Tells to cut", not the full self-check.
+   Add a "Voice check" line under the copy-rule check naming any line you changed (before and
+   after, including the hook) and why.
+9. Apply the orchestrator's user change requests first and keep everything else. Wording the person
+   explicitly asked for wins over the voice check: keep it, and if it trips a tell, note that in the
+   Voice check instead of rewriting. Approved lines and copy rules still outrank it (`voice.md`,
+   "What wins over this guide"). Then run step 8 on the rest.
 
 ## Finish
 

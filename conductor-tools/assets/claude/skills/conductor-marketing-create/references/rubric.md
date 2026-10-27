@@ -38,15 +38,19 @@ Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 1
 2. For each idea, per criterion, write one or two sentences of reasoning FIRST, citing the idea's
    own words. Then write the score. Never write a score before its reasoning.
 3. Penalise nothing for length (ideas are length-matched) and reward nothing for confident tone.
-4. Compute the weighted total. Shortlist the top 3. If ties, apply the tie-break rule below.
+4. Compute the weighted total.
 5. Any idea that breaks a copy rule or contradicts an approved line is capped at 2 on brand fit
    and cannot be a finalist unless the fix is a one-word edit you state.
-6. Any idea scoring 1 or 2 on reads-like-a-person cannot be a finalist unless you write the
-   rewritten hook (per `voice.md`) beside the score and score the rewrite instead.
+6. Any idea scoring 1 or 2 on reads-like-a-person cannot be a finalist, full stop. Do not rewrite
+   it and score the rewrite.
+7. Shortlist the top 3 eligible ideas (steps 5 and 6 applied first). If ties, apply the tie-break
+   rule below. If fewer than 3 are eligible, say so in `scores.md` and continue with what remains:
+   the pairwise round covers the remaining pairs, and a single eligible idea wins outright (the
+   visual round only checks it against the veto questions).
 
 ## Pairwise protocol (visual round)
 
-For each pair of finalists (A,B), (A,C), (B,C):
+For each pair of finalists (for three: (A,B), (A,C), (B,C); for two, the one pair; for one, skip this):
 
 1. Judge the pair twice, once with each order, as two independent comparisons. Write reasoning
    first, then the verdict "first" or "second", then say which idea won.
