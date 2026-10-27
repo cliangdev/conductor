@@ -101,7 +101,7 @@ template exactly; <any stage-specific rule>
 Return: at most 150 words plus the output path.
 ```
 
-Resolve the reference files once: Glob for `**/conductor-marketing-post/references/rubric.md` under
+Resolve the reference files once: Glob for `**/conductor-marketing-create/references/rubric.md` under
 `.claude/skills/` in this project, then under `~/.claude/skills/`. Use that folder for every
 `references/` path below. A subagent that returns more than 150 words or leaves its file unwritten
 has failed the stage: retry once with a one-line reminder, then tell the person.
@@ -397,10 +397,10 @@ Keep it short:
   alternate hooks); say the publisher will pre-fill the Post from `publish-pack.json`, and that the
   pinned comment, the link in bio and the Stories repost with a link sticker are manual steps;
 - next steps:
-  - make the Post with the `conductor-publisher` skill (the Creative is
+  - make the Post with the `conductor-marketing-publish` skill (the Creative is
     not on a Post yet, because a run never creates one);
   - to test a runner-up's hook, cut it as a lettered variant of the Creative with `variantOf`;
-  - for `FILM`: film it, upload the clip, then run `/conductor:marketing-post` and pick a clip I have.
+  - for `FILM`: film it, upload the clip, then run `/conductor:marketing create` and pick a clip I have.
 
 ## Failure handling
 
@@ -416,4 +416,4 @@ Keep it short:
 
 - `references/direct.md`: the single-Creative flow whose checklist S6 uses.
 - `references/slideshow-formats.md`: the slideshow spec, archetypes and text rules.
-- `conductor-publisher`: takes the committed Creative onto a Post, pre-filled from `publish-pack.json`.
+- `conductor-marketing-publish`: takes the committed Creative onto a Post, pre-filled from `publish-pack.json`.

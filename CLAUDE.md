@@ -134,8 +134,8 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 
 `.claude/` at the repo root provides skills and agents for Claude Code users:
 
-- `commands/conductor/` — the `/conductor:*` slash commands: `prd`, `implement`, `fix`, `workflow`, `marketing-post`, `marketing-report` (installed via `conductor init`)
-- `skills/` — `conductor-marketing-post` (router + `references/direct.md`, `team-run.md`), `conductor-publisher`, `conductor-marketing-analyst`
+- `commands/conductor/` — the `/conductor:*` slash commands: `prd`, `implement`, `fix`, `workflow`, `marketing` (routes to the `conductor-marketing-create`/`-publish`/`-report` skills) (installed via `conductor init`)
+- `skills/` — `conductor-marketing-create` (router + `references/direct.md`, `team-run.md`), `conductor-marketing-publish`, `conductor-marketing-report`
 - `agents/` — subagents: `conductor-coder`, `conductor-researcher`, and the marketing team (`conductor-marketing-strategist`, `-ideator`, `-creative-director`, `-scriptwriter`, `-art-director`)
 
 Source of truth for these assets is `conductor-tools/assets/claude/` — edit there, not in `.claude/` directly.

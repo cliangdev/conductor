@@ -1,6 +1,6 @@
 # Brand Kit check and setup
 
-Used by the `conductor-marketing-post` skill (both modes): check whether this workspace's
+Used by the `conductor-marketing-create` skill (both modes): check whether this workspace's
 Brand Kit has been set up, and offer to set it up if not.
 
 ## Step 1 — Check the brand

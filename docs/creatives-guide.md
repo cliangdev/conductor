@@ -16,12 +16,12 @@ For how any of this works under the hood, see [docs/creatives.md](creatives.md).
   from 0.25.0.
 - Set up your brand first — **Settings → Brand** in the web app, or ask Claude something like "Set
   up our brand kit in Conductor from our website" (Claude will ask for the URL).
-- In Claude Code, run `/conductor:marketing-post` and describe what you want — e.g. "Make an ad for our
+- In Claude Code, run `/conductor:marketing create` and describe what you want — e.g. "Make an ad for our
   spring sale, headline leads with the discount," "Make a 9:16 TikTok video from our latest photo
   with the headline *half price*," or "Upload this finished video as a Clip and put it on a new
   Post." In Claude Desktop (or Claude Code), skip the slash command and just ask the same way —
   Claude uses the same Conductor MCP tools either way.
-- Not sure what to post? Run `/conductor:marketing-post "<goal and platform>"` with a goal instead of a headline and a team of agents proposes,
+- Not sure what to post? Run `/conductor:marketing create "<goal and platform>"` with a goal instead of a headline and a team of agents proposes,
   judges and drafts an idea for you to approve (see "Let a content team choose the idea").
 - No Claude Code/Desktop? **Marketing → Creatives → New creative** in the web app does the same job.
 
@@ -86,7 +86,7 @@ work. Either way, rendering the final artwork always happens locally, not on Con
 - Google Chrome or Microsoft Edge installed, or run `npx playwright install chromium` once.
   Rendering launches whichever it finds first.
 
-In Claude Code, run `/conductor:marketing-post` and describe what you want. In Claude Desktop (or Claude
+In Claude Code, run `/conductor:marketing create` and describe what you want. In Claude Desktop (or Claude
 Code, if you'd rather skip the slash command), just ask Claude directly — the same MCP tools drive
 either flow, e.g.:
 
@@ -191,7 +191,7 @@ conductor start
 
 ### Let a content team choose the idea
 
-If you have a goal rather than a headline, run `/conductor:marketing-post "<request>"` in Claude Code (a goal selects team mode; a concrete headline, photo or clip selects direct mode), for
+If you have a goal rather than a headline, run `/conductor:marketing create "<request>"` in Claude Code (a goal selects team mode; a concrete headline, photo or clip selects direct mode), for
 example "a post that gets lapsed users back, for Reels" or "a 20-second explainer on our new report,
 TikTok". Add `--quick` for a lighter run. Without a request it first asks whether you already have the headline, photo or clip or want an idea; for an idea it asks one short question: what the post
 is for, which platform, and any line it must say. It first checks your Brand Kit the same way
@@ -223,7 +223,7 @@ conversation:
 once, at the final draft preview: you see the draft, the runners-up's sheets and a summary of why the
 winner won and a short pack summary, then choose *Approve & upload*, *Use runner-up*, *Request changes* or *Stop*. Nothing is
 uploaded to Conductor until you approve. The run ends at a committed Creative and **never creates a
-Post**; make the Post afterwards with the publisher skill. To test a
+Post**; make the Post afterwards with the `conductor-marketing-publish` skill. To test a
 runner-up's hook, cut it as a lettered variant of the Creative (see section 4).
 
 **The publish pack.** Each run also leaves `publish-pack.md` (for you) and `publish-pack.json` (for
@@ -232,7 +232,7 @@ first line and a call to action that names the app, 3 to 5 hashtags, a pinned co
 comments), a reminder to repost to Stories with a link sticker, the cover frame, alt text for every image or card, where the on-screen text sits, the
 sound and its licence, a posting window from your insights (or "no data yet"), and 2 to 3 alternate
 hooks, each tagged with a hook type, ready to cut as lettered variants for a hook test. When you make
-the Post from the Creative with the publisher skill, it finds the pack and
+the Post from the Creative with the `conductor-marketing-publish` skill, it finds the pack and
 pre-fills each destination's caption and publish options. You see them in the confirmation table and
 can change any of them, and the Post still goes through the normal review.
 
@@ -276,7 +276,7 @@ story sequence, or motion text over photos or clips you already have), or `FILM`
 person or real footage. If a filming idea wins, you get a shoot-ready script instead of a draft:
 script, shot list, capture settings, B-roll, safe zones, and on-screen text and captions ready to
 paste, plus the publish pack (captions, hashtags, disclosure, music) to apply when the clip is posted. You are asked whether to save it as a project doc under `Content/Shoots/`. Once you have
-filmed it, upload the clip and run `/conductor:marketing-post` with the clip (direct mode).
+filmed it, upload the clip and run `/conductor:marketing create` with the clip (direct mode).
 
 **Cost.** A run is about 8 subagent calls, and only the strategist and the judge use the top model
 tier. `--quick` uses two ideators with three ideas each and skips the finalist renders (the judge
@@ -291,7 +291,7 @@ command again offers to resume it.
 ## Make an organic slideshow
 
 For a TikTok photo post or an Instagram carousel that promotes your app without looking like an ad,
-ask Claude Code for a slideshow, for example "make a slideshow about X" (or let `/conductor:marketing-post`
+ask Claude Code for a slideshow, for example "make a slideshow about X" (or let `/conductor:marketing create`
 choose the idea; it defaults to a slideshow for organic posts). Claude writes a slide-by-slide plan
 and builds the slides on your machine with `compose_slideshow`.
 
@@ -320,7 +320,7 @@ YouTube default to the video, Instagram and Facebook feed to the photos. You can
 between **photos** and **video** before it publishes; the confirmation table shows which one it
 is.
 
-Ads are different: ask `/conductor:marketing-post` for a static ad to get a brand-layout ad.
+Ads are different: ask `/conductor:marketing create` for a static ad to get a brand-layout ad.
 
 ## 3. Put it on a Post
 

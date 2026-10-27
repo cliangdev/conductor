@@ -167,7 +167,7 @@ names the route (`openai-api` or `codex`) and model; `model` and `quality` repor
 - **Codex: the skills' default.** `useCodex: true` runs the local `codex exec` (built-in image_gen,
   `gpt-image-2`) on the person's ChatGPT Plus (or higher) weekly allowance, shared with coding; it is
   honoured even when a key exists, and it honours the custom size (1440x2560 verified 2026-10-22). The
-  `conductor-marketing-post` skill passes it on every call without asking, as
+  `conductor-marketing-create` skill passes it on every call without asking, as
   it is cheaper than the API, and fall back to a call without it when Codex fails. Called without
   `useCodex` and with no key, the tool generates nothing and returns an error with
   `code: 'CODEX_CONFIRMATION_REQUIRED'`, `options` (set an API key / use Codex / skip) and a
@@ -394,7 +394,7 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   backend job.
 - **Not the ad path.** Slides carry no logo, badge or offer; branded ads still use the brand layouts
   (STILL). The skills' guidance (post anatomy, archetypes, text and honesty rules) is
-  `references/slideshow-formats.md` in the `conductor-marketing-post` skill.
+  `references/slideshow-formats.md` in the `conductor-marketing-create` skill.
 
 ## Motion (COND-24 PR2)
 

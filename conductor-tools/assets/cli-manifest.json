@@ -154,10 +154,6 @@
     "mcpConfig": "{\n  \"mcpServers\": {\n    \"conductor\": {\n      \"command\": \"conductor\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}",
     "slashCommands": [
       {
-        "name": "conductor:marketing-report",
-        "description": "Build the app marketing report: pull the whole-funnel numbers, refresh stale industry benchmarks from sources read this session, and publish a ten-section HTML report with prioritised next actions."
-      },
-      {
         "name": "conductor:prd",
         "description": "Create a PRD for the current project through guided discovery, research, and writing."
       },
@@ -174,8 +170,8 @@
         "description": "Design and create a Conductor workflow \u2014 YAML automation or statechart lifecycle \u2014 via guided discovery and MCP creation."
       },
       {
-        "name": "conductor:marketing-post",
-        "description": "Make the artwork for a social post. Give it a headline, photo or clip and it renders a draft for your approval, or give it a goal and a team of agents comes up with, judges and makes the post. Nothing is saved until you approve the preview; never creates a Post."
+        "name": "conductor:marketing",
+        "description": "One entry point for marketing: make a social post's artwork (create), publish or schedule a post (publish), or build the whole-funnel marketing report (report). Routes to the matching skill."
       }
     ],
     "agents": [
@@ -189,36 +185,36 @@
       },
       {
         "name": "conductor-marketing-strategist",
-        "description": "Writes the content brief (objective, audience tension, must-say/avoid, assets, what has worked) from a workspace context snapshot. Stage of conductor-marketing-post (team mode)."
+        "description": "Writes the content brief (objective, audience tension, must-say/avoid, assets, what has worked) from a workspace context snapshot. Stage of conductor-marketing-create (team mode)."
       },
       {
         "name": "conductor-marketing-ideator",
-        "description": "Brainstorms distinct short-form post ideas from one assigned angle, tagging each RENDER or FILM. Three run in parallel inside conductor-marketing-post (team mode)."
+        "description": "Brainstorms distinct short-form post ideas from one assigned angle, tagging each RENDER or FILM. Three run in parallel inside conductor-marketing-create (team mode)."
       },
       {
         "name": "conductor-marketing-creative-director",
-        "description": "Judges ideas with a fixed rubric: scores anonymized ideas, compares finalists pairwise from rendered drafts, argues against its own leader. Stage of conductor-marketing-post (team mode)."
+        "description": "Judges ideas with a fixed rubric: scores anonymized ideas, compares finalists pairwise from rendered drafts, argues against its own leader. Stage of conductor-marketing-create (team mode)."
       },
       {
         "name": "conductor-marketing-scriptwriter",
-        "description": "Writes the winning idea's script: hook, timed beats, payoff, CTA and captions per platform. Stage of conductor-marketing-post (team mode)."
+        "description": "Writes the winning idea's script: hook, timed beats, payoff, CTA and captions per platform. Stage of conductor-marketing-create (team mode)."
       },
       {
         "name": "conductor-marketing-art-director",
-        "description": "Writes visual direction and the creative-spec.json for the draft renderer (or a shoot script for a filming idea). Stage of conductor-marketing-post (team mode)."
+        "description": "Writes visual direction and the creative-spec.json for the draft renderer (or a shoot script for a filming idea). Stage of conductor-marketing-create (team mode)."
       }
     ],
     "skills": [
       {
-        "name": "conductor-marketing-post",
+        "name": "conductor-marketing-create",
         "description": "Makes the artwork for a social post. Direct mode: from a headline, photo, clip or finished images, sets up the Brand Kit if unconfigured, previews a draft locally and shows it for approval before anything is saved, then commits it. Team mode: from a goal, a team of agents brainstorms, judges, scripts and directs a post, runs pre-publish checks and renders a draft with a publish pack. Never creates a Post."
       },
       {
-        "name": "conductor-publisher",
+        "name": "conductor-marketing-publish",
         "description": "Schedules and tracks a Post through the publishing pipeline: gathers copy, destinations and timing, checks content, creates it with create_post, reports the confirmation table, follows it through review and publishing."
       },
       {
-        "name": "conductor-marketing-analyst",
+        "name": "conductor-marketing-report",
         "description": "Method for the marketing report: fetch the report payload, research and record missing or stale benchmarks, rank next actions by users lost, and write only what the numbers and cited sources support."
       }
     ]

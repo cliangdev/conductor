@@ -1,15 +1,15 @@
 ---
-name: conductor-marketing-post
-description: Makes the artwork for a social post through the Conductor MCP tools, rendered locally as a draft, checked by eye and approved before anything is saved. Direct mode, when the headline, photo, clip or finished images are in hand - make or design an ad, a short video, a slideshow or carousel, a story sequence, post a clip as-is, a lettered headline variant, or set up the brand (colours, font, logo, copy rules) when the Brand Kit was never configured. Team mode, when there is only a goal - come up with, choose and make a short-form post (TikTok, Reels, Shorts, Facebook) with a small team of subagents that brainstorm, judge, script and direct it, run pre-publish checks and render a draft with a publish pack. Ends at a committed Creative (or a shoot script for an idea that needs filming) and never creates a Post. Use when asked to make, design or write a social ad, promo image, short-form video, slideshow or carousel, to post a clip, to configure a project's brand, or to come up with a post from a goal, or via /conductor:marketing-post.
+name: conductor-marketing-create
+description: Makes the artwork for a social post through the Conductor MCP tools, rendered locally as a draft and approved before anything is saved. Direct mode, when a headline, photo, clip or finished images are in hand: make an ad, short video, slideshow, carousel or story sequence, post a clip as-is, write a headline variant, or set up the brand (Brand Kit). Team mode, when there is only a goal: a team of subagents brainstorms, judges, scripts and directs a short-form post and renders a draft. Ends at a committed Creative; never creates a Post. Entry point: /conductor:marketing create.
 user-invocable: true
 allowed-tools: mcp__conductor__*, Agent, AskUserQuestion, Skill, Read, Write, Glob, Grep, WebFetch
 ---
 
-# Conductor Marketing Post
+# Conductor Marketing Create
 
 Produces the artwork for a Post: upload-ready media at every placement a workspace's Brand Kit
 enables, either from a concept the person already has (Direct) or from a goal the team turns into
-one (Team). This is the front half of Conductor's marketing pillar; `conductor-publisher` takes the
+one (Team). This is the front half of Conductor's marketing pillar; `conductor-marketing-publish` takes the
 committed Creative from here through review and out to each destination. You make the artwork; you
 do not post it.
 
@@ -23,7 +23,7 @@ do not post it.
   `commit_creative_draft` upload the media, save the Creative and run the full render. Never commit
   a draft the person has not seen and approved.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script). Hand off to
-  `conductor-publisher` for the Post, scheduling and review.
+  `conductor-marketing-publish` for the Post, scheduling and review.
 
 ## Which mode
 
@@ -32,7 +32,11 @@ do not post it.
 | A headline, photo, clip or finished images, an existing Creative to vary, or wants the brand set up | **Direct** | `references/direct.md` |
 | A goal or topic ("a post about X for Y") and wants the idea chosen for them | **Team** (honours `--quick`: two ideators, no finalist renders) | `references/team-run.md` |
 
-Unclear which? Ask once with `AskUserQuestion`. Team mode finishes through the Direct flow's
+Infer the mode from the request. A concrete headline, photo, clip or existing Creative (including a
+headline variant or brand setup) is Direct. A goal or topic ("a post about X for TikTok") is Team.
+`--quick` applies to Team only. If it is unclear, ask once with `AskUserQuestion` (single select),
+"What are we making?", with two options: "I have the headline/photo/clip" (Direct) and "Come up with
+an idea" (Team). Team mode finishes through the Direct flow's
 preview, check and commit steps (S6 reads `references/direct.md`).
 
 ## References
@@ -50,7 +54,7 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 - `references/platform-specs.md`: per-platform formats, lengths and limits (Team).
 - `references/idea-template.md`, `script-template.md`, `shotlist-template.md`: the fixed formats the team's agents write in (Team).
 - `references/compliance-checklist.md`: pre-publish checks for disclosure, AI label, music, claims, third-party material, accessibility (Team).
-- `references/publish-pack-template.md`: the publish pack `conductor-publisher` later pre-fills a Post from (Team).
+- `references/publish-pack-template.md`: the publish pack `conductor-marketing-publish` later pre-fills a Post from (Team).
 
 ## Failures that are silent
 
@@ -75,7 +79,7 @@ Automated checks are real but incomplete. These are the ones worth looking for b
 
 ## Related
 
-- `conductor-publisher`: schedules and tracks the Post the artwork attaches to, through review and out
+- `conductor-marketing-publish`: schedules and tracks the Post the artwork attaches to, through review and out
   to each destination. This skill hands off to it, never the reverse.
-- `conductor-marketing-analyst`: the whole-funnel marketing report; its next actions can feed new
+- `conductor-marketing-report`: the whole-funnel marketing report; its next actions can feed new
   posts made here.

@@ -173,7 +173,7 @@ describe('CreativeLibraryGrid', () => {
     expect(screen.getByText('In Claude Code:')).toBeInTheDocument()
     expect(
       screen.getByText(
-        "/conductor:marketing-post Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'",
+        "/conductor:marketing create Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'",
       ),
     ).toBeInTheDocument()
     expect(screen.getByText('In Claude Desktop (or Claude Code): ask, e.g.')).toBeInTheDocument()
@@ -185,7 +185,7 @@ describe('CreativeLibraryGrid', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Copy Claude Code prompt' }))
     await waitFor(() =>
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-        "/conductor:marketing-post Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'",
+        "/conductor:marketing create Make a 9:16 TikTok video from our newest photo with the headline 'Dinner, sorted in minutes'",
       ),
     )
 

@@ -257,15 +257,15 @@ Creative is already saved — call `render_creative`, don't commit again. Verify
 Then `attach_creative_to_post` with the Post's Work Item id — it maps each placement to the right
 destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to Facebook, story to story targets)
 for every destination that has not set its own custom media, and never touches one that has. Verify
-with `get_post_status`. From here, use the `conductor-publisher` skill for scheduling, review and
+with `get_post_status`. From here, use the `conductor-marketing-publish` skill for scheduling, review and
 publishing — this skill's job ends at attaching the artwork. If there is no Post yet, say so plainly
-and name the next step (creating one with `conductor-publisher`) rather than leaving the artwork with
+and name the next step (creating one with `conductor-marketing-publish`) rather than leaving the artwork with
 no stated destination.
 
 When the Creative came from a team run, or the person points to a publish pack, look for
 `.conductor/content-runs/*/publish-pack.json` whose `creativeId` matches. It carries per-destination
 captions and publish options (disclosure, AI label, cover frame, alt text) and a pinned comment. When
-you go on to create or edit the Post with `conductor-publisher`, pre-fill each target's
+you go on to create or edit the Post with `conductor-marketing-publish`, pre-fill each target's
 `captionOverride` and options from it, show them in the confirmation table and let the person change
 them. Mention the pinned comment (and, for a post that promotes an app, the Stories repost with a link
 sticker) as manual steps, since Conductor cannot post comments. The Post still goes through the normal
@@ -363,7 +363,7 @@ thing).
    accepts a chosen track on photos, so each destination sends it as `carouselAs: "photos"`
    (silent) or `"video"` (the slideshow MP4 with the track). Attach defaults to video for TikTok
    and YouTube and photos for Instagram and Facebook feed, and writes the choice into the target's
-   options; change it with `set_publish_targets` (publisher skill). Mind each platform's length limit
+   options; change it with `set_publish_targets` (`conductor-marketing-publish` skill). Mind each platform's length limit
    for the video.
 
 ## Short videos from a photo or clip

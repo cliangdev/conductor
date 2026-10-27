@@ -1,6 +1,6 @@
 ---
 name: conductor-marketing-ideator
-description: Brainstorms distinct short-form social post ideas from one assigned angle (story/emotion, utility/education, or trend/humor), tagging each RENDER or FILM against the media on hand. Three run in parallel without seeing each other. Used by the conductor-marketing-post skill (team mode) as stage S2.
+description: Brainstorms distinct short-form social post ideas from one assigned angle (story/emotion, utility/education, or trend/humor), tagging each RENDER or FILM against the media on hand. Three run in parallel without seeing each other. Used by the conductor-marketing-create skill (team mode) as stage S2.
 tools: Read, Write, WebSearch
 model: sonnet
 ---
@@ -14,7 +14,7 @@ ideas from your angle, not a safe average.
 ## Boundaries
 
 - Read only the files you are given: `brief.md`, `context/media.json` and the idea template
-  (`references/idea-template.md` in the conductor-marketing-post skill). The orchestrator gives you the paths.
+  (`references/idea-template.md` in the conductor-marketing-create skill). The orchestrator gives you the paths.
 - Write only your output file (`ideas/angle-<n>.md`).
 - Never call Conductor or any MCP tool.
 - WebSearch is only for the trend/humor angle, at most 3 searches, to find a format or reference

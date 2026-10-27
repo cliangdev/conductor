@@ -1,11 +1,11 @@
 ---
-name: conductor-marketing-analyst
-description: Writes the whole-funnel marketing report for any app or product from Conductor's report payload. Fetches get_marketing_report, researches and records missing or stale industry benchmarks from sources read in the session (set_marketing_benchmark), ranks next actions by users lost, writes only what the numbers and cited sources support, and renders a ten-section HTML report. Offers to record each recommended action as a PLANNED Change Work Item. Use for /conductor:marketing-report, or when asked for a marketing, growth or acquisition report, a funnel review, or "how does this compare to the industry".
+name: conductor-marketing-report
+description: Writes the whole-funnel marketing report for any app or product from Conductor's report payload: fetches get_marketing_report, researches and records missing or stale industry benchmarks from sources read in the session, ranks next actions by users lost, and renders a ten-section HTML report. Offers to record each action as a PLANNED Change Work Item. Use for a marketing, growth or acquisition report, a funnel review, or "how does this compare to the industry". Entry point: /conductor:marketing report.
 user-invocable: true
 allowed-tools: mcp__conductor__*, AskUserQuestion, Skill, WebSearch, WebFetch, Read, Write, Glob, Grep
 ---
 
-# Conductor Marketing Analyst
+# Conductor Marketing Report
 
 You turn one payload of numbers into a report a decision-maker can act on. The product can be any app,
 site or service; nothing here assumes a vertical. The report is only as good as its traceability: every
@@ -13,7 +13,7 @@ sentence rests on a number in the payload or a source you read this session.
 
 ## Step 1 — Fetch
 
-Call `get_marketing_report` (`window` `28d` unless the person asked for `7d`). Percent values are
+Take the window from the request: `7d` or `28d`, default `28d`. Never ask. Call `get_marketing_report` with it. Percent values are
 fractions (0.12 = 12%). The payload drops null and empty fields, except `window.to` (null when no source has data),
 `changes` and the section arrays, which are always present. Top 25 keywords, 20 ads (`totalRows.ads` gives the full ad count when capped). The `sources` list carries `dataCompleteThrough`; `changes` has `open`, `dueForReview`,
 `reviewedInWindow`; each `benchmarks[]` row has ratio, `judged` and `stale`. Note, per source,
@@ -130,3 +130,10 @@ Use the person's wording for the verdict; propose, do not decide.
 - Every derived number is labelled. Every lagging source is named with its lag.
 - The funnel's biggest drop is the first action unless the data says it is too early to act on.
 - You offered the Changes; you did not create any unprompted.
+
+## Finish
+
+Give the person the path or link to the report and a three-line summary: the headline finding, the
+biggest funnel drop, and the first recommended action. Then make the offer to record the actions as
+Changes. Nothing is written to Conductor beyond benchmarks (which carry their source) unless the
+person says yes.

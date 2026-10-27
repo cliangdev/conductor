@@ -451,10 +451,13 @@ describe('installPluginAssets', () => {
     expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'prd.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'implement.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'agents', 'conductor-researcher.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'SKILL.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'references', 'direct.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'references', 'team-run.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'marketing-post.md'))).toBe(true)
+    for (const skill of ['create', 'publish', 'report']) {
+      expect(realFs.existsSync(path.join(tmpDir, 'skills', `conductor-marketing-${skill}`, 'SKILL.md'))).toBe(true)
+    }
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-create', 'references', 'direct.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-create', 'references', 'team-run.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-report', 'references', 'html-layout.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'marketing.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'agents', 'conductor-marketing-strategist.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design'))).toBe(false)
   })
@@ -473,6 +476,10 @@ describe('installPluginAssets', () => {
       'skills/conductor-content-studio/references/rubric.md',
       'skills/conductor-ux-ui-design/SKILL.md',
       'skills/conductor-ux-ui-design/references/design-tokens.md',
+      'commands/conductor/marketing-report.md',
+      'skills/conductor-publisher/SKILL.md',
+      'skills/conductor-marketing-analyst/SKILL.md',
+      'skills/conductor-marketing-analyst/references/html-layout.md',
     ]
     for (const f of oldFiles) {
       realFs.mkdirSync(path.dirname(path.join(tmpDir, f)), { recursive: true })
@@ -490,8 +497,13 @@ describe('installPluginAssets', () => {
     expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-content-studio'))).toBe(false)
     expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design'))).toBe(false)
     expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-creative', 'references', 'mine.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'SKILL.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'marketing-post.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-publisher'))).toBe(false)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-analyst'))).toBe(false)
+    for (const skill of ['create', 'publish', 'report']) {
+      expect(realFs.existsSync(path.join(tmpDir, 'skills', `conductor-marketing-${skill}`, 'SKILL.md'))).toBe(true)
+    }
+    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'marketing.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'marketing-report.md'))).toBe(false)
   })
 
   it('returns current when all files already match', async () => {
