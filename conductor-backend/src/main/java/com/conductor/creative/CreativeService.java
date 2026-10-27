@@ -338,6 +338,8 @@ public class CreativeService {
         String lockup = request.getLockup() != null ? request.getLockup().getValue() : current.getLockup();
         String kind = request.getKind() != null ? request.getKind().getValue() : current.getKind();
         Map<String, List<String>> slides = request.getSlides() != null ? request.getSlides() : toSlidesMap(current.getSlides());
+        // Read before current is mutated below: the recorded slide style survives only identical slides.
+        boolean slidesChanged = request.getSlides() != null && !request.getSlides().equals(toSlidesMap(current.getSlides()));
         List<String> slideAltText = request.getSlideAltText() != null
                 ? request.getSlideAltText() : toStringList(current.getSlideAltText());
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : toStringList(current.getPlacements());
@@ -443,13 +445,14 @@ public class CreativeService {
         current.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         current.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         current.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
-        // The recorded style describes the current slides: replacing the slides without sending a style clears
-        // it; sending one records it; changing neither keeps it. It belongs to CAROUSEL, so leaving that kind drops it.
+        // The recorded style describes the current slides: sending one records it (null or {} clears it); changing
+        // the slides (a different id list or order for any ratio) without sending a style clears it; resending the
+        // same slides keeps it. It belongs to CAROUSEL, so leaving that kind drops it.
         if (!Creative.KIND_CAROUSEL.equals(kind)) {
             current.setSlideStyle(null);
         } else if (request.getSlideStyle() != null) {
             current.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
-        } else if (request.getSlides() != null) {
+        } else if (slidesChanged) {
             current.setSlideStyle(null);
         }
 
@@ -968,14 +971,23 @@ public class CreativeService {
         if (draft.getClipMedia() != null) merged.setClipMedia(draft.getClipMedia());
         if (draft.getSlides() != null) {
             merged.setSlides(draft.getSlides());
-            // New slides without a style do not inherit the base's look.
-            if (draft.getSlideStyle() == null) merged.setSlideStyle(null);
+            // Different slides without a style do not inherit the base's look; the same slides keep it.
+            if (draft.getSlideStyle() == null && base != null
+                    && !draft.getSlides().equals(toSlidesMap(base.getSlides()))) {
+                merged.setSlideStyle(null);
+            }
         }
         if (draft.getSlideAltText() != null) merged.setSlideAltText(draft.getSlideAltText());
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
         if (draft.getAudio() != null) merged.setAudio(draft.getAudio());
         if (draft.getSlideshow() != null) merged.setSlideshow(draft.getSlideshow());
-        if (draft.getSlideStyle() != null) merged.setSlideStyle(draft.getSlideStyle());
+        if (draft.getSlideStyle() != null) {
+            // An empty style ({} or an explicit null) clears the base's.
+            merged.setSlideStyle(SlideshowStyles.isEmpty(draft.getSlideStyle()) ? null : draft.getSlideStyle());
+        } else if (merged.getKind() == null || !Creative.KIND_CAROUSEL.equals(merged.getKind().getValue())) {
+            // The base style belongs to a CAROUSEL: another kind must not carry it (it would 422 on slideStyle).
+            merged.setSlideStyle(null);
+        }
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
         // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
         // or cleared there by the headline/layout rule; only a draft's own typeOverrides pass through here.
@@ -1402,7 +1414,7 @@ public class CreativeService {
     /** A slide style is CAROUSEL-only and field-validated; violations name {@code slideStyle}. */
     private static List<Violation> slideStyleViolations(String kind, SlideshowStyle style) {
         List<Violation> out = new ArrayList<>();
-        if (style == null) {
+        if (SlideshowStyles.isEmpty(style)) {
             return out;
         }
         if (!Creative.KIND_CAROUSEL.equals(kind)) {

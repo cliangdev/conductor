@@ -390,17 +390,23 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   finished images.
 - **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
   `conductor-tools/assets/fonts/` with `OFL.txt`.
-- **Style.** The native look is the default. A `SlideshowStyle` (`fontFamily`, a name or comma list such as `Inter, sans-serif`; `fontUrl` for a CSS
-  stylesheet such as Google Fonts, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `outline`, `accent` as
+- **Style.** The native look is the default. A `SlideshowStyle` (`fontFamily`, a name or comma list such as `Inter, sans-serif`; `fontUrl` for an https CSS
+  stylesheet such as Google Fonts, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `strokeInk` (the colour of outlined text and sub text; white when a stored style has none), `outline`, `accent` as
   `#RRGGBB`, `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96; all optional)
   restyles the text boxes, stroke text and callouts. It can live on a Brand Kit (`slideshowStyle`,
   nullable; set with `create_brand_kit` / `update_brand_kit`) or be passed one-off to
   `compose_slideshow`. Resolution is native, then the kit's style (`brandKitId`; refused with a clear
-  error when the kit has none; unknown fields in a kit's style are ignored), then the spec's own top-level `style` (`null` = no layer), then the inline `style` on top. In the spec's and the inline `style` a field left out inherits from the layer below, while a field set to `null` resets it to the native value (`fontFamily: null` = bundled TikTok Sans and no `fontUrl`); in a kit, null and absent both mean "not set by the kit". `fontUrl` is checked only against the backend's pattern (http(s), no whitespace or quotes, at most 2048 characters) and `fontFamily` needs at least one family name; an invalid kit style is reported naming the kit. A new `fontFamily` keeps the inherited `fontUrl` only when its first family is the same (case-insensitive). The font check loads the list's first non-generic family even on slides with no styled text. A custom font loads from `fontUrl`;
+  error when the kit has none; unknown fields in a kit's style are ignored), then the spec's own top-level `style` (`null` = no layer), then the inline `style` on top. In the spec's and the inline `style` a field left out inherits from the layer below, while a field set to `null` resets it to the native value (`fontFamily: null` = bundled TikTok Sans and no `fontUrl`); in a kit, null and absent both mean "not set by the kit". `fontUrl` is checked only against the shared pattern (https only, no whitespace or quotes, at most 2048 characters) and `fontFamily` needs at least one family name; an invalid kit style is reported naming the kit. A new `fontFamily` keeps the inherited `fontUrl` only when its first family is the same (case-insensitive). The font check loads the list's first non-keyword family (generic and system keywords such as `sans-serif`, `-apple-system` and `BlinkMacSystemFont` are emitted unquoted and never checked; a list of only keywords has no custom-font check) even on slides with no styled text, and checks the bundled TikTok Sans whenever any text uses it (no custom font, or any placard slide). A custom font loads from `fontUrl`;
   a font that fails to load, or a `fontFamily` that is not installed when there is no `fontUrl`, is a blocking `font` check naming the family; notes, week, receipt,
   placard and messages slides keep their system-UI fonts. The resolved (full) style is written to
   `spec.json` as `resolvedStyle` (the spec's own `style` is kept as given and a re-compose ignores `resolvedStyle`), returned by the tool as `style`, and recorded on the Creative as `slideStyle`
-  (CAROUSEL only; native slides record the native defaults) so a look can be reused later.
+  (CAROUSEL only; native slides record the native defaults) so a look can be reused later. The rules
+  (native values, keyword list, bounds, patterns) live once in `conductor-creative/slideshow-style.json`; the
+  web Brand Kit form imports it and the CLI and backend tests assert their copies equal it. A kit style with no
+  known non-null field counts as no style. A saved Creative keeps its recorded `slideStyle` unless a patch (or a
+  draft over `baseCreativeId`) changes the slides (a different media id list or order for any ratio) without
+  sending a `slideStyle`, which clears it; resending identical slides (the web editor does on every save) keeps
+  it; an explicit `null` (or `{}`) clears it on any kind.
   `create_brand_kit` with `copyFrom` starts a new kit from another kit's voice, tokens and font
   (images are not copied).
 - **Local rendering:** like Creatives, slides render on the user's machine with the system Chrome; no

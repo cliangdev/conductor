@@ -1,0 +1,44 @@
+{
+  "native": {
+    "boxBg": "#ffffff",
+    "boxInk": "#111111",
+    "darkBg": "#111111",
+    "darkInk": "#ffffff",
+    "strokeInk": "#ffffff",
+    "outline": "#000000",
+    "accent": "#ff2d55",
+    "defaultText": "box",
+    "textSize": 60,
+    "subSize": 44
+  },
+  "defaultTextKinds": ["box", "dark", "stroke"],
+  "genericFamilies": [
+    "serif",
+    "sans-serif",
+    "monospace",
+    "cursive",
+    "fantasy",
+    "system-ui",
+    "ui-sans-serif",
+    "ui-serif",
+    "ui-monospace",
+    "ui-rounded",
+    "emoji",
+    "math",
+    "fangsong",
+    "-apple-system",
+    "BlinkMacSystemFont"
+  ],
+  "bounds": {
+    "textSize": { "min": 24, "max": 120 },
+    "subSize": { "min": 16, "max": 96 }
+  },
+  "maxLength": {
+    "fontFamily": 200,
+    "fontUrl": 2048
+  },
+  "hexPattern": "^#[0-9a-fA-F]{6}$",
+  "fontUrlPattern": "^https://[^\\s\"'<>\\\\]+$",
+  "forbiddenFontFamilyChars": "\"';{}<>\\",
+  "forbidControlCharsInFontFamily": true
+}

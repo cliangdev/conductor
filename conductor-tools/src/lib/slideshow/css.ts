@@ -13,7 +13,7 @@ const rgba = (c: string, a: string): string => {
  * UI (notes, week, receipt, placard, messages) keep their own fonts.
  */
 export function slideCss(assetBase: string, style: ResolvedSlideshowStyle = NATIVE_STYLE): string {
-  const bg = hex(style.boxBg), ink = hex(style.boxInk), dbg = hex(style.darkBg), dink = hex(style.darkInk)
+  const bg = hex(style.boxBg), ink = hex(style.boxInk), dbg = hex(style.darkBg), dink = hex(style.darkInk), sink = hex(style.strokeInk)
   const line = hex(style.outline), accent = hex(style.accent), line8 = rgba(style.outline, '.8')
   const face = style.fontFamily ? fontFamilyCss(style.fontFamily) : '"TT"'
   return String.raw`
@@ -31,8 +31,8 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .txt.full{right:70px}
 .box{display:inline;font-weight:700;font-size:var(--fs,${style.textSize}px);line-height:1.34;color:${ink};background:${bg};padding:4px 18px;border-radius:14px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .box.dark{background:${dbg};color:${dink}}
-.stroke{font-weight:800;font-size:var(--fs,${style.textSize}px);line-height:1.22;color:${dink};-webkit-text-stroke:0;text-shadow:0 0 3px ${line},0 0 3px ${line},0 0 4px ${line},0 2px 6px ${line8}}
-.sub{font-weight:700;font-size:var(--ss,${style.subSize}px);line-height:1.25;color:${dink};text-shadow:0 0 3px ${line},0 0 3px ${line},0 2px 6px ${line8}}
+.stroke{font-weight:800;font-size:var(--fs,${style.textSize}px);line-height:1.22;color:${sink};-webkit-text-stroke:0;text-shadow:0 0 3px ${line},0 0 3px ${line},0 0 4px ${line},0 2px 6px ${line8}}
+.sub{font-weight:700;font-size:var(--ss,${style.subSize}px);line-height:1.25;color:${sink};text-shadow:0 0 3px ${line},0 0 3px ${line},0 2px 6px ${line8}}
 /* phone with a real screenshot */
 .phone{position:absolute;left:50%;width:var(--pw,640px);transform:translateX(-50%) rotate(var(--rot,0deg));border-radius:72px;background:#0b0b0c;padding:16px;box-shadow:0 40px 90px rgba(0,0,0,.55),0 0 0 3px #2a2a2e;z-index:3}
 .phone .scr{border-radius:58px;overflow:hidden;position:relative;background:#fff}

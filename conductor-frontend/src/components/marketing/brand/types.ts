@@ -54,7 +54,7 @@ export type BrandTokenKey = (typeof BRAND_TOKEN_KEYS)[number]
 
 export type SlideshowDefaultText = 'box' | 'dark' | 'stroke'
 
-export const SLIDESHOW_COLOUR_KEYS = ['boxBg', 'boxInk', 'darkBg', 'darkInk', 'outline', 'accent'] as const
+export const SLIDESHOW_COLOUR_KEYS = ['boxBg', 'boxInk', 'darkBg', 'darkInk', 'strokeInk', 'outline', 'accent'] as const
 export type SlideshowColourKey = (typeof SLIDESHOW_COLOUR_KEYS)[number]
 
 /** How organic slideshow slides are styled (openapi-v2 `SlideshowStyle`). Every property is optional;
@@ -66,6 +66,8 @@ export interface SlideshowStyle {
   boxInk?: string
   darkBg?: string
   darkInk?: string
+  /** Colour of outlined (stroke) text and sub text; white when absent. */
+  strokeInk?: string
   outline?: string
   accent?: string
   defaultText?: SlideshowDefaultText

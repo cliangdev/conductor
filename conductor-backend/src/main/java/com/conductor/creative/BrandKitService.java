@@ -161,11 +161,17 @@ public class BrandKitService {
         return findKit(projectId, kitId);
     }
 
+    private static final java.util.regex.Pattern SLUG_OK = java.util.regex.Pattern.compile("^[a-z0-9-]{1,64}$");
+
     @Transactional
     public BrandKit createKit(String projectId, CreateBrandKitRequest request, User caller) {
         requireEditor(projectId, caller);
         if (request.getSlug() == null || request.getSlug().isBlank()) {
             throw new BusinessException("slug is required");
+        }
+        if (!SLUG_OK.matcher(request.getSlug()).matches()) {
+            throw new BrandKitValidationException(List.of(new BrandKitValidationException.FieldError("slug",
+                    "must be 1-64 characters: lowercase letters a-z, digits 0-9 and hyphens")));
         }
         if (brandKitRepository.existsByProjectIdAndSlug(projectId, request.getSlug())) {
             throw new ConflictException("A Brand Kit with slug '" + request.getSlug() + "' already exists in this project");

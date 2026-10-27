@@ -746,6 +746,61 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aWebEditorSaveResendingIdenticalSlidesKeepsTheStyleButReorderedOrReplacedSlidesClearIt() {
+        List<String> ids = imageIds(3, 1080, 1920, true);
+        CreateCreativeRequest request = carouselRequest(Map.of("default", ids));
+        request.setSlideStyle(new SlideshowStyle().fontFamily("Poppins").accent("#FF5A5F"));
+        Creative created = creativeService.createCreative(project.getId(), request, admin).creative();
+
+        PatchCreativeRequest same = new PatchCreativeRequest();
+        same.setVersion(created.getVersion());
+        same.setCaption("New caption");
+        same.setSlides(Map.of("default", List.copyOf(ids)));
+        Creative kept = creativeService.patchCreative(project.getId(), created.getId(), same, admin).creative();
+        assertThat(kept.getSlideStyle().get("accent").asText()).isEqualTo("#FF5A5F");
+
+        PatchCreativeRequest reordered = new PatchCreativeRequest();
+        reordered.setVersion(kept.getVersion());
+        reordered.setSlides(Map.of("default", List.of(ids.get(1), ids.get(0), ids.get(2))));
+        Creative cleared = creativeService.patchCreative(project.getId(), created.getId(), reordered, admin).creative();
+        assertThat(cleared.getSlideStyle()).isNull();
+    }
+
+    @Test
+    void anExplicitNullOrEmptySlideStyleClearsItAndAbsentLeavesIt() throws Exception {
+        CreateCreativeRequest request = carouselRequest(Map.of("default", imageIds(2, 1080, 1920, true)));
+        request.setSlideStyle(new SlideshowStyle().fontFamily("Poppins"));
+        Creative created = creativeService.createCreative(project.getId(), request, admin).creative();
+
+        com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
+        assertThat(json.readValue("{\"caption\":\"x\"}", PatchCreativeRequest.class).getSlideStyle()).isNull();
+        PatchCreativeRequest explicitNull = json.readValue("{\"slideStyle\":null}", PatchCreativeRequest.class);
+        assertThat(explicitNull.getSlideStyle()).isNotNull();
+        explicitNull.setVersion(created.getVersion());
+        Creative cleared = creativeService.patchCreative(project.getId(), created.getId(), explicitNull, admin).creative();
+        assertThat(cleared.getSlideStyle()).isNull();
+    }
+
+    @Test
+    void clearingTheSlideStyleIsAllowedOnANonCarouselButSettingOneIsNot() {
+        CreateCreativeRequest request = new CreateCreativeRequest();
+        request.setHeadline("Hello");
+        Creative created = creativeService.createCreative(project.getId(), request, admin).creative();
+
+        PatchCreativeRequest clear = new PatchCreativeRequest();
+        clear.setVersion(created.getVersion());
+        clear.setSlideStyle(new SlideshowStyle());
+        Creative cleared = creativeService.patchCreative(project.getId(), created.getId(), clear, admin).creative();
+        assertThat(cleared.getSlideStyle()).isNull();
+
+        PatchCreativeRequest set = new PatchCreativeRequest();
+        set.setVersion(cleared.getVersion());
+        set.setSlideStyle(new SlideshowStyle().accent("#FF5A5F"));
+        assertThatThrownBy(() -> creativeService.patchCreative(project.getId(), created.getId(), set, admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
+    @Test
     void aSlideStyleOnANonCarouselIsRefusedWith422() {
         CreateCreativeRequest request = new CreateCreativeRequest();
         request.setHeadline("Hello");

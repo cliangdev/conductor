@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { slideCss } from '../lib/slideshow/css.js'
+import { findBrowserFactory, type BrowserFactory } from '../lib/creative-browser.js'
 import {
   buildSlideHtml,
   composeSlideshow,
@@ -12,6 +13,8 @@ import {
   NATIVE_STYLE,
   pickKnownStyleFields,
   resolveSlideshowStyle,
+  resolveStyleLayers,
+  hasAnyStyleField,
   validateSlideshowSpec,
   validateSlideshowStyle,
   SlideshowStyleError,
@@ -91,7 +94,8 @@ describe('resolveSlideshowStyle', () => {
     expect(validateSlideshowStyle({ fontFamily: 'x'.repeat(200) })).toEqual([])
     expect(validateSlideshowStyle({ fontUrl: 'https://fonts.googleapis.com/css?family=Open+Sans|Lora' })).toEqual([])
     expect(validateSlideshowStyle({ fontUrl: '' })).toEqual([])
-    expect(validateSlideshowStyle({ fontUrl: 'http://x' })).toEqual([]) // only the backend's pattern: no URL parse
+    expect(validateSlideshowStyle({ fontUrl: 'https://x' })).toEqual([]) // only the backend's pattern: no URL parse
+    expect(validateSlideshowStyle({ fontUrl: 'http://fonts.example/a.css' })).toHaveLength(1) // https only
     expect(validateSlideshowStyle({ fontFamily: ', ,' })).toHaveLength(1)
     for (const bad of ['ftp://x.example/a.css', 'https://x.example/a b', 'https://x.example/a"b', 'https://x.example/' + 'a'.repeat(2048)]) expect(validateSlideshowStyle({ fontUrl: bad })).toHaveLength(1)
     expect(resolveSlideshowStyle({ fontFamily: '   ', fontUrl: '' }).fontFamily).toBeNull()
@@ -99,6 +103,32 @@ describe('resolveSlideshowStyle', () => {
 
   it('renders a family list as quoted names, generics bare', () => {
     expect(slideCss(base, resolveSlideshowStyle({ fontFamily: 'Open Sans, Söhne ,sans-serif' }))).toContain('font-family:"Open Sans","Söhne",sans-serif,-apple-system')
+  })
+
+  it('emits generic and system keywords unquoted, in their canonical casing', () => {
+    expect(slideCss(base, resolveSlideshowStyle({ fontFamily: '-apple-system, blinkmacsystemfont, Inter, SANS-SERIF' }))).toContain('font-family:-apple-system,BlinkMacSystemFont,"Inter",sans-serif,-apple-system')
+  })
+
+  it('colours outlined text and sub text with strokeInk, not darkInk', () => {
+    const css = slideCss(base, resolveSlideshowStyle({ darkInk: '#112233', strokeInk: '#ffee00' }))
+    expect(css).toMatch(/\.stroke\{[^}]*color:#fe0;/)
+    expect(css).toMatch(/\.sub\{[^}]*color:#fe0;/)
+    expect(css).toContain('.box.dark{background:#111;color:#123}')
+    expect(resolveSlideshowStyle({ darkInk: '#112233' }).strokeInk).toBe('#ffffff')
+    expect(validateSlideshowStyle({ strokeInk: 'white' })).toHaveLength(1)
+  })
+
+  it('resolves kit < spec < inline once, naming a kit in its errors, and rejects unknown inline fields', () => {
+    const r = resolveStyleLayers({ kit: { accent: '#111111', textSize: 50, futureField: 1, fontFamily: null }, spec: { textSize: 55 }, inline: { subSize: 40 } })
+    expect(r).toMatchObject({ accent: '#111111', textSize: 55, subSize: 40, fontFamily: null })
+    expect(() => resolveStyleLayers({ kit: { accent: 'zzz' }, kitLabel: 'Brand Kit "Warm" slideshowStyle' })).toThrow(/Brand Kit "Warm" slideshowStyle\.accent/)
+    expect(() => resolveStyleLayers({ inline: { acent: '#fff' } as never })).toThrow(SlideshowStyleError)
+  })
+
+  it('hasAnyStyleField needs one known non-null field', () => {
+    for (const none of [null, undefined, 'x', [], {}, { futureField: 1 }, { accent: null, fontFamily: null }]) expect(hasAnyStyleField(none)).toBe(false)
+    expect(hasAnyStyleField({ accent: '#112233' })).toBe(true)
+    expect(hasAnyStyleField({ textSize: 0, futureField: 1 })).toBe(true)
   })
 
   it('ignores unknown keys read from a Brand Kit, but not from an inline style', () => {
@@ -193,20 +223,37 @@ describe.skipIf(!hasBrowser)('composeSlideshow with a custom font (real browser)
     await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
     const port = (server.address() as { port: number }).port
     const out = mkdtempSync(join(tmpdir(), 'ss-font-'))
+    // fontUrl must be https, so the browser's https://fonts.test/* requests are answered from the local server
+    const real = await findBrowserFactory()
+    const factoryFor = (blockTT = false): BrowserFactory => async () => {
+      const browser = await real()
+      const newPage = browser.newPage.bind(browser)
+      browser.newPage = (async (o?: Parameters<typeof newPage>[0]) => {
+        const page = await newPage(o)
+        if (blockTT) await page.route('**/tiktok-sans-*.ttf', (route) => route.abort())
+        await page.route('https://fonts.test/**', async (route) => {
+          const r = await fetch(`http://127.0.0.1:${port}${new URL(route.request().url()).pathname}`)
+          await route.fulfill({ status: r.status, headers: { 'content-type': r.headers.get('content-type') ?? 'text/plain', 'access-control-allow-origin': '*' }, body: Buffer.from(await r.arrayBuffer()) })
+        })
+        return page
+      }) as typeof browser.newPage
+      return browser
+    }
+    const browserFactory = factoryFor()
     try {
       const spec = { id: 'f', slides: [{ bgColor: '#336699', texts: [{ t: 'hello there', y: 40 }] }] }
-      const good = await composeSlideshow({ ...spec, style: { fontFamily: 'Test Sans', fontUrl: `http://127.0.0.1:${port}/good.css`, accent: '#00FF88' } }, join(out, 'good'), { ratios: ['9x16'] })
+      const good = await composeSlideshow({ ...spec, style: { fontFamily: 'Test Sans', fontUrl: `https://fonts.test/good.css`, accent: '#00FF88' } }, join(out, 'good'), { ratios: ['9x16'], browserFactory })
       expect(good.checks.filter((c) => c.rule === 'font')).toEqual([])
       expect(good.style).toMatchObject({ fontFamily: 'Test Sans', accent: '#00ff88', boxBg: '#ffffff' })
       const saved = JSON.parse(readFileSync(good.specPath, 'utf8'))
       expect(saved.resolvedStyle).toEqual(good.style)
-      expect(saved.style).toEqual({ fontFamily: 'Test Sans', fontUrl: `http://127.0.0.1:${port}/good.css`, accent: '#00FF88' })
+      expect(saved.style).toEqual({ fontFamily: 'Test Sans', fontUrl: `https://fonts.test/good.css`, accent: '#00FF88' })
 
-      const bad = await composeSlideshow({ ...spec, style: { fontFamily: 'Missing Sans', fontUrl: `http://127.0.0.1:${port}/missing.css` } }, join(out, 'bad'), { ratios: ['9x16'] })
+      const bad = await composeSlideshow({ ...spec, style: { fontFamily: 'Missing Sans', fontUrl: `https://fonts.test/missing.css` } }, join(out, 'bad'), { ratios: ['9x16'], browserFactory })
       expect(bad.passed).toBe(false)
       expect(bad.checks.find((c) => c.rule === 'font')?.message).toMatch(/"Missing Sans" did not load/)
 
-      const native = await composeSlideshow(spec, join(out, 'native'), { ratios: ['9x16'] })
+      const native = await composeSlideshow(spec, join(out, 'native'), { ratios: ['9x16'], browserFactory })
       expect(native.style).toEqual(NATIVE_STYLE)
       expect(native.checks.filter((c) => c.rule === 'font')).toEqual([])
       const nativeSaved = JSON.parse(readFileSync(native.specPath, 'utf8'))
@@ -214,17 +261,36 @@ describe.skipIf(!hasBrowser)('composeSlideshow with a custom font (real browser)
       expect(nativeSaved.style).toBeUndefined()
 
       // no fontUrl: an uninstalled first family is a blocking check naming it; a generic passes
-      const noUrl = await composeSlideshow({ ...spec, style: { fontFamily: 'Missing Sans, sans-serif' } }, join(out, 'nourl'), { ratios: ['9x16'] })
+      const noUrl = await composeSlideshow({ ...spec, style: { fontFamily: 'Missing Sans, sans-serif' } }, join(out, 'nourl'), { ratios: ['9x16'], browserFactory })
       expect(noUrl.passed).toBe(false)
       expect(noUrl.checks.find((c) => c.rule === 'font')?.message).toMatch(/"Missing Sans" is not installed.*fontUrl/)
       // a font list on a slide with no styled text still loads and passes the check
-      const list = { fontFamily: 'Test Sans, sans-serif', fontUrl: `http://127.0.0.1:${port}/good.css` }
-      const notes = await composeSlideshow({ id: 'n', style: list, slides: [{ type: 'notes', title: 'Plain notes', items: ['one'] }] }, join(out, 'notes'), { ratios: ['9x16'] })
+      const list = { fontFamily: 'Test Sans, sans-serif', fontUrl: `https://fonts.test/good.css` }
+      const notes = await composeSlideshow({ id: 'n', style: list, slides: [{ type: 'notes', title: 'Plain notes', items: ['one'] }] }, join(out, 'notes'), { ratios: ['9x16'], browserFactory })
       expect(notes.checks.filter((c) => c.rule === 'font')).toEqual([])
-      const photo = await composeSlideshow({ id: 'p', style: list, slides: [{ bgColor: '#336699' }] }, join(out, 'photo'), { ratios: ['9x16'] })
+      const photo = await composeSlideshow({ id: 'p', style: list, slides: [{ bgColor: '#336699' }] }, join(out, 'photo'), { ratios: ['9x16'], browserFactory })
       expect(photo.checks.filter((c) => c.rule === 'font')).toEqual([])
-      const generic = await composeSlideshow({ ...spec, style: { fontFamily: 'sans-serif' } }, join(out, 'generic'), { ratios: ['9x16'] })
+      const generic = await composeSlideshow({ ...spec, style: { fontFamily: 'sans-serif' } }, join(out, 'generic'), { ratios: ['9x16'], browserFactory })
       expect(generic.checks.filter((c) => c.rule === 'font')).toEqual([])
+
+      // system keywords are emitted bare and never checked as a custom font (a list of only keywords has no check)
+      const system = await composeSlideshow({ ...spec, style: { fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' } }, join(out, 'system'), { ratios: ['9x16'], browserFactory })
+      expect(system.checks.filter((c) => c.rule === 'font')).toEqual([])
+      expect(slideCss(base, system.style)).toContain('font-family:-apple-system,BlinkMacSystemFont,sans-serif,-apple-system')
+      // ... and only the first non-keyword family is checked
+      const mixed = await composeSlideshow({ ...spec, style: { fontFamily: '-apple-system, Missing Sans' } }, join(out, 'mixed'), { ratios: ['9x16'], browserFactory })
+      expect(mixed.checks.find((c) => c.rule === 'font')?.message).toMatch(/"Missing Sans" is not installed/)
+
+      // the bundled TikTok Sans is checked whenever any text uses it: native text, or a placard's label
+      const placard = { id: 'pl', slides: [{ bgColor: '#336699' }, { type: 'placard' as const, title: 'Untitled', ex: 'Exhibit A' }], style: { fontFamily: 'Test Sans', fontUrl: 'https://fonts.test/good.css' } }
+      const blocked = factoryFor(true)
+      const withPlacard = await composeSlideshow(placard, join(out, 'placard'), { ratios: ['9x16'], browserFactory: blocked })
+      expect(withPlacard.passed).toBe(false)
+      expect(withPlacard.checks.filter((c) => c.rule === 'font').map((c) => c.message)).toEqual([expect.stringMatching(/TikTok Sans did not load/), expect.stringMatching(/TikTok Sans did not load/)])
+      const customOnly = await composeSlideshow({ ...placard, slides: [placard.slides[0]!] }, join(out, 'customonly'), { ratios: ['9x16'], browserFactory: blocked })
+      expect(customOnly.checks.filter((c) => c.rule === 'font')).toEqual([])
+      const nativeBlocked = await composeSlideshow(spec, join(out, 'nativeblocked'), { ratios: ['9x16'], browserFactory: blocked })
+      expect(nativeBlocked.checks.find((c) => c.rule === 'font')?.message).toMatch(/TikTok Sans did not load/)
     } finally {
       server.close()
       rmSync(out, { recursive: true, force: true })

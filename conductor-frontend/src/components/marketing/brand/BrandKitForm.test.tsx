@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -187,6 +187,10 @@ describe('BrandKitForm', () => {
   })
 
   describe('slideshow style', () => {
+    afterEach(() => {
+      document.head.querySelectorAll('link[rel="stylesheet"]').forEach((l) => l.remove())
+    })
+
     const STYLE = { accent: '#FF5A5F', boxBg: '#FFFFFF', defaultText: 'stroke' as const, textSize: 64, subSize: 36 }
 
     function withStyle(style: typeof STYLE | null) {
@@ -270,7 +274,7 @@ describe('BrandKitForm', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
       await waitFor(() => expect(apiPatch).toHaveBeenCalled())
       expect((apiPatch as Mock).mock.calls[0][1].slideshowStyle).toEqual({
-        boxBg: '#ffffff', boxInk: '#111111', darkBg: '#111111', darkInk: '#ffffff', outline: '#000000',
+        boxBg: '#ffffff', boxInk: '#111111', darkBg: '#111111', darkInk: '#ffffff', strokeInk: '#ffffff', outline: '#000000',
         accent: '#ff2d55', defaultText: 'box', textSize: 60, subSize: 44,
       })
     })
@@ -289,17 +293,18 @@ describe('BrandKitForm', () => {
       expect(payload).not.toHaveProperty('slideshowStyle')
     })
 
-    it('loads the font URL in the preview on blur and keeps the link', async () => {
+    it('loads the font URL in the preview frame on blur, never in the app head', async () => {
       withStyle(STYLE)
       render(<BrandKitForm projectId="proj-1" token="tok" />)
       const url = await screen.findByLabelText('Slide font URL')
       await userEvent.type(url, 'https://fonts.googleapis.com/css?family=Lora')
       await userEvent.tab()
       await waitFor(() =>
-        expect(document.head.querySelector('link[href="https://fonts.googleapis.com/css?family=Lora"]')).not.toBeNull(),
+        expect(screen.getByTestId('slideshow-style-preview').getAttribute('srcdoc')).toContain(
+          'href="https://fonts.googleapis.com/css?family=Lora"',
+        ),
       )
-      await userEvent.clear(url)
-      expect(document.head.querySelector('link[href="https://fonts.googleapis.com/css?family=Lora"]')).not.toBeNull()
+      expect(document.head.querySelector('link[rel="stylesheet"]')).toBeNull()
     })
   })
 })

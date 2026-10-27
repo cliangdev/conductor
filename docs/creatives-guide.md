@@ -327,7 +327,8 @@ Three ways to choose:
 
 - **Native, the default.** Nothing to do. You can always pick it, even when your brand has a style.
 - **A kit's style.** A Brand Kit can hold a slideshow style (font, text box and outline colours, an
-  accent for callouts, text sizes). When a kit has one, or you ask for "the Summer look", Claude asks
+  accent for callouts, text sizes, and a separate colour for outlined text). The font link must be an
+  `https://` stylesheet link. When a kit has one, or you ask for "the Summer look", Claude asks
   once: native or that kit's style. Skipping the kit never forces its look onto a slideshow. This is
   separate from which Brand Kit the Creative belongs to: picking "native look" never changes that,
   and a kit used only for its look does not become the Creative's Brand Kit. In a team run, one
@@ -341,7 +342,7 @@ the slides (a Creative like `12a`, or a slideshow Claude just made). Claude read
 made with, then asks whether to start a new kit (it can copy your current kit's copy rules and voice;
 logos are not copied, so upload them after) or add the style to an existing kit, warning you if it
 would replace one. Slides designed elsewhere work too: Claude samples the colours, asks you the font
-name, and shows one sample slide before saving anything. Your default kit is never changed. Slides made before styles were recorded count as the native look.
+name, and shows one sample slide before saving anything. Editing a saved slideshow in the web editor keeps its recorded style as long as the slides themselves are unchanged; swapping or reordering slides clears it. Your default kit is never changed. Slides made before styles were recorded count as the native look.
 
 Ads are different: ask `/conductor:marketing create` for a static ad to get a brand-layout ad.
 

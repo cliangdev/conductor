@@ -1,12 +1,13 @@
 /**
  * Slideshow style: the look of the composer's native text and callouts. The native look (bundled TikTok
  * Sans, white/black boxes, #ff2d55 callouts) is the default; a Brand Kit's `slideshowStyle` and/or an inline
- * `style` override any of it. Mirrors the backend's `SlideshowStyle` schema.
+ * `style` override any of it. Mirrors the backend's `SlideshowStyle` schema. The rule constants below equal
+ * `conductor-creative/slideshow-style.json` (asserted by slideshow-style-parity.test.ts).
  */
 
 export const STYLE_TEXT_KINDS = ['box', 'dark', 'stroke'] as const
 export type StyleTextKind = (typeof STYLE_TEXT_KINDS)[number]
-export const STYLE_COLOR_KEYS = ['boxBg', 'boxInk', 'darkBg', 'darkInk', 'outline', 'accent'] as const
+export const STYLE_COLOR_KEYS = ['boxBg', 'boxInk', 'darkBg', 'darkInk', 'strokeInk', 'outline', 'accent'] as const
 export const STYLE_KEYS = ['fontFamily', 'fontUrl', ...STYLE_COLOR_KEYS, 'defaultText', 'textSize', 'subSize'] as const
 
 /** A partial style as stored on a Brand Kit or Creative (null/absent = not set). */
@@ -17,6 +18,7 @@ export interface SlideshowStyle {
   boxInk?: string | null
   darkBg?: string | null
   darkInk?: string | null
+  strokeInk?: string | null
   outline?: string | null
   accent?: string | null
   defaultText?: StyleTextKind | null
@@ -32,6 +34,7 @@ export interface ResolvedSlideshowStyle {
   boxInk: string
   darkBg: string
   darkInk: string
+  strokeInk: string
   outline: string
   accent: string
   defaultText: StyleTextKind
@@ -46,6 +49,7 @@ export const NATIVE_STYLE: Readonly<ResolvedSlideshowStyle> = Object.freeze({
   boxInk: '#111111',
   darkBg: '#111111',
   darkInk: '#ffffff',
+  strokeInk: '#ffffff',
   outline: '#000000',
   accent: '#ff2d55',
   defaultText: 'box',
@@ -53,21 +57,30 @@ export const NATIVE_STYLE: Readonly<ResolvedSlideshowStyle> = Object.freeze({
   subSize: 44,
 })
 
-const HEX = /^#[0-9a-fA-F]{6}$/
+export const HEX_PATTERN = /^#[0-9a-fA-F]{6}$/
+const HEX = HEX_PATTERN
 // eslint-disable-next-line no-control-regex
-const FAMILY_BAD = /[\u0000-\u001f\u007f-\u009f"';{}<>\\]/
-const FONT_URL = /^https?:\/\/[^\s"'<>\\]+$/
-export const GENERIC_FAMILIES = ['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong'] as const
+export const FAMILY_BAD = /[\u0000-\u001f\u007f-\u009f"';{}<>\\]/
+export const FONT_URL_PATTERN = /^https:\/\/[^\s"'<>\\]+$/
+const FONT_URL = FONT_URL_PATTERN
+export const MAX_FONT_FAMILY = 200
+export const MAX_FONT_URL = 2048
+export const STYLE_BOUNDS = { textSize: { min: 24, max: 120 }, subSize: { min: 16, max: 96 } } as const
+export const GENERIC_FAMILIES = ['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong', '-apple-system', 'BlinkMacSystemFont'] as const
+const GENERIC_CANONICAL = new Map<string, string>(GENERIC_FAMILIES.map((g) => [g.toLowerCase(), g]))
+
+/** True for a CSS generic or system-font keyword (case-insensitive), which is never a custom font to check or load. */
+export const isGenericFamily = (name: string): boolean => GENERIC_CANONICAL.has(name.toLowerCase())
 
 /** The family names of a font-family list: split on commas, trimmed, blanks dropped. */
 export function fontFamilyNames(family: string): string[] {
   return family.split(',').map((f) => f.trim()).filter(Boolean)
 }
 
-/** A font-family list as CSS: each family quoted unless it is a generic keyword. */
+/** A font-family list as CSS: each family quoted unless it is a generic/system keyword (emitted unquoted, canonical casing). */
 export function fontFamilyCss(family: string): string {
   return fontFamilyNames(family)
-    .map((f) => ((GENERIC_FAMILIES as readonly string[]).includes(f.toLowerCase()) ? f.toLowerCase() : `"${f}"`))
+    .map((f) => GENERIC_CANONICAL.get(f.toLowerCase()) ?? `"${f}"`)
     .join(',')
 }
 
@@ -78,7 +91,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 /**
  * Every problem with a (partial) style; empty = valid. Same rules as the backend (fontFamily: trimmed, blank =
  * unset, 1-200 chars, a comma-separated CSS family list without control characters or any of " ' ; { } < > and backslash;
- * fontUrl: blank = unset, http(s), <= 2048 chars, no whitespace or " ' < > \). Unknown keys are errors unless
+ * fontUrl: blank = unset, https, <= 2048 chars, no whitespace or " ' < > \). Unknown keys are errors unless
  * `ignoreUnknown` (a style read from a Brand Kit).
  */
 export function validateSlideshowStyle(style: unknown, at = 'style', ignoreUnknown = false): string[] {
@@ -93,15 +106,15 @@ export function validateSlideshowStyle(style: unknown, at = 'style', ignoreUnkno
   if (v('fontFamily') != null) {
     const f = v('fontFamily')
     const t = typeof f === 'string' ? f.trim() : ''
-    if (typeof f !== 'string' || (t !== '' && (t.length > 200 || FAMILY_BAD.test(t) || fontFamilyNames(t).length === 0))) {
+    if (typeof f !== 'string' || (t !== '' && (t.length > MAX_FONT_FAMILY || FAMILY_BAD.test(t) || fontFamilyNames(t).length === 0))) {
       errors.push(`${at}.fontFamily must be a font name or comma-separated list up to 200 characters, without quotes or any of ; { } < > \\`)
     }
   }
   if (v('fontUrl') != null) {
     const url = v('fontUrl')
     const t = typeof url === 'string' ? url.trim() : ''
-    const ok = typeof url === 'string' && (t === '' || (t.length <= 2048 && FONT_URL.test(t)))
-    if (!ok) errors.push(`${at}.fontUrl must be an http(s) URL to a CSS stylesheet (for example a Google Fonts link)`)
+    const ok = typeof url === 'string' && (t === '' || (t.length <= MAX_FONT_URL && FONT_URL.test(t)))
+    if (!ok) errors.push(`${at}.fontUrl must be an https URL to a CSS stylesheet (for example a Google Fonts link)`)
   }
   for (const k of STYLE_COLOR_KEYS) {
     if (v(k) != null && !(typeof v(k) === 'string' && HEX.test(v(k) as string))) errors.push(`${at}.${k} must be a #RRGGBB hex colour, got ${JSON.stringify(v(k))}`)
@@ -113,8 +126,8 @@ export function validateSlideshowStyle(style: unknown, at = 'style', ignoreUnkno
     const n = v(k)
     if (n != null && !(typeof n === 'number' && Number.isInteger(n) && n >= lo && n <= hi)) errors.push(`${at}.${k} must be a whole number of pixels from ${lo} to ${hi}`)
   }
-  int('textSize', 24, 120)
-  int('subSize', 16, 96)
+  int('textSize', STYLE_BOUNDS.textSize.min, STYLE_BOUNDS.textSize.max)
+  int('subSize', STYLE_BOUNDS.subSize.min, STYLE_BOUNDS.subSize.max)
   return errors
 }
 
@@ -175,9 +188,30 @@ export function resolveSlideshowStyle(...layers: Array<SlideshowStyle | null | u
   return mergeSlideshowStyles(...layers)
 }
 
+/**
+ * The one place a slideshow's style layers are resolved: native look < Brand Kit < the spec's own `style` <
+ * inline `style`. The kit layer (`kitLabel` names it in errors) tolerates unknown fields and treats nulls as
+ * "not set"; the inline layer rejects unknown fields. The spec's own `style` is validated with the rest of the
+ * spec (assertValidSlideshowSpec), so it is only merged here. Throws SlideshowStyleError listing every problem.
+ */
+export function resolveStyleLayers(layers: { kit?: unknown; kitLabel?: string; spec?: SlideshowStyle | null; inline?: SlideshowStyle | null }): ResolvedSlideshowStyle {
+  const errors = [
+    ...(layers.inline == null ? [] : validateSlideshowStyle(layers.inline, 'style')),
+    ...(layers.kit == null ? [] : validateSlideshowStyle(layers.kit, layers.kitLabel ?? 'Brand Kit slideshowStyle', true)),
+  ]
+  if (errors.length > 0) throw new SlideshowStyleError(errors)
+  return mergeSlideshowStyles(layers.kit == null ? undefined : kitStyleLayer(layers.kit), layers.spec, layers.inline)
+}
+
 /** A Brand Kit's style: unknown fields dropped, nulls removed (a kit's null means "not set by the kit"). */
 export function kitStyleLayer(style: unknown): SlideshowStyle | undefined {
   const picked = pickKnownStyleFields(style)
   if (!picked) return undefined
   return Object.fromEntries(Object.entries(picked).filter(([, v]) => v !== null)) as SlideshowStyle
+}
+
+/** True when a (kit) style sets at least one known field to a non-null value: otherwise it is "no style". */
+export function hasAnyStyleField(style: unknown): boolean {
+  if (!isObj(style)) return false
+  return STYLE_KEYS.some((k) => style[k] !== null && style[k] !== undefined)
 }

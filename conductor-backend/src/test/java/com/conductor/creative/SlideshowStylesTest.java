@@ -25,6 +25,7 @@ class SlideshowStylesTest {
     @Test
     void badUrlsAreRejected() {
         assertThat(fields(new SlideshowStyle().fontUrl("ftp://x.com/a"))).containsExactly("slideshowStyle.fontUrl");
+        assertThat(fields(new SlideshowStyle().fontUrl("http://fonts.googleapis.com/css"))).containsExactly("slideshowStyle.fontUrl");
         assertThat(fields(new SlideshowStyle().fontUrl("https://x.com/a b"))).containsExactly("slideshowStyle.fontUrl");
         assertThat(fields(new SlideshowStyle().fontUrl("https://x.com/" + "a".repeat(2048)))).containsExactly("slideshowStyle.fontUrl");
     }
@@ -67,5 +68,19 @@ class SlideshowStylesTest {
         assertThat(SlideshowStyles.fromStored(mapper, mapper.nullNode())).isNull();
         SlideshowStyle s = SlideshowStyles.fromStored(mapper, mapper.readTree("{\"accent\":\"#112233\",\"future\":1}"));
         assertThat(s.getAccent()).isEqualTo("#112233");
+    }
+
+    @Test
+    void strokeInkIsAHexColour() {
+        assertThat(fields(new SlideshowStyle().strokeInk("#FFFFFF"))).isEmpty();
+        assertThat(fields(new SlideshowStyle().strokeInk("white"))).containsExactly("slideshowStyle.strokeInk");
+    }
+
+    @Test
+    void aStoredStyleWithNoKnownNonNullFieldIsNoStyle() throws Exception {
+        assertThat(SlideshowStyles.fromStored(mapper, mapper.readTree("{}"))).isNull();
+        assertThat(SlideshowStyles.fromStored(mapper, mapper.readTree("{\"future\":1}"))).isNull();
+        assertThat(SlideshowStyles.fromStored(mapper, mapper.readTree("{\"accent\":null,\"future\":1}"))).isNull();
+        assertThat(SlideshowStyles.fromStored(mapper, mapper.readTree("{\"accent\":\"#112233\"}"))).isNotNull();
     }
 }

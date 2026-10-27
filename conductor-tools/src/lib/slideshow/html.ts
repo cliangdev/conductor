@@ -1,5 +1,5 @@
 import { slideCss } from './css.js'
-import { fontFamilyNames, GENERIC_FAMILIES, resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
+import { fontFamilyNames, isGenericFamily, resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
 import type { SlideRatio, SlideshowSpec, SlideSpec } from './spec.js'
 
 export const FRAME_W = 1080
@@ -28,11 +28,12 @@ const CHECK_SCRIPT = String.raw`
     var FF = M.fontFamily, FQ = M.firstFamily ? '"' + M.firstFamily + '"' : 'TT', faces = [];
     // load the first real family even when no text on this slide uses it, so the check can tell loaded from missing
     try { faces = await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px ' + FQ); })); } catch (e) {}
+    // the bundled TikTok Sans is used by the native text and by a placard's label, so check it whenever any text uses it
+    if (M.needsTT && FQ !== 'TT') { try { await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px TT'); })); } catch (e) {} }
     try { await document.fonts.ready; } catch (e) {}
     await Promise.all(Array.prototype.map.call(document.images, function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); }));
-    if (!FF) {
-      if (!document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
-    } else if (M.firstFamily) {
+    if (M.needsTT && !document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
+    if (FF && M.firstFamily) {
       var loaded = faces.some(function (f) { return f && f.length > 0; });
       var probe = document.createElement('span');
       probe.textContent = 'mmmmmmmmmmlliWW@#';
@@ -232,9 +233,11 @@ export function buildSlideHtml(
   const sl = spec.slides[index]
   if (!sl) throw new Error(`No slide at index ${index}`)
   const lines = (sl.texts ?? []).flatMap((t) => String(t.t).split('\n'))
-  // the family list is parsed once: the first non-generic name drives the font check and load
-  const firstFamily = style.fontFamily ? (fontFamilyNames(style.fontFamily).find((f) => !(GENERIC_FAMILIES as readonly string[]).includes(f.toLowerCase())) ?? null) : null
-  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
+  // the family list is parsed once: the first non-keyword name drives the custom-font check and load (none when
+  // every family is a generic/system keyword); the bundled TikTok Sans is checked whenever any text uses it
+  const firstFamily = style.fontFamily ? (fontFamilyNames(style.fontFamily).find((f) => !isGenericFamily(f)) ?? null) : null
+  const needsTT = !style.fontFamily || spec.slides.some((s) => s.type === 'placard')
+  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily, needsTT, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
     `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style)}</style></head>\n` +

@@ -135,7 +135,7 @@ import {
 const SLIDESHOW_STYLE_SCHEMA = {
   type: 'object',
   description:
-    'Slideshow look, all fields optional: fontFamily (a name or comma list like "Inter, sans-serif"; null = TikTok Sans), fontUrl (http(s) CSS stylesheet such as a Google Fonts link), boxBg, boxInk, darkBg, darkInk, outline, accent (#RRGGBB), defaultText (box|dark|stroke, for text with no style), textSize (24-120 px), subSize (16-96 px).',
+    'Slideshow look, all fields optional: fontFamily (a name or comma list like "Inter, sans-serif"; null = TikTok Sans), fontUrl (https CSS stylesheet such as a Google Fonts link), boxBg, boxInk, darkBg, darkInk, strokeInk (the colour of outlined text and sub text; white when absent), outline, accent (#RRGGBB), defaultText (box|dark|stroke, for text with no style), textSize (24-120 px), subSize (16-96 px).',
   properties: {
     fontFamily: { type: ['string', 'null'] },
     fontUrl: { type: ['string', 'null'] },
@@ -143,6 +143,7 @@ const SLIDESHOW_STYLE_SCHEMA = {
     boxInk: { type: ['string', 'null'] },
     darkBg: { type: ['string', 'null'] },
     darkInk: { type: ['string', 'null'] },
+    strokeInk: { type: ['string', 'null'] },
     outline: { type: ['string', 'null'] },
     accent: { type: ['string', 'null'] },
     defaultText: { type: ['string', 'null'], enum: ['box', 'dark', 'stroke', null] },
@@ -205,8 +206,9 @@ const CREATIVE_FIELD_PROPERTIES = {
     },
   },
   slideStyle: {
-    type: 'object',
-    description: "CAROUSEL only: compose_slideshow's returned style",
+    type: ['object', 'null'],
+    description:
+      "CAROUSEL only: compose_slideshow's returned style. On a saved Creative (update_creative) or a draft over baseCreativeId (preview_creative_draft) the recorded style is kept unless the slides change; changing the slides without a slideStyle clears it; an explicit null (or {}) clears it.",
   },
   slideshow: {
     type: 'object',

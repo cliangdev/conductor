@@ -254,6 +254,33 @@ class CreativeDraftSpecTest {
     }
 
     @Test
+    void draftOverlayKeepsTheBaseSlideStyleWhenTheSlidesAreIdenticalAndClearsItOnReorder() {
+        Creative base = baseCreative();
+        base.setKind(Creative.KIND_CAROUSEL);
+        base.setSlides(objectMapper.valueToTree(Map.of("9x16", List.of("a", "b"))));
+        base.setSlideStyle(objectMapper.valueToTree(Map.of("fontFamily", "Poppins")));
+
+        var same = service.overlayOnBase(base, draftRequest("x").slides(Map.of("9x16", List.of("a", "b"))));
+        assertThat(same.getSlideStyle().getFontFamily()).isEqualTo("Poppins");
+
+        var reordered = service.overlayOnBase(base, draftRequest("x").slides(Map.of("9x16", List.of("b", "a"))));
+        assertThat(reordered.getSlideStyle()).isNull();
+
+        var emptied = service.overlayOnBase(base, draftRequest("x").slideStyle(new com.conductor.generated.v2.model.SlideshowStyle()));
+        assertThat(emptied.getSlideStyle()).isNull();
+    }
+
+    @Test
+    void draftOverlayDoesNotCarryTheBaseSlideStyleToAnotherKind() {
+        Creative base = baseCreative();
+        base.setKind(Creative.KIND_CAROUSEL);
+        base.setSlideStyle(objectMapper.valueToTree(Map.of("fontFamily", "Poppins")));
+
+        var still = service.overlayOnBase(base, draftRequest("x").kind(CreativeKind.STILL));
+        assertThat(still.getSlideStyle()).isNull();
+    }
+
+    @Test
     void aCarouselDraftWithALocalTrackGetsTheFullSlideshowSpec() {
         LocalMediaInfo slide = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1920);
         CreativeDraftSpecRequest request = draftRequest("x")

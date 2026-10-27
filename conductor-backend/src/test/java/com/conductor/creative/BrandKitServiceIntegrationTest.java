@@ -391,6 +391,17 @@ class BrandKitServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aSlugOverSixtyFourCharactersOrWithInvalidCharactersIs422NotA500() {
+        for (String bad : new String[] {"a".repeat(65), "Upper", "with space", "under_score", "emoji-\u2603"}) {
+            assertThatThrownBy(() -> brandKitService.createKit(project.getId(), new CreateBrandKitRequest(bad, "Bad"), admin))
+                    .isInstanceOf(BrandKitValidationException.class)
+                    .satisfies(e -> assertThat(e.getMessage()).contains("slug"));
+        }
+        BrandKit ok = brandKitService.createKit(project.getId(), new CreateBrandKitRequest("a".repeat(64), "Longest"), admin);
+        assertThat(ok.getSlug()).hasSize(64);
+    }
+
+    @Test
     void anExplicitNullSlideshowStyleInJsonArrivesAsAnEmptyStyleAndAbsentStaysNull() throws Exception {
         tools.jackson.databind.json.JsonMapper mapper = tools.jackson.databind.json.JsonMapper.builder().build();
         PatchBrandKitRequest explicitNull = mapper.readValue("{\"slideshowStyle\":null}", PatchBrandKitRequest.class);

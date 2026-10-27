@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { findBrowserFactory, type BrowserFactory } from '../creative-browser.js'
 import { readProvenanceSidecar, writeProvenanceSidecar, type SidecarProvenance } from '../provenance-sidecar.js'
 import { buildSlideHtml, FRAME_H, FRAME_W } from './html.js'
-import { resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
+import { resolveStyleLayers, type ResolvedSlideshowStyle, type SlideshowStyle } from './style.js'
 import { assertValidSlideshowSpec, SLIDE_RATIOS, type SlideRatio, type SlideshowSpec } from './spec.js'
 
 export interface SlideshowCheck {
@@ -21,8 +21,11 @@ export interface ComposeOptions {
   specDir?: string
   /** Tests: supply a browser instead of discovering one. */
   browserFactory?: BrowserFactory
-  /** The style already layered by the caller (kit, inline); default: resolved from the spec's own `style`. */
-  resolvedStyle?: ResolvedSlideshowStyle
+  /** A Brand Kit's slideshowStyle (the layer under the spec's own `style`); `kitLabel` names it in errors. */
+  kitStyle?: unknown
+  kitLabel?: string
+  /** An inline style over the spec's own `style` and the kit's. Resolved and validated once, here. */
+  style?: SlideshowStyle | null
   log?: (message: string) => void
 }
 
@@ -126,8 +129,8 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
   if (ratios.length === 0) throw new Error('ratios must name at least one of 9x16, 4x5')
 
   const specDir = resolve(options.specDir ?? process.cwd())
-  // The caller (compose_slideshow) may have layered a Brand Kit / inline style already; else the spec's own.
-  const style = options.resolvedStyle ?? resolveSlideshowStyle(specInput.style)
+  // native < kit < the spec's own style < inline, resolved and validated once (throws SlideshowStyleError).
+  const style = resolveStyleLayers({ kit: options.kitStyle, kitLabel: options.kitLabel, spec: specInput.style, inline: options.style })
   // spec.json keeps the input `style` as given and records the outcome beside it as `resolvedStyle`; an
   // earlier output's `resolvedStyle` is dropped here, the only place that happens.
   const { resolvedStyle: _ignored, ...input } = specInput as SlideshowSpec & { resolvedStyle?: unknown }

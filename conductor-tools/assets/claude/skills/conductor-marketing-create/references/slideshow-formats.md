@@ -129,8 +129,8 @@ Two separate choices, never conflated:
   Store the answers in `run.json` (`brandKitId`, and `slideshowStyle: {"styleKitId": "<id>" | null,
   "style": {...} | null}`, where a null `styleKitId` is native) and reuse them on resume.
 - **Compose.** Pass `brandKitId` (the style source kit only; a kit with no slideshow style is refused
-  with a clear error: fall back to native or set one with `update_brand_kit`) and/or `style` (`fontFamily` as a name or a comma list such as `Inter, sans-serif`, `fontUrl` for a
-  Google Fonts stylesheet, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `outline`, `accent` as `#RRGGBB`,
+  with a clear error: fall back to native or set one with `update_brand_kit`) and/or `style` (`fontFamily` as a name or a comma list such as `Inter, sans-serif`, `fontUrl` for an https
+  Google Fonts stylesheet, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `strokeInk` (outlined text and sub text, white by default), `outline`, `accent` as `#RRGGBB`,
   `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96). In `style` (and in a
   spec's own `style`) a field you leave out inherits from the layer below; a field set to `null`
   resets that field to the native value (`fontFamily: null` is the bundled TikTok Sans with no
@@ -142,7 +142,9 @@ Two separate choices, never conflated:
   the kit (`brandKitId`), then the spec's `style`, then the inline `style`; re-composing an output
   `spec.json` ignores `resolvedStyle`. Pass it as `slideStyle` on `preview_creative_draft` / `create_creative`
   so every composed slideshow has a style that can later become a kit style
-  (`references/brand-kit-setup.md`, "Make a kit style from slides").
+  (`references/brand-kit-setup.md`, "Make a kit style from slides"). A saved Creative keeps its `slideStyle`
+  unless `update_creative` (or a draft over `baseCreativeId`) changes the slides without sending a
+  `slideStyle`, which clears it; send the new `style` with the new slides, or `slideStyle: null` to clear it.
 
 ## Honesty and brand
 

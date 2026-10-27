@@ -4,6 +4,7 @@ import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/pr
 import { existsSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { Config } from '../config.js'
+import { slugify } from '../../lib/slug.js'
 import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { apiGet, apiPatch, apiPost, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
@@ -161,11 +162,6 @@ function draftsRoot(projectRoot: string): string {
 export function stamp(now: Date): string {
   const p = (n: number, w = 2) => String(n).padStart(w, '0')
   return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
-}
-
-export function slugify(text: string | undefined, max = 40, fallback = 'draft'): string {
-  const slug = (text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '')
-  return slug || fallback
 }
 
 async function readDraftFile(draftDir: string): Promise<DraftFile | undefined> {

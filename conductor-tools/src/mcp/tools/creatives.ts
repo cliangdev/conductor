@@ -2,8 +2,8 @@ import { readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Config } from '../config.js'
-import { SlideshowStyleError, validateSlideshowStyle } from '../../lib/slideshow/style.js'
-import { slugify } from './creative-drafts.js'
+import { hasAnyStyleField, SlideshowStyleError, validateSlideshowStyle } from '../../lib/slideshow/style.js'
+import { brandKitSlug, KIT_SLUG_PATTERN } from '../../lib/slug.js'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
@@ -126,7 +126,7 @@ export async function getBrandKit(params: { kitId?: string }, config: Config): P
     // Small fields only: the caller picks by name, then passes the id as `brandKitId`.
     const others = listed.kits
       .filter((k) => k !== listed.kit)
-      .map((k) => ({ id: k['id'], name: k['name'], configured: k['configured'], hasSlideshowStyle: k['slideshowStyle'] != null }))
+      .map((k) => ({ id: k['id'], name: k['name'], configured: k['configured'], hasSlideshowStyle: hasAnyStyleField(k['slideshowStyle']) }))
     if (others.length > 0) otherKits = others
   }
   const base = otherKits ? { ...kit, otherKits } : kit
@@ -275,8 +275,10 @@ export async function createBrandKit(params: CreateBrandKitParams, config: Confi
   const name = typeof params.name === 'string' ? params.name.trim() : ''
   if (!name) throw new Error('name is required.')
   const explicitSlug = params.slug?.trim()
-  const slug = explicitSlug || slugify(name, 60, '')
-  if (!slug) throw new Error('Could not derive a slug from the name; pass slug (letters, digits, hyphens).')
+  if (explicitSlug && !KIT_SLUG_PATTERN.test(explicitSlug)) {
+    throw new Error(`slug "${explicitSlug}" is not valid: use 1-64 characters, lowercase letters a-z, digits 0-9 and hyphens.`)
+  }
+  const slug = explicitSlug || brandKitSlug(name)
 
   const body: Record<string, unknown> = { slug, name }
   let source: Record<string, unknown> | undefined
@@ -290,7 +292,7 @@ export async function createBrandKit(params: CreateBrandKitParams, config: Confi
     body['slideshowStyle'] = params.slideshowStyle
   }
 
-  // A derived slug that is taken gets -2 ... -9 (like the web app); a slug the caller chose is never changed.
+  // A derived slug that is taken gets -2 ... -9 (the web app tries -2 and -3 only); a slug the caller chose is never changed.
   const candidates = explicitSlug ? [slug] : [slug, ...[2, 3, 4, 5, 6, 7, 8, 9].map((n) => `${slug.slice(0, 58).replace(/-+$/g, '')}-${n}`)]
   let created: Record<string, unknown> | undefined
   for (const candidate of candidates) {
@@ -418,7 +420,7 @@ export interface CreativeFields {
   /** CAROUSEL only: slide pacing and zoom of the slideshow video made when audio.source is track. */
   slideshow?: Record<string, unknown>
   /** CAROUSEL only: the look the slides were composed with (compose_slideshow's `style`), so it can be reused as a kit style. */
-  slideStyle?: Record<string, unknown>
+  slideStyle?: Record<string, unknown> | null
   focalOverride?: Record<string, string>
   headline?: string
   body?: string

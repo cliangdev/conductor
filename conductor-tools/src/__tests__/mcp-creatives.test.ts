@@ -131,12 +131,16 @@ describe('get_brand_kit', () => {
       { id: 'a', name: 'A', isDefault: false, configured: true, tokens: { x: 1 } },
       { id: 'b', name: 'B', isDefault: true, configured: true },
       { id: 'c', name: 'C', isDefault: false, configured: false, slideshowStyle: { accent: '#00ff88' } },
+      { id: 'd', name: 'D', isDefault: false, configured: true, slideshowStyle: {} },
+      { id: 'e', name: 'E', isDefault: false, configured: true, slideshowStyle: { accent: null, future: 1 } },
     ])
     const result = await getBrandKit({}, config)
     expect(result['id']).toBe('b')
     expect(result['otherKits']).toEqual([
       { id: 'a', name: 'A', configured: true, hasSlideshowStyle: false },
       { id: 'c', name: 'C', configured: false, hasSlideshowStyle: true },
+      { id: 'd', name: 'D', configured: true, hasSlideshowStyle: false },
+      { id: 'e', name: 'E', configured: true, hasSlideshowStyle: false },
     ])
     expect(apiGet).toHaveBeenCalledTimes(1)
   })
@@ -1671,6 +1675,25 @@ describe('create_brand_kit', () => {
     mocked(apiPost).mockResolvedValue({ id: 'n' })
     await createBrandKit({ name: `${'a'.repeat(59)} bbb` }, config)
     expect((mocked(apiPost).mock.calls[0]![1] as { slug: string }).slug).toBe('a'.repeat(59))
+  })
+
+  it('derives the same slug as the web app: NFKD, diacritics stripped, "kit" when nothing is left', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'n' })
+    for (const [name, slug] of [['Café Été', 'cafe-ete'], ['  --Zoë & Co.--  ', 'zoe-co'], ['ＡＢＣ 123', 'abc-123'], ['🔥🔥', 'kit']] as const) {
+      mocked(apiPost).mockClear()
+      await createBrandKit({ name }, config)
+      expect((mocked(apiPost).mock.calls[0]![1] as { slug: string }).slug).toBe(slug)
+    }
+  })
+
+  it('validates an explicit slug before calling the API', async () => {
+    for (const bad of ['Upper', 'with space', 'under_score', 'a'.repeat(65), 'café']) {
+      await expect(createBrandKit({ name: 'W', slug: bad }, config)).rejects.toThrow(/slug .* is not valid.*1-64 characters/)
+    }
+    expect(apiPost).not.toHaveBeenCalled()
+    mocked(apiPost).mockResolvedValue({ id: 'n' })
+    await createBrandKit({ name: 'W', slug: ` ${'a-1'.repeat(21)}x ` }, config)
+    expect((mocked(apiPost).mock.calls[0]![1] as { slug: string }).slug).toBe(`${'a-1'.repeat(21)}x`)
   })
 
   it('retries a taken derived slug with -2 ... and gives up after -9', async () => {

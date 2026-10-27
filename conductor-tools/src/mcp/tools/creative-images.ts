@@ -3,7 +3,8 @@ import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { IMAGE_QUALITIES, normalizeAspect, parseSize, type GeneratedImage, type ImageQuality, type PlacementFit } from '../../lib/image-common.js'
 import { generateImages } from '../../lib/image-generation.js'
-import { findProjectRoot, slugify, stamp } from './creative-drafts.js'
+import { findProjectRoot, stamp } from './creative-drafts.js'
+import { slugify } from '../../lib/slug.js'
 
 /**
  * generate_creative_image: makes a photo on this machine (OpenAI Images API, or the person's Codex CLI when they agreed) and returns it
