@@ -289,6 +289,10 @@ public class TikTokClient {
      * than one part — so it goes as a single whole-file chunk, which is exactly what TikTok prescribes
      * for that case. Above the floor the target chunk size is used, grown only far enough to keep the
      * count inside the cap (at the 4 GB ceiling that never binds: 4 GB / 10 MB is 410 chunks).
+     *
+     * <p>A file under two target chunks (20 MB) also goes whole: the floor rule would count it as one
+     * chunk anyway, and under one target chunk (5–10 MB) the declared {@code chunk_size} would exceed
+     * {@code video_size}, which TikTok rejects as "The chunk size is invalid".
      */
     public static ChunkPlan planChunks(long videoSize) {
         if (videoSize <= 0) {
@@ -303,6 +307,13 @@ public class TikTokClient {
         }
         long chunkSize = Math.max(TARGET_CHUNK_BYTES, ceilDiv(videoSize, MAX_CHUNK_COUNT));
         chunkSize = Math.min(Math.max(chunkSize, MIN_CHUNK_BYTES), MAX_CHUNK_BYTES);
+        // Below two chunks' worth TikTok's floor rule counts one chunk anyway. Below one chunk's worth
+        // (5-10 MB) the declared chunk_size would also exceed video_size ("The chunk size is invalid");
+        // from 10 to 20 MB the old plan was valid but is sent whole too, so one rule covers both. The
+        // whole file is one legal chunk (up to 64 MB).
+        if (videoSize < 2 * chunkSize && videoSize <= MAX_CHUNK_BYTES) {
+            return new ChunkPlan(videoSize, videoSize, 1);
+        }
         int totalChunkCount = (int) Math.max(1, videoSize / chunkSize);
         return new ChunkPlan(videoSize, chunkSize, totalChunkCount);
     }
