@@ -163,13 +163,23 @@ function mergeMcpJson(mcpPath: string): void {
   atomicWriteFileSync(mcpPath, JSON.stringify(mcp, null, 2) + '\n')
 }
 
-/** Deletes every LEGACY_PATHS file under targetDir, then prunes the directories that leaves empty
+/** Deletes LEGACY_PATHS files under targetDir, then prunes the directories that leaves empty
  * (e.g. a removed skill's folder and its references/) up to — never including — targetDir. `rmdirSync`
- * refuses a non-empty directory, so anything the user added beside our files is kept. */
-function removeLegacyPaths(targetDir: string): void {
+ * refuses a non-empty directory, so anything the user added beside our files is kept.
+ *
+ * With `recordedHashes` (the background refresh), a legacy file is deleted only when its content still
+ * matches the hash recorded at the last install — the same edit-preserving rule as the files we
+ * overwrite. A file the user edited, or one with no recorded baseline, is left in place. Without it
+ * (an explicit `conductor init`), every legacy file is removed. */
+function removeLegacyPaths(targetDir: string, recordedHashes?: Record<string, string>): void {
   const root = path.resolve(targetDir)
   for (const legacy of LEGACY_PATHS) {
     const file = path.join(root, legacy)
+    if (recordedHashes) {
+      let content: string
+      try { content = fs.readFileSync(file, 'utf8') } catch { continue } // already gone
+      if (recordedHashes[legacy] !== sha256Hex(content)) continue // edited, or not ours to judge
+    }
     try { fs.rmSync(file) } catch { /* already gone */ }
     let dir = path.dirname(file)
     while (dir.startsWith(root + path.sep)) {
@@ -400,7 +410,7 @@ function overwriteUneditedFiles(targetDir: string, assetSrcDir: string, recorded
     // hash out of writtenHashes so the caller keeps the previously recorded one.
   }
 
-  removeLegacyPaths(targetDir)
+  removeLegacyPaths(targetDir, recordedHashes)
 
   return writtenHashes
 }

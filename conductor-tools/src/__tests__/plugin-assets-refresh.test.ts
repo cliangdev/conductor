@@ -96,17 +96,19 @@ describe('refreshInstalledPluginAssets', () => {
 
   it('removes the 0.41.0 publisher, analyst and marketing-report paths on refresh and installs the marketing router and skills', () => {
     installPluginAssets(globalDir, assetSrcDir)
-    writePluginVersionMarker(globalDir, '0.41.0', computeInstalledFileHashes(globalDir))
     const released041 = [
       'commands/conductor/marketing-report.md',
       'skills/conductor-publisher/SKILL.md',
       'skills/conductor-marketing-analyst/SKILL.md',
       'skills/conductor-marketing-analyst/references/html-layout.md',
     ]
+    const hashes = computeInstalledFileHashes(globalDir)
     for (const f of released041) {
       fs.mkdirSync(path.dirname(path.join(globalDir, f)), { recursive: true })
       fs.writeFileSync(path.join(globalDir, f), 'old', 'utf8')
+      hashes[f] = sha256('old') // recorded by the 0.41.0 install that shipped them
     }
+    writePluginVersionMarker(globalDir, '0.41.0', hashes)
     fs.rmSync(path.join(globalDir, 'commands', 'conductor', 'marketing.md'))
 
     refreshInstalledPluginAssets(opts('9.9.9'))
@@ -118,6 +120,23 @@ describe('refreshInstalledPluginAssets', () => {
     for (const skill of ['create', 'publish', 'report']) {
       expect(fs.existsSync(path.join(globalDir, 'skills', `conductor-marketing-${skill}`, 'SKILL.md'))).toBe(true)
     }
+  })
+
+  it('keeps a legacy file the user edited, and one with no recorded hash, instead of deleting it on refresh', () => {
+    installPluginAssets(globalDir, assetSrcDir)
+    const edited = 'skills/conductor-publisher/SKILL.md'
+    const unrecorded = 'skills/conductor-marketing-analyst/SKILL.md'
+    const hashes = computeInstalledFileHashes(globalDir)
+    for (const f of [edited, unrecorded]) fs.mkdirSync(path.dirname(path.join(globalDir, f)), { recursive: true })
+    fs.writeFileSync(path.join(globalDir, edited), 'my customised publisher', 'utf8')
+    hashes[edited] = sha256('the shipped publisher')
+    fs.writeFileSync(path.join(globalDir, unrecorded), 'something of mine', 'utf8')
+    writePluginVersionMarker(globalDir, '0.41.0', hashes)
+
+    refreshInstalledPluginAssets(opts('9.9.9'))
+
+    expect(fs.readFileSync(path.join(globalDir, edited), 'utf8')).toBe('my customised publisher')
+    expect(fs.readFileSync(path.join(globalDir, unrecorded), 'utf8')).toBe('something of mine')
   })
 
   it('preserves a file the user edited, updates one that matches its recorded hash, and restores one that went missing', () => {
