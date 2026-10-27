@@ -324,7 +324,7 @@ export function RendersPanel({
             webRender ? undefined : (
             <div className="w-full max-w-sm space-y-2 text-left">
               <p className="text-xs text-muted-foreground">
-                In Claude Code: <code className="text-foreground">/conductor:creative</code>.
+                In Claude Code: <code className="text-foreground">/conductor:marketing-post</code>.
               </p>
               <p className="text-xs text-muted-foreground">
                 In Claude Desktop (or Claude Code): ask, e.g. copy this prompt, or the CLI command:
@@ -468,7 +468,7 @@ export function RendersPanel({
           <summary className="cursor-pointer select-none">Render with Claude Code or the CLI instead</summary>
           <div className="mt-2 w-full max-w-sm space-y-2">
             <p>
-              In Claude Code: <code className="text-foreground">/conductor:creative</code>, or copy this prompt
+              In Claude Code: <code className="text-foreground">/conductor:marketing-post</code>, or copy this prompt
               or the CLI command:
             </p>
             <CopyableCode text={prompt} label="Copy render prompt" />

@@ -166,7 +166,8 @@ describe('plugin assets integrity', () => {
       byName.set(m[2]!, [...(byName.get(m[2]!) ?? []), f])
     }
     const shared = [...byName.entries()].filter(([, files]) => files.length > 1)
-    expect(shared.length).toBeGreaterThan(0)
+    // Currently none: each reference lives once, in conductor-marketing-post. The check stays so a
+    // future second copy can't drift.
     const drifted: string[] = []
     for (const [name, files] of shared) {
       const first = fs.readFileSync(path.join(assetDir, files[0]!))

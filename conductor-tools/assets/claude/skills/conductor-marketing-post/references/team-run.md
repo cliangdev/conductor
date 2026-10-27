@@ -1,15 +1,9 @@
----
-name: conductor-content-studio
-description: Runs a small team of subagents (strategist, three ideators, creative director, scriptwriter, art director) that brainstorm competing short-form social post ideas, pick one with a bias-resistant judging method, write the script and visual direction, run pre-publish checks (disclosure, AI label, music, claims, third-party material, accessibility), and render a local draft with a publish pack the publisher later pre-fills from. The person approves at the preview; only then is the Creative uploaded to Conductor. Ideas are either RENDER (a native slideshow for organic posts, or a still, carousel, story sequence or motion text that Conductor can render) or FILM (needs real filming, so the output is a shoot-ready script). A run ends at a committed Creative or a shoot script and never creates a Post. Use when asked to come up with, choose and make a short-form post (TikTok, Reels, Shorts, Facebook) from a goal rather than from a given headline, or via /conductor:content. For a headline or photo already chosen, use conductor-creative instead.
-user-invocable: true
-allowed-tools: mcp__conductor__*, Agent, AskUserQuestion, Skill, Read, Write, Glob, Grep, WebFetch
----
+# Team mode: from a goal to a committed Creative
 
-# Conductor Content Studio
-
-Takes a request ("a post about X for Y") to either a committed Creative or a shoot-ready script. The
-team chooses the idea itself; the person is asked once, at the final draft preview. You are the
-orchestrator and run in the main session. Subagents do the thinking and writing; you do every
+Read when the person gives a goal ("a post about X for Y") rather than a headline, photo or clip. The
+shared rules in `SKILL.md` apply. Takes the request to either a committed Creative or a shoot-ready
+script. The team chooses the idea itself; the person is asked once, at the final draft preview. You
+are the orchestrator and run in the main session. Subagents do the thinking and writing; you do every
 Conductor call and every file merge.
 
 ## Rules that shape the design
@@ -107,7 +101,7 @@ template exactly; <any stage-specific rule>
 Return: at most 150 words plus the output path.
 ```
 
-Resolve the reference files once: Glob for `**/conductor-content-studio/references/rubric.md` under
+Resolve the reference files once: Glob for `**/conductor-marketing-post/references/rubric.md` under
 `.claude/skills/` in this project, then under `~/.claude/skills/`. Use that folder for every
 `references/` path below. A subagent that returns more than 150 words or leaves its file unwritten
 has failed the stage: retry once with a one-line reminder, then tell the person.
@@ -161,14 +155,14 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 
 ### S1 — Strategist -> `brief.md`
 
-`Agent(subagent_type: "conductor-content-strategist")` with the seven context files (including `context/banned.md`, whose every entry goes into the brief's must-avoid), `request.md`
+`Agent(subagent_type: "conductor-marketing-strategist")` with the seven context files (including `context/banned.md`, whose every entry goes into the brief's must-avoid), `request.md`
 and `references/capabilities.md` (so the brief states rendering constraints correctly: motion text
 over a photo is renderable and needs no filming).
 
 ### S2 — Ideators, in parallel -> `ideas/angle-<n>.md`
 
 Three `Agent` calls in ONE message so they run in parallel, `subagent_type:
-"conductor-content-ideator"`, with these angles and no knowledge of each other:
+"conductor-marketing-ideator"`, with these angles and no knowledge of each other:
 
 1. story/emotion  2. utility/education  3. trend/humor (the only one allowed web search)
 
@@ -189,7 +183,7 @@ Build one pool from all the angle files:
 
 ### S3a — Creative director, text round -> `judging/scores.md`
 
-`Agent(subagent_type: "conductor-content-creative-director")`, mode `text-round`. Inputs:
+`Agent(subagent_type: "conductor-marketing-creative-director")`, mode `text-round`. Inputs:
 `brief.md`, `ideas/pool.md`, `references/rubric.md`. It scores every idea independently, reasoning
 before each score, and names the top 3. Store the finalists in `run.json`.
 
@@ -234,7 +228,7 @@ which idea to take; show the decision at the gate.
 ### S4 — Scriptwriter -> `script.md`
 
 First copy the winning idea's block from `ideas/pool.md` to `ideas/winner.md`. Then
-`Agent(subagent_type: "conductor-content-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md` and
+`Agent(subagent_type: "conductor-marketing-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md` and
 `references/publish-pack-template.md`. Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
 caption per platform whose call to action names the app so it can be searched, hashtags, a pinned
 comment and 2 to 3 alternate hooks with a hookType each.
@@ -254,7 +248,7 @@ through `generate_creative_image` and the realism check first, as below. Every p
 through the resolution gate below. The rest of this stage is
 the STILL/MOTION path.
 
-`Agent(subagent_type: "conductor-content-art-director")` with `script.md`, `context/media.json`,
+`Agent(subagent_type: "conductor-marketing-art-director")` with `script.md`, `context/media.json`,
 `context/brand-kit.json`, `context/banned.md`, `references/shotlist-template.md`,
 `references/platform-specs.md`, `references/realism-check.md` and
 `references/publish-pack-template.md`. Besides the spec it writes the Publish assets section of
@@ -338,7 +332,7 @@ any placement is fixed now, not shown.
    `audio.source: "track"` previews as its slideshow MP4 too (`slideshowVideoPath`), so give the
    person that path to watch along with the sheet, and put the track's licence in the pack's music
    line (`references/compliance-checklist.md` section 3).
-2. Eye-check the image. Load the `conductor-creative` skill with `Skill(skill: "conductor-creative")` and
+2. Eye-check the image. Read `references/direct.md` (same skill) and
    apply its review guidance (step 7 and the silent-failures list), scoring the draft with
    `references/design-critique.md` (the slideshow criteria for a slideshow, the STILL criteria
    otherwise; any criterion below 3 is fixed before anyone sees it). For a STILL: does the headline read at a
@@ -380,7 +374,7 @@ any placement is fixed now, not shown.
 ### FILM winner
 
 1. After S4, have the art director write the shoot version: `Agent(subagent_type:
-   "conductor-content-art-director")` with `script.md`, `context/media.json`, `context/brand-kit.json`
+   "conductor-marketing-art-director")` with `script.md`, `context/media.json`, `context/brand-kit.json`
    and `references/shotlist-template.md`, output `shoot/shoot-script.md`: script, shot list, capture
    settings (9:16, 30 fps, sound on), B-roll, safe zones, and the on-screen text and captions ready to
    paste. It also writes the Publish assets section there. It writes no `creative-spec.json` here.
@@ -403,11 +397,10 @@ Keep it short:
   alternate hooks); say the publisher will pre-fill the Post from `publish-pack.json`, and that the
   pinned comment, the link in bio and the Stories repost with a link sticker are manual steps;
 - next steps:
-  - make the Post with `/conductor:creative` or the `conductor-publisher` skill (the Creative is
+  - make the Post with the `conductor-publisher` skill (the Creative is
     not on a Post yet, because a run never creates one);
   - to test a runner-up's hook, cut it as a lettered variant of the Creative with `variantOf`;
-  - for `FILM`: film it, upload the clip, then run `/conductor:creative` and pick "Video from a
-    clip I have".
+  - for `FILM`: film it, upload the clip, then run `/conductor:marketing-post` and pick a clip I have.
 
 ## Failure handling
 
@@ -421,6 +414,6 @@ Keep it short:
 
 ## Related
 
-- `conductor-creative`: the single-Creative skill whose checklist S6 uses.
+- `references/direct.md`: the single-Creative flow whose checklist S6 uses.
 - `references/slideshow-formats.md`: the slideshow spec, archetypes and text rules.
 - `conductor-publisher`: takes the committed Creative onto a Post, pre-filled from `publish-pack.json`.

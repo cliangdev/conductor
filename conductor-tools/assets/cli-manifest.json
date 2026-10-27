@@ -174,12 +174,8 @@
         "description": "Design and create a Conductor workflow \u2014 YAML automation or statechart lifecycle \u2014 via guided discovery and MCP creation."
       },
       {
-        "name": "conductor:creative",
-        "description": "One entry point for creative work \u2014 checks the workspace brand (offers to set it up if unconfigured), asks what to make (static ad, short video, an existing clip), then hands off to the conductor-creative skill through draft, preview, approval, commit and attach."
-      },
-      {
-        "name": "conductor:content",
-        "description": "Run a content team: agents brainstorm competing short-form post ideas, pick one with a bias-resistant judge, write the script and direction, and render a local draft. You approve at the preview; only then is the Creative uploaded. Never creates a Post."
+        "name": "conductor:marketing-post",
+        "description": "Make the artwork for a social post. Give it a headline, photo or clip and it renders a draft for your approval, or give it a goal and a team of agents comes up with, judges and makes the post. Nothing is saved until you approve the preview; never creates a Post."
       }
     ],
     "agents": [
@@ -189,53 +185,41 @@
       },
       {
         "name": "conductor-coder",
-        "description": "Implements one task test-first. Spawned in parallel by conductor:implement with the conductor-coder skill preloaded."
+        "description": "Implements one task test-first: detects the stack, writes tests for the automated criteria, implements until they pass, and commits with the task reference. Spawned in parallel by conductor:implement."
       },
       {
-        "name": "conductor-content-strategist",
-        "description": "Writes the content brief (objective, audience tension, must-say/avoid, assets, what has worked) from a workspace context snapshot. Stage of conductor-content-studio."
+        "name": "conductor-marketing-strategist",
+        "description": "Writes the content brief (objective, audience tension, must-say/avoid, assets, what has worked) from a workspace context snapshot. Stage of conductor-marketing-post (team mode)."
       },
       {
-        "name": "conductor-content-ideator",
-        "description": "Brainstorms distinct short-form post ideas from one assigned angle, tagging each RENDER or FILM. Three run in parallel inside conductor-content-studio."
+        "name": "conductor-marketing-ideator",
+        "description": "Brainstorms distinct short-form post ideas from one assigned angle, tagging each RENDER or FILM. Three run in parallel inside conductor-marketing-post (team mode)."
       },
       {
-        "name": "conductor-content-creative-director",
-        "description": "Judges ideas with a fixed rubric: scores anonymized ideas, compares finalists pairwise from rendered drafts, argues against its own leader. Stage of conductor-content-studio."
+        "name": "conductor-marketing-creative-director",
+        "description": "Judges ideas with a fixed rubric: scores anonymized ideas, compares finalists pairwise from rendered drafts, argues against its own leader. Stage of conductor-marketing-post (team mode)."
       },
       {
-        "name": "conductor-content-scriptwriter",
-        "description": "Writes the winning idea's script: hook, timed beats, payoff, CTA and captions per platform. Stage of conductor-content-studio."
+        "name": "conductor-marketing-scriptwriter",
+        "description": "Writes the winning idea's script: hook, timed beats, payoff, CTA and captions per platform. Stage of conductor-marketing-post (team mode)."
       },
       {
-        "name": "conductor-content-art-director",
-        "description": "Writes visual direction and the creative-spec.json for the draft renderer (or a shoot script for a filming idea). Stage of conductor-content-studio."
+        "name": "conductor-marketing-art-director",
+        "description": "Writes visual direction and the creative-spec.json for the draft renderer (or a shoot script for a filming idea). Stage of conductor-marketing-post (team mode)."
       }
     ],
     "skills": [
       {
-        "name": "conductor-coder",
-        "description": "Conductor-native coding agent. Implements tasks TDD-style: writes tests first, implements until passing, commits with task ref."
-      },
-      {
-        "name": "conductor-ux-ui-design",
-        "description": "Expert UX/UI design guidance for creating simple, user-focused interfaces. Applies human-centered design principles."
+        "name": "conductor-marketing-post",
+        "description": "Makes the artwork for a social post. Direct mode: from a headline, photo, clip or finished images, sets up the Brand Kit if unconfigured, previews a draft locally and shows it for approval before anything is saved, then commits it. Team mode: from a goal, a team of agents brainstorms, judges, scripts and directs a post, runs pre-publish checks and renders a draft with a publish pack. Never creates a Post."
       },
       {
         "name": "conductor-publisher",
         "description": "Schedules and tracks a Post through the publishing pipeline: gathers copy, destinations and timing, checks content, creates it with create_post, reports the confirmation table, follows it through review and publishing."
       },
       {
-        "name": "conductor-creative",
-        "description": "Makes a Creative end to end, static or short video: sets up the Brand Kit if unconfigured, reads it and its Knowledge page, picks media and an angle, previews a draft locally and shows it for approval before anything is saved, commits it, fixes what's wrong, then hands it to conductor-publisher."
-      },
-      {
         "name": "conductor-marketing-analyst",
         "description": "Method for the marketing report: fetch the report payload, research and record missing or stale benchmarks, rank next actions by users lost, and write only what the numbers and cited sources support."
-      },
-      {
-        "name": "conductor-content-studio",
-        "description": "Orchestrates the content team: context snapshot, parallel ideators, anonymized judging, finalist drafts, script and direction, then a local draft preview you approve before anything is uploaded. Ends at a committed Creative or a shoot script; never creates a Post."
       }
     ]
   },

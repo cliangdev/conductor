@@ -1,4 +1,3 @@
-<!-- Keep identical to the copy in the other creative skill (conductor-creative / conductor-content-studio references/slideshow-formats.md). Skills install independently and cannot reference each other. -->
 # Slideshow formats
 
 For organic posts: a native-looking photo slideshow (TikTok photo post, Instagram carousel) that

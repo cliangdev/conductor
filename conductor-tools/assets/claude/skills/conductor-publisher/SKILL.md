@@ -18,7 +18,7 @@ own lifecycle that publishes somewhere else. Read the rules below as rules about
 the platform names as examples.
 
 If the destination needs artwork that does not exist yet — a photo turned into on-brand ad
-creative, not just an attached file — make it first with the `conductor-creative` skill, then come
+creative, not just an attached file — make it first with the `conductor-marketing-post` skill (`/conductor:marketing-post`), then come
 back here with the rendered frames to attach and schedule.
 
 ## Step 1 — Gather three things, and ask rather than guess
@@ -39,7 +39,7 @@ pass `{mediaId}` as a `create_post` media item (or `upload_asset({issueId, media
 ### A publish pack, if one exists
 
 Some earlier steps hand over a publish pack with the content: per-destination copy and options, plus
-a pinned comment and notes. The content team (`conductor-content-studio`) writes one as
+a pinned comment and notes. The marketing-post team mode (`conductor-marketing-post`) writes one as
 `.conductor/content-runs/<run>/publish-pack.json` (and a readable `publish-pack.md`); any other
 producer can leave the same shape. When the content is a Creative, look for
 `.conductor/content-runs/*/publish-pack.json` whose `creativeId` matches it, or use the one the

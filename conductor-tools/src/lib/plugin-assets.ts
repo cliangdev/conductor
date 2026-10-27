@@ -13,42 +13,35 @@ const PLUGIN_FILES = [
   'commands/conductor/implement.md',
   'commands/conductor/fix.md',
   'commands/conductor/workflow.md',
-  'commands/conductor/creative.md',
-  'commands/conductor/content.md',
+  'commands/conductor/marketing-post.md',
   'commands/conductor/marketing-report.md',
   'agents/conductor-researcher.md',
   'agents/conductor-coder.md',
-  'agents/conductor-content-strategist.md',
-  'agents/conductor-content-ideator.md',
-  'agents/conductor-content-creative-director.md',
-  'agents/conductor-content-scriptwriter.md',
-  'agents/conductor-content-art-director.md',
-  'skills/conductor-ux-ui-design/SKILL.md',
-  'skills/conductor-ux-ui-design/references/design-tokens.md',
-  'skills/conductor-coder/SKILL.md',
+  'agents/conductor-marketing-art-director.md',
+  'agents/conductor-marketing-creative-director.md',
+  'agents/conductor-marketing-ideator.md',
+  'agents/conductor-marketing-scriptwriter.md',
+  'agents/conductor-marketing-strategist.md',
   'skills/conductor-publisher/SKILL.md',
-  'skills/conductor-creative/SKILL.md',
-  'skills/conductor-creative/references/brand-kit-setup.md',
-  'skills/conductor-creative/references/realism-check.md',
-  'skills/conductor-creative/references/hooks.md',
-  'skills/conductor-creative/references/layout-guide.md',
-  'skills/conductor-creative/references/slideshow-formats.md',
-  'skills/conductor-creative/references/design-critique.md',
   'skills/conductor-marketing-analyst/SKILL.md',
   'skills/conductor-marketing-analyst/references/html-layout.md',
-  'skills/conductor-content-studio/SKILL.md',
-  'skills/conductor-content-studio/references/rubric.md',
-  'skills/conductor-content-studio/references/capabilities.md',
-  'skills/conductor-content-studio/references/realism-check.md',
-  'skills/conductor-content-studio/references/layout-guide.md',
-  'skills/conductor-content-studio/references/slideshow-formats.md',
-  'skills/conductor-content-studio/references/design-critique.md',
-  'skills/conductor-content-studio/references/platform-specs.md',
-  'skills/conductor-content-studio/references/idea-template.md',
-  'skills/conductor-content-studio/references/script-template.md',
-  'skills/conductor-content-studio/references/shotlist-template.md',
-  'skills/conductor-content-studio/references/compliance-checklist.md',
-  'skills/conductor-content-studio/references/publish-pack-template.md',
+  'skills/conductor-marketing-post/SKILL.md',
+  'skills/conductor-marketing-post/references/brand-kit-setup.md',
+  'skills/conductor-marketing-post/references/capabilities.md',
+  'skills/conductor-marketing-post/references/compliance-checklist.md',
+  'skills/conductor-marketing-post/references/design-critique.md',
+  'skills/conductor-marketing-post/references/direct.md',
+  'skills/conductor-marketing-post/references/hooks.md',
+  'skills/conductor-marketing-post/references/idea-template.md',
+  'skills/conductor-marketing-post/references/layout-guide.md',
+  'skills/conductor-marketing-post/references/platform-specs.md',
+  'skills/conductor-marketing-post/references/publish-pack-template.md',
+  'skills/conductor-marketing-post/references/realism-check.md',
+  'skills/conductor-marketing-post/references/rubric.md',
+  'skills/conductor-marketing-post/references/script-template.md',
+  'skills/conductor-marketing-post/references/shotlist-template.md',
+  'skills/conductor-marketing-post/references/slideshow-formats.md',
+  'skills/conductor-marketing-post/references/team-run.md',
 ]
 
 // Paths removed in previous versions — deleted on `conductor init` (and a refresh) to clean up stale installs.
@@ -56,6 +49,36 @@ const LEGACY_PATHS = [
   'agents/researcher.md',
   'skills/ux-ui-design/SKILL.md',
   'skills/ux-ui-design/references/design-tokens.md',
+  'agents/conductor-content-art-director.md',
+  'agents/conductor-content-creative-director.md',
+  'agents/conductor-content-ideator.md',
+  'agents/conductor-content-scriptwriter.md',
+  'agents/conductor-content-strategist.md',
+  'commands/conductor/content.md',
+  'commands/conductor/creative.md',
+  'skills/conductor-coder/SKILL.md',
+  'skills/conductor-content-studio/SKILL.md',
+  'skills/conductor-content-studio/references/capabilities.md',
+  'skills/conductor-content-studio/references/compliance-checklist.md',
+  'skills/conductor-content-studio/references/design-critique.md',
+  'skills/conductor-content-studio/references/idea-template.md',
+  'skills/conductor-content-studio/references/layout-guide.md',
+  'skills/conductor-content-studio/references/platform-specs.md',
+  'skills/conductor-content-studio/references/publish-pack-template.md',
+  'skills/conductor-content-studio/references/realism-check.md',
+  'skills/conductor-content-studio/references/rubric.md',
+  'skills/conductor-content-studio/references/script-template.md',
+  'skills/conductor-content-studio/references/shotlist-template.md',
+  'skills/conductor-content-studio/references/slideshow-formats.md',
+  'skills/conductor-creative/SKILL.md',
+  'skills/conductor-creative/references/brand-kit-setup.md',
+  'skills/conductor-creative/references/design-critique.md',
+  'skills/conductor-creative/references/hooks.md',
+  'skills/conductor-creative/references/layout-guide.md',
+  'skills/conductor-creative/references/realism-check.md',
+  'skills/conductor-creative/references/slideshow-formats.md',
+  'skills/conductor-ux-ui-design/SKILL.md',
+  'skills/conductor-ux-ui-design/references/design-tokens.md',
 ]
 
 const CONDUCTOR_PERMISSIONS = ['mcp__conductor__*']
@@ -137,6 +160,22 @@ function mergeMcpJson(mcpPath: string): void {
   atomicWriteFileSync(mcpPath, JSON.stringify(mcp, null, 2) + '\n')
 }
 
+/** Deletes every LEGACY_PATHS file under targetDir, then prunes the directories that leaves empty
+ * (e.g. a removed skill's folder and its references/) up to — never including — targetDir. `rmdirSync`
+ * refuses a non-empty directory, so anything the user added beside our files is kept. */
+function removeLegacyPaths(targetDir: string): void {
+  const root = path.resolve(targetDir)
+  for (const legacy of LEGACY_PATHS) {
+    const file = path.join(root, legacy)
+    try { fs.rmSync(file) } catch { /* already gone */ }
+    let dir = path.dirname(file)
+    while (dir.startsWith(root + path.sep)) {
+      try { fs.rmdirSync(dir) } catch { break } // not empty, or already gone
+      dir = path.dirname(dir)
+    }
+  }
+}
+
 export type InstallStatus = 'installed' | 'updated' | 'current'
 
 /** Writes every PLUGIN_FILES entry into targetDir (unconditionally overwriting anything already
@@ -173,9 +212,7 @@ function writePluginFiles(targetDir: string, assetSrcDir: string): InstallStatus
     }
   }
 
-  for (const legacy of LEGACY_PATHS) {
-    try { fs.rmSync(path.join(targetDir, legacy)) } catch { /* already gone */ }
-  }
+  removeLegacyPaths(targetDir)
 
   if (anyNew) return 'installed'
   if (anyUpdated) return 'updated'
@@ -360,9 +397,7 @@ function overwriteUneditedFiles(targetDir: string, assetSrcDir: string, recorded
     // hash out of writtenHashes so the caller keeps the previously recorded one.
   }
 
-  for (const legacy of LEGACY_PATHS) {
-    try { fs.rmSync(path.join(targetDir, legacy)) } catch { /* already gone */ }
-  }
+  removeLegacyPaths(targetDir)
 
   return writtenHashes
 }

@@ -1,4 +1,4 @@
-<!-- Used by conductor-creative only. -->
+<!-- Used by the Direct mode of conductor-marketing-post. -->
 # Hooks: writing the headline
 
 A hook is the line that makes a thumb stop. A tagline says what the brand is; a hook names a moment,

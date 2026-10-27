@@ -432,6 +432,9 @@ describe('installPluginAssets', () => {
     mockFs.rmSync.mockImplementation((...args) =>
       (realFs.rmSync as (...a: unknown[]) => void)(...args)
     )
+    mockFs.rmdirSync.mockImplementation((...args) =>
+      (realFs.rmdirSync as (...a: unknown[]) => void)(...args)
+    )
     mockFs.existsSync.mockImplementation((...args) =>
       (realFs.existsSync as (...a: unknown[]) => boolean)(...args)
     )
@@ -448,8 +451,47 @@ describe('installPluginAssets', () => {
     expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'prd.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'implement.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'agents', 'conductor-researcher.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design', 'SKILL.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design', 'references', 'design-tokens.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'SKILL.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'references', 'direct.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'references', 'team-run.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'marketing-post.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'agents', 'conductor-marketing-strategist.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design'))).toBe(false)
+  })
+
+  it('removes the old creative/content/coder/ux-ui assets and their empty directories', async () => {
+    const { installPluginAssets } = await import('../lib/plugin-assets.js')
+    const oldFiles = [
+      'commands/conductor/creative.md',
+      'commands/conductor/content.md',
+      'agents/conductor-content-strategist.md',
+      'agents/conductor-content-art-director.md',
+      'skills/conductor-coder/SKILL.md',
+      'skills/conductor-creative/SKILL.md',
+      'skills/conductor-creative/references/hooks.md',
+      'skills/conductor-content-studio/SKILL.md',
+      'skills/conductor-content-studio/references/rubric.md',
+      'skills/conductor-ux-ui-design/SKILL.md',
+      'skills/conductor-ux-ui-design/references/design-tokens.md',
+    ]
+    for (const f of oldFiles) {
+      realFs.mkdirSync(path.dirname(path.join(tmpDir, f)), { recursive: true })
+      realFs.writeFileSync(path.join(tmpDir, f), 'old', 'utf8')
+    }
+    // A user's own file beside ours must keep its directory alive.
+    realFs.writeFileSync(path.join(tmpDir, 'skills', 'conductor-creative', 'references', 'mine.md'), 'keep', 'utf8')
+
+    installPluginAssets(tmpDir, assetSrcDir)
+
+    for (const f of oldFiles) {
+      expect(realFs.existsSync(path.join(tmpDir, f))).toBe(false)
+    }
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-coder'))).toBe(false)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-content-studio'))).toBe(false)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design'))).toBe(false)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-creative', 'references', 'mine.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-marketing-post', 'SKILL.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'marketing-post.md'))).toBe(true)
   })
 
   it('returns current when all files already match', async () => {

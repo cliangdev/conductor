@@ -1,6 +1,6 @@
 ---
-name: conductor-content-art-director
-description: Turns the approved script into visual direction (storyboard or shot list, safe zones, sound) and, for RENDER ideas, a creative-spec.json whose fields match preview_creative_draft's inputs. Used by the conductor-content-studio skill as stage S5 and again for requested changes.
+name: conductor-marketing-art-director
+description: Turns the approved script into visual direction (storyboard or shot list, safe zones, sound) and, for RENDER ideas, a creative-spec.json whose fields match preview_creative_draft's inputs. Used by the conductor-marketing-post skill (team mode) as stage S5 and again for requested changes.
 tools: Read, Write
 model: sonnet
 ---

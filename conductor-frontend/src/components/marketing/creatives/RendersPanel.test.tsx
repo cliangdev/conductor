@@ -99,11 +99,11 @@ describe('RendersPanel', () => {
     expect(screen.getByText('conductor creative render 12a')).toBeInTheDocument()
   })
 
-  it('hints at /conductor:creative and updating the CLI when render_creative is not available', async () => {
+  it('hints at /conductor:marketing-post and updating the CLI when render_creative is not available', async () => {
     ;(apiGet as Mock).mockResolvedValue([])
     setup()
     await waitFor(() => expect(screen.getByText('No renders yet')).toBeInTheDocument())
-    expect(screen.getByText('/conductor:creative')).toBeInTheDocument()
+    expect(screen.getByText('/conductor:marketing-post')).toBeInTheDocument()
     expect(screen.getByText('npm i -g @cliangdev/conductor@latest')).toBeInTheDocument()
   })
 
