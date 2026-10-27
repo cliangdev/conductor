@@ -159,6 +159,12 @@
             <artifactId>google-cloud-storage</artifactId>
         </dependency>
 
+        <!-- Google OIDC ID-token verification (SchedulerTokenVerifier); managed by the GCP BOM -->
+        <dependency>
+            <groupId>com.google.auth</groupId>
+            <artifactId>google-auth-library-oauth2-http</artifactId>
+        </dependency>
+
         <!-- GCP Cloud KMS -->
         <dependency>
             <groupId>com.google.cloud</groupId>

@@ -1486,6 +1486,24 @@ page format, and pipeline these workflows are part of.
 
 ---
 
+## Timed jobs
+
+Every periodic backend task (workflow schedule poll, publish polling, connector feeds, knowledge ingest, retries, memory maintenance, ...) is registered by stable name in `ScheduledJobRegistry`. `ScheduledJobRunner.run(name)` is the single way a job runs: bounded concurrency, then a database lease (`ScheduledJobLeaseRepository`) so a job never overlaps itself across instances or triggers, then the body.
+
+`conductor.scheduling.mode` picks who fires them:
+
+- `in-app` (default, production today): this instance's own timers call the runner.
+- `external`: no in-app timers; Cloud Scheduler calls the endpoint below.
+
+**`POST /internal/v1/scheduler/jobs/{job}`** works in both modes (a manual trigger is safe; the lease prevents double runs). The job runs inside the request, which is what keeps Cloud Run's CPU allocated. Responses: `200 {job, outcome, durationMs}` (`outcome` is `RAN`, `SKIPPED_LEASED`, `SKIPPED_RECENT` or `DISABLED`), `401` bad or missing token, `404` unknown job, `500` the job threw (Cloud Scheduler retries).
+
+Auth is a Google-signed OIDC ID token from Cloud Scheduler's service account, not a run token (those are minted per run or per target and cannot identify a standing cron caller). `SchedulerTokenVerifier` checks signature, issuer (`accounts.google.com`), expiry, audience, and `email` == invoker with `email_verified`. Unset config rejects every call.
+
+| Env var | Property | Meaning |
+| --- | --- | --- |
+| `CONDUCTOR_SCHEDULER_OIDC_AUDIENCE` | `conductor.scheduling.oidc-audience` | Audience set on the Scheduler job's OIDC token (typically the trigger URL) |
+| `CONDUCTOR_SCHEDULER_INVOKER_EMAIL` | `conductor.scheduling.invoker-email` | Service account Cloud Scheduler runs as |
+
 ## Self-hosted setup
 
 ### Prerequisites
