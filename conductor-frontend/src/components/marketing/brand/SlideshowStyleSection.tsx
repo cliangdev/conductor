@@ -121,10 +121,9 @@ const STYLE_DEBOUNCE_MS = 150
 function useDebouncedStyle(style: SlideshowStyle): SlideshowStyle {
   const [debounced, setDebounced] = useState(style)
   const key = JSON.stringify(style)
-  const latest = useRef(style)
-  latest.current = style
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(latest.current), STYLE_DEBOUNCE_MS)
+    // The key is the style itself, so the effect reads it back rather than a ref written during render.
+    const t = setTimeout(() => setDebounced(JSON.parse(key) as SlideshowStyle), STYLE_DEBOUNCE_MS)
     return () => clearTimeout(t)
   }, [key])
   return debounced
