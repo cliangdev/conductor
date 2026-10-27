@@ -12,7 +12,7 @@ Idea: <id>   Source decision: decision.md
 
 ## Hook (0-3s)
 - Spoken: <line, max 12 words, or "none">
-- On screen: <text, max 12 words>
+- On screen: <text, max 12 words; on the artwork about 8 or fewer>
 - Visual: <what is shown>
 
 ## Beats
@@ -42,10 +42,12 @@ opening words (and in the on-screen text and speech); the first line carries the
   3. <optional>
 
 Hook types: question, bold-claim, pattern-interrupt, relatable-pain, how-to, number,
-curiosity-gap, story, social-proof.
+curiosity-gap, story, social-proof (tag from `voice.md`'s shapes table).
 
 ## Copy-rule check
 <each must-say / must-avoid item from brief.md, and ok or the fix>
+## Voice check
+<each line changed against voice.md, the hook included: before, after, which question or tell it failed; or "all lines pass". Functional lines (CTA, save or follow ask, link in bio, pinned comment, plain app mention, disclosure, approved lines) are checked only against "Tells to cut". Wording the person asked for stays; note any tell it trips here.>
 ```
 
 Rules: a beat every 3 to 5 seconds (a `MOTION` idea instead has one headline, one optional body and an end card, with no timed on-screen beats); no beat longer than 5 seconds without a visual or text change;

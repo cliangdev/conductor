@@ -79,7 +79,8 @@ of the problem or the result) before you write a line of copy.
 
 Prefer an approved line from the Knowledge page verbatim. Otherwise write one that names something
 real and specific, not a generic claim. Write 6 to 10 candidates across hook types, score them and
-keep the best two or three: `references/hooks.md`.
+keep the best two or three: `references/hooks.md`. Every candidate must read like a person posted
+it: `references/voice.md`.
 
 If the Brand Kit's `accentPhraseRequired` is true, mark exactly one phrase per headline with
 asterisks: `Every saved link, *finally usable*.` Never zero, never two — `preview_creative_draft`,

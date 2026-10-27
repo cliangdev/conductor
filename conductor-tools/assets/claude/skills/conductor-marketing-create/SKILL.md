@@ -45,6 +45,8 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 - `references/team-run.md`: the Team flow (run folder, stages S0 to S6, FILM ideas, final message, failure handling).
 - `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers.
 - `references/hooks.md`: writing and scoring headline candidates.
+- `references/voice.md`: making every line read like a person posted it, with the self-check every
+  hook, card and caption passes (both modes).
 - `references/layout-guide.md`: choosing a layout, resolution and safe zones.
 - `references/design-critique.md`: the six-criterion score applied to every draft before it is shown.
 - `references/realism-check.md`: the check every generated or library photo passes.

@@ -11,8 +11,8 @@ Heading: `## Idea <n>: <title>` where the title is 8 words or fewer.
 
 - **Concept:** <one line, max 25 words: what the viewer sees and why it works>
 - **Hook, spoken:** <max 12 words, or "none (text only)">
-- **Hook, on screen:** <max 12 words>
-- **Hook type:** <question | bold-claim | pattern-interrupt | relatable-pain | how-to | number | curiosity-gap | story | social-proof>
+- **Hook, on screen:** <max 12 words; on the artwork aim for about 8 or fewer, `voice.md`>
+- **Hook type:** <question | bold-claim | pattern-interrupt | relatable-pain | how-to | number | curiosity-gap | story | social-proof; tag it from `voice.md`'s "Shapes, and the hookType each one is tagged" table>
 - **Format:** <slideshow | still | carousel | story sequence | motion text over photo | motion text over clip | talking head | demo | skit | other>
 - **Platform:** <primary platform, then any others>
 - **Tag:** RENDER | FILM
