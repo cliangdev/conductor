@@ -1,15 +1,13 @@
 /* copy-rules.test.mjs — checkCopyRules, checkAccentPhrase, accentPhraseCount,
- * checkCreativeCopy, against a neutral fixture kit (no Rexipe/nexus copy).
- * Ports the relevant cases from nexus-marketing's core.test.mjs copyErrors/
- * validate coverage onto the data-driven copyRules shape.
+ * checkCreativeCopy, against a neutral fixture kit.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkCopyRules, checkAccentPhrase, accentPhraseCount, checkCreativeCopy } from '../copy-rules.js';
 
 /* A neutral fixture kit: nothing about any real brand. One plain rule (no
- * exclamation marks), and one rule with an exceptPattern carve-out, the same
- * shape nexus-marketing used for its one verbatim-quotable button name. */
+ * exclamation marks), and one rule with an exceptPattern carve-out, a verbatim-quotable
+ * button name. */
 const KIT = {
   accentPhraseRequired: true,
   copyRules: [

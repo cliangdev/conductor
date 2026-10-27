@@ -10,10 +10,9 @@
  *   [{ id, pattern, flags?, message, fields: ['headline'|'body'|'caption'],
  *      exceptPattern? }]
  * `pattern` and `exceptPattern` are regex source strings (no literal slashes),
- * `flags` defaults to 'i'. Nothing here is Rexipe-specific — the six rules
- * nexus-marketing hardcoded (no em/en dash, no "shopping list", no emoji, no
- * exclamation marks, no free-plan pitch, no price) become one kit's data; a
- * different workspace's kit can carry entirely different rules.
+ * `flags` defaults to 'i'. Nothing here is brand-specific: rules such as no
+ * em dash, no emoji or no price are one kit's data; a different workspace's
+ * kit can carry entirely different rules.
  */
 
 /* Strips 'g' so a single .test() call is stateless (a global regex's lastIndex
@@ -25,7 +24,7 @@ function stripGlobal(flags) {
 /* Checks one field's text against one rule. `exceptPattern` matches are
  * removed from the text BEFORE `pattern` is tested against it — this is what
  * lets a kit forbid a phrase everywhere except one exact, cleared string
- * (nexus-marketing's example: forbid "shopping list" except the verbatim
+ * (e.g. forbid "shopping list" except the verbatim
  * in-app button name "Add All to Shopping List"). */
 function stripExcept(text, exceptPattern, flags) {
   if (!exceptPattern) return text;
@@ -67,8 +66,7 @@ export function accentPhraseCount(headline) {
   return pairs ? pairs.length : 0;
 }
 
-/* The one structural rule nexus-marketing's design system enforced beyond
- * regex rules: exactly one accent phrase per headline, never zero, never two.
+/* The one structural rule beyond regex rules: exactly one accent phrase per headline, never zero, never two.
  * A kit opts in with `accentPhraseRequired: true`; a kit that does not care
  * about this convention simply never sets it, and this returns no errors. */
 export function checkAccentPhrase(headline, required) {

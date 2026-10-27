@@ -21,7 +21,7 @@ import java.util.UUID;
  * <p>A project may hold several kits (unique on {@code (projectId, slug)}); exactly one is
  * {@code isDefault}, enforced by a partial unique index rather than in Java, so a race between two
  * "set default" requests fails at the database rather than leaving two defaults. Nothing on this
- * entity is Rexipe-specific — every value here is data a workspace configures, never a constant in
+ * entity is brand-specific — every value here is data a workspace configures, never a constant in
  * product code.
  */
 @Entity

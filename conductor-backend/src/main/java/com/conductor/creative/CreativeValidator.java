@@ -17,7 +17,7 @@ import java.util.regex.PatternSyntaxException;
 import com.conductor.creative.CreativeValidationException.Violation;
 
 /**
- * A data-driven port of nexus-marketing/social/core.mjs's {@code validate()} and {@code copyErrors()} —
+ * Data-driven {@code validate()} and {@code copyErrors()} —
  * every rule the Creative library enforces, run against the {@link BrandKit} a Creative renders with.
  *
  * <p>Two groups of rule, both collected into one {@link CreativeValidationException} so a form can
@@ -561,8 +561,7 @@ public class CreativeValidator {
 
     /**
      * {@code layoutOverrides.band}/{@code padBottom}: every placement key must be real (registry) and
-     * every value a sane pixel amount — a data-driven port of the same shape check nexus's schema.json
-     * gives its own {@code band}/{@code padBottom} (an object keyed by placement, integer values).
+     * every value a sane pixel amount — an object keyed by placement with integer values.
      */
     private void validateLayoutOverrides(Input input, List<Violation> violations) {
         validateOverrideMap("layoutOverrides.band", input.layoutOverrideBand(), violations);
@@ -637,7 +636,7 @@ public class CreativeValidator {
         return violations;
     }
 
-    /** nexus's rule: exactly one pair of asterisks around the accent phrase, e.g. {@code "*so easy*"}. */
+    /** Exactly one pair of asterisks around the accent phrase, e.g. {@code "*so easy*"}. */
     private void checkAccentPhrase(String field, String text, List<Violation> violations) {
         if (text == null || text.isBlank()) {
             return;

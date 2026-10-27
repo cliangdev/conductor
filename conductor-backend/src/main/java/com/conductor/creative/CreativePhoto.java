@@ -15,8 +15,8 @@ import java.util.UUID;
 
 /**
  * A photo with provenance a {@link Creative} renders with: source, licence, AI disclosure, a human
- * {@code checked}/{@code blocked} verdict (a photo can carry burned-in text no copy check can see —
- * nexus's {@code photos.json}), and per-placement focal points. See {@code V140__creative.sql}.
+ * {@code checked}/{@code blocked} verdict (a photo can carry burned-in text no copy check can see),
+ * and per-placement focal points. See {@code V140__creative.sql}.
  *
  * <p>Mint (this row, {@code PENDING}) &rarr; client {@code PUT}s to the signed URL &rarr; confirm
  * ({@code UPLOADED}) — the same shape as {@code AssetService#createFileAsset}/{@code confirmUpload}.

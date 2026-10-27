@@ -30,7 +30,7 @@ import java.util.function.Supplier;
 /**
  * Reads one app's App Store listing (what an agent needs to reason about ASO): the live version and the newest
  * editable draft with per-locale keywords / promotional text / name / subtitle, the Custom Product Pages and the
- * Product Page Optimization tests. Mirrors nexus's {@code AppStoreConnectListingAdapter}.
+ * Product Page Optimization tests.
  *
  * <p>Rules this client keeps:
  * <ul>

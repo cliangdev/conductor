@@ -65,7 +65,7 @@ class BrandKitServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(kits).hasSize(1);
         assertThat(kits.get(0).getSlug()).isEqualTo(BrandKitService.DEFAULT_SLUG);
         assertThat(kits.get(0).isDefault()).isTrue();
-        // Brand-free: nothing Rexipe-specific in the default tokens.
+        // Brand-free: no brand-specific values in the default tokens.
         assertThat(kits.get(0).getTokens().toString()).doesNotContainIgnoringCase("rexipe")
                 .doesNotContain("#FF5A5F");
 

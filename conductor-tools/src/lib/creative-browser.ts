@@ -3,8 +3,7 @@
  * of this package, not the browser-bundling `playwright`). `conductor-creative/job/render.mjs`'s own
  * CLI bootstrap depends on full `playwright` (it ships its own Chromium download) because it's meant
  * to run inside a container built for that purpose; the CLI/MCP server run on a user's own machine,
- * so they discover whatever Chromium-family browser is already there instead of bundling one — the
- * same shape nexus-marketing's `rexipe-social` MCP server used.
+ * so they discover whatever Chromium-family browser is already there instead of bundling one.
  *
  * `playwright-core` itself is lazy-imported (see `findBrowserFactory`) so requiring it doesn't add
  * to MCP server startup cost for sessions that never call a creative tool.

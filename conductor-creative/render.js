@@ -217,7 +217,7 @@ function el(tag, className, parent) {
  * fall back to, and a placeholder logo would be worse than none.
  *
  * `lockup: 'chip'` puts the lockup on a white pill (frame.css's `.cc-lockup--chip`),
- * for busy photography — ported from nexus's schema.json/render.js. A chip
+ * for busy photography. A chip
  * sits on light ground regardless of the artboard's own theme, so it needs
  * the dark-ink wordmark just like a light theme does. */
 function buildLockup(brand, theme, lockup, parent, reserveSpace = false) {

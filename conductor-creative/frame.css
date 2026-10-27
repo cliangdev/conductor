@@ -57,8 +57,8 @@
 .cc-lockup__mark { display: block; height: var(--cc-mark-height); }
 .cc-lockup--spacer { visibility: hidden; }
 
-/* Chip variant: a white pill behind the lockup, for busy photography (ported
-   from nexus's schema.json `lockup: "chip"` / render.js). `--cc-l-card` and
+/* Chip variant: a white pill behind the lockup, for busy photography (`lockup: "chip"`).
+   `--cc-l-card` and
    `--cc-elev-overlay` are tokens.css's neutral light-ground surface and
    shadow — brand-agnostic, so a white pill works over any brand's photo. */
 .cc-lockup--chip {
