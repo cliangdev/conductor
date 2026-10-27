@@ -203,7 +203,7 @@ public class PostPublishScheduler {
      * A 30-second tick, comfortably inside COND-23's 60-second publishing SLO: a target due at 09:00 is
      * dispatched no later than 09:00:30.
      */
-    @Scheduled(fixedDelay = 30_000)
+    @Scheduled(fixedDelay = 30_000, initialDelay = 5_000)
     public void poll() {
         if (!enabled) {
             return;

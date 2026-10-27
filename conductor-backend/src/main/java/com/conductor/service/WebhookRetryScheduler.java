@@ -27,7 +27,7 @@ public class WebhookRetryScheduler {
         this.dispatchService = dispatchService;
     }
 
-    @Scheduled(fixedDelay = 60000)
+    @Scheduled(fixedDelay = 60000, initialDelay = 70_000)
     public void retryFailedEvents() {
         // Minimum backoff (2^1 = 2 min) bounds the DB candidate set; per-event backoff enforced below.
         OffsetDateTime minimumCutoff = OffsetDateTime.now().minusMinutes(2);

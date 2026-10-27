@@ -44,7 +44,7 @@ public class WorkflowScheduler {
         this.objectMapper = objectMapper;
     }
 
-    @Scheduled(fixedDelay = 60_000)
+    @Scheduled(fixedDelay = 60_000, initialDelay = 35_000)
     @Transactional
     public void timeoutLocalPickupRuns() {
         OffsetDateTime cutoff = OffsetDateTime.now().minusMinutes(10);
@@ -57,7 +57,7 @@ public class WorkflowScheduler {
         }
     }
 
-    @Scheduled(fixedDelay = 30_000)
+    @Scheduled(fixedDelay = 30_000, initialDelay = 10_000)
     @Transactional
     public void poll() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);

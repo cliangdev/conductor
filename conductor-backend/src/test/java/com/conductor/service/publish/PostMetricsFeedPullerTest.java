@@ -153,7 +153,7 @@ class PostMetricsFeedPullerTest {
 
         ArgumentCaptor<String> key = ArgumentCaptor.captor();
         verify(actionInvocationService).invoke(eq(connection), eq("get_video_statistics"), any(), key.capture(), anyList());
-        assertThat(key.getValue()).isEqualTo("metrics:feed-1:" + PERIOD + ":youtube:0");
+        assertThat(key.getValue()).isEqualTo("metrics:feed-1:" + PERIOD + ":youtube:" + PostMetricsFeedPuller.chunkHash(List.of(target("t-1", "youtube", "v-1"))));
     }
 
     @Test
@@ -216,5 +216,62 @@ class PostMetricsFeedPullerTest {
         ArgumentCaptor<OffsetDateTime> since = ArgumentCaptor.captor();
         verify(targetRepository).findPublishedForMetrics(eq("conn-1"), since.capture());
         assertThat(since.getValue().toInstant()).isEqualTo(Instant.parse("2026-08-05T14:20:00Z"));
+    }
+
+    @Test
+    void noTransactionIsActiveDuringThePlatformCallAndResultsStillPersistInShortOnes() {
+        int[] begun = {0};
+        org.springframework.transaction.support.AbstractPlatformTransactionManager txManager =
+                new org.springframework.transaction.support.AbstractPlatformTransactionManager() {
+                    @Override protected Object doGetTransaction() { return new Object(); }
+                    @Override protected void doBegin(Object t, org.springframework.transaction.TransactionDefinition d) { begun[0]++; }
+                    @Override protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus s) { }
+                    @Override protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus s) { }
+                };
+        puller = new PostMetricsFeedPuller(new PublishPlatformRegistry(), targetRepository, metricRepository,
+                actionInvocationService, new ObjectMapper(), Clock.fixed(NOW.toInstant(), ZoneOffset.UTC),
+                new org.springframework.transaction.support.TransactionTemplate(txManager));
+        when(targetRepository.findPublishedForMetrics(eq("conn-1"), any())).thenReturn(List.of(target("t-fb", "facebook", "fb-1")));
+        boolean[] active = {true};
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), anyList())).thenAnswer(inv -> {
+            active[0] = org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive();
+            return metrics(Map.of("post_id", "fb-1", "likes", 7));
+        });
+
+        puller.pull(feed, spec(10, 90), connection, new IngestRequest("post_metrics", null, null, 500));
+
+        assertThat(active[0]).isFalse();
+        assertThat(begun[0]).as("one read transaction, one write transaction").isEqualTo(2);
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getLikes()).isEqualTo(7L);
+    }
+
+    @Test
+    void aLaterTickWithADifferentChunkUsesADifferentIdempotencyKey() {
+        List<PostPublishTarget> many = new ArrayList<>();
+        for (int i = 0; i < 25; i++) {
+            many.add(target("t-" + i, "tiktok", "tt-" + i));
+        }
+        when(targetRepository.findPublishedForMetrics(eq("conn-1"), any())).thenReturn(many);
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), anyList()))
+                .thenReturn(metrics(Map.of("post_id", "tt-0", "views", 1)));
+        puller.pull(feed, spec(1, 90), connection, new IngestRequest("post_metrics", null, null, 500));
+        ArgumentCaptor<String> first = ArgumentCaptor.captor();
+        verify(actionInvocationService).invoke(any(), anyString(), any(), first.capture(), anyList());
+
+        // Tick 2: a shorter due list, so chunk 0 now holds different posts.
+        org.mockito.Mockito.reset(actionInvocationService);
+        when(targetRepository.findPublishedForMetrics(eq("conn-1"), any())).thenReturn(many.subList(10, 15));
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), anyList()))
+                .thenReturn(metrics(Map.of("post_id", "tt-10", "views", 5)));
+        saved.clear();
+        puller.pull(feed, spec(1, 90), connection, new IngestRequest("post_metrics", null, null, 500));
+        ArgumentCaptor<String> second = ArgumentCaptor.captor();
+        verify(actionInvocationService).invoke(any(), anyString(), any(), second.capture(), anyList());
+
+        assertThat(second.getValue()).isNotEqualTo(first.getValue());
+        PostPublishTargetMetric real = saved.stream().filter(m -> m.getTargetId().equals("t-10")).findFirst().orElseThrow();
+        assertThat(real.isUnavailable()).isFalse();
+        assertThat(real.getViews()).isEqualTo(5L);
     }
 }

@@ -530,7 +530,7 @@ public class PublishOutcomeService {
      * lane's own housekeeping, and its finder is globally scoped in exactly the same way, so it has to be off
      * wherever that poller is (local, and the test profile). Tests call {@link #runReconciliationTick} directly.
      */
-    @Scheduled(fixedDelay = 300_000)
+    @Scheduled(fixedDelay = 300_000, initialDelay = 65_000)
     public void reconcileStrandedTargets() {
         if (!reconciliationEnabled) {
             return;

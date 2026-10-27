@@ -10,6 +10,9 @@ import com.google.cloud.kms.v1.CryptoKeyName;
 import com.google.cloud.kms.v1.DecryptResponse;
 import com.google.cloud.kms.v1.EncryptResponse;
 import com.google.cloud.kms.v1.KeyManagementServiceClient;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.google.protobuf.ByteString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +29,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
+import java.time.Duration;
 import java.util.*;
 
 /**
@@ -46,7 +50,17 @@ public class GcpKmsCredentialService implements CredentialService {
     private final ObjectMapper objectMapper;
     private final KeyManagementServiceClient kmsClient;
     private final String kmsKeyName;
+    /**
+     * Unwrapped DEKs keyed by the Base64 wrapped blob (the plaintext DEK maps 1:1 to its wrapped form), so a
+     * hot connection doesn't pay a KMS round trip per credential read. In-memory only; never logged.
+     * Plaintext DEKs live on the heap for up to 20 minutes, and a revoked KMS grant keeps working for up to 20 minutes.
+     */
+    private final Cache<String, byte[]> dekCache;
 
+    static final Duration DEK_CACHE_TTL = Duration.ofMinutes(20);
+    static final long DEK_CACHE_MAX_ENTRIES = 1_000;
+
+    @org.springframework.beans.factory.annotation.Autowired
     public GcpKmsCredentialService(
             ObjectMapper objectMapper,
             KeyManagementServiceClient kmsClient,
@@ -57,6 +71,17 @@ public class GcpKmsCredentialService implements CredentialService {
         this.objectMapper = objectMapper;
         this.kmsClient = kmsClient;
         this.kmsKeyName = CryptoKeyName.format(gcpProjectId, kmsLocation, kmsKeyRing, kmsKeyName);
+        this.dekCache = Caffeine.newBuilder().maximumSize(DEK_CACHE_MAX_ENTRIES).expireAfterWrite(DEK_CACHE_TTL).build();
+    }
+
+    /** Test seam: same service with an injectable clock for the DEK cache. */
+    GcpKmsCredentialService(ObjectMapper objectMapper, KeyManagementServiceClient kmsClient, String gcpProjectId,
+                            String kmsLocation, String kmsKeyRing, String kmsKeyName, Ticker ticker) {
+        this.objectMapper = objectMapper;
+        this.kmsClient = kmsClient;
+        this.kmsKeyName = CryptoKeyName.format(gcpProjectId, kmsLocation, kmsKeyRing, kmsKeyName);
+        this.dekCache = Caffeine.newBuilder().maximumSize(DEK_CACHE_MAX_ENTRIES).expireAfterWrite(DEK_CACHE_TTL)
+                .ticker(ticker).build();
     }
 
     @Override
@@ -143,9 +168,16 @@ public class GcpKmsCredentialService implements CredentialService {
         if (c.getKmsKeyReference() == null || c.getKmsKeyReference().isBlank()) {
             return null;
         }
-        byte[] wrappedDek = Base64.getDecoder().decode(c.getKmsKeyReference());
+        String reference = c.getKmsKeyReference();
+        byte[] cached = dekCache.getIfPresent(reference);
+        if (cached != null) {
+            return cached.clone();
+        }
+        byte[] wrappedDek = Base64.getDecoder().decode(reference);
         DecryptResponse decryptResponse = kmsClient.decrypt(kmsKeyName, ByteString.copyFrom(wrappedDek));
-        return decryptResponse.getPlaintext().toByteArray();
+        byte[] dek = decryptResponse.getPlaintext().toByteArray();
+        dekCache.put(reference, dek.clone());
+        return dek;
     }
 
     private String encryptWithDek(byte[] dek, String plaintext) throws Exception {

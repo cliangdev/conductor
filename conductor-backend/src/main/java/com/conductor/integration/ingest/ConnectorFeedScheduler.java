@@ -94,7 +94,7 @@ public class ConnectorFeedScheduler {
         this.enabled = enabled;
     }
 
-    @Scheduled(fixedDelay = 60_000)
+    @Scheduled(fixedDelay = 60_000, initialDelay = 45_000)
     public void poll() {
         if (!enabled) {
             return;

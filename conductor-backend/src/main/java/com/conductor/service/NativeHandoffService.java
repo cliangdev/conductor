@@ -233,7 +233,7 @@ public class NativeHandoffService {
      * further out than the platform would accept. A minute's granularity is ample: the earliest a deferred
      * row can become eligible is Facebook's thirty-day boundary, never a fire time that is imminent.
      */
-    @Scheduled(fixedDelay = 60_000)
+    @Scheduled(fixedDelay = 60_000, initialDelay = 40_000)
     public void sweepDeferredHandoffs() {
         if (!enabled) {
             return;

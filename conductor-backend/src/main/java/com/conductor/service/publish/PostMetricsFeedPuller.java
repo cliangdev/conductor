@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -73,15 +74,18 @@ public class PostMetricsFeedPuller {
     private final ActionInvocationService actionInvocationService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    /** Null in plain unit tests, which then run each step directly. */
+    private final TransactionTemplate tx;
 
     @org.springframework.beans.factory.annotation.Autowired
     public PostMetricsFeedPuller(PublishPlatformRegistry platformRegistry,
                                  PostPublishTargetRepository targetRepository,
                                  PostPublishTargetMetricRepository metricRepository,
                                  ActionInvocationService actionInvocationService,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 TransactionTemplate transactionTemplate) {
         this(platformRegistry, targetRepository, metricRepository, actionInvocationService, objectMapper,
-                Clock.systemUTC());
+                Clock.systemUTC(), transactionTemplate);
     }
 
     PostMetricsFeedPuller(PublishPlatformRegistry platformRegistry,
@@ -90,6 +94,17 @@ public class PostMetricsFeedPuller {
                           ActionInvocationService actionInvocationService,
                           ObjectMapper objectMapper,
                           Clock clock) {
+        this(platformRegistry, targetRepository, metricRepository, actionInvocationService, objectMapper, clock, null);
+    }
+
+    PostMetricsFeedPuller(PublishPlatformRegistry platformRegistry,
+                          PostPublishTargetRepository targetRepository,
+                          PostPublishTargetMetricRepository metricRepository,
+                          ActionInvocationService actionInvocationService,
+                          ObjectMapper objectMapper,
+                          Clock clock,
+                          TransactionTemplate transactionTemplate) {
+        this.tx = transactionTemplate;
         this.platformRegistry = platformRegistry;
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
@@ -105,16 +120,7 @@ public class PostMetricsFeedPuller {
         String periodKey = now.withOffsetSameInstant(ZoneOffset.UTC).format(PERIOD);
         OffsetDateTime since = now.minus(Duration.ofDays(quota.maxPostAgeDays()));
 
-        List<PostPublishTarget> due = new ArrayList<>();
-        for (PostPublishTarget target : targetRepository.findPublishedForMetrics(connection.getId(), since)) {
-            if (platformRegistry.find(target.getPlatform()).map(PublishPlatform::metrics).isEmpty()) {
-                continue;
-            }
-            if (metricRepository.findByTargetIdAndPeriodKey(target.getId(), periodKey).isPresent()) {
-                continue;
-            }
-            due.add(target);
-        }
+        List<PostPublishTarget> due = inTransaction(() -> findDue(connection, since, periodKey));
         if (due.isEmpty()) {
             return IngestBatch.empty(periodKey);
         }
@@ -137,7 +143,7 @@ public class PostMetricsFeedPuller {
                 }
                 List<PostPublishTarget> chunk = targets.subList(from, Math.min(targets.size(), from + platform.metrics().maxBatch()));
                 calls++;
-                String key = "metrics:" + feed.getId() + ":" + periodKey + ":" + platform.id() + ":" + (from / platform.metrics().maxBatch());
+                String key = "metrics:" + feed.getId() + ":" + periodKey + ":" + platform.id() + ":" + chunkHash(chunk);
                 ActionResult result = actionInvocationService.invoke(connection, platform.metrics().actionId(),
                         Map.of(INPUT_POST_IDS, chunk.stream().map(PostPublishTarget::getPlatformPostId).toList()),
                         key, List.of());
@@ -166,8 +172,48 @@ public class PostMetricsFeedPuller {
         return exhausted ? IngestBatch.of(List.of(), periodKey, true) : IngestBatch.empty(periodKey);
     }
 
-    /** Files one chunk's answers. Runs inside the feed pull's transaction, like every other sink write. */
+    /** Short read transaction: the due targets, with the owning Post/Project resolved so they work detached. */
+    private List<PostPublishTarget> findDue(Connection connection, OffsetDateTime since, String periodKey) {
+        List<PostPublishTarget> due = new ArrayList<>();
+        for (PostPublishTarget target : targetRepository.findPublishedForMetrics(connection.getId(), since)) {
+            if (platformRegistry.find(target.getPlatform()).map(PublishPlatform::metrics).isEmpty()) {
+                continue;
+            }
+            if (metricRepository.findByTargetIdAndPeriodKey(target.getId(), periodKey).isPresent()) {
+                continue;
+            }
+            WorkItem post = target.getWorkItem();
+            if (post != null) {
+                post.getProject(); // initialises the lazy Post so record() can read ids after the session closed
+            }
+            due.add(target);
+        }
+        return due;
+    }
+
+    /** Stable id of a chunk's contents: a later tick whose chunk holds other posts must not replay this answer. */
+    static String chunkHash(List<PostPublishTarget> chunk) {
+        String joined = String.join(",", chunk.stream().map(PostPublishTarget::getId).sorted().toList());
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(joined.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest).substring(0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private <T> T inTransaction(java.util.function.Supplier<T> work) {
+        return tx == null ? work.get() : tx.execute(status -> work.get());
+    }
+
+    /** Files one chunk's answers in its own short transaction -- the platform call has already returned. */
     int record(List<PostPublishTarget> chunk, PublishPlatform platform, String periodKey,
+                      OffsetDateTime observedAt, Map<String, Object> output) {
+        return inTransaction(() -> doRecord(chunk, platform, periodKey, observedAt, output));
+    }
+
+    private int doRecord(List<PostPublishTarget> chunk, PublishPlatform platform, String periodKey,
                       OffsetDateTime observedAt, Map<String, Object> output) {
         Map<String, Map<String, Object>> byPostId = new LinkedHashMap<>();
         Object metrics = output == null ? null : output.get(OUTPUT_METRICS);
