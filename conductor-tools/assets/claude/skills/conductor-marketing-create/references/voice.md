@@ -1,4 +1,4 @@
-<!-- Used by both modes of conductor-marketing-post: the ideators, the scriptwriter, the creative director and Direct-mode headlines. -->
+<!-- Used by both modes of conductor-marketing-create: the ideators, the scriptwriter, the creative director and Direct-mode headlines. -->
 # Voice: write it like a person posted it
 
 Every line on a card, in a caption or spoken on camera should read as if a real person typed it on
