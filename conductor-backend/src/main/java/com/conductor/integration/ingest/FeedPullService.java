@@ -120,7 +120,7 @@ public class FeedPullService {
     public boolean pull(String feedId) {
         ConnectorFeed feed = feedRepository.findById(feedId)
                 .orElseThrow(() -> new EntityNotFoundException("connector_feed not found: " + feedId));
-        if (isChannelMetrics(feed)) {
+        if (isNoTransactionSink(feed)) {
             return pull(feed);
         }
         return inTransaction(() -> pull(feedRepository.findById(feedId)
@@ -132,37 +132,46 @@ public class FeedPullService {
      *  since no progress was made) — the caller uses this to re-due the feed immediately rather than
      *  waiting a full {@code interval_minutes} to drain a backlog. */
     public boolean pull(ConnectorFeed feed) {
-        if (isChannelMetrics(feed)) {
-            return pullChannelMetrics(feed);
+        if (isNoTransactionSink(feed)) {
+            return pullWithoutTransaction(feed);
         }
         return inTransaction(() -> pullInTransaction(feed));
     }
 
-    private boolean isChannelMetrics(ConnectorFeed feed) {
-        return resolveSpec(feed).sink() == IngestSink.CHANNEL_METRICS;
+    /** Sinks that call a remote API per pull: no transaction (and so no pooled connection) is held across it. */
+    private boolean isNoTransactionSink(ConnectorFeed feed) {
+        IngestSink sink = resolveSpec(feed).sink();
+        return sink == IngestSink.CHANNEL_METRICS || sink == IngestSink.POST_METRICS;
     }
 
     private <T> T inTransaction(java.util.function.Supplier<T> work) {
         return tx == null ? work.get() : tx.execute(status -> work.get());
     }
 
-    /** Fetch with no transaction active; the puller's store write and {@link #recordOutcome} are short transactions. */
-    private boolean pullChannelMetrics(ConnectorFeed feed) {
+    /** Fetch with no transaction active; the puller's store reads/writes and {@link #recordOutcome} are short transactions. */
+    private boolean pullWithoutTransaction(ConnectorFeed feed) {
         Connection conn = connectionService.getById(feed.getConnectionId())
                 .orElseThrow(() -> new EntityNotFoundException("Connection not found: " + feed.getConnectionId()));
         IngestSpec spec = resolveSpec(feed);
         IngestRequest request = new IngestRequest(feed.getIngestId(), null, feed.getCursorState(), DEFAULT_MAX_ITEMS);
-        IngestBatch batch = channelMetricsFeedPuller == null
-                ? IngestBatch.setupRequired("This deployment has no channel-metrics sink")
-                : channelMetricsFeedPuller.pull(feed, spec, conn, request);
+        IngestBatch batch;
+        if (spec.sink() == IngestSink.POST_METRICS) {
+            batch = postMetricsFeedPuller == null
+                    ? IngestBatch.setupRequired("This deployment has no post-metrics sink")
+                    : postMetricsFeedPuller.pull(feed, spec, conn, request);
+        } else {
+            batch = channelMetricsFeedPuller == null
+                    ? IngestBatch.setupRequired("This deployment has no channel-metrics sink")
+                    : channelMetricsFeedPuller.pull(feed, spec, conn, request);
+        }
         return inTransaction(() -> recordOutcome(feed, spec, null, batch));
     }
 
     private boolean pullInTransaction(ConnectorFeed feed) {
         Connection conn = connectionService.getById(feed.getConnectionId())
                 .orElseThrow(() -> new EntityNotFoundException("Connection not found: " + feed.getConnectionId()));
-        ConnectionContext ctx = connectionService.toContext(conn);
         IngestSpec spec = resolveSpec(feed);
+        ConnectionContext ctx = connectionService.toContext(conn);
 
         // Computed for WINDOW-mode feeds, and also for a SNAPSHOT+digest feed that declares a window --
         // that slices an already-fetched series rather than driving a separate pull; see IngestSpec#window.
@@ -171,19 +180,9 @@ public class FeedPullService {
                 : null;
         IngestRequest request = new IngestRequest(feed.getIngestId(), window, feed.getCursorState(), DEFAULT_MAX_ITEMS);
 
-        // A post-metrics feed writes its own rows and answers with no items; see PostMetricsFeedPuller.
-        IngestBatch batch;
-        if (spec.sink() == IngestSink.POST_METRICS) {
-            if (postMetricsFeedPuller == null) {
-                batch = IngestBatch.setupRequired("This deployment has no post-metrics sink");
-            } else {
-                batch = postMetricsFeedPuller.pull(feed, spec, conn, request);
-            }
-        } else {
-            batch = connectorRegistry.findIngest(feed.getConnectorId())
-                    .map(ingestConnector -> ingestConnector.pull(ctx, request))
-                    .orElseGet(() -> snapshotIngestAdapter.pull(ctx, spec, request));
-        }
+        IngestBatch batch = connectorRegistry.findIngest(feed.getConnectorId())
+                .map(ingestConnector -> ingestConnector.pull(ctx, request))
+                .orElseGet(() -> snapshotIngestAdapter.pull(ctx, spec, request));
 
         return recordOutcome(feed, spec, window, batch);
     }

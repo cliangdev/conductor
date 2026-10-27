@@ -217,4 +217,32 @@ class PostMetricsFeedPullerTest {
         verify(targetRepository).findPublishedForMetrics(eq("conn-1"), since.capture());
         assertThat(since.getValue().toInstant()).isEqualTo(Instant.parse("2026-08-05T14:20:00Z"));
     }
+
+    @Test
+    void noTransactionIsActiveDuringThePlatformCallAndResultsStillPersistInShortOnes() {
+        int[] begun = {0};
+        org.springframework.transaction.support.AbstractPlatformTransactionManager txManager =
+                new org.springframework.transaction.support.AbstractPlatformTransactionManager() {
+                    @Override protected Object doGetTransaction() { return new Object(); }
+                    @Override protected void doBegin(Object t, org.springframework.transaction.TransactionDefinition d) { begun[0]++; }
+                    @Override protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus s) { }
+                    @Override protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus s) { }
+                };
+        puller = new PostMetricsFeedPuller(new PublishPlatformRegistry(), targetRepository, metricRepository,
+                actionInvocationService, new ObjectMapper(), Clock.fixed(NOW.toInstant(), ZoneOffset.UTC),
+                new org.springframework.transaction.support.TransactionTemplate(txManager));
+        when(targetRepository.findPublishedForMetrics(eq("conn-1"), any())).thenReturn(List.of(target("t-fb", "facebook", "fb-1")));
+        boolean[] active = {true};
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), anyList())).thenAnswer(inv -> {
+            active[0] = org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive();
+            return metrics(Map.of("post_id", "fb-1", "likes", 7));
+        });
+
+        puller.pull(feed, spec(10, 90), connection, new IngestRequest("post_metrics", null, null, 500));
+
+        assertThat(active[0]).isFalse();
+        assertThat(begun[0]).as("one read transaction, one write transaction").isEqualTo(2);
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getLikes()).isEqualTo(7L);
+    }
 }

@@ -301,4 +301,47 @@ class FeedPullServiceTest {
         verify(ingestConnector).pull(any(), any());
         verify(snapshotIngestAdapter, never()).pull(any(), any(), any());
     }
+
+    /** Minimal transaction manager: begins nothing real, but flips Spring's "actual transaction active" flag. */
+    static final class FakeTxManager extends org.springframework.transaction.support.AbstractPlatformTransactionManager {
+        int begun;
+        @Override protected Object doGetTransaction() { return new Object(); }
+        @Override protected void doBegin(Object tx, org.springframework.transaction.TransactionDefinition d) { begun++; }
+        @Override protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus s) { }
+        @Override protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus s) { }
+    }
+
+    @org.junit.jupiter.api.Test
+    void aPostMetricsPullRunsNoTransactionAcrossThePullerAndSkipsKms() {
+        FakeTxManager txManager = new FakeTxManager();
+        FeedPullService txService = new FeedPullService(feedRepository, connectionService, connectorRegistry,
+                snapshotIngestAdapter, digestSink, metricsDigestService, postMetricsFeedPuller, null,
+                new org.springframework.transaction.support.TransactionTemplate(txManager));
+        ConnectorFeed feed = feed();
+        feed.setConnectorId("meta");
+        feed.setIngestId("post_metrics");
+        Connection conn = connection();
+        when(connectionService.getById("conn-1")).thenReturn(Optional.of(conn));
+        IngestSpec spec = new IngestSpec("post_metrics", "l", "d", IngestMode.SNAPSHOT, null, null, 360, null, null,
+                null, null, com.conductor.integration.IngestSink.POST_METRICS, null);
+        com.conductor.integration.Connector connector = mock(com.conductor.integration.Connector.class);
+        com.conductor.integration.IntegrationToolSpec toolSpec = mock(com.conductor.integration.IntegrationToolSpec.class);
+        when(toolSpec.ingest()).thenReturn(java.util.List.of(spec));
+        when(connector.getToolSpec()).thenReturn(toolSpec);
+        when(connectorRegistry.getById("meta")).thenReturn(Optional.of(connector));
+        boolean[] activeDuringPull = {true};
+        when(postMetricsFeedPuller.pull(any(), any(), any(), any())).thenAnswer(inv -> {
+            activeDuringPull[0] = org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive();
+            return com.conductor.integration.IngestBatch.empty("2026-09-04T14");
+        });
+
+        txService.pull(feed);
+
+        assertThat(activeDuringPull[0]).as("no transaction while the puller calls the platform").isFalse();
+        verify(connectionService, never()).toContext(any());
+        assertThat(txManager.begun).as("outcome bookkeeping still runs in a short transaction").isEqualTo(1);
+        verify(feedRepository).save(feed);
+        assertThat(feed.getCursorState()).isEqualTo("2026-09-04T14");
+    }
 }
