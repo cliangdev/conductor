@@ -49,6 +49,7 @@ public class ScheduledJobLeaseRepository {
                             last_error = NULL
                         WHERE l.leased_until < now()
                           AND (l.last_started_at IS NULL
+                               OR l.last_status = 'FAILED'
                                OR l.last_started_at < now() - make_interval(secs => ?))
                     """, jobName, ttl, holder, ttl, spacing);
             if (claimed == 1) {

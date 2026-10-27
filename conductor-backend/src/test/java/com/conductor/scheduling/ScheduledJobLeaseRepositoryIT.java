@@ -65,4 +65,20 @@ class ScheduledJobLeaseRepositoryIT extends AbstractNoneWebIntegrationTest {
         assertThat(row(n)).containsEntry("last_status", "FAILED")
                 .containsEntry("last_error", "java.lang.IllegalStateException: boom");
     }
+
+    @Test
+    void afterAFailedRunTheJobMayBeReclaimedImmediatelyDespiteSpacing() {
+        String n = name();
+        leases.claim(n, "h1", Duration.ofMinutes(5), Duration.ofHours(12));
+        leases.release(n, "h1", "FAILED", "boom");
+        assertThat(leases.claim(n, "h2", Duration.ofMinutes(5), Duration.ofHours(12))).isEqualTo(Claim.CLAIMED);
+    }
+
+    @Test
+    void afterASuccessfulRunSpacingStillApplies() {
+        String n = name();
+        leases.claim(n, "h1", Duration.ofMinutes(5), Duration.ofHours(12));
+        leases.release(n, "h1", "OK", null);
+        assertThat(leases.claim(n, "h2", Duration.ofMinutes(5), Duration.ofHours(12))).isEqualTo(Claim.RECENT);
+    }
 }
