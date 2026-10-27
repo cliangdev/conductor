@@ -31,7 +31,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -203,7 +202,6 @@ public class PostPublishScheduler {
      * A 30-second tick, comfortably inside COND-23's 60-second publishing SLO: a target due at 09:00 is
      * dispatched no later than 09:00:30.
      */
-    @Scheduled(fixedDelay = 30_000, initialDelay = 5_000)
     public void poll() {
         if (!enabled) {
             return;

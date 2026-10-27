@@ -19,7 +19,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -233,7 +232,6 @@ public class NativeHandoffService {
      * further out than the platform would accept. A minute's granularity is ample: the earliest a deferred
      * row can become eligible is Facebook's thirty-day boundary, never a fire time that is imminent.
      */
-    @Scheduled(fixedDelay = 60_000, initialDelay = 40_000)
     public void sweepDeferredHandoffs() {
         if (!enabled) {
             return;

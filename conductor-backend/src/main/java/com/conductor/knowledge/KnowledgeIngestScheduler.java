@@ -11,7 +11,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -100,7 +99,6 @@ public class KnowledgeIngestScheduler {
      * test that needs this scheduler live ({@code KnowledgeIngestSchedulerIntegrationTest}) carries its
      * own private {@code @Container} plus {@code @TestPropertySource} to flip it back on in isolation.
      */
-    @Scheduled(fixedDelay = 30_000, initialDelay = 20_000)
     public void poll() {
         if (!enabled) {
             return;

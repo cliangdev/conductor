@@ -365,6 +365,9 @@ public class WorkflowRunLogBroker {
         }
     }
 
+    // Stays an in-app @Scheduled timer, NOT a ScheduledJobRegistry job: the emitters it closes are SSE
+    // connections held in this instance's memory, so it must run on every instance, every few seconds,
+    // and never behind a database lease or an external trigger.
     @Scheduled(fixedDelay = 5000, initialDelay = 15_000)
     public void closeTerminalRunEmitters() {
         activeEmitters.forEach((runId, emitter) -> {

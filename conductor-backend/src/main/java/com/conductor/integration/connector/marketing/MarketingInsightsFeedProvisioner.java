@@ -12,7 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
@@ -53,7 +52,6 @@ public class MarketingInsightsFeedProvisioner {
         provisionEligibleProjects();
     }
 
-    @Scheduled(fixedDelay = 3_600_000, initialDelay = 80_000)
     public void onSchedule() {
         provisionEligibleProjects();
     }

@@ -420,11 +420,8 @@ class NativePublishConfirmationPollerTest {
 
     @Test
     void theTickIsFrequentEnoughToConfirmAPostSoonAfterItGoesLive() throws Exception {
-        Method poll = NativePublishConfirmationPoller.class.getMethod("poll");
-        Scheduled scheduled = poll.getAnnotation(Scheduled.class);
-
-        assertThat(scheduled).isNotNull();
-        assertThat(scheduled.fixedDelay()).isEqualTo(60_000L);
+        assertThat(com.conductor.scheduling.TestRegistries.fixedDelay("native-publish-confirmation-poll"))
+                .isEqualTo(java.time.Duration.ofMillis(60_000L));
     }
 
     @Test

@@ -16,7 +16,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -317,7 +316,6 @@ public class ActionInvocationService {
 
     // ---- background retry sweep (ad-hoc invocations only — see ActionInvocationRepository#findRetryable) ----
 
-    @Scheduled(fixedDelay = 60000, initialDelay = 25_000)
     public void retryFailedInvocations() {
         OffsetDateTime minimumCutoff = OffsetDateTime.now().minusMinutes(2);
         for (ActionInvocation invocation : repository.findRetryable(minimumCutoff)) {

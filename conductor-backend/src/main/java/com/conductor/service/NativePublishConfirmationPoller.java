@@ -16,7 +16,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -167,7 +166,6 @@ public class NativePublishConfirmationPoller {
      * this is about how quickly a permalink shows up on the Post, not about the publishing SLO — the
      * app-managed poller's 30 seconds owns that.
      */
-    @Scheduled(fixedDelay = 60_000, initialDelay = 55_000)
     public void poll() {
         if (!enabled) {
             return;

@@ -7,7 +7,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -43,7 +42,6 @@ public class DaemonEventService {
         repository.acknowledgeEvents(eventIds, projectId, OffsetDateTime.now());
     }
 
-    @Scheduled(fixedDelay = 3_600_000, initialDelay = 85_000)
     public void purgeExpiredEvents() {
         try {
             repository.deleteByExpiresAtBefore(OffsetDateTime.now());
