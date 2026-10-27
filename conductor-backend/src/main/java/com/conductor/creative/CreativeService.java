@@ -337,9 +337,10 @@ public class CreativeService {
         String sequenceKind = request.getSequenceKind() != null ? request.getSequenceKind().getValue() : current.getSequenceKind();
         String lockup = request.getLockup() != null ? request.getLockup().getValue() : current.getLockup();
         String kind = request.getKind() != null ? request.getKind().getValue() : current.getKind();
-        Map<String, List<String>> slides = request.getSlides() != null ? request.getSlides() : toSlidesMap(current.getSlides());
+        Map<String, List<String>> currentSlides = toSlidesMap(current.getSlides());
+        Map<String, List<String>> slides = request.getSlides() != null ? request.getSlides() : currentSlides;
         // Read before current is mutated below: the recorded slide style survives only identical slides.
-        boolean slidesChanged = request.getSlides() != null && !request.getSlides().equals(toSlidesMap(current.getSlides()));
+        boolean slidesChanged = request.getSlides() != null && !request.getSlides().equals(currentSlides);
         List<String> slideAltText = request.getSlideAltText() != null
                 ? request.getSlideAltText() : toStringList(current.getSlideAltText());
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : toStringList(current.getPlacements());

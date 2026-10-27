@@ -772,11 +772,16 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         request.setSlideStyle(new SlideshowStyle().fontFamily("Poppins"));
         Creative created = creativeService.createCreative(project.getId(), request, admin).creative();
 
-        com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
-        assertThat(json.readValue("{\"caption\":\"x\"}", PatchCreativeRequest.class).getSlideStyle()).isNull();
+        tools.jackson.databind.json.JsonMapper json = tools.jackson.databind.json.JsonMapper.builder().build();
+        PatchCreativeRequest absent = json.readValue("{\"caption\":\"x\"}", PatchCreativeRequest.class);
+        assertThat(absent.getSlideStyle()).isNull();
+        absent.setVersion(created.getVersion());
+        Creative kept = creativeService.patchCreative(project.getId(), created.getId(), absent, admin).creative();
+        assertThat(kept.getSlideStyle().get("fontFamily").asText()).isEqualTo("Poppins");
+
         PatchCreativeRequest explicitNull = json.readValue("{\"slideStyle\":null}", PatchCreativeRequest.class);
         assertThat(explicitNull.getSlideStyle()).isNotNull();
-        explicitNull.setVersion(created.getVersion());
+        explicitNull.setVersion(kept.getVersion());
         Creative cleared = creativeService.patchCreative(project.getId(), created.getId(), explicitNull, admin).creative();
         assertThat(cleared.getSlideStyle()).isNull();
     }

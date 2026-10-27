@@ -7,7 +7,7 @@ vi.mock('../lib/slideshow/compose.js', async (orig) => ({ ...(await orig<typeof 
 vi.mock('../lib/image-common.js', async (orig) => ({ ...(await orig<typeof import('../lib/image-common.js')>()), jpegPreview: vi.fn(async () => ({ data: Buffer.from('x'), mimeType: 'image/jpeg' })) }))
 
 import { composeSlideshow } from '../lib/slideshow/compose.js'
-import { NATIVE_STYLE, SlideshowSpecError, resolveStyleLayers, type ComposeOptions } from '../lib/slideshow/index.js'
+import { NATIVE_STYLE, SlideshowSpecError, SlideshowStyleError, resolveStyleLayers, type ComposeOptions } from '../lib/slideshow/index.js'
 import { composeSlideshowTool } from '../mcp/tools/slideshow.js'
 
 const compose = vi.mocked(composeSlideshow)
@@ -146,7 +146,7 @@ describe('composeSlideshowTool', () => {
       expect(res).toMatchObject({
         ok: false,
         error: expect.stringMatching(/Brand Kit "Warm".*update_brand_kit.*inline style/s),
-        errors: [expect.stringMatching(/^Brand Kit "Warm" slideshowStyle\.fontFamily/), expect.stringMatching(/^Brand Kit "Warm" slideshowStyle\.fontUrl/)],
+        errors: [expect.stringMatching(/^kit\.style\.fontFamily/), expect.stringMatching(/^kit\.style\.fontUrl/)],
       })
     })
 
@@ -184,7 +184,44 @@ describe('composeSlideshowTool', () => {
 
     it('passes the layers to composeSlideshow instead of resolving them itself', async () => {
       await composeSlideshowTool({ spec, brandKitId: 'k1', style: { textSize: 66 } }, { projectRoot: tmp, loadKit: kit({ accent: '#111111' }) })
-      expect(compose.mock.calls[0]![2]).toMatchObject({ kitStyle: { accent: '#111111' }, kitLabel: 'Brand Kit "Warm" slideshowStyle', style: { textSize: 66 } })
+      expect(compose.mock.calls[0]![2]).toMatchObject({ kitStyle: { accent: '#111111' }, kitLabel: 'kit.style', style: { textSize: 66 } })
+    })
+
+    it('reports an invalid inline style even when the kit has no style or cannot be read', async () => {
+      const noStyle = await composeSlideshowTool({ spec, brandKitId: 'k1', style: { boxBg: 'red' } }, { projectRoot: tmp, loadKit: kit(null) })
+      expect(noStyle).toMatchObject({ ok: false, error: expect.stringMatching(/"Warm" has no slideshow style.*inline style is also invalid/s), errors: [expect.stringMatching(/^style\.boxBg/)] })
+      const failing = vi.fn(async () => { throw new Error('404') })
+      const unreadable = await composeSlideshowTool({ spec, brandKitId: 'k1', style: { boxBg: 'red' } }, { projectRoot: tmp, loadKit: failing })
+      expect(unreadable).toMatchObject({ ok: false, error: expect.stringMatching(/Could not read Brand Kit k1: 404.*inline style is also invalid/s), errors: [expect.stringMatching(/^style\.boxBg/)] })
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('names both the kit and the inline style when both are invalid', async () => {
+      const res = await composeSlideshowTool({ spec, brandKitId: 'k1', style: { textSize: 5 } }, { projectRoot: tmp, loadKit: kit({ accent: 'zzz' }) })
+      expect(res).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/Brand Kit "Warm" has an invalid slideshow style.*inline style is invalid/s),
+        errors: [expect.stringMatching(/^kit\.style\.accent/), expect.stringMatching(/^style\.textSize/)],
+      })
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('labels a bad spec.style spec.style.*', async () => {
+      const real = await vi.importActual<typeof import('../lib/slideshow/spec.js')>('../lib/slideshow/spec.js')
+      compose.mockImplementation(async (s) => { real.assertValidSlideshowSpec(s); return result(true) as never })
+      const res = await composeSlideshowTool({ spec: { id: 'a', slides: [{}], style: { accent: 'nope' } } }, { projectRoot: tmp })
+      expect(res).toMatchObject({ ok: false, error: 'The slideshow spec is invalid.', errors: [expect.stringMatching(/^spec\.style\.accent/)] })
+    })
+
+    it('carries the failing sources on the typed error', () => {
+      try {
+        resolveStyleLayers({ kit: { accent: 'zzz' }, spec: { textSize: 1 }, inline: { subSize: 1 } })
+        expect.unreachable()
+      } catch (e) {
+        expect(e).toBeInstanceOf(SlideshowStyleError)
+        expect((e as SlideshowStyleError).sources.sort()).toEqual(['inline', 'kit', 'spec'])
+        expect((e as SlideshowStyleError).errors).toEqual([expect.stringMatching(/^style\.subSize/), expect.stringMatching(/^kit\.style\.accent/), expect.stringMatching(/^spec\.style\.textSize/)])
+      }
     })
 
     it('rejects an invalid style that arrives from a kit', async () => {

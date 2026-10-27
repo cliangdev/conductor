@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { fireEvent } from '@testing-library/react'
@@ -45,8 +45,54 @@ describe('SlideshowStyleSection', () => {
   it('renders the preview in a sandboxed iframe without scripts', () => {
     render(<Harness initial={{}} />)
     expect(frame().tagName).toBe('IFRAME')
-    expect(frame().getAttribute('sandbox')).toBe('')
+    // same-origin only so the page can read the frame's height; scripts stay off
+    expect(frame().getAttribute('sandbox')).toBe('allow-same-origin')
     expect(frame().getAttribute('sandbox')).not.toContain('allow-scripts')
+  })
+
+  it('sizes the preview from its content instead of a fixed height', () => {
+    render(<Harness initial={{}} />)
+    expect(frame().className).not.toMatch(/\bh-24\b/)
+    expect(frame().style.height).not.toBe('')
+  })
+
+  it('rebuilds the preview document once per debounce window while a colour is dragged', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<Harness initial={{}} />)
+      const before = srcDoc()
+      const picker = screen.getByLabelText('Accent colour')
+      for (const c of ['#111111', '#222222', '#333333', '#444444', '#555555']) {
+        fireEvent.change(picker, { target: { value: c } })
+        await act(async () => { vi.advanceTimersByTime(30) })
+        expect(srcDoc()).toBe(before)
+      }
+      await act(async () => { vi.advanceTimersByTime(200) })
+      expect(srcDoc()).not.toBe(before)
+      expect(srcDoc()).toContain('#555555')
+      expect(srcDoc()).not.toContain('#333333')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not show the https message while the URL is still being typed, only once it has settled or on blur', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<Harness initial={{}} />)
+      const input = screen.getByLabelText('Slide font URL')
+      fireEvent.change(input, { target: { value: 'h' } })
+      fireEvent.change(input, { target: { value: 'ht' } })
+      expect(screen.queryByText(/https:\/\/ link/)).not.toBeInTheDocument()
+      await act(async () => { vi.advanceTimersByTime(600) })
+      expect(screen.getByText(/https:\/\/ link/)).toBeInTheDocument()
+      fireEvent.change(input, { target: { value: 'htt' } })
+      expect(screen.queryByText(/https:\/\/ link/)).not.toBeInTheDocument()
+      await act(async () => { fireEvent.blur(input) })
+      expect(screen.getByText(/https:\/\/ link/)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('puts the chosen font in the iframe document, not on the preview element', () => {

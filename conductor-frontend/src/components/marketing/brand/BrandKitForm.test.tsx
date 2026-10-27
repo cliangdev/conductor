@@ -19,6 +19,7 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
+import { brandKitSlug } from '@cliangdev/creative-render/slideshow-style'
 import { apiGet, apiPatch, apiPost } from '@/lib/api'
 import { BrandKitForm } from './BrandKitForm'
 import type { BrandKit } from './types'
@@ -184,6 +185,36 @@ describe('BrandKitForm', () => {
       ),
     )
     expect(toastSpy).toHaveBeenCalledWith('Brand kit created')
+  })
+
+  it('derives the same slug as the CLI for the same name (table shared with conductor-tools)', async () => {
+    const table: Array<[string, string]> = [
+      ['Café Summer', 'cafe-summer'],
+      ['Holiday Drop!', 'holiday-drop'],
+      ['x'.repeat(70), 'x'.repeat(60)],
+      [`${'word '.repeat(14)}end`, 'word-'.repeat(12).replace(/-$/, '')],
+      ['!!!', 'kit'],
+      ['  Ünïcode  Ñame ', 'unicode-name'],
+    ]
+    for (const [name, expected] of table) expect(brandKitSlug(name), name).toBe(expected)
+  })
+
+  it('keeps every retried slug within 64 characters when a 63-character name is taken', async () => {
+    const conflict = Object.assign(new Error('slug taken'), { status: 409 })
+    ;(apiPost as Mock)
+      .mockImplementationOnce(() => Promise.reject(conflict))
+      .mockImplementationOnce(() => Promise.reject(conflict))
+      .mockImplementationOnce(() => Promise.resolve(kit({ id: 'kit-9', slug: 'x', name: 'n' })))
+    render(<BrandKitForm projectId="proj-1" token="tok" />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'New kit' }))
+    await userEvent.type(document.getElementById('new-kit-name')!, 'x'.repeat(63))
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(3))
+    const slugs = (apiPost as Mock).mock.calls.map((c) => (c[1] as { slug: string }).slug)
+    expect(slugs).toEqual(['x'.repeat(60), `${'x'.repeat(60)}-2`, `${'x'.repeat(60)}-3`])
+    for (const slug of slugs) expect(slug.length).toBeLessThanOrEqual(64)
   })
 
   describe('slideshow style', () => {

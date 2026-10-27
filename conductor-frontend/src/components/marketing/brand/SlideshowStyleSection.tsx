@@ -4,10 +4,10 @@
 // (bundled font, built-in colours). On, the kit carries a SlideshowStyle that the slideshow tools read.
 // Nothing here is a brand constant — the starting values are neutral and every one is editable.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import styleRules from '@cliangdev/creative-render/slideshow-style.json'
-import { fontFamilyCss as listToCss } from '@cliangdev/creative-render/slideshow-style'
+import { fontFamilyCss as listToCss, fontFamilyValid } from '@cliangdev/creative-render/slideshow-style'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -67,12 +67,9 @@ const FONT_URL = new RegExp(styleRules.fontUrlPattern)
 /** The same rule the CLI and backend apply to fontUrl: an https URL of at most 2048 characters. */
 const fontUrlValid = (url: string): boolean => url.length <= styleRules.maxLength.fontUrl && FONT_URL.test(url)
 
-/** A family list the preview may put in CSS: none of the characters the shared rules forbid (control characters, quotes, braces ...). */
+/** A family list the preview may put in CSS: the shared validity rule (length, names, forbidden characters). */
 const familyUsable = (family: string): boolean =>
-  ![...family].some((ch) => {
-    const code = ch.charCodeAt(0)
-    return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || styleRules.forbiddenFontFamilyChars.includes(ch)
-  })
+  fontFamilyValid(family, styleRules.forbiddenFontFamilyChars, styleRules.maxLength.fontFamily)
 
 function rgba(hex: string, alpha: number): string {
   const n = parseInt(hex.slice(1), 16)
@@ -98,6 +95,7 @@ const pickerValue = (value: string | undefined, key: SlideshowColourKey): string
   value && HEX.test(value) ? value : (NATIVE_SLIDESHOW_STYLE[key] as string)
 
 const FONT_LINK_DEBOUNCE_MS = 500
+const PREVIEW_MIN_HEIGHT = 48
 
 /**
  * The URL the preview frame should load: follows `url` once it has been stable for a moment or on blur, so typing
@@ -117,6 +115,21 @@ function useStableUrl(url: string | null, flush: boolean): string | null {
   return stable
 }
 
+const STYLE_DEBOUNCE_MS = 150
+
+/** The style the preview document is built from: follows `style` once it has been still for a moment, so a colour drag does not reload the frame per event. */
+function useDebouncedStyle(style: SlideshowStyle): SlideshowStyle {
+  const [debounced, setDebounced] = useState(style)
+  const key = JSON.stringify(style)
+  const latest = useRef(style)
+  latest.current = style
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(latest.current), STYLE_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [key])
+  return debounced
+}
+
 const escAttr = (v: string): string => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /** The preview's document: its own <link> to the font stylesheet plus the sample markup and CSS. */
@@ -132,7 +145,7 @@ export function previewDocument(style: SlideshowStyle, fontUrl: string | null): 
   const family = style.fontFamily && familyUsable(style.fontFamily) ? previewFontFamily(style.fontFamily) : undefined
   const shadow = `0 0 3px ${outline}, 0 0 3px ${outline}, 0 0 4px ${outline}, 0 2px 6px ${rgba(outline, 0.8)}`
   const css =
-    `html,body{margin:0}body{box-sizing:border-box;min-height:100vh;padding:12px;background:${darkBg};` +
+    `html,body{margin:0}html{background:${darkBg}}body{box-sizing:border-box;padding:12px;background:${darkBg};` +
     `font:14px/1.3 ${family ?? 'system-ui,sans-serif'}}` +
     `.row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}` +
     `.box{padding:4px 10px;border-radius:4px;font-weight:700;background:${boxBg};color:${boxInk}}` +
@@ -164,13 +177,32 @@ function StylePreview({ style, urlBlurred }: { style: SlideshowStyle; urlBlurred
   const fontUrl = style.fontUrl?.trim()
   const linkable = fontUrl && fontUrlValid(fontUrl) ? fontUrl : null
   const stableUrl = useStableUrl(linkable, urlBlurred)
+  const settled = useDebouncedStyle(style)
+  const ref = useRef<HTMLIFrameElement>(null)
+  const [height, setHeight] = useState(PREVIEW_MIN_HEIGHT)
+  // Fit the frame to its content (the sample wraps at narrow widths). The frame is same-origin so the page can read
+  // its height, but it has no allow-scripts: nothing inside it can run.
+  const fit = () => {
+    const h = ref.current?.contentDocument?.body?.getBoundingClientRect().height
+    if (h) setHeight(Math.max(PREVIEW_MIN_HEIGHT, Math.ceil(h)))
+  }
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   return (
     <iframe
+      ref={ref}
       title="Slideshow style preview"
       data-testid="slideshow-style-preview"
-      sandbox=""
-      srcDoc={previewDocument(style, stableUrl)}
-      className="h-24 w-full rounded-md border-0"
+      sandbox="allow-same-origin"
+      srcDoc={previewDocument(settled, stableUrl)}
+      onLoad={fit}
+      style={{ height }}
+      className="w-full rounded-md border-0"
     />
   )
 }
@@ -186,7 +218,10 @@ export function SlideshowStyleSection({ value, onChange, errorFor }: SlideshowSt
   const [urlBlurred, setUrlBlurred] = useState(false)
   const err = (field: string) => errorFor?.(`slideshowStyle.${field}`)
   const typedUrl = style?.fontUrl?.trim()
-  const localFontUrlError = typedUrl && !fontUrlValid(typedUrl) ? 'Use an https:// link to a CSS stylesheet.' : undefined
+  // the https message waits for the same stable-input gate as the preview link (or blur), so typing "h", "ht" ... does not flash it
+  const stableTyped = useStableUrl(typedUrl || null, urlBlurred)
+  const localFontUrlError =
+    typedUrl && !fontUrlValid(typedUrl) && stableTyped === typedUrl ? 'Use an https:// link to a CSS stylesheet.' : undefined
 
   return (
     <section className="space-y-3 rounded-lg border border-border p-4">

@@ -7,6 +7,8 @@ import {
   SlideshowSpecError,
   hasAnyStyleField,
   SlideshowStyleError,
+  validateSlideshowStyle,
+  type StyleSource,
   type ResolvedSlideshowStyle,
   type SlideshowStyle,
   type SlideRatio,
@@ -70,6 +72,16 @@ function provenanceNote(p: { needed: number[]; aiGenerated: boolean }): string {
   return note
 }
 
+/** The top-level message for a failing style: every failing source is named. */
+function styleErrorMessage(sources: StyleSource[], kitName: string): string {
+  const parts: string[] = []
+  if (sources.includes('kit')) parts.push(`Brand Kit "${kitName}" has an invalid slideshow style (fix it with update_brand_kit({kitId, slideshowStyle}) or pass an inline style instead)`)
+  if (sources.includes('spec')) parts.push("the spec's own style is invalid (spec.style)")
+  if (sources.includes('inline')) parts.push('the inline style is invalid')
+  if (parts.length === 0 || (sources.length === 1 && sources[0] === 'inline')) return 'The style is invalid.'
+  return `${parts.join('; ')}.`.replace(/^./, (c) => c.toUpperCase())
+}
+
 export async function composeSlideshowTool(
   params: ComposeSlideshowParams,
   options: ComposeSlideshowOptions = {}
@@ -100,29 +112,41 @@ export async function composeSlideshowTool(
   }
   if (typeof spec !== 'object' || spec === null) return { ok: false, error: 'spec must be an object with { id, slides }.' }
 
-  // Style layers (native < kit < the spec's own style < inline) are resolved and validated once, in
-  // composeSlideshow; here the kit is only loaded.
+  // Style layers (native < kit < the spec's own style < inline) are resolved and merged once, in composeSlideshow.
+  // Here the inline style is checked first, so a kit that cannot be read or has no style never hides its errors.
+  const inlineErrors = params.style == null ? [] : validateSlideshowStyle(params.style, 'style')
   let kitStyle: unknown
   let kitLabel: string | undefined
   let kitName = ''
+  let kitProblem: string | undefined
+  let kitErrors: string[] = []
   if (params.brandKitId) {
     const load = options.loadKit ?? (options.config ? (kitId: string) => getBrandKit({ kitId }, options.config!) : undefined)
     if (!load) return { ok: false, error: 'brandKitId needs a connected project; run conductor login or omit brandKitId.' }
-    let kit: Record<string, unknown>
+    let kit: Record<string, unknown> | undefined
     try {
       kit = await load(params.brandKitId)
     } catch (err) {
-      return { ok: false, error: `Could not read Brand Kit ${params.brandKitId}: ${err instanceof Error ? err.message : String(err)}` }
+      kitProblem = `Could not read Brand Kit ${params.brandKitId}: ${err instanceof Error ? err.message : String(err)}`
     }
-    kitName = String(kit['name'] ?? params.brandKitId)
-    if (!hasAnyStyleField(kit['slideshowStyle'])) {
-      return {
-        ok: false,
-        error: `Brand Kit "${kitName}" has no slideshow style. Compose without brandKitId for the native look, pass an inline style, or set one with update_brand_kit({kitId, slideshowStyle}).`,
+    if (kit) {
+      kitName = String(kit['name'] ?? params.brandKitId)
+      if (!hasAnyStyleField(kit['slideshowStyle'])) {
+        kitProblem = `Brand Kit "${kitName}" has no slideshow style. Compose without brandKitId for the native look, pass an inline style, or set one with update_brand_kit({kitId, slideshowStyle}).`
+      } else {
+        kitStyle = kit['slideshowStyle']
+        kitLabel = 'kit.style'
+        kitErrors = validateSlideshowStyle(kitStyle, kitLabel, true)
       }
     }
-    kitStyle = kit['slideshowStyle']
-    kitLabel = `Brand Kit "${kitName}" slideshowStyle`
+  }
+  if (kitProblem !== undefined || inlineErrors.length > 0 || kitErrors.length > 0) {
+    const sources: StyleSource[] = [...(kitErrors.length > 0 ? (['kit'] as const) : []), ...(inlineErrors.length > 0 ? (['inline'] as const) : [])]
+    const errors = [...kitErrors, ...inlineErrors]
+    if (kitProblem !== undefined) {
+      return { ok: false, error: inlineErrors.length > 0 ? `${kitProblem} The inline style is also invalid.` : kitProblem, ...(errors.length > 0 ? { errors } : {}) }
+    }
+    return { ok: false, error: styleErrorMessage(sources, kitName), errors }
   }
 
   const id = String((spec as { id?: unknown }).id ?? 'slideshow').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 40)
@@ -151,16 +175,7 @@ export async function composeSlideshowTool(
     }
   } catch (err) {
     if (err instanceof SlideshowSpecError) return { ok: false, error: 'The slideshow spec is invalid.', errors: err.errors }
-    if (err instanceof SlideshowStyleError) {
-      const fromKit = kitLabel !== undefined && err.errors.some((e) => e.startsWith(kitLabel!))
-      return {
-        ok: false,
-        error: fromKit
-          ? `Brand Kit "${kitName}" has an invalid slideshow style. Fix it with update_brand_kit({kitId, slideshowStyle}) or pass an inline style instead.`
-          : 'The style is invalid.',
-        errors: err.errors,
-      }
-    }
+    if (err instanceof SlideshowStyleError) return { ok: false, error: styleErrorMessage(err.sources, kitName), errors: err.errors }
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }

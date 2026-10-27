@@ -126,7 +126,9 @@ describe('resolveSlideshowStyle', () => {
   })
 
   it('hasAnyStyleField needs one known non-null field', () => {
-    for (const none of [null, undefined, 'x', [], {}, { futureField: 1 }, { accent: null, fontFamily: null }]) expect(hasAnyStyleField(none)).toBe(false)
+    for (const none of [null, undefined, 'x', [], {}, { futureField: 1 }, { accent: null, fontFamily: null }, { fontFamily: '  ' }, { fontUrl: '' }, { fontFamily: ' ', fontUrl: '\t' }]) expect(hasAnyStyleField(none)).toBe(false)
+    expect(hasAnyStyleField({ fontFamily: ' ', accent: '#ffffff' })).toBe(true)
+    expect(hasAnyStyleField({ fontFamily: 'Lora' })).toBe(true)
     expect(hasAnyStyleField({ accent: '#112233' })).toBe(true)
     expect(hasAnyStyleField({ textSize: 0, futureField: 1 })).toBe(true)
   })
@@ -152,12 +154,21 @@ describe('resolveSlideshowStyle', () => {
   })
 
   it('is validated inside a spec', () => {
-    expect(validateSlideshowSpec({ id: 'a', style: { accent: 'nope' }, slides: [{}] })).toEqual([expect.stringMatching(/style\.accent/)])
+    expect(validateSlideshowSpec({ id: 'a', style: { accent: 'nope' }, slides: [{}] })).toEqual([expect.stringMatching(/^spec\.style\.accent/)])
     expect(validateSlideshowSpec({ id: 'a', style: { accent: '#00ff88' }, slides: [{}] })).toEqual([])
   })
 })
 
 describe('buildSlideHtml with a style', () => {
+  const metaOf = (html: string) => JSON.parse(/window\.__META=(\{.*?\});<\/script>/s.exec(html)![1]!) as { needsTT: boolean }
+
+  it('checks the bundled font only on the slides that use it', () => {
+    const spec = { id: 't', slides: [{ texts: [{ t: 'a', y: 20 }] }, { type: 'placard' as const, texts: [{ t: 'b', y: 20 }] }], style: resolveSlideshowStyle({ fontFamily: 'Poppins' }) }
+    expect(metaOf(buildSlideHtml(spec, 0, '9x16', base)).needsTT).toBe(false)
+    expect(metaOf(buildSlideHtml(spec, 1, '9x16', base)).needsTT).toBe(true)
+    expect(metaOf(buildSlideHtml({ id: 't', slides: [{ texts: [{ t: 'a', y: 20 }] }] }, 0, '9x16', base)).needsTT).toBe(true)
+  })
+
   const slide = { texts: [{ t: 'one', y: 20 }, { t: 'two', y: 40, style: 'stroke' as const }, { t: 'three', y: 60, style: 'sub' as const }] }
 
   it('links the font stylesheet and tells the font check which family to wait for', () => {
@@ -281,12 +292,13 @@ describe.skipIf(!hasBrowser)('composeSlideshow with a custom font (real browser)
       const mixed = await composeSlideshow({ ...spec, style: { fontFamily: '-apple-system, Missing Sans' } }, join(out, 'mixed'), { ratios: ['9x16'], browserFactory })
       expect(mixed.checks.find((c) => c.rule === 'font')?.message).toMatch(/"Missing Sans" is not installed/)
 
-      // the bundled TikTok Sans is checked whenever any text uses it: native text, or a placard's label
+      // the bundled TikTok Sans is checked on each slide that uses it: native text, or a placard's label
       const placard = { id: 'pl', slides: [{ bgColor: '#336699' }, { type: 'placard' as const, title: 'Untitled', ex: 'Exhibit A' }], style: { fontFamily: 'Test Sans', fontUrl: 'https://fonts.test/good.css' } }
       const blocked = factoryFor(true)
       const withPlacard = await composeSlideshow(placard, join(out, 'placard'), { ratios: ['9x16'], browserFactory: blocked })
       expect(withPlacard.passed).toBe(false)
-      expect(withPlacard.checks.filter((c) => c.rule === 'font').map((c) => c.message)).toEqual([expect.stringMatching(/TikTok Sans did not load/), expect.stringMatching(/TikTok Sans did not load/)])
+      expect(withPlacard.checks.filter((c) => c.rule === 'font').map((c) => c.message)).toEqual([expect.stringMatching(/TikTok Sans did not load/)]) // only the placard slide
+      expect(withPlacard.checks.filter((c) => c.rule === 'font').map((c) => c.slide)).toEqual([2])
       const customOnly = await composeSlideshow({ ...placard, slides: [placard.slides[0]!] }, join(out, 'customonly'), { ratios: ['9x16'], browserFactory: blocked })
       expect(customOnly.checks.filter((c) => c.rule === 'font')).toEqual([])
       const nativeBlocked = await composeSlideshow(spec, join(out, 'nativeblocked'), { ratios: ['9x16'], browserFactory: blocked })

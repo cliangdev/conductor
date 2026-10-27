@@ -8,7 +8,7 @@ export function slugify(text: string | undefined, max = 40, fallback = 'draft'):
 
 /** The longest slug a Brand Kit may have (the backend refuses more with a 422). */
 export const KIT_SLUG_MAX = 64
-export const KIT_SLUG_PATTERN = /^[a-z0-9-]{1,64}$/
+export const KIT_SLUG_PATTERN = new RegExp(`^[a-z0-9-]{1,${KIT_SLUG_MAX}}$`)
 
 /**
  * The slug a new Brand Kit's name derives to. Same rules as the web app's slugify in BrandKitForm.tsx: NFKD,

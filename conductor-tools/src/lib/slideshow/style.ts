@@ -58,11 +58,9 @@ export const NATIVE_STYLE: Readonly<ResolvedSlideshowStyle> = Object.freeze({
 })
 
 export const HEX_PATTERN = /^#[0-9a-fA-F]{6}$/
-const HEX = HEX_PATTERN
 // eslint-disable-next-line no-control-regex
 export const FAMILY_BAD = /[\u0000-\u001f\u007f-\u009f"';{}<>\\]/
 export const FONT_URL_PATTERN = /^https:\/\/[^\s"'<>\\]+$/
-const FONT_URL = FONT_URL_PATTERN
 export const MAX_FONT_FAMILY = 200
 export const MAX_FONT_URL = 2048
 export const STYLE_BOUNDS = { textSize: { min: 24, max: 120 }, subSize: { min: 16, max: 96 } } as const
@@ -113,11 +111,11 @@ export function validateSlideshowStyle(style: unknown, at = 'style', ignoreUnkno
   if (v('fontUrl') != null) {
     const url = v('fontUrl')
     const t = typeof url === 'string' ? url.trim() : ''
-    const ok = typeof url === 'string' && (t === '' || (t.length <= MAX_FONT_URL && FONT_URL.test(t)))
+    const ok = typeof url === 'string' && (t === '' || (t.length <= MAX_FONT_URL && FONT_URL_PATTERN.test(t)))
     if (!ok) errors.push(`${at}.fontUrl must be an https URL to a CSS stylesheet (for example a Google Fonts link)`)
   }
   for (const k of STYLE_COLOR_KEYS) {
-    if (v(k) != null && !(typeof v(k) === 'string' && HEX.test(v(k) as string))) errors.push(`${at}.${k} must be a #RRGGBB hex colour, got ${JSON.stringify(v(k))}`)
+    if (v(k) != null && !(typeof v(k) === 'string' && HEX_PATTERN.test(v(k) as string))) errors.push(`${at}.${k} must be a #RRGGBB hex colour, got ${JSON.stringify(v(k))}`)
   }
   if (v('defaultText') != null && !(STYLE_TEXT_KINDS as readonly unknown[]).includes(v('defaultText'))) {
     errors.push(`${at}.defaultText must be one of ${STYLE_TEXT_KINDS.join(', ')}`)
@@ -131,8 +129,15 @@ export function validateSlideshowStyle(style: unknown, at = 'style', ignoreUnkno
   return errors
 }
 
+/** Where a style layer came from, so an error names the right one without matching message text. */
+export type StyleSource = 'kit' | 'spec' | 'inline'
+
 export class SlideshowStyleError extends Error {
-  constructor(public readonly errors: string[]) {
+  constructor(
+    public readonly errors: string[],
+    /** Every layer that has a problem (empty when the caller did not track layers). */
+    public readonly sources: StyleSource[] = [],
+  ) {
     super(`Invalid slideshow style:\n${errors.map((e) => `  - ${e}`).join('\n')}`)
     this.name = 'SlideshowStyleError'
   }
@@ -195,11 +200,13 @@ export function resolveSlideshowStyle(...layers: Array<SlideshowStyle | null | u
  * spec (assertValidSlideshowSpec), so it is only merged here. Throws SlideshowStyleError listing every problem.
  */
 export function resolveStyleLayers(layers: { kit?: unknown; kitLabel?: string; spec?: SlideshowStyle | null; inline?: SlideshowStyle | null }): ResolvedSlideshowStyle {
-  const errors = [
-    ...(layers.inline == null ? [] : validateSlideshowStyle(layers.inline, 'style')),
-    ...(layers.kit == null ? [] : validateSlideshowStyle(layers.kit, layers.kitLabel ?? 'Brand Kit slideshowStyle', true)),
+  const found: Array<[StyleSource, string[]]> = [
+    ['inline', layers.inline == null ? [] : validateSlideshowStyle(layers.inline, 'style')],
+    ['kit', layers.kit == null ? [] : validateSlideshowStyle(layers.kit, layers.kitLabel ?? 'kit.style', true)],
+    ['spec', layers.spec == null ? [] : validateSlideshowStyle(layers.spec, 'spec.style')],
   ]
-  if (errors.length > 0) throw new SlideshowStyleError(errors)
+  const failing = found.filter(([, errs]) => errs.length > 0)
+  if (failing.length > 0) throw new SlideshowStyleError(failing.flatMap(([, errs]) => errs), failing.map(([source]) => source))
   return mergeSlideshowStyles(layers.kit == null ? undefined : kitStyleLayer(layers.kit), layers.spec, layers.inline)
 }
 
@@ -213,5 +220,10 @@ export function kitStyleLayer(style: unknown): SlideshowStyle | undefined {
 /** True when a (kit) style sets at least one known field to a non-null value: otherwise it is "no style". */
 export function hasAnyStyleField(style: unknown): boolean {
   if (!isObj(style)) return false
-  return STYLE_KEYS.some((k) => style[k] !== null && style[k] !== undefined)
+  return STYLE_KEYS.some((k) => {
+    const v = style[k]
+    if (v === null || v === undefined) return false
+    // a blank font is unset, as the backend treats it
+    return (k === 'fontFamily' || k === 'fontUrl') && typeof v === 'string' ? v.trim() !== '' : true
+  })
 }

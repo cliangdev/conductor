@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PlusIcon, StarIcon, TrashIcon, UploadCloudIcon, XIcon } from 'lucide-react'
 import { checkCreativeCopy } from '@cliangdev/creative-render/copy-rules'
 import { mountBoard } from '@cliangdev/creative-render/mount'
+import { brandKitSlug } from '@cliangdev/creative-render/slideshow-style'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -86,19 +87,6 @@ let ruleSeq = 0
 function newRuleId() {
   ruleSeq += 1
   return `rule-${Date.now()}-${ruleSeq}`
-}
-
-/** Lowercase, hyphenated, ascii-only — the slug a new kit's Name derives to, so the user is never
- *  asked for a slug directly. "kit" is the fallback for a name that has no ascii letters or digits
- *  at all (e.g. all emoji). */
-function slugify(name: string): string {
-  const slug = name
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return slug || 'kit'
 }
 
 function PreviewBoard({ draft, kit }: { draft: Draft; kit: BrandKit | null }) {
@@ -233,7 +221,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
     const name = newKitName.trim()
     if (!name) return
     setCreatingKitBusy(true)
-    const base = slugify(name)
+    const base = brandKitSlug(name)
     // A duplicate slug is the only thing worth silently retrying — anything else (network, 4xx
     // other than a conflict) is shown to the user straight away instead of burning two more calls.
     const candidates = [base, `${base}-2`, `${base}-3`]

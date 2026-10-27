@@ -1340,9 +1340,9 @@ export const TOOLS = [
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Kit display name' },
-        slug: { type: 'string', description: 'URL-safe id (optional; derived from name)' },
+        slug: { type: 'string', description: 'URL-safe id: lowercase a-z, 0-9 and hyphens, 1-64 characters (optional; omit to derive it from the name)' },
         copyFrom: { type: 'string', description: 'Brand Kit id to copy the voice, tokens and font from (optional)' },
-        slideshowStyle: { type: 'object', description: "Same fields as compose_slideshow's style" },
+        slideshowStyle: { type: ['object', 'null'], description: "Same fields as compose_slideshow's style; null means no slideshow style" },
         tokens: { type: 'object', additionalProperties: { type: 'string' }, description: 'CSS colour tokens, #RRGGBB (optional)' },
         fontFamily: { type: 'string' },
         fontUrl: { type: 'string' },

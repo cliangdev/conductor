@@ -236,7 +236,7 @@ export function buildSlideHtml(
   // the family list is parsed once: the first non-keyword name drives the custom-font check and load (none when
   // every family is a generic/system keyword); the bundled TikTok Sans is checked whenever any text uses it
   const firstFamily = style.fontFamily ? (fontFamilyNames(style.fontFamily).find((f) => !isGenericFamily(f)) ?? null) : null
-  const needsTT = !style.fontFamily || spec.slides.some((s) => s.type === 'placard')
+  const needsTT = !style.fontFamily || sl.type === 'placard'
   const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily, needsTT, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
