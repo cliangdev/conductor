@@ -100,7 +100,7 @@ public class KnowledgeIngestScheduler {
      * test that needs this scheduler live ({@code KnowledgeIngestSchedulerIntegrationTest}) carries its
      * own private {@code @Container} plus {@code @TestPropertySource} to flip it back on in isolation.
      */
-    @Scheduled(fixedDelay = 30_000)
+    @Scheduled(fixedDelay = 30_000, initialDelay = 20_000)
     public void poll() {
         if (!enabled) {
             return;

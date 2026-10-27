@@ -53,7 +53,7 @@ public class MarketingInsightsFeedProvisioner {
         provisionEligibleProjects();
     }
 
-    @Scheduled(fixedDelay = 3_600_000)
+    @Scheduled(fixedDelay = 3_600_000, initialDelay = 80_000)
     public void onSchedule() {
         provisionEligibleProjects();
     }

@@ -59,6 +59,7 @@ public class GcpKmsCredentialService implements CredentialService {
     static final Duration DEK_CACHE_TTL = Duration.ofMinutes(20);
     static final long DEK_CACHE_MAX_ENTRIES = 1_000;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public GcpKmsCredentialService(
             ObjectMapper objectMapper,
             KeyManagementServiceClient kmsClient,

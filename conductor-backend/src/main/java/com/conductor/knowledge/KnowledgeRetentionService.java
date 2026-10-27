@@ -82,7 +82,7 @@ public class KnowledgeRetentionService {
         this.deleteSkippedAfterDays = deleteSkippedAfterDays;
     }
 
-    @Scheduled(fixedDelay = 3_600_000)
+    @Scheduled(fixedDelay = 3_600_000, initialDelay = 90_000)
     public void sweep() {
         try {
             compactProcessed();

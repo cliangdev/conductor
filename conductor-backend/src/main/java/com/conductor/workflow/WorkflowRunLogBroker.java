@@ -365,7 +365,7 @@ public class WorkflowRunLogBroker {
         }
     }
 
-    @Scheduled(fixedDelay = 5000)
+    @Scheduled(fixedDelay = 5000, initialDelay = 15_000)
     public void closeTerminalRunEmitters() {
         activeEmitters.forEach((runId, emitter) -> {
             Optional<WorkflowRun> runOpt = runRepository.findByIdWithWorkflow(runId);

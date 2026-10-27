@@ -167,7 +167,7 @@ public class NativePublishConfirmationPoller {
      * this is about how quickly a permalink shows up on the Post, not about the publishing SLO — the
      * app-managed poller's 30 seconds owns that.
      */
-    @Scheduled(fixedDelay = 60_000)
+    @Scheduled(fixedDelay = 60_000, initialDelay = 55_000)
     public void poll() {
         if (!enabled) {
             return;
