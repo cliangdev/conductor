@@ -51,6 +51,8 @@ interface Draft {
   fontFamily: string
   fontUrl: string
   slideshowStyle: SlideshowStyle | null
+  /** True once the person edited the Slideshow style section in this session. */
+  slideshowStyleDirty: boolean
   ctaClaim: string
   accentPhraseRequired: boolean
   copyRules: CopyRule[]
@@ -66,6 +68,7 @@ function toDraft(kit: BrandKit): Draft {
     fontFamily: kit.fontFamily ?? '',
     fontUrl: kit.fontUrl ?? '',
     slideshowStyle: kit.slideshowStyle ? { ...kit.slideshowStyle } : null,
+    slideshowStyleDirty: false,
     ctaClaim: kit.ctaClaim ?? '',
     accentPhraseRequired: kit.accentPhraseRequired,
     copyRules: kit.copyRules.map((r) => ({ ...r, fields: [...r.fields] })),
@@ -190,8 +193,9 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
           tokens: draft.tokens,
           fontFamily: draft.fontFamily || null,
           fontUrl: draft.fontUrl || null,
-          // null (style off) clears it on the server; an object replaces the whole style.
-          slideshowStyle: draft.slideshowStyle,
+          // Only when edited here: null (style off) clears it on the server, an object replaces it;
+          // omitted leaves a style written elsewhere (CLI, MCP) untouched.
+          ...(draft.slideshowStyleDirty ? { slideshowStyle: draft.slideshowStyle } : {}),
           ctaClaim: draft.ctaClaim || null,
           accentPhraseRequired: draft.accentPhraseRequired,
           copyRules: draft.copyRules,
@@ -512,7 +516,9 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
 
           <SlideshowStyleSection
             value={draft.slideshowStyle}
-            onChange={(next) => updateDraft('slideshowStyle', next)}
+            onChange={(next) =>
+              setDraft((prev) => (prev ? { ...prev, slideshowStyle: next, slideshowStyleDirty: true } : prev))
+            }
             errorFor={(field) => fieldError(error, field)}
           />
 

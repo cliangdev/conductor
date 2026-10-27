@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -17,49 +16,75 @@ import java.util.regex.Pattern;
  * Creatives ({@code slideStyle}). The constraints live here rather than as OpenAPI keywords so a
  * violation answers 422 naming the field, not a generic 400 from bean validation.
  */
-final class SlideshowStyles {
+public final class SlideshowStyles {
 
-    record Problem(String field, String message) {
+    public record Problem(String field, String message) {
     }
 
     private static final Pattern HEX = Pattern.compile("^#[0-9A-Fa-f]{6}$");
+    private static final Pattern FAMILY_OK = Pattern.compile("^[^\\p{Cc}\"';{}<>\\\\]+$");
+    private static final Pattern URL_OK = Pattern.compile("^https?://[^\\s\"'<>\\\\]+$");
     private static final Set<String> DEFAULT_TEXT = Set.of("box", "dark", "stroke");
 
     private SlideshowStyles() {
     }
 
-    /** True when no property is set — what an explicit JSON null (or {@code {}}) deserializes to. */
-    static boolean isEmpty(SlideshowStyle s) {
-        return s == null
-                || (s.getFontFamily() == null && s.getFontUrl() == null && s.getBoxBg() == null
-                && s.getBoxInk() == null && s.getDarkBg() == null && s.getDarkInk() == null
-                && s.getOutline() == null && s.getAccent() == null && s.getDefaultText() == null
-                && s.getTextSize() == null && s.getSubSize() == null);
-    }
+    private static final Set<String> KNOWN = Set.of("fontFamily", "fontUrl", "boxBg", "boxInk", "darkBg",
+            "darkInk", "outline", "accent", "defaultText", "textSize", "subSize");
 
-    /** The JSON to store: only the properties that are set, or null for an empty style. */
-    static JsonNode toStored(ObjectMapper mapper, SlideshowStyle s) {
-        if (isEmpty(s)) {
+    /**
+     * The JSON to store: only the properties that are set (blank strings count as unset, strings are
+     * trimmed), or null for an empty style.
+     */
+    public static JsonNode toStored(ObjectMapper mapper, SlideshowStyle s) {
+        if (s == null) {
             return null;
         }
         ObjectNode node = mapper.valueToTree(s);
-        node.properties().removeIf(e -> e.getValue().isNull());
-        return node;
+        node.properties().removeIf(e -> e.getValue().isNull()
+                || (e.getValue().isTextual() && e.getValue().asText().isBlank()));
+        node.properties().forEach(e -> {
+            if (e.getValue().isTextual()) {
+                e.setValue(node.textNode(e.getValue().asText().trim()));
+            }
+        });
+        return node.isEmpty() ? null : node;
+    }
+
+    /** The API model for a stored style; unknown stored keys are ignored, null/absent gives null. */
+    public static SlideshowStyle fromStored(ObjectMapper mapper, JsonNode stored) {
+        if (stored == null || stored.isNull() || !stored.isObject()) {
+            return null;
+        }
+        ObjectNode known = mapper.createObjectNode();
+        stored.properties().forEach(e -> {
+            if (KNOWN.contains(e.getKey())) {
+                known.set(e.getKey(), e.getValue());
+            }
+        });
+        return mapper.convertValue(known, SlideshowStyle.class);
     }
 
     /** Problems found, each field prefixed with {@code prefix} (e.g. {@code slideshowStyle}). */
-    static List<Problem> validate(SlideshowStyle s, String prefix) {
+    public static List<Problem> validate(SlideshowStyle s, String prefix) {
         List<Problem> out = new ArrayList<>();
         if (s == null) {
             return out;
         }
-        if (s.getFontFamily() != null && s.getFontFamily().length() > 200) {
-            out.add(new Problem(prefix + ".fontFamily", "must be at most 200 characters"));
+        String family = blankToNull(s.getFontFamily());
+        if (family != null) {
+            if (family.length() > 200) {
+                out.add(new Problem(prefix + ".fontFamily", "must be at most 200 characters"));
+            } else if (!FAMILY_OK.matcher(family).matches()) {
+                out.add(new Problem(prefix + ".fontFamily",
+                        "must be a CSS font-family list without quotes, semicolons, braces, angle brackets, backslashes or control characters"));
+            }
         }
-        if (s.getFontUrl() != null) {
-            if (s.getFontUrl().length() > 2048) {
+        String url = blankToNull(s.getFontUrl());
+        if (url != null) {
+            if (url.length() > 2048) {
                 out.add(new Problem(prefix + ".fontUrl", "must be at most 2048 characters"));
-            } else if (!isHttpUrl(s.getFontUrl())) {
+            } else if (!URL_OK.matcher(url).matches()) {
                 out.add(new Problem(prefix + ".fontUrl", "must be an http(s) URL"));
             }
         }
@@ -89,13 +114,7 @@ final class SlideshowStyles {
         }
     }
 
-    private static boolean isHttpUrl(String value) {
-        try {
-            URI uri = URI.create(value);
-            return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                    && uri.getHost() != null;
-        } catch (IllegalArgumentException e) {
-            return false;
-        }
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
     }
 }

@@ -117,13 +117,15 @@ inline `style`, or both (the kit's style first, the inline fields on top).
   whether it is also the slideshow look); never add a second gate. Store the choice in `run.json`
   as `slideshowStyle: {"brandKitId": "<id>" | null, "style": {...} | null}`.
 - **Compose.** Pass `brandKitId` (a kit with no slideshow style is refused with a clear error: fall
-  back to native or set one with `update_brand_kit`) and/or `style` (`fontFamily`, `fontUrl` for a
+  back to native or set one with `update_brand_kit`) and/or `style` (`fontFamily` as a name or a comma list such as `Inter, sans-serif`, `fontUrl` for a
   Google Fonts stylesheet, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `outline`, `accent` as `#RRGGBB`,
   `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96). Notes, week, receipt,
-  placard and messages slides keep their system-UI fonts by design. A custom font that fails to load
-  is a blocking `font` check naming the family.
-- **Record it.** The result and the output `spec.json` carry the resolved `style` (the full object,
-  native defaults included). Pass it as `slideStyle` on `preview_creative_draft` / `create_creative`
+  placard and messages slides keep their system-UI fonts by design. A custom font that fails to load,
+  or a `fontFamily` that is not installed when there is no `fontUrl`, is a blocking `font` check naming the family.
+- **Record it.** The result's `style` and the output `spec.json`'s `resolvedStyle` are the full object,
+  native defaults included (the spec's own `style` is kept as you wrote it). Layers: native, then
+  the kit (`brandKitId`), then the spec's `style`, then the inline `style`; re-composing an output
+  `spec.json` ignores `resolvedStyle`. Pass it as `slideStyle` on `preview_creative_draft` / `create_creative`
   so every composed slideshow has a style that can later become a kit style
   (`references/brand-kit-setup.md`, "Make a kit style from slides").
 
@@ -152,7 +154,8 @@ Captions on TikTok and Instagram cannot hold clickable links, so do not rely on 
 1. Write the spec (`slideshow-spec.json`); call `compose_slideshow({specPath})`, adding `brandKitId`
    and/or `style` per Style above.
 2. If `passed` is false, fix every `error` check and compose again. Warnings are advisory.
-3. `preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle, caption, slideAltText})` using the
+3. `preview_creative_draft({kind: "CAROUSEL", brandKitId, slidePaths, slideStyle, caption, slideAltText})` (the same
+   `brandKitId` as the compose; omit it for the default kit) using the
    returned `slidePaths` and `style` (as `slideStyle`) (`9x16` for TikTok, `4x5` for Instagram). Look at the contact sheet and show
    it.
    With music (`audio: {source: "track", trackId}`, a library track from

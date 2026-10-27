@@ -135,7 +135,7 @@ import {
 const SLIDESHOW_STYLE_SCHEMA = {
   type: 'object',
   description:
-    'Slideshow look, all fields optional: fontFamily (null = TikTok Sans), fontUrl (http(s) CSS stylesheet such as a Google Fonts link), boxBg, boxInk, darkBg, darkInk, outline, accent (#RRGGBB), defaultText (box|dark|stroke, for text with no style), textSize (24-120 px), subSize (16-96 px).',
+    'Slideshow look, all fields optional: fontFamily (a name or comma list like "Inter, sans-serif"; null = TikTok Sans), fontUrl (http(s) CSS stylesheet such as a Google Fonts link), boxBg, boxInk, darkBg, darkInk, outline, accent (#RRGGBB), defaultText (box|dark|stroke, for text with no style), textSize (24-120 px), subSize (16-96 px).',
   properties: {
     fontFamily: { type: ['string', 'null'] },
     fontUrl: { type: ['string', 'null'] },
@@ -206,8 +206,7 @@ const CREATIVE_FIELD_PROPERTIES = {
   },
   slideStyle: {
     type: 'object',
-    description: "CAROUSEL only: the look the slides were composed with. Pass compose_slideshow's returned `style` so the look can be reused as a Brand Kit style later.",
-    properties: SLIDESHOW_STYLE_SCHEMA.properties,
+    description: "CAROUSEL only: compose_slideshow's returned style",
   },
   slideshow: {
     type: 'object',
@@ -1328,20 +1327,20 @@ export const TOOLS = [
         addApprovedLines: { type: 'array', items: { type: 'string' }, description: 'Appends to the existing approved lines instead of replacing them (optional). Mutually exclusive with approvedLines.' },
         enabledPlacements: { type: 'array', items: { type: 'string' }, description: 'Placement keys (from the creative registry) this kit exports by default (optional)' },
         knowledgePagePath: { type: 'string', description: "Wiki page path holding this brand's prose context (optional)" },
-        slideshowStyle: { ...SLIDESHOW_STYLE_SCHEMA, type: ['object', 'null'], description: 'Replaces the kit\'s whole slideshow style; null clears it (optional). Fields: see compose_slideshow style.' },
+        slideshowStyle: { type: ['object', 'null'], description: "Same fields as compose_slideshow's style; null clears" },
       },
     },
   },
   {
     name: 'create_brand_kit',
-    description: "Create an additional Brand Kit (never the default). name is required; slug is derived from it. copyFrom (a kit id) starts from that kit's tokens, font, CTA claim, copy rules, approved lines, placements and Knowledge page so the voice carries over; anything passed here wins. Images are not copied: add them with upload_brand_image. slideshowStyle sets the look of composed slideshows. Call get_brand_kit after to verify.",
+    description: "Create an additional Brand Kit (never the default). copyFrom (a kit id) carries over its voice, tokens and font; fields passed here win. Images are not copied: add them with upload_brand_image. Call get_brand_kit after to verify.",
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Kit display name' },
         slug: { type: 'string', description: 'URL-safe id (optional; derived from name)' },
         copyFrom: { type: 'string', description: 'Brand Kit id to copy the voice, tokens and font from (optional)' },
-        slideshowStyle: SLIDESHOW_STYLE_SCHEMA,
+        slideshowStyle: { type: 'object', description: "Same fields as compose_slideshow's style" },
         tokens: { type: 'object', additionalProperties: { type: 'string' }, description: 'CSS colour tokens, #RRGGBB (optional)' },
         fontFamily: { type: 'string' },
         fontUrl: { type: 'string' },
@@ -1604,7 +1603,7 @@ export const TOOLS = [
   },
   {
     name: 'compose_slideshow',
-    description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (also in spec.json) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}). Nothing is sent to Conductor.",
+    description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}). Nothing is sent to Conductor.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1612,7 +1611,7 @@ export const TOOLS = [
         specPath: { type: 'string', description: 'A spec .json file; relative image paths resolve against its folder (use this or spec)' },
         ratios: { type: 'array', items: { type: 'string', enum: ['9x16', '4x5'] }, description: 'Default both' },
         brandKitId: { type: 'string', description: "Style the slides from this Brand Kit's slideshowStyle (optional; errors if the kit has none; omit for the native look)" },
-        style: { ...SLIDESHOW_STYLE_SCHEMA, description: 'One-off style, applied over the kit style or the native look (optional). Fields as in update_brand_kit slideshowStyle.' },
+        style: { ...SLIDESHOW_STYLE_SCHEMA, description: 'One-off style, applied over the kit style or the native look (optional). Overrides the kit and the spec\'s own style.' },
         draftDir: { type: 'string', description: 'Output folder (optional; defaults to <project>/.conductor/slideshows/<timestamp>-<id>/)' },
       },
     },

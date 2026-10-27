@@ -2,6 +2,7 @@ import { readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Config } from '../config.js'
+import { validateSlideshowStyle } from '../../lib/slideshow/style.js'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
@@ -198,7 +199,10 @@ export async function updateBrandKit(params: UpdateBrandKitParams, config: Confi
   if (params.copyRules !== undefined) patch['copyRules'] = params.copyRules
   if (params.enabledPlacements !== undefined) patch['enabledPlacements'] = params.enabledPlacements
   if (params.knowledgePagePath !== undefined) patch['knowledgePagePath'] = params.knowledgePagePath
-  if (params.slideshowStyle !== undefined) patch['slideshowStyle'] = params.slideshowStyle
+  if (params.slideshowStyle !== undefined) {
+    assertStyle(params.slideshowStyle)
+    patch['slideshowStyle'] = params.slideshowStyle
+  }
 
   if (params.tokens !== undefined) {
     if (supportsPartialMerge) {
@@ -225,6 +229,12 @@ export async function updateBrandKit(params: UpdateBrandKitParams, config: Confi
   }
 
   return withBrandKitErrors(() => apiPatch(`${V2_PROJECT(config)}/marketing/brand-kits/${kitId}`, patch, config))
+}
+
+function assertStyle(style: unknown): void {
+  if (style === null) return
+  const errors = validateSlideshowStyle(style, 'slideshowStyle')
+  if (errors.length > 0) throw new Error(`Invalid slideshowStyle:\n${errors.map((e) => `  - ${e}`).join('\n')}`)
 }
 
 export interface CreateBrandKitParams {
@@ -264,13 +274,15 @@ export const slugifyKitName = (name: string): string =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60)
+    .replace(/-+$/g, '')
 
 /** Creates a Brand Kit (never the default one). With `copyFrom`, starts from that kit's voice and
  * tokens; any field passed here wins over the copied one. */
 export async function createBrandKit(params: CreateBrandKitParams, config: Config): Promise<Record<string, unknown>> {
   const name = typeof params.name === 'string' ? params.name.trim() : ''
   if (!name) throw new Error('name is required.')
-  const slug = params.slug?.trim() || slugifyKitName(name)
+  const explicitSlug = params.slug?.trim()
+  const slug = explicitSlug || slugifyKitName(name)
   if (!slug) throw new Error('Could not derive a slug from the name; pass slug (letters, digits, hyphens).')
 
   const body: Record<string, unknown> = { slug, name }
@@ -280,9 +292,29 @@ export async function createBrandKit(params: CreateBrandKitParams, config: Confi
     for (const f of COPIED_KIT_FIELDS) if (source[f] !== undefined && source[f] !== null) body[f] = source[f]
   }
   for (const f of COPIED_KIT_FIELDS) if (params[f] !== undefined) body[f] = params[f]
-  if (params.slideshowStyle !== undefined) body['slideshowStyle'] = params.slideshowStyle
+  if (params.slideshowStyle !== undefined) {
+    assertStyle(params.slideshowStyle)
+    body['slideshowStyle'] = params.slideshowStyle
+  }
 
-  const created = await withBrandKitErrors(() => apiPost<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits`, body, config))
+  // A derived slug that is taken gets -2 ... -9 (like the web app); a slug the caller chose is never changed.
+  const candidates = explicitSlug ? [slug] : [slug, ...[2, 3, 4, 5, 6, 7, 8, 9].map((n) => `${slug.slice(0, 58).replace(/-+$/g, '')}-${n}`)]
+  let created: Record<string, unknown> | undefined
+  for (const candidate of candidates) {
+    try {
+      created = await withBrandKitErrors(() => apiPost<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits`, { ...body, slug: candidate }, config))
+      break
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 409)) throw err
+    }
+  }
+  if (!created) {
+    throw new Error(
+      explicitSlug
+        ? `A Brand Kit with the slug "${slug}" already exists; pass a different slug.`
+        : `Could not find a free slug for "${name}" (${slug} through ${slug}-9 are taken); pass a slug.`
+    )
+  }
   const copied = source ? ` Copied the voice, tokens and font from "${String(source['name'] ?? params.copyFrom)}"; its logos and other images were NOT copied.` : ''
   return {
     ...created,

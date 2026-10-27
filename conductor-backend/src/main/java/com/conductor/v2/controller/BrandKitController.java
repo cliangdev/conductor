@@ -12,7 +12,6 @@ import com.conductor.generated.v2.model.CopyRuleField;
 import com.conductor.generated.v2.model.CreateBrandKitRequest;
 import com.conductor.generated.v2.model.MintUploadRequest;
 import com.conductor.generated.v2.model.PatchBrandKitRequest;
-import com.conductor.generated.v2.model.SlideshowStyle;
 import com.conductor.generated.v2.model.UploadTicketResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -116,8 +115,7 @@ public class BrandKitController implements BrandKitsApi {
                 .wordmarkDarkUrl(brandKitService.resolveImageUrl(kit.getWordmarkDarkGcsPath()))
                 .wordmarkLightUrl(brandKitService.resolveImageUrl(kit.getWordmarkLightGcsPath()))
                 .badgeUrl(brandKitService.resolveImageUrl(kit.getBadgeGcsPath()))
-                .slideshowStyle(kit.getSlideshowStyle() != null && !kit.getSlideshowStyle().isNull()
-                        ? objectMapper.convertValue(kit.getSlideshowStyle(), SlideshowStyle.class) : null)
+                .slideshowStyle(com.conductor.creative.SlideshowStyles.fromStored(objectMapper, kit.getSlideshowStyle()))
                 .ctaClaim(kit.getCtaClaim());
     }
 

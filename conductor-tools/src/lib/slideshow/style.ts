@@ -54,26 +54,55 @@ export const NATIVE_STYLE: Readonly<ResolvedSlideshowStyle> = Object.freeze({
 })
 
 const HEX = /^#[0-9a-fA-F]{6}$/
-const FAMILY = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/
+// eslint-disable-next-line no-control-regex
+const FAMILY_BAD = /[\u0000-\u001f\u007f-\u009f"';{}<>\\]/
+const FONT_URL = /^https?:\/\/[^\s"'<>\\]+$/
+export const GENERIC_FAMILIES = ['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong'] as const
+
+/** The family names of a font-family list: split on commas, trimmed, blanks dropped. */
+export function fontFamilyNames(family: string): string[] {
+  return family.split(',').map((f) => f.trim()).filter(Boolean)
+}
+
+/** A font-family list as CSS: each family quoted unless it is a generic keyword. */
+export function fontFamilyCss(family: string): string {
+  return fontFamilyNames(family)
+    .map((f) => ((GENERIC_FAMILIES as readonly string[]).includes(f.toLowerCase()) ? f.toLowerCase() : `"${f}"`))
+    .join(',')
+}
+
+const sameFamily = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase()
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** Every problem with a (partial) style; empty = valid. Same rules as the backend. */
-export function validateSlideshowStyle(style: unknown, at = 'style'): string[] {
+/**
+ * Every problem with a (partial) style; empty = valid. Same rules as the backend (fontFamily: trimmed, blank =
+ * unset, 1-200 chars, a comma-separated CSS family list without control characters or any of " ' ; { } < > and backslash;
+ * fontUrl: blank = unset, http(s), <= 2048 chars, no whitespace or " ' < > \). Unknown keys are errors unless
+ * `ignoreUnknown` (a style read from a Brand Kit).
+ */
+export function validateSlideshowStyle(style: unknown, at = 'style', ignoreUnknown = false): string[] {
   if (!isObj(style)) return [`${at} must be an object`]
   const errors: string[] = []
-  for (const key of Object.keys(style)) {
-    if (!(STYLE_KEYS as readonly string[]).includes(key)) errors.push(`${at}.${key} is not a style field; use ${STYLE_KEYS.join(', ')}`)
+  if (!ignoreUnknown) {
+    for (const key of Object.keys(style)) {
+      if (!(STYLE_KEYS as readonly string[]).includes(key)) errors.push(`${at}.${key} is not a style field; use ${STYLE_KEYS.join(', ')}`)
+    }
   }
   const v = (k: string) => style[k]
-  if (v('fontFamily') != null && !(typeof v('fontFamily') === 'string' && FAMILY.test(v('fontFamily') as string))) {
-    errors.push(`${at}.fontFamily must be a plain font family name (letters, digits, spaces, "." "_" "-")`)
+  if (v('fontFamily') != null) {
+    const f = v('fontFamily')
+    const t = typeof f === 'string' ? f.trim() : ''
+    if (typeof f !== 'string' || (t !== '' && (t.length > 200 || FAMILY_BAD.test(t) || fontFamilyNames(t).length === 0))) {
+      errors.push(`${at}.fontFamily must be a font name or comma-separated list up to 200 characters, without quotes or any of ; { } < > \\`)
+    }
   }
   if (v('fontUrl') != null) {
     const url = v('fontUrl')
-    let ok = typeof url === 'string' && /^https?:\/\/[^\s"'<>()\\]+$/i.test(url)
-    if (ok) {
+    const t = typeof url === 'string' ? url.trim() : ''
+    let ok = typeof url === 'string' && (t === '' || (t.length <= 2048 && FONT_URL.test(t)))
+    if (ok && t !== '') {
       try {
-        new URL(url as string)
+        new URL(t)
       } catch {
         ok = false
       }
@@ -102,10 +131,20 @@ export class SlideshowStyleError extends Error {
   }
 }
 
+/** Drops keys that are not style fields (a Brand Kit's style may carry fields a newer backend added). */
+export function pickKnownStyleFields(style: unknown): SlideshowStyle | undefined {
+  if (!isObj(style)) return undefined
+  const out: Record<string, unknown> = {}
+  for (const k of STYLE_KEYS) if (k in style) out[k] = style[k]
+  return out as SlideshowStyle
+}
+
+const blank = (s: string | null | undefined): string | null => (typeof s === 'string' && s.trim() !== '' ? s.trim() : null)
+
 /**
  * Layers the given styles over the native look, later layers winning. A layer's null/absent field leaves the
- * layer below untouched, except a layer that sets `fontFamily` also takes its `fontUrl` (null clears it),
- * so a new family never inherits the previous layer's stylesheet.
+ * layer below untouched, except a layer that sets a *different* `fontFamily` (case-insensitive) and gives no
+ * `fontUrl` clears the inherited `fontUrl`, so a new family never inherits the previous layer's stylesheet.
  */
 export function resolveSlideshowStyle(...layers: Array<SlideshowStyle | null | undefined>): ResolvedSlideshowStyle {
   const out: ResolvedSlideshowStyle = { ...NATIVE_STYLE }
@@ -117,12 +156,13 @@ export function resolveSlideshowStyle(...layers: Array<SlideshowStyle | null | u
     if (layer.defaultText != null) out.defaultText = layer.defaultText
     if (layer.textSize != null) out.textSize = layer.textSize
     if (layer.subSize != null) out.subSize = layer.subSize
-    if (layer.fontFamily != null) {
-      out.fontFamily = layer.fontFamily
-      out.fontUrl = layer.fontUrl ?? null
-    } else if (layer.fontUrl != null) {
-      out.fontUrl = layer.fontUrl
+    const family = blank(layer.fontFamily)
+    const url = blank(layer.fontUrl)
+    if (family != null) {
+      if (out.fontFamily == null || !sameFamily(out.fontFamily, family)) out.fontUrl = null
+      out.fontFamily = family
     }
+    if (url != null) out.fontUrl = url
   })
   return out
 }

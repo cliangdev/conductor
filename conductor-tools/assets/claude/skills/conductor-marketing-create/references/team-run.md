@@ -204,7 +204,7 @@ Draft each finalist the judge named (up to three).
 A slideshow finalist has no cheap draft: judge it from its idea text (archetype and slide-by-slide
 text) unless its slides can be composed from photos already on hand. In that case write its spec to
 `<run>/drafts/finalist-<id>/slideshow-spec.json`, call `compose_slideshow` with `draftDir` set to
-that folder and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` (with `brandKitId` from `run.json`) with that idea's draft spec (map the
+that folder, passing `brandKitId` and/or `style` from the run's slideshow choice (as at S6), and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` (with `brandKitId` from `run.json`) with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
 `full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
 `imagePrompt`, write the prompt by the prompt-writing rules in `references/realism-check.md` and
@@ -334,8 +334,9 @@ any placement is fixed now, not shown.
    as given in the spec.
    **Slideshow winner:** `compose_slideshow({specPath})` on `slideshow-spec.json`; while `passed` is
    false, fix the spec and compose again. Pass `brandKitId` and/or `style` from the run's choice
-   (the spec may also carry a top-level `style`); keep the result's `style`. Then
-   `preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle: style, caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
+   (layers: native, then the kit, then the spec's own top-level `style`, then the inline `style`); keep the
+   result's `style`. Then
+   `preview_creative_draft({kind: "CAROUSEL", brandKitId, slidePaths, slideStyle: style, caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
    the caption from `publish-pack.json` and the alt text from `direction.md`. Record the preview's
    `draftDir` as `drafts.final`.
    **Music:** a slideshow or clip with music uses `audio` on the Creative, and a track from

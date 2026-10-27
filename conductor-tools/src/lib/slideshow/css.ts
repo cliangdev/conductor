@@ -1,4 +1,4 @@
-import { NATIVE_STYLE, type ResolvedSlideshowStyle } from './style.js'
+import { NATIVE_STYLE, fontFamilyCss, type ResolvedSlideshowStyle } from './style.js'
 
 /** #rrggbb as the shortest CSS hex (so the native look stays byte-identical to the original sheet). */
 const hex = (c: string): string => c.replace(/^#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3$/i, '#$1$2$3').toLowerCase()
@@ -15,7 +15,7 @@ const rgba = (c: string, a: string): string => {
 export function slideCss(assetBase: string, style: ResolvedSlideshowStyle = NATIVE_STYLE): string {
   const bg = hex(style.boxBg), ink = hex(style.boxInk), dbg = hex(style.darkBg), dink = hex(style.darkInk)
   const line = hex(style.outline), accent = hex(style.accent), line8 = rgba(style.outline, '.8')
-  const face = style.fontFamily ? `"${style.fontFamily}"` : '"TT"'
+  const face = style.fontFamily ? fontFamilyCss(style.fontFamily) : '"TT"'
   return String.raw`
 @font-face{font-family:"TT";font-weight:600;src:url(${assetBase}tiktok-sans-600.ttf)}
 @font-face{font-family:"TT";font-weight:700;src:url(${assetBase}tiktok-sans-700.ttf)}

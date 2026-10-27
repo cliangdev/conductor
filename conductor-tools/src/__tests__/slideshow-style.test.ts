@@ -10,6 +10,7 @@ import {
   composeSlideshow,
   fontsDir,
   NATIVE_STYLE,
+  pickKnownStyleFields,
   resolveSlideshowStyle,
   validateSlideshowSpec,
   validateSlideshowStyle,
@@ -60,6 +61,33 @@ describe('resolveSlideshowStyle', () => {
     expect(out.fontFamily).toBe('B')
     expect(out.fontUrl).toBeNull()
     expect(resolveSlideshowStyle({ fontFamily: null, boxBg: '#123456' }).fontFamily).toBeNull()
+  })
+
+  it('keeps the inherited fontUrl when a layer names the same family (case-insensitive, trimmed)', () => {
+    const kit = { fontFamily: 'Lora', fontUrl: 'https://x.example/lora.css' }
+    expect(resolveSlideshowStyle(kit, { fontFamily: '  lora ' })).toMatchObject({ fontFamily: 'lora', fontUrl: 'https://x.example/lora.css' })
+    expect(resolveSlideshowStyle(kit, { fontFamily: 'Lora', fontUrl: 'https://y.example/l.css' }).fontUrl).toBe('https://y.example/l.css')
+    expect(resolveSlideshowStyle(kit, { fontFamily: 'Other' }).fontUrl).toBeNull()
+  })
+
+  it('validates font family lists and URLs like the backend', () => {
+    for (const ok of ['Inter, sans-serif', 'Söhne', '  Lora  ', '', '   ']) expect(validateSlideshowStyle({ fontFamily: ok })).toEqual([])
+    for (const bad of ['a"b', "a'b", 'a;b', 'a{b', 'a}b', 'a<b', 'a>b', 'a\\b', 'a\u0001b', 'x'.repeat(201), ',,']) expect(validateSlideshowStyle({ fontFamily: bad })).toHaveLength(1)
+    expect(validateSlideshowStyle({ fontFamily: 'x'.repeat(200) })).toEqual([])
+    expect(validateSlideshowStyle({ fontUrl: 'https://fonts.googleapis.com/css?family=Open+Sans|Lora' })).toEqual([])
+    expect(validateSlideshowStyle({ fontUrl: '' })).toEqual([])
+    for (const bad of ['ftp://x.example/a.css', 'https://x.example/a b', 'https://x.example/a"b', 'https://x.example/' + 'a'.repeat(2048)]) expect(validateSlideshowStyle({ fontUrl: bad })).toHaveLength(1)
+    expect(resolveSlideshowStyle({ fontFamily: '   ', fontUrl: '' }).fontFamily).toBeNull()
+  })
+
+  it('renders a family list as quoted names, generics bare', () => {
+    expect(slideCss(base, resolveSlideshowStyle({ fontFamily: 'Open Sans, Söhne ,sans-serif' }))).toContain('font-family:"Open Sans","Söhne",sans-serif,-apple-system')
+  })
+
+  it('ignores unknown keys read from a Brand Kit, but not from an inline style', () => {
+    expect(pickKnownStyleFields({ accent: '#00ff88', futureField: 1 })).toEqual({ accent: '#00ff88' })
+    expect(validateSlideshowStyle({ futureField: 1 })).toHaveLength(1)
+    expect(validateSlideshowStyle({ futureField: 1 }, 'style', true)).toEqual([])
   })
 
   it('rejects bad values with every problem named', () => {
@@ -149,7 +177,8 @@ describe.skipIf(!hasBrowser)('composeSlideshow with a custom font (real browser)
       expect(good.checks.filter((c) => c.rule === 'font')).toEqual([])
       expect(good.style).toMatchObject({ fontFamily: 'Test Sans', accent: '#00ff88', boxBg: '#ffffff' })
       const saved = JSON.parse(readFileSync(good.specPath, 'utf8'))
-      expect(saved.style).toEqual(good.style)
+      expect(saved.resolvedStyle).toEqual(good.style)
+      expect(saved.style).toEqual({ fontFamily: 'Test Sans', fontUrl: `http://127.0.0.1:${port}/good.css`, accent: '#00FF88' })
 
       const bad = await composeSlideshow({ ...spec, style: { fontFamily: 'Missing Sans', fontUrl: `http://127.0.0.1:${port}/missing.css` } }, join(out, 'bad'), { ratios: ['9x16'] })
       expect(bad.passed).toBe(false)
@@ -158,7 +187,16 @@ describe.skipIf(!hasBrowser)('composeSlideshow with a custom font (real browser)
       const native = await composeSlideshow(spec, join(out, 'native'), { ratios: ['9x16'] })
       expect(native.style).toEqual(NATIVE_STYLE)
       expect(native.checks.filter((c) => c.rule === 'font')).toEqual([])
-      expect(JSON.parse(readFileSync(native.specPath, 'utf8')).style).toEqual(NATIVE_STYLE)
+      const nativeSaved = JSON.parse(readFileSync(native.specPath, 'utf8'))
+      expect(nativeSaved.resolvedStyle).toEqual(NATIVE_STYLE)
+      expect(nativeSaved.style).toBeUndefined()
+
+      // no fontUrl: an uninstalled first family is a blocking check naming it; a generic passes
+      const noUrl = await composeSlideshow({ ...spec, style: { fontFamily: 'Missing Sans, sans-serif' } }, join(out, 'nourl'), { ratios: ['9x16'] })
+      expect(noUrl.passed).toBe(false)
+      expect(noUrl.checks.find((c) => c.rule === 'font')?.message).toMatch(/"Missing Sans" is not installed.*fontUrl/)
+      const generic = await composeSlideshow({ ...spec, style: { fontFamily: 'sans-serif' } }, join(out, 'generic'), { ratios: ['9x16'] })
+      expect(generic.checks.filter((c) => c.rule === 'font')).toEqual([])
     } finally {
       server.close()
       rmSync(out, { recursive: true, force: true })

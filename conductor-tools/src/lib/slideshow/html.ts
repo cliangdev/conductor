@@ -1,5 +1,5 @@
 import { slideCss } from './css.js'
-import { resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
+import { fontFamilyNames, GENERIC_FAMILIES, resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
 import type { SlideRatio, SlideshowSpec, SlideSpec } from './spec.js'
 
 export const FRAME_W = 1080
@@ -31,8 +31,20 @@ const CHECK_SCRIPT = String.raw`
     await Promise.all(Array.prototype.map.call(document.images, function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); }));
     if (!FF) {
       if (!document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
-    } else if (M.fontUrl && !faces.some(function (f) { return f && f.length > 0; })) {
-      add('font', 'error', 'font "' + FF + '" did not load from ' + M.fontUrl + ' (check the family name and the stylesheet URL, or use the native look)');
+    } else if (M.firstFamily && M.generics.indexOf(M.firstFamily.toLowerCase()) < 0) {
+      var loaded = faces.some(function (f) { return f && f.length > 0; });
+      var probe = document.createElement('span');
+      probe.textContent = 'mmmmmmmmmmlliWW@#';
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font-size:72px;font-weight:700';
+      document.body.appendChild(probe);
+      var width = function (ff) { probe.style.fontFamily = ff; return probe.getBoundingClientRect().width; };
+      var present = loaded || ['monospace', 'serif', 'sans-serif'].some(function (b) { return width('"' + M.firstFamily + '",' + b) !== width(b); });
+      probe.remove();
+      if (!present) {
+        add('font', 'error', M.fontUrl
+          ? 'font "' + M.firstFamily + '" did not load from ' + M.fontUrl + ' (check the family name and the stylesheet URL, or use the native look)'
+          : 'font "' + M.firstFamily + '" is not installed on this machine; set a fontUrl (for example a Google Fonts stylesheet link) or use an installed family');
+      }
     }
     Array.prototype.forEach.call(document.images, function (im) {
       if (!im.naturalWidth) add('image', 'error', 'image failed to load: ' + (im.getAttribute('src') || '').slice(0, 120));
@@ -214,7 +226,7 @@ export function buildSlideHtml(spec: SlideshowSpec, index: number, ratio: SlideR
   if (!sl) throw new Error(`No slide at index ${index}`)
   const lines = (sl.texts ?? []).flatMap((t) => String(t.t).split('\n'))
   const style = resolveSlideshowStyle(spec.style)
-  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
+  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily: style.fontFamily ? fontFamilyNames(style.fontFamily)[0] : null, generics: GENERIC_FAMILIES, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
     `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style)}</style></head>\n` +

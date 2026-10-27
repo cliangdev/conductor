@@ -259,8 +259,44 @@ describe('BrandKitForm', () => {
       await waitFor(() => expect(apiPatch).toHaveBeenCalled())
       const sent = (apiPatch as Mock).mock.calls[0][1].slideshowStyle
       expect(sent.defaultText).toBe('box')
-      expect(sent.textSize).toBe(64)
+      expect(sent.textSize).toBe(60)
       expect(sent).not.toHaveProperty('subSize')
+    })
+
+    it('starts from the exact native look when turned on', async () => {
+      ;(apiPatch as Mock).mockResolvedValue(kit())
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      await userEvent.click(await screen.findByRole('switch', { name: 'Use a slideshow style' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      expect((apiPatch as Mock).mock.calls[0][1].slideshowStyle).toEqual({
+        boxBg: '#ffffff', boxInk: '#111111', darkBg: '#111111', darkInk: '#ffffff', outline: '#000000',
+        accent: '#ff2d55', defaultText: 'box', textSize: 60, subSize: 44,
+      })
+    })
+
+    it('omits slideshowStyle when only another field was edited', async () => {
+      withStyle(STYLE)
+      ;(apiPatch as Mock).mockResolvedValue(kit({ slideshowStyle: STYLE }))
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const cta = await screen.findByDisplayValue('7 days free.')
+      await userEvent.clear(cta)
+      await userEvent.type(cta, 'Try it free.')
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      const payload = (apiPatch as Mock).mock.calls[0][1]
+      expect(payload.ctaClaim).toBe('Try it free.')
+      expect(payload).not.toHaveProperty('slideshowStyle')
+    })
+
+    it('loads the font URL in the preview and removes it on change', async () => {
+      withStyle(STYLE)
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const url = await screen.findByLabelText('Slide font URL')
+      await userEvent.type(url, 'https://fonts.googleapis.com/css?family=Lora')
+      expect(document.head.querySelector('link[href="https://fonts.googleapis.com/css?family=Lora"]')).not.toBeNull()
+      await userEvent.clear(url)
+      expect(document.head.querySelector('link[href^="https://fonts.googleapis.com"]')).toBeNull()
     })
   })
 })

@@ -341,10 +341,10 @@ thing).
    result, so retry only the ones with an `error`. Find an already uploaded set with
    `list_creative_media({labelPrefix: "01-import"})` rather than uploading again. `label`, `source`
    and `licence` can't exceed 200 characters.
-2. Local files: `preview_creative_draft({kind: "CAROUSEL", caption, slidePaths: {"4x5": [path, ...]}})`
+2. Local files: `preview_creative_draft({kind: "CAROUSEL", brandKitId, caption, slidePaths: {"4x5": [path, ...]}})`
    returns a contact sheet per placement (slides in order), readiness and any violations; look at it
    with the person, then `commit_creative_draft` (it uploads in order and requests the render).
-   Media already in the library: `create_creative({kind: "CAROUSEL", slides: {"4x5": [mediaId, ...]}, slideAltText, caption})`
+   Media already in the library: `create_creative({kind: "CAROUSEL", brandKitId, slides: {"4x5": [mediaId, ...]}, slideAltText, caption})`
    and then `render_creative` (instant, server-side).
 3. Placements. `slides` is a list per placement key (`4x5`, `9x16`, `1x1`); `default` is the
    fallback for a placement with no list of its own. Each image must match its placement's aspect

@@ -941,8 +941,7 @@ public class CreativeService {
                     .motion(toMotion(base.getMotion()))
                     .audio(toAudio(base.getAudio()))
                     .slideshow(toSlideshow(base.getSlideshow()))
-                    .slideStyle(base.getSlideStyle() != null && !base.getSlideStyle().isNull()
-                            ? objectMapper.convertValue(base.getSlideStyle(), SlideshowStyle.class) : null)
+                    .slideStyle(SlideshowStyles.fromStored(objectMapper, base.getSlideStyle()))
                     .layoutOverrides(base.getLayoutOverrides() != null
                             ? objectMapper.convertValue(base.getLayoutOverrides(), CreativeLayoutOverrides.class) : null);
         }

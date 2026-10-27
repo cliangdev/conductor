@@ -7,6 +7,7 @@ import {
   SlideshowSpecError,
   SlideshowStyleError,
   resolveSlideshowStyle,
+  pickKnownStyleFields,
   validateSlideshowStyle,
   type ResolvedSlideshowStyle,
   type SlideshowStyle,
@@ -55,7 +56,7 @@ export type ComposeSlideshowToolResult =
       checks: SlideshowCheck[]
       passed: boolean
       provenance: { recorded: number; needed: number[]; aiGenerated: boolean }
-      /** The full style used; pass it as `slideStyle` on preview_creative_draft / create_creative. */
+      /** The full style used (also written to spec.json as `resolvedStyle`); pass it as `slideStyle` on preview_creative_draft / create_creative. */
       style: ResolvedSlideshowStyle
       nextStep: string
       image?: { data: Buffer; mimeType: string }
@@ -101,7 +102,11 @@ export async function composeSlideshowTool(
   }
   if (typeof spec !== 'object' || spec === null) return { ok: false, error: 'spec must be an object with { id, slides }.' }
 
-  // Style: native look <- the spec's own style <- the kit's slideshowStyle <- inline `style`.
+  // Style layers: native look < Brand Kit < the spec's own `style` < inline `style`. An earlier output's
+  // `resolvedStyle` is never read, so re-composing does not carry the old kit's style forward.
+  const { resolvedStyle: _old, ...specIn } = spec as Record<string, unknown>
+  void _old
+  spec = specIn
   let kitStyle: SlideshowStyle | undefined
   if (params.style !== undefined && params.style !== null) {
     const problems = validateSlideshowStyle(params.style, 'style')
@@ -123,16 +128,15 @@ export async function composeSlideshowTool(
         error: `Brand Kit "${String(kit['name'] ?? params.brandKitId)}" has no slideshow style. Compose without brandKitId for the native look, pass an inline style, or set one with update_brand_kit({kitId, slideshowStyle}).`,
       }
     }
-    kitStyle = ss as SlideshowStyle
+    kitStyle = pickKnownStyleFields(ss)
   }
   let resolvedStyle: ResolvedSlideshowStyle
   try {
-    resolvedStyle = resolveSlideshowStyle((spec as { style?: SlideshowStyle }).style, kitStyle, params.style)
+    resolvedStyle = resolveSlideshowStyle(kitStyle, (spec as { style?: SlideshowStyle }).style, params.style)
   } catch (err) {
     if (err instanceof SlideshowStyleError) return { ok: false, error: 'The style is invalid.', errors: err.errors }
     throw err
   }
-  spec = { ...(spec as object), style: resolvedStyle }
 
   const id = String((spec as { id?: unknown }).id ?? 'slideshow').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 40)
   const outDir = params.draftDir
@@ -140,7 +144,7 @@ export async function composeSlideshowTool(
     : join(projectRoot, SLIDESHOWS_SUBDIR, `${stamp(options.now ?? new Date())}-${id}`)
 
   try {
-    const result = await composeSlideshow(spec, outDir, { ratios, specDir, log: options.log })
+    const result = await composeSlideshow(spec, outDir, { ratios, specDir, log: options.log, resolvedStyle })
     const first = result.slidePaths['9x16']?.[0] ?? Object.values(result.slidePaths)[0]?.[0]
     const image = first ? await jpegPreview(first, result.outDir) : undefined
     return {

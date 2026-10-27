@@ -395,7 +395,7 @@ class BrandKitServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         tools.jackson.databind.json.JsonMapper mapper = tools.jackson.databind.json.JsonMapper.builder().build();
         PatchBrandKitRequest explicitNull = mapper.readValue("{\"slideshowStyle\":null}", PatchBrandKitRequest.class);
         assertThat(explicitNull.getSlideshowStyle()).isNotNull();
-        assertThat(SlideshowStyles.isEmpty(explicitNull.getSlideshowStyle())).isTrue();
+        assertThat(SlideshowStyles.toStored(new com.fasterxml.jackson.databind.ObjectMapper(), explicitNull.getSlideshowStyle())).isNull();
         assertThat(mapper.readValue("{\"name\":\"x\"}", PatchBrandKitRequest.class).getSlideshowStyle()).isNull();
         // Same under Jackson 2, in case the web layer is configured with it.
         com.fasterxml.jackson.databind.ObjectMapper v2 = new com.fasterxml.jackson.databind.ObjectMapper();

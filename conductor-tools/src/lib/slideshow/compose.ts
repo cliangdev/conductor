@@ -21,6 +21,8 @@ export interface ComposeOptions {
   specDir?: string
   /** Tests: supply a browser instead of discovering one. */
   browserFactory?: BrowserFactory
+  /** The style already layered by the caller (kit, inline); default: resolved from the spec's own `style`. */
+  resolvedStyle?: ResolvedSlideshowStyle
   log?: (message: string) => void
 }
 
@@ -33,7 +35,7 @@ export interface ComposeResult {
   provenance: { recorded: number; needed: number[]; aiGenerated: boolean }
   specPath: string
   outDir: string
-  /** The full style the slides were composed with (spec.json carries it as `style`). */
+  /** The full style the slides were composed with (spec.json carries it as `resolvedStyle`). */
   style: ResolvedSlideshowStyle
 }
 
@@ -124,9 +126,13 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
   if (ratios.length === 0) throw new Error('ratios must name at least one of 9x16, 4x5')
 
   const specDir = resolve(options.specDir ?? process.cwd())
-  const style = resolveSlideshowStyle(specInput.style)
-  const resolved: SlideshowSpec = { ...resolveSpecImages(specInput, specDir), style }
-  const htmlSpec = mapImages(resolved, (v) => toUrl(v))
+  // The caller (compose_slideshow) may have layered a Brand Kit / inline style already; else the spec's own.
+  const style = options.resolvedStyle ?? resolveSlideshowStyle(specInput.style)
+  // spec.json keeps the input `style` as given and records the outcome beside it as `resolvedStyle`.
+  const { resolvedStyle: _ignored, ...input } = specInput as SlideshowSpec & { resolvedStyle?: unknown }
+  void _ignored
+  const resolved: SlideshowSpec & { resolvedStyle: ResolvedSlideshowStyle } = { ...resolveSpecImages(input, specDir), resolvedStyle: style }
+  const htmlSpec = mapImages({ ...resolved, style }, (v) => toUrl(v))
   const out = resolve(outDir)
   await mkdir(out, { recursive: true })
   const specPath = join(out, 'spec.json')

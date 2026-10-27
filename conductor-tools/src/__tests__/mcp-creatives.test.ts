@@ -1667,6 +1667,39 @@ describe('create_brand_kit', () => {
     expect(res['nextStep']).toMatch(/"Main".*NOT copied.*upload_brand_image/s)
   })
 
+  it('trims dashes left by cutting a long name to 60 characters', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'n' })
+    await createBrandKit({ name: `${'a'.repeat(59)} bbb` }, config)
+    expect((mocked(apiPost).mock.calls[0]![1] as { slug: string }).slug).toBe('a'.repeat(59))
+  })
+
+  it('retries a taken derived slug with -2 ... and gives up after -9', async () => {
+    mocked(apiPost).mockRejectedValueOnce(new ApiError(409, 'slug taken')).mockRejectedValueOnce(new ApiError(409, 'slug taken')).mockResolvedValueOnce({ id: 'n' })
+    await createBrandKit({ name: 'Warm' }, config)
+    expect(mocked(apiPost).mock.calls.map((c) => (c[1] as { slug: string }).slug)).toEqual(['warm', 'warm-2', 'warm-3'])
+
+    mocked(apiPost).mockReset()
+    mocked(apiPost).mockRejectedValue(new ApiError(409, 'slug taken'))
+    await expect(createBrandKit({ name: 'Warm' }, config)).rejects.toThrow(/free slug.*warm-9.*pass a slug/s)
+    expect(apiPost).toHaveBeenCalledTimes(9)
+  })
+
+  it('does not retry on other errors or change a slug the caller chose', async () => {
+    mocked(apiPost).mockReset()
+    mocked(apiPost).mockRejectedValue(new ApiError(500, 'boom'))
+    await expect(createBrandKit({ name: 'Warm' }, config)).rejects.toThrow(/boom/)
+    expect(apiPost).toHaveBeenCalledTimes(1)
+    mocked(apiPost).mockReset()
+    mocked(apiPost).mockRejectedValue(new ApiError(409, 'slug taken'))
+    await expect(createBrandKit({ name: 'Warm', slug: 'mine' }, config)).rejects.toThrow(/"mine" already exists/)
+    expect(apiPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an invalid slideshowStyle before calling the API', async () => {
+    await expect(createBrandKit({ name: 'W', slideshowStyle: { accent: 'red' } }, config)).rejects.toThrow(/accent/)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
   it('requires a name', async () => {
     await expect(createBrandKit({ name: '  ' }, config)).rejects.toThrow(/name is required/)
     expect(apiPost).not.toHaveBeenCalled()

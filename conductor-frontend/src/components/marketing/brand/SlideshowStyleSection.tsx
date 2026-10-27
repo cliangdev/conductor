@@ -4,6 +4,8 @@
 // (bundled font, built-in colours). On, the kit carries a SlideshowStyle that the slideshow tools read.
 // Nothing here is a brand constant — the starting values are neutral and every one is editable.
 
+import { useEffect } from 'react'
+
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -15,17 +17,20 @@ import {
   type SlideshowStyle,
 } from '@/components/marketing/brand/types'
 
-/** The neutral style a person starts from when they turn the section on. */
-export const STARTING_SLIDESHOW_STYLE: SlideshowStyle = {
-  boxBg: '#FFFFFF',
+/**
+ * The exact native look (mirrors NATIVE_STYLE in conductor-tools/src/lib/slideshow/style.ts), so turning the
+ * section on changes nothing until the person edits. No font family: unset means the bundled TikTok Sans.
+ */
+export const NATIVE_SLIDESHOW_STYLE: SlideshowStyle = {
+  boxBg: '#ffffff',
   boxInk: '#111111',
   darkBg: '#111111',
-  darkInk: '#FFFFFF',
+  darkInk: '#ffffff',
   outline: '#000000',
-  accent: '#3B82F6',
+  accent: '#ff2d55',
   defaultText: 'box',
-  textSize: 64,
-  subSize: 36,
+  textSize: 60,
+  subSize: 44,
 }
 
 const COLOUR_LABELS: Record<SlideshowColourKey, string> = {
@@ -63,34 +68,68 @@ function intOrUndefined(raw: string): number | undefined {
   return Number.isFinite(n) ? Math.trunc(n) : undefined
 }
 
+const HTTP_URL = /^https?:\/\/[^\s"'<>\\]+$/
+
+function rgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16)
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${alpha})`
+}
+
+/** Colour if it is a full hex, else the native fallback — half-typed values never reach CSS. */
+const colour = (value: string | undefined, fallback: string) => (value && HEX.test(value) ? value : fallback)
+
 function StylePreview({ style }: { style: SlideshowStyle }) {
-  const font = style.fontFamily ? { fontFamily: `"${style.fontFamily}", sans-serif` } : undefined
-  const sample = 'Save every recipe'
+  const fontUrl = style.fontUrl?.trim()
+  const linkable = fontUrl && HTTP_URL.test(fontUrl) ? fontUrl : null
+
+  // Load the font the renderer will load; remove the link on change or unmount.
+  useEffect(() => {
+    if (!linkable) return
+    const link = document.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = linkable
+    document.head.appendChild(link)
+    return () => {
+      link.remove()
+    }
+  }, [linkable])
+
+  const n = NATIVE_SLIDESHOW_STYLE as Required<Omit<SlideshowStyle, 'fontFamily' | 'fontUrl'>>
+  const boxBg = colour(style.boxBg, n.boxBg)
+  const boxInk = colour(style.boxInk, n.boxInk)
+  const darkBg = colour(style.darkBg, n.darkBg)
+  const darkInk = colour(style.darkInk, n.darkInk)
+  const outline = colour(style.outline, n.outline)
+  const accent = colour(style.accent, n.accent)
+  const family = style.fontFamily?.trim()
+  const sample = 'Your headline here'
+  const shadow = `0 0 3px ${outline}, 0 0 3px ${outline}, 0 0 4px ${outline}, 0 2px 6px ${rgba(outline, 0.8)}`
   return (
     <div
       data-testid="slideshow-style-preview"
-      className="flex flex-wrap items-center gap-3 rounded-md bg-surface-3 p-3"
-      style={{ ...font, background: style.darkBg || undefined }}
+      className="flex flex-wrap items-center gap-3 rounded-md p-3"
+      style={{ background: darkBg, fontFamily: family ? `${family}, sans-serif` : undefined }}
     >
-      <span
-        className="rounded px-2.5 py-1 text-sm font-semibold"
-        style={{ background: style.boxBg || '#FFFFFF', color: style.boxInk || '#111111' }}
-      >
+      <span className="rounded px-2.5 py-1 text-sm font-bold" style={{ background: boxBg, color: boxInk }}>
         {sample}
       </span>
-      <span
-        className="text-sm font-extrabold"
-        style={{
-          color: style.darkInk || '#FFFFFF',
-          WebkitTextStroke: `1px ${style.outline || '#000000'}`,
-          textShadow: style.accent ? `0 0 0 ${style.accent}` : undefined,
-        }}
-      >
+      <span className="text-sm font-extrabold" style={{ color: darkInk, textShadow: shadow }}>
         {sample}
       </span>
-      {style.accent && (
-        <span className="h-3 w-3 rounded-full" style={{ background: style.accent }} aria-hidden />
-      )}
+      <span className="text-xs font-bold" style={{ color: darkInk, textShadow: shadow }}>
+        Sub text
+      </span>
+      <span className="flex items-center gap-1.5" data-testid="slideshow-style-callout">
+        <span
+          className="h-3 w-3 rounded-full border-2 border-solid"
+          style={{ background: accent, borderColor: '#ffffff' }}
+          aria-hidden
+        />
+        <span className="h-px w-3" style={{ background: accent }} aria-hidden />
+        <span className="rounded px-2 py-0.5 text-xs font-bold" style={{ background: boxBg, color: boxInk }}>
+          Callout
+        </span>
+      </span>
     </div>
   )
 }
@@ -112,7 +151,7 @@ export function SlideshowStyleSection({ value, onChange, errorFor }: SlideshowSt
         <Switch
           id="kit-slideshow-style-on"
           checked={style !== null}
-          onCheckedChange={(on) => onChange(on ? { ...STARTING_SLIDESHOW_STYLE } : null)}
+          onCheckedChange={(on) => onChange(on ? { ...NATIVE_SLIDESHOW_STYLE } : null)}
         />
         <Label htmlFor="kit-slideshow-style-on" className="mb-0">
           Use a slideshow style
