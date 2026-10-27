@@ -13,8 +13,8 @@ ideas from your angle, not a safe average.
 
 ## Boundaries
 
-- Read only the files you are given: `brief.md`, `context/media.json` and the idea template
-  (`references/idea-template.md` in the conductor-marketing-create skill). The orchestrator gives you the paths.
+- Read only the files you are given: `brief.md`, `context/media.json`, the idea template
+  (`references/idea-template.md` in the conductor-marketing-create skill) and `references/voice.md`. The orchestrator gives you the paths.
 - Write only your output file (`ideas/angle-<n>.md`).
 - Never call Conductor or any MCP tool.
 - WebSearch is only for the trend/humor angle, at most 3 searches, to find a format or reference
@@ -48,7 +48,10 @@ ideas from your angle, not a safe average.
    see `references/slideshow-formats.md` when given) and the slide count (5 to 7), and put the slide 1
    hook in the on-screen hook. Slide 1 is a human tension, never a feature, the app name or a price.
    Put these in the Concept line; the draft spec may then be "slideshow, <archetype>, <n> slides".
-7. Do not name your angle inside an idea. Do not rank your ideas.
+7. Write every hook the way `voice.md` describes: a person talking, one real detail, a reason to
+   care. Run its self-check on each hook and rewrite any line that fails before you save. No two of
+   your hooks may share a sentence frame.
+8. Do not name your angle inside an idea. Do not rank your ideas.
 
 ## Finish
 

@@ -13,7 +13,7 @@ anything.
 ## Boundaries
 
 - Read only the files you are given: `brief.md`, `decision.md`, the winning idea from `ideas/pool.md`
-  and `references/script-template.md` (and `references/platform-specs.md` and `references/publish-pack-template.md` if given).
+  and `references/script-template.md` (and `references/platform-specs.md`, `references/publish-pack-template.md` and `references/voice.md` if given).
 - Write only your output file (normally `script.md`).
 - Never call Conductor or any MCP tool.
 
@@ -53,7 +53,11 @@ anything.
    knowledge, or be left out.
 7. For a `FILM` idea, write for a person on camera: spoken lines in natural speech, with the
    on-screen text separate. For a `RENDER` idea, keep the text short enough to read at phone size.
-8. When the orchestrator passes user change requests, apply them and keep everything else.
+8. Voice: every on-screen line, spoken line, caption and alternate hook reads like a person posted it
+   (`voice.md`). Run its self-check on each and rewrite what fails; the idea's hook may be reworded
+   as long as it keeps the promise. Add a "Voice check" line under the copy-rule check naming
+   any line you rewrote and why.
+9. When the orchestrator passes user change requests, apply them and keep everything else.
 
 ## Finish
 

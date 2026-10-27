@@ -85,6 +85,8 @@ Pick one per post and name it in the idea. Change one thing per post so results 
 
 - Native box text (`box`) or white text with a black stroke (`stroke`); centred, bold, sans.
 - At most 8 words a line and 3 lines a box.
+- Every card reads like a person posted it (`voice.md`): a speaker, one real detail, no template
+  frames, never a description of the photo.
 - Keep text between about y 16 and y 75 (percent of the 9:16 frame). That survives the 4:5 Instagram
   cut and the platform UI (top bar, bottom caption, right button column).
 - The first text of every slide needs `y`.

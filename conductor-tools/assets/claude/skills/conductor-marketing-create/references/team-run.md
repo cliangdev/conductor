@@ -166,8 +166,8 @@ Three `Agent` calls in ONE message so they run in parallel, `subagent_type:
 
 1. story/emotion  2. utility/education  3. trend/humor (the only one allowed web search)
 
-Each gets `brief.md`, `context/media.json`, `references/idea-template.md` and
-`references/capabilities.md` (the `RENDER`/`FILM` test), and writes 4 ideas.
+Each gets `brief.md`, `context/media.json`, `references/idea-template.md`,
+`references/capabilities.md` (the `RENDER`/`FILM` test) and `references/voice.md`, and writes 4 ideas.
 With `--quick`: only angles 1 and 2, 3 ideas each.
 
 ### Merge (you) -> `ideas/pool.md`
@@ -184,7 +184,7 @@ Build one pool from all the angle files:
 ### S3a — Creative director, text round -> `judging/scores.md`
 
 `Agent(subagent_type: "conductor-marketing-creative-director")`, mode `text-round`. Inputs:
-`brief.md`, `ideas/pool.md`, `references/rubric.md`. It scores every idea independently, reasoning
+`brief.md`, `ideas/pool.md`, `references/rubric.md`, `references/voice.md`. It scores every idea independently, reasoning
 before each score, and names the top 3. Store the finalists in `run.json`.
 
 ### S3b — Finalist drafts (you; skipped in `--quick`)
@@ -228,8 +228,8 @@ which idea to take; show the decision at the gate.
 ### S4 — Scriptwriter -> `script.md`
 
 First copy the winning idea's block from `ideas/pool.md` to `ideas/winner.md`. Then
-`Agent(subagent_type: "conductor-marketing-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md` and
-`references/publish-pack-template.md`. Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
+`Agent(subagent_type: "conductor-marketing-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md`,
+`references/publish-pack-template.md` and `references/voice.md`. Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
 caption per platform whose call to action names the app so it can be searched, hashtags, a pinned
 comment and 2 to 3 alternate hooks with a hookType each.
 For a `MOTION` winner tell it that the render shows one headline and one optional body, animated

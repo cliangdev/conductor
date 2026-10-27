@@ -23,11 +23,12 @@ Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 1
 
 | Criterion | Weight | 1 | 3 | 5 |
 |---|---|---|---|---|
-| Hook strength | 25 | Opens on a greeting, a logo or context; nothing makes a stranger stay | A clear promise or question, but generic; could open any account's post | A specific, surprising or tension-filled claim a stranger understands in 1s, spoken and on screen |
+| Hook strength | 20 | Opens on a greeting, a logo or context; nothing makes a stranger stay | A clear promise or question, but generic; could open any account's post | A specific, surprising or tension-filled claim a stranger understands in 1s, spoken and on screen |
 | Audience relevance | 20 | Aimed at "everyone"; ignores the brief's tension | Names the audience's topic but not their actual friction | Opens on a friction the brief names and the audience would recognise as theirs |
-| Brand fit | 15 | Breaks a copy rule or approved-line, or reads off-voice | Within the rules but could be any brand | Uses an approved line or the knowledge page's voice naturally; no rule risk |
+| Reads like a person | 15 | A template frame ("X but Y"), brand words, a described picture or an explained joke; nobody would say it out loud | Plain and correct, but no speaker or attitude; reads as a caption, not a post | Someone is talking, with one real detail and a reason to care; passes every question in `voice.md`'s self-check |
+| Brand fit | 10 | Breaks a copy rule or approved-line, or reads off-voice | Within the rules but could be any brand | Uses an approved line or the knowledge page's voice naturally; no rule risk |
 | Feasibility with assets on hand | 15 | Needs assets that do not exist and cannot be made here (and is tagged `RENDER`) | Needs one new photo or clip the user can supply easily | Fully buildable from `media.json` or a render with no photo; or an honest `FILM` with a simple shoot |
-| Novelty | 15 | The mechanic is the most common one for this topic (listicle, "5 tips", before/after) | A familiar mechanic with a fresh angle | A mechanic not seen elsewhere in the pool or in the performance data, still easy to grasp |
+| Novelty | 10 | The mechanic is the most common one for this topic (listicle, "5 tips", before/after) | A familiar mechanic with a fresh angle | A mechanic not seen elsewhere in the pool or in the performance data, still easy to grasp. Novelty is in the idea, not in an odd sentence: a strange word pairing scores nothing here |
 | Shareability | 10 | Nothing to send to a friend; purely informational | Useful or pleasant, but no reason to send | A person would send it to a named other person ("this is you") or save it for later |
 
 ## Scoring protocol
@@ -40,6 +41,8 @@ Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 1
 4. Compute the weighted total. Shortlist the top 3. If ties, apply the tie-break rule below.
 5. Any idea that breaks a copy rule or contradicts an approved line is capped at 2 on brand fit
    and cannot be a finalist unless the fix is a one-word edit you state.
+6. Any idea scoring 1 or 2 on reads-like-a-person cannot be a finalist unless you write the
+   rewritten hook (per `voice.md`) beside the score and score the rewrite instead.
 
 ## Pairwise protocol (visual round)
 
@@ -65,6 +68,8 @@ Look at the actual image file, not the text description. Check:
   payoff not the opener, native look, not a banner ad), each 1 to 5. A finalist with a criterion below 3
   that the layout could have fixed (`stacked` or `split` on 9:16, a dead panel) counts against it.
 - Realism: a generated photo that looks AI-made (waxy, duplicated objects, warped hands) counts against the finalist.
+- Voice: read every card and the caption against `voice.md`'s self-check. A card that describes
+  the picture, a template frame or a brand word counts against the finalist.
 - Whether the picture and the words do different jobs (photo shows, words claim) rather than
   repeating each other.
 

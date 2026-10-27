@@ -46,6 +46,8 @@ curiosity-gap, story, social-proof.
 
 ## Copy-rule check
 <each must-say / must-avoid item from brief.md, and ok or the fix>
+## Voice check
+<each line rewritten against voice.md's self-check: before, after, which question it failed; or "all lines pass">
 ```
 
 Rules: a beat every 3 to 5 seconds (a `MOTION` idea instead has one headline, one optional body and an end card, with no timed on-screen beats); no beat longer than 5 seconds without a visual or text change;

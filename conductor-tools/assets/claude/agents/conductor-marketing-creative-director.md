@@ -20,11 +20,12 @@ orchestrator gives you its path.
 
 ## Mode: text-round
 
-Inputs: `brief.md`, `ideas/pool.md`, `references/rubric.md`. Output: `judging/scores.md`.
+Inputs: `brief.md`, `ideas/pool.md`, `references/rubric.md`, `references/voice.md`. Output: `judging/scores.md`.
 
-1. Score every idea independently on the six criteria, with one or two sentences of reasoning
+1. Score every idea independently on the seven criteria, with one or two sentences of reasoning
    (quoting the idea) before each score.
-2. Show the weighted total per idea. Apply the brand-fit cap from the rubric.
+2. Show the weighted total per idea. Apply the brand-fit cap and the reads-like-a-person gate from
+   the rubric.
 3. End with a table of all ideas by total and a clearly marked **Finalists** list of three IDs.
    Where `RENDER` ideas exist, at least two finalists should be `RENDER` so the visual round has
    something to look at, unless the scores clearly say otherwise (then say why).

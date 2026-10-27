@@ -26,6 +26,8 @@ promise that could open any account's post, 5 a specific, surprising line a stra
 - **Hook strength**: would it stop a thumb?
 - **Specificity**: does it name a moment, an object or a number?
 - **Competitor test**: could a competitor run this unchanged? If yes, it fails; rewrite or drop it.
+- **Reads like a person**: would someone say it out loud to a friend? Run `voice.md`'s self-check;
+  a template frame ("X but Y"), a brand word or a line that describes the photo fails.
 
 Exact numbers read as more credible than round ones: "11 minutes" over "10 minutes". One selling point
 per line, written the way a person would say it.
