@@ -153,7 +153,7 @@ class PostMetricsFeedPullerTest {
 
         ArgumentCaptor<String> key = ArgumentCaptor.captor();
         verify(actionInvocationService).invoke(eq(connection), eq("get_video_statistics"), any(), key.capture(), anyList());
-        assertThat(key.getValue()).isEqualTo("metrics:feed-1:" + PERIOD + ":youtube:0");
+        assertThat(key.getValue()).isEqualTo("metrics:feed-1:" + PERIOD + ":youtube:" + PostMetricsFeedPuller.chunkHash(List.of(target("t-1", "youtube", "v-1"))));
     }
 
     @Test
@@ -244,5 +244,34 @@ class PostMetricsFeedPullerTest {
         assertThat(begun[0]).as("one read transaction, one write transaction").isEqualTo(2);
         assertThat(saved).hasSize(1);
         assertThat(saved.get(0).getLikes()).isEqualTo(7L);
+    }
+
+    @Test
+    void aLaterTickWithADifferentChunkUsesADifferentIdempotencyKey() {
+        List<PostPublishTarget> many = new ArrayList<>();
+        for (int i = 0; i < 25; i++) {
+            many.add(target("t-" + i, "tiktok", "tt-" + i));
+        }
+        when(targetRepository.findPublishedForMetrics(eq("conn-1"), any())).thenReturn(many);
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), anyList()))
+                .thenReturn(metrics(Map.of("post_id", "tt-0", "views", 1)));
+        puller.pull(feed, spec(1, 90), connection, new IngestRequest("post_metrics", null, null, 500));
+        ArgumentCaptor<String> first = ArgumentCaptor.captor();
+        verify(actionInvocationService).invoke(any(), anyString(), any(), first.capture(), anyList());
+
+        // Tick 2: a shorter due list, so chunk 0 now holds different posts.
+        org.mockito.Mockito.reset(actionInvocationService);
+        when(targetRepository.findPublishedForMetrics(eq("conn-1"), any())).thenReturn(many.subList(10, 15));
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), anyList()))
+                .thenReturn(metrics(Map.of("post_id", "tt-10", "views", 5)));
+        saved.clear();
+        puller.pull(feed, spec(1, 90), connection, new IngestRequest("post_metrics", null, null, 500));
+        ArgumentCaptor<String> second = ArgumentCaptor.captor();
+        verify(actionInvocationService).invoke(any(), anyString(), any(), second.capture(), anyList());
+
+        assertThat(second.getValue()).isNotEqualTo(first.getValue());
+        PostPublishTargetMetric real = saved.stream().filter(m -> m.getTargetId().equals("t-10")).findFirst().orElseThrow();
+        assertThat(real.isUnavailable()).isFalse();
+        assertThat(real.getViews()).isEqualTo(5L);
     }
 }

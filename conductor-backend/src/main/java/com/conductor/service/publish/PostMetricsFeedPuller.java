@@ -143,7 +143,7 @@ public class PostMetricsFeedPuller {
                 }
                 List<PostPublishTarget> chunk = targets.subList(from, Math.min(targets.size(), from + platform.metrics().maxBatch()));
                 calls++;
-                String key = "metrics:" + feed.getId() + ":" + periodKey + ":" + platform.id() + ":" + (from / platform.metrics().maxBatch());
+                String key = "metrics:" + feed.getId() + ":" + periodKey + ":" + platform.id() + ":" + chunkHash(chunk);
                 ActionResult result = actionInvocationService.invoke(connection, platform.metrics().actionId(),
                         Map.of(INPUT_POST_IDS, chunk.stream().map(PostPublishTarget::getPlatformPostId).toList()),
                         key, List.of());
@@ -189,6 +189,18 @@ public class PostMetricsFeedPuller {
             due.add(target);
         }
         return due;
+    }
+
+    /** Stable id of a chunk's contents: a later tick whose chunk holds other posts must not replay this answer. */
+    static String chunkHash(List<PostPublishTarget> chunk) {
+        String joined = String.join(",", chunk.stream().map(PostPublishTarget::getId).sorted().toList());
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(joined.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest).substring(0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private <T> T inTransaction(java.util.function.Supplier<T> work) {

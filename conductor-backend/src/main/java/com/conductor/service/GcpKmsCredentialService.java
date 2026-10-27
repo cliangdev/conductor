@@ -53,6 +53,7 @@ public class GcpKmsCredentialService implements CredentialService {
     /**
      * Unwrapped DEKs keyed by the Base64 wrapped blob (the plaintext DEK maps 1:1 to its wrapped form), so a
      * hot connection doesn't pay a KMS round trip per credential read. In-memory only; never logged.
+     * Plaintext DEKs live on the heap for up to 20 minutes, and a revoked KMS grant keeps working for up to 20 minutes.
      */
     private final Cache<String, byte[]> dekCache;
 
