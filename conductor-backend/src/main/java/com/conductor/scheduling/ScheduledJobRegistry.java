@@ -35,9 +35,15 @@ import java.util.Optional;
 @Component
 public class ScheduledJobRegistry {
 
+    // There is no lease heartbeat, so a TTL must exceed the job's worst-case runtime or another instance
+    // could start the same job while it is still running. A crashed holder costs at most one TTL of delay.
+    /** Cheap DB-only ticks. */
     private static final Duration SHORT_TTL = Duration.ofMinutes(5);
-    private static final Duration HOURLY_TTL = Duration.ofMinutes(30);
-    private static final Duration DAILY_TTL = Duration.ofHours(1);
+    /** Ticks that make many outbound HTTP pulls or dispatch the librarian (connector feeds, knowledge ingest, reconcile). */
+    private static final Duration LONG_TTL = Duration.ofMinutes(15);
+    private static final Duration HOURLY_TTL = Duration.ofMinutes(45);
+    /** Daily crons; memory maintenance makes LLM calls per project. */
+    private static final Duration DAILY_TTL = Duration.ofHours(2);
 
     private final List<ScheduledJobDefinition> jobs = new ArrayList<>();
 
@@ -57,8 +63,8 @@ public class ScheduledJobRegistry {
                                 WorkflowScheduler workflowScheduler) {
         fixedDelay("marketing-insights-feed-provisioner", 3_600_000, 80_000, HOURLY_TTL,
                 marketingInsightsFeedProvisioner::onSchedule);
-        fixedDelay("connector-feed-poll", 60_000, 45_000, SHORT_TTL, connectorFeedScheduler::poll);
-        fixedDelay("knowledge-ingest-poll", 30_000, 20_000, SHORT_TTL, knowledgeIngestScheduler::poll);
+        fixedDelay("connector-feed-poll", 60_000, 45_000, LONG_TTL, connectorFeedScheduler::poll);
+        fixedDelay("knowledge-ingest-poll", 30_000, 20_000, LONG_TTL, knowledgeIngestScheduler::poll);
         fixedDelay("knowledge-retention-sweep", 3_600_000, 90_000, HOURLY_TTL, knowledgeRetentionService::sweep);
         cron("memory-maintenance", "0 17 3 * * *", DAILY_TTL, memoryMaintenanceScheduler::run);
         fixedDelay("action-invocation-retry", 60_000, 25_000, SHORT_TTL,
@@ -67,7 +73,7 @@ public class ScheduledJobRegistry {
         fixedDelay("native-handoff-sweep", 60_000, 40_000, SHORT_TTL, nativeHandoffService::sweepDeferredHandoffs);
         fixedDelay("native-publish-confirmation-poll", 60_000, 55_000, SHORT_TTL,
                 nativePublishConfirmationPoller::poll);
-        fixedDelay("publish-reconcile-stranded-targets", 300_000, 65_000, Duration.ofMinutes(10),
+        fixedDelay("publish-reconcile-stranded-targets", 300_000, 65_000, LONG_TTL,
                 publishOutcomeService::reconcileStrandedTargets);
         fixedDelay("webhook-retry", 60_000, 70_000, SHORT_TTL, webhookRetryScheduler::retryFailedEvents);
         fixedDelay("post-publish-poll", 30_000, 5_000, SHORT_TTL, postPublishScheduler::poll);

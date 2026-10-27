@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runs one registered job by name: bounded concurrency per instance, a database lease so the job never
@@ -27,14 +28,17 @@ public class ScheduledJobRunner {
     private final ScheduledJobLeaseRepository leases;
     private final Semaphore slots;
     private final boolean schedulingEnabled;
+    private final long slotWaitSeconds;
 
     public ScheduledJobRunner(ScheduledJobRegistry registry, ScheduledJobLeaseRepository leases,
                               @Value("${conductor.scheduling.max-concurrent-ticks:3}") int maxConcurrentTicks,
-                              @Value("${conductor.scheduling.enabled:true}") boolean schedulingEnabled) {
+                              @Value("${conductor.scheduling.enabled:true}") boolean schedulingEnabled,
+                              @Value("${conductor.scheduling.slot-wait-seconds:30}") long slotWaitSeconds) {
         this.registry = registry;
         this.leases = leases;
         this.slots = new Semaphore(Math.max(1, maxConcurrentTicks));
         this.schedulingEnabled = schedulingEnabled;
+        this.slotWaitSeconds = slotWaitSeconds;
     }
 
     public RunResult run(String name) {
@@ -48,7 +52,9 @@ public class ScheduledJobRunner {
         }
         ScheduledJobDefinition job = found.get();
         try {
-            slots.acquire();
+            if (!slots.tryAcquire(slotWaitSeconds, TimeUnit.SECONDS)) {
+                return finish(name, TickOutcome.SKIPPED_BUSY, start);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted waiting for a scheduler slot: " + name, e);
@@ -64,7 +70,7 @@ public class ScheduledJobRunner {
                 job.body().run();
             } catch (RuntimeException | Error e) {
                 release(name, holder, "FAILED", e.toString());
-                finish(name, TickOutcome.RAN, start);
+                finish(name, TickOutcome.FAILED, start);
                 throw e;
             }
             release(name, holder, "OK", null);

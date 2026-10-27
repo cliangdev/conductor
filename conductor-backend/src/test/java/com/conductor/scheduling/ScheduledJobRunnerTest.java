@@ -38,7 +38,7 @@ class ScheduledJobRunnerTest {
     }
 
     private ScheduledJobRunner runner(int slots, boolean enabled) {
-        return new ScheduledJobRunner(registry, leases, slots, enabled);
+        return new ScheduledJobRunner(registry, leases, slots, enabled, 1);
     }
 
     @Test
@@ -94,6 +94,25 @@ class ScheduledJobRunnerTest {
     }
 
     @Test
+    void failingBodyIsLoggedAsFailedOutcome() {
+        job(() -> { throw new IllegalStateException("boom"); });
+        when(leases.claim(eq("job-a"), anyString(), any(), any())).thenReturn(Claim.CLAIMED);
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ScheduledJobRunner.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertThatThrownBy(() -> runner(3, true).run("job-a")).isInstanceOf(IllegalStateException.class);
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getMessage()).isEqualTo("scheduler_tick");
+            assertThat(e.getKeyValuePairs()).anyMatch(kv -> kv.key.equals("outcome") && "FAILED".equals(String.valueOf(kv.value)));
+        });
+    }
+
+    @Test
     void unknownJobAndDisabledSchedulingDoNothing() {
         when(registry.find("nope")).thenReturn(Optional.empty());
         assertThat(runner(3, true).run("nope").outcome()).isEqualTo(TickOutcome.UNKNOWN);
@@ -124,13 +143,12 @@ class ScheduledJobRunnerTest {
         try {
             Future<?> first = pool.submit(() -> runner.run("job-a"));
             assertThat(inBody.await(5, TimeUnit.SECONDS)).isTrue();
-            Future<?> second = pool.submit(() -> runner.run("job-a"));
-            Thread.sleep(200);
-            assertThat(ran).as("second tick waits for the only slot").hasValue(1);
+            Future<ScheduledJobRunner.RunResult> second = pool.submit(() -> runner.run("job-a"));
+            assertThat(((ScheduledJobRunner.RunResult) second.get(10, TimeUnit.SECONDS)).outcome())
+                    .as("no free slot within the wait").isEqualTo(TickOutcome.SKIPPED_BUSY);
+            assertThat(ran).hasValue(1);
             finish.countDown();
             first.get(5, TimeUnit.SECONDS);
-            second.get(5, TimeUnit.SECONDS);
-            assertThat(ran).hasValue(2);
         } finally {
             finish.countDown();
             pool.shutdownNow();

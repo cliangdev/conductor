@@ -1,5 +1,5 @@
 package com.conductor.scheduling;
 
 public enum TickOutcome {
-    RAN, SKIPPED_LEASED, SKIPPED_RECENT, DISABLED, UNKNOWN
+    RAN, FAILED, SKIPPED_LEASED, SKIPPED_RECENT, SKIPPED_BUSY, DISABLED, UNKNOWN
 }
