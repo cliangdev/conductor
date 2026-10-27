@@ -208,8 +208,8 @@ conversation:
 3. **Ideas.** Three ideators with different angles (story and emotion, utility and education, trend
    and humor) each write four ideas without seeing each other's.
 4. **Judging.** The ideas are shuffled, stripped of their source and given neutral IDs. A judge on a
-   different model tier scores each against a six-criterion rubric (hook strength, audience
-   relevance, brand fit, feasibility with assets on hand, novelty, shareability), writing its reasoning
+   different model tier scores each against a seven-criterion rubric (hook strength, audience
+   relevance, reads like a person, brand fit, feasibility with assets on hand, novelty, shareability), writing its reasoning
    before each score, and picks three finalists. Each finalist that can be rendered gets a quick local
    draft, and the judge then looks at the actual images, compares the finalists pairwise in both orders
    (a split counts as a tie) and argues against its own leader before naming a winner.
@@ -278,8 +278,8 @@ script, shot list, capture settings, B-roll, safe zones, and on-screen text and 
 paste, plus the publish pack (captions, hashtags, disclosure, music) to apply when the clip is posted. You are asked whether to save it as a project doc under `Content/Shoots/`. Once you have
 filmed it, upload the clip and run `/conductor:marketing create` with the clip (direct mode).
 
-**Cost.** A run is about 8 subagent calls, and only the strategist and the judge use the top model
-tier. `--quick` uses two ideators with three ideas each and skips the finalist renders (the judge
+**Cost.** A run is about 8 subagent calls, and the strategist, the judge and the scriptwriter use the top model
+tier (the ideators stay a tier below the judge). `--quick` uses two ideators with three ideas each and skips the finalist renders (the judge
 then decides from the text alone), for about 7 calls.
 
 **Where the files live.** Each run keeps everything in

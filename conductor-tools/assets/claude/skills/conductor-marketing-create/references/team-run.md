@@ -40,7 +40,8 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   rules into `context/banned.md` on every later run.
 
 Cost: a run is about 8 subagent calls (strategist 1, ideators 3, director 2, scriptwriter 1, art
-director 1), and only the strategist and the director use the top model tier. `--quick` runs two
+director 1). The strategist, the director and the scriptwriter use the top model tier; the
+ideators stay on the lower tier so the judge never scores its own tier's ideas. `--quick` runs two
 ideators and skips the finalist renders (about 7 calls).
 
 ## Run folder and state
