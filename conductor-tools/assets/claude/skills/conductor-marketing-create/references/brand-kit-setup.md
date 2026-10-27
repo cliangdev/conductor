@@ -5,7 +5,10 @@ Brand Kit has been set up, and offer to set it up if not.
 
 ## Step 1 — Check the brand
 
-Call `get_brand_kit` (pass `kitId` only if the person already named a specific brand).
+Call `get_brand_kit` for the kit chosen under SKILL.md "Brand kit first" (`kitId` if the person
+named a brand or already chose one; otherwise no `kitId`, which returns the default and any
+`otherKits`). Setup applies to that kit only: pass its `kitId` to `update_brand_kit` and
+`upload_brand_image`.
 
 **If `configured` is `false`**, this workspace has no brand set up yet — offer to fix that before
 making anything:

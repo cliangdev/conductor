@@ -97,7 +97,7 @@ or, to test a headline variant of something that already exists:
 
 > Cut a variant of 12a with the headline "Spring colours, *half price*."
 
-Claude reads your Brand Kit and its linked Knowledge page, picks a photo, writes the copy against
+If your workspace has several Brand Kits, Claude asks which one to use first. Claude reads your Brand Kit and its linked Knowledge page, picks a photo, writes the copy against
 your kit's rules, and renders a **draft** on your machine for you to look at. **Nothing is saved to
 Conductor — no Creative, no photo upload — until you approve it.** You'll be asked to *Approve &
 upload*, *Request changes* or *Stop*; changes just make another draft. Approving also confirms the photo has no text, logo or claim burned into it; Claude then moves the Creative from DRAFT to READY once nothing else is missing. Under the hood it's calling

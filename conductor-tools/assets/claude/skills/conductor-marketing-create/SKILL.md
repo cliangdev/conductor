@@ -15,9 +15,15 @@ do not post it.
 
 ## Rules that hold in both modes
 
-- **Brand kit first.** Call `get_brand_kit`. If `configured` is `false` the workspace has never set
-  up its brand: follow `references/brand-kit-setup.md` and offer setup before making anything.
-  Copy and visuals come from the Brand Kit and its Knowledge page, not from invention.
+- **Brand kit first.** A workspace may have several kits. If the person named a brand or kit, call
+  `get_brand_kit` with that `kitId`. Otherwise call it with no `kitId`; if the response has a
+  non-empty `otherKits`, ask once with `AskUserQuestion` which kit to use: the default first, labelled
+  as the default, then up to 3 others (up to 4 options; "Other" covers the rest by name). Pass the
+  chosen kit's id as `brandKitId` on every `preview_creative_draft` and `create_creative` call for
+  the run, and take the Knowledge page and copy rules from that same kit. If the chosen kit's
+  `configured` is `false` the brand has never been set up: follow `references/brand-kit-setup.md`
+  and offer setup before making anything. Copy and visuals come from the Brand Kit and its Knowledge
+  page, not from invention.
 - **Draft first, save after approval.** `preview_creative_draft` renders on this machine and writes
   nothing to Conductor. Only after the person has seen the draft and approved it does
   `commit_creative_draft` upload the media, save the Creative and run the full render. Never commit

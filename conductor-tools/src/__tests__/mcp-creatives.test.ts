@@ -119,6 +119,34 @@ describe('get_brand_kit', () => {
     expect(result['id']).toBe('b')
   })
 
+  it('adds no otherKits when the project has a single kit', async () => {
+    mocked(apiGet).mockResolvedValue([{ id: 'a', name: 'A', isDefault: true, configured: true }])
+    const result = await getBrandKit({}, config)
+    expect(result).not.toHaveProperty('otherKits')
+  })
+
+  it('lists the non-default kits as otherKits (id, name, configured) when there are several', async () => {
+    mocked(apiGet).mockResolvedValue([
+      { id: 'a', name: 'A', isDefault: false, configured: true, tokens: { x: 1 } },
+      { id: 'b', name: 'B', isDefault: true, configured: true },
+      { id: 'c', name: 'C', isDefault: false, configured: false },
+    ])
+    const result = await getBrandKit({}, config)
+    expect(result['id']).toBe('b')
+    expect(result['otherKits']).toEqual([
+      { id: 'a', name: 'A', configured: true },
+      { id: 'c', name: 'C', configured: false },
+    ])
+    expect(apiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('does one GET and no otherKits when kitId is given', async () => {
+    mocked(apiGet).mockResolvedValue({ id: 'kit1', configured: true })
+    const result = await getBrandKit({ kitId: 'kit1' }, config)
+    expect(apiGet).toHaveBeenCalledTimes(1)
+    expect(result).not.toHaveProperty('otherKits')
+  })
+
   it('throws a clear error when the project has no kits at all', async () => {
     mocked(apiGet).mockResolvedValue([])
     await expect(getBrandKit({}, config)).rejects.toThrow(/no Brand Kit/)
