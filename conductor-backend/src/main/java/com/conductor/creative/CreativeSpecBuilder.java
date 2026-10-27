@@ -235,7 +235,7 @@ public class CreativeSpecBuilder {
             return List.of("story");
         }
         if ("carousel".equals(creative.getSequenceKind())) {
-            // nexus's default: a carousel with no ratio set is a 4:5 Instagram carousel.
+            // default: a carousel with no ratio set is a 4:5 Instagram carousel.
             return List.of(creative.getCarouselRatio() != null ? creative.getCarouselRatio() : DEFAULT_CAROUSEL_RATIO);
         }
         Set<String> union = new LinkedHashSet<>(toStringList(kit.getEnabledPlacements()));

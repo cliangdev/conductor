@@ -1,8 +1,7 @@
-/* assertions.js — the in-page checks that refuse a wrong render, ported from
- * nexus-marketing/social/export-png.mjs and made brand-agnostic: the accent
+/* assertions.js — the in-page checks that refuse a wrong render. The accent
  * check reads brand.tokens.accent (via the board's own resolved --cc-accent
- * custom property) instead of a hardcoded Rexipe coral, and the font check
- * reads brand.fontFamily instead of a hardcoded "DM Sans". A brand kit with
+ * custom property), and the font check reads brand.fontFamily; neither
+ * hardcodes a brand value. A brand kit with
  * neither set still gets a meaningful check — the board's actually-applied
  * value is what is verified, not a specific brand's value.
  *
@@ -79,8 +78,7 @@ export function spillDetect(boardRect, nodes) {
  * platform's own UI — Instagram's story CTA, TikTok's caption — sits).
  * Mirrors render.js's own `fits()` bottom check exactly, so fitting and this
  * safety net can never disagree. Only the bottom zone is enforced: the top
- * reserve varies far more per platform and is documented, not asserted, the
- * same call nexus-marketing's export-png.mjs made. */
+ * reserve varies far more per platform and is documented, not asserted. */
 export function safeZoneIntrusion(boardRect, nodes, safe) {
   const issues = [];
   const bottom = (safe && safe.bottom) || 0;

@@ -4374,8 +4374,8 @@ paths:
       description: >-
         `version` must match the Creative's current version or the write is refused with 409 — read
         the Creative again, reapply the edit on top of the newer version. Changing `headline` or
-        `layout` clears any pinned `typeOverrides` for the fields that changed, exactly like nexus's
-        `setConcept`. Requires ADMIN or CREATOR.
+        `layout` clears any pinned `typeOverrides` for the fields that changed. Requires ADMIN or
+        CREATOR.
       operationId: patchCreative
       security:
         - bearerAuth: []
@@ -4569,7 +4569,7 @@ paths:
         - creatives
       summary: What is stopping this Creative from going up for review
       description: >-
-        A port of nexus's `readiness()`: caption, alt text, the photo's `checked` verdict and
+        Caption, alt text, the photo's `checked` verdict and
         source/licence, and the Creative's own state (must not be `DRAFT`) are blocking; the photo's
         AI disclosure is informational only. `ready` is true only when every blocking item is clear.
       operationId: getCreativeReadiness
@@ -8647,7 +8647,7 @@ components:
           nullable: true
           description: >-
             When set, every match of this pattern is stripped from the field's text before `pattern`
-            is tested — the "Add All to Shopping List" exact-button-name exemption in nexus.
+            is tested, e.g. to exempt one exact, quotable button name from a banned-phrase rule.
 
     BrandKitResponse:
       type: object

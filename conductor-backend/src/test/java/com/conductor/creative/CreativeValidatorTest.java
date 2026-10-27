@@ -14,7 +14,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * A data-driven port of the relevant cases from nexus-marketing/social/test/core.test.mjs, run against a
+ * Data-driven validator cases run against a
  * brand-free fixture kit — no coral, no Rexipe, no trial claim (CLAUDE.md, docs/cli-assets.md). Pure unit
  * test: no Spring context, since {@link CreativeValidator} takes only a {@link CreativeRegistry}.
  */
@@ -49,7 +49,7 @@ class CreativeValidatorTest {
         kit.setCopyRules(array);
     }
 
-    // ── copy rules (nexus copyErrors) ─────────────────────────────────────
+    // ── copy rules (copyErrors) ─────────────────────────────────────
 
     @Test
     void copyRuleForbiddingExclamationMarksFailsOnMatchAndPassesOtherwise() {

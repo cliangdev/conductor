@@ -31,7 +31,7 @@ import java.util.regex.PatternSyntaxException;
 /**
  * Per-project Brand Kits (COND-24 T2). Every workspace has at least one kit, slug {@code default},
  * created lazily and race-safely the first time {@link #listKits} or {@link #resolveDefault} runs — see
- * {@code V139__brand_kit.sql}. Nothing here is Rexipe-specific: {@link #DEFAULT_TOKENS} is a neutral
+ * {@code V139__brand_kit.sql}. Nothing here is brand-specific: {@link #DEFAULT_TOKENS} is a neutral
  * palette, never a brand constant (CLAUDE.md, {@code docs/cli-assets.md}).
  *
  * <p>Reads are open to any project member; writes (create/patch/delete/image slots) require ADMIN or

@@ -6,8 +6,7 @@
  * are both blocked under file://, which is why this exists rather than just
  * pointing Playwright at the files directly.
  *
- * Adapted from nexus-marketing/social/server.mjs; the only change is that
- * the static root is a parameter (this package's root) rather than assumed
+ * The static root is a parameter (this package's root) rather than assumed
  * to be the module's own directory, since this job lives one level down, in
  * job/.
  */

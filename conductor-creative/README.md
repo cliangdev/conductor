@@ -7,13 +7,10 @@ photo posts both refuse PNG) — the preview-only contact sheet stays PNG. One
 codebase, so the preview a marketer edits against and the frame that gets
 attached to a Post can never drift apart.
 
-It is a brand-agnostic port of `nexus-marketing/social/`'s static-ad render
-engine (`render.js`, `layouts/`, `placements.json`). Everything Rexipe-specific
-in that system — its palette, its logos, its trial-claim copy, its six copy
-rules — is gone from this package. **Nothing here may hardcode a brand
-constant.** A workspace's Brand Kit is passed in at render time as a plain
-`brand` object; a kit with no logo images renders no lockup and no CTA badge,
-and a kit with no copy rules configured never fails a save. See
+**Nothing here may hardcode a brand constant.** A workspace's Brand Kit is
+passed in at render time as a plain `brand` object; a kit with no logo images
+renders no lockup and no CTA badge, and a kit with no copy rules configured
+never fails a save. See
 `docs/cli-assets.md`'s domain-agnostic-guidance principle in the main
 Conductor repo for why this matters beyond just this package.
 
@@ -422,8 +419,7 @@ same page, calling `__assertBoard()` only once, on the very last (end-card) fram
 `previewOnly` MOTION render: one ROW per time, each row holding every enabled placement's board at that
 moment, so a human can see how the animation progresses without downloading the full MP4.
 
-**`assertions.js`** is the in-page safety net, ported from
-`nexus-marketing/social/export-png.mjs` and made brand-agnostic: text spill,
+**`assertions.js`** is the in-page safety net, covering text spill,
 bottom safe-zone intrusion (mirrors `render.js`'s own `fitBoard`/`fits()`
 bottom check, so fitting and this check can never disagree), fonts loaded
 (reads `brand.fontFamily` instead of a hardcoded face), every `<img>` loaded,
@@ -509,8 +505,8 @@ that package via a `file:` dependency and must stay dependency-free.
   `<placement>[-<index>].jpg|.mp4` and `poster-<placement>.jpg`; `complete`/`fail` write
   `manifest.json` (frames, sizes, warnings, or the error). It is how a Creative is previewed before
   anything is uploaded or saved. Tested in `test/file-transport.test.mjs`.
-- `job/server.mjs` — a dependency-free `node:http` static server (ported from
-  nexus-marketing's `social/server.mjs`) scoped to this package's root, so
+- `job/server.mjs` — a dependency-free `node:http` static server scoped to
+  this package's root, so
   `frame.html`/`sheet.html`'s `type="module"` imports and stylesheet
   `<link>`s resolve (both are blocked under `file://`). Honours `Range` requests (a `<video>` cannot
   seek without them) and, with `{ cors: true }`, serves the file transport's local media.
@@ -568,31 +564,25 @@ a clear, actionable error. Fixture audio/video files are generated with
 `ffmpeg -f lavfi` and served from a throwaway local `node:http` server (the
 job's `fetch()`-based downloader has no `file://` support), never checked in.
 
-## Intentional behavior changes from `nexus-marketing/social/`
+## Design notes
 
-- **Brand values are parameters, not constants.** `TRIAL_CLAIM`, the Apple
-  badge path/ratio, the coral token, and the DM Sans self-hosted font are all
-  gone; they are the `brand` object's job now.
+- **Brand values are parameters, not constants.** Claim copy, store-badge
+  artwork, the accent colour and the brand font all come from the `brand`
+  object.
 - **The CTA badge is sized by height only**, preserving its own intrinsic
-  aspect ratio, instead of Apple's specific badge ratio — a brand's badge is
-  not assumed to be any one store's artwork. Clear space (a quarter of the
-  badge's height) is kept as a reasonable general default.
-- **The badge's `alt` text is empty** (decorative) rather than Apple's
-  specific "Download on the App Store" wording, since the badge is now
-  arbitrary brand artwork, not necessarily that one badge.
+  aspect ratio; a brand's badge is not assumed to be any one store's artwork.
+  Clear space (a quarter of the badge's height) is kept around it.
+- **The badge's `alt` text is empty** (decorative), since the badge is
+  arbitrary brand artwork.
 - **All CSS classes and custom properties are prefixed `cc-`** so the
   package's styles cannot collide with a host app's own Tailwind setup.
-- **The `1.91x1` placement's label lost the word "Meta"** (now "1.91:1 link
-  ad") since it renders for any link-ad surface, not only Meta's.
-- **No photo/focal registry ships in this package.** nexus-marketing kept a
-  separate `photos.json` mapping a photo path to its own focal points;
-  here a creative simply carries `focal` (read from the backend's
-  `creative_photo.focal`) and `focalOverride` directly, since photo storage
-  and provenance are backend concerns (`creative_photo`), not this package's.
-- **No golden-image test, no CLI, no MCP server, no photo pipeline** — all
-  out of scope for this package (see the PRD; golden-image comparison and the
-  Rexipe import are T6 work against the real render job).
-- **Placement frames export as JPEG, not PNG** (`export-png.mjs`'s namesake
-  format) — Instagram feed images and TikTok photo posts both refuse PNG, so
-  a PNG frame would fail the publishing approval gate. Only the preview-only
-  `sheet` contact sheet, never attached to a Post, still exports PNG.
+- **The `1.91x1` placement's label is "1.91:1 link ad"**, since it renders for
+  any link-ad surface.
+- **No photo/focal registry ships in this package.** A creative carries
+  `focal` (read from the backend's `creative_photo.focal`) and `focalOverride`
+  directly; photo storage and provenance are backend concerns
+  (`creative_photo`).
+- **Placement frames export as JPEG, not PNG** — Instagram feed images and
+  TikTok photo posts both refuse PNG, so a PNG frame would fail the publishing
+  approval gate. Only the preview-only `sheet` contact sheet, never attached
+  to a Post, exports PNG.

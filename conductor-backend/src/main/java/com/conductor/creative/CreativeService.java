@@ -51,11 +51,10 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * The Creative library (COND-24 T2): CRUD, cutting a lettered variant, and readiness — a data-driven
- * port of nexus-marketing/social/core.mjs's {@code addConcept}/{@code setConcept}/{@code readiness}.
+ * The Creative library (COND-24 T2): CRUD, cutting a lettered variant, and readiness.
  * Every structural rule is enforced by {@link CreativeValidator} against the Creative's {@link BrandKit};
  * this class resolves references (kit, photo, sequence photos), assigns the display number/letter, and
- * owns the optimistic-lock check that replaces nexus's sha1 store version.
+ * owns the optimistic-lock check.
  */
 @Service
 public class CreativeService {

@@ -19,8 +19,8 @@ import java.util.UUID;
  * creatives are not Work Items"): a photo, headline, body, layout and theme, plus lettered variants
  * (12a, 12b) of the same idea. See {@code V140__creative.sql}.
  *
- * <p>{@code number}/{@code variantLetter} together are nexus's display id ("12a"); {@code version} is
- * JPA's own optimistic-lock column, replacing nexus's sha1 store version, and gives the same 409 on a
+ * <p>{@code number}/{@code variantLetter} together are the display id ("12a"); {@code version} is
+ * JPA's own optimistic-lock column and gives a 409 on a
  * stale write ({@link CreativeService#patch}).
  */
 @Entity
@@ -195,7 +195,7 @@ public class Creative {
         updatedAt = OffsetDateTime.now();
     }
 
-    /** Nexus's display id, e.g. {@code "12a"}. */
+    /** Display id, e.g. {@code "12a"}. */
     public String displayId() {
         return number + variantLetter;
     }

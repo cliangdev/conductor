@@ -57,7 +57,7 @@ import java.util.regex.Pattern;
 @Service
 public class CreativePhotoService {
 
-    /** Nexus's advisory bar: below this on the long edge, the 2x export upscales. Applies to IMAGE only. */
+    /** Advisory bar: below this on the long edge, the 2x export upscales. Applies to IMAGE only. */
     static final int MIN_LONG_EDGE_PX = 2160;
     /** Advisory only (never a refusal): most platforms cap short-form video well under this. */
     static final int VIDEO_DURATION_WARNING_SECONDS = 180;
@@ -886,7 +886,7 @@ public class CreativePhotoService {
     }
 
     /**
-     * IMAGE: a long edge under nexus's 2160px bar is advisory only (never a refusal — no image pipeline
+     * IMAGE: a long edge under the 2160px bar is advisory only (never a refusal — no image pipeline
      * here). VIDEO: longer than {@link #VIDEO_DURATION_WARNING_SECONDS} is advisory only ("longer than
      * most platforms take" — no length cap here either, platform caps are enforced at publish time by
      * {@code MediaTargetValidator}). AUDIO: no warnings today.

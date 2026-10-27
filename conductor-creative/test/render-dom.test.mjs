@@ -74,7 +74,7 @@ test('renderBoard: a single wordmark is used regardless of theme when the other 
   assert.equal(light.querySelector('.cc-lockup__mark').getAttribute('src'), 'https://cdn.example/only.png');
 });
 
-/* ── lockup: 'chip' (fidelity-gap port of nexus's white-pill lockup) ──────── */
+/* ── lockup: 'chip' (white-pill lockup behind the wordmark) ──────── */
 
 test('renderBoard: lockup "chip" adds cc-lockup--chip; plain (default) does not', () => {
   const brand = { logos: { mark: 'https://cdn.example/mark.png' } };

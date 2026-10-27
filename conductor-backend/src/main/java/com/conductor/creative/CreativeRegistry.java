@@ -20,8 +20,7 @@ import java.util.Set;
  * {@code creative/registry.json}.
  *
  * <p>The source of truth is {@code conductor-creative/layouts/*}\/{@code layout.json} and
- * {@code conductor-creative/placements.json} (a sibling top-level package, ported from
- * {@code nexus-marketing/social/}), but the backend's Docker build context is {@code conductor-backend/}
+ * {@code conductor-creative/placements.json} (a sibling top-level package), but the backend's Docker build context is {@code conductor-backend/}
  * only — a sibling directory never reaches the image — so a compact copy ships in this module's own
  * resources. {@code CreativeRegistryConsistencyTest} keeps the two from drifting whenever both
  * directories are checked out side by side.
