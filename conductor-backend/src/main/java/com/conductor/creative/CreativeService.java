@@ -17,6 +17,7 @@ import com.conductor.generated.v2.model.CreativeMotion;
 import com.conductor.generated.v2.model.CreativeMotionBackground;
 import com.conductor.generated.v2.model.CreativeRenderSpec;
 import com.conductor.generated.v2.model.CreativeSlideshow;
+import com.conductor.generated.v2.model.SlideshowStyle;
 import com.conductor.generated.v2.model.CreativeState;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.LocalMediaInfo;
@@ -272,6 +273,7 @@ public class CreativeService {
                 motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
+        violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -307,6 +309,7 @@ public class CreativeService {
         creative.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         creative.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         creative.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
+        creative.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
         return new PreparedCreate(kit, creative, motionRes, sound);
     }
 
@@ -334,7 +337,10 @@ public class CreativeService {
         String sequenceKind = request.getSequenceKind() != null ? request.getSequenceKind().getValue() : current.getSequenceKind();
         String lockup = request.getLockup() != null ? request.getLockup().getValue() : current.getLockup();
         String kind = request.getKind() != null ? request.getKind().getValue() : current.getKind();
-        Map<String, List<String>> slides = request.getSlides() != null ? request.getSlides() : toSlidesMap(current.getSlides());
+        Map<String, List<String>> currentSlides = toSlidesMap(current.getSlides());
+        Map<String, List<String>> slides = request.getSlides() != null ? request.getSlides() : currentSlides;
+        // Read before current is mutated below: the recorded slide style survives only identical slides.
+        boolean slidesChanged = request.getSlides() != null && !request.getSlides().equals(currentSlides);
         List<String> slideAltText = request.getSlideAltText() != null
                 ? request.getSlideAltText() : toStringList(current.getSlideAltText());
         List<String> placements = request.getPlacements() != null ? request.getPlacements() : toStringList(current.getPlacements());
@@ -397,6 +403,7 @@ public class CreativeService {
                 motionRes.input(), slideEntries, slideAltText).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
+        violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -439,6 +446,16 @@ public class CreativeService {
         current.setSlideshow(sound.slideshow() != null ? objectMapper.valueToTree(sound.slideshow()) : null);
         current.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         current.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
+        // The recorded style describes the current slides: sending one records it (null or {} clears it); changing
+        // the slides (a different id list or order for any ratio) without sending a style clears it; resending the
+        // same slides keeps it. It belongs to CAROUSEL, so leaving that kind drops it.
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            current.setSlideStyle(null);
+        } else if (request.getSlideStyle() != null) {
+            current.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
+        } else if (slidesChanged) {
+            current.setSlideStyle(null);
+        }
 
         current = creativeRepository.save(current);
         return toView(projectId, current, loadPhotos(List.of(current)));
@@ -506,6 +523,7 @@ public class CreativeService {
         variant.setMotion(motionRes.motion() != null ? objectMapper.valueToTree(motionRes.motion()) : null);
         variant.setAudio(sound.audio() != null ? objectMapper.valueToTree(sound.audio()) : null);
         variant.setSlideshow(root.getSlideshow());
+        variant.setSlideStyle(root.getSlideStyle());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
@@ -904,7 +922,7 @@ public class CreativeService {
      * a list is present when it is non-empty (the generated model cannot tell an omitted list from an empty
      * one), so a draft cannot clear a base Creative's placements or sequence — only replace them.
      */
-    private CreateCreativeRequest overlayOnBase(Creative base, CreativeDraftSpecRequest draft) {
+    CreateCreativeRequest overlayOnBase(Creative base, CreativeDraftSpecRequest draft) {
         CreateCreativeRequest merged = new CreateCreativeRequest();
         if (base != null) {
             merged.brandKitId(base.getBrandKitId())
@@ -930,6 +948,7 @@ public class CreativeService {
                     .motion(toMotion(base.getMotion()))
                     .audio(toAudio(base.getAudio()))
                     .slideshow(toSlideshow(base.getSlideshow()))
+                    .slideStyle(SlideshowStyles.fromStored(objectMapper, base.getSlideStyle()))
                     .layoutOverrides(base.getLayoutOverrides() != null
                             ? objectMapper.convertValue(base.getLayoutOverrides(), CreativeLayoutOverrides.class) : null);
         }
@@ -951,11 +970,25 @@ public class CreativeService {
         if (draft.getLockup() != null) merged.setLockup(draft.getLockup());
         if (draft.getKind() != null) merged.setKind(draft.getKind());
         if (draft.getClipMedia() != null) merged.setClipMedia(draft.getClipMedia());
-        if (draft.getSlides() != null) merged.setSlides(draft.getSlides());
+        if (draft.getSlides() != null) {
+            merged.setSlides(draft.getSlides());
+            // Different slides without a style do not inherit the base's look; the same slides keep it.
+            if (draft.getSlideStyle() == null && base != null
+                    && !draft.getSlides().equals(toSlidesMap(base.getSlides()))) {
+                merged.setSlideStyle(null);
+            }
+        }
         if (draft.getSlideAltText() != null) merged.setSlideAltText(draft.getSlideAltText());
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
         if (draft.getAudio() != null) merged.setAudio(draft.getAudio());
         if (draft.getSlideshow() != null) merged.setSlideshow(draft.getSlideshow());
+        if (draft.getSlideStyle() != null) {
+            // An empty style ({} or an explicit null) clears the base's.
+            merged.setSlideStyle(SlideshowStyles.isEmpty(draft.getSlideStyle()) ? null : draft.getSlideStyle());
+        } else if (merged.getKind() == null || !Creative.KIND_CAROUSEL.equals(merged.getKind().getValue())) {
+            // The base style belongs to a CAROUSEL: another kind must not carry it (it would 422 on slideStyle).
+            merged.setSlideStyle(null);
+        }
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
         // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
         // or cleared there by the headline/layout rule; only a draft's own typeOverrides pass through here.
@@ -1377,6 +1410,22 @@ public class CreativeService {
         }
         boolean silent = (carouselKind && "none".equals(source)) || (clipKind && "clip".equals(source));
         return new SoundResolution(silent ? null : audio, track, input, slideshow, slideshowInput);
+    }
+
+    /** A slide style is CAROUSEL-only and field-validated; violations name {@code slideStyle}. */
+    private static List<Violation> slideStyleViolations(String kind, SlideshowStyle style) {
+        List<Violation> out = new ArrayList<>();
+        if (SlideshowStyles.isEmpty(style)) {
+            return out;
+        }
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            out.add(new Violation("slideStyle", "kindFields",
+                    "slideStyle only applies to a CAROUSEL creative, not " + kind));
+            return out;
+        }
+        SlideshowStyles.validate(style, "slideStyle")
+                .forEach(p -> out.add(new Violation(p.field(), "bounds", p.message())));
+        return out;
     }
 
     /** {@code creative.slideshow} JSON -&gt; the typed DTO, or null when unset. */

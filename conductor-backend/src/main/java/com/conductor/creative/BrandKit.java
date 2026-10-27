@@ -66,6 +66,11 @@ public class BrandKit {
     @Column(name = "badge_gcs_path")
     private String badgeGcsPath;
 
+    /** {@code SlideshowStyle} JSON; null means slides use the native look. See V164__slideshow_style.sql. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "slideshow_style", columnDefinition = "jsonb")
+    private JsonNode slideshowStyle;
+
     @Column(name = "cta_claim")
     private String ctaClaim;
 
@@ -143,6 +148,9 @@ public class BrandKit {
 
     public String getBadgeGcsPath() { return badgeGcsPath; }
     public void setBadgeGcsPath(String badgeGcsPath) { this.badgeGcsPath = badgeGcsPath; }
+
+    public JsonNode getSlideshowStyle() { return slideshowStyle; }
+    public void setSlideshowStyle(JsonNode slideshowStyle) { this.slideshowStyle = slideshowStyle; }
 
     public String getCtaClaim() { return ctaClaim; }
     public void setCtaClaim(String ctaClaim) { this.ctaClaim = ctaClaim; }

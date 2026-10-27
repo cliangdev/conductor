@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -19,7 +19,8 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
 }))
 
-import { apiGet, apiPost } from '@/lib/api'
+import { brandKitSlug } from '@cliangdev/creative-render/slideshow-style'
+import { apiGet, apiPatch, apiPost } from '@/lib/api'
 import { BrandKitForm } from './BrandKitForm'
 import type { BrandKit } from './types'
 
@@ -184,5 +185,157 @@ describe('BrandKitForm', () => {
       ),
     )
     expect(toastSpy).toHaveBeenCalledWith('Brand kit created')
+  })
+
+  it('derives the same slug as the CLI for the same name (table shared with conductor-tools)', async () => {
+    const table: Array<[string, string]> = [
+      ['Café Summer', 'cafe-summer'],
+      ['Holiday Drop!', 'holiday-drop'],
+      ['x'.repeat(70), 'x'.repeat(60)],
+      [`${'word '.repeat(14)}end`, 'word-'.repeat(12).replace(/-$/, '')],
+      ['!!!', 'kit'],
+      ['  Ünïcode  Ñame ', 'unicode-name'],
+    ]
+    for (const [name, expected] of table) expect(brandKitSlug(name), name).toBe(expected)
+  })
+
+  it('keeps every retried slug within 64 characters when a 63-character name is taken', async () => {
+    const conflict = Object.assign(new Error('slug taken'), { status: 409 })
+    ;(apiPost as Mock)
+      .mockImplementationOnce(() => Promise.reject(conflict))
+      .mockImplementationOnce(() => Promise.reject(conflict))
+      .mockImplementationOnce(() => Promise.resolve(kit({ id: 'kit-9', slug: 'x', name: 'n' })))
+    render(<BrandKitForm projectId="proj-1" token="tok" />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'New kit' }))
+    await userEvent.type(document.getElementById('new-kit-name')!, 'x'.repeat(63))
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(3))
+    const slugs = (apiPost as Mock).mock.calls.map((c) => (c[1] as { slug: string }).slug)
+    expect(slugs).toEqual(['x'.repeat(60), `${'x'.repeat(60)}-2`, `${'x'.repeat(60)}-3`])
+    for (const slug of slugs) expect(slug.length).toBeLessThanOrEqual(64)
+  })
+
+  describe('slideshow style', () => {
+    afterEach(() => {
+      document.head.querySelectorAll('link[rel="stylesheet"]').forEach((l) => l.remove())
+    })
+
+    const STYLE = { accent: '#FF5A5F', boxBg: '#FFFFFF', defaultText: 'stroke' as const, textSize: 64, subSize: 36 }
+
+    function withStyle(style: typeof STYLE | null) {
+      ;(apiGet as Mock).mockImplementation((path: string) => {
+        if (path.includes('/creative-registry')) return Promise.resolve(REGISTRY)
+        return Promise.resolve([kit({ slideshowStyle: style })])
+      })
+    }
+
+    it('is off with the native-look note when the kit has no style', async () => {
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const toggle = await screen.findByRole('switch', { name: 'Use a slideshow style' })
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByText(/slideshow slides use the native look/)).toBeInTheDocument()
+      expect(screen.queryByLabelText('Slide font family')).not.toBeInTheDocument()
+    })
+
+    it('renders the stored style, the preview and every control', async () => {
+      withStyle(STYLE)
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      expect(await screen.findByLabelText('Accent')).toHaveValue('#FF5A5F')
+      expect(screen.getByLabelText('Default text style')).toHaveValue('stroke')
+      expect(screen.getByLabelText('Headline size (px)')).toHaveValue(64)
+      expect(screen.getByLabelText('Sub text size (px)')).toHaveValue(36)
+      expect(screen.getByLabelText('Slide font URL')).toBeInTheDocument()
+      expect(screen.getByTestId('slideshow-style-preview')).toBeInTheDocument()
+    })
+
+    it('sends slideshowStyle: null when the toggle is turned off', async () => {
+      withStyle(STYLE)
+      ;(apiPatch as Mock).mockResolvedValue(kit({ slideshowStyle: null }))
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      await userEvent.click(await screen.findByRole('switch', { name: 'Use a slideshow style' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      expect((apiPatch as Mock).mock.calls[0][1]).toHaveProperty('slideshowStyle', null)
+    })
+
+    it('flows edits into the save payload', async () => {
+      withStyle(STYLE)
+      ;(apiPatch as Mock).mockResolvedValue(kit({ slideshowStyle: STYLE }))
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const family = await screen.findByLabelText('Slide font family')
+      await userEvent.type(family, 'Poppins')
+      await userEvent.selectOptions(screen.getByLabelText('Default text style'), 'dark')
+      const size = screen.getByLabelText('Headline size (px)')
+      await userEvent.clear(size)
+      await userEvent.type(size, '80')
+      const accent = screen.getByLabelText('Accent')
+      await userEvent.clear(accent)
+      await userEvent.type(accent, '#00FF00')
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      expect((apiPatch as Mock).mock.calls[0][1].slideshowStyle).toEqual({
+        ...STYLE,
+        fontFamily: 'Poppins',
+        defaultText: 'dark',
+        textSize: 80,
+        accent: '#00FF00',
+      })
+    })
+
+    it('turning it on starts from a neutral style and omits cleared fields', async () => {
+      ;(apiPatch as Mock).mockResolvedValue(kit())
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      await userEvent.click(await screen.findByRole('switch', { name: 'Use a slideshow style' }))
+      const sub = screen.getByLabelText('Sub text size (px)')
+      await userEvent.clear(sub)
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      const sent = (apiPatch as Mock).mock.calls[0][1].slideshowStyle
+      expect(sent.defaultText).toBe('box')
+      expect(sent.textSize).toBe(60)
+      expect(sent).not.toHaveProperty('subSize')
+    })
+
+    it('starts from the exact native look when turned on', async () => {
+      ;(apiPatch as Mock).mockResolvedValue(kit())
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      await userEvent.click(await screen.findByRole('switch', { name: 'Use a slideshow style' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      expect((apiPatch as Mock).mock.calls[0][1].slideshowStyle).toEqual({
+        boxBg: '#ffffff', boxInk: '#111111', darkBg: '#111111', darkInk: '#ffffff', strokeInk: '#ffffff', outline: '#000000',
+        accent: '#ff2d55', defaultText: 'box', textSize: 60, subSize: 44,
+      })
+    })
+
+    it('omits slideshowStyle when only another field was edited', async () => {
+      withStyle(STYLE)
+      ;(apiPatch as Mock).mockResolvedValue(kit({ slideshowStyle: STYLE }))
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const cta = await screen.findByDisplayValue('7 days free.')
+      await userEvent.clear(cta)
+      await userEvent.type(cta, 'Try it free.')
+      await userEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+      await waitFor(() => expect(apiPatch).toHaveBeenCalled())
+      const payload = (apiPatch as Mock).mock.calls[0][1]
+      expect(payload.ctaClaim).toBe('Try it free.')
+      expect(payload).not.toHaveProperty('slideshowStyle')
+    })
+
+    it('loads the font URL in the preview frame on blur, never in the app head', async () => {
+      withStyle(STYLE)
+      render(<BrandKitForm projectId="proj-1" token="tok" />)
+      const url = await screen.findByLabelText('Slide font URL')
+      await userEvent.type(url, 'https://fonts.googleapis.com/css?family=Lora')
+      await userEvent.tab()
+      await waitFor(() =>
+        expect(screen.getByTestId('slideshow-style-preview').getAttribute('srcdoc')).toContain(
+          'href="https://fonts.googleapis.com/css?family=Lora"',
+        ),
+      )
+      expect(document.head.querySelector('link[rel="stylesheet"]')).toBeNull()
+    })
   })
 })

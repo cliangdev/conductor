@@ -538,6 +538,7 @@ public class CreativeController implements CreativesApi {
                 .slideAltText(c.getSlideAltText() != null ? toStringList(c.getSlideAltText()) : null)
                 .motion(toMotion(c.getMotion()))
                 .audio(toAudio(c.getAudio()))
+                .slideStyle(com.conductor.creative.SlideshowStyles.fromStored(objectMapper, c.getSlideStyle()))
                 .slideshow(c.getSlideshow() != null
                         ? objectMapper.convertValue(c.getSlideshow(), CreativeSlideshow.class) : null)
                 .createdBy(c.getCreatedBy())

@@ -43,3 +43,31 @@ making anything:
   a trial offer or similar in the caption instead. Verify with `get_brand_kit` —
   `configured` should now read `true`.
 - **Skip for now**: proceed; the skill below will render against the default kit as given.
+
+A kit can also carry a slideshow style (the look of organic slideshows); it is optional, and native is
+the default. `update_brand_kit` sets it (`slideshowStyle`, fields in `references/slideshow-formats.md`).
+
+## Make a kit style from slides
+
+Triggers: "I like these slides", "I like this look", "make a kit (style) from it". Never change the
+default kit, and never delete anything.
+
+1. **Identify the slides and read their style.**
+   - A Creative (display id such as `12a`): `get_creative` and read `slideStyle`. A CAROUSEL with a
+     null `slideStyle` was made before styles were recorded: treat it as the native defaults and say so.
+   - A local slideshow folder (`.conductor/slideshows/*/spec.json`): read the spec's top-level `resolvedStyle`
+     (the full look that was composed; the spec's own `style` is only the partial input). A folder
+     with neither `resolvedStyle` nor `style` was made before styles were recorded: treat it as the
+     native defaults and say so (the same as a Creative with a null `slideStyle`).
+   - Images designed elsewhere: look at them, sample the colours (text box, text, outline, accent),
+     and ask the person for the font name (and a Google Fonts link if it is one). Compose one sample
+     slide with `compose_slideshow` and that inline `style`, show it, and continue only once they
+     say it matches.
+2. **Ask once** (`AskUserQuestion`): a new kit, or add it to an existing kit.
+   - **New kit:** ask for a name. Offer `copyFrom` the current kit so copy rules, voice, tokens and
+     font carry over; call `create_brand_kit({name, slideshowStyle, copyFrom?})`. Logos are not
+     copied: offer `upload_brand_image` for the new kit's slots.
+   - **Existing kit:** `get_brand_kit({kitId})` first. If it already has a `slideshowStyle`, say it
+     will be replaced and show the old one, then `update_brand_kit({kitId, slideshowStyle})`.
+3. **Verify** with `get_brand_kit({kitId})`: `slideshowStyle` matches what was sent. Report the kit
+   name and how to use it (pick it at the kit question, or pass `brandKitId` to `compose_slideshow`).

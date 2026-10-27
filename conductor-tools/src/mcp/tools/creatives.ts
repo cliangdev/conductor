@@ -2,6 +2,8 @@ import { readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Config } from '../config.js'
+import { hasAnyStyleField, SlideshowStyleError, validateSlideshowStyle } from '../../lib/slideshow/style.js'
+import { brandKitSlug, KIT_SLUG_PATTERN } from '../../lib/slug.js'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
@@ -115,14 +117,16 @@ async function listKitsWithDefault(config: Config): Promise<{ kit: Record<string
 
 export async function getBrandKit(params: { kitId?: string }, config: Config): Promise<Record<string, unknown>> {
   let kit: Record<string, unknown>
-  let otherKits: Array<{ id: unknown; name: unknown; configured: unknown }> | undefined
+  let otherKits: Array<{ id: unknown; name: unknown; configured: unknown; hasSlideshowStyle: boolean }> | undefined
   if (params.kitId) {
     kit = await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.kitId}`, config)
   } else {
     const listed = await listKitsWithDefault(config)
     kit = listed.kit
     // Small fields only: the caller picks by name, then passes the id as `brandKitId`.
-    const others = listed.kits.filter((k) => k !== listed.kit).map((k) => ({ id: k['id'], name: k['name'], configured: k['configured'] }))
+    const others = listed.kits
+      .filter((k) => k !== listed.kit)
+      .map((k) => ({ id: k['id'], name: k['name'], configured: k['configured'], hasSlideshowStyle: hasAnyStyleField(k['slideshowStyle']) }))
     if (others.length > 0) otherKits = others
   }
   const base = otherKits ? { ...kit, otherKits } : kit
@@ -162,6 +166,8 @@ export interface UpdateBrandKitParams {
   addApprovedLines?: string[]
   enabledPlacements?: string[]
   knowledgePagePath?: string
+  /** Replaces the kit's whole slideshow style (the look of composed slideshows); null clears it. */
+  slideshowStyle?: Record<string, unknown> | null
 }
 
 /**
@@ -194,6 +200,10 @@ export async function updateBrandKit(params: UpdateBrandKitParams, config: Confi
   if (params.copyRules !== undefined) patch['copyRules'] = params.copyRules
   if (params.enabledPlacements !== undefined) patch['enabledPlacements'] = params.enabledPlacements
   if (params.knowledgePagePath !== undefined) patch['knowledgePagePath'] = params.knowledgePagePath
+  if (params.slideshowStyle !== undefined) {
+    assertStyle(params.slideshowStyle)
+    patch['slideshowStyle'] = params.slideshowStyle
+  }
 
   if (params.tokens !== undefined) {
     if (supportsPartialMerge) {
@@ -220,6 +230,94 @@ export async function updateBrandKit(params: UpdateBrandKitParams, config: Confi
   }
 
   return withBrandKitErrors(() => apiPatch(`${V2_PROJECT(config)}/marketing/brand-kits/${kitId}`, patch, config))
+}
+
+function assertStyle(style: unknown): void {
+  if (style === null) return
+  const errors = validateSlideshowStyle(style, 'slideshowStyle')
+  if (errors.length > 0) throw new SlideshowStyleError(errors)
+}
+
+export interface CreateBrandKitParams {
+  name: string
+  /** Defaults to a slug derived from the name. */
+  slug?: string
+  /** Copy tokens, font, CTA claim, copy rules, approved lines, placements and Knowledge page from this kit
+   * unless given here. Logos and other images are not copied. */
+  copyFrom?: string
+  tokens?: Record<string, string>
+  fontFamily?: string
+  fontUrl?: string
+  ctaClaim?: string
+  accentPhraseRequired?: boolean
+  copyRules?: Array<Record<string, unknown>>
+  approvedLines?: string[]
+  enabledPlacements?: string[]
+  knowledgePagePath?: string
+  slideshowStyle?: Record<string, unknown> | null
+}
+
+const COPIED_KIT_FIELDS = [
+  'tokens',
+  'fontFamily',
+  'fontUrl',
+  'ctaClaim',
+  'accentPhraseRequired',
+  'copyRules',
+  'approvedLines',
+  'enabledPlacements',
+  'knowledgePagePath',
+] as const
+
+/** Creates a Brand Kit (never the default one). With `copyFrom`, starts from that kit's voice and
+ * tokens; any field passed here wins over the copied one. */
+export async function createBrandKit(params: CreateBrandKitParams, config: Config): Promise<Record<string, unknown>> {
+  const name = typeof params.name === 'string' ? params.name.trim() : ''
+  if (!name) throw new Error('name is required.')
+  const explicitSlug = params.slug?.trim()
+  if (explicitSlug && !KIT_SLUG_PATTERN.test(explicitSlug)) {
+    throw new Error(`slug "${explicitSlug}" is not valid: use 1-64 characters, lowercase letters a-z, digits 0-9 and hyphens.`)
+  }
+  const slug = explicitSlug || brandKitSlug(name)
+
+  const body: Record<string, unknown> = { slug, name }
+  let source: Record<string, unknown> | undefined
+  if (params.copyFrom) {
+    source = await apiGet<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits/${params.copyFrom}`, config)
+    for (const f of COPIED_KIT_FIELDS) if (source[f] !== undefined && source[f] !== null) body[f] = source[f]
+  }
+  for (const f of COPIED_KIT_FIELDS) if (params[f] !== undefined) body[f] = params[f]
+  if (params.slideshowStyle !== undefined) {
+    assertStyle(params.slideshowStyle)
+    body['slideshowStyle'] = params.slideshowStyle
+  }
+
+  // A derived slug that is taken gets -2 ... -9 (the web app tries -2 and -3 only); a slug the caller chose is never changed.
+  const candidates = explicitSlug ? [slug] : [slug, ...[2, 3, 4, 5, 6, 7, 8, 9].map((n) => `${slug.slice(0, 58).replace(/-+$/g, '')}-${n}`)]
+  let created: Record<string, unknown> | undefined
+  for (const candidate of candidates) {
+    try {
+      created = await withBrandKitErrors(() => apiPost<Record<string, unknown>>(`${V2_PROJECT(config)}/marketing/brand-kits`, { ...body, slug: candidate }, config))
+      break
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 409)) throw err
+    }
+  }
+  if (!created) {
+    throw new Error(
+      explicitSlug
+        ? `A Brand Kit with the slug "${slug}" already exists; pass a different slug.`
+        : `Could not find a free slug for "${name}" (${slug} through ${slug}-9 are taken); pass a slug.`
+    )
+  }
+  const copied = source ? ` Copied the voice, tokens and font from "${String(source['name'] ?? params.copyFrom)}"; its logos and other images were NOT copied.` : ''
+  return {
+    ...created,
+    nextStep:
+      'Call get_brand_kit to verify.' +
+      copied +
+      ' Add the logo, wordmark and badge with upload_brand_image (kitId = this kit); the default kit is unchanged.',
+  }
 }
 
 // --- Creatives --------------------------------------------------------------
@@ -321,6 +419,8 @@ export interface CreativeFields {
   audio?: Record<string, unknown>
   /** CAROUSEL only: slide pacing and zoom of the slideshow video made when audio.source is track. */
   slideshow?: Record<string, unknown>
+  /** CAROUSEL only: the look the slides were composed with (compose_slideshow's `style`), so it can be reused as a kit style. */
+  slideStyle?: Record<string, unknown> | null
   focalOverride?: Record<string, string>
   headline?: string
   body?: string

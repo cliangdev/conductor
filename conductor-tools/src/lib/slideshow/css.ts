@@ -1,22 +1,38 @@
-/** Slide stylesheet. `assetBase` is the URL (ending in "/") of the folder holding the bundled TikTok Sans TTFs. */
-export function slideCss(assetBase: string): string {
+import { NATIVE_STYLE, fontFamilyCss, type ResolvedSlideshowStyle } from './style.js'
+
+/** #rrggbb as the shortest CSS hex (so the native look stays byte-identical to the original sheet). */
+const hex = (c: string): string => c.replace(/^#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3$/i, '#$1$2$3').toLowerCase()
+const rgba = (c: string, a: string): string => {
+  const n = parseInt(c.slice(1), 16)
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`
+}
+
+/**
+ * Slide stylesheet. `assetBase` is the URL (ending in "/") of the folder holding the bundled TikTok Sans TTFs;
+ * `style` restyles the native text and callouts (default: the native look). Slide types that imitate a system
+ * UI (notes, week, receipt, placard, messages) keep their own fonts.
+ */
+export function slideCss(assetBase: string, style: ResolvedSlideshowStyle = NATIVE_STYLE): string {
+  const bg = hex(style.boxBg), ink = hex(style.boxInk), dbg = hex(style.darkBg), dink = hex(style.darkInk), sink = hex(style.strokeInk)
+  const line = hex(style.outline), accent = hex(style.accent), line8 = rgba(style.outline, '.8')
+  const face = style.fontFamily ? fontFamilyCss(style.fontFamily) : '"TT"'
   return String.raw`
 @font-face{font-family:"TT";font-weight:600;src:url(${assetBase}tiktok-sans-600.ttf)}
 @font-face{font-family:"TT";font-weight:700;src:url(${assetBase}tiktok-sans-700.ttf)}
 @font-face{font-family:"TT";font-weight:800;src:url(${assetBase}tiktok-sans-800.ttf)}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
-#s{position:relative;width:1080px;height:var(--H);overflow:hidden;font-family:"TT",-apple-system,"Helvetica Neue",sans-serif}
+#s{position:relative;width:1080px;height:var(--H);overflow:hidden;font-family:${face},-apple-system,"Helvetica Neue",sans-serif}
 .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .dim{position:absolute;inset:0;background:rgba(0,0,0,.28)}
 .blur{filter:blur(28px) brightness(.55) saturate(1.1);transform:scale(1.15)}
 /* native TikTok text */
 .txt{position:absolute;left:70px;right:150px;display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;z-index:5}
 .txt.full{right:70px}
-.box{display:inline;font-weight:700;font-size:var(--fs,60px);line-height:1.34;color:#111;background:#fff;padding:4px 18px;border-radius:14px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
-.box.dark{background:#111;color:#fff}
-.stroke{font-weight:800;font-size:var(--fs,60px);line-height:1.22;color:#fff;-webkit-text-stroke:0;text-shadow:0 0 3px #000,0 0 3px #000,0 0 4px #000,0 2px 6px rgba(0,0,0,.8)}
-.sub{font-weight:700;font-size:var(--ss,44px);line-height:1.25;color:#fff;text-shadow:0 0 3px #000,0 0 3px #000,0 2px 6px rgba(0,0,0,.8)}
+.box{display:inline;font-weight:700;font-size:var(--fs,${style.textSize}px);line-height:1.34;color:${ink};background:${bg};padding:4px 18px;border-radius:14px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.box.dark{background:${dbg};color:${dink}}
+.stroke{font-weight:800;font-size:var(--fs,${style.textSize}px);line-height:1.22;color:${sink};-webkit-text-stroke:0;text-shadow:0 0 3px ${line},0 0 3px ${line},0 0 4px ${line},0 2px 6px ${line8}}
+.sub{font-weight:700;font-size:var(--ss,${style.subSize}px);line-height:1.25;color:${sink};text-shadow:0 0 3px ${line},0 0 3px ${line},0 2px 6px ${line8}}
 /* phone with a real screenshot */
 .phone{position:absolute;left:50%;width:var(--pw,640px);transform:translateX(-50%) rotate(var(--rot,0deg));border-radius:72px;background:#0b0b0c;padding:16px;box-shadow:0 40px 90px rgba(0,0,0,.55),0 0 0 3px #2a2a2e;z-index:3}
 .phone .scr{border-radius:58px;overflow:hidden;position:relative;background:#fff}
@@ -24,9 +40,9 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .phone .crop{overflow:hidden}
 /* screenshot callouts: x/y are % of the screenshot box */
 .callouts{position:absolute;left:16px;right:16px;top:16px;bottom:16px;z-index:6;pointer-events:none}
-.callouts .dot{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;background:#ff2d55;border:5px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.5)}
-.callouts .ln{position:absolute;width:6px;margin-left:-3px;background:#ff2d55;box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,.4)}
-.callouts .pill{position:absolute;width:max-content;max-width:560px;text-align:center;font-weight:700;font-size:42px;line-height:1.25;color:#111;background:#fff;padding:6px 20px;border-radius:14px;box-shadow:0 6px 22px rgba(0,0,0,.45)}
+.callouts .dot{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;background:${accent};border:5px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.5)}
+.callouts .ln{position:absolute;width:6px;margin-left:-3px;background:${accent};box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,.4)}
+.callouts .pill{position:absolute;width:max-content;max-width:560px;text-align:center;font-weight:700;font-size:42px;line-height:1.25;color:${ink};background:${bg};padding:6px 20px;border-radius:14px;box-shadow:0 6px 22px rgba(0,0,0,.45)}
 /* iOS Notes */
 .notes{position:absolute;inset:0;background:#fffefa;color:#1c1c1e;font-family:-apple-system,"SF Pro Text","Helvetica Neue",sans-serif;padding:0 70px}
 .notes .bar{display:flex;align-items:center;justify-content:space-between;color:#d9a400;font-size:52px;height:120px;margin-top:var(--top,120px)}
@@ -61,7 +77,7 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .stack .lbl{position:absolute;left:40px;top:var(--lt,30px);z-index:5;max-width:760px}
 .stack .lbl .box{font-size:44px}
 /* tier list */
-.tier{position:absolute;left:0;right:0;top:var(--top,250px);font-family:"TT",sans-serif}
+.tier{position:absolute;left:0;right:0;top:var(--top,250px);font-family:${face},sans-serif}
 .tier h2{color:#fff;font-weight:800;font-size:46px;line-height:1.2;text-align:center;padding:0 80px 26px}
 .tier .row{display:flex;min-height:150px;border-top:4px solid #000}
 .tier .row:last-child{border-bottom:4px solid #000}

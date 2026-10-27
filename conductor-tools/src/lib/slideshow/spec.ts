@@ -3,6 +3,8 @@
  * Ported from a content run's hand-built compositor, so its specs render unchanged.
  */
 
+import { validateSlideshowStyle, type SlideshowStyle } from './style.js'
+
 export const SLIDE_TYPES = ['photo', 'screen', 'notes', 'grid', 'stack', 'tier', 'week', 'receipt', 'placard', 'messages'] as const
 export type SlideType = (typeof SLIDE_TYPES)[number]
 export const TEXT_STYLES = ['box', 'dark', 'stroke', 'sub'] as const
@@ -82,6 +84,8 @@ export interface SlideSpec {
 export interface SlideshowSpec {
   id: string
   grain?: boolean
+  /** The look of the composed text and callouts (partial or resolved); absent = the native look. */
+  style?: SlideshowStyle | null
   slides: SlideSpec[]
 }
 
@@ -106,6 +110,7 @@ export function validateSlideshowSpec(spec: unknown): string[] {
   if (!isStr(spec.id) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$/.test(spec.id)) {
     errors.push('id is required: letters, digits, ".", "_" or "-" only (it names the output files)')
   }
+  if (spec.style !== undefined && spec.style !== null) errors.push(...validateSlideshowStyle(spec.style, 'spec.style'))
   if (!Array.isArray(spec.slides) || spec.slides.length === 0) {
     errors.push('slides must be a non-empty array')
     return errors

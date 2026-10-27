@@ -1,4 +1,5 @@
 import { slideCss } from './css.js'
+import { fontFamilyNames, isGenericFamily, resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
 import type { SlideRatio, SlideshowSpec, SlideSpec } from './spec.js'
 
 export const FRAME_W = 1080
@@ -24,10 +25,29 @@ const CHECK_SCRIPT = String.raw`
   function add(rule, severity, message) { out.push({ slide: M.slide, ratio: M.ratio, rule: rule, severity: severity, message: message }); }
   function label(el) { var nm = el.getAttribute('data-name'); if (nm) return nm; var t = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 32); return t ? '"' + t + '"' : '<' + el.tagName.toLowerCase() + '>'; }
   async function run() {
-    try { await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px TT'); })); } catch (e) {}
+    var FF = M.fontFamily, FQ = M.firstFamily ? '"' + M.firstFamily + '"' : 'TT', faces = [];
+    // load the first real family even when no text on this slide uses it, so the check can tell loaded from missing
+    try { faces = await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px ' + FQ); })); } catch (e) {}
+    // the bundled TikTok Sans is used by the native text and by a placard's label, so check it whenever any text uses it
+    if (M.needsTT && FQ !== 'TT') { try { await Promise.all(['600', '700', '800'].map(function (w) { return document.fonts.load(w + ' 60px TT'); })); } catch (e) {} }
     try { await document.fonts.ready; } catch (e) {}
     await Promise.all(Array.prototype.map.call(document.images, function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); }));
-    if (!document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
+    if (M.needsTT && !document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
+    if (FF && M.firstFamily) {
+      var loaded = faces.some(function (f) { return f && f.length > 0; });
+      var probe = document.createElement('span');
+      probe.textContent = 'mmmmmmmmmmlliWW@#';
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font-size:72px;font-weight:700';
+      document.body.appendChild(probe);
+      var width = function (ff) { probe.style.fontFamily = ff; return probe.getBoundingClientRect().width; };
+      var present = loaded || ['monospace', 'serif', 'sans-serif'].some(function (b) { return width('"' + M.firstFamily + '",' + b) !== width(b); });
+      probe.remove();
+      if (!present) {
+        add('font', 'error', M.fontUrl
+          ? 'font "' + M.firstFamily + '" did not load from ' + M.fontUrl + ' (check the family name and the stylesheet URL, or use the native look)'
+          : 'font "' + M.firstFamily + '" is not installed on this machine; set a fontUrl (for example a Google Fonts stylesheet link) or use an installed family');
+      }
+    }
     Array.prototype.forEach.call(document.images, function (im) {
       if (!im.naturalWidth) add('image', 'error', 'image failed to load: ' + (im.getAttribute('src') || '').slice(0, 120));
     });
@@ -62,7 +82,7 @@ const CHECK_SCRIPT = String.raw`
 })();
 `
 
-function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio): string {
+function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style: ResolvedSlideshowStyle): string {
   const r4 = ratio === '4x5'
   const objTop = (d: number) => (r4 ? (sl.top4 ?? 60) : (sl.top ?? d))
   let html = ''
@@ -187,7 +207,8 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio): strin
   for (const g of groups) {
     const inner = g.items
       .map((t) => {
-        const cls = t.style === 'stroke' ? 'stroke' : t.style === 'sub' ? 'sub' : `box ${t.style === 'dark' ? 'dark' : ''}`
+        const kind = t.style ?? style.defaultText
+        const cls = kind === 'stroke' ? 'stroke' : kind === 'sub' ? 'sub' : `box ${kind === 'dark' ? 'dark' : ''}`
         const lines = String(t.t).split('\n').map(esc).join('<br>')
         return `<div style="${t.fs ? `--fs:${Number(t.fs)}px;` : ''}${t.ss ? `--ss:${Number(t.ss)}px;` : ''}"><span class="${cls}" data-fg data-right data-ts>${lines}</span></div>`
       })
@@ -202,15 +223,25 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio): strin
  * The full HTML document for one slide. Pure: image sources are used as given (the composer resolves them
  * to file URLs first); `assetBase` is the URL, ending in "/", of the folder holding the bundled fonts.
  */
-export function buildSlideHtml(spec: SlideshowSpec, index: number, ratio: SlideRatio, assetBase: string): string {
+export function buildSlideHtml(
+  spec: SlideshowSpec,
+  index: number,
+  ratio: SlideRatio,
+  assetBase: string,
+  style: ResolvedSlideshowStyle = resolveSlideshowStyle(spec.style)
+): string {
   const sl = spec.slides[index]
   if (!sl) throw new Error(`No slide at index ${index}`)
   const lines = (sl.texts ?? []).flatMap((t) => String(t.t).split('\n'))
-  const meta = JSON.stringify({ slide: index + 1, ratio, lines }).replace(/</g, '\\u003c')
+  // the family list is parsed once: the first non-keyword name drives the custom-font check and load (none when
+  // every family is a generic/system keyword); the bundled TikTok Sans is checked whenever any text uses it
+  const firstFamily = style.fontFamily ? (fontFamilyNames(style.fontFamily).find((f) => !isGenericFamily(f)) ?? null) : null
+  const needsTT = !style.fontFamily || sl.type === 'placard'
+  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily, needsTT, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
-    `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8"><style>${slideCss(base)}</style></head>\n` +
-    `<body><div id="s">${slideBody(sl, spec, ratio)}</div>\n` +
+    `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style)}</style></head>\n` +
+    `<body><div id="s">${slideBody(sl, spec, ratio, style)}</div>\n` +
     `<script>window.__META=${meta};</script><script>${CHECK_SCRIPT}</script></body></html>\n`
   )
 }

@@ -115,6 +115,7 @@ public class BrandKitController implements BrandKitsApi {
                 .wordmarkDarkUrl(brandKitService.resolveImageUrl(kit.getWordmarkDarkGcsPath()))
                 .wordmarkLightUrl(brandKitService.resolveImageUrl(kit.getWordmarkLightGcsPath()))
                 .badgeUrl(brandKitService.resolveImageUrl(kit.getBadgeGcsPath()))
+                .slideshowStyle(com.conductor.creative.SlideshowStyles.fromStored(objectMapper, kit.getSlideshowStyle()))
                 .ctaClaim(kit.getCtaClaim());
     }
 

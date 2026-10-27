@@ -7,7 +7,7 @@ vi.mock('../lib/slideshow/compose.js', async (orig) => ({ ...(await orig<typeof 
 vi.mock('../lib/image-common.js', async (orig) => ({ ...(await orig<typeof import('../lib/image-common.js')>()), jpegPreview: vi.fn(async () => ({ data: Buffer.from('x'), mimeType: 'image/jpeg' })) }))
 
 import { composeSlideshow } from '../lib/slideshow/compose.js'
-import { SlideshowSpecError } from '../lib/slideshow/index.js'
+import { NATIVE_STYLE, SlideshowSpecError, SlideshowStyleError, resolveStyleLayers, type ComposeOptions } from '../lib/slideshow/index.js'
 import { composeSlideshowTool } from '../mcp/tools/slideshow.js'
 
 const compose = vi.mocked(composeSlideshow)
@@ -76,5 +76,157 @@ describe('composeSlideshowTool', () => {
     compose.mockRejectedValue(new SlideshowSpecError(['slides[0] (screen): shot (the screenshot path) is required']))
     const res = await composeSlideshowTool({ spec: { id: 'a', slides: [{ type: 'screen' }] } }, { projectRoot: tmp })
     expect(res).toEqual({ ok: false, error: 'The slideshow spec is invalid.', errors: [expect.stringMatching(/shot/)] })
+  })
+
+  describe('style', () => {
+    const spec = { id: 'a', slides: [{}] }
+    const kit = (slideshowStyle: unknown) => vi.fn(async () => ({ id: 'k1', name: 'Warm', slideshowStyle }))
+    // composeSlideshow is mocked, so stand in for its single resolve step with the real one.
+    const resolved: Array<Record<string, unknown>> = []
+    beforeEach(() => {
+      resolved.length = 0
+      compose.mockImplementation(async (s, _out, o) => {
+        const opts = (o ?? {}) as ComposeOptions
+        const style = resolveStyleLayers({ kit: opts.kitStyle, kitLabel: opts.kitLabel, spec: (s as { style?: never }).style, inline: opts.style })
+        resolved.push(style as unknown as Record<string, unknown>)
+        return { ...result(true), style } as never
+      })
+    })
+    const styleArg = (n = 0) => resolved[n]!
+
+    it('composes the native look when neither brandKitId nor style is given, and returns the style', async () => {
+      const res = (await composeSlideshowTool({ spec }, { projectRoot: tmp })) as { style: unknown; nextStep: string }
+      expect(styleArg()).toEqual(NATIVE_STYLE)
+      expect(res.style).toEqual(NATIVE_STYLE)
+      expect(res.nextStep).toMatch(/slideStyle: style/)
+    })
+
+    it("uses the kit's slideshowStyle, with inline style on top", async () => {
+      const loadKit = kit({ fontFamily: 'Lora', fontUrl: 'https://f.example/l.css', boxBg: '#fff8e7' })
+      await composeSlideshowTool({ spec, brandKitId: 'k1', style: { boxBg: '#123456', textSize: 70 } }, { projectRoot: tmp, loadKit })
+      expect(loadKit).toHaveBeenCalledWith('k1')
+      expect(styleArg()).toMatchObject({ fontFamily: 'Lora', fontUrl: 'https://f.example/l.css', boxBg: '#123456', textSize: 70, subSize: 44 })
+    })
+
+    it('applies an inline style alone over the native look', async () => {
+      await composeSlideshowTool({ spec, style: { accent: '#00FF88' } }, { projectRoot: tmp })
+      expect(styleArg()).toEqual({ ...NATIVE_STYLE, accent: '#00ff88' })
+    })
+
+    it('layers native < kit < the spec\'s own style < inline style, and leaves the spec\'s style as given', async () => {
+      const loadKit = kit({ accent: '#111111', boxBg: '#222222', textSize: 50, fontFamily: 'Lora' })
+      const own = { id: 'a', slides: [{}], style: { boxBg: '#333333', textSize: 55 } }
+      await composeSlideshowTool({ spec: own, brandKitId: 'k1', style: { textSize: 66 } }, { projectRoot: tmp, loadKit })
+      expect(styleArg()).toMatchObject({ accent: '#111111', boxBg: '#333333', textSize: 66, fontFamily: 'Lora' })
+      expect((compose.mock.calls[0]![0] as { style: unknown }).style).toEqual({ boxBg: '#333333', textSize: 55 })
+    })
+
+    it('ignores resolvedStyle from an earlier output when re-composing', async () => {
+      const old = { ...NATIVE_STYLE, accent: '#abcdef', fontFamily: 'Old Kit Font' }
+      writeFileSync(join(tmp, 'spec.json'), JSON.stringify({ id: 'a', slides: [{}], resolvedStyle: old }))
+      await composeSlideshowTool({ specPath: 'spec.json' }, { projectRoot: tmp })
+      expect(styleArg()).toEqual(NATIVE_STYLE)
+      await composeSlideshowTool({ specPath: 'spec.json', brandKitId: 'k2' }, { projectRoot: tmp, loadKit: kit({ accent: '#00ff88' }) })
+      expect(styleArg(1)).toEqual({ ...NATIVE_STYLE, accent: '#00ff88' })
+    })
+
+    it('inline null resets to native over a kit; a kit style: null in the spec is no layer', async () => {
+      const loadKit = kit({ fontFamily: 'Lora', fontUrl: 'https://f.example/l.css', accent: '#111111' })
+      await composeSlideshowTool({ spec, brandKitId: 'k1', style: { fontFamily: null } }, { projectRoot: tmp, loadKit })
+      expect(styleArg()).toEqual({ ...NATIVE_STYLE, accent: '#111111' })
+      await composeSlideshowTool({ spec: { id: 'a', slides: [{}], style: null }, brandKitId: 'k1' }, { projectRoot: tmp, loadKit })
+      expect(styleArg(1)).toMatchObject({ fontFamily: 'Lora', accent: '#111111' })
+      // nulls inside a kit mean "not set by the kit"
+      await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit({ fontFamily: null, accent: '#222222' }) })
+      expect(styleArg(2)).toEqual({ ...NATIVE_STYLE, accent: '#222222' })
+    })
+
+    it('names the Brand Kit when its style is invalid', async () => {
+      const res = await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit({ fontFamily: ',', fontUrl: 'ftp://x' }) })
+      expect(res).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/Brand Kit "Warm".*update_brand_kit.*inline style/s),
+        errors: [expect.stringMatching(/^kit\.style\.fontFamily/), expect.stringMatching(/^kit\.style\.fontUrl/)],
+      })
+    })
+
+    it('ignores unknown fields in a kit style but rejects them in an inline style', async () => {
+      await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit({ accent: '#00ff88', futureField: 1 }) })
+      expect(styleArg()).toEqual({ ...NATIVE_STYLE, accent: '#00ff88' })
+      const bad = await composeSlideshowTool({ spec, style: { acent: '#00ff88' } as never }, { projectRoot: tmp })
+      expect(bad).toMatchObject({ ok: false, errors: [expect.stringMatching(/acent/)] })
+    })
+
+    it('errors clearly when the kit has no slideshow style', async () => {
+      for (const ss of [null, undefined, {}]) {
+        const res = await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit(ss) })
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/"Warm" has no slideshow style.*native look.*update_brand_kit/s) })
+      }
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('reports an unreadable kit and an invalid inline style without composing', async () => {
+      const failing = vi.fn(async () => { throw new Error('404') })
+      expect(await composeSlideshowTool({ spec, brandKitId: 'nope' }, { projectRoot: tmp, loadKit: failing })).toMatchObject({ ok: false, error: expect.stringMatching(/Could not read Brand Kit nope: 404/) })
+      expect(compose).not.toHaveBeenCalled()
+      const bad = await composeSlideshowTool({ spec, style: { boxBg: 'red', textSize: 5 } }, { projectRoot: tmp })
+      expect(bad).toMatchObject({ ok: false, error: 'The style is invalid.', errors: [expect.stringMatching(/boxBg/), expect.stringMatching(/textSize/)] })
+      expect(resolved).toEqual([]) // composeSlideshow refused it while resolving, before rendering
+    })
+
+    it('treats a kit style with no known non-null field as no style', async () => {
+      for (const ss of [{ futureField: 1 }, { accent: null, fontFamily: null }]) {
+        const res = await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit(ss) })
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/"Warm" has no slideshow style/) })
+      }
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('passes the layers to composeSlideshow instead of resolving them itself', async () => {
+      await composeSlideshowTool({ spec, brandKitId: 'k1', style: { textSize: 66 } }, { projectRoot: tmp, loadKit: kit({ accent: '#111111' }) })
+      expect(compose.mock.calls[0]![2]).toMatchObject({ kitStyle: { accent: '#111111' }, kitLabel: 'kit.style', style: { textSize: 66 } })
+    })
+
+    it('reports an invalid inline style even when the kit has no style or cannot be read', async () => {
+      const noStyle = await composeSlideshowTool({ spec, brandKitId: 'k1', style: { boxBg: 'red' } }, { projectRoot: tmp, loadKit: kit(null) })
+      expect(noStyle).toMatchObject({ ok: false, error: expect.stringMatching(/"Warm" has no slideshow style.*inline style is also invalid/s), errors: [expect.stringMatching(/^style\.boxBg/)] })
+      const failing = vi.fn(async () => { throw new Error('404') })
+      const unreadable = await composeSlideshowTool({ spec, brandKitId: 'k1', style: { boxBg: 'red' } }, { projectRoot: tmp, loadKit: failing })
+      expect(unreadable).toMatchObject({ ok: false, error: expect.stringMatching(/Could not read Brand Kit k1: 404.*inline style is also invalid/s), errors: [expect.stringMatching(/^style\.boxBg/)] })
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('names both the kit and the inline style when both are invalid', async () => {
+      const res = await composeSlideshowTool({ spec, brandKitId: 'k1', style: { textSize: 5 } }, { projectRoot: tmp, loadKit: kit({ accent: 'zzz' }) })
+      expect(res).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/Brand Kit "Warm" has an invalid slideshow style.*inline style is invalid/s),
+        errors: [expect.stringMatching(/^kit\.style\.accent/), expect.stringMatching(/^style\.textSize/)],
+      })
+      expect(compose).not.toHaveBeenCalled()
+    })
+
+    it('labels a bad spec.style spec.style.*', async () => {
+      const real = await vi.importActual<typeof import('../lib/slideshow/spec.js')>('../lib/slideshow/spec.js')
+      compose.mockImplementation(async (s) => { real.assertValidSlideshowSpec(s); return result(true) as never })
+      const res = await composeSlideshowTool({ spec: { id: 'a', slides: [{}], style: { accent: 'nope' } } }, { projectRoot: tmp })
+      expect(res).toMatchObject({ ok: false, error: 'The slideshow spec is invalid.', errors: [expect.stringMatching(/^spec\.style\.accent/)] })
+    })
+
+    it('carries the failing sources on the typed error', () => {
+      try {
+        resolveStyleLayers({ kit: { accent: 'zzz' }, spec: { textSize: 1 }, inline: { subSize: 1 } })
+        expect.unreachable()
+      } catch (e) {
+        expect(e).toBeInstanceOf(SlideshowStyleError)
+        expect((e as SlideshowStyleError).sources.sort()).toEqual(['inline', 'kit', 'spec'])
+        expect((e as SlideshowStyleError).errors).toEqual([expect.stringMatching(/^style\.subSize/), expect.stringMatching(/^kit\.style\.accent/), expect.stringMatching(/^spec\.style\.textSize/)])
+      }
+    })
+
+    it('rejects an invalid style that arrives from a kit', async () => {
+      const res = await composeSlideshowTool({ spec, brandKitId: 'k1' }, { projectRoot: tmp, loadKit: kit({ accent: 'zzz' }) })
+      expect(res).toMatchObject({ ok: false, errors: [expect.stringMatching(/accent/)] })
+    })
   })
 })

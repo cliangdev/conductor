@@ -603,6 +603,18 @@ describe('CAROUSEL drafts', () => {
     expect(fs.existsSync(path.join(result.draftDir, 'sheet-4x5.jpg'))).toBe(true)
   })
 
+  it('carries slideStyle into the draft-spec request and draft.json', async () => {
+    mocked(apiPost).mockResolvedValueOnce({ spec: {}, readiness: { ready: false } })
+    const slideStyle = { fontFamily: null, boxBg: '#ffffff', accent: '#ff2d55', defaultText: 'box', textSize: 60 }
+    const result = await previewCreativeDraft({ kind: 'CAROUSEL', slidePaths: { '9x16': [s1] }, slideStyle }, config, { projectRoot: root })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const [, body] = mocked(apiPost).mock.calls[0]! as [string, Record<string, any>]
+    expect(body.slideStyle).toEqual(slideStyle)
+    const draft = JSON.parse(fs.readFileSync(path.join(result.draftDir, 'draft.json'), 'utf8'))
+    expect(draft.request.slideStyle).toEqual(slideStyle)
+  })
+
   it('accepts an existing media id in slidePaths and refuses a path that does not exist', async () => {
     mocked(apiPost).mockResolvedValueOnce({ readiness: {} })
     const id = '123e4567-e89b-12d3-a456-426614174000'

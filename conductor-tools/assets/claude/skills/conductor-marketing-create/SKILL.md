@@ -20,10 +20,12 @@ do not post it.
   non-empty `otherKits`, ask once with `AskUserQuestion` which kit to use: the default first, labelled
   as the default, then up to 3 others (up to 4 options; "Other" covers the rest by name). Pass the
   chosen kit's id as `brandKitId` on every `preview_creative_draft` and `create_creative` call for
-  the run, and take the Knowledge page and copy rules from that same kit. If the chosen kit's
+  the run (the default kit needs none), and take the Knowledge page and copy rules from that same kit. If the chosen kit's
   `configured` is `false` the brand has never been set up: follow `references/brand-kit-setup.md`
   and offer setup before making anything. Copy and visuals come from the Brand Kit and its Knowledge
-  page, not from invention.
+  page, not from invention. For slideshows the *style source* (native, or a kit's `slideshowStyle`)
+  is a separate choice: that kit's id goes only to `compose_slideshow`, never onto the Creative
+  unless it is also the brand kit (`references/slideshow-formats.md`, "Style").
 - **Draft first, save after approval.** `preview_creative_draft` renders on this machine and writes
   nothing to Conductor. Only after the person has seen the draft and approved it does
   `commit_creative_draft` upload the media, save the Creative and run the full render. Never commit
@@ -35,7 +37,7 @@ do not post it.
 
 | The person has | Mode | Read |
 |---|---|---|
-| A headline, photo, clip or finished images, an existing Creative to vary, or wants the brand set up | **Direct** | `references/direct.md` |
+| A headline, photo, clip or finished images, an existing Creative to vary, wants the brand set up, or wants a kit style made from slides they like ("Make a kit style from slides") | **Direct** | `references/direct.md` |
 | A goal or topic ("a post about X for Y") and wants the idea chosen for them | **Team** (honours `--quick`: two ideators, no finalist renders) | `references/team-run.md` |
 
 Infer the mode from the request. A concrete headline, photo, clip or existing Creative (including a
@@ -49,14 +51,14 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 
 - `references/direct.md`: the Direct flow (read the brand, angle, headline, photo, preview, critique, commit), sequences, video, finished images, short videos, music, cleanup.
 - `references/team-run.md`: the Team flow (run folder, stages S0 to S6, FILM ideas, final message, failure handling).
-- `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers.
+- `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers; "Make a kit style from slides" (Direct mode) turns slides the person likes into a slideshow style on a new or existing kit.
 - `references/hooks.md`: writing and scoring headline candidates.
 - `references/voice.md`: making every line read like a person posted it, with the self-check every
   hook, card and caption passes (both modes).
 - `references/layout-guide.md`: choosing a layout, resolution and safe zones.
 - `references/design-critique.md`: the six-criterion score applied to every draft before it is shown.
 - `references/realism-check.md`: the check every generated or library photo passes.
-- `references/slideshow-formats.md`: native slideshow spec, archetypes and text rules for organic posts.
+- `references/slideshow-formats.md`: native slideshow spec, style (native default, kit style, one-off style), archetypes and text rules for organic posts.
 - `references/rubric.md`: the judging rubric the creative director uses (Team).
 - `references/capabilities.md`: what Conductor can render, and what needs filming (Team).
 - `references/platform-specs.md`: per-platform formats, lengths and limits (Team).

@@ -5,10 +5,18 @@ import {
   composeSlideshow,
   SLIDE_RATIOS,
   SlideshowSpecError,
+  hasAnyStyleField,
+  SlideshowStyleError,
+  validateSlideshowStyle,
+  type StyleSource,
+  type ResolvedSlideshowStyle,
+  type SlideshowStyle,
   type SlideRatio,
   type SlideshowCheck,
 } from '../../lib/slideshow/index.js'
 import { findProjectRoot, stamp } from './creative-drafts.js'
+import type { Config } from '../config.js'
+import { getBrandKit } from './creatives.js'
 
 /**
  * compose_slideshow: builds native-looking organic slideshow slides (TikTok / Reels style) on this machine and
@@ -23,11 +31,19 @@ export interface ComposeSlideshowParams {
   specPath?: string
   ratios?: string[]
   draftDir?: string
+  /** Style the slides from this Brand Kit's slideshowStyle (omit for the native look). */
+  brandKitId?: string
+  /** One-off style over the kit's style (or the native look): absent field = inherit, null = reset to native. */
+  style?: SlideshowStyle | null
 }
 
 export interface ComposeSlideshowOptions {
   projectRoot?: string
   now?: Date
+  /** Needed only when brandKitId is passed. */
+  config?: Config
+  /** Tests: supply the kit lookup. */
+  loadKit?: (kitId: string) => Promise<Record<string, unknown>>
   log?: (message: string) => void
 }
 
@@ -40,6 +56,8 @@ export type ComposeSlideshowToolResult =
       checks: SlideshowCheck[]
       passed: boolean
       provenance: { recorded: number; needed: number[]; aiGenerated: boolean }
+      /** The full style used (also written to spec.json as `resolvedStyle`); pass it as `slideStyle` on preview_creative_draft / create_creative. */
+      style: ResolvedSlideshowStyle
       nextStep: string
       image?: { data: Buffer; mimeType: string }
     }
@@ -52,6 +70,16 @@ function provenanceNote(p: { needed: number[]; aiGenerated: boolean }): string {
   }
   if (p.aiGenerated) note += ' An input image is AI-generated: make sure the AI label is on (aiGenerated: true at commit if a slide has no sidecar).'
   return note
+}
+
+/** The top-level message for a failing style: every failing source is named. */
+function styleErrorMessage(sources: StyleSource[], kitName: string): string {
+  const parts: string[] = []
+  if (sources.includes('kit')) parts.push(`Brand Kit "${kitName}" has an invalid slideshow style (fix it with update_brand_kit({kitId, slideshowStyle}) or pass an inline style instead)`)
+  if (sources.includes('spec')) parts.push("the spec's own style is invalid (spec.style)")
+  if (sources.includes('inline')) parts.push('the inline style is invalid')
+  if (parts.length === 0 || (sources.length === 1 && sources[0] === 'inline')) return 'The style is invalid.'
+  return `${parts.join('; ')}.`.replace(/^./, (c) => c.toUpperCase())
 }
 
 export async function composeSlideshowTool(
@@ -84,13 +112,50 @@ export async function composeSlideshowTool(
   }
   if (typeof spec !== 'object' || spec === null) return { ok: false, error: 'spec must be an object with { id, slides }.' }
 
+  // Style layers (native < kit < the spec's own style < inline) are resolved and merged once, in composeSlideshow.
+  // Here the inline style is checked first, so a kit that cannot be read or has no style never hides its errors.
+  const inlineErrors = params.style == null ? [] : validateSlideshowStyle(params.style, 'style')
+  let kitStyle: unknown
+  let kitLabel: string | undefined
+  let kitName = ''
+  let kitProblem: string | undefined
+  let kitErrors: string[] = []
+  if (params.brandKitId) {
+    const load = options.loadKit ?? (options.config ? (kitId: string) => getBrandKit({ kitId }, options.config!) : undefined)
+    if (!load) return { ok: false, error: 'brandKitId needs a connected project; run conductor login or omit brandKitId.' }
+    let kit: Record<string, unknown> | undefined
+    try {
+      kit = await load(params.brandKitId)
+    } catch (err) {
+      kitProblem = `Could not read Brand Kit ${params.brandKitId}: ${err instanceof Error ? err.message : String(err)}`
+    }
+    if (kit) {
+      kitName = String(kit['name'] ?? params.brandKitId)
+      if (!hasAnyStyleField(kit['slideshowStyle'])) {
+        kitProblem = `Brand Kit "${kitName}" has no slideshow style. Compose without brandKitId for the native look, pass an inline style, or set one with update_brand_kit({kitId, slideshowStyle}).`
+      } else {
+        kitStyle = kit['slideshowStyle']
+        kitLabel = 'kit.style'
+        kitErrors = validateSlideshowStyle(kitStyle, kitLabel, true)
+      }
+    }
+  }
+  if (kitProblem !== undefined || inlineErrors.length > 0 || kitErrors.length > 0) {
+    const sources: StyleSource[] = [...(kitErrors.length > 0 ? (['kit'] as const) : []), ...(inlineErrors.length > 0 ? (['inline'] as const) : [])]
+    const errors = [...kitErrors, ...inlineErrors]
+    if (kitProblem !== undefined) {
+      return { ok: false, error: inlineErrors.length > 0 ? `${kitProblem} The inline style is also invalid.` : kitProblem, ...(errors.length > 0 ? { errors } : {}) }
+    }
+    return { ok: false, error: styleErrorMessage(sources, kitName), errors }
+  }
+
   const id = String((spec as { id?: unknown }).id ?? 'slideshow').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 40)
   const outDir = params.draftDir
     ? resolve(projectRoot, params.draftDir)
     : join(projectRoot, SLIDESHOWS_SUBDIR, `${stamp(options.now ?? new Date())}-${id}`)
 
   try {
-    const result = await composeSlideshow(spec, outDir, { ratios, specDir, log: options.log })
+    const result = await composeSlideshow(spec, outDir, { ratios, specDir, log: options.log, kitStyle, kitLabel, style: params.style })
     const first = result.slidePaths['9x16']?.[0] ?? Object.values(result.slidePaths)[0]?.[0]
     const image = first ? await jpegPreview(first, result.outDir) : undefined
     return {
@@ -101,14 +166,16 @@ export async function composeSlideshowTool(
       checks: result.checks,
       passed: result.passed,
       provenance: result.provenance,
+      style: result.style,
       nextStep: result.passed
-        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap.' +
+        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle: style, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap.' +
           provenanceNote(result.provenance)
         : 'Fix the spec for every check with severity "error" and call compose_slideshow again BEFORE showing anything to the person.',
       ...(image ? { image } : {}),
     }
   } catch (err) {
     if (err instanceof SlideshowSpecError) return { ok: false, error: 'The slideshow spec is invalid.', errors: err.errors }
+    if (err instanceof SlideshowStyleError) return { ok: false, error: styleErrorMessage(err.sources, kitName), errors: err.errors }
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }

@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PlusIcon, StarIcon, TrashIcon, UploadCloudIcon, XIcon } from 'lucide-react'
 import { checkCreativeCopy } from '@cliangdev/creative-render/copy-rules'
 import { mountBoard } from '@cliangdev/creative-render/mount'
+import { brandKitSlug } from '@cliangdev/creative-render/slideshow-style'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -39,7 +40,9 @@ import {
   type BrandKit,
   type CopyRule,
   type CopyRuleField,
+  type SlideshowStyle,
 } from '@/components/marketing/brand/types'
+import { SlideshowStyleSection } from '@/components/marketing/brand/SlideshowStyleSection'
 import { getCreativeRegistry, type CreativeRegistry } from '@/components/marketing/creatives/types'
 import { putToSignedUrl } from '@/components/workitems/MediaUploadPanel'
 
@@ -48,6 +51,9 @@ interface Draft {
   tokens: Record<string, string>
   fontFamily: string
   fontUrl: string
+  slideshowStyle: SlideshowStyle | null
+  /** True once the person edited the Slideshow style section in this session. */
+  slideshowStyleDirty: boolean
   ctaClaim: string
   accentPhraseRequired: boolean
   copyRules: CopyRule[]
@@ -62,6 +68,8 @@ function toDraft(kit: BrandKit): Draft {
     tokens: { ...kit.tokens },
     fontFamily: kit.fontFamily ?? '',
     fontUrl: kit.fontUrl ?? '',
+    slideshowStyle: kit.slideshowStyle ? { ...kit.slideshowStyle } : null,
+    slideshowStyleDirty: false,
     ctaClaim: kit.ctaClaim ?? '',
     accentPhraseRequired: kit.accentPhraseRequired,
     copyRules: kit.copyRules.map((r) => ({ ...r, fields: [...r.fields] })),
@@ -79,19 +87,6 @@ let ruleSeq = 0
 function newRuleId() {
   ruleSeq += 1
   return `rule-${Date.now()}-${ruleSeq}`
-}
-
-/** Lowercase, hyphenated, ascii-only — the slug a new kit's Name derives to, so the user is never
- *  asked for a slug directly. "kit" is the fallback for a name that has no ascii letters or digits
- *  at all (e.g. all emoji). */
-function slugify(name: string): string {
-  const slug = name
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return slug || 'kit'
 }
 
 function PreviewBoard({ draft, kit }: { draft: Draft; kit: BrandKit | null }) {
@@ -186,6 +181,9 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
           tokens: draft.tokens,
           fontFamily: draft.fontFamily || null,
           fontUrl: draft.fontUrl || null,
+          // Only when edited here: null (style off) clears it on the server, an object replaces it;
+          // omitted leaves a style written elsewhere (CLI, MCP) untouched.
+          ...(draft.slideshowStyleDirty ? { slideshowStyle: draft.slideshowStyle } : {}),
           ctaClaim: draft.ctaClaim || null,
           accentPhraseRequired: draft.accentPhraseRequired,
           copyRules: draft.copyRules,
@@ -223,7 +221,7 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
     const name = newKitName.trim()
     if (!name) return
     setCreatingKitBusy(true)
-    const base = slugify(name)
+    const base = brandKitSlug(name)
     // A duplicate slug is the only thing worth silently retrying — anything else (network, 4xx
     // other than a conflict) is shown to the user straight away instead of burning two more calls.
     const candidates = [base, `${base}-2`, `${base}-3`]
@@ -503,6 +501,14 @@ export function BrandKitForm({ projectId, token }: BrandKitFormProps) {
               ))}
             </div>
           </section>
+
+          <SlideshowStyleSection
+            value={draft.slideshowStyle}
+            onChange={(next) =>
+              setDraft((prev) => (prev ? { ...prev, slideshowStyle: next, slideshowStyleDirty: true } : prev))
+            }
+            errorFor={(field) => fieldError(error, field)}
+          />
 
           <section className="space-y-3 rounded-lg border border-border p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Placements</h3>

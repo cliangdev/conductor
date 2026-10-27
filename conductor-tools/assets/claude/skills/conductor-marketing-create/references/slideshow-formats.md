@@ -4,8 +4,8 @@ For organic posts: a native-looking photo slideshow (TikTok photo post, Instagra
 promotes an app or product by being worth watching first. Build it with `compose_slideshow`, then
 post it as a CAROUSEL Creative. Ads use the brand layouts (STILL) instead; this is not the ad path.
 
-Branding is light: no logo, badge or offer on the slides. The product appears as the payoff, not the
-opener.
+Branding is light: no logo, badge or offer on the slides, and the product appears as the payoff, not
+the opener. The look of the text (font, colours, sizes) is separate and optional: see Style.
 
 ## Post anatomy
 
@@ -103,6 +103,49 @@ photo full-bleed at 9:16 uses 675x1200 source pixels, a 1.6x upscale. Check ever
 the largest size in that aspect (`aspect: "9:16"`), use a different photo, or use a slide type that
 shows the photo framed at or below native size (such as `grid` or `stack`).
 
+## Style
+
+The native look (TikTok Sans, white and black text boxes, a pink callout accent) is the default and
+needs no setup. A slideshow can instead take the look of a Brand Kit's `slideshowStyle`, or a one-off
+inline `style`, or both (the kit's style first, the inline fields on top).
+
+Two separate choices, never conflated:
+
+- **The brand kit** (SKILL.md "Brand kit first": the kit question, or the default) is the Creative's
+  `brandKitId`. Pass it on every `preview_creative_draft` / `create_creative` call whenever it is not
+  the default kit. Choosing "native look" never changes it.
+- **The style source** is either native or a kit whose `slideshowStyle` is used. That kit's id goes
+  only to `compose_slideshow`'s `brandKitId`. A kit used only for its look never becomes the
+  Creative's brand kit unless it is also the brand kit.
+
+- **When to offer the choice.** Ask once, never twice in a run, when the person asks for a kit's look
+  or when a kit with a slideshow style exists (`get_brand_kit`'s `slideshowStyle` is set, or an
+  `otherKits[]` entry has `hasSlideshowStyle: true`). Options: "Native look" first, then each styled
+  kit (up to 4 options in all). No styled kit and no request: do not ask, use native.
+- **Team mode.** One question before S0 covers whatever choice exists, and there is never more than
+  one (a single `AskUserQuestion` call; it may carry the kit part and the look part together):
+  several kits and none named: which kit and, if any kit has a slideshow style, native vs that look;
+  a single kit that has a `slideshowStyle`: native vs the kit's look; nothing to choose: no question.
+  Store the answers in `run.json` (`brandKitId`, and `slideshowStyle: {"styleKitId": "<id>" | null,
+  "style": {...} | null}`, where a null `styleKitId` is native) and reuse them on resume.
+- **Compose.** Pass `brandKitId` (the style source kit only; a kit with no slideshow style is refused
+  with a clear error: fall back to native or set one with `update_brand_kit`) and/or `style` (`fontFamily` as a name or a comma list such as `Inter, sans-serif`, `fontUrl` for an https
+  Google Fonts stylesheet, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `strokeInk` (outlined text and sub text, white by default), `outline`, `accent` as `#RRGGBB`,
+  `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96). In `style` (and in a
+  spec's own `style`) a field you leave out inherits from the layer below; a field set to `null`
+  resets that field to the native value (`fontFamily: null` is the bundled TikTok Sans with no
+  `fontUrl`). Notes, week, receipt,
+  placard and messages slides keep their system-UI fonts by design. A custom font that fails to load,
+  or a `fontFamily` that is not installed when there is no `fontUrl`, is a blocking `font` check naming the family.
+- **Record it.** The result's `style` and the output `spec.json`'s `resolvedStyle` are the full object,
+  native defaults included (the spec's own `style` is kept as you wrote it). Layers: native, then
+  the kit (`brandKitId`), then the spec's `style`, then the inline `style`; re-composing an output
+  `spec.json` ignores `resolvedStyle`. Pass it as `slideStyle` on `preview_creative_draft` / `create_creative`
+  so every composed slideshow has a style that can later become a kit style
+  (`references/brand-kit-setup.md`, "Make a kit style from slides"). A saved Creative keeps its `slideStyle`
+  unless `update_creative` (or a draft over `baseCreativeId`) changes the slides without sending a
+  `slideStyle`, which clears it; send the new `style` with the new slides, or `slideStyle: null` to clear it.
+
 ## Honesty and brand
 
 - No logo, badge or offer on the slides. The offer, if any, goes in the caption.
@@ -125,10 +168,14 @@ Captions on TikTok and Instagram cannot hold clickable links, so do not rely on 
 
 ## Flow
 
-1. Write the spec (`slideshow-spec.json`); call `compose_slideshow({specPath})`.
+1. Write the spec (`slideshow-spec.json`); call `compose_slideshow({specPath})`, adding the *style
+   source* kit as `brandKitId` (only when the look comes from a kit) and/or `style` per Style above.
+   Omit `brandKitId` for the native look.
 2. If `passed` is false, fix every `error` check and compose again. Warnings are advisory.
-3. `preview_creative_draft({kind: "CAROUSEL", slidePaths, caption, slideAltText})` using the
-   returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram). Look at the contact sheet and show
+3. `preview_creative_draft({kind: "CAROUSEL", brandKitId: <the Creative's brand kit>, slidePaths, slideStyle, caption, slideAltText})`
+   using the returned `slidePaths` and `style` (as `slideStyle`) (`9x16` for TikTok, `4x5` for Instagram).
+   The `brandKitId` here is the *brand kit*, not the style source: pass it whenever it is not the
+   default kit, and leave it out for the default, whatever the look. Look at the contact sheet and show
    it.
    With music (`audio: {source: "track", trackId}`, a library track from
    `list_creative_media({kind: "AUDIO"})`; a new file is uploaded there first with its source and

@@ -23,13 +23,17 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   own leader.
 - **One gate.** The person is asked only at the final draft preview. Do not stop to ask which idea.
   Two exceptions: S5b's disclosure question, asked only when disclosure cannot be inferred; and the
-  kit question, asked once before S0 only when the workspace has several kits and the person named
-  none (SKILL.md "Brand kit first"). A resumed run reuses the `brandKitId` stored in `run.json`.
+  pre-S0 question, at most one before S0, covering whatever choice exists: several kits and none
+  named, which kit (SKILL.md "Brand kit first") and, if any kit has a slideshow style, native vs that
+  look; a single kit that has a slideshow style, native vs the kit's look; nothing to choose, no
+  question (`references/slideshow-formats.md`, "Style"). A resumed run reuses the `brandKitId` and
+  `slideshowStyle` stored in `run.json`; the brand kit and the style source are separate answers.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script).
 - **Organic posts default to a slideshow.** A `RENDER` idea for an organic post (not an ad) is a
   native-looking slideshow built by `compose_slideshow` and posted as a CAROUSEL; see
   `references/slideshow-formats.md`. STILL and MOTION stay for ideas that really are one still, an
-  ad, or a motion piece. A slideshow never carries a logo, badge or offer.
+  ad, or a motion piece. A slideshow never carries a logo, badge or offer; its text look is native
+  unless the run's choice names a kit style or an inline `style`.
 - **Rejected copy stays rejected.** A CTA or offer line on a card or in a caption is opt-in per
   request, never a default. That means a sales line: the kit's `ctaClaim`, a trial, price, plan or
   discount. Naming the app so it can be searched is not one. Approved lines in the knowledge pages are allowed, not required. When the
@@ -75,6 +79,7 @@ shoot/     shoot-script.md  (FILM winner only)
              "S6": "pending"},
   "idMap": {"I1": {"angle": "story/emotion", "file": "ideas/angle-1.md", "n": 3}},
   "brandKitId": null,
+  "slideshowStyle": {"styleKitId": null, "style": null},
   "finalists": [], "winner": null, "tag": null, "runnerUps": [],
   "tags": {"hookType": null, "angle": null, "format": null},
   "drafts": {"finalist-I3": "<absolute dir>", "final": "<absolute dir>"},
@@ -88,8 +93,8 @@ linked to IDs; it is never shown to the director.
 **Resume check (first thing).** Glob `.conductor/content-runs/*/run.json`. If one has a stage that is
 not `done` or `skipped` and no `creativeId` or `shootDoc`, ask with `AskUserQuestion` whether to
 **Resume** that run (name it and its last finished stage) or **Start a new run**. On resume, skip
-done stages and continue from the first pending one, using the `brandKitId` already in
-`run.json`; never ask the kit question again for a run that has one stored.
+done stages and continue from the first pending one, using the `brandKitId` and
+`slideshowStyle` already in `run.json`; never ask the pre-S0 question again for a run that has them stored.
 
 ## Delegation prompt template
 
@@ -117,8 +122,9 @@ has failed the stage: retry once with a one-line reminder, then tell the person.
 
 Write `request.md` (the request verbatim, `--quick` if given, the platform if stated). Then:
 
-1. Resolve the kit (SKILL.md "Brand kit first": the named kit, else ask once when `otherKits` is
-   non-empty), store its id in `run.json` as `brandKitId`, and write `get_brand_kit({kitId})` ->
+1. Resolve the kit (SKILL.md "Brand kit first": the named kit, else the one pre-S0 question from
+   "One gate" when there is a choice to make), store its id in `run.json` as `brandKitId` (and the
+   look as `slideshowStyle.styleKitId`, null = native), and write `get_brand_kit({kitId})` ->
    `context/brand-kit.json`. Use that kit's `knowledgePagePath` and copy rules below. If `configured` is false and the person already
    skipped setup in the command, note that in the brief's constraints.
 2. Knowledge, for `context/knowledge.md`: `read_knowledge_pages` for the kit's `knowledgePagePath`
@@ -201,7 +207,7 @@ Draft each finalist the judge named (up to three).
 A slideshow finalist has no cheap draft: judge it from its idea text (archetype and slide-by-slide
 text) unless its slides can be composed from photos already on hand. In that case write its spec to
 `<run>/drafts/finalist-<id>/slideshow-spec.json`, call `compose_slideshow` with `draftDir` set to
-that folder and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` (with `brandKitId` from `run.json`) with that idea's draft spec (map the
+that folder, passing `slideshowStyle.styleKitId` as `brandKitId` and/or `slideshowStyle.style` as `style` (as at S6), and judge from the first slide and the `checks`. For every other `RENDER` finalist, call `preview_creative_draft` (with `brandKitId` from `run.json`) with that idea's draft spec (map the
 draft-spec block to the tool's fields) and `draftDir` set to `<run>/drafts/finalist-<id>`. Use
 `full: false`. Record each draft dir in `run.json`. For a finalist whose draft spec carries an
 `imagePrompt`, write the prompt by the prompt-writing rules in `references/realism-check.md` and
@@ -330,8 +336,10 @@ any placement is fixed now, not shown.
    returned `draftDir` as `drafts.final`. Local files (`photoPath`, `clipPath`, `audioPath`) go in
    as given in the spec.
    **Slideshow winner:** `compose_slideshow({specPath})` on `slideshow-spec.json`; while `passed` is
-   false, fix the spec and compose again. Then `preview_creative_draft({kind: "CAROUSEL", slidePaths,
-   caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
+   false, fix the spec and compose again. Pass `slideshowStyle.styleKitId` as `compose_slideshow`'s `brandKitId` (omit for native) and/or `slideshowStyle.style` as `style`
+   (layers: native, then the kit, then the spec's own top-level `style`, then the inline `style`); keep the
+   result's `style`. Then
+   `preview_creative_draft({kind: "CAROUSEL", brandKitId: <run.json brandKitId, the Creative's brand kit>, slidePaths, slideStyle: style, caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
    the caption from `publish-pack.json` and the alt text from `direction.md`. Record the preview's
    `draftDir` as `drafts.final`.
    **Music:** a slideshow or clip with music uses `audio` on the Creative, and a track from

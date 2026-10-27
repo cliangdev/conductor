@@ -59,6 +59,7 @@ import { readProvenanceSidecar } from '../lib/provenance-sidecar.js'
 import {
   getBrandKit,
   updateBrandKit,
+  createBrandKit,
   uploadBrandImage,
   listCreatives,
   listCreativeMedia,
@@ -129,13 +130,17 @@ describe('get_brand_kit', () => {
     mocked(apiGet).mockResolvedValue([
       { id: 'a', name: 'A', isDefault: false, configured: true, tokens: { x: 1 } },
       { id: 'b', name: 'B', isDefault: true, configured: true },
-      { id: 'c', name: 'C', isDefault: false, configured: false },
+      { id: 'c', name: 'C', isDefault: false, configured: false, slideshowStyle: { accent: '#00ff88' } },
+      { id: 'd', name: 'D', isDefault: false, configured: true, slideshowStyle: {} },
+      { id: 'e', name: 'E', isDefault: false, configured: true, slideshowStyle: { accent: null, future: 1 } },
     ])
     const result = await getBrandKit({}, config)
     expect(result['id']).toBe('b')
     expect(result['otherKits']).toEqual([
-      { id: 'a', name: 'A', configured: true },
-      { id: 'c', name: 'C', configured: false },
+      { id: 'a', name: 'A', configured: true, hasSlideshowStyle: false },
+      { id: 'c', name: 'C', configured: false, hasSlideshowStyle: true },
+      { id: 'd', name: 'D', configured: true, hasSlideshowStyle: false },
+      { id: 'e', name: 'E', configured: true, hasSlideshowStyle: false },
     ])
     expect(apiGet).toHaveBeenCalledTimes(1)
   })
@@ -1615,5 +1620,111 @@ describe('upload_creative_media batch', () => {
     await uploadCreativeMediaBatch({ files: Array.from({ length: 9 }, (_, i) => ({ filePath: `/x/${i}.png` })) }, config)
     expect(peak).toBeLessThanOrEqual(3)
     expect(peak).toBeGreaterThan(1)
+  })
+})
+
+describe('update_brand_kit slideshowStyle', () => {
+  it('passes an object (replace) and null (clear) straight through, and omits it when absent', async () => {
+    mocked(apiGet).mockResolvedValue({ id: 'kit1', configured: true })
+    mocked(apiPatch).mockResolvedValue({ id: 'kit1' })
+    const url = '/api/v2/projects/proj-1/marketing/brand-kits/kit1'
+    await updateBrandKit({ kitId: 'kit1', slideshowStyle: { fontFamily: 'Lora', accent: '#00ff88' } }, config)
+    expect(apiPatch).toHaveBeenLastCalledWith(url, { slideshowStyle: { fontFamily: 'Lora', accent: '#00ff88' } }, config)
+    await updateBrandKit({ kitId: 'kit1', slideshowStyle: null }, config)
+    expect(apiPatch).toHaveBeenLastCalledWith(url, { slideshowStyle: null }, config)
+    await updateBrandKit({ kitId: 'kit1', name: 'N' }, config)
+    expect(apiPatch).toHaveBeenLastCalledWith(url, { name: 'N' }, config)
+  })
+})
+
+describe('create_brand_kit', () => {
+  const url = '/api/v2/projects/proj-1/marketing/brand-kits'
+
+  it('POSTs name, a derived slug and the style; no copy', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'new1', slug: 'summer-warm' })
+    const res = await createBrandKit({ name: 'Summer Warm!', slideshowStyle: { accent: '#00ff88' } }, config)
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(apiPost).toHaveBeenCalledWith(url, { slug: 'summer-warm', name: 'Summer Warm!', slideshowStyle: { accent: '#00ff88' } }, config)
+    expect(res['id']).toBe('new1')
+    expect(res['nextStep']).toMatch(/get_brand_kit.*upload_brand_image/s)
+    expect(res['nextStep']).not.toMatch(/NOT copied/)
+  })
+
+  it('copyFrom copies the voice, tokens and font, lets params override, and says images are not copied', async () => {
+    mocked(apiGet).mockResolvedValue({
+      id: 'src', name: 'Main', tokens: { accent: '#111111' }, fontFamily: 'Inter', fontUrl: 'https://f.example/i.css', ctaClaim: 'Try it',
+      accentPhraseRequired: true, copyRules: [{ id: 'r' }], approvedLines: ['A'], enabledPlacements: ['9x16'], knowledgePagePath: 'brand/main',
+      slideshowStyle: { accent: '#ff0000' }, logoUrl: 'https://x/logo.png', isDefault: true,
+    })
+    mocked(apiPost).mockResolvedValue({ id: 'new1' })
+    const res = await createBrandKit({ name: 'Warm', slug: 'warm', copyFrom: 'src', ctaClaim: 'Get it', slideshowStyle: { boxBg: '#fff8e7' } }, config)
+    expect(apiGet).toHaveBeenCalledWith(`${url}/src`, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      url,
+      {
+        slug: 'warm', name: 'Warm', tokens: { accent: '#111111' }, fontFamily: 'Inter', fontUrl: 'https://f.example/i.css', ctaClaim: 'Get it',
+        accentPhraseRequired: true, copyRules: [{ id: 'r' }], approvedLines: ['A'], enabledPlacements: ['9x16'], knowledgePagePath: 'brand/main',
+        slideshowStyle: { boxBg: '#fff8e7' },
+      },
+      config
+    )
+    expect(res['nextStep']).toMatch(/"Main".*NOT copied.*upload_brand_image/s)
+  })
+
+  it('trims dashes left by cutting a long name to 60 characters', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'n' })
+    await createBrandKit({ name: `${'a'.repeat(59)} bbb` }, config)
+    expect((mocked(apiPost).mock.calls[0]![1] as { slug: string }).slug).toBe('a'.repeat(59))
+  })
+
+  it('derives the same slug as the web app: NFKD, diacritics stripped, "kit" when nothing is left', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'n' })
+    for (const [name, slug] of [['Café Été', 'cafe-ete'], ['  --Zoë & Co.--  ', 'zoe-co'], ['ＡＢＣ 123', 'abc-123'], ['🔥🔥', 'kit']] as const) {
+      mocked(apiPost).mockClear()
+      await createBrandKit({ name }, config)
+      expect((mocked(apiPost).mock.calls[0]![1] as { slug: string }).slug).toBe(slug)
+    }
+  })
+
+  it('validates an explicit slug before calling the API', async () => {
+    for (const bad of ['Upper', 'with space', 'under_score', 'a'.repeat(65), 'café']) {
+      await expect(createBrandKit({ name: 'W', slug: bad }, config)).rejects.toThrow(/slug .* is not valid.*1-64 characters/)
+    }
+    expect(apiPost).not.toHaveBeenCalled()
+    mocked(apiPost).mockResolvedValue({ id: 'n' })
+    await createBrandKit({ name: 'W', slug: ` ${'a-1'.repeat(21)}x ` }, config)
+    expect((mocked(apiPost).mock.calls[0]![1] as { slug: string }).slug).toBe(`${'a-1'.repeat(21)}x`)
+  })
+
+  it('retries a taken derived slug with -2 ... and gives up after -9', async () => {
+    mocked(apiPost).mockRejectedValueOnce(new ApiError(409, 'slug taken')).mockRejectedValueOnce(new ApiError(409, 'slug taken')).mockResolvedValueOnce({ id: 'n' })
+    await createBrandKit({ name: 'Warm' }, config)
+    expect(mocked(apiPost).mock.calls.map((c) => (c[1] as { slug: string }).slug)).toEqual(['warm', 'warm-2', 'warm-3'])
+
+    mocked(apiPost).mockReset()
+    mocked(apiPost).mockRejectedValue(new ApiError(409, 'slug taken'))
+    await expect(createBrandKit({ name: 'Warm' }, config)).rejects.toThrow(/free slug.*warm-9.*pass a slug/s)
+    expect(apiPost).toHaveBeenCalledTimes(9)
+  })
+
+  it('does not retry on other errors or change a slug the caller chose', async () => {
+    mocked(apiPost).mockReset()
+    mocked(apiPost).mockRejectedValue(new ApiError(500, 'boom'))
+    await expect(createBrandKit({ name: 'Warm' }, config)).rejects.toThrow(/boom/)
+    expect(apiPost).toHaveBeenCalledTimes(1)
+    mocked(apiPost).mockReset()
+    mocked(apiPost).mockRejectedValue(new ApiError(409, 'slug taken'))
+    await expect(createBrandKit({ name: 'Warm', slug: 'mine' }, config)).rejects.toThrow(/"mine" already exists/)
+    expect(apiPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an invalid slideshowStyle before calling the API', async () => {
+    await expect(createBrandKit({ name: 'W', slideshowStyle: { accent: 'red' } }, config)).rejects.toThrow(/accent/)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it('requires a name', async () => {
+    await expect(createBrandKit({ name: '  ' }, config)).rejects.toThrow(/name is required/)
+    expect(apiPost).not.toHaveBeenCalled()
   })
 })
