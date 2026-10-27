@@ -454,8 +454,9 @@ paths:
       description: >
         Cloud Scheduler's HTTP target for a timed job (see ScheduledJobRegistry). Runs the job inside
         the request (Cloud Run only grants CPU while a request is open) behind the same database lease
-        the in-app timers use, so a trigger never overlaps a run already in progress; a skipped tick is
-        a 200 with the outcome. Authenticated by a Google-signed OIDC ID token minted for Cloud
+        the in-app timers use, so a trigger never overlaps a run already in progress; a tick skipped
+        because the job is leased or ran too recently is a 200 with the outcome, and one skipped because
+        this instance had no free slot is a 503 with Retry-After so Cloud Scheduler retries it. Authenticated by a Google-signed OIDC ID token minted for Cloud
         Scheduler's service account (SchedulerTokenVerifier), not a run token. A job that throws is a
         500 so Cloud Scheduler retries. Works in both `conductor.scheduling.mode` values.
       operationId: runScheduledJob
@@ -465,7 +466,7 @@ paths:
         - name: job
           in: path
           required: true
-          description: Registered job name (validated against the registry, unknown is 404)
+          description: Registered job name (must match the pattern, else 400; then looked up in the registry, unknown is 404)
           schema:
             type: string
             pattern: "^[a-z0-9-]{1,100}$"
@@ -476,12 +477,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SchedulerJobRunResponse"
+        "400":
+          description: Job name does not match the pattern
         "401":
           description: Missing or invalid Cloud Scheduler OIDC token
         "404":
           description: No such job
         "500":
           description: The job threw; its lease was released and Cloud Scheduler should retry
+        "503":
+          description: No free scheduler slot on this instance (outcome SKIPPED_BUSY); retry after Retry-After
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulerJobRunResponse"
 
 components:
   parameters:
@@ -553,7 +566,7 @@ components:
           type: string
         outcome:
           type: string
-          enum: [RAN, SKIPPED_LEASED, SKIPPED_RECENT, DISABLED, UNKNOWN]
+          enum: [RAN, SKIPPED_LEASED, SKIPPED_RECENT, SKIPPED_BUSY, DISABLED]
         durationMs:
           type: integer
           format: int64

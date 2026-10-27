@@ -25,6 +25,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -92,5 +93,32 @@ class SchedulerInternalControllerTest {
         when(verifier.verify("good")).thenReturn(Optional.of("s@x.com"));
         when(runner.run("workflow-schedule-poll")).thenThrow(new IllegalStateException("boom"));
         mockMvc.perform(post(URL).header("Authorization", "Bearer good")).andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    void skippedBusy_is503WithRetryAfter() throws Exception {
+        when(verifier.verify("good")).thenReturn(Optional.of("s@x.com"));
+        when(runner.run("workflow-schedule-poll")).thenReturn(new RunResult(TickOutcome.SKIPPED_BUSY, 30000));
+        mockMvc.perform(post(URL).header("Authorization", "Bearer good"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "30"))
+                .andExpect(jsonPath("$.outcome").value("SKIPPED_BUSY"));
+    }
+
+    @Test
+    void skippedRecent_andDisabled_are200() throws Exception {
+        when(verifier.verify("good")).thenReturn(Optional.of("s@x.com"));
+        when(runner.run("workflow-schedule-poll")).thenReturn(new RunResult(TickOutcome.SKIPPED_RECENT, 1));
+        mockMvc.perform(post(URL).header("Authorization", "Bearer good")).andExpect(status().isOk());
+        when(runner.run("workflow-schedule-poll")).thenReturn(new RunResult(TickOutcome.DISABLED, 0));
+        mockMvc.perform(post(URL).header("Authorization", "Bearer good")).andExpect(status().isOk());
+    }
+
+    @Test
+    void malformedJobName_is400_andNothingRuns() throws Exception {
+        when(verifier.verify("good")).thenReturn(Optional.of("s@x.com"));
+        mockMvc.perform(post("/internal/v1/scheduler/jobs/Bad_Name").header("Authorization", "Bearer good"))
+                .andExpect(status().isBadRequest());
+        verify(runner, never()).run(any());
     }
 }

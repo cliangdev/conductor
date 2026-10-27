@@ -15,6 +15,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Cloud Scheduler's HTTP target for the timed jobs in the registry. {@code /internal/**} is permitAll, so
@@ -24,6 +25,9 @@ import java.util.Optional;
  */
 @RestController
 public class SchedulerInternalController implements SchedulerInternalApi {
+
+    private static final Pattern JOB_NAME = Pattern.compile("^[a-z0-9-]{1,100}$");
+    private static final String RETRY_AFTER_SECONDS = "30";
 
     private static final Logger log = LoggerFactory.getLogger(SchedulerInternalController.class);
 
@@ -40,6 +44,9 @@ public class SchedulerInternalController implements SchedulerInternalApi {
         Optional<String> caller = verifier.verify(bearerToken());
         if (caller.isEmpty()) {
             return ResponseEntity.status(401).build();
+        }
+        if (job == null || !JOB_NAME.matcher(job).matches()) {
+            return ResponseEntity.badRequest().build();
         }
         long start = System.nanoTime();
         RunResult result;
@@ -63,10 +70,15 @@ public class SchedulerInternalController implements SchedulerInternalApi {
         if (result.outcome() == TickOutcome.UNKNOWN) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(new SchedulerJobRunResponse()
+        SchedulerJobRunResponse body = new SchedulerJobRunResponse()
                 .job(job)
                 .outcome(SchedulerJobRunResponse.OutcomeEnum.valueOf(result.outcome().name()))
-                .durationMs(result.durationMs()));
+                .durationMs(result.durationMs());
+        if (result.outcome() == TickOutcome.SKIPPED_BUSY) {
+            // This instance had no free slot: a 5xx makes Cloud Scheduler retry instead of dropping the tick.
+            return ResponseEntity.status(503).header("Retry-After", RETRY_AFTER_SECONDS).body(body);
+        }
+        return ResponseEntity.ok(body);
     }
 
     private static String bearerToken() {

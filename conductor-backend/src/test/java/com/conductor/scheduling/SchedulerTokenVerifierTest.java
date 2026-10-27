@@ -114,4 +114,18 @@ class SchedulerTokenVerifierTest {
         assertThat(verifier(AUD, "").verify(t)).isEmpty();
         assertThat(verifier(null, null).verify(t)).isEmpty();
     }
+
+    @Test
+    void certFetchFailure_isStillRejected() throws Exception {
+        com.google.api.client.http.HttpTransport broken = new com.google.api.client.http.HttpTransport() {
+            @Override
+            protected com.google.api.client.http.LowLevelHttpRequest buildRequest(String method, String url)
+                    throws java.io.IOException {
+                throw new java.io.IOException("certs unreachable");
+            }
+        };
+        SchedulerTokenVerifier v = new SchedulerTokenVerifier(AUD, EMAIL,
+                () -> TokenVerifier.newBuilder().setHttpTransportFactory(() -> broken));
+        assertThat(v.verify(token("https://accounts.google.com", AUD, EMAIL, true, 600))).isEmpty();
+    }
 }

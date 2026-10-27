@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -63,6 +64,12 @@ public class SchedulerTokenVerifier {
                 }
                 return Optional.empty();
             } catch (TokenVerifier.VerificationException e) {
+                if (e.getCause() instanceof IOException) {
+                    // Google's certs could not be fetched: an outage on our side, not a bad token. Still a 401.
+                    log.warn("Scheduler token verification failed: could not fetch Google certs: {}",
+                            e.getCause().toString());
+                    return Optional.empty();
+                }
                 // wrong issuer for this verifier, bad signature, expired, wrong audience: try the next issuer
             } catch (RuntimeException e) {
                 log.warn("Scheduler token verification failed unexpectedly: {}", e.toString());
