@@ -133,3 +133,24 @@ hop through the frontend service to every call):
 
 "Overhead" is client time minus server time. If this is revisited, serve the API from the app's domain at the
 load balancer instead, which removes preflights without the extra hop.
+
+## Posts list sizing (server paging decision)
+
+`GET /work-items?workflow=...` returns the whole workflow and the page filters, searches and renders it
+client-side. For publishing workflows each row now also carries a thumbnail URL, per-destination states and
+its Creative, loaded for the whole page in a fixed number of batched reads (image Assets, publish targets,
+and the Creative frame/Creative lookups), never per row.
+
+Measured on 2026-10-27 with 300 Posts (2 destinations and 1 image each), local Postgres in Testcontainers
+(`WorkItemListEnricherIntegrationTest`) and jsdom render (`WorkItemList.render-cost.test.tsx`):
+
+| | before | after |
+|---|---|---|
+| list endpoint work (query + mapping, median of 7) | 24 ms | 41 ms (+17 ms) |
+| render 300 list rows (jsdom) | 305 ms | 362 ms |
+| render 300 grid cards (jsdom) | n/a | 99 ms |
+
+Decision threshold for adding keyset paging and server-side filters (`limit`/`cursor`/`q`, as Media has):
+the list endpoint over 500 ms for ~300 Posts, or a 300-row render over 1 s. Both are well under, so paging
+is **not** built. Revisit with `scripts/perf-report.sh` once a workspace passes ~1000 Posts; the response
+also grows by roughly one signed URL per Post (~0.5 KB each) for publishing workflows.

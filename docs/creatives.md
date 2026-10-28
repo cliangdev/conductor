@@ -278,6 +278,15 @@ Blocking media a Post already uses is allowed, but publishing is then held: the 
 `MEDIA_BLOCKED` until the file is removed from it. This holds for an already-scheduled Post too: at publish time the target
 fails with "<label> is blocked in Media — remove it from this post, then retry." and the platform is never called.
 
+### Where a Creative is used
+
+The Creative list carries `postCount` (distinct Posts that use a rendered frame of the Creative). The tile
+shows "Used in N posts" and links to the Posts list filtered by `?creativeId=`; the editor lists the same
+Posts under "Posts using this". `GET /work-items` accepts `creativeId` and `mediaId` to filter to Posts that
+use a Creative or a Media item (a Media item's post count on its tile links to `?mediaId=`). Deleting a
+Creative still on a Post is refused and names the Post. The Posts, Creatives and Media pages share one
+sub-nav.
+
 ## Video (COND-24 PR1)
 
 The media library (`creative_photo` — the table/entity name stays, the API calls it "media") now takes
