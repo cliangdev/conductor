@@ -47,22 +47,6 @@ export interface WorkItemCreativeRef {
   name?: string | null
 }
 
-/** One publish destination on a Post and how it stands (list response only). */
-export interface WorkItemPublishTarget {
-  platform: string
-  /** PENDING | HANDED_OFF | PUBLISHING | AWAITING_MANUAL | PUBLISHED | FAILED | REVOKED */
-  state: string
-  stateLabel?: string
-  label?: string | null
-}
-
-/** The Creative a Post's media came from (list response only). */
-export interface WorkItemCreativeRef {
-  id: string
-  displayId: string
-  name?: string | null
-}
-
 export interface Issue {
   id: string
   title: string

@@ -184,13 +184,19 @@ export function useWorkItemListState({
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const flatIdsKey = flatIds.join(',')
 
-  // Drop any selection/focus that fell out of view (filtered away, status changed, etc).
+  // Focus follows what is shown. Selection is kept for anything still in the tab (a search or filter can
+  // hide a selected row; clearing it brings the row back) and is only dropped once the item is gone.
+  const inViewKey = issuesInView.map((i) => i.id).join(',')
   useEffect(() => {
-    const idSet = new Set(flatIds)
+    const present = new Set(issuesInView.map((i) => i.id))
     setSelected((prev) => {
-      const next = new Set([...prev].filter((id) => idSet.has(id)))
+      const next = new Set([...prev].filter((id) => present.has(id)))
       return next.size === prev.size ? prev : next
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inViewKey])
+  useEffect(() => {
+    const idSet = new Set(flatIds)
     setFocusedId((prev) => (prev && idSet.has(prev) ? prev : null))
     // flatIds is a new array every render — flatIdsKey is the stable identity to depend on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,6 +225,20 @@ export function useWorkItemListState({
   function clearSelection() {
     setSelected(new Set())
   }
+
+  /** After a bulk run: drop what was acted on, keep the failures (and any selection hidden by a filter). */
+  function settleSelection(actedIds: string[], failedIds: string[]) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of actedIds) next.delete(id)
+      for (const id of failedIds) next.add(id)
+      return next
+    })
+  }
+
+  // Bulk actions act on what is selected AND shown, in display order; the rest is only counted.
+  const visibleSelectedIds = useMemo(() => flatIds.filter((id) => selected.has(id)), [flatIds, selected])
+  const hiddenSelectedCount = selected.size - visibleSelectedIds.length
 
   /** Replaces the selection wholesale — used to leave only the failed ids selected after a partial bulk-mutation failure. */
   function setSelection(ids: Iterable<string>) {
@@ -315,7 +335,7 @@ export function useWorkItemListState({
   // actions that just open the bulk bar's own trigger — avoids a second status/member list.
   // REVIEWERs never reach a nonzero selection (toggleSelect no-ops for them), so this stays absent
   // for them too.
-  const selectedCount = selected.size
+  const selectedCount = visibleSelectedIds.length
   useEffect(() => {
     if (selectedCount === 0 || !canEdit) return
     return registerPaletteActions({
@@ -357,6 +377,9 @@ export function useWorkItemListState({
     setFocusedId,
     toggleSelect,
     clearSelection,
+    settleSelection,
+    visibleSelectedIds,
+    hiddenSelectedCount,
     setSelection,
     bulkInFlight,
     setBulkInFlight,

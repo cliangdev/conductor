@@ -632,6 +632,56 @@ describe('bulk results and selection in every view', () => {
   })
 })
 
+describe('bulk actions act only on what is shown', () => {
+  async function selectI1ThenSearchAlpha() {
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i1 (Zeta task)
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'alpha' } }) // hides i1, shows i2
+  }
+
+  it('keeps a hidden selection, counts it as hidden, and disables the actions while nothing visible is selected', async () => {
+    await selectI1ThenSearchAlpha()
+    expect(await screen.findByText('0 selected')).toBeInTheDocument()
+    expect(screen.getByText('(1 hidden by filters)')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Change status' })).toBeDisabled()
+    // Room is left under the last row for the fixed bar.
+    expect(document.querySelector('div.h-20[aria-hidden]')).not.toBeNull()
+  })
+
+  it('sends a bulk status change for the visible selected rows only and leaves the hidden one selected', async () => {
+    const user = userEvent.setup()
+    await selectI1ThenSearchAlpha()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i2
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('(1 hidden by filters)')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/i2', { status: 'DONE' }, 'token')
+    // i1 was never touched and is still selected (hidden) once the search is cleared.
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: '' } })
+    await waitFor(() => expect(rowFor('i1')).toHaveAttribute('data-selected', 'true'))
+  })
+
+  it('words a partial failure as a full phrase for the action', async () => {
+    apiPatch.mockImplementationOnce(() => Promise.reject(new Error('nope'))).mockResolvedValueOnce(undefined)
+    const user = userEvent.setup()
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalledWith('1 of 2 Work Items failed to change status'))
+  })
+})
+
 describe('search', () => {
   it('filters by title, display id and tag, and Clear filters resets it', async () => {
     issues = [

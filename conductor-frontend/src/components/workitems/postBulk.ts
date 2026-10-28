@@ -17,6 +17,20 @@ export function isLivePost(post: PostLike): boolean {
   return status === 'PUBLISHED' || status === 'LIVE'
 }
 
+/**
+ * A Post whose destinations or schedule must not be edited in bulk: it is live, or already approved or
+ * handed to a platform. The server accepts such an edit but revokes the hand-off and reverts the Post to
+ * review first (see PUT .../publish-targets), a side effect nobody should get from a bulk action.
+ */
+export function isEditLocked(post: PostLike): boolean {
+  if (isLivePost(post)) return true
+  const status = post.status.toUpperCase()
+  if (status === 'APPROVED' || status === 'SCHEDULED' || status === 'PUBLISHING') return true
+  return (post.publishTargets ?? []).some((t) =>
+    ['HANDED_OFF', 'PUBLISHING', 'AWAITING_MANUAL', 'PUBLISHED'].includes(t.state),
+  )
+}
+
 /** True when some destination of this Post failed to publish. */
 export function hasFailedTarget(post: Pick<Issue, 'publishTargets'>): boolean {
   return (post.publishTargets ?? []).some((t) => t.state === 'FAILED')
@@ -46,6 +60,13 @@ export function shiftSchedule(iso: string | null | undefined, timeZone: string |
 /** Free text ("Autumn, launch") as the stored form: trimmed, lower-cased, de-duplicated, no blanks. */
 export function parseTags(input: string): string[] {
   return [...new Set(input.split(/[,\n]/).map((t) => t.trim().toLowerCase()).filter(Boolean))]
+}
+
+/** True when applying the tag change would actually alter the Post's tags (content, not identity). */
+export function tagsDiffer(current: string[] | undefined, change: string[], mode: 'add' | 'remove'): boolean {
+  const base = current ?? []
+  const next = applyTagChange(base, change, mode)
+  return next.length !== base.length || next.some((t, i) => t !== base[i])
 }
 
 /** `current` with `change` added or removed; the same array reference when nothing changes. */

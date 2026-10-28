@@ -29,6 +29,7 @@ export function BulkActionBar({
   statusTriggerRef,
   assignTriggerRef,
   onClear,
+  hiddenCount,
   children,
 }: {
   count: number
@@ -41,11 +42,13 @@ export function BulkActionBar({
   statusTriggerRef?: RefObject<HTMLButtonElement | null>
   assignTriggerRef?: RefObject<HTMLButtonElement | null>
   onClear?: () => void
+  /** Selected but hidden by a search, filter or tab: kept, but never acted on. */
+  hiddenCount?: number
   /** Extra actions after Assign (the Posts-only bulk actions). */
   children?: ReactNode
 }) {
   return (
-    <FloatingBulkBar count={count} onClear={onClear}>
+    <FloatingBulkBar count={count} hiddenCount={hiddenCount} onClear={onClear}>
       <div className="flex items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

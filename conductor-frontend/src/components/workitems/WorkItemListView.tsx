@@ -266,7 +266,7 @@ export function WorkItemListView({
   // over `ids` concurrently (Promise.allSettled, not sequential awaits — one slow/failing item can't
   // block the rest), skips items already at the target value, keeps only the failed ids selected on
   // partial failure (so the user can retry just those), and refetches once at the end either way.
-  async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failureNoun: string) {
+  async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failure: string) {
     if (ids.length === 0) {
       listState.clearSelection()
       return
@@ -275,17 +275,16 @@ export function WorkItemListView({
     try {
       const results = await Promise.allSettled(ids.map((id) => mutate(id)))
       const failedIds = ids.filter((_, i) => results[i].status === 'rejected')
+      // `failure` is a full phrase per action ("to change status", "to delete"), so the toast reads naturally.
       if (failedIds.length > 0) {
-        toastError(`${failedIds.length} of ${ids.length} Work Items failed to update ${failureNoun}`)
-        listState.setSelection(failedIds)
-      } else {
-        listState.clearSelection()
+        toastError(`${failedIds.length} of ${ids.length} Work Items failed ${failure}`)
       }
+      listState.settleSelection(ids, failedIds)
       // The per-item result line ("7 done, 1 failed") with a retry for just the failures.
       setBulkResult({
         done: ids.length - failedIds.length,
         failed: failedIds.length,
-        retry: failedIds.length > 0 ? () => runBulkMutation(failedIds, mutate, failureNoun) : undefined,
+        retry: failedIds.length > 0 ? () => runBulkMutation(failedIds, mutate, failure) : undefined,
       })
       await loadIssues()
     } finally {
@@ -294,21 +293,21 @@ export function WorkItemListView({
   }
 
   async function bulkChangeStatus(newStatus: string) {
-    const ids = [...listState.selected].filter((id) => issues.find((i) => i.id === id)?.status !== newStatus)
+    const ids = listState.visibleSelectedIds.filter((id) => issues.find((i) => i.id === id)?.status !== newStatus)
     await runBulkMutation(
       ids,
       (id) => apiPatch(`/api/v2/projects/${projectId}/work-items/${id}`, { status: newStatus }, accessToken!),
-      'status'
+      'to change status'
     )
   }
 
   async function bulkAssign(member: Member | null) {
     const targetId = member?.userId ?? null
-    const ids = [...listState.selected].filter((id) => (issues.find((i) => i.id === id)?.assignee?.userId ?? null) !== targetId)
+    const ids = listState.visibleSelectedIds.filter((id) => (issues.find((i) => i.id === id)?.assignee?.userId ?? null) !== targetId)
     await runBulkMutation(
       ids,
       (id) => apiPatch(`/api/v2/projects/${projectId}/work-items/${id}`, { assigneeId: member ? member.userId : '' }, accessToken!),
-      'assignee'
+      'to change assignee'
     )
   }
 
@@ -675,13 +674,17 @@ export function WorkItemListView({
         </>
       )}
       {canEdit && listState.selected.size > 0 && (
+        <>
+        {/* Room under the last row: the bulk bar is fixed to the viewport and would cover it. */}
+        <div aria-hidden className="h-20" />
         <BulkActionBar
-          count={listState.selected.size}
+          count={listState.visibleSelectedIds.length}
+          hiddenCount={listState.hiddenSelectedCount}
           statusOptions={(workflowView?.statuses ?? []).map((s) => ({ id: s.id, label: s.label ?? humanizeId(s.id), category: s.category }))}
           members={members}
           onChangeStatus={bulkChangeStatus}
           onAssign={bulkAssign}
-          disabled={listState.bulkInFlight}
+          disabled={listState.bulkInFlight || listState.visibleSelectedIds.length === 0}
           statusTriggerRef={bulkStatusTriggerRef}
           assignTriggerRef={bulkAssignTriggerRef}
           onClear={listState.clearSelection}
@@ -690,12 +693,13 @@ export function WorkItemListView({
             <PostBulkActions
               projectId={projectId}
               token={accessToken!}
-              selected={issues.filter((i) => listState.selected.has(i.id))}
-              disabled={listState.bulkInFlight}
+              selected={listState.visibleSelectedIds.flatMap((id) => issues.find((i) => i.id === id) ?? [])}
+              disabled={listState.bulkInFlight || listState.visibleSelectedIds.length === 0}
               run={runBulkMutation}
             />
           )}
         </BulkActionBar>
+        </>
       )}
     </PageContainer>
   )

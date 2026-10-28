@@ -17,11 +17,12 @@ import { Select } from '@/components/ui/select'
 import { TimeZonePicker } from '@/components/ui/time-zone-picker'
 import { apiDelete, apiErrorMessage, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api'
 import { browserTimeZone, wallClockToInstant } from '@/lib/schedule'
-import type { PublishTargetOption } from '@/components/marketing/destinations/types'
+import type { PublishTargetOption, SelectedPublishTarget } from '@/components/marketing/destinations/types'
 import type { IssueWithReviewers } from '@/components/workitems/listTypes'
-import { applyTagChange, hasFailedTarget, isLivePost, parseTags, shiftSchedule } from '@/components/workitems/postBulk'
+import { applyTagChange, hasFailedTarget, isEditLocked, isLivePost, parseTags, shiftSchedule, tagsDiffer } from '@/components/workitems/postBulk'
 
-type Run = (ids: string[], mutate: (id: string) => Promise<unknown>, failureNoun: string) => Promise<void>
+/** `failure` is the full tail of the toast: "N of M Work Items failed {failure}". */
+type Run = (ids: string[], mutate: (id: string) => Promise<unknown>, failure: string) => Promise<void>
 
 export interface PostBulkActionsProps {
   projectId: string
@@ -40,15 +41,31 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
   const failed = selected.filter(hasFailedTarget)
   const live = selected.filter(isLivePost)
   const deletable = selected.filter((p) => !isLivePost(p))
+  // Reschedule and Destinations leave live, approved, scheduled and handed-off posts alone.
+  const editable = selected.filter((p) => !isEditLocked(p))
+  const locked = selected.filter(isEditLocked)
+  const lockedReason = 'Every selected post is live, approved or already handed to a platform'
 
   const close = () => setDialog(null)
 
   return (
     <>
-      <Button variant="outline" size="sm" disabled={disabled} onClick={() => setDialog('schedule')}>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={disabled || editable.length === 0}
+        title={editable.length === 0 ? lockedReason : undefined}
+        onClick={() => setDialog('schedule')}
+      >
         Reschedule
       </Button>
-      <Button variant="outline" size="sm" disabled={disabled} onClick={() => setDialog('destinations')}>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={disabled || editable.length === 0}
+        title={editable.length === 0 ? lockedReason : undefined}
+        onClick={() => setDialog('destinations')}
+      >
         Destinations
       </Button>
       <Button
@@ -60,7 +77,7 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
           void run(
             failed.map((p) => p.id),
             (id) => apiPost(`${base}/${id}/publish-targets/retry`, {}, token),
-            'on retry',
+            'to retry the failed destinations',
           )
         }
       >
@@ -82,13 +99,14 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
 
       {dialog === 'schedule' && (
         <RescheduleDialog
-          posts={selected}
+          posts={editable}
+          excluded={locked}
           onClose={close}
           onApply={(plan) => {
             close()
-            const byId = new Map(selected.map((p) => [p.id, p]))
-            const ids = selected.filter((p) => plan(p) !== null).map((p) => p.id)
-            void run(ids, (id) => apiPatch(`${base}/${id}`, plan(byId.get(id)!)!, token), 'schedule')
+            const byId = new Map(editable.map((p) => [p.id, p]))
+            const ids = editable.filter((p) => plan(p) !== null).map((p) => p.id)
+            void run(ids, (id) => apiPatch(`${base}/${id}`, plan(byId.get(id)!)!, token), 'to reschedule')
           }}
         />
       )}
@@ -96,14 +114,33 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
         <DestinationsDialog
           projectId={projectId}
           token={token}
-          count={selected.length}
+          count={editable.length}
+          excluded={locked}
           onClose={close}
           onApply={(targets) => {
             close()
             void run(
-              selected.map((p) => p.id),
-              (id) => apiPut(`${base}/${id}/publish-targets`, { targets }, token),
-              'destinations',
+              editable.map((p) => p.id),
+              async (id) => {
+                // Targets that stay selected keep their own settings (TikTok consent options, format,
+                // caption, media); only newly added ones start plain. Accounts left unticked are removed.
+                const current = await apiGet<SelectedPublishTarget[]>(`${base}/${id}/publish-targets`, token)
+                const keyOf = (platform: string, connectionId: string | null) => `${platform}:${connectionId ?? 'manual'}`
+                const existing = new Map(current.map((t) => [keyOf(t.platform, t.connectionId), t]))
+                const payload = targets.map((t) => {
+                  const kept = existing.get(keyOf(t.platform, t.connectionId))
+                  if (!kept) return t
+                  return {
+                    ...t,
+                    format: kept.format ?? undefined,
+                    publishOptions: kept.publishOptions ?? undefined,
+                    captionOverride: kept.captionOverride ?? undefined,
+                    assetIds: kept.assetIds ?? undefined,
+                  }
+                })
+                return apiPut(`${base}/${id}/publish-targets`, { targets: payload }, token)
+              },
+              'to update destinations',
             )
           }}
         />
@@ -115,11 +152,11 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
           onApply={(change, mode) => {
             close()
             const byId = new Map(selected.map((p) => [p.id, p]))
-            const ids = selected.filter((p) => applyTagChange(p.tags, change, mode) !== (p.tags ?? [])).map((p) => p.id)
+            const ids = selected.filter((p) => tagsDiffer(p.tags, change, mode)).map((p) => p.id)
             void run(
               ids,
               (id) => apiPatch(`${base}/${id}`, { tags: applyTagChange(byId.get(id)!.tags, change, mode) }, token),
-              'tags',
+              'to update tags',
             )
           }}
         />
@@ -137,7 +174,7 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
             void run(
               deletable.map((p) => p.id),
               (id) => apiDelete(`${base}/${id}`, token),
-              'delete',
+              'to delete',
             )
           }}
         >
@@ -161,12 +198,25 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
   )
 }
 
+/** Names the posts a bulk edit leaves alone, so nobody wonders why the count is lower than the selection. */
+function ExcludedNote({ posts }: { posts: IssueWithReviewers[] }) {
+  if (posts.length === 0) return null
+  return (
+    <p className="rounded-md border border-border bg-surface-2 p-2 text-sm text-foreground" data-testid="excluded-note">
+      {posts.length} {posts.length === 1 ? 'post is' : 'posts are'} live, approved or already handed to a platform
+      and will not be changed: {posts.map((p) => p.displayId ?? p.title).join(', ')}.
+    </p>
+  )
+}
+
 function RescheduleDialog({
   posts,
+  excluded,
   onClose,
   onApply,
 }: {
   posts: IssueWithReviewers[]
+  excluded: IssueWithReviewers[]
   onClose: () => void
   onApply: (plan: (p: IssueWithReviewers) => { scheduledFor: string; scheduleTimezone: string } | null) => void
 }) {
@@ -208,6 +258,7 @@ function RescheduleDialog({
       }
     >
       <div className="space-y-3">
+        <ExcludedNote posts={excluded} />
         <Select aria-label="Reschedule mode" value={mode} onChange={(e) => setMode(e.target.value as 'set' | 'shift')}>
           <option value="set">Set a date and time</option>
           <option value="shift">Shift by days</option>
@@ -239,12 +290,14 @@ function DestinationsDialog({
   projectId,
   token,
   count,
+  excluded,
   onClose,
   onApply,
 }: {
   projectId: string
   token: string
   count: number
+  excluded: IssueWithReviewers[]
   onClose: () => void
   onApply: (targets: { platform: string; connectionId: string | null }[]) => void
 }) {
@@ -268,7 +321,7 @@ function DestinationsDialog({
       open
       onOpenChange={(o) => !o && onClose()}
       title="Set destinations"
-      description={`Replaces the destinations on ${count} ${count === 1 ? 'post' : 'posts'}.`}
+      description={`Replaces the destinations on ${count} ${count === 1 ? 'post' : 'posts'}. Accounts that stay ticked keep their settings; unticked ones are removed.`}
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>
@@ -290,6 +343,9 @@ function DestinationsDialog({
         </div>
       }
     >
+      <div className="mb-3">
+        <ExcludedNote posts={excluded} />
+      </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!options && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
       <div className="space-y-2">
@@ -325,7 +381,7 @@ function TagsDialog({
   const [mode, setMode] = useState<'add' | 'remove'>('add')
   const [text, setText] = useState('')
   const tags = parseTags(text)
-  const affected = posts.filter((p) => applyTagChange(p.tags, tags, mode) !== (p.tags ?? [])).length
+  const affected = posts.filter((p) => tagsDiffer(p.tags, tags, mode)).length
   return (
     <Modal
       open
@@ -353,7 +409,7 @@ function TagsDialog({
         </div>
         {tags.length > 0 && (
           <p className="text-xs text-muted-foreground">
-            {affected} of {posts.length} {affected === 1 ? 'post' : 'posts'} will change.
+            {affected} of {posts.length} {posts.length === 1 ? 'post' : 'posts'} will change.
           </p>
         )}
       </div>

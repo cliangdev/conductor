@@ -204,6 +204,8 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  // Kept apart from `error`: the reload that follows a delete clears `error`, and these must stay readable.
+  const [deleteFailures, setDeleteFailures] = useState<string | null>(null)
   const canManage = useCan('creative.manage')
   const postsHref = usePostsHref(projectId)
 
@@ -263,7 +265,8 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       return {
         number,
         members: sorted,
-        used: sorted.reduce((n, m) => n + (m.postCount ?? 0), 0),
+        // The server reports the whole family's distinct Posts on every member; the tile shows that one number.
+        used: Math.max(0, ...sorted.map((m) => m.postCount ?? 0)),
         text: familyText(sorted),
       }
     })
@@ -295,22 +298,41 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
     setDeleting(true)
     setError(null)
     setNotice(null)
+    setDeleteFailures(null)
     const failures: string[] = []
     let done = 0
-    for (const family of selectedFamilies) {
-      const ordered = [...family.members].reverse()
+    // A state or kit filter can hide some variants of a family; the family to delete is the whole of it.
+    let everyCreative: Creative[] = creatives ?? []
+    try {
+      everyCreative = await listCreatives(projectId, accessToken)
+    } catch {
+      // Fall back to what is on screen; the server still refuses a root that has variants.
+    }
+    for (const shown of selectedFamilies) {
+      const root = shown.members[0]
+      const family = everyCreative.filter((c) => c.number === root.number)
+      const members = family.length > 0 ? family : shown.members
+      // Check the whole family first so a refused family is never left half deleted: any member on a Post
+      // means the family is skipped and reported (the server would refuse the root at the end anyway).
+      const onPosts = Math.max(0, ...members.map((m) => m.postCount ?? 0))
+      if (onPosts > 0) {
+        failures.push(`${root.displayId}: used in ${onPosts} ${onPosts === 1 ? 'post' : 'posts'}, remove it from them first`)
+        continue
+      }
+      // Variants first, root last: the server refuses a root that still has variants.
+      const ordered = [...members].sort((a, b) => b.variantLetter.localeCompare(a.variantLetter))
       try {
         for (const member of ordered) await deleteCreative(projectId, member.id, accessToken)
         done++
-        selection.remove(family.members[0].id)
+        selection.remove(root.id)
       } catch (err) {
-        failures.push(`${family.members[0].displayId}: ${apiErrorMessage(err, 'could not be deleted')}`)
+        failures.push(`${root.displayId}: ${apiErrorMessage(err, 'could not be deleted')}`)
       }
     }
     setDeleting(false)
     setDeleteOpen(false)
     setNotice(`${done} deleted${failures.length ? `, ${failures.length} failed` : ''}.`)
-    if (failures.length) setError(failures.join(' · '))
+    setDeleteFailures(failures.length ? failures.join(' · ') : null)
     setReloadKey((k) => k + 1)
   }
 
@@ -415,6 +437,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
       {error && <Alert variant="destructive">{error}</Alert>}
       {notice && <Alert variant="info">{notice}</Alert>}
+      {deleteFailures && <Alert variant="destructive">{deleteFailures}</Alert>}
 
       {loading ? (
         <GridSkeleton />

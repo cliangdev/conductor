@@ -12,7 +12,7 @@ describe('FloatingBulkBar', () => {
     )
     expect(screen.getByRole('toolbar', { name: 'Selection actions' })).toBeInTheDocument()
     expect(screen.getByText('3 selected')).toBeInTheDocument()
-    expect(screen.getByText('2 hidden by filters')).toBeInTheDocument()
+    expect(screen.getByText('(2 hidden by filters)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Do it' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     expect(onClear).toHaveBeenCalled()

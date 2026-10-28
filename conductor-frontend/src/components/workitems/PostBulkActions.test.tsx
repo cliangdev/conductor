@@ -2,15 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { IssueWithReviewers } from './listTypes'
 
+const OPTIONS = [
+  { platform: 'instagram', connectionId: 'c1', label: 'Rexcipe IG', lane: 'NATIVE' },
+  { platform: 'tiktok', connectionId: 'c2', label: 'Rexcipe TikTok', lane: 'NATIVE' },
+]
+const apiGetImpl = vi.fn((url: string): Promise<unknown> =>
+  Promise.resolve(url.endsWith('/publish-targets') && url.includes('/work-items/') ? [] : OPTIONS))
 const apiPatch = vi.fn().mockResolvedValue({})
 const apiPost = vi.fn().mockResolvedValue({})
 const apiPut = vi.fn().mockResolvedValue({})
 const apiDelete = vi.fn().mockResolvedValue({})
 vi.mock('@/lib/api', () => ({
-  apiGet: vi.fn().mockResolvedValue([
-    { platform: 'instagram', connectionId: 'c1', label: 'Rexcipe IG', lane: 'NATIVE' },
-    { platform: 'tiktok', connectionId: null, label: 'TikTok (manual)', lane: 'MANUAL' },
-  ]),
+  apiGet: (url: string) =>
+    apiGetImpl(url),
   apiPatch: (...a: unknown[]) => apiPatch(...a),
   apiPost: (...a: unknown[]) => apiPost(...a),
   apiPut: (...a: unknown[]) => apiPut(...a),
@@ -33,7 +37,7 @@ function post(over: Partial<IssueWithReviewers>): IssueWithReviewers {
   }
 }
 
-const run = vi.fn(async (ids: string[], mutate: (id: string) => Promise<unknown>) => {
+const run = vi.fn(async (ids: string[], mutate: (id: string) => Promise<unknown>, _failure: string) => {
   await Promise.all(ids.map((id) => mutate(id)))
 })
 
@@ -108,5 +112,68 @@ describe('PostBulkActions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(2))
     expect(apiPut.mock.calls[0]![1]).toEqual({ targets: [{ platform: 'instagram', connectionId: 'c1' }] })
+  })
+
+  it('leaves approved, scheduled and handed-off posts out of Reschedule and Destinations, and says so', async () => {
+    setup([
+      post({ id: 'p1' }),
+      post({ id: 'p2', displayId: 'RE-2', status: 'SCHEDULED' }),
+      post({ id: 'p3', displayId: 'RE-3', publishTargets: [{ platform: 'tiktok', state: 'HANDED_OFF' }] }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
+    expect(await screen.findByTestId('excluded-note')).toHaveTextContent('2 posts are live, approved or already handed')
+    expect(screen.getByTestId('excluded-note')).toHaveTextContent('RE-2, RE-3')
+    fireEvent.click(await screen.findByLabelText(/Rexcipe IG/))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1))
+    expect(apiPut.mock.calls[0]![0]).toContain('/work-items/p1/publish-targets')
+  })
+
+  it('disables Reschedule and Destinations when every selected post is locked', () => {
+    setup([post({ id: 'p1', status: 'APPROVED' })])
+    expect(screen.getByRole('button', { name: 'Reschedule' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Destinations' })).toBeDisabled()
+  })
+
+  it('keeps the settings of a destination that stays selected (e.g. TikTok options) and adds new ones plain', async () => {
+    apiGetImpl.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.includes('/work-items/p1/publish-targets')
+          ? [{ id: 't', platform: 'tiktok', connectionId: 'c2', lane: 'NATIVE', state: 'PENDING', format: 'reel', publishOptions: { privacyLevel: 'PUBLIC' }, captionOverride: 'Own caption' }]
+          : OPTIONS,
+      ),
+    )
+    setup([post({ id: 'p1' })])
+    fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
+    fireEvent.click(await screen.findByLabelText(/Rexcipe TikTok/))
+    fireEvent.click(screen.getByLabelText(/Rexcipe IG/))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1))
+    const targets = (apiPut.mock.calls[0]![1] as { targets: Record<string, unknown>[] }).targets
+    expect(targets.find((t) => t.platform === 'tiktok')).toMatchObject({
+      format: 'reel',
+      publishOptions: { privacyLevel: 'PUBLIC' },
+      captionOverride: 'Own caption',
+    })
+    expect(targets.find((t) => t.platform === 'instagram')).toEqual({ platform: 'instagram', connectionId: 'c1' })
+  })
+
+  it('does not count or PATCH posts whose tags would not change', async () => {
+    setup([post({ id: 'p1', tags: ['launch'] }), post({ id: 'p2', tags: undefined }), post({ id: 'p3', tags: [] })])
+    fireEvent.click(screen.getByRole('button', { name: 'Tags' }))
+    fireEvent.change(screen.getByLabelText(/Tags \(comma/), { target: { value: 'launch' } })
+    fireEvent.change(screen.getByLabelText('Tag action'), { target: { value: 'remove' } })
+    expect(screen.getByText('1 of 3 posts will change.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove tags' }))
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect(apiPatch.mock.calls[0]![0]).toContain('/work-items/p1')
+    expect(apiPatch.mock.calls[0]![1]).toEqual({ tags: [] })
+  })
+
+  it('passes a full-phrase failure message to the runner for each action', async () => {
+    setup([post({ id: 'p1', publishTargets: [{ platform: 'tiktok', state: 'FAILED' }] })])
+    fireEvent.click(screen.getByRole('button', { name: /Retry failed/ }))
+    await waitFor(() => expect(run).toHaveBeenCalled())
+    expect(run.mock.calls[0]![2]).toBe('to retry the failed destinations')
   })
 })

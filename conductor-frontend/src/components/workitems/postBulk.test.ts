@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyTagChange, hasFailedTarget, isLivePost, parseTags, shiftSchedule } from './postBulk'
+import { applyTagChange, hasFailedTarget, isEditLocked, isLivePost, parseTags, shiftSchedule, tagsDiffer } from './postBulk'
 
 describe('isLivePost', () => {
   it('is live with a published destination, a live link or a Published status', () => {
@@ -55,5 +55,29 @@ describe('tags', () => {
     const cur = ['a']
     expect(applyTagChange(cur, ['a'], 'add')).toBe(cur)
     expect(applyTagChange(cur, ['z'], 'remove')).toBe(cur)
+  })
+})
+
+describe('isEditLocked', () => {
+  it('locks live, approved, scheduled and handed-off posts', () => {
+    expect(isEditLocked({ status: 'APPROVED' })).toBe(true)
+    expect(isEditLocked({ status: 'SCHEDULED' })).toBe(true)
+    expect(isEditLocked({ status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'HANDED_OFF' }] })).toBe(true)
+    expect(isEditLocked({ status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'PUBLISHED' }] })).toBe(true)
+  })
+  it('leaves drafts, in-review, changes-requested and failed posts editable', () => {
+    for (const status of ['DRAFT', 'IN_REVIEW', 'CHANGES_REQUESTED', 'FAILED']) {
+      expect(isEditLocked({ status, publishTargets: [{ platform: 'tiktok', state: 'PENDING' }] })).toBe(false)
+    }
+  })
+})
+
+describe('tagsDiffer', () => {
+  it('compares contents, so an unchanged or missing list is not a change', () => {
+    expect(tagsDiffer(undefined, ['a'], 'remove')).toBe(false)
+    expect(tagsDiffer([], ['a'], 'remove')).toBe(false)
+    expect(tagsDiffer(['a'], ['a'], 'add')).toBe(false)
+    expect(tagsDiffer(undefined, ['a'], 'add')).toBe(true)
+    expect(tagsDiffer(['a', 'b'], ['b'], 'remove')).toBe(true)
   })
 })

@@ -221,7 +221,7 @@ describe('selection and bulk actions', () => {
     await user.type(screen.getByLabelText('Search by label'), 'slide 01')
     await waitFor(() => expect(tileIds()).toEqual(['4x5-1']))
     expect(screen.getByText('1 selected')).toBeInTheDocument()
-    expect(screen.getByText('2 hidden by filters')).toBeInTheDocument()
+    expect(screen.getByText('(2 hidden by filters)')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Mark checked' }))
     await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
     expect((apiPatch as Mock).mock.calls[0][0]).toContain('/4x5-1')

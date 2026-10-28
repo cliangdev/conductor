@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 
 vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
@@ -30,6 +30,30 @@ describe('PostsUsingCreativePanel', () => {
   it('says so when nothing uses it', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
     render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
+    expect(await screen.findByText('No posts use this creative yet.')).toBeInTheDocument()
+  })
+
+  it('shows only the publishing workflow\'s posts', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'w1', displayId: 'RE-1', title: 'A post', status: 'DRAFT', workflow: 'MARKETING' },
+      { id: 'w2', displayId: 'CH-1', title: 'A change', status: 'PLANNED', workflow: 'MARKETING_CHANGES' },
+    ])
+    render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
+    expect(await screen.findByText('A post')).toBeInTheDocument()
+    expect(screen.queryByText('A change')).toBeNull()
+  })
+
+  it('clears the previous creative\'s posts and error when the creative changes', async () => {
+    const get = apiGet as ReturnType<typeof vi.fn>
+    get.mockRejectedValueOnce(new Error('boom'))
+    const { rerender } = render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
+    expect(await screen.findByText('Could not load the posts using this creative')).toBeInTheDocument()
+
+    let release: (v: unknown[]) => void = () => {}
+    get.mockReturnValueOnce(new Promise((r) => (release = r)))
+    rerender(<PostsUsingCreativePanel projectId="p" creativeId="c2" token="t" />)
+    await waitFor(() => expect(screen.queryByText('Could not load the posts using this creative')).toBeNull())
+    release([])
     expect(await screen.findByText('No posts use this creative yet.')).toBeInTheDocument()
   })
 })

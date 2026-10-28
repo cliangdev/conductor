@@ -17,6 +17,7 @@ interface PostRow {
   title: string
   status: string
   statusLabel?: string
+  workflow?: string
 }
 
 export function PostsUsingCreativePanel({
@@ -36,6 +37,9 @@ export function PostsUsingCreativePanel({
 
   useEffect(() => {
     let cancelled = false
+    // A different Creative must not show the previous one's posts, or its error, while loading.
+    setPosts(null)
+    setError(null)
     apiGet<PostRow[]>(`/api/v2/projects/${projectId}/work-items?creativeId=${encodeURIComponent(creativeId)}`, token)
       .then((rows) => !cancelled && setPosts(rows))
       .catch((err) => {
@@ -48,21 +52,24 @@ export function PostsUsingCreativePanel({
     }
   }, [projectId, creativeId, token])
 
+  // Rows link through the publishing workflow's own list, so only that workflow's posts are shown.
+  const shown = postsEntry && posts ? posts.filter((p) => !p.workflow || p.workflow === postsEntry.slug) : posts
+
   return (
     <Card data-testid="posts-using-creative">
       <CardHeader>
         <h3 className="text-sm font-semibold text-foreground">Posts using this</h3>
       </CardHeader>
       <CardContent>
-        {posts === null ? (
+        {shown === null ? (
           <Skeleton className="h-8 w-full" />
         ) : error ? (
           <p className="text-sm text-destructive">{error}</p>
-        ) : posts.length === 0 ? (
+        ) : shown.length === 0 ? (
           <p className="text-sm text-muted-foreground">No posts use this creative yet.</p>
         ) : (
           <ul className="divide-y divide-border">
-            {posts.map((p) => (
+            {shown.map((p) => (
               <li key={p.id} className="flex items-center gap-3 py-2 text-sm">
                 <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{p.displayId}</span>
                 {postsHref ? (
