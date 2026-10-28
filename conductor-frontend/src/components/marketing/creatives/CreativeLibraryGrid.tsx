@@ -10,11 +10,13 @@ import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { markPageReady } from '@/lib/perf'
 import { useRouter } from 'next/navigation'
-import { ImagesIcon, LayersIcon, PlayIcon } from 'lucide-react'
+import { ImagesIcon, LayersIcon, PlayIcon, SearchIcon } from 'lucide-react'
 import { mountBoard } from '@cliangdev/creative-render/mount'
 import { motionKeyTimes } from '@cliangdev/creative-render/motion'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
+import { Input } from '@/components/ui/input'
 import { CopyableCode } from '@/components/ui/copyable-code'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Label } from '@/components/ui/label'
@@ -22,6 +24,10 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Can } from '@/components/auth/Can'
+import { useCan } from '@/contexts/PermissionsContext'
+import { FloatingBulkBar } from '@/components/marketing/shared/FloatingBulkBar'
+import { useRangeSelection } from '@/components/marketing/shared/useRangeSelection'
+import { usePostsHref } from '@/components/marketing/shared/ContentSubNav'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { formatDuration } from '@/lib/format'
@@ -32,6 +38,7 @@ import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/mark
 import {
   creativeToRenderCreative,
   createCreative,
+  deleteCreative,
   listCreatives,
   type Creative,
   type CreativePhoto,
@@ -39,6 +46,16 @@ import {
 } from '@/components/marketing/creatives/types'
 import type { RenderBrand } from '@/components/marketing/creatives/renderTypes'
 import { tileMediaIds, useMediaByIds } from '@/components/marketing/media/useMediaByIds'
+
+type CreativeSort = 'newest' | 'oldest' | 'name' | 'used'
+
+/** Pure: a family's text for search — id, names and copy of every member. */
+function familyText(members: Creative[]): string {
+  return members
+    .map((m) => [m.displayId, m.name, m.headline, m.body].filter(Boolean).join(' '))
+    .join(' ')
+    .toLowerCase()
+}
 
 const STATE_HUE: Record<CreativeState, 'gray' | 'teal' | 'slate'> = {
   DRAFT: 'gray',
@@ -181,6 +198,14 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
   const [stateFilter, setStateFilter] = useState<CreativeState | ''>('')
   const [kitFilter, setKitFilter] = useState('')
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<CreativeSort>('newest')
+  const [reloadKey, setReloadKey] = useState(0)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const canManage = useCan('creative.manage')
+  const postsHref = usePostsHref(projectId)
 
   useEffect(() => {
     if (!projectId || !accessToken) return
@@ -213,7 +238,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
     return () => {
       cancelled = true
     }
-  }, [projectId, accessToken, stateFilter, kitFilter])
+  }, [projectId, accessToken, stateFilter, kitFilter, reloadKey])
 
   const kitById = useMemo(() => {
     const map = new Map<string, BrandKit>()
@@ -233,13 +258,61 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       list.push(creative)
       byNumber.set(creative.number, list)
     }
-    return [...byNumber.entries()]
-      .map(([number, members]) => ({
+    const all = [...byNumber.entries()].map(([number, members]) => {
+      const sorted = [...members].sort((a, b) => a.variantLetter.localeCompare(b.variantLetter))
+      return {
         number,
-        members: [...members].sort((a, b) => a.variantLetter.localeCompare(b.variantLetter)),
-      }))
-      .sort((a, b) => b.number - a.number)
-  }, [creatives])
+        members: sorted,
+        used: sorted.reduce((n, m) => n + (m.postCount ?? 0), 0),
+        text: familyText(sorted),
+      }
+    })
+    const needle = query.trim().toLowerCase()
+    const matched = needle ? all.filter((f) => f.text.includes(needle)) : all
+    const nameOf = (f: (typeof all)[number]) => (f.members[0].name || f.members[0].displayId).toLowerCase()
+    return matched.sort((a, b) => {
+      switch (sort) {
+        case 'oldest':
+          return a.number - b.number
+        case 'name':
+          return nameOf(a).localeCompare(nameOf(b))
+        case 'used':
+          return b.used - a.used || b.number - a.number
+        default:
+          return b.number - a.number
+      }
+    })
+  }, [creatives, query, sort])
+
+  // Selection works on whole families (the "a" root with its variants): that is what a tile is.
+  const rootIds = useMemo(() => families.map((f) => f.members[0].id), [families])
+  const selection = useRangeSelection(rootIds)
+  const selectedFamilies = families.filter((f) => selection.selectedVisible.includes(f.members[0].id))
+
+  /** Deletes each selected family, variants first (the server refuses a root that still has variants). */
+  async function deleteSelected() {
+    if (!accessToken) return
+    setDeleting(true)
+    setError(null)
+    setNotice(null)
+    const failures: string[] = []
+    let done = 0
+    for (const family of selectedFamilies) {
+      const ordered = [...family.members].reverse()
+      try {
+        for (const member of ordered) await deleteCreative(projectId, member.id, accessToken)
+        done++
+        selection.remove(family.members[0].id)
+      } catch (err) {
+        failures.push(`${family.members[0].displayId}: ${apiErrorMessage(err, 'could not be deleted')}`)
+      }
+    }
+    setDeleting(false)
+    setDeleteOpen(false)
+    setNotice(`${done} deleted${failures.length ? `, ${failures.length} failed` : ''}.`)
+    if (failures.length) setError(failures.join(' · '))
+    setReloadKey((k) => k + 1)
+  }
 
   async function handleNewCreative() {
     if (!accessToken || creating) return
@@ -256,13 +329,37 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
   const loading = creatives === null
   useEffect(() => { if (!loading) markPageReady('creatives-library') }, [loading])
-  const filtered = Boolean(stateFilter || kitFilter)
+  const filtered = Boolean(stateFilter || kitFilter || query.trim())
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-16">
       <BrandSetupNotice projectId={projectId} kit={defaultKit} />
 
       <div className="flex flex-wrap items-end gap-3">
+        <div className="relative w-56">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-subtle" aria-hidden />
+          <Input
+            type="search"
+            aria-label="Search creatives"
+            placeholder="Search name, copy or ID"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+
+        <div className="min-w-[9rem]">
+          <Label htmlFor="creative-sort" className="text-xs font-medium text-muted-foreground">
+            Sort
+          </Label>
+          <Select id="creative-sort" value={sort} onChange={(e) => setSort(e.target.value as CreativeSort)}>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="name">Name</option>
+            <option value="used">Most used</option>
+          </Select>
+        </div>
+
         <div className="min-w-[9rem]">
           <Label htmlFor="creative-state-filter" className="text-xs font-medium text-muted-foreground">
             State
@@ -300,6 +397,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
             onClick={() => {
               setStateFilter('')
               setKitFilter('')
+              setQuery('')
             }}
           >
             Clear filters
@@ -316,6 +414,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       </div>
 
       {error && <Alert variant="destructive">{error}</Alert>}
+      {notice && <Alert variant="info">{notice}</Alert>}
 
       {loading ? (
         <GridSkeleton />
@@ -357,63 +456,122 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
         )
       ) : (
         <div data-testid="creative-grid" className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {families.map(({ members }) => {
+          {families.map(({ members, used }) => {
             const root = members[0]
             const variants = members.slice(1)
             const kit = kitById.get(root.brandKitId)
             const brand = brandKitToBrand(kit)
             const isSequence = Boolean(root.sequenceKind && root.sequence.length > 0)
+            const isSelected = selection.isSelected(root.id)
             return (
-              <Link
+              <div
                 key={root.id}
-                href={`/app/projects/${projectId}/marketing/creatives/${root.id}`}
-                className="group block overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-strong"
+                data-testid={`creative-tile-${root.id}`}
+                data-selected={isSelected || undefined}
+                className={`group relative overflow-hidden rounded-lg border bg-surface transition-colors hover:border-border-strong ${
+                  isSelected ? 'border-primary ring-2 ring-primary' : 'border-border'
+                }`}
               >
-                {root.kind === 'CAROUSEL' ? (
-                  <CarouselThumb creative={root} mediaById={mediaById} />
-                ) : root.kind === 'CLIP' ? (
-                  <ClipThumb creative={root} mediaById={mediaById} />
-                ) : (
-                  <CreativeThumb creative={root} brand={brand} mediaById={mediaById} />
-                )}
-                <div className="flex flex-col gap-1.5 border-t border-border p-3">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="font-mono">{root.displayId}</span>
-                    {isSequence && (
-                      <span title={`${root.sequenceKind === 'carousel' ? 'Carousel' : 'Story'} · ${root.sequence.length}`}>
-                        <LayersIcon className="h-3 w-3" aria-hidden />
-                      </span>
-                    )}
-                    {variants.length > 0 && (
-                      <span className="flex gap-1">
-                        {variants.map((v) => (
-                          <span
-                            key={v.id}
-                            role="link"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              router.push(`/app/projects/${projectId}/marketing/creatives/${v.id}`)
-                            }}
-                            className="cursor-pointer rounded px-1 font-mono hover:bg-surface-3 hover:text-foreground"
-                          >
-                            {v.variantLetter}
-                          </span>
-                        ))}
-                      </span>
-                    )}
-                    {showKitName && kit && <span className="ml-auto shrink-0 truncate">{kit.name}</span>}
+                <Link
+                  href={`/app/projects/${projectId}/marketing/creatives/${root.id}`}
+                  className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {root.kind === 'CAROUSEL' ? (
+                    <CarouselThumb creative={root} mediaById={mediaById} />
+                  ) : root.kind === 'CLIP' ? (
+                    <ClipThumb creative={root} mediaById={mediaById} />
+                  ) : (
+                    <CreativeThumb creative={root} brand={brand} mediaById={mediaById} />
+                  )}
+                  <div className="flex flex-col gap-1.5 border-t border-border px-3 pt-3">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-mono">{root.displayId}</span>
+                      {isSequence && (
+                        <span title={`${root.sequenceKind === 'carousel' ? 'Carousel' : 'Story'} · ${root.sequence.length}`}>
+                          <LayersIcon className="h-3 w-3" aria-hidden />
+                        </span>
+                      )}
+                      {showKitName && kit && <span className="ml-auto shrink-0 truncate">{kit.name}</span>}
+                    </div>
+                    <p className="truncate text-sm text-foreground" title={root.name || root.displayId}>
+                      {root.name || (root.kind === 'CAROUSEL' ? (carouselSlideCount(root.slides) === 1 ? 'Image' : 'Carousel') : root.kind === 'CLIP' ? 'Clip' : root.layout)}
+                    </p>
+                    <StatusBadge status={root.state} hue={STATE_HUE[root.state]} label={STATE_LABEL[root.state]} className="self-start" />
                   </div>
-                  <p className="truncate text-sm text-foreground" title={root.name || root.displayId}>
-                    {root.name || (root.kind === 'CAROUSEL' ? (carouselSlideCount(root.slides) === 1 ? 'Image' : 'Carousel') : root.kind === 'CLIP' ? 'Clip' : root.layout)}
-                  </p>
-                  <StatusBadge status={root.state} hue={STATE_HUE[root.state]} label={STATE_LABEL[root.state]} className="self-start" />
+                </Link>
+                {/* Variant letters and usage are real links beside the tile link, never nested inside it. */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-3 pt-1.5 text-xs text-muted-foreground">
+                  {variants.map((v) => (
+                    <Link
+                      key={v.id}
+                      href={`/app/projects/${projectId}/marketing/creatives/${v.id}`}
+                      aria-label={`Open variant ${v.displayId}`}
+                      className="rounded px-1 font-mono hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {v.variantLetter}
+                    </Link>
+                  ))}
+                  {used > 0 && postsHref ? (
+                    <Link
+                      href={`${postsHref}?creativeId=${root.id}`}
+                      data-testid={`creative-used-${root.id}`}
+                      className="ml-auto hover:text-foreground hover:underline"
+                    >
+                      Used in {used} {used === 1 ? 'post' : 'posts'}
+                    </Link>
+                  ) : used > 0 ? (
+                    <span className="ml-auto" data-testid={`creative-used-${root.id}`}>
+                      Used in {used} {used === 1 ? 'post' : 'posts'}
+                    </span>
+                  ) : null}
                 </div>
-              </Link>
+                {canManage && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${root.displayId}`}
+                    checked={isSelected}
+                    onChange={() => {}}
+                    onClick={(e) => selection.select(root.id, e.shiftKey)}
+                    className={`absolute left-1.5 top-1.5 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100 ${
+                      selection.selected.length === 0 ? 'opacity-0' : ''
+                    }`}
+                  />
+                )}
+              </div>
             )
           })}
         </div>
+      )}
+
+      {canManage && selectedFamilies.length > 0 && (
+        <FloatingBulkBar count={selectedFamilies.length} hiddenCount={selection.hiddenCount} onClear={selection.clear}>
+          <Button variant="outline" size="sm" className="text-destructive" disabled={deleting} onClick={() => setDeleteOpen(true)}>
+            Delete
+          </Button>
+        </FloatingBulkBar>
+      )}
+
+      {deleteOpen && (
+        <ConfirmModal
+          open
+          title={`Delete ${selectedFamilies.length} ${selectedFamilies.length === 1 ? 'creative' : 'creatives'}?`}
+          description="Variants go with their creative. One still on a post is refused, and the post is named."
+          confirmLabel={`Delete ${selectedFamilies.length}`}
+          busyLabel="Deleting…"
+          busy={deleting}
+          onCancel={() => !deleting && setDeleteOpen(false)}
+          onConfirm={() => void deleteSelected()}
+        >
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-foreground">
+            {selectedFamilies.map((f) => (
+              <li key={f.members[0].id} className="truncate">
+                <span className="mr-2 font-mono text-xs text-muted-foreground">{f.members[0].displayId}</span>
+                {f.members[0].name}
+                {f.used > 0 && <span className="ml-2 text-xs text-muted-foreground">used in {f.used} {f.used === 1 ? 'post' : 'posts'}</span>}
+              </li>
+            ))}
+          </ul>
+        </ConfirmModal>
       )}
     </div>
   )

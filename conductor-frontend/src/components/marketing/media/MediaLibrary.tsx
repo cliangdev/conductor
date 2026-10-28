@@ -11,6 +11,7 @@
 // columns), so those load everything unpaged, exactly like the page used to.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { markPageReady } from '@/lib/perf'
 import { FilmIcon, UploadCloudIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
@@ -19,6 +20,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCan } from '@/contexts/PermissionsContext'
+import { usePostsHref } from '@/components/marketing/shared/ContentSubNav'
 import { apiErrorMessage } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { FloatingBulkBar } from '@/components/marketing/shared/FloatingBulkBar'
@@ -50,6 +52,7 @@ const ACCEPT = Object.values(ALLOWED_CONTENT_TYPES).flat().join(',')
 export function MediaLibrary({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth()
   const canManage = useCan('creative.manage')
+  const postsHref = usePostsHref(projectId)
   const token = accessToken ?? ''
 
   const [items, setItems] = useState<CreativePhoto[] | null>(null)
@@ -360,11 +363,20 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                       {audioUsageLabel(item.creativeCount ?? 0, item.postCount ?? 0)}
                     </span>
                   ) : (
-                    (item.postCount ?? 0) > 0 && (
+                    (item.postCount ?? 0) > 0 &&
+                    (postsHref ? (
+                      <Link
+                        href={`${postsHref}?mediaId=${item.id}`}
+                        data-testid={`media-posts-${item.id}`}
+                        className="text-muted-foreground hover:text-foreground hover:underline"
+                      >
+                        {item.postCount} {item.postCount === 1 ? 'post' : 'posts'}
+                      </Link>
+                    ) : (
                       <span className="text-muted-foreground">
                         {item.postCount} {item.postCount === 1 ? 'post' : 'posts'}
                       </span>
-                    )
+                    ))
                   )}
                   {!item.checked && <span className="text-muted-foreground">Unchecked</span>}
                 </div>

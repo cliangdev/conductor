@@ -44,6 +44,7 @@ import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarVie
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
+import { ContentSubNav } from '@/components/marketing/shared/ContentSubNav'
 import { PendingConsentNotice } from '@/components/marketing/consent/PendingConsentNotice'
 import { WorkItemGridView } from '@/components/workitems/WorkItemGridView'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
@@ -87,6 +88,9 @@ export function WorkItemListView({
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
+  // "Posts using this Creative / Media": the Creative and Media pages link here with one of these set.
+  const creativeFilter = searchParams.get('creativeId')
+  const mediaFilter = searchParams.get('mediaId')
   const viewParam = searchParams.get('view')
   const view: ListView = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
 
@@ -155,7 +159,12 @@ export function WorkItemListView({
     try {
       const [issueData, memberData] = await Promise.all([
         // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
-        apiGet<IssueWithReviewers[]>(`/api/v2/projects/${projectId}/work-items?workflow=${slug}`, accessToken),
+        apiGet<IssueWithReviewers[]>(
+          `/api/v2/projects/${projectId}/work-items?workflow=${slug}` +
+            (creativeFilter ? `&creativeId=${encodeURIComponent(creativeFilter)}` : '') +
+            (mediaFilter ? `&mediaId=${encodeURIComponent(mediaFilter)}` : ''),
+          accessToken
+        ),
         // Shared cache: deduplicates the concurrent fetch from PermissionsContext.
         fetchMembersCached(projectId, accessToken),
       ])
@@ -170,7 +179,7 @@ export function WorkItemListView({
       setError(apiErrorMessage(err, `Failed to load ${title.toLowerCase()}`))
       setLoading(false)
     }
-  }, [accessToken, projectId, slug, user?.id, title])
+  }, [accessToken, projectId, slug, user?.id, title, creativeFilter, mediaFilter])
 
   useEffect(() => {
     void loadIssues()
@@ -347,6 +356,21 @@ export function WorkItemListView({
           ) : undefined
         }
       />
+
+      {opensComposePage && (
+        <ContentSubNav projectId={projectId} active="posts" postsHref={workItemListPath(projectId, detailArea, noun)} />
+      )}
+
+      {(creativeFilter || mediaFilter) && (
+        <Alert variant="info" className="mb-3">
+          <span data-testid="usage-filter">
+            Showing {lowerNoun} that use {creativeFilter ? 'one Creative' : 'one media item'}.
+          </span>
+          <Link prefetch={false} href={workItemListPath(projectId, detailArea, noun)} className="ml-2 underline">
+            Show all
+          </Link>
+        </Alert>
+      )}
 
       {opensComposePage && accessToken && <PendingConsentNotice projectId={projectId} token={accessToken} />}
 

@@ -51,6 +51,7 @@ import { BrandSetupNotice } from '@/components/marketing/brand/BrandSetupNotice'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import { CarouselSlidesSection } from '@/components/marketing/creatives/CarouselSlidesSection'
 import { CLIP_PLACEMENT_KEYS, nearestAspectPlacement } from '@/components/marketing/creatives/clipPlacement'
+import { PostsUsingCreativePanel } from '@/components/marketing/creatives/PostsUsingCreativePanel'
 import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
 import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
 import { MediaPicker } from '@/components/marketing/creatives/MediaPicker'
@@ -1950,6 +1951,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             registry={registry}
             onLatestSucceededChange={setLatestSucceededRender}
           />
+
+          <PostsUsingCreativePanel projectId={projectId} creativeId={creativeId} token={token} />
 
           <CreativePerformancePanel projectId={projectId} creativeId={creativeId} token={token} />
         </div>

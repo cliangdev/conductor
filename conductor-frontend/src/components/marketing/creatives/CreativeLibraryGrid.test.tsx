@@ -28,11 +28,16 @@ const { mountBoardSpy } = vi.hoisted(() => ({
 }))
 vi.mock('@cliangdev/creative-render/mount', () => ({ mountBoard: mountBoardSpy }))
 
+vi.mock('@/components/marketing/shared/ContentSubNav', () => ({
+  usePostsHref: () => '/app/projects/proj-1/marketing/posts',
+}))
+
 Object.assign(navigator, {
   clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
 })
 
-import { apiGet, apiGetPage, apiPost } from '@/lib/api'
+import { apiDelete, apiGet, apiGetPage, apiPost } from '@/lib/api'
+import { fireEvent } from '@testing-library/react'
 import { CreativeLibraryGrid } from './CreativeLibraryGrid'
 import type { Creative, CreativePhoto } from './types'
 import type { BrandKit } from '@/components/marketing/brand/types'
@@ -381,5 +386,71 @@ describe('CreativeLibraryGrid', () => {
     render(<CreativeLibraryGrid projectId="proj-1" />)
     await screen.findByText('12a')
     expect(apiGetPage).not.toHaveBeenCalled()
+  })
+
+  describe('browse, usage and bulk delete', () => {
+    const family = () => [
+      creative({ id: 'a', number: 3, displayId: '3a', name: 'Zebra', postCount: 0 }),
+      creative({ id: 'b', number: 5, displayId: '5a', name: 'Apple', postCount: 4, headline: 'Crisp autumn' }),
+      creative({ id: 'b2', number: 5, variantLetter: 'b', displayId: '5b', parentCreativeId: 'b', name: 'Apple b', postCount: 1 }),
+    ]
+
+    it('shows "Used in N posts" summed over a family and links to the pre-filtered Posts list', async () => {
+      mockGets({ creatives: family() })
+      render(<CreativeLibraryGrid projectId="proj-1" />)
+      const link = await screen.findByTestId('creative-used-b')
+      expect(link).toHaveTextContent('Used in 5 posts')
+      expect(link).toHaveAttribute('href', '/app/projects/proj-1/marketing/posts?creativeId=b')
+      expect(screen.queryByTestId('creative-used-a')).toBeNull()
+    })
+
+    it('renders variant letters as real links, never a role=link span nested in the tile link', async () => {
+      mockGets({ creatives: family() })
+      render(<CreativeLibraryGrid projectId="proj-1" />)
+      const variant = await screen.findByRole('link', { name: 'Open variant 5b' })
+      expect(variant.tagName).toBe('A')
+      expect(variant.closest('a:not([aria-label])')).toBeNull()
+      expect(variant).toHaveAttribute('href', '/app/projects/proj-1/marketing/creatives/b2')
+    })
+
+    it('searches by name, copy and id, and sorts by name and most used', async () => {
+      mockGets({ creatives: family() })
+      render(<CreativeLibraryGrid projectId="proj-1" />)
+      await screen.findByText('3a')
+
+      fireEvent.change(screen.getByLabelText('Search creatives'), { target: { value: 'autumn' } })
+      expect(screen.queryByText('3a')).toBeNull()
+      expect(screen.getByText('5a')).toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('Search creatives'), { target: { value: '' } })
+
+      fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'name' } })
+      const ids = () => screen.getAllByTestId(/^creative-tile-/).map((t) => t.getAttribute('data-testid'))
+      expect(ids()).toEqual(['creative-tile-b', 'creative-tile-a'])
+      fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'oldest' } })
+      expect(ids()).toEqual(['creative-tile-a', 'creative-tile-b'])
+      fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'used' } })
+      expect(ids()).toEqual(['creative-tile-b', 'creative-tile-a'])
+    })
+
+    it('multi-selects with shift range and bulk-deletes variants before the root, reporting failures', async () => {
+      mockGets({ creatives: family() })
+      ;(apiDelete as Mock).mockImplementation((path: string) =>
+        path.endsWith('/a') ? Promise.reject(new Error('on a post')) : Promise.resolve(undefined),
+      )
+      render(<CreativeLibraryGrid projectId="proj-1" />)
+      await screen.findByText('3a')
+      // newest first: 5 then 3
+      fireEvent.click(screen.getByLabelText('Select 5a'))
+      fireEvent.click(screen.getByLabelText('Select 3a'), { shiftKey: true })
+      expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete 2' }))
+
+      await waitFor(() => expect(apiDelete).toHaveBeenCalledTimes(3))
+      const paths = (apiDelete as Mock).mock.calls.map((c) => c[0] as string)
+      expect(paths.indexOf(paths.find((p) => p.endsWith('/b2'))!)).toBeLessThan(paths.indexOf(paths.find((p) => p.endsWith('/b'))!))
+      expect(await screen.findByText('1 deleted, 1 failed.')).toBeInTheDocument()
+    })
   })
 })

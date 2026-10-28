@@ -99,6 +99,8 @@ export interface Creative {
   displayId: string
   parentCreativeId?: string | null
   name?: string | null
+  /** List response only: distinct Posts that use a rendered frame of this Creative. */
+  postCount?: number | null
   state: CreativeState
   /** Defaults to STILL on the server; older responses cached before this field existed are treated
    *  as STILL by every call site below. */
