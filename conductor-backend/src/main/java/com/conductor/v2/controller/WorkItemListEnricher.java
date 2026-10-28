@@ -4,6 +4,9 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.generated.v2.model.WorkItemCreativeRef;
 import com.conductor.generated.v2.model.WorkItemPublishTargetSummary;
+import com.conductor.creative.CreativePhotoRepository;
+import com.conductor.creative.CreativeRenderFrame;
+import com.conductor.creative.CreativeRenderFrameRepository;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.StorageService;
@@ -14,8 +17,10 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * List-only enrichment of Work Items for the Posts list: first-image thumbnail URL, publish-target
@@ -39,13 +44,51 @@ public class WorkItemListEnricher {
     private final PostPublishTargetRepository targets;
     private final AssetCreativeOriginResolver originResolver;
     private final StorageService storage;
+    private final CreativeRenderFrameRepository frames;
+    private final CreativePhotoRepository photos;
 
     public WorkItemListEnricher(AssetRepository assets, PostPublishTargetRepository targets,
-                                AssetCreativeOriginResolver originResolver, StorageService storage) {
+                                AssetCreativeOriginResolver originResolver, StorageService storage,
+                                CreativeRenderFrameRepository frames, CreativePhotoRepository photos) {
+        this.frames = frames;
+        this.photos = photos;
         this.assets = assets;
         this.targets = targets;
         this.originResolver = originResolver;
         this.storage = storage;
+    }
+
+    /**
+     * Ids of the Work Items that use a Creative (through its rendered frames) and/or a Media item (directly,
+     * or through a frame that reuses its stored object). A null argument is not applied; when both are
+     * given, the Work Item must match both. Null when neither is given (no filtering).
+     */
+    public Set<String> idsUsing(String creativeId, String mediaId) {
+        Set<String> result = null;
+        if (creativeId != null && !creativeId.isBlank()) {
+            List<String> frameIds = frames.findAllByCreativeId(creativeId).stream().map(CreativeRenderFrame::getId).toList();
+            Set<String> ids = new HashSet<>();
+            if (!frameIds.isEmpty()) {
+                assets.findAllByCreativeFrameIdIn(frameIds).forEach(a -> ids.add(a.getWorkItem().getId()));
+            }
+            result = ids;
+        }
+        if (mediaId != null && !mediaId.isBlank()) {
+            Set<String> ids = new HashSet<>();
+            assets.findAllByMediaIdFetchWorkItem(mediaId).forEach(a -> ids.add(a.getWorkItem().getId()));
+            photos.findById(mediaId).ifPresent(p -> {
+                if (p.getGcsPath() != null) {
+                    assets.findAllByFrameObjectPathsFetchWorkItem(List.of(p.getGcsPath()))
+                            .forEach(a -> ids.add(a.getWorkItem().getId()));
+                }
+            });
+            if (result == null) {
+                result = ids;
+            } else {
+                result.retainAll(ids);
+            }
+        }
+        return result;
     }
 
     /** Work Item id → enrichment; ids with nothing to add are absent. */

@@ -558,6 +558,36 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void listCountsDistinctPostsUsingEachCreativesFrames() {
+        workflowSeeder.seedMarketing(project);
+        WorkItem post = workItemService.createWorkItem(project.getId(), "POST", "Counted", "Caption", "MARKETING", admin);
+        Creative used = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin).creative();
+        Creative unused = creativeService.createCreative(project.getId(),
+                concept("Another *hook*.", "Another plan."), admin).creative();
+        CreativeRenderFrame frame = newSucceededRenderWithFrame(used);
+        for (int i = 0; i < 2; i++) { // two Assets on one Post still count that Post once
+            Asset asset = new Asset();
+            asset.setWorkItem(post);
+            asset.setType("facebook_post");
+            asset.setKind(AssetService.KIND_FILE);
+            asset.setRef("marketing-assets/" + frame.getId() + i);
+            asset.setGcsPath("marketing-assets/" + frame.getId() + i);
+            asset.setContentType("image/jpeg");
+            asset.setSizeBytes(500L);
+            asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+            asset.setCreativeFrameId(frame.getId());
+            assetRepository.save(asset);
+        }
+
+        Map<String, Integer> counts = creativeService.listCreatives(project.getId(), null, null, admin).stream()
+                .collect(java.util.stream.Collectors.toMap(v -> v.creative().getId(), CreativeService.CreativeView::postCount));
+
+        assertThat(counts.get(used.getId())).isEqualTo(1);
+        assertThat(counts.get(unused.getId())).isZero();
+    }
+
+    @Test
     void deletingACreativeWithARenderFrameStillOnAPostIsRefused() {
         workflowSeeder.seedMarketing(project);
         WorkItem post = workItemService.createWorkItem(project.getId(), "POST", "Launch teaser", "Caption", "MARKETING", admin);

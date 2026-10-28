@@ -29,7 +29,28 @@ class WorkItemListEnricherTest {
     private final PostPublishTargetRepository targets = mock(PostPublishTargetRepository.class);
     private final AssetCreativeOriginResolver origins = mock(AssetCreativeOriginResolver.class);
     private final StorageService storage = mock(StorageService.class);
-    private final WorkItemListEnricher enricher = new WorkItemListEnricher(assets, targets, origins, storage);
+    private final com.conductor.creative.CreativeRenderFrameRepository frames =
+            mock(com.conductor.creative.CreativeRenderFrameRepository.class);
+    private final com.conductor.creative.CreativePhotoRepository photos =
+            mock(com.conductor.creative.CreativePhotoRepository.class);
+    private final WorkItemListEnricher enricher =
+            new WorkItemListEnricher(assets, targets, origins, storage, frames, photos);
+
+    @Test
+    void idsUsingNarrowsByCreativeAndMediaAndIsNullWithoutFilters() {
+        assertThat(enricher.idsUsing(null, " ")).isNull();
+
+        com.conductor.creative.CreativeRenderFrame f = new com.conductor.creative.CreativeRenderFrame();
+        f.setId("f1");
+        when(frames.findAllByCreativeId("c1")).thenReturn(List.of(f));
+        when(assets.findAllByCreativeFrameIdIn(anyCollection()))
+                .thenReturn(List.of(image("a1", "w1", "p", "f1"), image("a2", "w2", "p", "f1")));
+        assertThat(enricher.idsUsing("c1", null)).containsExactlyInAnyOrder("w1", "w2");
+
+        when(assets.findAllByMediaIdFetchWorkItem("m1")).thenReturn(List.of(image("a3", "w2", "p", null)));
+        when(photos.findById("m1")).thenReturn(java.util.Optional.empty());
+        assertThat(enricher.idsUsing("c1", "m1")).containsExactly("w2");
+    }
 
     @Test
     void emptyPageRunsNoQueries() {

@@ -33,6 +33,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Canonical v2 Work Item resource ({@code /api/v2/projects/{projectId}/work-items}). This is the successor
@@ -91,10 +92,16 @@ public class WorkItemController implements WorkItemsApi {
     @Transactional(readOnly = true)
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
                                                                 String workflow, String tag,
-                                                                LocalDate dueBefore) {
+                                                                LocalDate dueBefore, String creativeId,
+                                                                String mediaId) {
         User caller = currentUser();
         List<WorkItem> items =
                 workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, dueBefore, caller);
+        // "Posts using this Creative / Media": narrow the already project-scoped, access-checked list.
+        Set<String> using = listEnricher.idsUsing(creativeId, mediaId);
+        if (using != null) {
+            items = items.stream().filter(i -> using.contains(i.getId())).toList();
+        }
         List<String> ids = items.stream().map(WorkItem::getId).toList();
         Map<String, Long> counts = workItemService.unresolvedCommentCounts(ids);
         // One query for the whole page, like the comment counts beside it — the list is exactly where an

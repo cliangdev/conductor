@@ -128,9 +128,18 @@ public class CreativeService {
     public record CreativeView(Creative creative, String photoUrl,
                                CreativeRenderService.RenderView latestRenderSummary,
                                CreativeRenderService.RenderView latestRenderFull,
-                               String activeExperimentId) {
+                               String activeExperimentId, Integer postCount) {
         public CreativeView(Creative creative, String photoUrl) {
-            this(creative, photoUrl, null, null, null);
+            this(creative, photoUrl, null, null, null, null);
+        }
+
+        public CreativeView(Creative creative, String photoUrl, CreativeRenderService.RenderView latestRenderSummary,
+                            CreativeRenderService.RenderView latestRenderFull, String activeExperimentId) {
+            this(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, null);
+        }
+
+        CreativeView withPostCount(Integer count) {
+            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, count);
         }
     }
 
@@ -179,8 +188,10 @@ public class CreativeService {
                 experiments.putIfAbsent(e.getParentCreativeId(), e.getId());
             }
         }
+        Map<String, Integer> postCounts = postCountsByCreative(projectId);
         return creatives.stream()
-                .map(c -> toView(c, photos, renders.get(c.getId()), experiments.get(rootIdOf(c))))
+                .map(c -> toView(c, photos, renders.get(c.getId()), experiments.get(rootIdOf(c)))
+                        .withPostCount(postCounts.getOrDefault(c.getId(), 0)))
                 .toList();
     }
 
@@ -1488,6 +1499,32 @@ public class CreativeService {
                 ? storageService.generateSignedUrl(photo.getGcsPath(), PHOTO_URL_EXPIRY_MINUTES)
                 : null;
         return new CreativeView(creative, url, summary, null, activeExperimentId);
+    }
+
+    /**
+     * Distinct Posts per Creative, through the Creative's rendered frames attached to them. Two reads for the
+     * whole project (frame links, then those frames' Creative ids) however many Creatives there are.
+     */
+    private Map<String, Integer> postCountsByCreative(String projectId) {
+        List<Object[]> links = assetRepository.findFrameLinksByProjectId(projectId);
+        if (links.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> creativeByFrame = new HashMap<>();
+        for (Object[] f : frameRepository.findRefsByIdIn(
+                links.stream().map(r -> (String) r[0]).collect(Collectors.toSet()))) {
+            creativeByFrame.put((String) f[0], (String) f[1]);
+        }
+        Map<String, Set<String>> posts = new HashMap<>();
+        for (Object[] row : links) {
+            String creativeId = creativeByFrame.get((String) row[0]);
+            if (creativeId != null) {
+                posts.computeIfAbsent(creativeId, k -> new HashSet<>()).add((String) row[1]);
+            }
+        }
+        Map<String, Integer> out = new HashMap<>();
+        posts.forEach((id, set) -> out.put(id, set.size()));
+        return out;
     }
 
     private static String rootIdOf(Creative creative) {

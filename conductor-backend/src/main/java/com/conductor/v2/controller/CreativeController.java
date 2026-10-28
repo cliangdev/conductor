@@ -522,6 +522,7 @@ public class CreativeController implements CreativesApi {
                 c.getCreatedAt(), c.getUpdatedAt())
                 .parentCreativeId(c.getParentCreativeId())
                 .name(c.getName())
+                .postCount(view.postCount())
                 .photoId(c.getPhotoId())
                 .photoUrl(view.photoUrl())
                 .focalOverride(c.getFocalOverride() != null ? toStringMap(c.getFocalOverride()) : null)

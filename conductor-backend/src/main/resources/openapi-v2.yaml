@@ -140,6 +140,20 @@ paths:
           schema:
             type: string
             format: date
+        - name: creativeId
+          in: query
+          required: false
+          description: Only Work Items that use a rendered frame of this Creative (the Creative's "Posts using this").
+          schema:
+            type: string
+        - name: mediaId
+          in: query
+          required: false
+          description: >-
+            Only Work Items that use this Media library item, directly or through a Creative frame that
+            reuses its stored object.
+          schema:
+            type: string
       responses:
         "200":
           description: List of Work Items
@@ -9576,6 +9590,12 @@ components:
         - createdAt
         - updatedAt
       properties:
+        postCount:
+          type: integer
+          nullable: true
+          description: >-
+            List response only. How many distinct Work Items (Posts) use a rendered frame of this Creative.
+            Null on the single-item reads.
         id:
           type: string
         projectId:
