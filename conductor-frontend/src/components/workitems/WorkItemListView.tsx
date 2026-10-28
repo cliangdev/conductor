@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { markPageReady } from '@/lib/perf'
 import { Badge } from '@/components/ui/badge'
+import { Alert } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { CommentCount } from '@/components/ui/comment-count'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -48,6 +49,7 @@ import { WorkItemGridView } from '@/components/workitems/WorkItemGridView'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
+import { PostBulkActions } from '@/components/workitems/PostBulkActions'
 import { UserAvatar } from '@/components/workitems/UserAvatar'
 import { useWorkItemListState } from '@/components/workitems/useWorkItemListState'
 import type {
@@ -237,6 +239,7 @@ export function WorkItemListView({
   const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
   const startCreating = () => (opensComposePage ? router.push(composePath) : setCreating(true))
 
+  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; retry?: () => Promise<void> } | null>(null)
   const bulkStatusTriggerRef = useRef<HTMLButtonElement>(null)
   const bulkAssignTriggerRef = useRef<HTMLButtonElement>(null)
 
@@ -269,6 +272,12 @@ export function WorkItemListView({
       } else {
         listState.clearSelection()
       }
+      // The per-item result line ("7 done, 1 failed") with a retry for just the failures.
+      setBulkResult({
+        done: ids.length - failedIds.length,
+        failed: failedIds.length,
+        retry: failedIds.length > 0 ? () => runBulkMutation(failedIds, mutate, failureNoun) : undefined,
+      })
       await loadIssues()
     } finally {
       listState.setBulkInFlight(false)
@@ -412,6 +421,27 @@ export function WorkItemListView({
         </div>
       </div>
 
+      {bulkResult && (
+        <Alert variant={bulkResult.failed > 0 ? 'destructive' : 'info'} className="mb-3">
+          <span data-testid="bulk-result">
+            {bulkResult.done} done{bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}
+          </span>
+          {bulkResult.retry && (
+            <Button
+              variant="link"
+              size="sm"
+              disabled={listState.bulkInFlight}
+              onClick={() => void bulkResult.retry!()}
+            >
+              Retry failed
+            </Button>
+          )}
+          <Button variant="link" size="sm" onClick={() => setBulkResult(null)}>
+            Dismiss
+          </Button>
+        </Alert>
+      )}
+
       <ListToolbar
         typeOptions={typeOptions}
         statusOptions={statusOptions}
@@ -433,6 +463,8 @@ export function WorkItemListView({
           noun={noun}
           workflowView={workflowView}
           issues={listState.filteredIssues}
+          selectedIds={canEdit ? listState.selected : undefined}
+          onToggleSelect={canEdit ? listState.toggleSelect : undefined}
         />
       ) : mode === 'board' && workflowView ? (
         <WorkItemBoardView
@@ -445,6 +477,8 @@ export function WorkItemListView({
           accessToken={accessToken!}
           view={view}
           onStatusChanged={updateIssueStatus}
+          selectedIds={canEdit ? listState.selected : undefined}
+          onToggleSelect={canEdit ? listState.toggleSelect : undefined}
         />
       ) : issuesInView.length === 0 ? (
         counts.all === 0 && workflowDeclaresPublishTargets(workflowView) ? (
@@ -501,20 +535,6 @@ export function WorkItemListView({
         />
       ) : (
         <>
-          {canEdit && listState.selected.size > 0 && (
-            <BulkActionBar
-              count={listState.selected.size}
-              statusOptions={(workflowView?.statuses ?? []).map((s) => ({ id: s.id, label: s.label ?? humanizeId(s.id), category: s.category }))}
-              members={members}
-              onChangeStatus={bulkChangeStatus}
-              onAssign={bulkAssign}
-              disabled={listState.bulkInFlight}
-              statusTriggerRef={bulkStatusTriggerRef}
-              assignTriggerRef={bulkAssignTriggerRef}
-              onClear={listState.clearSelection}
-            />
-          )}
-
           {mode === 'grid' && (
             <WorkItemGridView
               issues={listState.groups.flatMap((g) => g.items)}
@@ -629,6 +649,29 @@ export function WorkItemListView({
           </div>
           </>)}
         </>
+      )}
+      {canEdit && listState.selected.size > 0 && (
+        <BulkActionBar
+          count={listState.selected.size}
+          statusOptions={(workflowView?.statuses ?? []).map((s) => ({ id: s.id, label: s.label ?? humanizeId(s.id), category: s.category }))}
+          members={members}
+          onChangeStatus={bulkChangeStatus}
+          onAssign={bulkAssign}
+          disabled={listState.bulkInFlight}
+          statusTriggerRef={bulkStatusTriggerRef}
+          assignTriggerRef={bulkAssignTriggerRef}
+          onClear={listState.clearSelection}
+        >
+          {opensComposePage && (
+            <PostBulkActions
+              projectId={projectId}
+              token={accessToken!}
+              selected={issues.filter((i) => listState.selected.has(i.id))}
+              disabled={listState.bulkInFlight}
+              run={runBulkMutation}
+            />
+          )}
+        </BulkActionBar>
       )}
     </PageContainer>
   )

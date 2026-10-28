@@ -580,6 +580,58 @@ describe('display mode', () => {
   })
 })
 
+describe('bulk results and selection in every view', () => {
+  it('reports "1 done, 1 failed" and retries just the failure', async () => {
+    apiPatch.mockImplementationOnce(() => Promise.reject(new Error('nope'))).mockResolvedValueOnce(undefined)
+    const user = userEvent.setup()
+    await renderList()
+    const firstLink = within(rowList()).getAllByRole('link')[0]
+    act(() => firstLink.focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent('1 done, 1 failed')
+    apiPatch.mockClear()
+    await user.click(screen.getByRole('button', { name: 'Retry failed' }))
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/i1', { status: 'DONE' }, 'token')
+    await waitFor(() => expect(screen.getByTestId('bulk-result')).toHaveTextContent('1 done'))
+  })
+
+  it('selects cards on the board and shows the bulk bar', async () => {
+    searchParamsValue = new URLSearchParams('mode=board')
+    render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
+    fireEvent.click(await screen.findByLabelText('Select Zeta task'))
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+  })
+
+  it('selects chips on the calendar and shows the bulk bar', async () => {
+    searchParamsValue = new URLSearchParams('mode=calendar')
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2026-03-15T12:00:00Z'))
+    try {
+      render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
+      fireEvent.click(await screen.findByLabelText('Select Zeta task'))
+      expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows Post bulk actions only for publishing workflows', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry failed' })).toBeDisabled()
+  })
+})
+
 describe('search', () => {
   it('filters by title, display id and tag, and Clear filters resets it', async () => {
     issues = [

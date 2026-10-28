@@ -1,0 +1,59 @@
+import { describe, expect, it } from 'vitest'
+import { applyTagChange, hasFailedTarget, isLivePost, parseTags, shiftSchedule } from './postBulk'
+
+describe('isLivePost', () => {
+  it('is live with a published destination, a live link or a Published status', () => {
+    expect(isLivePost({ status: 'SCHEDULED', publishTargets: [{ platform: 'tiktok', state: 'PUBLISHED' }] })).toBe(true)
+    expect(isLivePost({ status: 'SCHEDULED', externalLinks: [{ url: 'https://x', type: 'instagram_post' }] })).toBe(true)
+    expect(isLivePost({ status: 'published' })).toBe(true)
+  })
+  it('is not live while waiting, failed or draft', () => {
+    expect(
+      isLivePost({
+        status: 'SCHEDULED',
+        publishTargets: [
+          { platform: 'tiktok', state: 'PENDING' },
+          { platform: 'instagram', state: 'FAILED' },
+        ],
+      }),
+    ).toBe(false)
+    expect(isLivePost({ status: 'DRAFT' })).toBe(false)
+  })
+})
+
+describe('hasFailedTarget', () => {
+  it('detects a failed destination only', () => {
+    expect(hasFailedTarget({ publishTargets: [{ platform: 'tiktok', state: 'FAILED' }] })).toBe(true)
+    expect(hasFailedTarget({ publishTargets: [{ platform: 'tiktok', state: 'PUBLISHED' }] })).toBe(false)
+    expect(hasFailedTarget({})).toBe(false)
+  })
+})
+
+describe('shiftSchedule', () => {
+  it('moves by calendar days', () => {
+    expect(shiftSchedule('2026-03-04T15:00:00.000Z', 'UTC', 3)).toBe('2026-03-07T15:00:00.000Z')
+    expect(shiftSchedule('2026-03-04T15:00:00.000Z', 'UTC', -4)).toBe('2026-02-28T15:00:00.000Z')
+  })
+  it('keeps the wall-clock time across a DST change', () => {
+    // 9:00 New York on Sat 7 Mar 2026 (EST, UTC-5); +2 days is after the 8 Mar spring-forward (EDT, UTC-4).
+    expect(shiftSchedule('2026-03-07T14:00:00.000Z', 'America/New_York', 2)).toBe('2026-03-09T13:00:00.000Z')
+  })
+  it('returns null when there is no schedule', () => {
+    expect(shiftSchedule(null, 'UTC', 1)).toBeNull()
+  })
+})
+
+describe('tags', () => {
+  it('parses, lower-cases and de-duplicates', () => {
+    expect(parseTags(' Autumn, launch ,autumn,,\nPaid')).toEqual(['autumn', 'launch', 'paid'])
+  })
+  it('adds without duplicating and removes only what is present', () => {
+    expect(applyTagChange(['a'], ['a', 'b'], 'add')).toEqual(['a', 'b'])
+    expect(applyTagChange(['a', 'b'], ['b', 'z'], 'remove')).toEqual(['a'])
+  })
+  it('returns the same array when nothing changes', () => {
+    const cur = ['a']
+    expect(applyTagChange(cur, ['a'], 'add')).toBe(cur)
+    expect(applyTagChange(cur, ['z'], 'remove')).toBe(cur)
+  })
+})

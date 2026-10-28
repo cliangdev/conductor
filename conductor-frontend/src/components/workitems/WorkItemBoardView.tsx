@@ -44,6 +44,8 @@ export function WorkItemBoardView({
   accessToken,
   view,
   onStatusChanged,
+  selectedIds,
+  onToggleSelect,
 }: {
   projectId: string
   slug: string
@@ -54,6 +56,9 @@ export function WorkItemBoardView({
   accessToken: string
   view: BoardView
   onStatusChanged: (issueId: string, newStatus: string) => void
+  /** Bulk selection (omit to hide the checkboxes). */
+  selectedIds?: Set<string>
+  onToggleSelect?: (id: string) => void
 }) {
   const router = useRouter()
   const categories = categoriesForView(view)
@@ -105,8 +110,23 @@ export function WorkItemBoardView({
                       onClick={() =>
                         router.push(workItemDetailPath(projectId, area, noun, issue.displayId ?? ''))
                       }
-                      className="bg-card border border-border rounded-md p-3 cursor-pointer hover:border-ring hover:shadow-sm transition-all"
+                      data-selected={selectedIds?.has(issue.id) || undefined}
+                      className={`group relative bg-card border rounded-md p-3 cursor-pointer hover:border-ring hover:shadow-sm transition-all ${
+                        selectedIds?.has(issue.id) ? 'border-primary ring-2 ring-primary' : 'border-border'
+                      }`}
                     >
+                      {onToggleSelect && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${issue.title}`}
+                          checked={selectedIds?.has(issue.id) ?? false}
+                          onChange={() => onToggleSelect(issue.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`absolute right-2 top-2 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100 ${
+                            (selectedIds?.size ?? 0) === 0 ? 'opacity-0' : ''
+                          }`}
+                        />
+                      )}
                       {issue.displayId && (
                         <span className="font-mono text-xs text-muted-foreground block mb-1">
                           {issue.displayId}

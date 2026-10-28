@@ -1,6 +1,6 @@
 'use client'
 
-import type { RefObject } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -29,6 +29,7 @@ export function BulkActionBar({
   statusTriggerRef,
   assignTriggerRef,
   onClear,
+  children,
 }: {
   count: number
   statusOptions: { id: string; label: string; category: string }[]
@@ -40,6 +41,8 @@ export function BulkActionBar({
   statusTriggerRef?: RefObject<HTMLButtonElement | null>
   assignTriggerRef?: RefObject<HTMLButtonElement | null>
   onClear?: () => void
+  /** Extra actions after Assign (the Posts-only bulk actions). */
+  children?: ReactNode
 }) {
   return (
     <FloatingBulkBar count={count} onClear={onClear}>
@@ -77,6 +80,7 @@ export function BulkActionBar({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {children}
       </div>
     </FloatingBulkBar>
   )
