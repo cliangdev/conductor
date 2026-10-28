@@ -12,7 +12,6 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Checkbox } from '@/components/ui/checkbox'
 import { CalendarOff, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -164,17 +163,12 @@ export function WorkItemCalendarView({
   noun,
   workflowView,
   issues,
-  selectedIds,
-  onToggleSelect,
 }: {
   projectId: string
   area: string
   noun: string
   workflowView?: WorkflowView
   issues: CalendarWorkItem[]
-  /** Bulk selection (omit to hide the checkboxes). */
-  selectedIds?: Set<string>
-  onToggleSelect?: (id: string) => void
 }) {
   const [anchor, setAnchor] = useState<Date>(() => startOfMonth(new Date()))
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set())
@@ -297,15 +291,7 @@ export function WorkItemCalendarView({
                           // The outward link sits beside the chip, not inside it. An <a> may not contain
                           // another <a>: nested, it renders under React but the HTML parser hoists it out
                           // of the server-rendered markup, and hydration then disagrees with the DOM.
-                          <div key={issue.id} className="flex min-w-0 items-center gap-1" data-selected={selectedIds?.has(issue.id) || undefined}>
-                            {onToggleSelect && (
-                              <Checkbox
-                                checked={selectedIds?.has(issue.id) ?? false}
-                                onCheckedChange={() => onToggleSelect(issue.id)}
-                                label={<span className="sr-only">Select {issue.title}</span>}
-                                className="shrink-0"
-                              />
-                            )}
+                          <div key={issue.id} className="flex min-w-0 items-center gap-1">
                             <Link prefetch={false}
                               data-testid={`calendar-chip-${issue.id}`}
                               href={workItemDetailPath(projectId, area, noun, issue.displayId ?? '')}

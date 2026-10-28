@@ -494,8 +494,6 @@ export function WorkItemListView({
           noun={noun}
           workflowView={workflowView}
           issues={listState.filteredIssues}
-          selectedIds={canEdit ? listState.selected : undefined}
-          onToggleSelect={canEdit ? listState.toggleSelect : undefined}
         />
       ) : mode === 'board' && workflowView ? (
         <WorkItemBoardView
@@ -677,6 +675,7 @@ export function WorkItemListView({
                 members={members}
                 canEdit={canEdit}
                 selectedIds={listState.selected}
+                onToggleSelect={listState.toggleSelect}
                 tabStopId={listState.tabStopId}
                 roundedTop={i === 0}
                 roundedBottom={i === listState.groups.length - 1}
