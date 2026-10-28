@@ -48,6 +48,7 @@ class WorkItemControllerListTest {
     @MockitoBean private WorkItemService workItemService;
     @MockitoBean private WorkItemWorkflowService workItemWorkflowService;
     @MockitoBean private ReviewerService reviewerService;
+    @MockitoBean private WorkItemListEnricher listEnricher;
     @MockitoBean private ProjectMemberRepository projectMemberRepository;
 
     @MockitoBean private JwtService jwtService;

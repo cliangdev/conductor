@@ -49,17 +49,22 @@ public class WorkItemController implements WorkItemsApi {
 
     private static final Logger log = LoggerFactory.getLogger(WorkItemController.class);
     private static final ObjectMapper FIELDS_MAPPER = new ObjectMapper();
+    private static final WorkItemListEnricher.Enrichment EMPTY_ENRICHMENT =
+            new WorkItemListEnricher.Enrichment(null, List.of(), null);
 
     private final WorkItemService workItemService;
     private final WorkItemWorkflowService workItemWorkflowService;
     private final ReviewerService reviewerService;
+    private final WorkItemListEnricher listEnricher;
 
     public WorkItemController(WorkItemService workItemService,
                               WorkItemWorkflowService workItemWorkflowService,
-                              ReviewerService reviewerService) {
+                              ReviewerService reviewerService,
+                              WorkItemListEnricher listEnricher) {
         this.workItemService = workItemService;
         this.workItemWorkflowService = workItemWorkflowService;
         this.reviewerService = reviewerService;
+        this.listEnricher = listEnricher;
     }
 
     // open-in-view is disabled, so the entity→DTO mapping (which touches lazy User/Project associations)
@@ -98,10 +103,15 @@ public class WorkItemController implements WorkItemsApi {
         // Reviewers for the whole page in one batched read (plus one user batch), so the list view never
         // fans out a reviewers call per row.
         Map<String, List<ReviewerView>> reviewers = reviewerService.reviewersByWorkItem(ids);
+        // Thumbnail, publish-target states and Creative for the whole page, again in batched reads.
+        Map<String, WorkItemListEnricher.Enrichment> enrichment = listEnricher.enrich(ids);
         List<WorkItemResponse> responses = items.stream()
                 .map(item -> toResponse(item, counts.getOrDefault(item.getId(), 0L),
                         links.getOrDefault(item.getId(), List.of()))
                         .statusLabel(statusLabel(projectId, item))
+                        .thumbnailUrl(enrichment.getOrDefault(item.getId(), EMPTY_ENRICHMENT).thumbnailUrl())
+                        .publishTargets(enrichment.getOrDefault(item.getId(), EMPTY_ENRICHMENT).publishTargets())
+                        .creative(enrichment.getOrDefault(item.getId(), EMPTY_ENRICHMENT).creative())
                         .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
                                 .map(v -> new ReviewerResponse(v.userId())
                                         .name(v.name())

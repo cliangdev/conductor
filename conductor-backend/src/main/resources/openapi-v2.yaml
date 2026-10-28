@@ -5741,6 +5741,63 @@ components:
             to ask "did that go out, and where is it?".
           items:
             $ref: "#/components/schemas/WorkItemExternalLink"
+        thumbnailUrl:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >-
+            List response only. A short-lived signed URL for the first image attached to this item (the
+            Post's first media), for a thumbnail. Null when it has no image, and on single-item reads.
+        publishTargets:
+          type: array
+          readOnly: true
+          description: >-
+            List response only. Where this item is going out to and how each destination stands, one entry
+            per (platform, account) target, so a list can show a failed destination without opening the
+            item. Loaded in one batch for the whole page. Empty for items that publish nowhere; omitted on
+            single-item reads (use GET .../publish-targets).
+          items:
+            $ref: "#/components/schemas/WorkItemPublishTargetSummary"
+        creative:
+          $ref: "#/components/schemas/WorkItemCreativeRef"
+
+    WorkItemPublishTargetSummary:
+      type: object
+      required:
+        - platform
+        - state
+      properties:
+        platform:
+          type: string
+          description: facebook | instagram | youtube | tiktok
+        state:
+          type: string
+          description: The target's lifecycle state (PENDING, HANDED_OFF, PUBLISHING, AWAITING_MANUAL, PUBLISHED, FAILED, REVOKED).
+        stateLabel:
+          type: string
+          description: The human word for the state ("Waiting", "Published", "Failed", ...).
+        label:
+          type: string
+          nullable: true
+          description: The account this target posts to (page name or handle).
+
+    WorkItemCreativeRef:
+      type: object
+      description: >-
+        List response only (as WorkItemResponse.creative): the Creative whose rendered frame is attached to
+        the item. Null when there is none.
+      required:
+        - id
+        - displayId
+      properties:
+        id:
+          type: string
+        displayId:
+          type: string
+          description: The Creative's human number (e.g. "17a").
+        name:
+          type: string
+          nullable: true
 
     WorkItemExternalLink:
       type: object
