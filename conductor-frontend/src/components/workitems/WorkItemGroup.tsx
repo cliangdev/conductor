@@ -22,6 +22,7 @@ export function WorkItemGroup({
   tabStopId,
   roundedTop,
   roundedBottom,
+  publishing,
   onStatusChanged,
   onAssigneeChanged,
   onReviewersChanged,
@@ -46,6 +47,8 @@ export function WorkItemGroup({
   roundedTop?: boolean
   /** True for the last rendered group — its last row gets the list container's bottom corner radius. */
   roundedBottom?: boolean
+  /** Publishing/marketing workflow: rows show thumbnail, destinations and schedule. */
+  publishing?: boolean
   onStatusChanged: (id: string, status: string) => void
   onAssigneeChanged: (id: string, assignee: IssueAssignee | null) => void
   onReviewersChanged: (id: string, reviewers: IssueReviewer[]) => void
@@ -85,6 +88,7 @@ export function WorkItemGroup({
             canEdit={canEdit}
             selected={selectedIds.has(issue.id)}
             focused={tabStopId === issue.id}
+            publishing={publishing}
             onStatusChanged={onStatusChanged}
             onAssigneeChanged={onAssigneeChanged}
             onReviewersChanged={onReviewersChanged}

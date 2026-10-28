@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, Plus, SearchX } from 'lucide-react'
+import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, LayoutGridIcon, ListIcon, Plus, SearchX } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { markPageReady } from '@/lib/perf'
@@ -44,6 +44,7 @@ import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleto
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { PendingConsentNotice } from '@/components/marketing/consent/PendingConsentNotice'
+import { WorkItemGridView } from '@/components/workitems/WorkItemGridView'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
@@ -58,12 +59,12 @@ import type {
 } from '@/components/workitems/listTypes'
 import type { MemberRole } from '@/types'
 
-type DisplayMode = 'list' | 'board' | 'calendar'
+type DisplayMode = 'list' | 'board' | 'calendar' | 'grid'
 
 /** The one place the set of display modes is enumerated — used for URL, localStorage, and the
  *  Workflow's own `defaultView`, all of which carry the mode as an untrusted string. */
 function isDisplayMode(value: string): value is DisplayMode {
-  return value === 'list' || value === 'board' || value === 'calendar'
+  return value === 'list' || value === 'board' || value === 'calendar' || value === 'grid'
 }
 
 /**
@@ -91,7 +92,7 @@ export function WorkItemListView({
   // workflow defaultView.
   const modeKey = `wv_mode_${projectId}_${slug}`
   const modeExplicitKey = `wv_mode_explicit_${projectId}_${slug}`
-  const [mode, setMode] = useState<DisplayMode>(() => {
+  const [rawMode, setMode] = useState<DisplayMode>(() => {
     const p = searchParams.get('mode')
     if (p && isDisplayMode(p)) return p
     return readPersisted<DisplayMode>(modeKey, isDisplayMode, 'list')
@@ -231,6 +232,8 @@ export function WorkItemListView({
   // A publishing Workflow composes on its own page (caption, media, destinations and schedule laid out
   // like the Post's); everything else keeps the generic title-and-description modal.
   const opensComposePage = workflowDeclaresPublishTargets(workflowView)
+  // Grid (thumbnail cards) is for publishing Workflows only; a stored/URL 'grid' elsewhere falls back to list.
+  const mode: DisplayMode = rawMode === 'grid' && !opensComposePage ? 'list' : rawMode
   const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
   const startCreating = () => (opensComposePage ? router.push(composePath) : setCreating(true))
 
@@ -394,6 +397,18 @@ export function WorkItemListView({
           >
             <CalendarDaysIcon className="h-4 w-4" />
           </button>
+          {opensComposePage && (
+            <button
+              type="button"
+              title="Grid view"
+              onClick={() => setDisplayMode('grid')}
+              className={`p-1.5 rounded transition-colors ${
+                mode === 'grid' ? 'text-foreground bg-foreground/8' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              }`}
+            >
+              <LayoutGridIcon className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -406,7 +421,9 @@ export function WorkItemListView({
         onRemoveFilter={listState.removeFilter}
         sortKey={listState.sortKey}
         onSortChange={listState.setSortKey}
-        showSort={mode === 'list'}
+        showSort={mode === 'list' || mode === 'grid'}
+        query={listState.query}
+        onQueryChange={listState.setQuery}
       />
 
       {mode === 'calendar' ? (
@@ -494,9 +511,24 @@ export function WorkItemListView({
               disabled={listState.bulkInFlight}
               statusTriggerRef={bulkStatusTriggerRef}
               assignTriggerRef={bulkAssignTriggerRef}
+              onClear={listState.clearSelection}
             />
           )}
 
+          {mode === 'grid' && (
+            <WorkItemGridView
+              issues={listState.groups.flatMap((g) => g.items)}
+              projectId={projectId}
+              detailArea={detailArea}
+              noun={noun}
+              workflowView={workflowView}
+              canEdit={canEdit}
+              selectedIds={listState.selected}
+              onToggleSelect={listState.toggleSelect}
+            />
+          )}
+
+          {mode !== 'grid' && (<>
           {/* Mobile card list */}
           <div className="md:hidden space-y-2">
             {listState.groups.flatMap((g) => g.items).map((issue) => (
@@ -584,6 +616,7 @@ export function WorkItemListView({
                 tabStopId={listState.tabStopId}
                 roundedTop={i === 0}
                 roundedBottom={i === listState.groups.length - 1}
+                publishing={opensComposePage}
                 onStatusChanged={updateIssueStatus}
                 onAssigneeChanged={updateIssueAssignee}
                 onReviewersChanged={updateIssueReviewers}
@@ -594,6 +627,7 @@ export function WorkItemListView({
               />
             ))}
           </div>
+          </>)}
         </>
       )}
     </PageContainer>

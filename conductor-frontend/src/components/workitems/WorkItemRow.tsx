@@ -8,6 +8,7 @@ import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
 import { ReviewerCell } from '@/components/workitems/ReviewerCell'
 import { EmptyAvatarSlot, UserAvatar } from '@/components/workitems/UserAvatar'
+import { DestinationMarks, PostThumb, scheduleLabel } from '@/components/workitems/postDisplay'
 import { timeAgo } from '@/lib/format'
 import { workItemDetailPath } from '@/lib/workflows'
 import { cn } from '@/lib/utils'
@@ -35,6 +36,7 @@ export function WorkItemRow({
   canEdit,
   selected,
   focused,
+  publishing,
   onStatusChanged,
   onAssigneeChanged,
   onReviewersChanged,
@@ -55,6 +57,8 @@ export function WorkItemRow({
   canEdit: boolean
   selected: boolean
   focused: boolean
+  /** Publishing/marketing workflow: adds a 40px thumbnail, destination marks and the scheduled time. */
+  publishing?: boolean
   onStatusChanged: (id: string, status: string) => void
   onAssigneeChanged: (id: string, assignee: IssueAssignee | null) => void
   onReviewersChanged: (id: string, reviewers: IssueReviewer[]) => void
@@ -66,6 +70,7 @@ export function WorkItemRow({
   className?: string
 }) {
   const highlighted = selected || focused
+  const scheduled = publishing ? scheduleLabel(issue) : null
 
   return (
     <div
@@ -73,7 +78,8 @@ export function WorkItemRow({
       data-selected={selected || undefined}
       data-focused={focused || undefined}
       className={cn(
-        'flex items-center gap-3 h-[38px] px-3 border-b border-border last:border-b-0 transition-colors min-w-0',
+        publishing ? 'h-[56px]' : 'h-[38px]',
+        'flex items-center gap-3 px-3 border-b border-border last:border-b-0 transition-colors min-w-0',
         'hover:bg-muted',
         highlighted && 'bg-accent-soft shadow-[inset_2px_0_0_0_hsl(var(--primary))]',
         className
@@ -105,6 +111,7 @@ export function WorkItemRow({
         {issue.displayId && (
           <span className="font-mono text-xs text-muted-foreground w-16 shrink-0 truncate">{issue.displayId}</span>
         )}
+        {publishing && <PostThumb className="h-10 w-10" />}
         <span className="text-[13px] font-medium text-foreground truncate min-w-0">{issue.title}</span>
       </Link>
 
@@ -129,6 +136,12 @@ export function WorkItemRow({
       )}
 
       <div className="flex items-center gap-3 ml-auto shrink-0">
+        {publishing && <DestinationMarks issue={issue} />}
+        {scheduled && (
+          <span className="hidden text-[11.5px] text-muted-foreground lg:inline" data-testid="row-schedule">
+            {scheduled}
+          </span>
+        )}
         {/* Where it ended up outside Conductor. Sits outside the row anchor so a click opens the live
             post rather than the Work Item — the whole reason for putting it here is to save that trip. */}
         <ExternalLinkCell links={issue.externalLinks} />

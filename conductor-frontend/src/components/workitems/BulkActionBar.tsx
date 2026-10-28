@@ -9,6 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { FloatingBulkBar } from '@/components/marketing/shared/FloatingBulkBar'
 import { UserAvatar } from '@/components/workitems/UserAvatar'
 import type { Member } from '@/components/workitems/listTypes'
 
@@ -27,6 +28,7 @@ export function BulkActionBar({
   disabled,
   statusTriggerRef,
   assignTriggerRef,
+  onClear,
 }: {
   count: number
   statusOptions: { id: string; label: string; category: string }[]
@@ -37,11 +39,11 @@ export function BulkActionBar({
   disabled?: boolean
   statusTriggerRef?: RefObject<HTMLButtonElement | null>
   assignTriggerRef?: RefObject<HTMLButtonElement | null>
+  onClear?: () => void
 }) {
   return (
-    <div className="sticky bottom-0 z-10 flex items-center gap-3 rounded-md border border-border bg-accent-soft px-3 py-2 mt-2 text-sm">
-      <span className="font-medium text-foreground">{count} selected</span>
-      <div className="flex items-center gap-2 ml-auto">
+    <FloatingBulkBar count={count} onClear={onClear}>
+      <div className="flex items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button ref={statusTriggerRef} variant="outline" size="sm" disabled={disabled}>
@@ -76,6 +78,6 @@ export function BulkActionBar({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </div>
+    </FloatingBulkBar>
   )
 }

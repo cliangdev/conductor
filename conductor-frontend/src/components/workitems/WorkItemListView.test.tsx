@@ -35,6 +35,8 @@ interface MockIssue {
   assignee?: { userId: string; name: string; avatarUrl?: string | null } | null
   scheduledFor?: string | null
   scheduleTimezone?: string | null
+  tags?: string[]
+  externalLinks?: { url: string; type: string }[]
 }
 
 let issues: MockIssue[] = []
@@ -575,5 +577,84 @@ describe('display mode', () => {
     await renderList()
 
     expect(screen.getByTestId('work-item-calendar-grid')).toBeInTheDocument()
+  })
+})
+
+describe('search', () => {
+  it('filters by title, display id and tag, and Clear filters resets it', async () => {
+    issues = [
+      ...baseIssues(),
+      { ...baseIssues()[0]!, id: 'i5', title: 'Tagged thing', displayId: 'COND-5', tags: ['launch'] },
+    ]
+    await renderList()
+    const box = screen.getByLabelText('Search')
+
+    fireEvent.change(box, { target: { value: 'alpha' } })
+    expect(rowFor('i2')).toBeTruthy()
+    expect(document.getElementById('wi-row-i1')).toBeNull()
+
+    fireEvent.change(box, { target: { value: 'cond-1' } })
+    expect(rowFor('i1')).toBeTruthy()
+    expect(document.getElementById('wi-row-i2')).toBeNull()
+
+    fireEvent.change(box, { target: { value: 'launch' } })
+    expect(rowFor('i5')).toBeTruthy()
+    expect(document.getElementById('wi-row-i1')).toBeNull()
+
+    fireEvent.change(box, { target: { value: 'zzz-nothing' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }))
+    expect(rowFor('i1')).toBeTruthy()
+    expect(box).toHaveValue('')
+  })
+})
+
+describe('publishing workflow rows and grid', () => {
+  beforeEach(() => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    issues = [
+      {
+        ...baseIssues()[0]!,
+        externalLinks: [{ url: 'https://instagram.com/p/1', type: 'instagram_post' }],
+      },
+      baseIssues()[1]!,
+    ]
+  })
+
+  function renderPosts() {
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    return waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+  }
+
+  it('shows destination marks and the scheduled time on rows', async () => {
+    await renderPosts()
+    const row = rowFor('i1')
+    expect(within(row).getByTestId('destination-marks')).toBeInTheDocument()
+    expect(within(row).getByTestId('row-schedule')).toHaveTextContent('Mar 4')
+    expect(within(rowFor('i2')).queryByTestId('destination-marks')).toBeNull()
+  })
+
+  it('does not enrich rows of a non-publishing workflow', async () => {
+    VIEW = BASE_VIEW
+    await renderList()
+    expect(within(rowFor('i1')).queryByTestId('row-schedule')).toBeNull()
+  })
+
+  it('switches to the grid, selects a card and shows the bulk bar', async () => {
+    await renderPosts()
+    fireEvent.click(screen.getByTitle('Grid view'))
+    expect(screen.getByTestId('work-item-grid')).toBeInTheDocument()
+    expect(screen.queryByTestId('work-item-list')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wv_mode_proj-1_MARKETING')).toBe('grid')
+
+    fireEvent.click(screen.getByLabelText('Select Zeta task'))
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+  })
+
+  it('offers no grid toggle on a non-publishing workflow', async () => {
+    VIEW = BASE_VIEW
+    await renderList()
+    expect(screen.queryByTitle('Grid view')).toBeNull()
   })
 })

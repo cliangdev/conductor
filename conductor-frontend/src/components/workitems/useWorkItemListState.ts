@@ -75,6 +75,9 @@ export function useWorkItemListState({
   bulkAssignTriggerRef,
 }: UseWorkItemListStateArgs) {
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([])
+  // Free-text search over title, tags and display id (client-side, case-insensitive).
+  const [query, setQuery] = useState('')
+  const needle = query.trim().toLowerCase()
 
   const [sortKey, setSortKey] = usePersistedState<SortKey>(
     `wv_sort_${storageKeyPrefix}`,
@@ -92,6 +95,7 @@ export function useWorkItemListState({
 
   function clearFilters() {
     setActiveFilters([])
+    setQuery('')
   }
 
   // Switching tabs (Active/Done/All) changes which statuses are even selectable — prune any status
@@ -123,12 +127,22 @@ export function useWorkItemListState({
         // Every selected tag must be present: picking two narrows to items carrying both, which is
         // what makes tags useful for finding one campaign's paid posts rather than either set.
         if (tagValues.length > 0 && !tagValues.every((t) => issue.tags?.includes(t))) return false
+        if (
+          needle &&
+          !(
+            issue.title.toLowerCase().includes(needle) ||
+            (issue.displayId ?? '').toLowerCase().includes(needle) ||
+            (issue.tags ?? []).some((t) => t.toLowerCase().includes(needle))
+          )
+        ) {
+          return false
+        }
         return true
       }),
     // typeValues/statusValues are recomputed every render from activeFilters — their joined keys
     // are the stable identity to depend on instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issuesInView, typeValuesKey, statusValuesKey, tagValuesKey]
+    [issuesInView, typeValuesKey, statusValuesKey, tagValuesKey, needle]
   )
 
   // Group by workflow status, in workflow-defined order, within the current tab's categories.
@@ -330,6 +344,8 @@ export function useWorkItemListState({
     addFilter,
     removeFilter,
     clearFilters,
+    query,
+    setQuery,
     sortKey,
     setSortKey,
     groups,
