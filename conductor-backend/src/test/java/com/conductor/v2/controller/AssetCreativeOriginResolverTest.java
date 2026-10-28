@@ -58,6 +58,33 @@ class AssetCreativeOriginResolverTest {
         return a;
     }
 
+    @Test
+    void moreFramesThanOneInListHoldsAreReadInBoundedChunks() {
+        int n = AssetCreativeOriginResolver.CHUNK * 2 + 1;
+        java.util.List<Asset> assets = new java.util.ArrayList<>();
+        java.util.List<CreativeRenderFrame> all = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            assets.add(asset("a" + i, "f" + i));
+            all.add(frame("f" + i, "c1", "9x16", 0));
+        }
+        Creative c1 = new Creative();
+        c1.setId("c1");
+        c1.setNumber(1);
+        c1.setVariantLetter("a");
+        when(frames.findAllById(anyIterable())).thenAnswer(inv -> {
+            java.util.Set<String> wanted = new java.util.HashSet<>();
+            ((Iterable<String>) inv.getArgument(0)).forEach(wanted::add);
+            assertThat(wanted.size()).isLessThanOrEqualTo(AssetCreativeOriginResolver.CHUNK);
+            return all.stream().filter(f -> wanted.contains(f.getId())).toList();
+        });
+        when(creatives.findAllById(anyIterable())).thenReturn(List.of(c1));
+
+        Map<String, AssetCreativeOriginResolver.Origin> out = resolver.resolve(assets);
+
+        assertThat(out).hasSize(n);
+        verify(frames, times(3)).findAllById(anyIterable());
+    }
+
     private static CreativeRenderFrame frame(String id, String creativeId, String placement, Integer seq) {
         CreativeRenderFrame f = new CreativeRenderFrame();
         f.setId(id);

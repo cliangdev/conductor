@@ -7,6 +7,7 @@ import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -996,10 +997,25 @@ public class WorkItemService {
                 });
     }
 
+    /** Deletes a Work Item; refuses one that is live on a platform (use the overload with {@code confirmLive}). */
     @Transactional
     public void deleteWorkItem(String projectId, String workItemId, User caller) {
+        deleteWorkItem(projectId, workItemId, caller, false);
+    }
+
+    /**
+     * Deletes a Work Item. A Post with a destination that is PUBLISHED is live on a platform; deleting it only
+     * removes it from Conductor and leaves the live post behind, so it is refused (409) unless the caller
+     * states that it knows ({@code confirmLive}). A bulk or automated caller never passes it.
+     */
+    @Transactional
+    public void deleteWorkItem(String projectId, String workItemId, User caller, boolean confirmLive) {
         verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        if (!confirmLive && publishTargetService.hasPublishedTarget(workItem.getId())) {
+            throw new ConflictException("This post is live on a platform. Deleting it only removes it from "
+                    + "Conductor and leaves the live post behind; confirm to delete it anyway.");
+        }
         // Deleting a scheduled Post must not leave a live post behind on the platform.
         nativeHandoffService.unschedule(workItem);
         // Then its destinations, before the Post: the revoke loaded them, and Hibernate refuses to flush

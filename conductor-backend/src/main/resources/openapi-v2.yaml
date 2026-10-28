@@ -323,6 +323,10 @@ paths:
       tags:
         - work-items
       summary: Delete a Work Item
+      description: >-
+        Refused with 409 when the Work Item has a destination that is already PUBLISHED (live on a platform):
+        deleting would only remove it from Conductor and leave the live post behind. Pass
+        `confirmLive=true` to delete it anyway; a bulk or automated caller should not.
       operationId: deleteWorkItem
       security:
         - bearerAuth: []
@@ -338,9 +342,22 @@ paths:
           required: true
           schema:
             type: string
+        - name: confirmLive
+          in: query
+          required: false
+          description: Delete even though a destination is live on a platform.
+          schema:
+            type: boolean
+            default: false
       responses:
         "204":
           description: Work Item deleted
+        "409":
+          description: The Work Item is live on a platform and `confirmLive` was not set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Not authenticated
           content:
@@ -5847,6 +5864,14 @@ components:
             $ref: "#/components/schemas/WorkItemPublishTargetSummary"
         creative:
           $ref: "#/components/schemas/WorkItemCreativeRef"
+        enrichmentFailed:
+          type: boolean
+          nullable: true
+          readOnly: true
+          description: >-
+            List response only, with `enrich=true`. True when the extras could not be worked out for this item
+            (its Workflow could not be resolved), so whether it has live destinations is UNKNOWN. A client
+            must not treat such an item as one that is not live. Absent otherwise.
 
     WorkItemPublishTargetSummary:
       type: object

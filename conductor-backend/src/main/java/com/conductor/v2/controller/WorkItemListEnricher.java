@@ -52,9 +52,20 @@ public class WorkItemListEnricher {
     /** Largest IN list sent in one statement. */
     static final int CHUNK = 500;
 
+    /**
+     * {@code failed} marks an item whose Workflow could not be resolved, so whether it publishes (and what its
+     * destinations are) is UNKNOWN, as opposed to {@link #EMPTY}, which is a confirmed "nothing to add". A
+     * client must not treat an unknown Post as one that is not live.
+     */
     public record Enrichment(String thumbnailUrl, List<WorkItemPublishTargetSummary> publishTargets,
-                             WorkItemCreativeRef creative) {
+                             WorkItemCreativeRef creative, boolean failed) {
+        public Enrichment(String thumbnailUrl, List<WorkItemPublishTargetSummary> publishTargets,
+                          WorkItemCreativeRef creative) {
+            this(thumbnailUrl, publishTargets, creative, false);
+        }
+
         public static final Enrichment EMPTY = new Enrichment(null, List.of(), null);
+        public static final Enrichment FAILED = new Enrichment(null, null, null, true);
     }
 
     private final AssetRepository assets;
@@ -137,23 +148,33 @@ public class WorkItemListEnricher {
         return result;
     }
 
-    /** Work Item id → enrichment; ids with nothing to add are absent. */
+    /**
+     * Work Item id → enrichment; ids with nothing to add are absent. Items of a Workflow that could not be
+     * resolved carry {@link Enrichment#FAILED}, never a silent empty.
+     */
     public Map<String, Enrichment> enrich(String projectId, Collection<WorkItem> items) {
         if (items == null || items.isEmpty()) {
             return Map.of();
         }
         // Publishing is a property of the pinned Workflow version, so resolve once per (slug, version).
+        // TRUE: publishes; FALSE: confirmed not publishing; null: the lookup failed, so it is unknown.
         Map<String, Boolean> publishingByVersion = new HashMap<>();
         List<String> workItemIds = new ArrayList<>();
+        Map<String, Enrichment> out = new HashMap<>();
         for (WorkItem item : items) {
             String key = item.getWorkflow() + "@" + item.getWorkflowVersion();
-            boolean publishing = publishingByVersion.computeIfAbsent(key, k -> declaresPublishing(projectId, item, k));
-            if (publishing) {
+            if (!publishingByVersion.containsKey(key)) {
+                publishingByVersion.put(key, declaresPublishing(projectId, item, key));
+            }
+            Boolean publishing = publishingByVersion.get(key);
+            if (publishing == null) {
+                out.put(item.getId(), Enrichment.FAILED);
+            } else if (publishing) {
                 workItemIds.add(item.getId());
             }
         }
         if (workItemIds.isEmpty()) {
-            return Map.of();
+            return out;
         }
 
         Map<String, Asset> imageByItem = new HashMap<>();
@@ -171,7 +192,6 @@ public class WorkItemListEnricher {
         Map<String, AssetCreativeOriginResolver.Origin> origins = originResolver.resolve(frameAssetByItem.values());
         Map<String, String> videoPosterPaths = videoPosterPaths(workItemIds, imageByItem.keySet());
 
-        Map<String, Enrichment> out = new HashMap<>();
         for (String id : workItemIds) {
             Asset image = imageByItem.get(id);
             String path = image != null ? image.getGcsPath() : videoPosterPaths.get(id);
@@ -185,15 +205,15 @@ public class WorkItemListEnricher {
         return out;
     }
 
-    private boolean declaresPublishing(String projectId, WorkItem item, String key) {
+    private Boolean declaresPublishing(String projectId, WorkItem item, String key) {
         try {
             Statechart statechart = workflows.resolveFor(projectId, item);
             return platforms.declaresPublishing(statechart);
         } catch (RuntimeException e) {
             // One unresolvable Workflow version must not take the whole list down: its items are simply
             // not enriched, and the others are.
-            log.warn("Could not resolve workflow {} to decide list enrichment; skipping its items: {}", key, e.toString());
-            return false;
+            log.warn("Could not resolve workflow {} to decide list enrichment; marking its items unknown: {}", key, e.toString());
+            return null;
         }
     }
 

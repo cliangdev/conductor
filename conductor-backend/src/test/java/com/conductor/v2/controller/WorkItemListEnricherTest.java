@@ -229,8 +229,20 @@ class WorkItemListEnricherTest {
 
         Map<String, WorkItemListEnricher.Enrichment> out = enricher.enrich("p", List.of(v1, v2));
 
-        assertThat(out).containsOnlyKeys("w2");
+        // The failed version is marked UNKNOWN (never a silent empty); the healthy one is enriched.
+        assertThat(out).containsOnlyKeys("w1", "w2");
+        assertThat(out.get("w1")).isSameAs(WorkItemListEnricher.Enrichment.FAILED);
+        assertThat(out.get("w1").failed()).isTrue();
+        assertThat(out.get("w1").publishTargets()).isNull();
+        assertThat(out.get("w2").failed()).isFalse();
         verify(workflows, times(2)).resolveFor(any(), any());
+    }
+
+    @Test
+    void aConfirmedNonPublishingWorkflowIsNotMarkedFailed() {
+        when(platforms.declaresPublishing(any())).thenReturn(false);
+        assertThat(enricher.enrich("p", List.of(item("w1", "ENGINEERING")))).isEmpty();
+        assertThat(WorkItemListEnricher.Enrichment.EMPTY.failed()).isFalse();
     }
 
     @Test

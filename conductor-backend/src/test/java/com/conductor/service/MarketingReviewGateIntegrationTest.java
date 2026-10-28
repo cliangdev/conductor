@@ -355,6 +355,27 @@ class MarketingReviewGateIntegrationTest {
         addUploadedAsset("teaser.png");
     }
 
+    @Test
+    void deletingALivePostIsRefusedUnlessTheCallerConfirmsItIsLive() {
+        addTarget("tiktok", "tiktok", null);
+        String postId = reload().getId();
+        int before = postPublishTargetRepository.findAllByWorkItemId(postId).size();
+        for (PostPublishTarget target : postPublishTargetRepository.findAllByWorkItemId(postId)) {
+            target.setState(PostPublishTargetState.PUBLISHED);
+            postPublishTargetRepository.save(target);
+        }
+
+        assertThatThrownBy(() -> workItemService.deleteWorkItem(project.getId(), postId, author))
+                .isInstanceOf(com.conductor.exception.ConflictException.class)
+                .hasMessageContaining("live on a platform");
+        // Refused means untouched: the Post and its destination are both still there.
+        assertThat(workItemRepository.findById(postId)).isPresent();
+        assertThat(postPublishTargetRepository.findAllByWorkItemId(postId)).hasSize(before);
+
+        workItemService.deleteWorkItem(project.getId(), postId, author, true);
+        assertThat(workItemRepository.findById(postId)).isEmpty();
+    }
+
     /**
      * Deleting a Post whose destination is still in flight used to fail with a Hibernate transient-reference
      * error, because the revoke loaded the rows and the Post was removed underneath them.

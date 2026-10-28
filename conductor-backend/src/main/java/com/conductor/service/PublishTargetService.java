@@ -313,6 +313,12 @@ public class PublishTargetService {
      * flush ("references an unsaved transient instance") — a 500 for any Post with a destination still in
      * flight. The database cascade would have handled rows the session never saw; this handles the rest.
      */
+    /** True when any destination of the Work Item has actually gone out (is PUBLISHED, i.e. live). */
+    @Transactional(readOnly = true)
+    public boolean hasPublishedTarget(String workItemId) {
+        return !targetRepository.findAllByWorkItemIdAndState(workItemId, PostPublishTargetState.PUBLISHED).isEmpty();
+    }
+
     @Transactional
     public void deleteAllForWorkItem(String workItemId) {
         targetRepository.deleteAll(targetRepository.findAllByWorkItemId(workItemId));

@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -114,5 +115,19 @@ class WorkItemControllerListTest {
         mockMvc.perform(get(URL).param("creativeId", "c1").param("mediaId", "m1")
                 .header("Authorization", "Bearer valid-token")).andExpect(status().isOk());
         verify(listEnricher).idsUsing("proj-1", "c1", "m1");
+    }
+
+    @Test
+    void delete_doesNotConfirmLiveByDefault() throws Exception {
+        mockMvc.perform(delete(URL + "/wi-1").header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNoContent());
+        verify(workItemService).deleteWorkItem(eq("proj-1"), eq("wi-1"), any(), eq(false));
+    }
+
+    @Test
+    void delete_passesAnExplicitConfirmLive() throws Exception {
+        mockMvc.perform(delete(URL + "/wi-1").param("confirmLive", "true").header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNoContent());
+        verify(workItemService).deleteWorkItem(eq("proj-1"), eq("wi-1"), any(), eq(true));
     }
 }

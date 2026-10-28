@@ -122,6 +122,7 @@ public class WorkItemController implements WorkItemsApi {
                             .thumbnailUrl(withExtras ? extra.thumbnailUrl() : null)
                             .publishTargets(withExtras ? extra.publishTargets() : null)
                             .creative(withExtras ? extra.creative() : null)
+                            .enrichmentFailed(withExtras && extra.failed() ? Boolean.TRUE : null)
                             .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
                                     .map(v -> new ReviewerResponse(v.userId())
                                             .name(v.name())
@@ -169,8 +170,8 @@ public class WorkItemController implements WorkItemsApi {
     }
 
     @Override
-    public ResponseEntity<Void> deleteWorkItem(String projectId, String workItemId) {
-        workItemService.deleteWorkItem(projectId, workItemId, currentUser());
+    public ResponseEntity<Void> deleteWorkItem(String projectId, String workItemId, Boolean confirmLive) {
+        workItemService.deleteWorkItem(projectId, workItemId, currentUser(), Boolean.TRUE.equals(confirmLive));
         return ResponseEntity.noContent().build();
     }
 
