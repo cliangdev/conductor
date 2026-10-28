@@ -46,14 +46,16 @@ public interface AssetRepository extends JpaRepository<Asset, String> {
     List<Asset> findLinkAssetsByWorkItemIds(@Param("workItemIds") Collection<String> workItemIds);
 
     /**
-     * Every uploaded image file Asset on any of {@code workItemIds}, oldest first — the list's thumbnail
-     * source (the first one per item) and, through its Creative frame, the item's Creative. One query for
-     * the whole page.
+     * The first (oldest) uploaded image file Asset of each of {@code workItemIds} — the list's thumbnail
+     * source and, through its Creative frame, the item's Creative. One query for the whole page, and only
+     * one row per item however many images it carries.
      */
-    @Query("SELECT a FROM Asset a WHERE a.workItem.id IN :workItemIds "
-            + "AND a.kind = 'file' AND a.uploadStatus = 'UPLOADED' AND a.gcsPath IS NOT NULL "
-            + "AND a.contentType LIKE 'image/%' ORDER BY a.createdAt ASC, a.id ASC")
-    List<Asset> findUploadedImageAssetsByWorkItemIds(@Param("workItemIds") Collection<String> workItemIds);
+    @Query(value = "SELECT a.* FROM assets a WHERE a.id IN ("
+            + "SELECT DISTINCT ON (f.work_item_id) f.id FROM assets f WHERE f.work_item_id IN (:workItemIds) "
+            + "AND f.kind = 'file' AND f.upload_status = 'UPLOADED' AND f.gcs_path IS NOT NULL "
+            + "AND f.content_type LIKE 'image/%' ORDER BY f.work_item_id, f.created_at ASC, f.id ASC)",
+            nativeQuery = true)
+    List<Asset> findFirstUploadedImagePerWorkItem(@Param("workItemIds") Collection<String> workItemIds);
 
     /**
      * (mediaId, workItemId) for every Asset in the project linked to a Media library item — the Media list's

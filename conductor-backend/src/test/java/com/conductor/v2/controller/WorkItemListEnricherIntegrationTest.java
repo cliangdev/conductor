@@ -71,10 +71,12 @@ class WorkItemListEnricherIntegrationTest extends AbstractNoneWebIntegrationTest
         workflowSeeder.seedMarketing(project);
 
         List<String> ids = new ArrayList<>();
+        List<WorkItem> posts = new ArrayList<>();
         String failedId = null;
         for (int i = 0; i < POSTS; i++) {
             WorkItem post = workItemService.createWorkItem(project.getId(), "POST", "Post " + i, "Caption", "MARKETING", admin);
             ids.add(post.getId());
+            posts.add(post);
             Asset a = new Asset();
             a.setWorkItem(post);
             a.setType("facebook_post");
@@ -103,7 +105,7 @@ class WorkItemListEnricherIntegrationTest extends AbstractNoneWebIntegrationTest
         final User caller = admin;
 
         // Correctness
-        Map<String, WorkItemListEnricher.Enrichment> out = tx.execute(s -> enricher.enrich(ids));
+        Map<String, WorkItemListEnricher.Enrichment> out = tx.execute(s -> enricher.enrich(projectId, posts));
         assertThat(out).hasSize(POSTS);
         assertThat(out.values()).allSatisfy(e -> {
             assertThat(e.thumbnailUrl()).isNotNull();
@@ -122,7 +124,7 @@ class WorkItemListEnricherIntegrationTest extends AbstractNoneWebIntegrationTest
         });
         Runnable enriched = () -> {
             base.run();
-            tx.executeWithoutResult(s -> enricher.enrich(ids));
+            tx.executeWithoutResult(s -> enricher.enrich(projectId, posts));
         };
         double without = medianMs(base);
         double with = medianMs(enriched);

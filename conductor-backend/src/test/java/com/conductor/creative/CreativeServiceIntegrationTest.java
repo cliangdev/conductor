@@ -580,10 +580,27 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
             assetRepository.save(asset);
         }
 
+        // A variant of the same family on the SAME Post: the family still counts that Post once.
+        Creative variant = creativeService.createVariant(project.getId(), used.getId(),
+                new CreateCreativeVariantRequest(), admin).creative();
+        CreativeRenderFrame variantFrame = newSucceededRenderWithFrame(variant);
+        Asset onVariant = new Asset();
+        onVariant.setWorkItem(post);
+        onVariant.setType("facebook_post");
+        onVariant.setKind(AssetService.KIND_FILE);
+        onVariant.setRef("marketing-assets/" + variantFrame.getId());
+        onVariant.setGcsPath("marketing-assets/" + variantFrame.getId());
+        onVariant.setContentType("image/jpeg");
+        onVariant.setSizeBytes(500L);
+        onVariant.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        onVariant.setCreativeFrameId(variantFrame.getId());
+        assetRepository.save(onVariant);
+
         Map<String, Integer> counts = creativeService.listCreatives(project.getId(), null, null, admin).stream()
                 .collect(java.util.stream.Collectors.toMap(v -> v.creative().getId(), CreativeService.CreativeView::postCount));
 
         assertThat(counts.get(used.getId())).isEqualTo(1);
+        assertThat(counts.get(variant.getId())).isEqualTo(1);
         assertThat(counts.get(unused.getId())).isZero();
     }
 

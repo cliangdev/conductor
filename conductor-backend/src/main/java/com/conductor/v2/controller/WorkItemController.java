@@ -50,8 +50,6 @@ public class WorkItemController implements WorkItemsApi {
 
     private static final Logger log = LoggerFactory.getLogger(WorkItemController.class);
     private static final ObjectMapper FIELDS_MAPPER = new ObjectMapper();
-    private static final WorkItemListEnricher.Enrichment EMPTY_ENRICHMENT =
-            new WorkItemListEnricher.Enrichment(null, List.of(), null);
 
     private final WorkItemService workItemService;
     private final WorkItemWorkflowService workItemWorkflowService;
@@ -111,21 +109,25 @@ public class WorkItemController implements WorkItemsApi {
         // fans out a reviewers call per row.
         Map<String, List<ReviewerView>> reviewers = reviewerService.reviewersByWorkItem(ids);
         // Thumbnail, publish-target states and Creative for the whole page, again in batched reads.
-        Map<String, WorkItemListEnricher.Enrichment> enrichment = listEnricher.enrich(ids);
+        Map<String, WorkItemListEnricher.Enrichment> enrichment = listEnricher.enrich(projectId, items);
         List<WorkItemResponse> responses = items.stream()
-                .map(item -> toResponse(item, counts.getOrDefault(item.getId(), 0L),
-                        links.getOrDefault(item.getId(), List.of()))
-                        .statusLabel(statusLabel(projectId, item))
-                        .thumbnailUrl(enrichment.getOrDefault(item.getId(), EMPTY_ENRICHMENT).thumbnailUrl())
-                        .publishTargets(enrichment.getOrDefault(item.getId(), EMPTY_ENRICHMENT).publishTargets())
-                        .creative(enrichment.getOrDefault(item.getId(), EMPTY_ENRICHMENT).creative())
-                        .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
-                                .map(v -> new ReviewerResponse(v.userId())
-                                        .name(v.name())
-                                        .email(v.email())
-                                        .avatarUrl(v.avatarUrl())
-                                        .reviewVerdict(v.reviewVerdict()))
-                                .toList()))
+                .map(item -> {
+                    WorkItemListEnricher.Enrichment extra =
+                            enrichment.getOrDefault(item.getId(), WorkItemListEnricher.Enrichment.EMPTY);
+                    return toResponse(item, counts.getOrDefault(item.getId(), 0L),
+                            links.getOrDefault(item.getId(), List.of()))
+                            .statusLabel(statusLabel(projectId, item))
+                            .thumbnailUrl(extra.thumbnailUrl())
+                            .publishTargets(extra.publishTargets())
+                            .creative(extra.creative())
+                            .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
+                                    .map(v -> new ReviewerResponse(v.userId())
+                                            .name(v.name())
+                                            .email(v.email())
+                                            .avatarUrl(v.avatarUrl())
+                                            .reviewVerdict(v.reviewVerdict()))
+                                    .toList());
+                })
                 .toList();
         return ResponseEntity.ok(responses);
     }

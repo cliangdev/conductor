@@ -1515,15 +1515,26 @@ public class CreativeService {
                 links.stream().map(r -> (String) r[0]).collect(Collectors.toSet()))) {
             creativeByFrame.put((String) f[0], (String) f[1]);
         }
-        Map<String, Set<String>> posts = new HashMap<>();
+        // Counted per family (the "a" root and its variants): a Post using several variants counts once,
+        // and every member reports the family's number, which is what the tile shows and its link filters.
+        Map<String, Integer> numberByCreative = new HashMap<>();
+        for (Creative c : creativeRepository.findAllById(new HashSet<>(creativeByFrame.values()))) {
+            numberByCreative.put(c.getId(), c.getNumber());
+        }
+        Map<Integer, Set<String>> postsByFamily = new HashMap<>();
         for (Object[] row : links) {
-            String creativeId = creativeByFrame.get((String) row[0]);
-            if (creativeId != null) {
-                posts.computeIfAbsent(creativeId, k -> new HashSet<>()).add((String) row[1]);
+            Integer number = numberByCreative.get(creativeByFrame.get((String) row[0]));
+            if (number != null) {
+                postsByFamily.computeIfAbsent(number, k -> new HashSet<>()).add((String) row[1]);
             }
         }
         Map<String, Integer> out = new HashMap<>();
-        posts.forEach((id, set) -> out.put(id, set.size()));
+        for (Creative c : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId)) {
+            Set<String> posts = postsByFamily.get(c.getNumber());
+            if (posts != null) {
+                out.put(c.getId(), posts.size());
+            }
+        }
         return out;
     }
 

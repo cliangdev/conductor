@@ -2,14 +2,20 @@ package com.conductor.v2.controller;
 
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.WorkItem;
 import com.conductor.generated.v2.model.WorkItemCreativeRef;
 import com.conductor.generated.v2.model.WorkItemPublishTargetSummary;
+import com.conductor.creative.Creative;
 import com.conductor.creative.CreativePhotoRepository;
+import com.conductor.creative.CreativeRepository;
 import com.conductor.creative.CreativeRenderFrame;
 import com.conductor.creative.CreativeRenderFrameRepository;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.StorageService;
+import com.conductor.service.WorkItemWorkflowService;
+import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.workflow.lifecycle.Statechart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -37,7 +43,7 @@ public class WorkItemListEnricher {
 
     public record Enrichment(String thumbnailUrl, List<WorkItemPublishTargetSummary> publishTargets,
                              WorkItemCreativeRef creative) {
-        static final Enrichment EMPTY = new Enrichment(null, List.of(), null);
+        public static final Enrichment EMPTY = new Enrichment(null, List.of(), null);
     }
 
     private final AssetRepository assets;
@@ -46,10 +52,18 @@ public class WorkItemListEnricher {
     private final StorageService storage;
     private final CreativeRenderFrameRepository frames;
     private final CreativePhotoRepository photos;
+    private final CreativeRepository creatives;
+    private final WorkItemWorkflowService workflows;
+    private final PublishPlatformRegistry platforms;
 
     public WorkItemListEnricher(AssetRepository assets, PostPublishTargetRepository targets,
                                 AssetCreativeOriginResolver originResolver, StorageService storage,
-                                CreativeRenderFrameRepository frames, CreativePhotoRepository photos) {
+                                CreativeRenderFrameRepository frames, CreativePhotoRepository photos,
+                                CreativeRepository creatives, WorkItemWorkflowService workflows,
+                                PublishPlatformRegistry platforms) {
+        this.creatives = creatives;
+        this.workflows = workflows;
+        this.platforms = platforms;
         this.frames = frames;
         this.photos = photos;
         this.assets = assets;
@@ -66,7 +80,15 @@ public class WorkItemListEnricher {
     public Set<String> idsUsing(String creativeId, String mediaId) {
         Set<String> result = null;
         if (creativeId != null && !creativeId.isBlank()) {
-            List<String> frameIds = frames.findAllByCreativeId(creativeId).stream().map(CreativeRenderFrame::getId).toList();
+            // The whole family (the "a" root and its lettered variants): the Creative tile counts the family,
+            // so the list it links to must be the same set of Posts.
+            List<String> familyIds = creatives.findById(creativeId)
+                    .map(c -> creatives.findAllByNumberAndProjectId(c.getNumber(), c.getProjectId()).stream()
+                            .map(Creative::getId).toList())
+                    .orElse(List.of(creativeId));
+            List<String> frameIds = familyIds.stream()
+                    .flatMap(id -> frames.findAllByCreativeId(id).stream())
+                    .map(CreativeRenderFrame::getId).toList();
             Set<String> ids = new HashSet<>();
             if (!frameIds.isEmpty()) {
                 assets.findAllByCreativeFrameIdIn(frameIds).forEach(a -> ids.add(a.getWorkItem().getId()));
@@ -91,13 +113,34 @@ public class WorkItemListEnricher {
         return result;
     }
 
-    /** Work Item id → enrichment; ids with nothing to add are absent. */
-    public Map<String, Enrichment> enrich(Collection<String> workItemIds) {
-        if (workItemIds == null || workItemIds.isEmpty()) {
+    /**
+     * Work Item id → enrichment; ids with nothing to add are absent. Only items of a Workflow that declares
+     * publishing (platform asset types) are enriched: an Engineering list pays for no extra reads.
+     */
+    public Map<String, Enrichment> enrich(String projectId, Collection<WorkItem> items) {
+        if (items == null || items.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Boolean> publishingBySlug = new HashMap<>();
+        List<String> workItemIds = new ArrayList<>();
+        for (WorkItem item : items) {
+            boolean publishing = publishingBySlug.computeIfAbsent(String.valueOf(item.getWorkflow()), slug -> {
+                try {
+                    Statechart statechart = workflows.resolveFor(projectId, item);
+                    return platforms.declaresPublishing(statechart);
+                } catch (RuntimeException e) {
+                    return false;
+                }
+            });
+            if (publishing) {
+                workItemIds.add(item.getId());
+            }
+        }
+        if (workItemIds.isEmpty()) {
             return Map.of();
         }
         Map<String, List<Asset>> imagesByItem = new HashMap<>();
-        List<Asset> images = assets.findUploadedImageAssetsByWorkItemIds(workItemIds);
+        List<Asset> images = assets.findFirstUploadedImagePerWorkItem(workItemIds);
         for (Asset a : images) {
             imagesByItem.computeIfAbsent(a.getWorkItem().getId(), k -> new ArrayList<>()).add(a);
         }
