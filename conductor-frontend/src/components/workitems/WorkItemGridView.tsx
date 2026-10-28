@@ -52,7 +52,7 @@ export function WorkItemGridView({
               href={workItemDetailPath(projectId, detailArea, noun, issue.displayId ?? '')}
               className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <PostThumb className="aspect-square w-full rounded-none border-0 border-b [&_svg]:h-6 [&_svg]:w-6" />
+              <PostThumb src={issue.thumbnailUrl} className="aspect-square w-full rounded-none border-0 border-b [&_svg]:h-6 [&_svg]:w-6" />
               <div className="space-y-1.5 p-2.5">
                 <p className="truncate text-[13px] font-medium text-foreground" title={issue.title}>
                   {issue.title}
@@ -63,6 +63,11 @@ export function WorkItemGridView({
                 </div>
                 <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
                   {issue.displayId && <span className="font-mono">{issue.displayId}</span>}
+                  {issue.creative && (
+                    <span className="font-mono" title={issue.creative.name ?? undefined}>
+                      Creative {issue.creative.displayId}
+                    </span>
+                  )}
                   {scheduled && <span className="ml-auto truncate">{scheduled}</span>}
                 </div>
               </div>

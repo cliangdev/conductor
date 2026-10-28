@@ -16,14 +16,39 @@ import { cn } from '@/lib/utils'
 
 const PLATFORMS: PublishPlatform[] = ['facebook', 'instagram', 'youtube', 'tiktok']
 
-/** Platforms a Post has been published to, from its link Assets (`instagram_post` -> instagram). */
-export function destinationsOf(issue: Pick<Issue, 'externalLinks'>): PublishPlatform[] {
-  const found = new Set<PublishPlatform>()
-  for (const link of issue.externalLinks ?? []) {
-    const head = link.type.trim().toLowerCase().split('_')[0] as PublishPlatform
-    if (PLATFORMS.includes(head)) found.add(head)
+export interface Destination {
+  platform: PublishPlatform
+  /** True when any target for this platform is FAILED. */
+  failed: boolean
+  /** Hover text: the state words of this platform's targets. */
+  title: string
+}
+
+/**
+ * The Post's destinations. Prefers the list payload's `publishTargets` (every configured target with its
+ * state, so a failed one shows); falls back to the link Assets of what was published
+ * (`instagram_post` -> instagram) for payloads that carry no targets.
+ */
+export function destinationsOf(issue: Pick<Issue, 'externalLinks' | 'publishTargets'>): Destination[] {
+  const byPlatform = new Map<PublishPlatform, string[]>()
+  const states = new Map<PublishPlatform, string[]>()
+  for (const t of issue.publishTargets ?? []) {
+    const p = t.platform.trim().toLowerCase() as PublishPlatform
+    if (!PLATFORMS.includes(p)) continue
+    byPlatform.set(p, [...(byPlatform.get(p) ?? []), t.stateLabel ?? t.state])
+    states.set(p, [...(states.get(p) ?? []), t.state])
   }
-  return PLATFORMS.filter((p) => found.has(p))
+  if (byPlatform.size === 0) {
+    for (const link of issue.externalLinks ?? []) {
+      const head = link.type.trim().toLowerCase().split('_')[0] as PublishPlatform
+      if (PLATFORMS.includes(head)) byPlatform.set(head, ['Published'])
+    }
+  }
+  return PLATFORMS.filter((p) => byPlatform.has(p)).map((p) => ({
+    platform: p,
+    failed: (states.get(p) ?? []).includes('FAILED'),
+    title: byPlatform.get(p)!.join(', '),
+  }))
 }
 
 /** "Oct 28, 3:00 PM" in the Post's own timezone when it has one; "On approval"; or null. */
@@ -42,14 +67,27 @@ export function scheduleLabel(issue: Pick<Issue, 'scheduledFor' | 'scheduleTimez
   return issue.publishOnApproval ? 'On approval' : null
 }
 
-/** The destination marks (brand logos), or nothing when none are known. */
-export function DestinationMarks({ issue, className }: { issue: Pick<Issue, 'externalLinks'>; className?: string }) {
-  const platforms = destinationsOf(issue)
-  if (platforms.length === 0) return null
+/** The destination marks (brand logos); a failed destination gets a destructive ring and says so on hover. */
+export function DestinationMarks({
+  issue,
+  className,
+}: {
+  issue: Pick<Issue, 'externalLinks' | 'publishTargets'>
+  className?: string
+}) {
+  const dests = destinationsOf(issue)
+  if (dests.length === 0) return null
   return (
     <span className={cn('inline-flex items-center gap-1', className)} data-testid="destination-marks">
-      {platforms.map((p) => (
-        <PlatformIcon key={p} platform={p} className="h-4 w-4" />
+      {dests.map((d) => (
+        <span
+          key={d.platform}
+          title={d.title}
+          data-failed={d.failed || undefined}
+          className={cn('inline-flex rounded-[5px]', d.failed && 'ring-2 ring-destructive')}
+        >
+          <PlatformIcon platform={d.platform} className="h-4 w-4" />
+        </span>
       ))}
     </span>
   )

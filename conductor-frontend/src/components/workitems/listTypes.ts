@@ -31,6 +31,38 @@ export interface WorkItemExternalLink {
   label?: string | null
 }
 
+/** One publish destination on a Post and how it stands (list response only). */
+export interface WorkItemPublishTarget {
+  platform: string
+  /** PENDING | HANDED_OFF | PUBLISHING | AWAITING_MANUAL | PUBLISHED | FAILED | REVOKED */
+  state: string
+  stateLabel?: string
+  label?: string | null
+}
+
+/** The Creative a Post's media came from (list response only). */
+export interface WorkItemCreativeRef {
+  id: string
+  displayId: string
+  name?: string | null
+}
+
+/** One publish destination on a Post and how it stands (list response only). */
+export interface WorkItemPublishTarget {
+  platform: string
+  /** PENDING | HANDED_OFF | PUBLISHING | AWAITING_MANUAL | PUBLISHED | FAILED | REVOKED */
+  state: string
+  stateLabel?: string
+  label?: string | null
+}
+
+/** The Creative a Post's media came from (list response only). */
+export interface WorkItemCreativeRef {
+  id: string
+  displayId: string
+  name?: string | null
+}
+
 export interface Issue {
   id: string
   title: string
@@ -51,6 +83,12 @@ export interface Issue {
   externalLinks?: WorkItemExternalLink[]
   /** Freeform labels, stored lower-cased. Empty until something is tagged. */
   tags?: string[]
+  /** List response only: signed URL of the first image attached, or null. */
+  thumbnailUrl?: string | null
+  /** List response only: each destination with its state. */
+  publishTargets?: WorkItemPublishTarget[]
+  /** List response only: the Creative the media came from, or null. */
+  creative?: WorkItemCreativeRef | null
 }
 
 export interface IssueWithReviewers extends Issue {

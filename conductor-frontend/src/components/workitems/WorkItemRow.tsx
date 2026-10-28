@@ -111,7 +111,7 @@ export function WorkItemRow({
         {issue.displayId && (
           <span className="font-mono text-xs text-muted-foreground w-16 shrink-0 truncate">{issue.displayId}</span>
         )}
-        {publishing && <PostThumb className="h-10 w-10" />}
+        {publishing && <PostThumb src={issue.thumbnailUrl} className="h-10 w-10" />}
         <span className="text-[13px] font-medium text-foreground truncate min-w-0">{issue.title}</span>
       </Link>
 
@@ -136,6 +136,16 @@ export function WorkItemRow({
       )}
 
       <div className="flex items-center gap-3 ml-auto shrink-0">
+        {publishing && issue.creative && (
+          <Link
+            prefetch={false}
+            href={`/app/projects/${projectId}/marketing/creatives/${issue.creative.id}`}
+            title={issue.creative.name ?? `Creative ${issue.creative.displayId}`}
+            className="hidden font-mono text-[11.5px] text-muted-foreground hover:text-primary lg:inline"
+          >
+            {issue.creative.displayId}
+          </Link>
+        )}
         {publishing && <DestinationMarks issue={issue} />}
         {scheduled && (
           <span className="hidden text-[11.5px] text-muted-foreground lg:inline" data-testid="row-schedule">
