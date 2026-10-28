@@ -28,7 +28,7 @@ import { Can } from '@/components/auth/Can'
 import { useCan } from '@/contexts/PermissionsContext'
 import { FloatingBulkBar } from '@/components/marketing/shared/FloatingBulkBar'
 import { useRangeSelection } from '@/components/marketing/shared/useRangeSelection'
-import { usePostsHref } from '@/components/marketing/shared/ContentSubNav'
+import { usePostsHref } from '@/components/marketing/shared/usePostsHref'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { formatDuration } from '@/lib/format'
@@ -369,18 +369,6 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
         </div>
 
         <div className="min-w-[9rem]">
-          <Label htmlFor="creative-sort" className="text-xs font-medium text-muted-foreground">
-            Sort
-          </Label>
-          <Select id="creative-sort" value={sort} onChange={(e) => setSort(e.target.value as CreativeSort)}>
-            <option value="newest">Newest</option>
-            <option value="oldest">Oldest</option>
-            <option value="name">Name</option>
-            <option value="used">Most used</option>
-          </Select>
-        </div>
-
-        <div className="min-w-[9rem]">
           <Label htmlFor="creative-state-filter" className="text-xs font-medium text-muted-foreground">
             State
           </Label>
@@ -423,6 +411,18 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
             Clear filters
           </Button>
         )}
+
+        <div className="min-w-[9rem]">
+          <Label htmlFor="creative-sort" className="text-xs font-medium text-muted-foreground">
+            Sort
+          </Label>
+          <Select id="creative-sort" value={sort} onChange={(e) => setSort(e.target.value as CreativeSort)}>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="name">Name</option>
+            <option value="used">Most used</option>
+          </Select>
+        </div>
 
         <Can do="creative.manage">
           <div className="ml-auto">

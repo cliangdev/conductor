@@ -28,7 +28,7 @@ const { mountBoardSpy } = vi.hoisted(() => ({
 }))
 vi.mock('@cliangdev/creative-render/mount', () => ({ mountBoard: mountBoardSpy }))
 
-vi.mock('@/components/marketing/shared/ContentSubNav', () => ({
+vi.mock('@/components/marketing/shared/usePostsHref', () => ({
   usePostsHref: () => '/app/projects/proj-1/marketing/posts',
 }))
 

@@ -9,7 +9,6 @@ import { useParams } from 'next/navigation'
 import { CreativeLibraryGrid } from '@/components/marketing/creatives/CreativeLibraryGrid'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { ContentSubNav } from '@/components/marketing/shared/ContentSubNav'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +22,6 @@ export default function MarketingCreativesPage() {
         title="Creatives"
         description="Photo, headline and layout concepts that render live for every enabled placement."
       />
-      <ContentSubNav projectId={projectId} active="creatives" />
       <CreativeLibraryGrid projectId={projectId} />
     </PageContainer>
   )

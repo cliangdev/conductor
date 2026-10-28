@@ -8,7 +8,6 @@ import { useParams } from 'next/navigation'
 import { MediaLibrary } from '@/components/marketing/media/MediaLibrary'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { ContentSubNav } from '@/components/marketing/shared/ContentSubNav'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +21,6 @@ export default function MarketingMediaPage() {
         title="Media"
         description="Every image, video and audio file in this workspace — uploads, generated images and finished slides — and where each is used."
       />
-      <ContentSubNav projectId={projectId} active="media" />
       <MediaLibrary projectId={projectId} />
     </PageContainer>
   )

@@ -44,7 +44,6 @@ import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarVie
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
-import { ContentSubNav } from '@/components/marketing/shared/ContentSubNav'
 import { PendingConsentNotice } from '@/components/marketing/consent/PendingConsentNotice'
 import { WorkItemGridView } from '@/components/workitems/WorkItemGridView'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
@@ -366,10 +365,6 @@ export function WorkItemListView({
           ) : undefined
         }
       />
-
-      {opensComposePage && (
-        <ContentSubNav projectId={projectId} active="posts" postsHref={workItemListPath(projectId, detailArea, noun)} />
-      )}
 
       {(creativeFilter || mediaFilter) && (
         <Alert variant="info" className="mb-3">
