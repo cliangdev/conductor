@@ -19,6 +19,7 @@ export function WorkItemGroup({
   members,
   canEdit,
   selectedIds,
+  onToggleSelect,
   tabStopId,
   roundedTop,
   roundedBottom,
@@ -41,6 +42,7 @@ export function WorkItemGroup({
   members: Member[]
   canEdit: boolean
   selectedIds: Set<string>
+  onToggleSelect?: (id: string) => void
   /** The row currently holding the roving tab stop (defaults to the first row — see useWorkItemListState). */
   tabStopId: string | null
   /** True for the first rendered group — its header gets the list container's top corner radius. */
@@ -89,6 +91,7 @@ export function WorkItemGroup({
             selected={selectedIds.has(issue.id)}
             focused={tabStopId === issue.id}
             publishing={publishing}
+            onToggleSelect={canEdit ? onToggleSelect : undefined}
             onStatusChanged={onStatusChanged}
             onAssigneeChanged={onAssigneeChanged}
             onReviewersChanged={onReviewersChanged}

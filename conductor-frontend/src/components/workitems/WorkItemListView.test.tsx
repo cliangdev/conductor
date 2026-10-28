@@ -628,14 +628,20 @@ describe('bulk results and selection in every view', () => {
     expect(await screen.findByText('1 selected')).toBeInTheDocument()
   })
 
-  it('selects chips on the calendar and shows the bulk bar', async () => {
+  it('selects rows from a checkbox in the list and shows the bulk bar', async () => {
+    render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
+    fireEvent.click(await screen.findByLabelText('Select Zeta task'))
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+  })
+
+  it('has no selection checkboxes on the calendar', async () => {
     searchParamsValue = new URLSearchParams('mode=calendar')
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.setSystemTime(new Date('2026-03-15T12:00:00Z'))
     try {
       render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
-      fireEvent.click(await screen.findByLabelText('Select Zeta task'))
-      expect(await screen.findByText('1 selected')).toBeInTheDocument()
+      await screen.findByTestId('calendar-chip-' + (await screen.findAllByTestId(/^calendar-chip-/))[0].getAttribute('data-testid')!.replace('calendar-chip-', ''))
+      expect(screen.queryByLabelText('Select Zeta task')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }

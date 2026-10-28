@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { ExternalLinkCell } from '@/components/workitems/ExternalLinkCell'
 import { CommentCount } from '@/components/ui/comment-count'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
@@ -37,6 +38,7 @@ export function WorkItemRow({
   selected,
   focused,
   publishing,
+  onToggleSelect,
   onStatusChanged,
   onAssigneeChanged,
   onReviewersChanged,
@@ -59,6 +61,8 @@ export function WorkItemRow({
   focused: boolean
   /** Publishing/marketing workflow: adds a 40px thumbnail, destination marks and the scheduled time. */
   publishing?: boolean
+  /** Bulk selection checkbox, first in the row (omit to hide it, e.g. for REVIEWERs). */
+  onToggleSelect?: (id: string) => void
   onStatusChanged: (id: string, status: string) => void
   onAssigneeChanged: (id: string, assignee: IssueAssignee | null) => void
   onReviewersChanged: (id: string, reviewers: IssueReviewer[]) => void
@@ -85,6 +89,15 @@ export function WorkItemRow({
         className
       )}
     >
+      {onToggleSelect && (
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggleSelect(issue.id)}
+          label={<span className="sr-only">Select {issue.title}</span>}
+          className="shrink-0"
+        />
+      )}
+
       <span className="shrink-0 flex items-center">
         <StatusDropdown
           lazy
