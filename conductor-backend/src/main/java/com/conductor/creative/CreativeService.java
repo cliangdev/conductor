@@ -1561,16 +1561,20 @@ public class CreativeService {
         if (links.isEmpty()) {
             return Map.of();
         }
+        // IN lists are bounded (a project can have thousands of attached frames, past a driver's bind limit).
         Map<String, String> creativeByFrame = new HashMap<>();
-        for (Object[] f : frameRepository.findRefsByIdIn(
-                links.stream().map(r -> (String) r[0]).collect(Collectors.toSet()))) {
-            creativeByFrame.put((String) f[0], (String) f[1]);
+        for (List<String> chunk : inChunks(links.stream().map(r -> (String) r[0]).collect(Collectors.toSet()))) {
+            for (Object[] f : frameRepository.findRefsByIdIn(chunk)) {
+                creativeByFrame.put((String) f[0], (String) f[1]);
+            }
         }
         // Counted per family (the "a" root and its variants): a Post using several variants counts once,
         // and every member reports the family's number, which is what the tile shows and its link filters.
         Map<String, Integer> numberByCreative = new HashMap<>();
-        for (Creative c : creativeRepository.findAllById(new HashSet<>(creativeByFrame.values()))) {
-            numberByCreative.put(c.getId(), c.getNumber());
+        for (List<String> chunk : inChunks(new HashSet<>(creativeByFrame.values()))) {
+            for (Creative c : creativeRepository.findAllById(chunk)) {
+                numberByCreative.put(c.getId(), c.getNumber());
+            }
         }
         Map<Integer, Set<String>> postsByFamily = new HashMap<>();
         for (Object[] row : links) {
@@ -1586,6 +1590,18 @@ public class CreativeService {
             if (posts != null) {
                 out.put(c.getId(), posts.size());
             }
+        }
+        return out;
+    }
+
+    /** Largest IN list sent in one statement. */
+    static final int IN_CHUNK = 500;
+
+    private static List<List<String>> inChunks(java.util.Collection<String> ids) {
+        List<String> all = new ArrayList<>(ids);
+        List<List<String>> out = new ArrayList<>();
+        for (int i = 0; i < all.size(); i += IN_CHUNK) {
+            out.add(all.subList(i, Math.min(all.size(), i + IN_CHUNK)));
         }
         return out;
     }

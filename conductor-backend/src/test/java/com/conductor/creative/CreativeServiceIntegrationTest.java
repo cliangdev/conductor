@@ -623,6 +623,41 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void postCountsSurviveMoreAttachedFramesThanOneInListHolds() {
+        workflowSeeder.seedMarketing(project);
+        WorkItem post = workItemService.createWorkItem(project.getId(), "POST", "Many frames", "Caption", "MARKETING", admin);
+        Creative big = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin).creative();
+        Creative small = creativeService.createCreative(project.getId(),
+                concept("Another *hook*.", "Another plan."), admin).creative();
+        CreativeRenderFrame first = newSucceededRenderWithFrame(big);
+        List<CreativeRenderFrame> frames = new java.util.ArrayList<>(List.of(first));
+        for (int i = 0; i < CreativeService.IN_CHUNK * 2; i++) { // 1001 frames: three chunks
+            CreativeRenderFrame f = new CreativeRenderFrame();
+            f.setRenderId(first.getRenderId());
+            f.setCreativeId(big.getId());
+            f.setPlacementKey("k" + i);
+            f.setPlatform("tiktok");
+            f.setGcsPath("bulk/" + i + ".jpg");
+            f.setContentType("image/jpeg");
+            f.setWidth(10);
+            f.setHeight(10);
+            f.setSizeBytes(1L);
+            f.setWarnings(objectMapper.createArrayNode());
+            frames.add(f);
+        }
+        frameRepository.saveAll(frames.subList(1, frames.size()));
+        for (CreativeRenderFrame f : frames) putFrameOnPost(post, f);
+        putFrameOnPost(post, newSucceededRenderWithFrame(small));
+
+        Map<String, Integer> counts = creativeService.listCreatives(project.getId(), null, null, admin, true).stream()
+                .collect(java.util.stream.Collectors.toMap(v -> v.creative().getId(), CreativeService.CreativeView::postCount));
+
+        assertThat(counts.get(big.getId())).isEqualTo(1);
+        assertThat(counts.get(small.getId())).isEqualTo(1);
+    }
+
+    @Test
     void deletingAFamilyRemovesRootAndEveryVariantTogether() {
         Creative root = creativeService.createCreative(project.getId(),
                 concept("The original *hook*.", "A calm plan."), admin).creative();
