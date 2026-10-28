@@ -5,15 +5,22 @@ vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
   apiErrorMessage: (_e: unknown, f: string) => f,
 }))
+const nav = vi.hoisted(() => ({ loading: false }))
 vi.mock('@/lib/workflows', async (orig) => ({
   ...(await orig<typeof import('@/lib/workflows')>()),
-  useSidebarWorkNav: () => ({ entries: [{ slug: 'MARKETING', label: 'Posts', noun: 'Post', area: 'MARKETING', createdAt: '' }], loading: false }),
+  useSidebarWorkNav: () => ({
+    entries: nav.loading ? [] : [{ slug: 'MARKETING', label: 'Posts', noun: 'Post', area: 'MARKETING', createdAt: '' }],
+    loading: nav.loading,
+  }),
 }))
 
 import { apiGet } from '@/lib/api'
 import { PostsUsingCreativePanel } from './PostsUsingCreativePanel'
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  nav.loading = false
+})
 
 describe('PostsUsingCreativePanel', () => {
   it('lists the posts filtered by creativeId, each linking to the post', async () => {
@@ -55,5 +62,25 @@ describe('PostsUsingCreativePanel', () => {
     await waitFor(() => expect(screen.queryByText('Could not load the posts using this creative')).toBeNull())
     release([])
     expect(await screen.findByText('No posts use this creative yet.')).toBeInTheDocument()
+  })
+
+  it('shows the skeleton, not unlinked rows of other workflows, until the workflow nav has resolved', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'w1', displayId: 'RE-1', title: 'A post', status: 'DRAFT', workflow: 'MARKETING' },
+      { id: 'w2', displayId: 'CH-1', title: 'A change', status: 'PLANNED', workflow: 'MARKETING_CHANGES' },
+    ])
+    nav.loading = true
+    const { rerender } = render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
+    await waitFor(() => expect(apiGet).toHaveBeenCalled())
+    // The posts have arrived but the nav has not: nothing is rendered yet.
+    expect(screen.queryByText('A post')).toBeNull()
+    expect(screen.queryByText('A change')).toBeNull()
+    expect(screen.queryByText('No posts use this creative yet.')).toBeNull()
+
+    nav.loading = false
+    rerender(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
+    const link = await screen.findByRole('link', { name: 'A post' })
+    expect(link).toHaveAttribute('href', '/app/projects/p/marketing/posts/RE-1')
+    expect(screen.queryByText('A change')).toBeNull()
   })
 })

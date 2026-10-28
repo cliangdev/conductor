@@ -22,6 +22,12 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_e: unknown, f: string) => f,
 }))
 
+vi.mock('@/components/ui/date-time-picker', () => ({
+  DateTimePicker: ({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) => (
+    <input aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} />
+  ),
+}))
+
 import { PostBulkActions } from './PostBulkActions'
 
 function post(over: Partial<IssueWithReviewers>): IssueWithReviewers {
@@ -37,7 +43,8 @@ function post(over: Partial<IssueWithReviewers>): IssueWithReviewers {
   }
 }
 
-const run = vi.fn(async (ids: string[], mutate: (id: string) => Promise<unknown>, _failure: string) => {
+const run = vi.fn(async (ids: string[], mutate: (id: string) => Promise<unknown>, ...rest: [failure: string]) => {
+  void rest
   await Promise.all(ids.map((id) => mutate(id)))
 })
 
@@ -93,8 +100,11 @@ describe('PostBulkActions', () => {
   })
 
   it('shifts schedules by days and skips unscheduled posts', async () => {
+    const base = new Date(Date.now() + 10 * 86400_000)
+    base.setUTCMinutes(0, 0, 0)
+    const shifted = new Date(base.getTime() + 2 * 86400_000)
     setup([
-      post({ id: 'p1', scheduledFor: '2026-03-04T15:00:00.000Z', scheduleTimezone: 'UTC' }),
+      post({ id: 'p1', scheduledFor: base.toISOString(), scheduleTimezone: 'UTC' }),
       post({ id: 'p2' }),
     ])
     fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }))
@@ -102,7 +112,17 @@ describe('PostBulkActions', () => {
     fireEvent.change(screen.getByLabelText(/Days/), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: 'Reschedule', hidden: false }))
     await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
-    expect(apiPatch.mock.calls[0]![1]).toEqual({ scheduledFor: '2026-03-06T15:00:00.000Z', scheduleTimezone: 'UTC' })
+    expect(apiPatch.mock.calls[0]![1]).toEqual({ scheduledFor: shifted.toISOString(), scheduleTimezone: 'UTC' })
+  })
+
+  it('blocks a shift that would move a post into the past, with a clear message', () => {
+    const soon = new Date(Date.now() + 86400_000).toISOString()
+    setup([post({ id: 'p1', scheduledFor: soon, scheduleTimezone: 'UTC' })])
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }))
+    fireEvent.change(screen.getByLabelText('Reschedule mode'), { target: { value: 'shift' } })
+    fireEvent.change(screen.getByLabelText(/Days/), { target: { value: '-3' } })
+    expect(screen.getByTestId('past-time')).toHaveTextContent('1 post would move into the past')
+    expect(screen.getAllByRole('button', { name: 'Reschedule' }).at(-1)).toBeDisabled()
   })
 
   it('sets destinations on every selected post with a PUT', async () => {
@@ -121,7 +141,7 @@ describe('PostBulkActions', () => {
       post({ id: 'p3', displayId: 'RE-3', publishTargets: [{ platform: 'tiktok', state: 'HANDED_OFF' }] }),
     ])
     fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
-    expect(await screen.findByTestId('excluded-note')).toHaveTextContent('2 posts are live, approved or already handed')
+    expect(await screen.findByTestId('excluded-note')).toHaveTextContent('2 posts are live, approved or already handed to a platform')
     expect(screen.getByTestId('excluded-note')).toHaveTextContent('RE-2, RE-3')
     fireEvent.click(await screen.findByLabelText(/Rexcipe IG/))
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
@@ -129,10 +149,38 @@ describe('PostBulkActions', () => {
     expect(apiPut.mock.calls[0]![0]).toContain('/work-items/p1/publish-targets')
   })
 
-  it('disables Reschedule and Destinations when every selected post is locked', () => {
-    setup([post({ id: 'p1', status: 'APPROVED' })])
-    expect(screen.getByRole('button', { name: 'Reschedule' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Destinations' })).toBeDisabled()
+  // The two actions lock differently: a schedule PATCH is allowed everywhere but live (a Scheduled post
+  // re-times in place), while replacing destinations revokes a hand-off.
+  const STATES: [string, Partial<IssueWithReviewers>, boolean, boolean][] = [
+    // name, post, Reschedule enabled, Destinations enabled
+    ['Draft', { status: 'DRAFT' }, true, true],
+    ['In Review', { status: 'IN_REVIEW' }, true, true],
+    ['Changes Requested', { status: 'CHANGES_REQUESTED' }, true, true],
+    ['Failed', { status: 'FAILED' }, true, true],
+    ['Approved', { status: 'APPROVED' }, true, false],
+    ['Scheduled', { status: 'SCHEDULED' }, true, false],
+    ['handed off', { status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'HANDED_OFF' }] }, true, false],
+    ['Published', { status: 'PUBLISHED' }, false, false],
+    ['live target', { status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'PUBLISHED' }] }, false, false],
+  ]
+  it.each(STATES)('%s post: Reschedule enabled=%s? Destinations enabled=%s?', (_name, over, reschedule, destinations) => {
+    setup([post({ id: 'p1', ...over })])
+    expect(screen.getByRole('button', { name: 'Reschedule' }).hasAttribute('disabled')).toBe(!reschedule)
+    expect(screen.getByRole('button', { name: 'Destinations' }).hasAttribute('disabled')).toBe(!destinations)
+  })
+
+  it('Reschedule includes a Scheduled post and names only the live one as excluded', async () => {
+    setup([
+      post({ id: 'p1', status: 'SCHEDULED', scheduledFor: new Date(Date.now() + 5 * 86400_000).toISOString(), scheduleTimezone: 'UTC' }),
+      post({ id: 'p2', displayId: 'RE-2', status: 'PUBLISHED' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }))
+    expect(screen.getByTestId('excluded-note')).toHaveTextContent('1 post is already live and will not be changed: RE-2.')
+    fireEvent.change(screen.getByLabelText('Reschedule mode'), { target: { value: 'shift' } })
+    fireEvent.change(screen.getByLabelText(/Days/), { target: { value: '1' } })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reschedule' }).at(-1)!)
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect(apiPatch.mock.calls[0]![0]).toContain('/work-items/p1')
   })
 
   it('keeps the settings of a destination that stays selected (e.g. TikTok options) and adds new ones plain', async () => {
@@ -175,5 +223,24 @@ describe('PostBulkActions', () => {
     fireEvent.click(screen.getByRole('button', { name: /Retry failed/ }))
     await waitFor(() => expect(run).toHaveBeenCalled())
     expect(run.mock.calls[0]![2]).toBe('to retry the failed destinations')
+  })
+
+  it('refuses a "set" time in the past with a clear message and accepts a future one', async () => {
+    setup([post({ id: 'p1' })])
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }))
+    const apply = () => screen.getAllByRole('button', { name: 'Reschedule' }).at(-1)!
+
+    fireEvent.change(screen.getByLabelText('Date and time'), { target: { value: '2020-01-01T09:00' } })
+    expect(screen.getByTestId('past-time')).toHaveTextContent('in the past')
+    expect(apply()).toBeDisabled()
+
+    const future = new Date(Date.now() + 3 * 86400_000)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const wall = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}T12:00`
+    fireEvent.change(screen.getByLabelText('Date and time'), { target: { value: wall } })
+    expect(screen.queryByTestId('past-time')).toBeNull()
+    fireEvent.click(apply())
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect(new Date((apiPatch.mock.calls[0]![1] as { scheduledFor: string }).scheduledFor).getTime()).toBeGreaterThan(Date.now())
   })
 })

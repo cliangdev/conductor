@@ -19,7 +19,16 @@ import { apiDelete, apiErrorMessage, apiGet, apiPatch, apiPost, apiPut } from '@
 import { browserTimeZone, wallClockToInstant } from '@/lib/schedule'
 import type { PublishTargetOption, SelectedPublishTarget } from '@/components/marketing/destinations/types'
 import type { IssueWithReviewers } from '@/components/workitems/listTypes'
-import { applyTagChange, hasFailedTarget, isEditLocked, isLivePost, parseTags, shiftSchedule, tagsDiffer } from '@/components/workitems/postBulk'
+import {
+  applyTagChange,
+  hasFailedTarget,
+  isEditLocked,
+  isLivePost,
+  isRescheduleLocked,
+  parseTags,
+  shiftSchedule,
+  tagsDiffer,
+} from '@/components/workitems/postBulk'
 
 /** `failure` is the full tail of the toast: "N of M Work Items failed {failure}". */
 type Run = (ids: string[], mutate: (id: string) => Promise<unknown>, failure: string) => Promise<void>
@@ -41,10 +50,15 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
   const failed = selected.filter(hasFailedTarget)
   const live = selected.filter(isLivePost)
   const deletable = selected.filter((p) => !isLivePost(p))
-  // Reschedule and Destinations leave live, approved, scheduled and handed-off posts alone.
+  // Reschedule leaves only live posts alone (a schedule edit is allowed everywhere else, as on a single
+  // post). Destinations is stricter: replacing them revokes a hand-off, so it also skips approved,
+  // scheduled and handed-off posts.
+  const reschedulable = selected.filter((p) => !isRescheduleLocked(p))
+  const scheduleLocked = selected.filter(isRescheduleLocked)
   const editable = selected.filter((p) => !isEditLocked(p))
   const locked = selected.filter(isEditLocked)
-  const lockedReason = 'Every selected post is live, approved or already handed to a platform'
+  const scheduleLockedReason = 'Every selected post is already live'
+  const destinationsLockedReason = 'Every selected post is live, approved or already handed to a platform'
 
   const close = () => setDialog(null)
 
@@ -53,8 +67,8 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
       <Button
         variant="outline"
         size="sm"
-        disabled={disabled || editable.length === 0}
-        title={editable.length === 0 ? lockedReason : undefined}
+        disabled={disabled || reschedulable.length === 0}
+        title={reschedulable.length === 0 ? scheduleLockedReason : undefined}
         onClick={() => setDialog('schedule')}
       >
         Reschedule
@@ -63,7 +77,7 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
         variant="outline"
         size="sm"
         disabled={disabled || editable.length === 0}
-        title={editable.length === 0 ? lockedReason : undefined}
+        title={editable.length === 0 ? destinationsLockedReason : undefined}
         onClick={() => setDialog('destinations')}
       >
         Destinations
@@ -99,13 +113,13 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
 
       {dialog === 'schedule' && (
         <RescheduleDialog
-          posts={editable}
-          excluded={locked}
+          posts={reschedulable}
+          excluded={scheduleLocked}
           onClose={close}
           onApply={(plan) => {
             close()
-            const byId = new Map(editable.map((p) => [p.id, p]))
-            const ids = editable.filter((p) => plan(p) !== null).map((p) => p.id)
+            const byId = new Map(reschedulable.map((p) => [p.id, p]))
+            const ids = reschedulable.filter((p) => plan(p) !== null).map((p) => p.id)
             void run(ids, (id) => apiPatch(`${base}/${id}`, plan(byId.get(id)!)!, token), 'to reschedule')
           }}
         />
@@ -199,12 +213,12 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
 }
 
 /** Names the posts a bulk edit leaves alone, so nobody wonders why the count is lower than the selection. */
-function ExcludedNote({ posts }: { posts: IssueWithReviewers[] }) {
+function ExcludedNote({ posts, reason }: { posts: IssueWithReviewers[]; reason: string }) {
   if (posts.length === 0) return null
   return (
     <p className="rounded-md border border-border bg-surface-2 p-2 text-sm text-foreground" data-testid="excluded-note">
-      {posts.length} {posts.length === 1 ? 'post is' : 'posts are'} live, approved or already handed to a platform
-      and will not be changed: {posts.map((p) => p.displayId ?? p.title).join(', ')}.
+      {posts.length} {posts.length === 1 ? 'post is' : 'posts are'} {reason} and will not be changed:{' '}
+      {posts.map((p) => p.displayId ?? p.title).join(', ')}.
     </p>
   )
 }
@@ -226,7 +240,24 @@ function RescheduleDialog({
   const [days, setDays] = useState('1')
   const scheduledCount = posts.filter((p) => p.scheduledFor).length
   const n = Number.parseInt(days, 10)
-  const valid = mode === 'set' ? Boolean(wallClockToInstant(when, zone)) : Number.isFinite(n) && n !== 0 && scheduledCount > 0
+  // Read once when the dialog opens (render must stay pure) and checked again on Apply.
+  const [openedAt] = useState(() => Date.now())
+  const now = openedAt
+  // A time in the past is refused here with a clear message (the server would only say it was too soon).
+  const setInstant = mode === 'set' ? wallClockToInstant(when, zone) : null
+  const setInPast = setInstant != null && new Date(setInstant).getTime() <= now
+  const shiftedInPast =
+    mode === 'shift' && Number.isFinite(n) && n !== 0
+      ? posts.filter((p) => {
+          const next = shiftSchedule(p.scheduledFor, p.scheduleTimezone, n)
+          return next != null && new Date(next).getTime() <= now
+        }).length
+      : 0
+  const valid =
+    mode === 'set'
+      ? setInstant != null && !setInPast
+      : Number.isFinite(n) && n !== 0 && scheduledCount > 0 && shiftedInPast === 0
+  const today = new Date(openedAt).toISOString().slice(0, 10)
 
   return (
     <Modal
@@ -245,10 +276,13 @@ function RescheduleDialog({
               onApply((p) => {
                 if (mode === 'set') {
                   const iso = wallClockToInstant(when, zone)
-                  return iso ? { scheduledFor: iso, scheduleTimezone: zone } : null
+                  // Checked again at click time: the dialog may have sat open past the chosen minute.
+                  return iso && new Date(iso).getTime() > Date.now() ? { scheduledFor: iso, scheduleTimezone: zone } : null
                 }
                 const iso = shiftSchedule(p.scheduledFor, p.scheduleTimezone, n)
-                return iso ? { scheduledFor: iso, scheduleTimezone: p.scheduleTimezone ?? 'UTC' } : null
+                return iso && new Date(iso).getTime() > Date.now()
+                  ? { scheduledFor: iso, scheduleTimezone: p.scheduleTimezone ?? 'UTC' }
+                  : null
               })
             }
           >
@@ -258,14 +292,19 @@ function RescheduleDialog({
       }
     >
       <div className="space-y-3">
-        <ExcludedNote posts={excluded} />
+        <ExcludedNote posts={excluded} reason="already live" />
         <Select aria-label="Reschedule mode" value={mode} onChange={(e) => setMode(e.target.value as 'set' | 'shift')}>
           <option value="set">Set a date and time</option>
           <option value="shift">Shift by days</option>
         </Select>
         {mode === 'set' ? (
           <>
-            <DateTimePicker value={when} onChange={setWhen} label="Date and time" />
+            <DateTimePicker value={when} onChange={setWhen} label="Date and time" min={today} />
+            {setInPast && (
+              <p className="text-sm text-destructive" data-testid="past-time">
+                That time is in the past. Pick a time in the future.
+              </p>
+            )}
             <TimeZonePicker value={zone} onChange={setZone} />
           </>
         ) : (
@@ -279,6 +318,11 @@ function RescheduleDialog({
                 ? 'None of the selected posts has a date to shift.'
                 : `${scheduledCount} of ${posts.length} have a date; the rest are left alone.`}
             </p>
+            {shiftedInPast > 0 && (
+              <p className="text-sm text-destructive" data-testid="past-time">
+                {shiftedInPast} {shiftedInPast === 1 ? 'post would' : 'posts would'} move into the past. Choose fewer days back.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -344,7 +388,7 @@ function DestinationsDialog({
       }
     >
       <div className="mb-3">
-        <ExcludedNote posts={excluded} />
+        <ExcludedNote posts={excluded} reason="live, approved or already handed to a platform" />
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!options && !error && <p className="text-sm text-muted-foreground">Loading…</p>}

@@ -18,9 +18,18 @@ export function isLivePost(post: PostLike): boolean {
 }
 
 /**
- * A Post whose destinations or schedule must not be edited in bulk: it is live, or already approved or
- * handed to a platform. The server accepts such an edit but revokes the hand-off and reverts the Post to
- * review first (see PUT .../publish-targets), a side effect nobody should get from a bulk action.
+ * A Post whose schedule must not be changed in bulk: the same rule the single-Post schedule field and the
+ * backend apply. A schedule PATCH is allowed in every status short of published (a Scheduled Post re-times
+ * in place; an Approved or In Review one just takes the new time), and refused once it is live.
+ */
+export function isRescheduleLocked(post: PostLike): boolean {
+  return isLivePost(post)
+}
+
+/**
+ * A Post whose destinations must not be replaced in bulk: it is live, or already approved or
+ * handed to a platform. Unlike a schedule change, PUT .../publish-targets revokes the hand-off and reverts the
+ * Post to review first, a side effect nobody should get from a bulk action.
  */
 export function isEditLocked(post: PostLike): boolean {
   if (isLivePost(post)) return true

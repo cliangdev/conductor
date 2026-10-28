@@ -224,11 +224,9 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
   useEffect(() => {
     if (!projectId || !accessToken) return
     let cancelled = false
-    listCreatives(projectId, accessToken, {
-      state: stateFilter || undefined,
-      brandKitId: kitFilter || undefined,
-      includePostCount: true,
-    })
+    // Always the complete list: a family is the unit here (selecting, counting, deleting), and a state or kit
+    // filter must hide families, never silently drop some of a family's members from under it.
+    listCreatives(projectId, accessToken, { includePostCount: true })
       .then((rows) => {
         if (cancelled) return
         setCreatives(rows)
@@ -242,7 +240,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
     return () => {
       cancelled = true
     }
-  }, [projectId, accessToken, stateFilter, kitFilter, reloadKey])
+  }, [projectId, accessToken, reloadKey])
 
   const kitById = useMemo(() => {
     const map = new Map<string, BrandKit>()
@@ -270,10 +268,17 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
         // The server reports the whole family's distinct Posts on every member; the tile shows that one number.
         used: Math.max(0, ...sorted.map((m) => m.postCount ?? 0)),
         text: familyText(sorted),
+        // Members the current state/kit filter lets through; the rest stay in the family, just flagged.
+        matching: new Set(
+          sorted
+            .filter((m) => (!stateFilter || m.state === stateFilter) && (!kitFilter || m.brandKitId === kitFilter))
+            .map((m) => m.id),
+        ),
       }
     })
     const needle = query.trim().toLowerCase()
-    const matched = needle ? all.filter((f) => f.text.includes(needle)) : all
+    const byFilter = all.filter((f) => f.matching.size > 0)
+    const matched = needle ? byFilter.filter((f) => f.text.includes(needle)) : byFilter
     const nameOf = (f: (typeof all)[number]) => (f.members[0].name || f.members[0].displayId).toLowerCase()
     return matched.sort((a, b) => {
       switch (sort) {
@@ -287,7 +292,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
           return b.number - a.number
       }
     })
-  }, [creatives, query, sort])
+  }, [creatives, query, sort, stateFilter, kitFilter])
 
   // Selection works on whole families (the "a" root with its variants): that is what a tile is.
   const rootIds = useMemo(() => families.map((f) => f.members[0].id), [families])
@@ -570,22 +575,29 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       {deleteOpen && (
         <ConfirmModal
           open
-          title={`Delete ${selectedFamilies.length} ${selectedFamilies.length === 1 ? 'creative' : 'creatives'}?`}
-          description="Variants go with their creative. One still on a post is refused, and the post is named."
+          title={`Delete ${selectedFamilies.length} ${selectedFamilies.length === 1 ? 'family' : 'families'} (${selectedFamilies.reduce((n, f) => n + f.members.length, 0)} creatives)?`}
+          description="Each family is deleted whole, with every variant listed below. One still on a post is refused, and the post is named."
           confirmLabel={`Delete ${selectedFamilies.length}`}
           busyLabel="Deleting…"
           busy={deleting}
           onCancel={() => !deleting && setDeleteOpen(false)}
           onConfirm={() => void deleteSelected()}
         >
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-foreground">
-            {selectedFamilies.map((f) => (
-              <li key={f.members[0].id} className="truncate">
-                <span className="mr-2 font-mono text-xs text-muted-foreground">{f.members[0].displayId}</span>
-                {f.members[0].name}
-                {f.used > 0 && <span className="ml-2 text-xs text-muted-foreground">used in {f.used} {f.used === 1 ? 'post' : 'posts'}</span>}
-              </li>
-            ))}
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-foreground" data-testid="delete-creatives">
+            {selectedFamilies.flatMap((f) =>
+              f.members.map((m) => (
+                <li key={m.id} className="truncate" data-testid={`delete-creative-${m.id}`}>
+                  <span className="mr-2 font-mono text-xs text-muted-foreground">{m.displayId}</span>
+                  {m.name}
+                  {!f.matching.has(m.id) && (
+                    <span className="ml-2 text-xs text-muted-foreground">hidden by the current filter</span>
+                  )}
+                  {m.id === f.members[0].id && f.used > 0 && (
+                    <span className="ml-2 text-xs text-muted-foreground">family used in {f.used} {f.used === 1 ? 'post' : 'posts'}</span>
+                  )}
+                </li>
+              )),
+            )}
           </ul>
         </ConfirmModal>
       )}

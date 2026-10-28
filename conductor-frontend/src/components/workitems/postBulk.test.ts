@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyTagChange, hasFailedTarget, isEditLocked, isLivePost, parseTags, shiftSchedule, tagsDiffer } from './postBulk'
+import { applyTagChange, hasFailedTarget, isEditLocked, isLivePost, isRescheduleLocked, parseTags, shiftSchedule, tagsDiffer } from './postBulk'
 
 describe('isLivePost', () => {
   it('is live with a published destination, a live link or a Published status', () => {
@@ -79,5 +79,16 @@ describe('tagsDiffer', () => {
     expect(tagsDiffer(['a'], ['a'], 'add')).toBe(false)
     expect(tagsDiffer(undefined, ['a'], 'add')).toBe(true)
     expect(tagsDiffer(['a', 'b'], ['b'], 'remove')).toBe(true)
+  })
+})
+
+describe('isRescheduleLocked', () => {
+  it('only locks live posts, matching the single-post schedule rule', () => {
+    for (const status of ['DRAFT', 'IN_REVIEW', 'CHANGES_REQUESTED', 'APPROVED', 'SCHEDULED', 'FAILED']) {
+      expect(isRescheduleLocked({ status })).toBe(false)
+    }
+    expect(isRescheduleLocked({ status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'HANDED_OFF' }] })).toBe(false)
+    expect(isRescheduleLocked({ status: 'PUBLISHED' })).toBe(true)
+    expect(isRescheduleLocked({ status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'PUBLISHED' }] })).toBe(true)
   })
 })

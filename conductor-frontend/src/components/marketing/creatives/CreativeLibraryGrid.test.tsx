@@ -37,7 +37,7 @@ Object.assign(navigator, {
 })
 
 import { apiDelete, apiGet, apiGetPage, apiPost } from '@/lib/api'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, within } from '@testing-library/react'
 import { CreativeLibraryGrid } from './CreativeLibraryGrid'
 import type { Creative, CreativePhoto } from './types'
 import type { BrandKit } from '@/components/marketing/brand/types'
@@ -483,6 +483,56 @@ describe('CreativeLibraryGrid', () => {
 
       await waitFor(() => expect(apiDelete).toHaveBeenCalledTimes(1))
       expect((apiDelete as Mock).mock.calls[0]![0]).toMatch(/\/creatives\/r\/family$/)
+    })
+
+    describe('families under a state filter', () => {
+      const draftRootReadyVariant = () => [
+        creative({ id: 'r', number: 8, displayId: '8a', name: 'Root', state: 'DRAFT' }),
+        creative({ id: 'v', number: 8, variantLetter: 'b', displayId: '8b', parentCreativeId: 'r', name: 'Variant', state: 'READY' }),
+        creative({ id: 'o', number: 9, displayId: '9a', name: 'Other', state: 'DRAFT' }),
+      ]
+
+      it('never presents a variant as the root: the tile is the real root, found because a variant matches, and the filter is applied here', async () => {
+        mockGets({ creatives: draftRootReadyVariant() })
+        render(<CreativeLibraryGrid projectId="proj-1" />)
+        await screen.findByText('8a')
+        fireEvent.change(screen.getByLabelText('State'), { target: { value: 'READY' } })
+
+        // The family stays (its variant is READY), shown by its root; the all-DRAFT family goes.
+        await waitFor(() => expect(screen.queryByTestId('creative-tile-o')).toBeNull())
+        expect(screen.getByTestId('creative-tile-r')).toBeInTheDocument()
+        expect(screen.queryByTestId('creative-tile-v')).toBeNull()
+        expect(screen.getByRole('link', { name: 'Open variant 8b' })).toHaveAttribute(
+          'href',
+          '/app/projects/proj-1/marketing/creatives/v',
+        )
+        // The list is always requested whole (no state/kit narrowing on the wire).
+        expect((apiGet as Mock).mock.calls.every((c) => !String(c[0]).includes('state='))).toBe(true)
+      })
+
+      it('lists every creative that will be deleted, flags the ones the filter hides, and deletes by the root id', async () => {
+        mockGets({ creatives: draftRootReadyVariant() })
+        ;(apiDelete as Mock).mockResolvedValue(undefined)
+        render(<CreativeLibraryGrid projectId="proj-1" />)
+        await screen.findByText('8a')
+        fireEvent.change(screen.getByLabelText('State'), { target: { value: 'READY' } })
+        await waitFor(() => expect(screen.queryByTestId('creative-tile-o')).toBeNull())
+
+        fireEvent.click(screen.getByLabelText('Select 8a'))
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+        const list = within(await screen.findByTestId('delete-creatives'))
+        expect(list.getByText('8a')).toBeInTheDocument()
+        expect(list.getByText('8b')).toBeInTheDocument()
+        // 8a is DRAFT, so the READY filter hides it, yet it is deleted with its family and is named.
+        expect(within(screen.getByTestId('delete-creative-r')).getByText('hidden by the current filter')).toBeInTheDocument()
+        expect(within(screen.getByTestId('delete-creative-v')).queryByText('hidden by the current filter')).toBeNull()
+        expect(screen.getByText(/Delete 1 family \(2 creatives\)\?/)).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete 1' }))
+        await waitFor(() => expect(apiDelete).toHaveBeenCalledTimes(1))
+        expect((apiDelete as Mock).mock.calls[0]![0]).toMatch(/\/creatives\/r\/family$/)
+      })
     })
   })
 })

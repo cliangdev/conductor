@@ -31,7 +31,7 @@ export function PostsUsingCreativePanel({
 }) {
   const [posts, setPosts] = useState<PostRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const { entries } = useSidebarWorkNav(projectId, token)
+  const { entries, loading: navLoading } = useSidebarWorkNav(projectId, token)
   const postsEntry = findPostsNavEntry(entries)
   const postsHref = postsEntry ? workItemListPath(projectId, postsEntry.area, postsEntry.noun) : null
 
@@ -53,7 +53,9 @@ export function PostsUsingCreativePanel({
   }, [projectId, creativeId, token])
 
   // Rows link through the publishing workflow's own list, so only that workflow's posts are shown.
-  const shown = postsEntry && posts ? posts.filter((p) => !p.workflow || p.workflow === postsEntry.slug) : posts
+  // Until the nav has resolved there is no way to tell the publishing workflow's posts from the rest (and no
+  // link target), so keep showing the skeleton rather than flash unlinked rows of other workflows.
+  const shown = navLoading || posts === null ? null : postsEntry ? posts.filter((p) => !p.workflow || p.workflow === postsEntry.slug) : posts
 
   return (
     <Card data-testid="posts-using-creative">

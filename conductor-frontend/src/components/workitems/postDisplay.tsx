@@ -14,12 +14,17 @@ import type { PublishPlatform } from '@/components/marketing/destinations/types'
 import type { Issue } from '@/components/workitems/listTypes'
 import { cn } from '@/lib/utils'
 
+/** Target states that are over: taken back. PENDING, HANDED_OFF, PUBLISHING, AWAITING_MANUAL, PUBLISHED and FAILED are live concerns. */
+const INACTIVE_STATES = ['REVOKED']
+
 const PLATFORMS: PublishPlatform[] = ['facebook', 'instagram', 'youtube', 'tiktok']
 
 export interface Destination {
   platform: PublishPlatform
   /** True when any target for this platform is FAILED. */
   failed: boolean
+  /** True when every target for this platform is inactive (taken back), so the mark reads as gone. */
+  inactive: boolean
   /** Hover text: the state words of this platform's targets. */
   title: string
 }
@@ -47,6 +52,9 @@ export function destinationsOf(issue: Pick<Issue, 'externalLinks' | 'publishTarg
   return PLATFORMS.filter((p) => byPlatform.has(p)).map((p) => ({
     platform: p,
     failed: (states.get(p) ?? []).includes('FAILED'),
+    // Only the states that mean "this is no longer going out". A platform known only from a published link
+    // (no targets in the payload) has no states and stays normal.
+    inactive: (states.get(p) ?? []).length > 0 && (states.get(p) ?? []).every((s) => INACTIVE_STATES.includes(s)),
     title: byPlatform.get(p)!.join(', '),
   }))
 }
@@ -84,7 +92,14 @@ export function DestinationMarks({
           key={d.platform}
           title={d.title}
           data-failed={d.failed || undefined}
-          className={cn('inline-flex rounded-[5px]', d.failed && 'ring-2 ring-destructive')}
+          data-inactive={d.inactive || undefined}
+          className={cn(
+            'relative inline-flex rounded-[5px]',
+            d.failed && 'ring-2 ring-destructive',
+            // Taken back: muted and struck through, so it cannot be read as a live destination.
+            d.inactive &&
+              'opacity-40 grayscale after:pointer-events-none after:absolute after:inset-x-0 after:top-1/2 after:h-px after:-rotate-45 after:bg-foreground',
+          )}
         >
           <PlatformIcon platform={d.platform} className="h-4 w-4" />
         </span>

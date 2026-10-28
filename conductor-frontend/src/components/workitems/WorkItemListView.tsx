@@ -248,7 +248,7 @@ export function WorkItemListView({
   const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
   const startCreating = () => (opensComposePage ? router.push(composePath) : setCreating(true))
 
-  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; message?: string; retry?: () => Promise<void> } | null>(null)
+  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; message?: string; reasons?: string[]; retry?: () => Promise<void> } | null>(null)
   const bulkStatusTriggerRef = useRef<HTMLButtonElement>(null)
   const bulkAssignTriggerRef = useRef<HTMLButtonElement>(null)
 
@@ -276,15 +276,24 @@ export function WorkItemListView({
     try {
       const results = await Promise.allSettled(ids.map((id) => mutate(id)))
       const failedIds = ids.filter((_, i) => results[i].status === 'rejected')
+      // The server's own words for why (a time too soon, a post already live...), once each.
+      const reasons = [
+        ...new Set(
+          results.flatMap((r) => (r.status === 'rejected' ? [apiErrorMessage(r.reason, '').trim()] : [])).filter(Boolean),
+        ),
+      ].slice(0, 3)
       // `failure` is a full phrase per action ("to change status", "to delete"), so the toast reads naturally.
       if (failedIds.length > 0) {
-        toastError(`${failedIds.length} of ${ids.length} Work Items failed ${failure}`)
+        toastError(
+          `${failedIds.length} of ${ids.length} Work Items failed ${failure}${reasons.length ? `: ${reasons.join('; ')}` : ''}`
+        )
       }
       listState.settleSelection(ids, failedIds)
       // The per-item result line ("7 done, 1 failed") with a retry for just the failures.
       setBulkResult({
         done: ids.length - failedIds.length,
         failed: failedIds.length,
+        reasons,
         retry: failedIds.length > 0 ? () => runBulkMutation(failedIds, mutate, failure) : undefined,
       })
       await loadIssues()
@@ -448,7 +457,9 @@ export function WorkItemListView({
       {bulkResult && (
         <Alert variant={bulkResult.failed > 0 ? 'destructive' : 'info'} className="mb-3">
           <span data-testid="bulk-result">
-            {bulkResult.message ?? `${bulkResult.done} done${bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}`}
+            {bulkResult.message ?? `${bulkResult.done} done${bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}${
+              bulkResult.reasons?.length ? `: ${bulkResult.reasons.join('; ')}` : ''
+            }`}
           </span>
           {bulkResult.retry && (
             <Button

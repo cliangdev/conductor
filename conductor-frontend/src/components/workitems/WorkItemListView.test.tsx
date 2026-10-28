@@ -76,7 +76,7 @@ vi.mock('@/lib/api', () => ({
   apiPost: (...args: unknown[]) => apiPost(...args),
   apiPatch: (...args: unknown[]) => apiPatch(...args),
   apiDelete: (...args: unknown[]) => apiDelete(...args),
-  apiErrorMessage: (_e: unknown, fallback: string) => fallback,
+  apiErrorMessage: (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback),
 }))
 
 const BASE_VIEW: WorkflowView = {
@@ -605,6 +605,22 @@ describe('bulk results and selection in every view', () => {
     await waitFor(() => expect(screen.getByTestId('bulk-result')).toHaveTextContent('1 done'))
   })
 
+  it('surfaces the server\'s reason for a rejected item in the result line, not only "N failed"', async () => {
+    apiPatch
+      .mockImplementationOnce(() => Promise.reject(new Error('That time is too soon for TikTok')))
+      .mockImplementationOnce(() => Promise.reject(new Error('That time is too soon for TikTok')))
+    const user = userEvent.setup()
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+    // The same reason twice is shown once.
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent('0 done, 2 failed: That time is too soon for TikTok')
+  })
+
   it('selects cards on the board and shows the bulk bar', async () => {
     searchParamsValue = new URLSearchParams('mode=board')
     render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
@@ -682,7 +698,7 @@ describe('bulk actions act only on what is shown', () => {
     fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
     await user.click(await screen.findByRole('button', { name: 'Change status' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
-    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalledWith('1 of 2 Work Items failed to change status'))
+    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalledWith('1 of 2 Work Items failed to change status: nope'))
   })
 })
 
