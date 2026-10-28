@@ -69,4 +69,14 @@ describe('Checkbox', () => {
     render(<Checkbox checked={false} onCheckedChange={vi.fn()} label="Named" id="my-checkbox" />)
     expect(screen.getByLabelText('Named')).toHaveAttribute('id', 'my-checkbox')
   })
+
+  it('forwards the click event (shift-click range selection) and still reports the change', async () => {
+    const onClick = vi.fn()
+    const onCheckedChange = vi.fn()
+    render(<Checkbox checked={false} onCheckedChange={onCheckedChange} onClick={onClick} label={<span className="sr-only">Select 5a</span>} />)
+    await userEvent.keyboard('{Shift>}')
+    await userEvent.click(screen.getByLabelText('Select 5a'))
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(onCheckedChange).toHaveBeenCalledWith(true)
+  })
 })

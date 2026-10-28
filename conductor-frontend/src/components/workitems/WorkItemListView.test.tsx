@@ -35,9 +35,12 @@ interface MockIssue {
   assignee?: { userId: string; name: string; avatarUrl?: string | null } | null
   scheduledFor?: string | null
   scheduleTimezone?: string | null
+  tags?: string[]
+  externalLinks?: { url: string; type: string }[]
 }
 
 let issues: MockIssue[] = []
+const listUrls: string[] = []
 const apiPatch = vi.fn().mockResolvedValue(undefined)
 const apiPost = vi.fn().mockResolvedValue(undefined)
 const apiDelete = vi.fn().mockResolvedValue(undefined)
@@ -56,7 +59,10 @@ const TRANSITIONS: Record<string, { toStatus: string; label: string }[]> = {
 
 vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
-    if (url.includes('/work-items?workflow=')) return Promise.resolve(issues)
+    if (url.includes('/work-items?workflow=')) {
+      listUrls.push(url)
+      return Promise.resolve(issues)
+    }
     if (url.includes('/members')) return Promise.resolve(MEMBERS)
     if (url.includes('/available-transitions')) {
       transitionCalls.push(url)
@@ -70,7 +76,7 @@ vi.mock('@/lib/api', () => ({
   apiPost: (...args: unknown[]) => apiPost(...args),
   apiPatch: (...args: unknown[]) => apiPatch(...args),
   apiDelete: (...args: unknown[]) => apiDelete(...args),
-  apiErrorMessage: (_e: unknown, fallback: string) => fallback,
+  apiErrorMessage: (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback),
 }))
 
 const BASE_VIEW: WorkflowView = {
@@ -575,5 +581,325 @@ describe('display mode', () => {
     await renderList()
 
     expect(screen.getByTestId('work-item-calendar-grid')).toBeInTheDocument()
+  })
+})
+
+describe('bulk results and selection in every view', () => {
+  it('reports "1 done, 1 failed" and retries just the failure', async () => {
+    apiPatch.mockImplementationOnce(() => Promise.reject(new Error('nope'))).mockResolvedValueOnce(undefined)
+    const user = userEvent.setup()
+    await renderList()
+    const firstLink = within(rowList()).getAllByRole('link')[0]
+    act(() => firstLink.focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent('1 done, 1 failed')
+    apiPatch.mockClear()
+    await user.click(screen.getByRole('button', { name: 'Retry failed' }))
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/i1', { status: 'DONE' }, 'token')
+    await waitFor(() => expect(screen.getByTestId('bulk-result')).toHaveTextContent('1 done'))
+  })
+
+  it('surfaces the server\'s reason for a rejected item in the result line, not only "N failed"', async () => {
+    apiPatch
+      .mockImplementationOnce(() => Promise.reject(new Error('That time is too soon for TikTok')))
+      .mockImplementationOnce(() => Promise.reject(new Error('That time is too soon for TikTok')))
+    const user = userEvent.setup()
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+    // The same reason twice is shown once.
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent('0 done, 2 failed: That time is too soon for TikTok')
+  })
+
+  it('selects cards on the board and shows the bulk bar', async () => {
+    searchParamsValue = new URLSearchParams('mode=board')
+    render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
+    fireEvent.click(await screen.findByLabelText('Select Zeta task'))
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+  })
+
+  it('selects chips on the calendar and shows the bulk bar', async () => {
+    searchParamsValue = new URLSearchParams('mode=calendar')
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2026-03-15T12:00:00Z'))
+    try {
+      render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
+      fireEvent.click(await screen.findByLabelText('Select Zeta task'))
+      expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows Post bulk actions only for publishing workflows', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry failed' })).toBeDisabled()
+  })
+})
+
+describe('bulk actions act only on what is shown', () => {
+  async function selectI1ThenSearchAlpha() {
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i1 (Zeta task)
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'alpha' } }) // hides i1, shows i2
+  }
+
+  it('keeps a hidden selection, counts it as hidden, and disables the actions while nothing visible is selected', async () => {
+    await selectI1ThenSearchAlpha()
+    expect(await screen.findByText('0 selected')).toBeInTheDocument()
+    expect(screen.getByText('(1 hidden by filters)')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Change status' })).toBeDisabled()
+    // Room is left under the last row for the fixed bar.
+    expect(document.querySelector('div.h-20[aria-hidden]')).not.toBeNull()
+  })
+
+  it('sends a bulk status change for the visible selected rows only and leaves the hidden one selected', async () => {
+    const user = userEvent.setup()
+    await selectI1ThenSearchAlpha()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i2
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('(1 hidden by filters)')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
+    expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/i2', { status: 'DONE' }, 'token')
+    // i1 was never touched and is still selected (hidden) once the search is cleared.
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: '' } })
+    await waitFor(() => expect(rowFor('i1')).toHaveAttribute('data-selected', 'true'))
+  })
+
+  it('words a partial failure as a full phrase for the action', async () => {
+    apiPatch.mockImplementationOnce(() => Promise.reject(new Error('nope'))).mockResolvedValueOnce(undefined)
+    const user = userEvent.setup()
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
+    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalledWith('1 of 2 Work Items failed to change status: nope'))
+  })
+})
+
+describe('shared-path behaviour that must not change', () => {
+  it('keeps a hidden selection and says "Nothing to change." when a bulk run has nothing to do', async () => {
+    const user = userEvent.setup()
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i1 (Zeta, DRAFT)
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'alpha' } }) // shows only i2 (DRAFT)
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i2
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Draft' })) // i2 is already Draft
+
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent('Nothing to change.')
+    expect(apiPatch).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: '' } })
+    await waitFor(() => expect(rowFor('i1')).toHaveAttribute('data-selected', 'true'))
+    expect(rowFor('i2')).toHaveAttribute('data-selected', 'true')
+  })
+
+  it('offers only Change status and Assign on a non-publishing workflow', async () => {
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    const bar = within(await screen.findByRole('toolbar', { name: 'Selection actions' }))
+    expect(bar.getByRole('button', { name: 'Change status' })).toBeInTheDocument()
+    expect(bar.getByRole('button', { name: 'Assign' })).toBeInTheDocument()
+    for (const name of ['Reschedule', 'Destinations', 'Tags', 'Delete', 'Retry failed']) {
+      expect(bar.queryByRole('button', { name })).toBeNull()
+    }
+    expect(screen.queryByTestId('destination-marks')).toBeNull()
+  })
+
+  it('renders a publishing list from an older cached response that lacks the new fields', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+    expect(within(rowFor('i1')).queryByTestId('destination-marks')).toBeNull()
+  })
+
+  it('shows no bulk bar to a REVIEWER on a publishing workflow', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    // user-1 is the current user; make them a REVIEWER via the members mock for this render.
+    const orig = MEMBERS[0]!.role
+    ;(MEMBERS[0] as { role: string }).role = 'REVIEWER'
+    try {
+      render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+      await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+      act(() => within(rowList()).getAllByRole('link')[0].focus())
+      fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+      expect(screen.queryByRole('toolbar', { name: 'Selection actions' })).toBeNull()
+    } finally {
+      ;(MEMBERS[0] as { role: string }).role = orig
+    }
+  })
+
+  it('asks for the list extras (thumbnail, destinations, Creative) and passes the usage filter through', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    searchParamsValue = new URLSearchParams('mediaId=m1&view=all')
+    listUrls.length = 0
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(listUrls.length).toBeGreaterThan(0))
+    expect(listUrls[0]).toBe('/api/v2/projects/proj-1/work-items?workflow=MARKETING&enrich=true&mediaId=m1')
+  })
+
+  it('shows "No matching posts" with a Clear filter action, not the first-run onboarding, when a usage filter finds nothing', async () => {
+    issues = []
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    searchParamsValue = new URLSearchParams('creativeId=c1&view=all')
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByText('No matching posts')).toBeInTheDocument()
+    expect(screen.queryByText('No posts yet')).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Connect an account' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Clear filter' })).toHaveAttribute('href', '/app/projects/proj-1/engineering/posts')
+  })
+
+  it('reports skipped posts next to "N done" after a reschedule, so it is not read as all of them', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    issues = issues.map((i) =>
+      i.id === 'i1' ? { ...i, scheduledFor: new Date(Date.now() + 6 * 86400_000).toISOString(), scheduleTimezone: 'UTC' } : i,
+    )
+    const user = userEvent.setup()
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i1 (scheduled)
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i2 (no date)
+    await user.click(await screen.findByRole('button', { name: 'Reschedule' }))
+    fireEvent.change(screen.getByLabelText('Reschedule mode'), { target: { value: 'shift' } })
+    fireEvent.change(screen.getByLabelText(/Days/), { target: { value: '1' } })
+    await user.click(screen.getAllByRole('button', { name: 'Reschedule' }).at(-1)!)
+
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent(
+      '1 done; 1 skipped: it has no date to shift, or the new time has already passed',
+    )
+    expect(apiPatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('still shows the first-run onboarding for a publishing workflow with no filter and no posts', async () => {
+    issues = []
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByText('No posts yet')).toBeInTheDocument()
+  })
+
+  it('keeps selection checkboxes visible on touch and narrow screens, revealed on hover for desktop', async () => {
+    searchParamsValue = new URLSearchParams('mode=board')
+    render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
+    const box = await screen.findByLabelText('Select Zeta task')
+    const wrapper = box.closest('div[class*="absolute"]') as HTMLElement
+    expect(wrapper.className).toContain('group-hover:opacity-100')
+    expect(wrapper.className).toContain('max-md:opacity-100')
+    expect(wrapper.className).toContain('[@media(hover:none)]:opacity-100')
+  })
+
+  it('says the filtered list shows every state when opened from a Creative or Media link', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    searchParamsValue = new URLSearchParams('creativeId=c1&view=all')
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByTestId('usage-filter')).toHaveTextContent('in every state')
+  })
+})
+
+describe('search', () => {
+  it('filters by title, display id and tag, and Clear filters resets it', async () => {
+    issues = [
+      ...baseIssues(),
+      { ...baseIssues()[0]!, id: 'i5', title: 'Tagged thing', displayId: 'COND-5', tags: ['launch'] },
+    ]
+    await renderList()
+    const box = screen.getByLabelText('Search')
+
+    fireEvent.change(box, { target: { value: 'alpha' } })
+    expect(rowFor('i2')).toBeTruthy()
+    expect(document.getElementById('wi-row-i1')).toBeNull()
+
+    fireEvent.change(box, { target: { value: 'cond-1' } })
+    expect(rowFor('i1')).toBeTruthy()
+    expect(document.getElementById('wi-row-i2')).toBeNull()
+
+    fireEvent.change(box, { target: { value: 'launch' } })
+    expect(rowFor('i5')).toBeTruthy()
+    expect(document.getElementById('wi-row-i1')).toBeNull()
+
+    fireEvent.change(box, { target: { value: 'zzz-nothing' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }))
+    expect(rowFor('i1')).toBeTruthy()
+    expect(box).toHaveValue('')
+  })
+})
+
+describe('publishing workflow rows and grid', () => {
+  beforeEach(() => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    issues = [
+      {
+        ...baseIssues()[0]!,
+        externalLinks: [{ url: 'https://instagram.com/p/1', type: 'instagram_post' }],
+      },
+      baseIssues()[1]!,
+    ]
+  })
+
+  function renderPosts() {
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    return waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+  }
+
+  it('shows destination marks and the scheduled time on rows', async () => {
+    await renderPosts()
+    const row = rowFor('i1')
+    expect(within(row).getByTestId('destination-marks')).toBeInTheDocument()
+    expect(within(row).getByTestId('row-schedule')).toHaveTextContent('Mar 4')
+    expect(within(rowFor('i2')).queryByTestId('destination-marks')).toBeNull()
+  })
+
+  it('does not enrich rows of a non-publishing workflow', async () => {
+    VIEW = BASE_VIEW
+    await renderList()
+    expect(within(rowFor('i1')).queryByTestId('row-schedule')).toBeNull()
+  })
+
+  it('switches to the grid, selects a card and shows the bulk bar', async () => {
+    await renderPosts()
+    fireEvent.click(screen.getByTitle('Grid view'))
+    expect(screen.getByTestId('work-item-grid')).toBeInTheDocument()
+    expect(screen.queryByTestId('work-item-list')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wv_mode_proj-1_MARKETING')).toBe('grid')
+
+    fireEvent.click(screen.getByLabelText('Select Zeta task'))
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+  })
+
+  it('offers no grid toggle on a non-publishing workflow', async () => {
+    VIEW = BASE_VIEW
+    await renderList()
+    expect(screen.queryByTitle('Grid view')).toBeNull()
   })
 })

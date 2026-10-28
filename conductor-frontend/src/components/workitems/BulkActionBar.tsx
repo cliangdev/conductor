@@ -1,6 +1,6 @@
 'use client'
 
-import type { RefObject } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -9,6 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { FloatingBulkBar } from '@/components/marketing/shared/FloatingBulkBar'
 import { UserAvatar } from '@/components/workitems/UserAvatar'
 import type { Member } from '@/components/workitems/listTypes'
 
@@ -27,6 +28,9 @@ export function BulkActionBar({
   disabled,
   statusTriggerRef,
   assignTriggerRef,
+  onClear,
+  hiddenCount,
+  children,
 }: {
   count: number
   statusOptions: { id: string; label: string; category: string }[]
@@ -37,11 +41,15 @@ export function BulkActionBar({
   disabled?: boolean
   statusTriggerRef?: RefObject<HTMLButtonElement | null>
   assignTriggerRef?: RefObject<HTMLButtonElement | null>
+  onClear?: () => void
+  /** Selected but hidden by a search, filter or tab: kept, but never acted on. */
+  hiddenCount?: number
+  /** Extra actions after Assign (the Posts-only bulk actions). */
+  children?: ReactNode
 }) {
   return (
-    <div className="sticky bottom-0 z-10 flex items-center gap-3 rounded-md border border-border bg-accent-soft px-3 py-2 mt-2 text-sm">
-      <span className="font-medium text-foreground">{count} selected</span>
-      <div className="flex items-center gap-2 ml-auto">
+    <FloatingBulkBar count={count} hiddenCount={hiddenCount} onClear={onClear}>
+      <div className="flex items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button ref={statusTriggerRef} variant="outline" size="sm" disabled={disabled}>
@@ -75,7 +83,8 @@ export function BulkActionBar({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {children}
       </div>
-    </div>
+    </FloatingBulkBar>
   )
 }

@@ -10,11 +10,14 @@ import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { markPageReady } from '@/lib/perf'
 import { useRouter } from 'next/navigation'
-import { ImagesIcon, LayersIcon, PlayIcon } from 'lucide-react'
+import { ImagesIcon, LayersIcon, PlayIcon, SearchIcon } from 'lucide-react'
 import { mountBoard } from '@cliangdev/creative-render/mount'
 import { motionKeyTimes } from '@cliangdev/creative-render/motion'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
+import { Input } from '@/components/ui/input'
 import { CopyableCode } from '@/components/ui/copyable-code'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Label } from '@/components/ui/label'
@@ -22,6 +25,10 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Can } from '@/components/auth/Can'
+import { useCan } from '@/contexts/PermissionsContext'
+import { FloatingBulkBar } from '@/components/marketing/shared/FloatingBulkBar'
+import { useRangeSelection } from '@/components/marketing/shared/useRangeSelection'
+import { usePostsHref } from '@/components/marketing/shared/ContentSubNav'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { formatDuration } from '@/lib/format'
@@ -32,6 +39,7 @@ import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/mark
 import {
   creativeToRenderCreative,
   createCreative,
+  deleteCreativeFamily,
   listCreatives,
   type Creative,
   type CreativePhoto,
@@ -39,6 +47,16 @@ import {
 } from '@/components/marketing/creatives/types'
 import type { RenderBrand } from '@/components/marketing/creatives/renderTypes'
 import { tileMediaIds, useMediaByIds } from '@/components/marketing/media/useMediaByIds'
+
+type CreativeSort = 'newest' | 'oldest' | 'name' | 'used'
+
+/** Pure: a family's text for search — id, names and copy of every member. */
+function familyText(members: Creative[]): string {
+  return members
+    .map((m) => [m.displayId, m.name, m.headline, m.body].filter(Boolean).join(' '))
+    .join(' ')
+    .toLowerCase()
+}
 
 const STATE_HUE: Record<CreativeState, 'gray' | 'teal' | 'slate'> = {
   DRAFT: 'gray',
@@ -181,6 +199,16 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
   const [stateFilter, setStateFilter] = useState<CreativeState | ''>('')
   const [kitFilter, setKitFilter] = useState('')
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<CreativeSort>('newest')
+  const [reloadKey, setReloadKey] = useState(0)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  // Kept apart from `error`: the reload that follows a delete clears `error`, and these must stay readable.
+  const [deleteFailures, setDeleteFailures] = useState<string | null>(null)
+  const canManage = useCan('creative.manage')
+  const postsHref = usePostsHref(projectId)
 
   useEffect(() => {
     if (!projectId || !accessToken) return
@@ -196,10 +224,9 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
   useEffect(() => {
     if (!projectId || !accessToken) return
     let cancelled = false
-    listCreatives(projectId, accessToken, {
-      state: stateFilter || undefined,
-      brandKitId: kitFilter || undefined,
-    })
+    // Always the complete list: a family is the unit here (selecting, counting, deleting), and a state or kit
+    // filter must hide families, never silently drop some of a family's members from under it.
+    listCreatives(projectId, accessToken, { includePostCount: true })
       .then((rows) => {
         if (cancelled) return
         setCreatives(rows)
@@ -213,7 +240,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
     return () => {
       cancelled = true
     }
-  }, [projectId, accessToken, stateFilter, kitFilter])
+  }, [projectId, accessToken, reloadKey])
 
   const kitById = useMemo(() => {
     const map = new Map<string, BrandKit>()
@@ -233,13 +260,79 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       list.push(creative)
       byNumber.set(creative.number, list)
     }
-    return [...byNumber.entries()]
-      .map(([number, members]) => ({
+    const all = [...byNumber.entries()].map(([number, members]) => {
+      const sorted = [...members].sort((a, b) => a.variantLetter.localeCompare(b.variantLetter))
+      return {
         number,
-        members: [...members].sort((a, b) => a.variantLetter.localeCompare(b.variantLetter)),
-      }))
-      .sort((a, b) => b.number - a.number)
-  }, [creatives])
+        members: sorted,
+        // The server reports the whole family's distinct Posts on every member; the tile shows that one number.
+        used: Math.max(0, ...sorted.map((m) => m.postCount ?? 0)),
+        text: familyText(sorted),
+        // Members the current state/kit filter lets through; the rest stay in the family, just flagged.
+        matching: new Set(
+          sorted
+            .filter((m) => (!stateFilter || m.state === stateFilter) && (!kitFilter || m.brandKitId === kitFilter))
+            .map((m) => m.id),
+        ),
+      }
+    })
+    const needle = query.trim().toLowerCase()
+    const byFilter = all.filter((f) => f.matching.size > 0)
+    const matched = needle ? byFilter.filter((f) => f.text.includes(needle)) : byFilter
+    const nameOf = (f: (typeof all)[number]) => (f.members[0].name || f.members[0].displayId).toLowerCase()
+    return matched.sort((a, b) => {
+      switch (sort) {
+        case 'oldest':
+          return a.number - b.number
+        case 'name':
+          return nameOf(a).localeCompare(nameOf(b))
+        case 'used':
+          return b.used - a.used || b.number - a.number
+        default:
+          return b.number - a.number
+      }
+    })
+  }, [creatives, query, sort, stateFilter, kitFilter])
+
+  // Selection works on whole families (the "a" root with its variants): that is what a tile is.
+  const rootIds = useMemo(() => families.map((f) => f.members[0].id), [families])
+  const selection = useRangeSelection(rootIds)
+  const selectedFamilies = families.filter((f) => selection.selectedVisible.includes(f.members[0].id))
+
+  /**
+   * Deletes each selected family with ONE server call per family: the server deletes the root and all its
+   * variants in a single transaction, or refuses and deletes nothing (a member on a Post, named in the
+   * message, or a running experiment). So a family is never left half deleted, and the summary below says
+   * exactly which families went and which stayed, with why.
+   */
+  async function deleteSelected() {
+    if (!accessToken) return
+    setDeleting(true)
+    setError(null)
+    setNotice(null)
+    setDeleteFailures(null)
+    const failures: string[] = []
+    const deleted: string[] = []
+    for (const family of selectedFamilies) {
+      const root = family.members[0]
+      try {
+        await deleteCreativeFamily(projectId, root.id, accessToken)
+        deleted.push(root.displayId)
+        selection.remove(root.id)
+      } catch (err) {
+        failures.push(`${root.displayId} kept: ${apiErrorMessage(err, 'could not be deleted')}`)
+      }
+    }
+    setDeleting(false)
+    setDeleteOpen(false)
+    setNotice(
+      `${deleted.length} deleted${deleted.length ? ` (${deleted.join(', ')})` : ''}${
+        failures.length ? `, ${failures.length} kept` : ''
+      }.`,
+    )
+    setDeleteFailures(failures.length ? failures.join(' · ') : null)
+    setReloadKey((k) => k + 1)
+  }
 
   async function handleNewCreative() {
     if (!accessToken || creating) return
@@ -256,13 +349,37 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
 
   const loading = creatives === null
   useEffect(() => { if (!loading) markPageReady('creatives-library') }, [loading])
-  const filtered = Boolean(stateFilter || kitFilter)
+  const filtered = Boolean(stateFilter || kitFilter || query.trim())
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-16">
       <BrandSetupNotice projectId={projectId} kit={defaultKit} />
 
       <div className="flex flex-wrap items-end gap-3">
+        <div className="relative w-56">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-subtle" aria-hidden />
+          <Input
+            type="search"
+            aria-label="Search creatives"
+            placeholder="Search name, copy or ID"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+
+        <div className="min-w-[9rem]">
+          <Label htmlFor="creative-sort" className="text-xs font-medium text-muted-foreground">
+            Sort
+          </Label>
+          <Select id="creative-sort" value={sort} onChange={(e) => setSort(e.target.value as CreativeSort)}>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="name">Name</option>
+            <option value="used">Most used</option>
+          </Select>
+        </div>
+
         <div className="min-w-[9rem]">
           <Label htmlFor="creative-state-filter" className="text-xs font-medium text-muted-foreground">
             State
@@ -300,6 +417,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
             onClick={() => {
               setStateFilter('')
               setKitFilter('')
+              setQuery('')
             }}
           >
             Clear filters
@@ -316,6 +434,8 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
       </div>
 
       {error && <Alert variant="destructive">{error}</Alert>}
+      {notice && <Alert variant="info">{notice}</Alert>}
+      {deleteFailures && <Alert variant="destructive">{deleteFailures}</Alert>}
 
       {loading ? (
         <GridSkeleton />
@@ -357,63 +477,129 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
         )
       ) : (
         <div data-testid="creative-grid" className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {families.map(({ members }) => {
+          {families.map(({ members, used }) => {
             const root = members[0]
             const variants = members.slice(1)
             const kit = kitById.get(root.brandKitId)
             const brand = brandKitToBrand(kit)
             const isSequence = Boolean(root.sequenceKind && root.sequence.length > 0)
+            const isSelected = selection.isSelected(root.id)
             return (
-              <Link
+              <div
                 key={root.id}
-                href={`/app/projects/${projectId}/marketing/creatives/${root.id}`}
-                className="group block overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-strong"
+                data-testid={`creative-tile-${root.id}`}
+                data-selected={isSelected || undefined}
+                className={`group relative overflow-hidden rounded-lg border bg-surface transition-colors hover:border-border-strong ${
+                  isSelected ? 'border-primary ring-2 ring-primary' : 'border-border'
+                }`}
               >
-                {root.kind === 'CAROUSEL' ? (
-                  <CarouselThumb creative={root} mediaById={mediaById} />
-                ) : root.kind === 'CLIP' ? (
-                  <ClipThumb creative={root} mediaById={mediaById} />
-                ) : (
-                  <CreativeThumb creative={root} brand={brand} mediaById={mediaById} />
-                )}
-                <div className="flex flex-col gap-1.5 border-t border-border p-3">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="font-mono">{root.displayId}</span>
-                    {isSequence && (
-                      <span title={`${root.sequenceKind === 'carousel' ? 'Carousel' : 'Story'} · ${root.sequence.length}`}>
-                        <LayersIcon className="h-3 w-3" aria-hidden />
-                      </span>
-                    )}
-                    {variants.length > 0 && (
-                      <span className="flex gap-1">
-                        {variants.map((v) => (
-                          <span
-                            key={v.id}
-                            role="link"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              router.push(`/app/projects/${projectId}/marketing/creatives/${v.id}`)
-                            }}
-                            className="cursor-pointer rounded px-1 font-mono hover:bg-surface-3 hover:text-foreground"
-                          >
-                            {v.variantLetter}
-                          </span>
-                        ))}
-                      </span>
-                    )}
-                    {showKitName && kit && <span className="ml-auto shrink-0 truncate">{kit.name}</span>}
+                <Link
+                  href={`/app/projects/${projectId}/marketing/creatives/${root.id}`}
+                  className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {root.kind === 'CAROUSEL' ? (
+                    <CarouselThumb creative={root} mediaById={mediaById} />
+                  ) : root.kind === 'CLIP' ? (
+                    <ClipThumb creative={root} mediaById={mediaById} />
+                  ) : (
+                    <CreativeThumb creative={root} brand={brand} mediaById={mediaById} />
+                  )}
+                  <div className="flex flex-col gap-1.5 border-t border-border px-3 pt-3">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-mono">{root.displayId}</span>
+                      {isSequence && (
+                        <span title={`${root.sequenceKind === 'carousel' ? 'Carousel' : 'Story'} · ${root.sequence.length}`}>
+                          <LayersIcon className="h-3 w-3" aria-hidden />
+                        </span>
+                      )}
+                      {showKitName && kit && <span className="ml-auto shrink-0 truncate">{kit.name}</span>}
+                    </div>
+                    <p className="truncate text-sm text-foreground" title={root.name || root.displayId}>
+                      {root.name || (root.kind === 'CAROUSEL' ? (carouselSlideCount(root.slides) === 1 ? 'Image' : 'Carousel') : root.kind === 'CLIP' ? 'Clip' : root.layout)}
+                    </p>
+                    <StatusBadge status={root.state} hue={STATE_HUE[root.state]} label={STATE_LABEL[root.state]} className="self-start" />
                   </div>
-                  <p className="truncate text-sm text-foreground" title={root.name || root.displayId}>
-                    {root.name || (root.kind === 'CAROUSEL' ? (carouselSlideCount(root.slides) === 1 ? 'Image' : 'Carousel') : root.kind === 'CLIP' ? 'Clip' : root.layout)}
-                  </p>
-                  <StatusBadge status={root.state} hue={STATE_HUE[root.state]} label={STATE_LABEL[root.state]} className="self-start" />
+                </Link>
+                {/* Variant letters and usage are real links beside the tile link, never nested inside it. */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-3 pt-1.5 text-xs text-muted-foreground">
+                  {variants.map((v) => (
+                    <Link
+                      key={v.id}
+                      href={`/app/projects/${projectId}/marketing/creatives/${v.id}`}
+                      aria-label={`Open variant ${v.displayId}`}
+                      className="rounded px-1 font-mono hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {v.variantLetter}
+                    </Link>
+                  ))}
+                  {used > 0 && postsHref ? (
+                    <Link
+                      href={`${postsHref}?creativeId=${root.id}&view=all`}
+                      data-testid={`creative-used-${root.id}`}
+                      className="ml-auto hover:text-foreground hover:underline"
+                    >
+                      Used in {used} {used === 1 ? 'post' : 'posts'}
+                    </Link>
+                  ) : used > 0 ? (
+                    <span className="ml-auto" data-testid={`creative-used-${root.id}`}>
+                      Used in {used} {used === 1 ? 'post' : 'posts'}
+                    </span>
+                  ) : null}
                 </div>
-              </Link>
+                {canManage && (
+                  <Checkbox
+                    checked={isSelected}
+                    // The click handler (not onCheckedChange) carries the shift key for range selection.
+                    onCheckedChange={() => {}}
+                    onClick={(e) => selection.select(root.id, e.shiftKey)}
+                    label={<span className="sr-only">Select {root.displayId}</span>}
+                    className={`absolute left-1.5 top-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100 ${
+                      selection.selected.length === 0 && !isSelected ? 'opacity-0' : ''
+                    }`}
+                  />
+                )}
+              </div>
             )
           })}
         </div>
+      )}
+
+      {canManage && selectedFamilies.length > 0 && (
+        <FloatingBulkBar count={selectedFamilies.length} hiddenCount={selection.hiddenCount} onClear={selection.clear}>
+          <Button variant="outline" size="sm" className="text-destructive" disabled={deleting} onClick={() => setDeleteOpen(true)}>
+            Delete
+          </Button>
+        </FloatingBulkBar>
+      )}
+
+      {deleteOpen && (
+        <ConfirmModal
+          open
+          title={`Delete ${selectedFamilies.length} ${selectedFamilies.length === 1 ? 'family' : 'families'} (${selectedFamilies.reduce((n, f) => n + f.members.length, 0)} creatives)?`}
+          description="Each family is deleted whole, with every variant listed below. One still on a post is refused, and the post is named."
+          confirmLabel={`Delete ${selectedFamilies.length}`}
+          busyLabel="Deleting…"
+          busy={deleting}
+          onCancel={() => !deleting && setDeleteOpen(false)}
+          onConfirm={() => void deleteSelected()}
+        >
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-foreground" data-testid="delete-creatives">
+            {selectedFamilies.flatMap((f) =>
+              f.members.map((m) => (
+                <li key={m.id} className="truncate" data-testid={`delete-creative-${m.id}`}>
+                  <span className="mr-2 font-mono text-xs text-muted-foreground">{m.displayId}</span>
+                  {m.name}
+                  {!f.matching.has(m.id) && (
+                    <span className="ml-2 text-xs text-muted-foreground">hidden by the current filter</span>
+                  )}
+                  {m.id === f.members[0].id && f.used > 0 && (
+                    <span className="ml-2 text-xs text-muted-foreground">family used in {f.used} {f.used === 1 ? 'post' : 'posts'}</span>
+                  )}
+                </li>
+              )),
+            )}
+          </ul>
+        </ConfirmModal>
       )}
     </div>
   )

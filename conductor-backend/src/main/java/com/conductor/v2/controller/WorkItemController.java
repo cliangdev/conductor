@@ -33,6 +33,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Canonical v2 Work Item resource ({@code /api/v2/projects/{projectId}/work-items}). This is the successor
@@ -53,13 +54,16 @@ public class WorkItemController implements WorkItemsApi {
     private final WorkItemService workItemService;
     private final WorkItemWorkflowService workItemWorkflowService;
     private final ReviewerService reviewerService;
+    private final WorkItemListEnricher listEnricher;
 
     public WorkItemController(WorkItemService workItemService,
                               WorkItemWorkflowService workItemWorkflowService,
-                              ReviewerService reviewerService) {
+                              ReviewerService reviewerService,
+                              WorkItemListEnricher listEnricher) {
         this.workItemService = workItemService;
         this.workItemWorkflowService = workItemWorkflowService;
         this.reviewerService = reviewerService;
+        this.listEnricher = listEnricher;
     }
 
     // open-in-view is disabled, so the entity→DTO mapping (which touches lazy User/Project associations)
@@ -86,10 +90,16 @@ public class WorkItemController implements WorkItemsApi {
     @Transactional(readOnly = true)
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
                                                                 String workflow, String tag,
-                                                                LocalDate dueBefore) {
+                                                                LocalDate dueBefore, String creativeId,
+                                                                String mediaId, Boolean enrich) {
         User caller = currentUser();
         List<WorkItem> items =
                 workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, dueBefore, caller);
+        // "Posts using this Creative / Media": narrow the already project-scoped, access-checked list.
+        Set<String> using = listEnricher.idsUsing(projectId, creativeId, mediaId);
+        if (using != null) {
+            items = items.stream().filter(i -> using.contains(i.getId())).toList();
+        }
         List<String> ids = items.stream().map(WorkItem::getId).toList();
         Map<String, Long> counts = workItemService.unresolvedCommentCounts(ids);
         // One query for the whole page, like the comment counts beside it — the list is exactly where an
@@ -98,17 +108,29 @@ public class WorkItemController implements WorkItemsApi {
         // Reviewers for the whole page in one batched read (plus one user batch), so the list view never
         // fans out a reviewers call per row.
         Map<String, List<ReviewerView>> reviewers = reviewerService.reviewersByWorkItem(ids);
+        // Thumbnail, publish-target states and Creative for the whole page, again in batched reads.
+        boolean withExtras = Boolean.TRUE.equals(enrich);
+        Map<String, WorkItemListEnricher.Enrichment> enrichment =
+                withExtras ? listEnricher.enrich(projectId, items) : Map.of();
         List<WorkItemResponse> responses = items.stream()
-                .map(item -> toResponse(item, counts.getOrDefault(item.getId(), 0L),
-                        links.getOrDefault(item.getId(), List.of()))
-                        .statusLabel(statusLabel(projectId, item))
-                        .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
-                                .map(v -> new ReviewerResponse(v.userId())
-                                        .name(v.name())
-                                        .email(v.email())
-                                        .avatarUrl(v.avatarUrl())
-                                        .reviewVerdict(v.reviewVerdict()))
-                                .toList()))
+                .map(item -> {
+                    WorkItemListEnricher.Enrichment extra =
+                            enrichment.getOrDefault(item.getId(), WorkItemListEnricher.Enrichment.EMPTY);
+                    return toResponse(item, counts.getOrDefault(item.getId(), 0L),
+                            links.getOrDefault(item.getId(), List.of()))
+                            .statusLabel(statusLabel(projectId, item))
+                            .thumbnailUrl(withExtras ? extra.thumbnailUrl() : null)
+                            .publishTargets(withExtras ? extra.publishTargets() : null)
+                            .creative(withExtras ? extra.creative() : null)
+                            .enrichmentFailed(withExtras && extra.failed() ? Boolean.TRUE : null)
+                            .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
+                                    .map(v -> new ReviewerResponse(v.userId())
+                                            .name(v.name())
+                                            .email(v.email())
+                                            .avatarUrl(v.avatarUrl())
+                                            .reviewVerdict(v.reviewVerdict()))
+                                    .toList());
+                })
                 .toList();
         return ResponseEntity.ok(responses);
     }
@@ -148,8 +170,8 @@ public class WorkItemController implements WorkItemsApi {
     }
 
     @Override
-    public ResponseEntity<Void> deleteWorkItem(String projectId, String workItemId) {
-        workItemService.deleteWorkItem(projectId, workItemId, currentUser());
+    public ResponseEntity<Void> deleteWorkItem(String projectId, String workItemId, Boolean confirmLive) {
+        workItemService.deleteWorkItem(projectId, workItemId, currentUser(), Boolean.TRUE.equals(confirmLive));
         return ResponseEntity.noContent().build();
     }
 
@@ -240,6 +262,9 @@ public class WorkItemController implements WorkItemsApi {
                 .scheduledFor(item.getScheduledFor())
                 .scheduleTimezone(item.getScheduleTimezone())
                 .publishOnApproval(item.isPublishOnApproval())
+                // The generated model defaults this to an empty list; it is a list-only extra, so leave it
+                // absent unless the list was asked to enrich.
+                .publishTargets(null)
                 .tags(List.copyOf(item.getTags()))
                 .fields(fieldsOf(item))
                 .dueOn(item.getDueOn())

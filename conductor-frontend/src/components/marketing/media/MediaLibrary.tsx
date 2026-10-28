@@ -11,16 +11,20 @@
 // columns), so those load everything unpaged, exactly like the page used to.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { markPageReady } from '@/lib/perf'
-import { FilmIcon, UploadCloudIcon, XIcon } from 'lucide-react'
+import { FilmIcon, UploadCloudIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCan } from '@/contexts/PermissionsContext'
+import { usePostsHref } from '@/components/marketing/shared/ContentSubNav'
 import { apiErrorMessage } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { FloatingBulkBar } from '@/components/marketing/shared/FloatingBulkBar'
+import { useRangeSelection } from '@/components/marketing/shared/useRangeSelection'
 import { MediaTile } from '@/components/marketing/creatives/MediaTile'
 import {
   ALLOWED_CONTENT_TYPES,
@@ -48,13 +52,11 @@ const ACCEPT = Object.values(ALLOWED_CONTENT_TYPES).flat().join(',')
 export function MediaLibrary({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth()
   const canManage = useCan('creative.manage')
+  const postsHref = usePostsHref(projectId)
   const token = accessToken ?? ''
 
   const [items, setItems] = useState<CreativePhoto[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<string[]>([])
-  // The id (not index) of the last plain-clicked tile: indexes shift when a filter or search changes.
-  const anchor = useRef<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [carouselOpen, setCarouselOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -187,26 +189,17 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
 
   // Bulk actions and Make carousel act on what's selected *and shown*: a selection hidden by a search,
   // filter or tab is kept (clearing the filter brings it back) but never acted on unseen.
+  const visibleIds = useMemo(() => visible.map((i) => i.id), [visible])
+  const selection = useRangeSelection(visibleIds)
+  const { selected } = selection
   const selectedItems = useMemo(() => visible.filter((i) => selected.includes(i.id)), [visible, selected])
-  const hiddenSelected = selected.length - selectedItems.length
+  const hiddenSelected = selection.hiddenCount
   const detail = (items ?? []).find((i) => i.id === detailId) ?? null
   const nonImageSelected = selectedItems.some((i) => (i.mediaKind ?? 'IMAGE') !== 'IMAGE')
 
   const replaceItem = useCallback((next: CreativePhoto) => {
     setItems((prev) => (prev ?? []).map((i) => (i.id === next.id ? next : i)))
   }, [])
-
-  function select(item: CreativePhoto, index: number, range: boolean) {
-    const from = anchor.current == null ? -1 : visible.findIndex((i) => i.id === anchor.current)
-    if (range && from >= 0) {
-      const [a, b] = [Math.min(from, index), Math.max(from, index)]
-      const ids = visible.slice(a, b + 1).map((i) => i.id)
-      setSelected((prev) => [...prev, ...ids.filter((id) => !prev.includes(id))])
-    } else {
-      setSelected((prev) => (prev.includes(item.id) ? prev.filter((id) => id !== item.id) : [...prev, item.id]))
-      anchor.current = item.id
-    }
-  }
 
   async function markChecked() {
     const todo = selectedItems.filter((i) => !i.checked)
@@ -242,7 +235,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
     }
     const prefixes = new Set(selectedItems.map((i) => setPrefix(i.label)).filter(Boolean))
     const ids = pool.filter((i) => [...prefixes].some((p) => inSet(i.label, p))).map((i) => i.id)
-    setSelected((prev) => [...new Set([...prev, ...ids])])
+    selection.add(ids)
   }
 
   async function upload(files: File[]) {
@@ -322,7 +315,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
         />
       ) : (
         <ul data-testid="media-grid" className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-          {visible.map((item, index) => {
+          {visible.map((item) => {
             const isSelected = selected.includes(item.id)
             return (
               <li
@@ -337,7 +330,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                   type="button"
                   aria-label={`Open ${item.label || 'Untitled'}`}
                   onClick={(e) => {
-                    if (e.shiftKey || e.metaKey || e.ctrlKey) select(item, index, e.shiftKey)
+                    if (e.shiftKey || e.metaKey || e.ctrlKey) selection.select(item.id, e.shiftKey)
                     else setDetailId(item.id)
                   }}
                   className={cn('relative block aspect-square w-full border-b border-border bg-surface-3', item.blocked && 'opacity-50')}
@@ -350,7 +343,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                     aria-label={`Select ${item.label || 'Untitled'}`}
                     checked={isSelected}
                     onChange={() => {}}
-                    onClick={(e) => select(item, index, e.shiftKey)}
+                    onClick={(e) => selection.select(item.id, e.shiftKey)}
                     className={cn(
                       'absolute left-1.5 top-1.5 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background',
                       'checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -370,11 +363,20 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                       {audioUsageLabel(item.creativeCount ?? 0, item.postCount ?? 0)}
                     </span>
                   ) : (
-                    (item.postCount ?? 0) > 0 && (
+                    (item.postCount ?? 0) > 0 &&
+                    (postsHref ? (
+                      <Link
+                        href={`${postsHref}?mediaId=${item.id}&view=all`}
+                        data-testid={`media-posts-${item.id}`}
+                        className="text-muted-foreground hover:text-foreground hover:underline"
+                      >
+                        {item.postCount} {item.postCount === 1 ? 'post' : 'posts'}
+                      </Link>
+                    ) : (
                       <span className="text-muted-foreground">
                         {item.postCount} {item.postCount === 1 ? 'post' : 'posts'}
                       </span>
-                    )
+                    ))
                   )}
                   {!item.checked && <span className="text-muted-foreground">Unchecked</span>}
                 </div>
@@ -393,13 +395,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
       )}
 
       {canManage && selected.length > 0 && (
-        <div
-          role="toolbar"
-          aria-label="Selection actions"
-          className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-lg border border-border bg-popover px-4 py-2.5 shadow-lg"
-        >
-          <span className="text-sm font-medium text-foreground">{selectedItems.length} selected</span>
-          {hiddenSelected > 0 && <span className="text-xs text-muted-foreground">{hiddenSelected} hidden by filters</span>}
+        <FloatingBulkBar count={selectedItems.length} hiddenCount={hiddenSelected} onClear={selection.clear}>
           <Button
             type="button"
             variant="outline"
@@ -421,20 +417,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
             Make carousel
           </Button>
           {nonImageSelected && <span className="text-xs text-muted-foreground">Carousels take images only — deselect video and audio.</span>}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="ml-auto"
-            onClick={() => {
-              setSelected([])
-              anchor.current = null
-            }}
-          >
-            <XIcon className="mr-1 h-3.5 w-3.5" aria-hidden />
-            Clear
-          </Button>
-        </div>
+        </FloatingBulkBar>
       )}
 
       <MediaDetailSheet
@@ -446,7 +429,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
         onChanged={replaceItem}
         onDeleted={(id) => {
           setItems((prev) => (prev ?? []).filter((i) => i.id !== id))
-          setSelected((prev) => prev.filter((s) => s !== id))
+          selection.remove(id)
           setDetailId(null)
         }}
       />

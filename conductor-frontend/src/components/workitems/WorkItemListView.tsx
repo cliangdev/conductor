@@ -11,11 +11,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, Plus, SearchX } from 'lucide-react'
+import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, LayoutGridIcon, ListIcon, Plus, SearchX } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { markPageReady } from '@/lib/perf'
 import { Badge } from '@/components/ui/badge'
+import { Alert } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { CommentCount } from '@/components/ui/comment-count'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -43,10 +44,13 @@ import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarVie
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
+import { ContentSubNav } from '@/components/marketing/shared/ContentSubNav'
 import { PendingConsentNotice } from '@/components/marketing/consent/PendingConsentNotice'
+import { WorkItemGridView } from '@/components/workitems/WorkItemGridView'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
+import { PostBulkActions } from '@/components/workitems/PostBulkActions'
 import { UserAvatar } from '@/components/workitems/UserAvatar'
 import { useWorkItemListState } from '@/components/workitems/useWorkItemListState'
 import type {
@@ -58,12 +62,12 @@ import type {
 } from '@/components/workitems/listTypes'
 import type { MemberRole } from '@/types'
 
-type DisplayMode = 'list' | 'board' | 'calendar'
+type DisplayMode = 'list' | 'board' | 'calendar' | 'grid'
 
 /** The one place the set of display modes is enumerated — used for URL, localStorage, and the
  *  Workflow's own `defaultView`, all of which carry the mode as an untrusted string. */
 function isDisplayMode(value: string): value is DisplayMode {
-  return value === 'list' || value === 'board' || value === 'calendar'
+  return value === 'list' || value === 'board' || value === 'calendar' || value === 'grid'
 }
 
 /**
@@ -84,6 +88,9 @@ export function WorkItemListView({
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
+  // "Posts using this Creative / Media": the Creative and Media pages link here with one of these set.
+  const creativeFilter = searchParams.get('creativeId')
+  const mediaFilter = searchParams.get('mediaId')
   const viewParam = searchParams.get('view')
   const view: ListView = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
 
@@ -91,7 +98,7 @@ export function WorkItemListView({
   // workflow defaultView.
   const modeKey = `wv_mode_${projectId}_${slug}`
   const modeExplicitKey = `wv_mode_explicit_${projectId}_${slug}`
-  const [mode, setMode] = useState<DisplayMode>(() => {
+  const [rawMode, setMode] = useState<DisplayMode>(() => {
     const p = searchParams.get('mode')
     if (p && isDisplayMode(p)) return p
     return readPersisted<DisplayMode>(modeKey, isDisplayMode, 'list')
@@ -152,7 +159,12 @@ export function WorkItemListView({
     try {
       const [issueData, memberData] = await Promise.all([
         // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
-        apiGet<IssueWithReviewers[]>(`/api/v2/projects/${projectId}/work-items?workflow=${slug}`, accessToken),
+        apiGet<IssueWithReviewers[]>(
+          `/api/v2/projects/${projectId}/work-items?workflow=${slug}&enrich=true` +
+            (creativeFilter ? `&creativeId=${encodeURIComponent(creativeFilter)}` : '') +
+            (mediaFilter ? `&mediaId=${encodeURIComponent(mediaFilter)}` : ''),
+          accessToken
+        ),
         // Shared cache: deduplicates the concurrent fetch from PermissionsContext.
         fetchMembersCached(projectId, accessToken),
       ])
@@ -167,7 +179,7 @@ export function WorkItemListView({
       setError(apiErrorMessage(err, `Failed to load ${title.toLowerCase()}`))
       setLoading(false)
     }
-  }, [accessToken, projectId, slug, user?.id, title])
+  }, [accessToken, projectId, slug, user?.id, title, creativeFilter, mediaFilter])
 
   useEffect(() => {
     void loadIssues()
@@ -231,9 +243,12 @@ export function WorkItemListView({
   // A publishing Workflow composes on its own page (caption, media, destinations and schedule laid out
   // like the Post's); everything else keeps the generic title-and-description modal.
   const opensComposePage = workflowDeclaresPublishTargets(workflowView)
+  // Grid (thumbnail cards) is for publishing Workflows only; a stored/URL 'grid' elsewhere falls back to list.
+  const mode: DisplayMode = rawMode === 'grid' && !opensComposePage ? 'list' : rawMode
   const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
   const startCreating = () => (opensComposePage ? router.push(composePath) : setCreating(true))
 
+  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; message?: string; reasons?: string[]; note?: string; retry?: () => Promise<void> } | null>(null)
   const bulkStatusTriggerRef = useRef<HTMLButtonElement>(null)
   const bulkAssignTriggerRef = useRef<HTMLButtonElement>(null)
 
@@ -251,21 +266,37 @@ export function WorkItemListView({
   // over `ids` concurrently (Promise.allSettled, not sequential awaits — one slow/failing item can't
   // block the rest), skips items already at the target value, keeps only the failed ids selected on
   // partial failure (so the user can retry just those), and refetches once at the end either way.
-  async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failureNoun: string) {
+  async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failure: string, note?: string) {
     if (ids.length === 0) {
-      listState.clearSelection()
+      // Nothing ran, so nothing is deselected: a selection hidden by a filter must survive. Say so instead.
+      setBulkResult({ done: 0, failed: 0, message: note ? `Nothing to change. ${note}.` : 'Nothing to change.' })
       return
     }
     listState.setBulkInFlight(true)
     try {
       const results = await Promise.allSettled(ids.map((id) => mutate(id)))
       const failedIds = ids.filter((_, i) => results[i].status === 'rejected')
+      // The server's own words for why (a time too soon, a post already live...), once each.
+      const reasons = [
+        ...new Set(
+          results.flatMap((r) => (r.status === 'rejected' ? [apiErrorMessage(r.reason, '').trim()] : [])).filter(Boolean),
+        ),
+      ].slice(0, 3)
+      // `failure` is a full phrase per action ("to change status", "to delete"), so the toast reads naturally.
       if (failedIds.length > 0) {
-        toastError(`${failedIds.length} of ${ids.length} Work Items failed to update ${failureNoun}`)
-        listState.setSelection(failedIds)
-      } else {
-        listState.clearSelection()
+        toastError(
+          `${failedIds.length} of ${ids.length} Work Items failed ${failure}${reasons.length ? `: ${reasons.join('; ')}` : ''}`
+        )
       }
+      listState.settleSelection(ids, failedIds)
+      // The per-item result line ("7 done, 1 failed") with a retry for just the failures.
+      setBulkResult({
+        done: ids.length - failedIds.length,
+        failed: failedIds.length,
+        reasons,
+        note,
+        retry: failedIds.length > 0 ? () => runBulkMutation(failedIds, mutate, failure) : undefined,
+      })
       await loadIssues()
     } finally {
       listState.setBulkInFlight(false)
@@ -273,21 +304,21 @@ export function WorkItemListView({
   }
 
   async function bulkChangeStatus(newStatus: string) {
-    const ids = [...listState.selected].filter((id) => issues.find((i) => i.id === id)?.status !== newStatus)
+    const ids = listState.visibleSelectedIds.filter((id) => issues.find((i) => i.id === id)?.status !== newStatus)
     await runBulkMutation(
       ids,
       (id) => apiPatch(`/api/v2/projects/${projectId}/work-items/${id}`, { status: newStatus }, accessToken!),
-      'status'
+      'to change status'
     )
   }
 
   async function bulkAssign(member: Member | null) {
     const targetId = member?.userId ?? null
-    const ids = [...listState.selected].filter((id) => (issues.find((i) => i.id === id)?.assignee?.userId ?? null) !== targetId)
+    const ids = listState.visibleSelectedIds.filter((id) => (issues.find((i) => i.id === id)?.assignee?.userId ?? null) !== targetId)
     await runBulkMutation(
       ids,
       (id) => apiPatch(`/api/v2/projects/${projectId}/work-items/${id}`, { assigneeId: member ? member.userId : '' }, accessToken!),
-      'assignee'
+      'to change assignee'
     )
   }
 
@@ -335,6 +366,21 @@ export function WorkItemListView({
           ) : undefined
         }
       />
+
+      {opensComposePage && (
+        <ContentSubNav projectId={projectId} active="posts" postsHref={workItemListPath(projectId, detailArea, noun)} />
+      )}
+
+      {(creativeFilter || mediaFilter) && (
+        <Alert variant="info" className="mb-3">
+          <span data-testid="usage-filter">
+            Showing {lowerNoun} in every state that use {creativeFilter ? 'one Creative' : 'one media item'}.
+          </span>
+          <Link prefetch={false} href={workItemListPath(projectId, detailArea, noun)} className="ml-2 underline">
+            Show all
+          </Link>
+        </Alert>
+      )}
 
       {opensComposePage && accessToken && <PendingConsentNotice projectId={projectId} token={accessToken} />}
 
@@ -394,8 +440,43 @@ export function WorkItemListView({
           >
             <CalendarDaysIcon className="h-4 w-4" />
           </button>
+          {opensComposePage && (
+            <button
+              type="button"
+              title="Grid view"
+              onClick={() => setDisplayMode('grid')}
+              className={`p-1.5 rounded transition-colors ${
+                mode === 'grid' ? 'text-foreground bg-foreground/8' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              }`}
+            >
+              <LayoutGridIcon className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
+
+      {bulkResult && (
+        <Alert variant={bulkResult.failed > 0 ? 'destructive' : 'info'} className="mb-3">
+          <span data-testid="bulk-result">
+            {bulkResult.message ?? `${bulkResult.done} done${bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}${
+              bulkResult.reasons?.length ? `: ${bulkResult.reasons.join('; ')}` : ''
+            }${bulkResult.note ? `; ${bulkResult.note}` : ''}`}
+          </span>
+          {bulkResult.retry && (
+            <Button
+              variant="link"
+              size="sm"
+              disabled={listState.bulkInFlight}
+              onClick={() => void bulkResult.retry!()}
+            >
+              Retry failed
+            </Button>
+          )}
+          <Button variant="link" size="sm" onClick={() => setBulkResult(null)}>
+            Dismiss
+          </Button>
+        </Alert>
+      )}
 
       <ListToolbar
         typeOptions={typeOptions}
@@ -406,7 +487,9 @@ export function WorkItemListView({
         onRemoveFilter={listState.removeFilter}
         sortKey={listState.sortKey}
         onSortChange={listState.setSortKey}
-        showSort={mode === 'list'}
+        showSort={mode === 'list' || mode === 'grid'}
+        query={listState.query}
+        onQueryChange={listState.setQuery}
       />
 
       {mode === 'calendar' ? (
@@ -416,6 +499,8 @@ export function WorkItemListView({
           noun={noun}
           workflowView={workflowView}
           issues={listState.filteredIssues}
+          selectedIds={canEdit ? listState.selected : undefined}
+          onToggleSelect={canEdit ? listState.toggleSelect : undefined}
         />
       ) : mode === 'board' && workflowView ? (
         <WorkItemBoardView
@@ -428,9 +513,24 @@ export function WorkItemListView({
           accessToken={accessToken!}
           view={view}
           onStatusChanged={updateIssueStatus}
+          selectedIds={canEdit ? listState.selected : undefined}
+          onToggleSelect={canEdit ? listState.toggleSelect : undefined}
         />
       ) : issuesInView.length === 0 ? (
-        counts.all === 0 && workflowDeclaresPublishTargets(workflowView) ? (
+        creativeFilter || mediaFilter ? (
+          // Opened from a Creative or Media link: an empty result is "nothing matches", never the first-run
+          // onboarding, and the way out is to drop the filter.
+          <EmptyState
+            icon={SearchX}
+            title={`No matching ${lowerNoun}`}
+            description={`No ${lowerNoun} use ${creativeFilter ? 'this Creative' : 'this media item'}.`}
+            action={
+              <Link prefetch={false} href={workItemListPath(projectId, detailArea, noun)} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                Clear filter
+              </Link>
+            }
+          />
+        ) : counts.all === 0 && workflowDeclaresPublishTargets(workflowView) ? (
           // First run of a publishing Workflow: nothing has ever been posted here, so lead with
           // connecting an account rather than the generic "created via MCP" line, which assumes an
           // audience this page's non-technical reader may not be.
@@ -484,19 +584,20 @@ export function WorkItemListView({
         />
       ) : (
         <>
-          {canEdit && listState.selected.size > 0 && (
-            <BulkActionBar
-              count={listState.selected.size}
-              statusOptions={(workflowView?.statuses ?? []).map((s) => ({ id: s.id, label: s.label ?? humanizeId(s.id), category: s.category }))}
-              members={members}
-              onChangeStatus={bulkChangeStatus}
-              onAssign={bulkAssign}
-              disabled={listState.bulkInFlight}
-              statusTriggerRef={bulkStatusTriggerRef}
-              assignTriggerRef={bulkAssignTriggerRef}
+          {mode === 'grid' && (
+            <WorkItemGridView
+              issues={listState.groups.flatMap((g) => g.items)}
+              projectId={projectId}
+              detailArea={detailArea}
+              noun={noun}
+              workflowView={workflowView}
+              canEdit={canEdit}
+              selectedIds={listState.selected}
+              onToggleSelect={listState.toggleSelect}
             />
           )}
 
+          {mode !== 'grid' && (<>
           {/* Mobile card list */}
           <div className="md:hidden space-y-2">
             {listState.groups.flatMap((g) => g.items).map((issue) => (
@@ -584,6 +685,7 @@ export function WorkItemListView({
                 tabStopId={listState.tabStopId}
                 roundedTop={i === 0}
                 roundedBottom={i === listState.groups.length - 1}
+                publishing={opensComposePage}
                 onStatusChanged={updateIssueStatus}
                 onAssigneeChanged={updateIssueAssignee}
                 onReviewersChanged={updateIssueReviewers}
@@ -594,6 +696,35 @@ export function WorkItemListView({
               />
             ))}
           </div>
+          </>)}
+        </>
+      )}
+      {canEdit && listState.selected.size > 0 && (
+        <>
+        {/* Room under the last row: the bulk bar is fixed to the viewport and would cover it. */}
+        <div aria-hidden className="h-20" />
+        <BulkActionBar
+          count={listState.visibleSelectedIds.length}
+          hiddenCount={listState.hiddenSelectedCount}
+          statusOptions={(workflowView?.statuses ?? []).map((s) => ({ id: s.id, label: s.label ?? humanizeId(s.id), category: s.category }))}
+          members={members}
+          onChangeStatus={bulkChangeStatus}
+          onAssign={bulkAssign}
+          disabled={listState.bulkInFlight || listState.visibleSelectedIds.length === 0}
+          statusTriggerRef={bulkStatusTriggerRef}
+          assignTriggerRef={bulkAssignTriggerRef}
+          onClear={listState.clearSelection}
+        >
+          {opensComposePage && (
+            <PostBulkActions
+              projectId={projectId}
+              token={accessToken!}
+              selected={listState.visibleSelectedIds.flatMap((id) => issues.find((i) => i.id === id) ?? [])}
+              disabled={listState.bulkInFlight || listState.visibleSelectedIds.length === 0}
+              run={runBulkMutation}
+            />
+          )}
+        </BulkActionBar>
         </>
       )}
     </PageContainer>

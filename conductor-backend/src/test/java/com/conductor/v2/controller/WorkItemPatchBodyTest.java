@@ -59,6 +59,8 @@ class WorkItemPatchBodyTest {
     @MockitoBean
     private ReviewerService reviewerService;
     @MockitoBean
+    private WorkItemListEnricher listEnricher;
+    @MockitoBean
     private JwtService jwtService;
     @MockitoBean
     private UserRepository userRepository;

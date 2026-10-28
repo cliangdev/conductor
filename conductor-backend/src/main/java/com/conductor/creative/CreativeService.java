@@ -3,6 +3,7 @@ package com.conductor.creative;
 import com.conductor.creative.CreativeValidationException.Violation;
 import com.conductor.entity.Asset;
 import com.conductor.entity.User;
+import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
@@ -128,9 +129,18 @@ public class CreativeService {
     public record CreativeView(Creative creative, String photoUrl,
                                CreativeRenderService.RenderView latestRenderSummary,
                                CreativeRenderService.RenderView latestRenderFull,
-                               String activeExperimentId) {
+                               String activeExperimentId, Integer postCount) {
         public CreativeView(Creative creative, String photoUrl) {
-            this(creative, photoUrl, null, null, null);
+            this(creative, photoUrl, null, null, null, null);
+        }
+
+        public CreativeView(Creative creative, String photoUrl, CreativeRenderService.RenderView latestRenderSummary,
+                            CreativeRenderService.RenderView latestRenderFull, String activeExperimentId) {
+            this(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, null);
+        }
+
+        CreativeView withPostCount(Integer count) {
+            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, count);
         }
     }
 
@@ -152,6 +162,16 @@ public class CreativeService {
 
     @Transactional(readOnly = true)
     public List<CreativeView> listCreatives(String projectId, String state, String brandKitId, User caller) {
+        return listCreatives(projectId, state, brandKitId, caller, false);
+    }
+
+    /**
+     * {@link #listCreatives(String, String, String, User)}; with {@code includePostCount} each Creative also
+     * carries the distinct Posts using its family (the web library's "Used in N posts"). Left off by default
+     * so API/MCP callers that do not show it pay for nothing.
+     */
+    public List<CreativeView> listCreatives(String projectId, String state, String brandKitId, User caller,
+                                            boolean includePostCount) {
         requireMember(projectId, caller);
         List<Creative> creatives;
         if (state != null && brandKitId != null) {
@@ -179,8 +199,10 @@ public class CreativeService {
                 experiments.putIfAbsent(e.getParentCreativeId(), e.getId());
             }
         }
+        Map<String, Integer> postCounts = includePostCount ? postCountsByCreative(projectId, creatives) : Map.of();
         return creatives.stream()
-                .map(c -> toView(c, photos, renders.get(c.getId()), experiments.get(rootIdOf(c))))
+                .map(c -> toView(c, photos, renders.get(c.getId()), experiments.get(rootIdOf(c)))
+                        .withPostCount(includePostCount ? postCounts.getOrDefault(c.getId(), 0) : null))
                 .toList();
     }
 
@@ -791,12 +813,7 @@ public class CreativeService {
             List<String> frameIds = frames.stream().map(CreativeRenderFrame::getId).toList();
             List<Asset> referencing = assetRepository.findAllByCreativeFrameIdIn(frameIds);
             if (!referencing.isEmpty()) {
-                Set<String> postDisplayIds = new TreeSet<>();
-                for (Asset asset : referencing) {
-                    postDisplayIds.add(asset.getWorkItem().getProject().getKey() + "-" + asset.getWorkItem().getSequenceNumber());
-                }
-                String noun = postDisplayIds.size() > 1 ? "Posts" : "Post";
-                throw new ConflictException("Remove it from the " + noun + " first (" + String.join(", ", postDisplayIds) + ")");
+                throw new ConflictException(blockedByPosts(referencing));
             }
         }
 
@@ -830,6 +847,51 @@ public class CreativeService {
 
         // Frames of CLIP/CAROUSEL renders link Media objects: only unreferenced objects are removed.
         storageReferences.deleteUnreferencedAfterCommit(gcsPaths, log);
+    }
+
+    /** "Remove it from the Post first (RE-12 Pasta night)": names each blocking Post by id and title. */
+    private static String blockedByPosts(List<Asset> referencing) {
+        Map<String, String> posts = new java.util.TreeMap<>();
+        for (Asset asset : referencing) {
+            WorkItem w = asset.getWorkItem();
+            posts.putIfAbsent(w.getProject().getKey() + "-" + w.getSequenceNumber(), w.getTitle());
+        }
+        String named = posts.entrySet().stream()
+                .map(e -> e.getKey() + (e.getValue() == null || e.getValue().isBlank() ? "" : " " + e.getValue()))
+                .collect(Collectors.joining(", "));
+        return "Remove it from the " + (posts.size() > 1 ? "Posts" : "Post") + " first (" + named + ")";
+    }
+
+    /**
+     * Deletes a Creative's whole family (the "a" root and every lettered variant) in ONE transaction: either
+     * all of it goes or none of it does. Refused, with nothing deleted, when any member's render frame is on a
+     * Post (the Posts are named) or when a hook experiment of the family is still running.
+     */
+    @Transactional
+    public void deleteCreativeFamily(String projectId, String creativeId, User caller) {
+        requireEditor(projectId, caller);
+        Creative creative = findCreative(projectId, creativeId);
+        List<Creative> members = creativeRepository.findAllByNumberAndProjectId(creative.getNumber(), projectId);
+        List<String> memberIds = members.stream().map(Creative::getId).toList();
+
+        List<String> frameIds = frameRepository.findAllByCreativeIdIn(memberIds).stream()
+                .map(CreativeRenderFrame::getId).toList();
+        if (!frameIds.isEmpty()) {
+            List<Asset> referencing = assetRepository.findAllByCreativeFrameIdIn(frameIds);
+            if (!referencing.isEmpty()) {
+                throw new ConflictException(blockedByPosts(referencing));
+            }
+        }
+        if (!experimentRepository.findAllByProjectIdAndParentCreativeIdInAndState(
+                projectId, memberIds, CreativeExperiment.STATE_RUNNING).isEmpty()) {
+            throw new ConflictException("Stop its running hook experiment first");
+        }
+
+        // Variants before the root (deleteCreative refuses a root that still has variants); a failure
+        // anywhere rolls the whole transaction back.
+        members.stream()
+                .sorted(Comparator.comparing(Creative::getVariantLetter).reversed())
+                .forEach(m -> deleteCreative(projectId, m.getId(), caller));
     }
 
     // ── Draft spec (preview-first) ────────────────────────────────────────
@@ -1488,6 +1550,60 @@ public class CreativeService {
                 ? storageService.generateSignedUrl(photo.getGcsPath(), PHOTO_URL_EXPIRY_MINUTES)
                 : null;
         return new CreativeView(creative, url, summary, null, activeExperimentId);
+    }
+
+    /**
+     * Distinct Posts per Creative, through the Creative's rendered frames attached to them. Two reads for the
+     * whole project (frame links, then those frames' Creative ids) however many Creatives there are.
+     */
+    private Map<String, Integer> postCountsByCreative(String projectId, List<Creative> listed) {
+        List<Object[]> links = assetRepository.findFrameLinksByProjectId(projectId);
+        if (links.isEmpty()) {
+            return Map.of();
+        }
+        // IN lists are bounded (a project can have thousands of attached frames, past a driver's bind limit).
+        Map<String, String> creativeByFrame = new HashMap<>();
+        for (List<String> chunk : inChunks(links.stream().map(r -> (String) r[0]).collect(Collectors.toSet()))) {
+            for (Object[] f : frameRepository.findRefsByIdIn(chunk)) {
+                creativeByFrame.put((String) f[0], (String) f[1]);
+            }
+        }
+        // Counted per family (the "a" root and its variants): a Post using several variants counts once,
+        // and every member reports the family's number, which is what the tile shows and its link filters.
+        Map<String, Integer> numberByCreative = new HashMap<>();
+        for (List<String> chunk : inChunks(new HashSet<>(creativeByFrame.values()))) {
+            for (Creative c : creativeRepository.findAllById(chunk)) {
+                numberByCreative.put(c.getId(), c.getNumber());
+            }
+        }
+        Map<Integer, Set<String>> postsByFamily = new HashMap<>();
+        for (Object[] row : links) {
+            Integer number = numberByCreative.get(creativeByFrame.get((String) row[0]));
+            if (number != null) {
+                postsByFamily.computeIfAbsent(number, k -> new HashSet<>()).add((String) row[1]);
+            }
+        }
+        // Only the Creatives being returned get a count; no second read of the project's Creatives.
+        Map<String, Integer> out = new HashMap<>();
+        for (Creative c : listed) {
+            Set<String> posts = postsByFamily.get(c.getNumber());
+            if (posts != null) {
+                out.put(c.getId(), posts.size());
+            }
+        }
+        return out;
+    }
+
+    /** Largest IN list sent in one statement. */
+    static final int IN_CHUNK = 500;
+
+    private static List<List<String>> inChunks(java.util.Collection<String> ids) {
+        List<String> all = new ArrayList<>(ids);
+        List<List<String>> out = new ArrayList<>();
+        for (int i = 0; i < all.size(); i += IN_CHUNK) {
+            out.add(all.subList(i, Math.min(all.size(), i + IN_CHUNK)));
+        }
+        return out;
     }
 
     private static String rootIdOf(Creative creative) {

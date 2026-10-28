@@ -1,6 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { Checkbox } from '@/components/ui/checkbox'
 import { CommentCount } from '@/components/ui/comment-count'
 import { Badge } from '@/components/ui/badge'
 import { statusHueClasses } from '@/components/ui/status-badge'
@@ -44,6 +45,8 @@ export function WorkItemBoardView({
   accessToken,
   view,
   onStatusChanged,
+  selectedIds,
+  onToggleSelect,
 }: {
   projectId: string
   slug: string
@@ -54,6 +57,9 @@ export function WorkItemBoardView({
   accessToken: string
   view: BoardView
   onStatusChanged: (issueId: string, newStatus: string) => void
+  /** Bulk selection (omit to hide the checkboxes). */
+  selectedIds?: Set<string>
+  onToggleSelect?: (id: string) => void
 }) {
   const router = useRouter()
   const categories = categoriesForView(view)
@@ -105,8 +111,23 @@ export function WorkItemBoardView({
                       onClick={() =>
                         router.push(workItemDetailPath(projectId, area, noun, issue.displayId ?? ''))
                       }
-                      className="bg-card border border-border rounded-md p-3 cursor-pointer hover:border-ring hover:shadow-sm transition-all"
+                      data-selected={selectedIds?.has(issue.id) || undefined}
+                      className={`group relative bg-card border rounded-md p-3 cursor-pointer hover:border-ring hover:shadow-sm transition-all ${
+                        selectedIds?.has(issue.id) ? 'border-primary ring-2 ring-primary' : 'border-border'
+                      }`}
                     >
+                      {onToggleSelect && (
+                        <Checkbox
+                          checked={selectedIds?.has(issue.id) ?? false}
+                          onCheckedChange={() => onToggleSelect(issue.id)}
+                          // The card itself navigates on click; the checkbox must not.
+                          onClick={(e) => e.stopPropagation()}
+                          label={<span className="sr-only">Select {issue.title}</span>}
+                          className={`absolute right-2 top-2 transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100 ${
+                            (selectedIds?.size ?? 0) === 0 && !selectedIds?.has(issue.id) ? 'opacity-0' : ''
+                          }`}
+                        />
+                      )}
                       {issue.displayId && (
                         <span className="font-mono text-xs text-muted-foreground block mb-1">
                           {issue.displayId}

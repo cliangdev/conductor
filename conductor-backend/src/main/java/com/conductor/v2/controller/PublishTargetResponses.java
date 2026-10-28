@@ -68,7 +68,7 @@ final class PublishTargetResponses {
      * ({@code PublishOutcomePanel.tsx}), so a client that only reads the wire never has to keep its own
      * copy of this map.
      */
-    private static String stateLabel(PostPublishTargetState state) {
+    static String stateLabel(PostPublishTargetState state) {
         return switch (state) {
             case PENDING -> "Waiting";
             case HANDED_OFF -> "Handed off";

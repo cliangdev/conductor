@@ -32,6 +32,18 @@ public class AssetCreativeOriginResolver {
         this.creatives = creatives;
     }
 
+    /** Largest IN list sent in one statement (a list page can carry thousands of frame Assets). */
+    static final int CHUNK = 500;
+
+    private static java.util.List<java.util.List<String>> chunks(Collection<String> ids) {
+        java.util.List<String> all = new java.util.ArrayList<>(ids);
+        java.util.List<java.util.List<String>> out = new java.util.ArrayList<>();
+        for (int i = 0; i < all.size(); i += CHUNK) {
+            out.add(all.subList(i, Math.min(all.size(), i + CHUNK)));
+        }
+        return out;
+    }
+
     /** Asset id → origin, only for Assets whose frame still exists. */
     public Map<String, Origin> resolve(Collection<Asset> assets) {
         Set<String> frameIds = new HashSet<>();
@@ -41,11 +53,15 @@ public class AssetCreativeOriginResolver {
         if (frameIds.isEmpty()) return Map.of();
 
         Map<String, CreativeRenderFrame> frameById = new HashMap<>();
-        for (CreativeRenderFrame f : frames.findAllById(frameIds)) frameById.put(f.getId(), f);
+        for (java.util.List<String> chunk : chunks(frameIds)) {
+            for (CreativeRenderFrame f : frames.findAllById(chunk)) frameById.put(f.getId(), f);
+        }
         Set<String> creativeIds = new HashSet<>();
         frameById.values().forEach(f -> creativeIds.add(f.getCreativeId()));
         Map<String, Creative> creativeById = new HashMap<>();
-        for (Creative c : creatives.findAllById(creativeIds)) creativeById.put(c.getId(), c);
+        for (java.util.List<String> chunk : chunks(creativeIds)) {
+            for (Creative c : creatives.findAllById(chunk)) creativeById.put(c.getId(), c);
+        }
 
         Map<String, Origin> out = new HashMap<>();
         for (Asset a : assets) {

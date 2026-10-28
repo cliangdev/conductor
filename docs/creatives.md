@@ -278,6 +278,23 @@ Blocking media a Post already uses is allowed, but publishing is then held: the 
 `MEDIA_BLOCKED` until the file is removed from it. This holds for an already-scheduled Post too: at publish time the target
 fails with "<label> is blocked in Media — remove it from this post, then retry." and the platform is never called.
 
+### Where a Creative is used
+
+The Creative list carries `postCount` (distinct Posts that use a rendered frame of the Creative). The tile
+shows "Used in N posts" and links to the Posts list filtered by `?creativeId=`; the editor lists the same
+Posts under "Posts using this". `GET /work-items` accepts `creativeId` and `mediaId` to filter to Posts that
+use a Creative or a Media item (a Media item's post count on its tile links to `?mediaId=`). The count is per
+family and only returned when asked (`GET .../creatives?includePostCount=true`, which the web library
+sends); API/MCP `list_creatives` is unchanged. The Posts list extras (`thumbnailUrl`, `publishTargets`,
+`creative`) are likewise opt-in (`GET /work-items?enrich=true`) so `list_work_items` / `list_posts` keep
+their payload and carry no signed URLs. Links from a Creative or Media tile open the Posts list with
+`view=all`, so Done and published Posts are included.
+
+`DELETE .../creatives/{id}/family` deletes a Creative's whole family (root and every variant) in one
+transaction: all of it, or none. It is refused (nothing deleted) when any member is on a Post, naming each
+Post by id and title, or when a hook experiment of the family is running. The Creatives page's bulk
+delete uses it, once per selected family. The Posts, Creatives and Media pages share one sub-nav.
+
 ## Video (COND-24 PR1)
 
 The media library (`creative_photo` — the table/entity name stays, the API calls it "media") now takes

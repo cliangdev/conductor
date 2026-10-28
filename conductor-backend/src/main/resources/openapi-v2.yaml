@@ -140,6 +140,30 @@ paths:
           schema:
             type: string
             format: date
+        - name: creativeId
+          in: query
+          required: false
+          description: Only Work Items that use a rendered frame of this Creative (the Creative's "Posts using this").
+          schema:
+            type: string
+        - name: mediaId
+          in: query
+          required: false
+          description: >-
+            Only Work Items that use this Media library item, directly or through a Creative frame that
+            reuses its stored object.
+          schema:
+            type: string
+        - name: enrich
+          in: query
+          required: false
+          description: >-
+            When true, each item also carries `thumbnailUrl`, `publishTargets` and `creative` (the Posts
+            list's extras). Off by default, so API and MCP callers get exactly the payload they always
+            did, without the signed URLs.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: List of Work Items
@@ -299,6 +323,10 @@ paths:
       tags:
         - work-items
       summary: Delete a Work Item
+      description: >-
+        Refused with 409 when the Work Item has a destination that is already PUBLISHED (live on a platform):
+        deleting would only remove it from Conductor and leave the live post behind. Pass
+        `confirmLive=true` to delete it anyway; a bulk or automated caller should not.
       operationId: deleteWorkItem
       security:
         - bearerAuth: []
@@ -314,9 +342,22 @@ paths:
           required: true
           schema:
             type: string
+        - name: confirmLive
+          in: query
+          required: false
+          description: Delete even though a destination is live on a platform.
+          schema:
+            type: boolean
+            default: false
       responses:
         "204":
           description: Work Item deleted
+        "409":
+          description: The Work Item is live on a platform and `confirmLive` was not set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Not authenticated
           content:
@@ -4166,6 +4207,15 @@ paths:
           required: false
           schema:
             type: string
+        - name: includePostCount
+          in: query
+          required: false
+          description: >-
+            When true, each Creative carries `postCount`: the distinct Posts using its family. Off by
+            default (the field is then null), so callers that do not show it pay for nothing.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: >-
@@ -4492,6 +4542,60 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: A render frame is still on a Post, or this is a family root with variants still present
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/family:
+    delete:
+      tags:
+        - creatives
+      summary: Delete a Creative's whole family (root and every variant) atomically
+      description: >-
+        Deletes the Creative's family (variant letter `a` and all lettered variants) in one transaction:
+        all of it, or none of it. Refused with 409, deleting nothing, when a render frame of any member is
+        still on a Post (the message names each Post by id and title) or when a hook experiment of the
+        family is still running. Requires ADMIN or CREATOR.
+      operationId: deleteCreativeFamily
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          description: Any member of the family.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The whole family was deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A member is still on a Post, or a hook experiment of the family is running; nothing was deleted
           content:
             application/json:
               schema:
@@ -5741,6 +5845,71 @@ components:
             to ask "did that go out, and where is it?".
           items:
             $ref: "#/components/schemas/WorkItemExternalLink"
+        thumbnailUrl:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >-
+            List response only. A short-lived signed URL for the first image attached to this item (the
+            Post's first media), for a thumbnail. Null when it has no image, and on single-item reads.
+        publishTargets:
+          type: array
+          readOnly: true
+          description: >-
+            List response only. Where this item is going out to and how each destination stands, one entry
+            per (platform, account) target, so a list can show a failed destination without opening the
+            item. Loaded in one batch for the whole page. Empty for items that publish nowhere; omitted on
+            single-item reads (use GET .../publish-targets).
+          items:
+            $ref: "#/components/schemas/WorkItemPublishTargetSummary"
+        creative:
+          $ref: "#/components/schemas/WorkItemCreativeRef"
+        enrichmentFailed:
+          type: boolean
+          nullable: true
+          readOnly: true
+          description: >-
+            List response only, with `enrich=true`. True when the extras could not be worked out for this item
+            (its Workflow could not be resolved), so whether it has live destinations is UNKNOWN. A client
+            must not treat such an item as one that is not live. Absent otherwise.
+
+    WorkItemPublishTargetSummary:
+      type: object
+      required:
+        - platform
+        - state
+      properties:
+        platform:
+          type: string
+          description: facebook | instagram | youtube | tiktok
+        state:
+          type: string
+          description: The target's lifecycle state (PENDING, HANDED_OFF, PUBLISHING, AWAITING_MANUAL, PUBLISHED, FAILED, REVOKED).
+        stateLabel:
+          type: string
+          description: The human word for the state ("Waiting", "Published", "Failed", ...).
+        label:
+          type: string
+          nullable: true
+          description: The account this target posts to (page name or handle).
+
+    WorkItemCreativeRef:
+      type: object
+      description: >-
+        List response only (as WorkItemResponse.creative): the Creative whose rendered frame is attached to
+        the item. Null when there is none.
+      required:
+        - id
+        - displayId
+      properties:
+        id:
+          type: string
+        displayId:
+          type: string
+          description: The Creative's human number (e.g. "17a").
+        name:
+          type: string
+          nullable: true
 
     WorkItemExternalLink:
       type: object
@@ -9519,6 +9688,12 @@ components:
         - createdAt
         - updatedAt
       properties:
+        postCount:
+          type: integer
+          nullable: true
+          description: >-
+            List response only. How many distinct Work Items (Posts) use a rendered frame of this Creative.
+            Null on the single-item reads.
         id:
           type: string
         projectId:

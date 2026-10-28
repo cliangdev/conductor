@@ -221,7 +221,7 @@ describe('selection and bulk actions', () => {
     await user.type(screen.getByLabelText('Search by label'), 'slide 01')
     await waitFor(() => expect(tileIds()).toEqual(['4x5-1']))
     expect(screen.getByText('1 selected')).toBeInTheDocument()
-    expect(screen.getByText('2 hidden by filters')).toBeInTheDocument()
+    expect(screen.getByText('(2 hidden by filters)')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Mark checked' }))
     await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
     expect((apiPatch as Mock).mock.calls[0][0]).toContain('/4x5-1')
@@ -323,6 +323,15 @@ describe('MediaLibrary usage', () => {
     expect(within(screen.getByTestId('media-tile-posted')).getByText('2 posts')).toBeInTheDocument()
     expect(within(screen.getByTestId('media-tile-one')).getByText('1 post')).toBeInTheDocument()
     expect(within(screen.getByTestId('media-tile-free')).queryByText(/post/)).not.toBeInTheDocument()
+  })
+
+  it('links the post count to the Posts list for that media in every state (view=all), so Done posts show', async () => {
+    setup([photo('one', 'single', 1080, 1350, { postCount: 1 }), ...rows()])
+    await screen.findByTestId('media-grid')
+    expect(screen.getByTestId('media-posts-one')).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/marketing/posts?mediaId=one&view=all',
+    )
   })
 
   it('shows "N creatives · N posts" or "Unused" on AUDIO tiles, leaving image tiles as they are', async () => {

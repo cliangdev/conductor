@@ -46,6 +46,39 @@ public interface AssetRepository extends JpaRepository<Asset, String> {
     List<Asset> findLinkAssetsByWorkItemIds(@Param("workItemIds") Collection<String> workItemIds);
 
     /**
+     * The first (oldest) uploaded image file Asset of each of {@code workItemIds} — the list's thumbnail
+     * source and, through its Creative frame, the item's Creative. One query for the whole page, and only
+     * one row per item however many images it carries.
+     */
+    @Query(value = "SELECT a.* FROM assets a WHERE a.id IN ("
+            + "SELECT DISTINCT ON (f.work_item_id) f.id FROM assets f WHERE f.work_item_id IN (:workItemIds) "
+            + "AND f.kind = 'file' AND f.upload_status = 'UPLOADED' AND f.gcs_path IS NOT NULL "
+            + "AND f.content_type LIKE 'image/%' ORDER BY f.work_item_id, f.created_at ASC, f.id ASC)",
+            nativeQuery = true)
+    List<Asset> findFirstUploadedImagePerWorkItem(@Param("workItemIds") Collection<String> workItemIds);
+
+    /**
+     * The first (oldest) Creative-frame Asset of each of {@code workItemIds}, whatever its content type — the
+     * list's Creative reference, kept independent of which image is the thumbnail. One query per page.
+     */
+    @Query(value = "SELECT a.* FROM assets a WHERE a.id IN ("
+            + "SELECT DISTINCT ON (f.work_item_id) f.id FROM assets f WHERE f.work_item_id IN (:workItemIds) "
+            + "AND f.creative_frame_id IS NOT NULL ORDER BY f.work_item_id, f.created_at ASC, f.id ASC)",
+            nativeQuery = true)
+    List<Asset> findFirstCreativeFrameAssetPerWorkItem(@Param("workItemIds") Collection<String> workItemIds);
+
+    /**
+     * The first uploaded video Media-linked Asset of each of {@code workItemIds} — the thumbnail fallback
+     * (through the Media item's poster) for a Post that has no image.
+     */
+    @Query(value = "SELECT a.* FROM assets a WHERE a.id IN ("
+            + "SELECT DISTINCT ON (f.work_item_id) f.id FROM assets f WHERE f.work_item_id IN (:workItemIds) "
+            + "AND f.kind = 'file' AND f.upload_status = 'UPLOADED' AND f.media_id IS NOT NULL "
+            + "AND f.content_type LIKE 'video/%' ORDER BY f.work_item_id, f.created_at ASC, f.id ASC)",
+            nativeQuery = true)
+    List<Asset> findFirstUploadedVideoPerWorkItem(@Param("workItemIds") Collection<String> workItemIds);
+
+    /**
      * (mediaId, workItemId) for every Asset in the project linked to a Media library item — the Media list's
      * post counts in one query, folded in memory by the caller.
      */

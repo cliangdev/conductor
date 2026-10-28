@@ -1012,7 +1012,8 @@ export function WorkItemDetailView({
     if (!accessToken || !issue) return
     setDeleting(true)
     try {
-      await apiDelete(`/api/v2/projects/${projectId}/work-items/${issueId}`, accessToken)
+      // The confirm dialog above says a published post stays live; passing confirmLive is that confirmation.
+      await apiDelete(`/api/v2/projects/${projectId}/work-items/${issueId}?confirmLive=true`, accessToken)
       toastSuccess(`${workflowView?.noun ?? 'Item'} deleted`)
       router.push(workItemListPath(projectId, workflowView?.area ?? slug, workflowView?.noun ?? 'items'))
     } catch (err) {
