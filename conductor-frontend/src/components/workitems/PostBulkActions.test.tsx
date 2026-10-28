@@ -39,11 +39,13 @@ function post(over: Partial<IssueWithReviewers>): IssueWithReviewers {
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     displayId: 'RE-1',
+    // Enriched with no destinations: a confirmed "nothing out there", not an unknown.
+    publishTargets: [],
     ...over,
   }
 }
 
-const run = vi.fn(async (ids: string[], mutate: (id: string) => Promise<unknown>, ...rest: [failure: string]) => {
+const run = vi.fn(async (ids: string[], mutate: (id: string) => Promise<unknown>, ...rest: [failure: string, note?: string]) => {
   void rest
   await Promise.all(ids.map((id) => mutate(id)))
 })
@@ -129,7 +131,7 @@ describe('PostBulkActions', () => {
     setup([post({ id: 'p1' }), post({ id: 'p2' })])
     fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
     fireEvent.click(await screen.findByLabelText(/Rexcipe IG/))
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(2))
     expect(apiPut.mock.calls[0]![1]).toEqual({ targets: [{ platform: 'instagram', connectionId: 'c1' }] })
   })
@@ -141,10 +143,10 @@ describe('PostBulkActions', () => {
       post({ id: 'p3', displayId: 'RE-3', publishTargets: [{ platform: 'tiktok', state: 'HANDED_OFF' }] }),
     ])
     fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
-    expect(await screen.findByTestId('excluded-note')).toHaveTextContent('2 posts are live, approved or already handed to a platform')
+    expect(await screen.findByTestId('excluded-note')).toHaveTextContent('2 posts are live, approved, already handed to a platform, or not confirmed as not live')
     expect(screen.getByTestId('excluded-note')).toHaveTextContent('RE-2, RE-3')
     fireEvent.click(await screen.findByLabelText(/Rexcipe IG/))
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1))
     expect(apiPut.mock.calls[0]![0]).toContain('/work-items/p1/publish-targets')
   })
@@ -195,7 +197,7 @@ describe('PostBulkActions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
     fireEvent.click(await screen.findByLabelText(/Rexcipe TikTok/))
     fireEvent.click(screen.getByLabelText(/Rexcipe IG/))
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1))
     const targets = (apiPut.mock.calls[0]![1] as { targets: Record<string, unknown>[] }).targets
     expect(targets.find((t) => t.platform === 'tiktok')).toMatchObject({
@@ -242,5 +244,111 @@ describe('PostBulkActions', () => {
     fireEvent.click(apply())
     await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
     expect(new Date((apiPatch.mock.calls[0]![1] as { scheduledFor: string }).scheduledFor).getTime()).toBeGreaterThan(Date.now())
+  })
+
+  it('fails closed on delete: a post that was not enriched, or whose enrichment failed, is never deleted', async () => {
+    setup([
+      post({ id: 'p1', displayId: 'RE-1' }),
+      post({ id: 'p2', displayId: 'RE-2', publishTargets: undefined }),
+      post({ id: 'p3', displayId: 'RE-3', publishTargets: undefined, enrichmentFailed: true }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(screen.getByTestId('delete-unknown-note')).toHaveTextContent('Could not confirm these posts are not live')
+    expect(screen.getByTestId('delete-unknown-note')).toHaveTextContent('RE-2, RE-3')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 1' }))
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledTimes(1))
+    expect(apiDelete.mock.calls[0]![0]).toContain('/work-items/p1')
+    // The delete never carries confirmLive: the server refuses a live post even if the client was wrong.
+    expect(apiDelete.mock.calls[0]![0]).not.toContain('confirmLive')
+  })
+
+  it('disables Delete, with the reason visible, when none of the selection can be confirmed not live', () => {
+    setup([post({ id: 'p1', publishTargets: undefined, enrichmentFailed: true })])
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled()
+    expect(screen.getByTestId('disabled-reasons')).toHaveTextContent('Could not confirm these are not live: RE-1')
+  })
+
+  it('shows why each action is disabled as text, not only a title', () => {
+    setup([post({ id: 'p1', status: 'PUBLISHED' })])
+    const reasons = screen.getByTestId('disabled-reasons')
+    expect(reasons).toHaveTextContent('Reschedule: every selected post is already live')
+    expect(reasons).toHaveTextContent('Retry failed: none of the selected posts has a failed destination')
+    expect(reasons).toHaveTextContent('Delete: Every selected post is live')
+  })
+
+  it('shows no reasons when everything is available', () => {
+    setup([post({ id: 'p1', publishTargets: [{ platform: 'tiktok', state: 'FAILED' }] })])
+    expect(screen.queryByTestId('disabled-reasons')).toBeNull()
+  })
+
+  describe('set destinations: Add (default) and Replace', () => {
+    const IG = { id: 't1', platform: 'instagram', connectionId: 'c1', lane: 'NATIVE', state: 'PENDING', publishOptions: { altText: 'ig alt' } }
+    const TT = { id: 't2', platform: 'tiktok', connectionId: 'c2', lane: 'NATIVE', state: 'PENDING', format: 'reel', publishOptions: { privacyLevel: 'PUBLIC' } }
+    const FB = { platform: 'facebook', connectionId: 'c3', label: 'Rexcipe FB', lane: 'NATIVE' }
+
+    beforeEach(() => {
+      apiGetImpl.mockImplementation((url: string) =>
+        Promise.resolve(url.includes('/work-items/') ? [IG, TT] : [...OPTIONS, FB]),
+      )
+    })
+
+    it('adds Facebook to 20 posts on IG and TikTok: every PUT keeps all three, with the original options', async () => {
+      const posts = Array.from({ length: 20 }, (_, i) => post({ id: `p${i}`, displayId: `RE-${i}` }))
+      setup(posts)
+      fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
+      // Add is the default; what every post already has is shown ticked and cannot be unticked here.
+      expect(await screen.findByLabelText(/Rexcipe IG/)).toBeDisabled()
+      expect(screen.getByLabelText(/Rexcipe IG/)).toBeChecked()
+      fireEvent.click(screen.getByLabelText(/Rexcipe FB/))
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(20))
+      for (const call of apiPut.mock.calls) {
+        const targets = (call[1] as { targets: Record<string, unknown>[] }).targets
+        expect(targets.map((t) => t.platform).sort()).toEqual(['facebook', 'instagram', 'tiktok'])
+        expect(targets.find((t) => t.platform === 'instagram')).toMatchObject({ publishOptions: { altText: 'ig alt' } })
+        expect(targets.find((t) => t.platform === 'tiktok')).toMatchObject({ format: 'reel', publishOptions: { privacyLevel: 'PUBLIC' } })
+        expect(targets.find((t) => t.platform === 'facebook')).toEqual({ platform: 'facebook', connectionId: 'c3' })
+      }
+    })
+
+    it('Replace is explicit, starts from what the posts have now, and drops what is unticked', async () => {
+      setup([post({ id: 'p1' }), post({ id: 'p2' })])
+      fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
+      await screen.findByLabelText(/Rexcipe IG/)
+      fireEvent.change(screen.getByLabelText('Destinations mode'), { target: { value: 'replace' } })
+      // Seeded from the common current destinations, now editable.
+      expect(screen.getByLabelText(/Rexcipe IG/)).toBeChecked()
+      expect(screen.getByLabelText(/Rexcipe IG/)).not.toBeDisabled()
+      fireEvent.click(screen.getByLabelText(/Rexcipe IG/)) // drop Instagram
+      fireEvent.click(screen.getByRole('button', { name: 'Replace' }))
+
+      await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(2))
+      const targets = (apiPut.mock.calls[0]![1] as { targets: Record<string, unknown>[] }).targets
+      expect(targets.map((t) => t.platform)).toEqual(['tiktok'])
+      expect(targets[0]).toMatchObject({ publishOptions: { privacyLevel: 'PUBLIC' } })
+    })
+
+    it('does nothing until something is ticked', async () => {
+      setup([post({ id: 'p1' })])
+      fireEvent.click(screen.getByRole('button', { name: 'Destinations' }))
+      await screen.findByLabelText(/Rexcipe IG/)
+      expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+    })
+  })
+
+  it('tells the runner how many posts it skipped, so "N done" is not read as all of them', async () => {
+    const soon = new Date(Date.now() + 5 * 86400_000).toISOString()
+    setup([
+      post({ id: 'p1', scheduledFor: soon, scheduleTimezone: 'UTC' }),
+      post({ id: 'p2' }),
+      post({ id: 'p3' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Reschedule' }))
+    fireEvent.change(screen.getByLabelText('Reschedule mode'), { target: { value: 'shift' } })
+    fireEvent.change(screen.getByLabelText(/Days/), { target: { value: '1' } })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reschedule' }).at(-1)!)
+    await waitFor(() => expect(run).toHaveBeenCalled())
+    expect(run.mock.calls[0]![3]).toBe('2 skipped: they have no date to shift, or the new time has already passed')
   })
 })

@@ -73,6 +73,8 @@ export interface Issue {
   publishTargets?: WorkItemPublishTarget[]
   /** List response only: the Creative the media came from, or null. */
   creative?: WorkItemCreativeRef | null
+  /** List response only: true when the extras could not be worked out, so whether this Post is live is UNKNOWN. */
+  enrichmentFailed?: boolean | null
 }
 
 export interface IssueWithReviewers extends Issue {

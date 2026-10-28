@@ -4,7 +4,29 @@
 import { instantToWallClock, wallClockToInstant } from '@/lib/schedule'
 import type { Issue } from '@/components/workitems/listTypes'
 
-type PostLike = Pick<Issue, 'status' | 'publishTargets' | 'externalLinks'>
+type PostLike = Pick<Issue, 'status' | 'publishTargets' | 'externalLinks' | 'enrichmentFailed'>
+
+/**
+ * Whether we cannot tell if a Post is live: the list did not enrich it (no `publishTargets` at all, as for a
+ * response that predates the field) or said enrichment failed for it. Such a Post must be treated as
+ * possibly live — never as one that is not — by anything destructive.
+ */
+export function isLiveUnknown(post: Pick<Issue, 'publishTargets' | 'enrichmentFailed'>): boolean {
+  return post.enrichmentFailed === true || post.publishTargets === undefined || post.publishTargets === null
+}
+
+/**
+ * The calendar date (`YYYY-MM-DD`) it is at `nowMs` in `timeZone` — the earliest day a schedule picker should
+ * offer, which is not the UTC date: at 20:00 in Los Angeles it is already tomorrow in UTC, and at 08:00 in
+ * Auckland it is still yesterday there.
+ */
+export function todayInZone(nowMs: number, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs))
+  } catch {
+    return new Date(nowMs).toISOString().slice(0, 10)
+  }
+}
 
 /**
  * A Post that is out in the world: any destination PUBLISHED, a recorded live link, or a status the
@@ -32,7 +54,7 @@ export function isRescheduleLocked(post: PostLike): boolean {
  * Post to review first, a side effect nobody should get from a bulk action.
  */
 export function isEditLocked(post: PostLike): boolean {
-  if (isLivePost(post)) return true
+  if (isLivePost(post) || isLiveUnknown(post)) return true
   const status = post.status.toUpperCase()
   if (status === 'APPROVED' || status === 'SCHEDULED' || status === 'PUBLISHING') return true
   return (post.publishTargets ?? []).some((t) =>

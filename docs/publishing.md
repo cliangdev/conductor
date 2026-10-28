@@ -729,3 +729,11 @@ example Workflow and the enums agree with the registry.
 
 See [`workflows.md`](workflows.md) for the Workflow YAML and statechart format, and
 [`integrations-adding-a-connector.md`](integrations-adding-a-connector.md) for connecting an account.
+
+## Deleting a live Post
+
+`DELETE /work-items/{id}` is refused with 409 when any destination is `PUBLISHED` (live on a platform): the
+delete would only remove the Post from Conductor and leave the live post behind. `?confirmLive=true` deletes
+it anyway; the Post detail page sends it after its own confirmation, and bulk delete never does. In the Posts
+list, bulk Delete also leaves out any Post it cannot confirm is not live (the list response carries
+`enrichmentFailed`, or no `publishTargets` at all), so a lookup failure fails closed.

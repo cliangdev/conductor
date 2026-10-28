@@ -341,7 +341,8 @@ describe('WorkItemDetailView', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
-    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith(expect.stringMatching(/\/work-items\/wi-1$/), 'token'))
+    // The single-post delete is the explicit, confirmed one: it states the post may be live.
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith(expect.stringMatching(/\/work-items\/wi-1\?confirmLive=true$/), 'token'))
     await waitFor(() => expect(pushSpy).toHaveBeenCalledWith(expect.stringContaining('/app/projects/proj-1/engineering/prds')))
   })
 

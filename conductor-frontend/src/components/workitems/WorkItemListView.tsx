@@ -248,7 +248,7 @@ export function WorkItemListView({
   const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
   const startCreating = () => (opensComposePage ? router.push(composePath) : setCreating(true))
 
-  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; message?: string; reasons?: string[]; retry?: () => Promise<void> } | null>(null)
+  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; message?: string; reasons?: string[]; note?: string; retry?: () => Promise<void> } | null>(null)
   const bulkStatusTriggerRef = useRef<HTMLButtonElement>(null)
   const bulkAssignTriggerRef = useRef<HTMLButtonElement>(null)
 
@@ -266,10 +266,10 @@ export function WorkItemListView({
   // over `ids` concurrently (Promise.allSettled, not sequential awaits — one slow/failing item can't
   // block the rest), skips items already at the target value, keeps only the failed ids selected on
   // partial failure (so the user can retry just those), and refetches once at the end either way.
-  async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failure: string) {
+  async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failure: string, note?: string) {
     if (ids.length === 0) {
       // Nothing ran, so nothing is deselected: a selection hidden by a filter must survive. Say so instead.
-      setBulkResult({ done: 0, failed: 0, message: 'Nothing to change.' })
+      setBulkResult({ done: 0, failed: 0, message: note ? `Nothing to change. ${note}.` : 'Nothing to change.' })
       return
     }
     listState.setBulkInFlight(true)
@@ -294,6 +294,7 @@ export function WorkItemListView({
         done: ids.length - failedIds.length,
         failed: failedIds.length,
         reasons,
+        note,
         retry: failedIds.length > 0 ? () => runBulkMutation(failedIds, mutate, failure) : undefined,
       })
       await loadIssues()
@@ -459,7 +460,7 @@ export function WorkItemListView({
           <span data-testid="bulk-result">
             {bulkResult.message ?? `${bulkResult.done} done${bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}${
               bulkResult.reasons?.length ? `: ${bulkResult.reasons.join('; ')}` : ''
-            }`}
+            }${bulkResult.note ? `; ${bulkResult.note}` : ''}`}
           </span>
           {bulkResult.retry && (
             <Button
@@ -516,7 +517,20 @@ export function WorkItemListView({
           onToggleSelect={canEdit ? listState.toggleSelect : undefined}
         />
       ) : issuesInView.length === 0 ? (
-        counts.all === 0 && workflowDeclaresPublishTargets(workflowView) ? (
+        creativeFilter || mediaFilter ? (
+          // Opened from a Creative or Media link: an empty result is "nothing matches", never the first-run
+          // onboarding, and the way out is to drop the filter.
+          <EmptyState
+            icon={SearchX}
+            title={`No matching ${lowerNoun}`}
+            description={`No ${lowerNoun} use ${creativeFilter ? 'this Creative' : 'this media item'}.`}
+            action={
+              <Link prefetch={false} href={workItemListPath(projectId, detailArea, noun)} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                Clear filter
+              </Link>
+            }
+          />
+        ) : counts.all === 0 && workflowDeclaresPublishTargets(workflowView) ? (
           // First run of a publishing Workflow: nothing has ever been posted here, so lead with
           // connecting an account rather than the generic "created via MCP" line, which assumes an
           // audience this page's non-technical reader may not be.

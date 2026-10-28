@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { applyTagChange, hasFailedTarget, isEditLocked, isLivePost, isRescheduleLocked, parseTags, shiftSchedule, tagsDiffer } from './postBulk'
+import {
+  applyTagChange,
+  hasFailedTarget,
+  isEditLocked,
+  isLivePost,
+  isLiveUnknown,
+  isRescheduleLocked,
+  parseTags,
+  shiftSchedule,
+  tagsDiffer,
+  todayInZone,
+} from './postBulk'
 
 describe('isLivePost', () => {
   it('is live with a published destination, a live link or a Published status', () => {
@@ -90,5 +101,39 @@ describe('isRescheduleLocked', () => {
     expect(isRescheduleLocked({ status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'HANDED_OFF' }] })).toBe(false)
     expect(isRescheduleLocked({ status: 'PUBLISHED' })).toBe(true)
     expect(isRescheduleLocked({ status: 'DRAFT', publishTargets: [{ platform: 'tiktok', state: 'PUBLISHED' }] })).toBe(true)
+  })
+})
+
+describe('isLiveUnknown (fail closed)', () => {
+  it('is unknown when the post was not enriched or enrichment failed', () => {
+    expect(isLiveUnknown({})).toBe(true)
+    expect(isLiveUnknown({ publishTargets: null as never })).toBe(true)
+    expect(isLiveUnknown({ publishTargets: [], enrichmentFailed: true })).toBe(true)
+  })
+  it('is known once enriched, even with no destinations', () => {
+    expect(isLiveUnknown({ publishTargets: [] })).toBe(false)
+    expect(isLiveUnknown({ publishTargets: [{ platform: 'tiktok', state: 'PENDING' }] })).toBe(false)
+  })
+  it('locks Destinations for an unknown post (it may be live) but leaves Reschedule to the server', () => {
+    expect(isEditLocked({ status: 'DRAFT' })).toBe(true)
+    expect(isRescheduleLocked({ status: 'DRAFT' })).toBe(false)
+  })
+})
+
+describe('todayInZone', () => {
+  it('is the date in the chosen zone, not the UTC date: a UTC-8 evening', () => {
+    // 04:00 UTC on the 5th is 20:00 on the 4th in Los Angeles (UTC-8, standard time).
+    const now = Date.UTC(2026, 0, 5, 4, 0)
+    expect(todayInZone(now, 'America/Los_Angeles')).toBe('2026-01-04')
+    expect(todayInZone(now, 'UTC')).toBe('2026-01-05')
+  })
+  it('a UTC+13 morning', () => {
+    // 12:00 UTC on the 4th is 01:00 on the 5th in Auckland (UTC+13, summer time).
+    const now = Date.UTC(2026, 0, 4, 12, 0)
+    expect(todayInZone(now, 'Pacific/Auckland')).toBe('2026-01-05')
+    expect(todayInZone(now, 'UTC')).toBe('2026-01-04')
+  })
+  it('falls back to the UTC date for an unusable zone', () => {
+    expect(todayInZone(Date.UTC(2026, 0, 5, 4, 0), 'Not/AZone')).toBe('2026-01-05')
   })
 })

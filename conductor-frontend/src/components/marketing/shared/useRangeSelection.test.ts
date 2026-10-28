@@ -93,4 +93,16 @@ describe('useRangeSelection', () => {
     act(() => result.current.prune(['b', 'c', 'z']))
     expect(result.current.selected).toEqual(['b', 'c'])
   })
+
+  it('answers isSelected from a set that follows toggles, ranges, removal and clear', () => {
+    const { result } = renderHook(() => useRangeSelection(IDS))
+    expect(result.current.isSelected('b')).toBe(false)
+    act(() => result.current.select('b'))
+    act(() => result.current.select('d', true))
+    expect(['a', 'b', 'c', 'd', 'e'].map(result.current.isSelected)).toEqual([false, true, true, true, false])
+    act(() => result.current.remove('c'))
+    expect(result.current.isSelected('c')).toBe(false)
+    act(() => result.current.clear())
+    expect(IDS.some(result.current.isSelected)).toBe(false)
+  })
 })

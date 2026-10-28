@@ -553,7 +553,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                     onCheckedChange={() => {}}
                     onClick={(e) => selection.select(root.id, e.shiftKey)}
                     label={<span className="sr-only">Select {root.displayId}</span>}
-                    className={`absolute left-1.5 top-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
+                    className={`absolute left-1.5 top-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100 ${
                       selection.selected.length === 0 && !isSelected ? 'opacity-0' : ''
                     }`}
                   />

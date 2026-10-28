@@ -54,6 +54,7 @@ export function useRangeSelection(visibleIds: string[]) {
     if (anchor.current && !keep.has(anchor.current)) anchor.current = null
   }, [])
 
+  const selectedSet = useMemo(() => new Set(selected), [selected])
   const visibleSet = useMemo(() => new Set(visibleIds), [visibleIds])
   const selectedVisible = useMemo(() => selected.filter((id) => visibleSet.has(id)), [selected, visibleSet])
 
@@ -61,7 +62,7 @@ export function useRangeSelection(visibleIds: string[]) {
     selected,
     selectedVisible,
     hiddenCount: selected.length - selectedVisible.length,
-    isSelected: (id: string) => selected.includes(id),
+    isSelected: (id: string) => selectedSet.has(id),
     select,
     clear,
     add,

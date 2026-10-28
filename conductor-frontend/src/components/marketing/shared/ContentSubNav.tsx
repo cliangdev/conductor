@@ -18,6 +18,38 @@ export function usePostsHref(projectId: string): string | null {
   return posts ? workItemListPath(projectId, posts.area, posts.noun) : null
 }
 
+function SubNavTabs({
+  projectId,
+  active,
+  posts,
+}: {
+  projectId: string
+  active?: ContentSection
+  posts: string | null
+}) {
+  const pathname = usePathname()
+  const current: ContentSection | undefined =
+    active ?? (pathname?.includes('/marketing/creatives') ? 'creatives' : pathname?.includes('/marketing/media') ? 'media' : undefined)
+
+  const items: TabItem[] = [
+    ...(posts ? [{ value: 'posts', label: 'Posts', href: posts }] : []),
+    { value: 'creatives', label: 'Creatives', href: `/app/projects/${projectId}/marketing/creatives` },
+    { value: 'media', label: 'Media', href: `/app/projects/${projectId}/marketing/media` },
+  ]
+  return <Tabs items={items} value={current ?? ''} ariaLabel="Content library" className="mb-4" />
+}
+
+/** The Posts page knows its own list path, so it needs no lookup. */
+function KnownPostsSubNav({ projectId, active, postsHref }: { projectId: string; active?: ContentSection; postsHref: string }) {
+  return <SubNavTabs projectId={projectId} active={active} posts={postsHref} />
+}
+
+/** The Creatives and Media pages look the Posts list up from the workflow nav. */
+function LookedUpSubNav({ projectId, active }: { projectId: string; active?: ContentSection }) {
+  const looked = usePostsHref(projectId)
+  return <SubNavTabs projectId={projectId} active={active} posts={looked} />
+}
+
 export function ContentSubNav({
   projectId,
   active,
@@ -28,16 +60,11 @@ export function ContentSubNav({
   /** Known by the Posts page itself; the other pages leave it out and it is looked up. */
   postsHref?: string
 }) {
-  const pathname = usePathname()
-  const looked = usePostsHref(postsHref ? '' : projectId)
-  const posts = postsHref ?? looked
-  const current: ContentSection | undefined =
-    active ?? (pathname?.includes('/marketing/creatives') ? 'creatives' : pathname?.includes('/marketing/media') ? 'media' : undefined)
-
-  const items: TabItem[] = [
-    ...(posts ? [{ value: 'posts', label: 'Posts', href: posts }] : []),
-    { value: 'creatives', label: 'Creatives', href: `/app/projects/${projectId}/marketing/creatives` },
-    { value: 'media', label: 'Media', href: `/app/projects/${projectId}/marketing/media` },
-  ]
-  return <Tabs items={items} value={current ?? ''} ariaLabel="Content library" className="mb-4" />
+  // Two components rather than one conditional hook call: the lookup (an auth read and a nav subscription)
+  // only runs where it is needed.
+  return postsHref ? (
+    <KnownPostsSubNav projectId={projectId} active={active} postsHref={postsHref} />
+  ) : (
+    <LookedUpSubNav projectId={projectId} active={active} />
+  )
 }

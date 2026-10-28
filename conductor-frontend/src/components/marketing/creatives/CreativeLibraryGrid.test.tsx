@@ -405,6 +405,15 @@ describe('CreativeLibraryGrid', () => {
       expect(screen.queryByTestId('creative-used-a')).toBeNull()
     })
 
+    it('keeps the selection checkbox visible on touch and narrow screens, revealed on hover for desktop', async () => {
+      mockGets({ creatives: family() })
+      render(<CreativeLibraryGrid projectId="proj-1" />)
+      const wrapper = (await screen.findByLabelText('Select 3a')).closest('div[class*="absolute"]') as HTMLElement
+      expect(wrapper.className).toContain('group-hover:opacity-100')
+      expect(wrapper.className).toContain('max-md:opacity-100')
+      expect(wrapper.className).toContain('[@media(hover:none)]:opacity-100')
+    })
+
     it('renders variant letters as real links, never a role=link span nested in the tile link', async () => {
       mockGets({ creatives: family() })
       render(<CreativeLibraryGrid projectId="proj-1" />)

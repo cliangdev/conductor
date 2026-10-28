@@ -123,7 +123,7 @@ export function WorkItemBoardView({
                           // The card itself navigates on click; the checkbox must not.
                           onClick={(e) => e.stopPropagation()}
                           label={<span className="sr-only">Select {issue.title}</span>}
-                          className={`absolute right-2 top-2 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
+                          className={`absolute right-2 top-2 transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100 ${
                             (selectedIds?.size ?? 0) === 0 && !selectedIds?.has(issue.id) ? 'opacity-0' : ''
                           }`}
                         />

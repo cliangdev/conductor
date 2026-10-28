@@ -79,7 +79,8 @@ export function WorkItemGridView({
                 onCheckedChange={() => onToggleSelect(issue.id)}
                 label={<span className="sr-only">Select {issue.title}</span>}
                 className={cn(
-                  'absolute left-1.5 top-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100',
+                  // Hover reveals it on desktop; on touch (no hover) or a narrow screen it is always shown.
+                  'absolute left-1.5 top-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100',
                   selectedIds.size === 0 && !isSelected && 'opacity-0',
                 )}
               />

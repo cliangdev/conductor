@@ -31,7 +31,7 @@ describe('PostsUsingCreativePanel', () => {
     const link = await screen.findByRole('link', { name: 'Pasta, 3 ways' })
     expect(link).toHaveAttribute('href', '/app/projects/p/marketing/posts/RE-88')
     expect(screen.getByText('Scheduled')).toBeInTheDocument()
-    expect((apiGet as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('/api/v2/projects/p/work-items?creativeId=c1')
+    expect((apiGet as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('/api/v2/projects/p/work-items?creativeId=c1&workflow=MARKETING')
   })
 
   it('says so when nothing uses it', async () => {
@@ -40,14 +40,17 @@ describe('PostsUsingCreativePanel', () => {
     expect(await screen.findByText('No posts use this creative yet.')).toBeInTheDocument()
   })
 
-  it('shows only the publishing workflow\'s posts', async () => {
-    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: 'w1', displayId: 'RE-1', title: 'A post', status: 'DRAFT', workflow: 'MARKETING' },
-      { id: 'w2', displayId: 'CH-1', title: 'A change', status: 'PLANNED', workflow: 'MARKETING_CHANGES' },
-    ])
+  it('asks the server for only the publishing workflow\'s posts', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
     render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
-    expect(await screen.findByText('A post')).toBeInTheDocument()
-    expect(screen.queryByText('A change')).toBeNull()
+    await screen.findByText('No posts use this creative yet.')
+    expect(String((apiGet as ReturnType<typeof vi.fn>).mock.calls[0]![0])).toContain('workflow=MARKETING')
+  })
+
+  it('does not wait on a skeleton forever when there is no token', async () => {
+    render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="" />)
+    expect(await screen.findByText('Posts using this creative cannot be listed right now.')).toBeInTheDocument()
+    expect(apiGet).not.toHaveBeenCalled()
   })
 
   it('clears the previous creative\'s posts and error when the creative changes', async () => {
@@ -64,23 +67,21 @@ describe('PostsUsingCreativePanel', () => {
     expect(await screen.findByText('No posts use this creative yet.')).toBeInTheDocument()
   })
 
-  it('shows the skeleton, not unlinked rows of other workflows, until the workflow nav has resolved', async () => {
+  it('shows the skeleton and asks for nothing until the workflow nav has resolved, then lists only that workflow\'s posts', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'w1', displayId: 'RE-1', title: 'A post', status: 'DRAFT', workflow: 'MARKETING' },
-      { id: 'w2', displayId: 'CH-1', title: 'A change', status: 'PLANNED', workflow: 'MARKETING_CHANGES' },
     ])
     nav.loading = true
     const { rerender } = render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
-    await waitFor(() => expect(apiGet).toHaveBeenCalled())
-    // The posts have arrived but the nav has not: nothing is rendered yet.
+    // Nothing is requested or rendered while the nav is unresolved: no flash of unlinked rows.
+    expect(apiGet).not.toHaveBeenCalled()
     expect(screen.queryByText('A post')).toBeNull()
-    expect(screen.queryByText('A change')).toBeNull()
     expect(screen.queryByText('No posts use this creative yet.')).toBeNull()
 
     nav.loading = false
     rerender(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
     const link = await screen.findByRole('link', { name: 'A post' })
     expect(link).toHaveAttribute('href', '/app/projects/p/marketing/posts/RE-1')
-    expect(screen.queryByText('A change')).toBeNull()
+    expect(apiGet).toHaveBeenCalledTimes(1)
   })
 })

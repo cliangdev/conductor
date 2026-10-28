@@ -766,6 +766,57 @@ describe('shared-path behaviour that must not change', () => {
     expect(listUrls[0]).toBe('/api/v2/projects/proj-1/work-items?workflow=MARKETING&enrich=true&mediaId=m1')
   })
 
+  it('shows "No matching posts" with a Clear filter action, not the first-run onboarding, when a usage filter finds nothing', async () => {
+    issues = []
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    searchParamsValue = new URLSearchParams('creativeId=c1&view=all')
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByText('No matching posts')).toBeInTheDocument()
+    expect(screen.queryByText('No posts yet')).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Connect an account' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Clear filter' })).toHaveAttribute('href', '/app/projects/proj-1/engineering/posts')
+  })
+
+  it('reports skipped posts next to "N done" after a reschedule, so it is not read as all of them', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    issues = issues.map((i) =>
+      i.id === 'i1' ? { ...i, scheduledFor: new Date(Date.now() + 6 * 86400_000).toISOString(), scheduleTimezone: 'UTC' } : i,
+    )
+    const user = userEvent.setup()
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i1 (scheduled)
+    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i2 (no date)
+    await user.click(await screen.findByRole('button', { name: 'Reschedule' }))
+    fireEvent.change(screen.getByLabelText('Reschedule mode'), { target: { value: 'shift' } })
+    fireEvent.change(screen.getByLabelText(/Days/), { target: { value: '1' } })
+    await user.click(screen.getAllByRole('button', { name: 'Reschedule' }).at(-1)!)
+
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent(
+      '1 done; 1 skipped: it has no date to shift, or the new time has already passed',
+    )
+    expect(apiPatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('still shows the first-run onboarding for a publishing workflow with no filter and no posts', async () => {
+    issues = []
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByText('No posts yet')).toBeInTheDocument()
+  })
+
+  it('keeps selection checkboxes visible on touch and narrow screens, revealed on hover for desktop', async () => {
+    searchParamsValue = new URLSearchParams('mode=board')
+    render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
+    const box = await screen.findByLabelText('Select Zeta task')
+    const wrapper = box.closest('div[class*="absolute"]') as HTMLElement
+    expect(wrapper.className).toContain('group-hover:opacity-100')
+    expect(wrapper.className).toContain('max-md:opacity-100')
+    expect(wrapper.className).toContain('[@media(hover:none)]:opacity-100')
+  })
+
   it('says the filtered list shows every state when opened from a Creative or Media link', async () => {
     VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
     searchParamsValue = new URLSearchParams('creativeId=c1&view=all')
