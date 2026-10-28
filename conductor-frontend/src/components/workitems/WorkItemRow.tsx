@@ -16,6 +16,23 @@ import { cn } from '@/lib/utils'
 import type { IssueAssignee, IssueReviewer, IssueWithReviewers, Member } from '@/components/workitems/listTypes'
 import type { MemberRole } from '@/types'
 
+/** "SCHEDULED" / "In_review" -> "Scheduled" / "In review". */
+function statusText(status: string): string {
+  const t = status.replace(/_/g, ' ').toLowerCase()
+  return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+/** "in 2 days" for a future schedule; nothing once it has passed. */
+function untilLabel(scheduledFor?: string | null): string | null {
+  if (!scheduledFor) return null
+  const ms = new Date(scheduledFor).getTime() - Date.now()
+  if (Number.isNaN(ms) || ms <= 0) return null
+  const hours = Math.round(ms / 3_600_000)
+  if (hours < 24) return `in ${Math.max(hours, 1)}h`
+  const days = Math.round(hours / 24)
+  return `in ${days} day${days === 1 ? '' : 's'}`
+}
+
 /**
  * One 38px row: status ring · mono id · title · type tag · (comment count · reviewers · assignee ·
  * time) right-aligned. Only the id+title span is a real `<a>` (native Enter activation, ⌘/Ctrl-click,
@@ -82,7 +99,7 @@ export function WorkItemRow({
       data-selected={selected || undefined}
       data-focused={focused || undefined}
       className={cn(
-        publishing ? 'h-[56px]' : 'h-[38px]',
+        publishing ? 'h-[64px]' : 'h-[38px]',
         'flex items-center gap-3 px-3 border-b border-border last:border-b-0 transition-colors min-w-0',
         'hover:bg-muted',
         highlighted && 'bg-accent-soft shadow-[inset_2px_0_0_0_hsl(var(--primary))]',
@@ -124,13 +141,29 @@ export function WorkItemRow({
         {issue.displayId && (
           <span className="font-mono text-xs text-muted-foreground w-16 shrink-0 truncate">{issue.displayId}</span>
         )}
-        {publishing && <PostThumb src={issue.thumbnailUrl} className="h-10 w-10" />}
-        <span className="text-[13px] font-medium text-foreground truncate min-w-0">{issue.title}</span>
+        {publishing && <PostThumb src={issue.thumbnailUrl} className="h-11 w-11" />}
+        <span className="flex min-w-0 flex-col">
+          <span className="text-[13px] font-medium text-foreground truncate min-w-0">{issue.title}</span>
+          {publishing && (
+            // Plain text, not a link: this sits inside the row anchor and an <a> may not nest another.
+            <span className="truncate text-[11.5px] text-muted-foreground">
+              {issue.creative && (
+                <>
+                  <span className="text-primary">Creative {issue.creative.displayId}</span>
+                  {' · '}
+                </>
+              )}
+              {statusText(issue.status)}
+            </span>
+          )}
+        </span>
       </Link>
 
-      <Badge variant="outline" className="text-xs shrink-0 hidden sm:inline-flex">
-        {issue.type}
-      </Badge>
+      {!publishing && (
+        <Badge variant="outline" className="text-xs shrink-0 hidden sm:inline-flex">
+          {issue.type}
+        </Badge>
+      )}
 
       {/* Tags read at a glance next to the type, which is the other thing that says what this is. */}
       {(issue.tags?.length ?? 0) > 0 && (
@@ -149,20 +182,13 @@ export function WorkItemRow({
       )}
 
       <div className="flex items-center gap-3 ml-auto shrink-0">
-        {publishing && issue.creative && (
-          <Link
-            prefetch={false}
-            href={`/app/projects/${projectId}/marketing/creatives/${issue.creative.id}`}
-            title={issue.creative.name ?? `Creative ${issue.creative.displayId}`}
-            className="hidden font-mono text-[11.5px] text-muted-foreground hover:text-primary lg:inline"
-          >
-            {issue.creative.displayId}
-          </Link>
-        )}
         {publishing && <DestinationMarks issue={issue} />}
-        {scheduled && (
-          <span className="hidden text-[11.5px] text-muted-foreground lg:inline" data-testid="row-schedule">
-            {scheduled}
+        {publishing && (
+          <span className="hidden w-28 flex-col text-right lg:flex" data-testid="row-schedule">
+            <span className="text-[12.5px] text-foreground">{scheduled ?? 'Unscheduled'}</span>
+            {untilLabel(issue.scheduledFor) && (
+              <span className="text-[11.5px] text-muted-foreground">{untilLabel(issue.scheduledFor)}</span>
+            )}
           </span>
         )}
         {/* Where it ended up outside Conductor. Sits outside the row anchor so a click opens the live
@@ -171,7 +197,7 @@ export function WorkItemRow({
 
         <CommentCount count={issue.unresolvedCommentCount} className="text-muted-foreground" />
 
-        {accessToken && (
+        {accessToken && !(publishing && (issue.reviewers ?? []).length === 0) && (
           <ReviewerCell
             issueId={issue.id}
             projectId={projectId}
@@ -198,7 +224,9 @@ export function WorkItemRow({
           <EmptyAvatarSlot size={5} />
         )}
 
-        <span className="text-foreground-subtle text-[11.5px] w-14 text-right shrink-0">{timeAgo(issue.updatedAt)}</span>
+        {!publishing && (
+          <span className="text-foreground-subtle text-[11.5px] w-14 text-right shrink-0">{timeAgo(issue.updatedAt)}</span>
+        )}
       </div>
     </div>
   )
