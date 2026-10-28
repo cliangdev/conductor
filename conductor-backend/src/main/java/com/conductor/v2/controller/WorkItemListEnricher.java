@@ -1,15 +1,16 @@
 package com.conductor.v2.controller;
 
+import com.conductor.creative.Creative;
+import com.conductor.creative.CreativePhoto;
+import com.conductor.creative.CreativePhotoRepository;
+import com.conductor.creative.CreativeRenderFrame;
+import com.conductor.creative.CreativeRenderFrameRepository;
+import com.conductor.creative.CreativeRepository;
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.WorkItem;
 import com.conductor.generated.v2.model.WorkItemCreativeRef;
 import com.conductor.generated.v2.model.WorkItemPublishTargetSummary;
-import com.conductor.creative.Creative;
-import com.conductor.creative.CreativePhotoRepository;
-import com.conductor.creative.CreativeRepository;
-import com.conductor.creative.CreativeRenderFrame;
-import com.conductor.creative.CreativeRenderFrameRepository;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.StorageService;
@@ -29,17 +30,27 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * List-only enrichment of Work Items for the Posts list: first-image thumbnail URL, publish-target
- * platforms with per-target state, and the linked Creative. Everything is loaded per page of results, never
- * per row: one query for the image Assets, one for the targets, and the two {@code IN} queries the
- * {@link AssetCreativeOriginResolver} already does for the Creative. Items that have none of these simply
- * get an empty enrichment, so non-publishing Workflows pay for the queries but see no new data.
+ * List-only enrichment of Work Items for the Posts list: thumbnail URL, publish-target platforms with
+ * per-target state, and the linked Creative. Everything is loaded per page of results, never per row: a fixed
+ * number of reads whatever the page size (large pages are split into fixed-size chunks, so the statement
+ * count grows with the number of chunks, not rows).
+ *
+ * <ul>
+ *   <li><b>Thumbnail</b>: the first (oldest) uploaded image of the Post; if it has none, the poster of its
+ *       first video Media item. Assets carry no explicit media order, so upload order is the order.</li>
+ *   <li><b>Creative</b>: taken from the Post's first Creative-frame Asset of any content type, independent of
+ *       which image is the thumbnail, so a Post with any Creative-origin media shows its Creative.</li>
+ * </ul>
+ *
+ * Only items of a Workflow that declares publishing are enriched.
  */
 @Component
 public class WorkItemListEnricher {
 
     private static final Logger log = LoggerFactory.getLogger(WorkItemListEnricher.class);
     private static final int THUMBNAIL_URL_EXPIRY_MINUTES = 60;
+    /** Largest IN list sent in one statement. */
+    static final int CHUNK = 500;
 
     public record Enrichment(String thumbnailUrl, List<WorkItemPublishTargetSummary> publishTargets,
                              WorkItemCreativeRef creative) {
@@ -61,49 +72,62 @@ public class WorkItemListEnricher {
                                 CreativeRenderFrameRepository frames, CreativePhotoRepository photos,
                                 CreativeRepository creatives, WorkItemWorkflowService workflows,
                                 PublishPlatformRegistry platforms) {
-        this.creatives = creatives;
-        this.workflows = workflows;
-        this.platforms = platforms;
-        this.frames = frames;
-        this.photos = photos;
         this.assets = assets;
         this.targets = targets;
         this.originResolver = originResolver;
         this.storage = storage;
+        this.frames = frames;
+        this.photos = photos;
+        this.creatives = creatives;
+        this.workflows = workflows;
+        this.platforms = platforms;
+    }
+
+    private static <T> List<List<T>> chunks(Collection<T> all) {
+        List<T> list = new ArrayList<>(all);
+        List<List<T>> out = new ArrayList<>();
+        for (int i = 0; i < list.size(); i += CHUNK) {
+            out.add(list.subList(i, Math.min(list.size(), i + CHUNK)));
+        }
+        return out;
     }
 
     /**
-     * Ids of the Work Items that use a Creative (through its rendered frames) and/or a Media item (directly,
-     * or through a frame that reuses its stored object). A null argument is not applied; when both are
-     * given, the Work Item must match both. Null when neither is given (no filtering).
+     * Ids of the Work Items that use a Creative's family (through its rendered frames) and/or a Media item
+     * (directly, or through a frame that reuses its stored object), within {@code projectId}. A null argument
+     * is not applied; when both are given the Work Item must match both. Null when neither is given (no
+     * filtering). A Creative or Media item that is not in the project matches nothing.
      */
-    public Set<String> idsUsing(String creativeId, String mediaId) {
+    public Set<String> idsUsing(String projectId, String creativeId, String mediaId) {
         Set<String> result = null;
         if (creativeId != null && !creativeId.isBlank()) {
-            // The whole family (the "a" root and its lettered variants): the Creative tile counts the family,
-            // so the list it links to must be the same set of Posts.
+            // The whole family (the "a" root and its lettered variants): the Creative tile counts the
+            // family, so the list it links to must be the same set of Posts.
             List<String> familyIds = creatives.findById(creativeId)
+                    .filter(c -> projectId.equals(c.getProjectId()))
                     .map(c -> creatives.findAllByNumberAndProjectId(c.getNumber(), c.getProjectId()).stream()
                             .map(Creative::getId).toList())
-                    .orElse(List.of(creativeId));
-            List<String> frameIds = familyIds.stream()
-                    .flatMap(id -> frames.findAllByCreativeId(id).stream())
-                    .map(CreativeRenderFrame::getId).toList();
+                    .orElse(List.of());
             Set<String> ids = new HashSet<>();
-            if (!frameIds.isEmpty()) {
-                assets.findAllByCreativeFrameIdIn(frameIds).forEach(a -> ids.add(a.getWorkItem().getId()));
+            List<String> frameIds = new ArrayList<>();
+            for (List<String> chunk : chunks(familyIds)) {
+                frames.findAllByCreativeIdIn(chunk).forEach(f -> frameIds.add(f.getId()));
+            }
+            for (List<String> chunk : chunks(frameIds)) {
+                assets.findAllByCreativeFrameIdIn(chunk).forEach(a -> ids.add(a.getWorkItem().getId()));
             }
             result = ids;
         }
         if (mediaId != null && !mediaId.isBlank()) {
             Set<String> ids = new HashSet<>();
-            assets.findAllByMediaIdFetchWorkItem(mediaId).forEach(a -> ids.add(a.getWorkItem().getId()));
-            photos.findById(mediaId).ifPresent(p -> {
-                if (p.getGcsPath() != null) {
-                    assets.findAllByFrameObjectPathsFetchWorkItem(List.of(p.getGcsPath()))
+            CreativePhoto photo = photos.findById(mediaId).filter(p -> projectId.equals(p.getProjectId())).orElse(null);
+            if (photo != null) {
+                assets.findAllByMediaIdFetchWorkItem(mediaId).forEach(a -> ids.add(a.getWorkItem().getId()));
+                if (photo.getGcsPath() != null) {
+                    assets.findAllByFrameObjectPathsFetchWorkItem(List.of(photo.getGcsPath()))
                             .forEach(a -> ids.add(a.getWorkItem().getId()));
                 }
-            });
+            }
             if (result == null) {
                 result = ids;
             } else {
@@ -113,25 +137,17 @@ public class WorkItemListEnricher {
         return result;
     }
 
-    /**
-     * Work Item id → enrichment; ids with nothing to add are absent. Only items of a Workflow that declares
-     * publishing (platform asset types) are enriched: an Engineering list pays for no extra reads.
-     */
+    /** Work Item id → enrichment; ids with nothing to add are absent. */
     public Map<String, Enrichment> enrich(String projectId, Collection<WorkItem> items) {
         if (items == null || items.isEmpty()) {
             return Map.of();
         }
-        Map<String, Boolean> publishingBySlug = new HashMap<>();
+        // Publishing is a property of the pinned Workflow version, so resolve once per (slug, version).
+        Map<String, Boolean> publishingByVersion = new HashMap<>();
         List<String> workItemIds = new ArrayList<>();
         for (WorkItem item : items) {
-            boolean publishing = publishingBySlug.computeIfAbsent(String.valueOf(item.getWorkflow()), slug -> {
-                try {
-                    Statechart statechart = workflows.resolveFor(projectId, item);
-                    return platforms.declaresPublishing(statechart);
-                } catch (RuntimeException e) {
-                    return false;
-                }
-            });
+            String key = item.getWorkflow() + "@" + item.getWorkflowVersion();
+            boolean publishing = publishingByVersion.computeIfAbsent(key, k -> declaresPublishing(projectId, item, k));
             if (publishing) {
                 workItemIds.add(item.getId());
             }
@@ -139,36 +155,86 @@ public class WorkItemListEnricher {
         if (workItemIds.isEmpty()) {
             return Map.of();
         }
-        Map<String, List<Asset>> imagesByItem = new HashMap<>();
-        List<Asset> images = assets.findFirstUploadedImagePerWorkItem(workItemIds);
-        for (Asset a : images) {
-            imagesByItem.computeIfAbsent(a.getWorkItem().getId(), k -> new ArrayList<>()).add(a);
-        }
-        Map<String, AssetCreativeOriginResolver.Origin> origins = originResolver.resolve(images);
 
+        Map<String, Asset> imageByItem = new HashMap<>();
+        Map<String, Asset> frameAssetByItem = new HashMap<>();
         Map<String, List<PostPublishTarget>> targetsByItem = new HashMap<>();
-        for (PostPublishTarget t : targets.findAllByWorkItemIdIn(workItemIds)) {
-            targetsByItem.computeIfAbsent(t.getWorkItem().getId(), k -> new ArrayList<>()).add(t);
+        for (List<String> chunk : chunks(workItemIds)) {
+            assets.findFirstUploadedImagePerWorkItem(chunk)
+                    .forEach(a -> imageByItem.putIfAbsent(a.getWorkItem().getId(), a));
+            assets.findFirstCreativeFrameAssetPerWorkItem(chunk)
+                    .forEach(a -> frameAssetByItem.putIfAbsent(a.getWorkItem().getId(), a));
+            for (PostPublishTarget t : targets.findAllByWorkItemIdIn(chunk)) {
+                targetsByItem.computeIfAbsent(t.getWorkItem().getId(), k -> new ArrayList<>()).add(t);
+            }
         }
+        Map<String, AssetCreativeOriginResolver.Origin> origins = originResolver.resolve(frameAssetByItem.values());
+        Map<String, String> videoPosterPaths = videoPosterPaths(workItemIds, imageByItem.keySet());
 
         Map<String, Enrichment> out = new HashMap<>();
         for (String id : workItemIds) {
-            List<Asset> mine = imagesByItem.getOrDefault(id, List.of());
+            Asset image = imageByItem.get(id);
+            String path = image != null ? image.getGcsPath() : videoPosterPaths.get(id);
             List<PostPublishTarget> myTargets = targetsByItem.getOrDefault(id, List.of());
-            if (mine.isEmpty() && myTargets.isEmpty()) {
+            WorkItemCreativeRef creative = creativeOf(frameAssetByItem.get(id), origins);
+            if (path == null && myTargets.isEmpty() && creative == null) {
                 continue;
             }
-            out.put(id, new Enrichment(thumbnailOf(mine), summaries(myTargets), creativeOf(mine, origins)));
+            out.put(id, new Enrichment(sign(path), summaries(myTargets), creative));
         }
         return out;
     }
 
-    private String thumbnailOf(List<Asset> images) {
-        if (images.isEmpty()) {
+    private boolean declaresPublishing(String projectId, WorkItem item, String key) {
+        try {
+            Statechart statechart = workflows.resolveFor(projectId, item);
+            return platforms.declaresPublishing(statechart);
+        } catch (RuntimeException e) {
+            // One unresolvable Workflow version must not take the whole list down: its items are simply
+            // not enriched, and the others are.
+            log.warn("Could not resolve workflow {} to decide list enrichment; skipping its items: {}", key, e.toString());
+            return false;
+        }
+    }
+
+    /** Poster object path of each item's first uploaded video Media, for items that have no image. */
+    private Map<String, String> videoPosterPaths(List<String> workItemIds, Set<String> withImage) {
+        List<String> without = workItemIds.stream().filter(id -> !withImage.contains(id)).toList();
+        if (without.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> mediaIdByItem = new HashMap<>();
+        for (List<String> chunk : chunks(without)) {
+            assets.findFirstUploadedVideoPerWorkItem(chunk)
+                    .forEach(a -> mediaIdByItem.putIfAbsent(a.getWorkItem().getId(), a.getMediaId()));
+        }
+        if (mediaIdByItem.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> posterByMedia = new HashMap<>();
+        for (List<String> chunk : chunks(new HashSet<>(mediaIdByItem.values()))) {
+            for (CreativePhoto p : photos.findAllById(chunk)) {
+                if (p.getPosterGcsPath() != null) {
+                    posterByMedia.put(p.getId(), p.getPosterGcsPath());
+                }
+            }
+        }
+        Map<String, String> out = new HashMap<>();
+        mediaIdByItem.forEach((item, media) -> {
+            String poster = media == null ? null : posterByMedia.get(media);
+            if (poster != null) {
+                out.put(item, poster);
+            }
+        });
+        return out;
+    }
+
+    private String sign(String gcsPath) {
+        if (gcsPath == null) {
             return null;
         }
         try {
-            return storage.generateSignedUrl(images.get(0).getGcsPath(), THUMBNAIL_URL_EXPIRY_MINUTES);
+            return storage.generateSignedUrl(gcsPath, THUMBNAIL_URL_EXPIRY_MINUTES);
         } catch (RuntimeException e) {
             // A signing failure must not take the whole list down; the row just has no thumbnail.
             log.warn("Could not sign a thumbnail URL: {}", e.toString());
@@ -176,13 +242,14 @@ public class WorkItemListEnricher {
         }
     }
 
-    private static WorkItemCreativeRef creativeOf(List<Asset> images,
+    private static WorkItemCreativeRef creativeOf(Asset frameAsset,
                                                   Map<String, AssetCreativeOriginResolver.Origin> origins) {
-        for (Asset a : images) {
-            AssetCreativeOriginResolver.Origin o = origins.get(a.getId());
-            if (o != null && o.creativeId() != null && o.creativeDisplayId() != null) {
-                return new WorkItemCreativeRef(o.creativeId(), o.creativeDisplayId()).name(o.creativeName());
-            }
+        if (frameAsset == null) {
+            return null;
+        }
+        AssetCreativeOriginResolver.Origin o = origins.get(frameAsset.getId());
+        if (o != null && o.creativeId() != null && o.creativeDisplayId() != null) {
+            return new WorkItemCreativeRef(o.creativeId(), o.creativeDisplayId()).name(o.creativeName());
         }
         return null;
     }

@@ -216,9 +216,10 @@ public class CreativeController implements CreativesApi {
     // ── Creatives ────────────────────────────────────────────────────────
 
     @Override
-    public ResponseEntity<List<CreativeResponse>> listCreatives(String projectId, CreativeState state, String brandKitId) {
+    public ResponseEntity<List<CreativeResponse>> listCreatives(String projectId, CreativeState state, String brandKitId,
+                                                                Boolean includePostCount) {
         List<CreativeResponse> body = creativeService.listCreatives(projectId, state != null ? state.getValue() : null,
-                        brandKitId, currentUser())
+                        brandKitId, currentUser(), Boolean.TRUE.equals(includePostCount))
                 .stream().map(this::toResponse).toList();
         return ResponseEntity.ok(body);
     }
@@ -246,6 +247,12 @@ public class CreativeController implements CreativesApi {
     @Override
     public ResponseEntity<CreativeResponse> patchCreative(String projectId, String creativeId, PatchCreativeRequest request) {
         return ResponseEntity.ok(toResponse(creativeService.patchCreative(projectId, creativeId, request, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<Void> deleteCreativeFamily(String projectId, String creativeId) {
+        creativeService.deleteCreativeFamily(projectId, creativeId, currentUser());
+        return ResponseEntity.noContent().build();
     }
 
     @Override

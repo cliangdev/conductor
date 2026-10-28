@@ -100,6 +100,9 @@ class ContentListQueryCountTest extends AbstractNoneWebIntegrationTest {
     @Autowired private AssetCreativeOriginResolver originResolver;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.conductor.v2.controller.WorkItemListEnricher listEnricher;
+    @Autowired private com.conductor.service.WorkflowSeeder workflowSeeder;
+    @Autowired private com.conductor.repository.PostPublishTargetRepository targetRepository;
 
     private User user() {
         User u = new User();
@@ -410,6 +413,132 @@ class ContentListQueryCountTest extends AbstractNoneWebIntegrationTest {
         var views = creativeService.listCreatives(p20.getId(), null, null, u);
         assertThat(views).hasSize(20);
         assertThat(views).allSatisfy(v -> assertThat(v.latestRenderSummary().frames()).hasSize(3));
+    }
+
+    /** Attaches one Creative-frame Asset per Creative to a single Work Item, so each Creative is "on a Post". */
+    private void attachFrames(Project p, User u, List<Creative> list) {
+        WorkItem item = workItem(p, u);
+        for (Creative c : list) {
+            CreativeRenderFrame f = frameRepository.findAllByCreativeId(c.getId()).get(0);
+            Asset a = new Asset();
+            a.setWorkItem(item);
+            a.setType("facebook_post");
+            a.setKind("file");
+            a.setRef("frame-" + f.getId());
+            a.setUploadStatus("UPLOADED");
+            a.setContentType("image/jpeg");
+            a.setSizeBytes(10L);
+            a.setGcsPath(f.getGcsPath());
+            a.setCreativeFrameId(f.getId());
+            assetRepository.save(a);
+        }
+    }
+
+    @Test
+    void creativesListWithPostCountsIsConstantAndWithoutThemCostsNoMore() {
+        User u = user();
+        Project p1 = project(u);
+        Project p20 = project(u);
+        CreativePhoto ph1 = photo(p1, u);
+        CreativePhoto ph20 = photo(p20, u);
+        List<Creative> one = List.of(creativeWithRender(p1, u, ph1, 1));
+        List<Creative> twenty = new java.util.ArrayList<>();
+        for (int i = 1; i <= 20; i++) twenty.add(creativeWithRender(p20, u, ph20, i));
+        attachFrames(p1, u, one);
+        attachFrames(p20, u, twenty);
+
+        int q1 = queries(() -> creativeService.listCreatives(p1.getId(), null, null, u, true));
+        int q20 = queries(() -> creativeService.listCreatives(p20.getId(), null, null, u, true));
+        assertCounts(q1, q20, "creatives list with post counts");
+        assertThat(creativeService.listCreatives(p20.getId(), null, null, u, true))
+                .allSatisfy(v -> assertThat(v.postCount()).isEqualTo(1));
+
+        // The default (API/MCP) list is unchanged: same statements as before the counts existed.
+        int plain20 = queries(() -> creativeService.listCreatives(p20.getId(), null, null, u));
+        assertThat(plain20).isLessThan(q20);
+        assertThat(creativeService.listCreatives(p20.getId(), null, null, u))
+                .allSatisfy(v -> assertThat(v.postCount()).isNull());
+    }
+
+    @Test
+    void postsListEnrichmentIsConstantAsPostsGrow() {
+        User u = user();
+        Project p1 = project(u);
+        Project p20 = project(u);
+        workflowSeeder.seedMarketing(p1);
+        workflowSeeder.seedMarketing(p20);
+        List<WorkItem> one = postsWithMedia(p1, u, 1);
+        List<WorkItem> twenty = postsWithMedia(p20, u, 20);
+
+        int q1 = queries(() -> listEnricher.enrich(p1.getId(), one));
+        int q20 = queries(() -> listEnricher.enrich(p20.getId(), twenty));
+        assertCounts(q1, q20, "posts list enrichment");
+        assertThat(listEnricher.enrich(p20.getId(), twenty)).hasSize(20)
+                .allSatisfy((id, e) -> {
+                    assertThat(e.thumbnailUrl()).isNotNull();
+                    assertThat(e.publishTargets()).hasSize(1);
+                });
+    }
+
+    @Test
+    void anEngineeringListPaysNothingForEnrichment() {
+        User u = user();
+        Project p = project(u);
+        workflowSeeder.seedEngineering(p);
+        List<WorkItem> items = new java.util.ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            WorkItem w = new WorkItem();
+            w.setProject(p);
+            w.setType("TASK");
+            w.setTitle("Task " + i);
+            w.setCreatedBy(u);
+            w.setWorkflow("ENGINEERING");
+            w.setWorkflowVersion(1);
+            w.setCurrentStatus("DRAFT");
+            w.setSequenceNumber(i);
+            items.add(workItemRepository.save(w));
+        }
+        listEnricher.enrich(p.getId(), items);
+        try (RequestStats.Scope scope = RequestStats.start()) {
+            assertThat(listEnricher.enrich(p.getId(), items)).isEmpty();
+            // Resolving the workflow may read; the Asset, target and Creative reads must not happen.
+            assertThat(scope.stats().dbQueries()).isLessThanOrEqualTo(3);
+        }
+    }
+
+    private List<WorkItem> postsWithMedia(Project p, User u, int n) {
+        List<WorkItem> posts = new java.util.ArrayList<>();
+        for (int i = 1; i <= n; i++) {
+            WorkItem w = new WorkItem();
+            w.setProject(p);
+            w.setType("POST");
+            w.setTitle("Post " + i);
+            w.setCreatedBy(u);
+            w.setWorkflow("MARKETING");
+            w.setWorkflowVersion(1);
+            w.setCurrentStatus("DRAFT");
+            w.setSequenceNumber(i);
+            w = workItemRepository.save(w);
+            Asset a = new Asset();
+            a.setWorkItem(w);
+            a.setType("facebook_post");
+            a.setKind("file");
+            a.setRef("pic-" + i);
+            a.setUploadStatus("UPLOADED");
+            a.setContentType("image/png");
+            a.setSizeBytes(10L);
+            a.setGcsPath("assets/" + UUID.randomUUID() + ".png");
+            assetRepository.save(a);
+            com.conductor.entity.PostPublishTarget t = new com.conductor.entity.PostPublishTarget();
+            t.setWorkItem(w);
+            t.setPlatform("instagram");
+            t.setLane(com.conductor.entity.PublishLane.MANUAL);
+            t.setState(com.conductor.entity.PostPublishTargetState.PENDING);
+            t.setIdempotencyKey("pub:" + UUID.randomUUID());
+            targetRepository.save(t);
+            posts.add(w);
+        }
+        return posts;
     }
 
     @Test

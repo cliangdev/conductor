@@ -596,12 +596,86 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         onVariant.setCreativeFrameId(variantFrame.getId());
         assetRepository.save(onVariant);
 
-        Map<String, Integer> counts = creativeService.listCreatives(project.getId(), null, null, admin).stream()
+        Map<String, Integer> counts = creativeService.listCreatives(project.getId(), null, null, admin, true).stream()
                 .collect(java.util.stream.Collectors.toMap(v -> v.creative().getId(), CreativeService.CreativeView::postCount));
 
         assertThat(counts.get(used.getId())).isEqualTo(1);
         assertThat(counts.get(variant.getId())).isEqualTo(1);
         assertThat(counts.get(unused.getId())).isZero();
+
+        // Existing callers (API/MCP list_creatives) do not ask for counts and get none: null, and no extra reads.
+        assertThat(creativeService.listCreatives(project.getId(), null, null, admin))
+                .allSatisfy(v -> assertThat(v.postCount()).isNull());
+    }
+
+    private void putFrameOnPost(WorkItem post, CreativeRenderFrame frame) {
+        Asset asset = new Asset();
+        asset.setWorkItem(post);
+        asset.setType("facebook_post");
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setRef("marketing-assets/" + frame.getId());
+        asset.setGcsPath("marketing-assets/" + frame.getId());
+        asset.setContentType("image/jpeg");
+        asset.setSizeBytes(500L);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setCreativeFrameId(frame.getId());
+        assetRepository.save(asset);
+    }
+
+    @Test
+    void deletingAFamilyRemovesRootAndEveryVariantTogether() {
+        Creative root = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin).creative();
+        Creative b = creativeService.createVariant(project.getId(), root.getId(), new CreateCreativeVariantRequest(), admin).creative();
+        Creative c = creativeService.createVariant(project.getId(), root.getId(), new CreateCreativeVariantRequest(), admin).creative();
+        Creative other = creativeService.createCreative(project.getId(),
+                concept("Another *hook*.", "Another plan."), admin).creative();
+
+        // Called on a VARIANT: the whole family still goes.
+        creativeService.deleteCreativeFamily(project.getId(), b.getId(), admin);
+
+        assertThat(creativeRepository.findById(root.getId())).isEmpty();
+        assertThat(creativeRepository.findById(b.getId())).isEmpty();
+        assertThat(creativeRepository.findById(c.getId())).isEmpty();
+        assertThat(creativeRepository.findById(other.getId())).isPresent();
+    }
+
+    @Test
+    void deletingAFamilyIsRefusedWholesaleWhenAVariantIsOnAPostAndNamesThePost() {
+        workflowSeeder.seedMarketing(project);
+        WorkItem post = workItemService.createWorkItem(project.getId(), "POST", "Pasta night", "Caption", "MARKETING", admin);
+        Creative root = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin).creative();
+        Creative variant = creativeService.createVariant(project.getId(), root.getId(), new CreateCreativeVariantRequest(), admin).creative();
+        putFrameOnPost(post, newSucceededRenderWithFrame(variant));
+
+        assertThatThrownBy(() -> creativeService.deleteCreativeFamily(project.getId(), root.getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Remove it from the Post first")
+                .hasMessageContaining("Pasta night");
+
+        // Nothing was deleted: not the variant on the Post, and not the root either.
+        assertThat(creativeRepository.findById(root.getId())).isPresent();
+        assertThat(creativeRepository.findById(variant.getId())).isPresent();
+    }
+
+    @Test
+    void deletingAFamilyIsRefusedWhileAHookExperimentIsRunning() {
+        Creative root = creativeService.createCreative(project.getId(),
+                concept("The original *hook*.", "A calm plan."), admin).creative();
+        Creative variant = creativeService.createVariant(project.getId(), root.getId(), new CreateCreativeVariantRequest(), admin).creative();
+        CreativeExperiment experiment = new CreativeExperiment();
+        experiment.setProjectId(project.getId());
+        experiment.setParentCreativeId(root.getId());
+        experiment.setMetric(CreativeExperiment.METRIC_VIEWS);
+        experiment.setWindowHours(72);
+        experiment.setState(CreativeExperiment.STATE_RUNNING);
+        experimentRepository.save(experiment);
+
+        assertThatThrownBy(() -> creativeService.deleteCreativeFamily(project.getId(), root.getId(), admin))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("experiment");
+        assertThat(creativeRepository.findById(variant.getId())).isPresent();
     }
 
     @Test

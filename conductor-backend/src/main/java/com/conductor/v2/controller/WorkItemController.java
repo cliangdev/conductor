@@ -96,7 +96,7 @@ public class WorkItemController implements WorkItemsApi {
         List<WorkItem> items =
                 workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, dueBefore, caller);
         // "Posts using this Creative / Media": narrow the already project-scoped, access-checked list.
-        Set<String> using = listEnricher.idsUsing(creativeId, mediaId);
+        Set<String> using = listEnricher.idsUsing(projectId, creativeId, mediaId);
         if (using != null) {
             items = items.stream().filter(i -> using.contains(i.getId())).toList();
         }
