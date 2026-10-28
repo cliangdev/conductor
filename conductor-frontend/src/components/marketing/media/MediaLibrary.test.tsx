@@ -325,6 +325,15 @@ describe('MediaLibrary usage', () => {
     expect(within(screen.getByTestId('media-tile-free')).queryByText(/post/)).not.toBeInTheDocument()
   })
 
+  it('links the post count to the Posts list for that media in every state (view=all), so Done posts show', async () => {
+    setup([photo('one', 'single', 1080, 1350, { postCount: 1 }), ...rows()])
+    await screen.findByTestId('media-grid')
+    expect(screen.getByTestId('media-posts-one')).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/marketing/posts?mediaId=one&view=all',
+    )
+  })
+
   it('shows "N creatives · N posts" or "Unused" on AUDIO tiles, leaving image tiles as they are', async () => {
     setup([
       photo('song', 'a song', 1, 1, { mediaKind: 'AUDIO', contentType: 'audio/mpeg', creativeCount: 2, postCount: 1 }),

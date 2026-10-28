@@ -12,6 +12,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
+import { Checkbox } from '@/components/ui/checkbox'
 import { CalendarOff, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -298,12 +299,11 @@ export function WorkItemCalendarView({
                           // of the server-rendered markup, and hydration then disagrees with the DOM.
                           <div key={issue.id} className="flex min-w-0 items-center gap-1" data-selected={selectedIds?.has(issue.id) || undefined}>
                             {onToggleSelect && (
-                              <input
-                                type="checkbox"
-                                aria-label={`Select ${issue.title}`}
+                              <Checkbox
                                 checked={selectedIds?.has(issue.id) ?? false}
-                                onChange={() => onToggleSelect(issue.id)}
-                                className="h-3.5 w-3.5 shrink-0 cursor-pointer appearance-none rounded border border-border-strong bg-background checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onCheckedChange={() => onToggleSelect(issue.id)}
+                                label={<span className="sr-only">Select {issue.title}</span>}
+                                className="shrink-0"
                               />
                             )}
                             <Link prefetch={false}

@@ -20,6 +20,8 @@ export interface CheckboxProps {
    */
   disabledReason?: React.ReactNode
   'aria-label'?: string
+  /** The click on the input itself, for callers that need the event (e.g. shift-click range selection). */
+  onClick?: React.MouseEventHandler<HTMLInputElement>
   'aria-describedby'?: string
 }
 

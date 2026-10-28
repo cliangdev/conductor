@@ -91,7 +91,7 @@ public class WorkItemController implements WorkItemsApi {
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
                                                                 String workflow, String tag,
                                                                 LocalDate dueBefore, String creativeId,
-                                                                String mediaId) {
+                                                                String mediaId, Boolean enrich) {
         User caller = currentUser();
         List<WorkItem> items =
                 workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, dueBefore, caller);
@@ -109,7 +109,9 @@ public class WorkItemController implements WorkItemsApi {
         // fans out a reviewers call per row.
         Map<String, List<ReviewerView>> reviewers = reviewerService.reviewersByWorkItem(ids);
         // Thumbnail, publish-target states and Creative for the whole page, again in batched reads.
-        Map<String, WorkItemListEnricher.Enrichment> enrichment = listEnricher.enrich(projectId, items);
+        boolean withExtras = Boolean.TRUE.equals(enrich);
+        Map<String, WorkItemListEnricher.Enrichment> enrichment =
+                withExtras ? listEnricher.enrich(projectId, items) : Map.of();
         List<WorkItemResponse> responses = items.stream()
                 .map(item -> {
                     WorkItemListEnricher.Enrichment extra =
@@ -117,9 +119,9 @@ public class WorkItemController implements WorkItemsApi {
                     return toResponse(item, counts.getOrDefault(item.getId(), 0L),
                             links.getOrDefault(item.getId(), List.of()))
                             .statusLabel(statusLabel(projectId, item))
-                            .thumbnailUrl(extra.thumbnailUrl())
-                            .publishTargets(extra.publishTargets())
-                            .creative(extra.creative())
+                            .thumbnailUrl(withExtras ? extra.thumbnailUrl() : null)
+                            .publishTargets(withExtras ? extra.publishTargets() : null)
+                            .creative(withExtras ? extra.creative() : null)
                             .reviewers(reviewers.getOrDefault(item.getId(), List.of()).stream()
                                     .map(v -> new ReviewerResponse(v.userId())
                                             .name(v.name())
@@ -259,6 +261,9 @@ public class WorkItemController implements WorkItemsApi {
                 .scheduledFor(item.getScheduledFor())
                 .scheduleTimezone(item.getScheduleTimezone())
                 .publishOnApproval(item.isPublishOnApproval())
+                // The generated model defaults this to an empty list; it is a list-only extra, so leave it
+                // absent unless the list was asked to enrich.
+                .publishTargets(null)
                 .tags(List.copyOf(item.getTags()))
                 .fields(fieldsOf(item))
                 .dueOn(item.getDueOn())

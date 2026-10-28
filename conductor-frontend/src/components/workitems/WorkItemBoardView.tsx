@@ -1,6 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { Checkbox } from '@/components/ui/checkbox'
 import { CommentCount } from '@/components/ui/comment-count'
 import { Badge } from '@/components/ui/badge'
 import { statusHueClasses } from '@/components/ui/status-badge'
@@ -116,14 +117,14 @@ export function WorkItemBoardView({
                       }`}
                     >
                       {onToggleSelect && (
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${issue.title}`}
+                        <Checkbox
                           checked={selectedIds?.has(issue.id) ?? false}
-                          onChange={() => onToggleSelect(issue.id)}
+                          onCheckedChange={() => onToggleSelect(issue.id)}
+                          // The card itself navigates on click; the checkbox must not.
                           onClick={(e) => e.stopPropagation()}
-                          className={`absolute right-2 top-2 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100 ${
-                            (selectedIds?.size ?? 0) === 0 ? 'opacity-0' : ''
+                          label={<span className="sr-only">Select {issue.title}</span>}
+                          className={`absolute right-2 top-2 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
+                            (selectedIds?.size ?? 0) === 0 && !selectedIds?.has(issue.id) ? 'opacity-0' : ''
                           }`}
                         />
                       )}

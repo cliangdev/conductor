@@ -58,4 +58,16 @@ class WorkItemControllerTest {
         assertThat(response.getCreatedBy()).isEqualTo("user-1");
         assertThat(response.getCreatedByLabel()).isNull();
     }
+
+    @Test
+    void singleItemAndDefaultListPayloadsCarryNoListOnlyExtras() throws Exception {
+        WorkItemResponse response = WorkItemController.toResponse(workItem(null, "Agent (ceo)"), 0L);
+
+        String json = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().writeValueAsString(response);
+
+        // MCP get_work_item / list_work_items see exactly the fields they always did.
+        // (a nullable scalar renders as null like scheduledFor does; no signed URL, targets or Creative appear)
+        assertThat(response.getThumbnailUrl()).isNull();
+        assertThat(json).doesNotContain("publishTargets").doesNotContain("\"creative\"").doesNotContain("https://");
+    }
 }

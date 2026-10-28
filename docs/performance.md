@@ -139,15 +139,17 @@ load balancer instead, which removes preflights without the extra hop.
 `GET /work-items?workflow=...` returns the whole workflow and the page filters, searches and renders it
 client-side. For publishing workflows each row now also carries a thumbnail URL, per-destination states and
 its Creative, loaded for the whole page in a fixed number of batched reads (the first image Asset per Post,
-publish targets, and the Creative frame/Creative lookups), never per row. Workflows that do not declare
-publishing (Engineering) are skipped, and only the first image of each Post is read and signed.
+its first Creative-frame Asset, a video poster fallback, publish targets, and the Creative lookups; long
+pages are split into 500-id chunks), never per row. Workflows that do not declare
+publishing (Engineering) are skipped, only the first image of each Post is read and signed, and the extras
+are opt-in (`enrich=true`, sent by the web list only), so `list_work_items` / `list_posts` pay nothing.
 
 Re-measured on 2026-10-27 after the review fixes with 300 Posts (2 destinations and 1 image each), local Postgres in Testcontainers
 (`WorkItemListEnricherIntegrationTest`) and jsdom render (`WorkItemList.render-cost.test.tsx`):
 
 | | before | after |
 |---|---|---|
-| list endpoint work (query + mapping, median of 7; three runs) | 17-26 ms | 32-39 ms (+5 to +20 ms, about 18 typical) |
+| list endpoint work (query + mapping, median of 7; four runs) | 24-27 ms | 42-55 ms (+17 to +31 ms, about 21 typical) |
 | render 300 list rows (jsdom) | 305 ms | 362 ms |
 | render 300 grid cards (jsdom) | n/a | 99 ms |
 

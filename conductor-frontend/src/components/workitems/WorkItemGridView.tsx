@@ -5,6 +5,7 @@
 // list payload yet, so the thumbnail is a placeholder until it is.
 
 import Link from 'next/link'
+import { Checkbox } from '@/components/ui/checkbox'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { cn } from '@/lib/utils'
 import { statusMeta, workItemDetailPath } from '@/lib/workflows'
@@ -73,16 +74,13 @@ export function WorkItemGridView({
               </div>
             </Link>
             {canEdit && (
-              <input
-                type="checkbox"
-                aria-label={`Select ${issue.title}`}
+              <Checkbox
                 checked={isSelected}
-                onChange={() => onToggleSelect(issue.id)}
+                onCheckedChange={() => onToggleSelect(issue.id)}
+                label={<span className="sr-only">Select {issue.title}</span>}
                 className={cn(
-                  'absolute left-1.5 top-1.5 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background',
-                  'checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  'transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100',
-                  selectedIds.size === 0 && 'opacity-0',
+                  'absolute left-1.5 top-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100',
+                  selectedIds.size === 0 && !isSelected && 'opacity-0',
                 )}
               />
             )}

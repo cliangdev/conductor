@@ -40,6 +40,7 @@ interface MockIssue {
 }
 
 let issues: MockIssue[] = []
+const listUrls: string[] = []
 const apiPatch = vi.fn().mockResolvedValue(undefined)
 const apiPost = vi.fn().mockResolvedValue(undefined)
 const apiDelete = vi.fn().mockResolvedValue(undefined)
@@ -58,7 +59,10 @@ const TRANSITIONS: Record<string, { toStatus: string; label: string }[]> = {
 
 vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
-    if (url.includes('/work-items?workflow=')) return Promise.resolve(issues)
+    if (url.includes('/work-items?workflow=')) {
+      listUrls.push(url)
+      return Promise.resolve(issues)
+    }
     if (url.includes('/members')) return Promise.resolve(MEMBERS)
     if (url.includes('/available-transitions')) {
       transitionCalls.push(url)
@@ -679,6 +683,78 @@ describe('bulk actions act only on what is shown', () => {
     await user.click(await screen.findByRole('button', { name: 'Change status' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Done' }))
     await waitFor(() => expect(toastErrorSpy).toHaveBeenCalledWith('1 of 2 Work Items failed to change status'))
+  })
+})
+
+describe('shared-path behaviour that must not change', () => {
+  it('keeps a hidden selection and says "Nothing to change." when a bulk run has nothing to do', async () => {
+    const user = userEvent.setup()
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i1 (Zeta, DRAFT)
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'alpha' } }) // shows only i2 (DRAFT)
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i2
+    await user.click(await screen.findByRole('button', { name: 'Change status' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Draft' })) // i2 is already Draft
+
+    expect(await screen.findByTestId('bulk-result')).toHaveTextContent('Nothing to change.')
+    expect(apiPatch).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: '' } })
+    await waitFor(() => expect(rowFor('i1')).toHaveAttribute('data-selected', 'true'))
+    expect(rowFor('i2')).toHaveAttribute('data-selected', 'true')
+  })
+
+  it('offers only Change status and Assign on a non-publishing workflow', async () => {
+    await renderList()
+    act(() => within(rowList()).getAllByRole('link')[0].focus())
+    fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+    const bar = within(await screen.findByRole('toolbar', { name: 'Selection actions' }))
+    expect(bar.getByRole('button', { name: 'Change status' })).toBeInTheDocument()
+    expect(bar.getByRole('button', { name: 'Assign' })).toBeInTheDocument()
+    for (const name of ['Reschedule', 'Destinations', 'Tags', 'Delete', 'Retry failed']) {
+      expect(bar.queryByRole('button', { name })).toBeNull()
+    }
+    expect(screen.queryByTestId('destination-marks')).toBeNull()
+  })
+
+  it('renders a publishing list from an older cached response that lacks the new fields', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+    expect(within(rowFor('i1')).queryByTestId('destination-marks')).toBeNull()
+  })
+
+  it('shows no bulk bar to a REVIEWER on a publishing workflow', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    // user-1 is the current user; make them a REVIEWER via the members mock for this render.
+    const orig = MEMBERS[0]!.role
+    ;(MEMBERS[0] as { role: string }).role = 'REVIEWER'
+    try {
+      render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+      await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+      act(() => within(rowList()).getAllByRole('link')[0].focus())
+      fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+      expect(screen.queryByRole('toolbar', { name: 'Selection actions' })).toBeNull()
+    } finally {
+      ;(MEMBERS[0] as { role: string }).role = orig
+    }
+  })
+
+  it('asks for the list extras (thumbnail, destinations, Creative) and passes the usage filter through', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    searchParamsValue = new URLSearchParams('mediaId=m1&view=all')
+    listUrls.length = 0
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    await waitFor(() => expect(listUrls.length).toBeGreaterThan(0))
+    expect(listUrls[0]).toBe('/api/v2/projects/proj-1/work-items?workflow=MARKETING&enrich=true&mediaId=m1')
+  })
+
+  it('says the filtered list shows every state when opened from a Creative or Media link', async () => {
+    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
+    searchParamsValue = new URLSearchParams('creativeId=c1&view=all')
+    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
+    expect(await screen.findByTestId('usage-filter')).toHaveTextContent('in every state')
   })
 })
 

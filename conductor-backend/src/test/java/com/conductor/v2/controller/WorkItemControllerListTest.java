@@ -95,4 +95,24 @@ class WorkItemControllerListTest {
 
         verify(workItemService, never()).listWorkItemEntities(any(), any(), any(), any(), any(), any(), any());
     }
+
+    @Test
+    void enrich_isOffByDefaultSoApiAndMcpCallersGetTheSamePayloadAsBefore() throws Exception {
+        mockMvc.perform(get(URL).header("Authorization", "Bearer valid-token")).andExpect(status().isOk());
+        verify(listEnricher, never()).enrich(any(), any());
+    }
+
+    @Test
+    void enrich_true_asksTheEnricherForThePage() throws Exception {
+        mockMvc.perform(get(URL).param("enrich", "true").header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk());
+        verify(listEnricher).enrich(eq("proj-1"), any());
+    }
+
+    @Test
+    void creativeIdAndMediaIdAreScopedToTheProject() throws Exception {
+        mockMvc.perform(get(URL).param("creativeId", "c1").param("mediaId", "m1")
+                .header("Authorization", "Bearer valid-token")).andExpect(status().isOk());
+        verify(listEnricher).idsUsing("proj-1", "c1", "m1");
+    }
 }

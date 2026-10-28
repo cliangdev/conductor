@@ -15,6 +15,7 @@ import { mountBoard } from '@cliangdev/creative-render/mount'
 import { motionKeyTimes } from '@cliangdev/creative-render/motion'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { Input } from '@/components/ui/input'
 import { CopyableCode } from '@/components/ui/copyable-code'
@@ -38,7 +39,7 @@ import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/mark
 import {
   creativeToRenderCreative,
   createCreative,
-  deleteCreative,
+  deleteCreativeFamily,
   listCreatives,
   type Creative,
   type CreativePhoto,
@@ -226,6 +227,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
     listCreatives(projectId, accessToken, {
       state: stateFilter || undefined,
       brandKitId: kitFilter || undefined,
+      includePostCount: true,
     })
       .then((rows) => {
         if (cancelled) return
@@ -292,7 +294,12 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
   const selection = useRangeSelection(rootIds)
   const selectedFamilies = families.filter((f) => selection.selectedVisible.includes(f.members[0].id))
 
-  /** Deletes each selected family, variants first (the server refuses a root that still has variants). */
+  /**
+   * Deletes each selected family with ONE server call per family: the server deletes the root and all its
+   * variants in a single transaction, or refuses and deletes nothing (a member on a Post, named in the
+   * message, or a running experiment). So a family is never left half deleted, and the summary below says
+   * exactly which families went and which stayed, with why.
+   */
   async function deleteSelected() {
     if (!accessToken) return
     setDeleting(true)
@@ -300,38 +307,24 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
     setNotice(null)
     setDeleteFailures(null)
     const failures: string[] = []
-    let done = 0
-    // A state or kit filter can hide some variants of a family; the family to delete is the whole of it.
-    let everyCreative: Creative[] = creatives ?? []
-    try {
-      everyCreative = await listCreatives(projectId, accessToken)
-    } catch {
-      // Fall back to what is on screen; the server still refuses a root that has variants.
-    }
-    for (const shown of selectedFamilies) {
-      const root = shown.members[0]
-      const family = everyCreative.filter((c) => c.number === root.number)
-      const members = family.length > 0 ? family : shown.members
-      // Check the whole family first so a refused family is never left half deleted: any member on a Post
-      // means the family is skipped and reported (the server would refuse the root at the end anyway).
-      const onPosts = Math.max(0, ...members.map((m) => m.postCount ?? 0))
-      if (onPosts > 0) {
-        failures.push(`${root.displayId}: used in ${onPosts} ${onPosts === 1 ? 'post' : 'posts'}, remove it from them first`)
-        continue
-      }
-      // Variants first, root last: the server refuses a root that still has variants.
-      const ordered = [...members].sort((a, b) => b.variantLetter.localeCompare(a.variantLetter))
+    const deleted: string[] = []
+    for (const family of selectedFamilies) {
+      const root = family.members[0]
       try {
-        for (const member of ordered) await deleteCreative(projectId, member.id, accessToken)
-        done++
+        await deleteCreativeFamily(projectId, root.id, accessToken)
+        deleted.push(root.displayId)
         selection.remove(root.id)
       } catch (err) {
-        failures.push(`${root.displayId}: ${apiErrorMessage(err, 'could not be deleted')}`)
+        failures.push(`${root.displayId} kept: ${apiErrorMessage(err, 'could not be deleted')}`)
       }
     }
     setDeleting(false)
     setDeleteOpen(false)
-    setNotice(`${done} deleted${failures.length ? `, ${failures.length} failed` : ''}.`)
+    setNotice(
+      `${deleted.length} deleted${deleted.length ? ` (${deleted.join(', ')})` : ''}${
+        failures.length ? `, ${failures.length} kept` : ''
+      }.`,
+    )
     setDeleteFailures(failures.length ? failures.join(' · ') : null)
     setReloadKey((k) => k + 1)
   }
@@ -536,7 +529,7 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                   ))}
                   {used > 0 && postsHref ? (
                     <Link
-                      href={`${postsHref}?creativeId=${root.id}`}
+                      href={`${postsHref}?creativeId=${root.id}&view=all`}
                       data-testid={`creative-used-${root.id}`}
                       className="ml-auto hover:text-foreground hover:underline"
                     >
@@ -549,14 +542,14 @@ export function CreativeLibraryGrid({ projectId }: CreativeLibraryGridProps) {
                   ) : null}
                 </div>
                 {canManage && (
-                  <input
-                    type="checkbox"
-                    aria-label={`Select ${root.displayId}`}
+                  <Checkbox
                     checked={isSelected}
-                    onChange={() => {}}
+                    // The click handler (not onCheckedChange) carries the shift key for range selection.
+                    onCheckedChange={() => {}}
                     onClick={(e) => selection.select(root.id, e.shiftKey)}
-                    className={`absolute left-1.5 top-1.5 h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-background checked:border-primary checked:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-opacity group-hover:opacity-100 focus-visible:opacity-100 checked:opacity-100 ${
-                      selection.selected.length === 0 ? 'opacity-0' : ''
+                    label={<span className="sr-only">Select {root.displayId}</span>}
+                    className={`absolute left-1.5 top-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
+                      selection.selected.length === 0 && !isSelected ? 'opacity-0' : ''
                     }`}
                   />
                 )}

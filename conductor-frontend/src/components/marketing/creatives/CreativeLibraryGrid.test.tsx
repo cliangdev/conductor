@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({
   apiPatch: vi.fn(),
   apiPut: vi.fn(),
   apiDelete: vi.fn(),
-  apiErrorMessage: (_err: unknown, fallback: string) => fallback,
+  apiErrorMessage: (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback),
 }))
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -401,7 +401,7 @@ describe('CreativeLibraryGrid', () => {
       render(<CreativeLibraryGrid projectId="proj-1" />)
       const link = await screen.findByTestId('creative-used-b')
       expect(link).toHaveTextContent('Used in 4 posts')
-      expect(link).toHaveAttribute('href', '/app/projects/proj-1/marketing/posts?creativeId=b')
+      expect(link).toHaveAttribute('href', '/app/projects/proj-1/marketing/posts?creativeId=b&view=all')
       expect(screen.queryByTestId('creative-used-a')).toBeNull()
     })
 
@@ -433,9 +433,13 @@ describe('CreativeLibraryGrid', () => {
       expect(ids()).toEqual(['creative-tile-b', 'creative-tile-a'])
     })
 
-    it('multi-selects with shift range and bulk-deletes variants before the root, reporting failures', async () => {
+    it('multi-selects with shift range and deletes each family atomically through the server, reporting exactly what stayed and why', async () => {
       mockGets({ creatives: family() })
-      ;(apiDelete as Mock).mockResolvedValue(undefined)
+      ;(apiDelete as Mock).mockImplementation((path: string) =>
+        path.endsWith('/b/family')
+          ? Promise.reject(new Error('Remove it from the Post first (RE-1 Pasta night)'))
+          : Promise.resolve(undefined),
+      )
       render(<CreativeLibraryGrid projectId="proj-1" />)
       await screen.findByText('3a')
       // newest first: 5 then 3
@@ -446,16 +450,16 @@ describe('CreativeLibraryGrid', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
       fireEvent.click(await screen.findByRole('button', { name: 'Delete 2' }))
 
-      await waitFor(() => expect(apiDelete).toHaveBeenCalled())
-      expect(await screen.findByText('1 deleted, 1 failed.')).toBeInTheDocument()
-      // 5a is on posts, so its whole family is skipped: neither the root nor its variant is touched.
+      expect(await screen.findByText('1 deleted (3a), 1 kept.')).toBeInTheDocument()
+      // One call per family, never per member, so a family can never be left half deleted.
       const paths = (apiDelete as Mock).mock.calls.map((c) => c[0] as string)
-      expect(paths.some((p) => p.endsWith('/b') || p.endsWith('/b2'))).toBe(false)
-      expect(paths.some((p) => p.endsWith('/a'))).toBe(true)
-      expect(screen.getByText(/5a: used in 4 posts/)).toBeInTheDocument()
+      expect(paths).toHaveLength(2)
+      expect(paths.every((p) => p.endsWith('/family'))).toBe(true)
+      // The refusal names the Post that blocked it.
+      expect(screen.getByText(/5a kept: Remove it from the Post first \(RE-1 Pasta night\)/)).toBeInTheDocument()
     })
 
-    it('deletes variants before the root, and includes variants hidden by a filter', async () => {
+    it('asks the server for post counts, and deletes a whole family even when a filter hides its variants', async () => {
       const all = [
         creative({ id: 'r', number: 8, displayId: '8a', name: 'Root', state: 'READY' }),
         creative({ id: 'v', number: 8, variantLetter: 'b', displayId: '8b', parentCreativeId: 'r', state: 'DRAFT' }),
@@ -470,16 +474,15 @@ describe('CreativeLibraryGrid', () => {
       ;(apiDelete as Mock).mockResolvedValue(undefined)
       render(<CreativeLibraryGrid projectId="proj-1" />)
       await screen.findByText('8a')
+      expect((apiGet as Mock).mock.calls.some((c) => String(c[0]).includes('includePostCount=true'))).toBe(true)
       fireEvent.change(screen.getByLabelText('State'), { target: { value: 'READY' } })
       await waitFor(() => expect(screen.queryByText('8b')).toBeNull())
       fireEvent.click(screen.getByLabelText('Select 8a'))
       fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
       fireEvent.click(await screen.findByRole('button', { name: 'Delete 1' }))
 
-      await waitFor(() => expect(apiDelete).toHaveBeenCalledTimes(2))
-      const paths = (apiDelete as Mock).mock.calls.map((c) => c[0] as string)
-      expect(paths[0]).toMatch(/\/v$/)
-      expect(paths[1]).toMatch(/\/r$/)
+      await waitFor(() => expect(apiDelete).toHaveBeenCalledTimes(1))
+      expect((apiDelete as Mock).mock.calls[0]![0]).toMatch(/\/creatives\/r\/family$/)
     })
   })
 })

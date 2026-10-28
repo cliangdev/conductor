@@ -613,11 +613,12 @@ export function getCreativeRegistry(projectId: string, token: string): Promise<C
 export function listCreatives(
   projectId: string,
   token: string,
-  query: { state?: CreativeState; brandKitId?: string } = {},
+  query: { state?: CreativeState; brandKitId?: string; includePostCount?: boolean } = {},
 ): Promise<Creative[]> {
   const params = new URLSearchParams()
   if (query.state) params.set('state', query.state)
   if (query.brandKitId) params.set('brandKitId', query.brandKitId)
+  if (query.includePostCount) params.set('includePostCount', 'true')
   const qs = params.toString()
   return apiGet<Creative[]>(`${creativesBase(projectId)}${qs ? `?${qs}` : ''}`, token)
 }
@@ -650,6 +651,15 @@ export function patchCreative(
  */
 export function deleteCreative(projectId: string, creativeId: string, token: string): Promise<void> {
   return apiDelete(`${creativesBase(projectId)}/${creativeId}`, token)
+}
+
+/**
+ * Deletes a Creative's whole family (the `a` root and every variant) in one server transaction: all of it
+ * or none of it. Refused with 409 (nothing deleted) when any member is on a Post (the message names the
+ * Post) or a hook experiment is running.
+ */
+export function deleteCreativeFamily(projectId: string, creativeId: string, token: string): Promise<void> {
+  return apiDelete(`${creativesBase(projectId)}/${creativeId}/family`, token)
 }
 
 export function createCreativeVariant(

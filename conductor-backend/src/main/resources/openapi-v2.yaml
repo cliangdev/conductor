@@ -154,6 +154,16 @@ paths:
             reuses its stored object.
           schema:
             type: string
+        - name: enrich
+          in: query
+          required: false
+          description: >-
+            When true, each item also carries `thumbnailUrl`, `publishTargets` and `creative` (the Posts
+            list's extras). Off by default, so API and MCP callers get exactly the payload they always
+            did, without the signed URLs.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: List of Work Items

@@ -160,7 +160,7 @@ export function WorkItemListView({
       const [issueData, memberData] = await Promise.all([
         // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
         apiGet<IssueWithReviewers[]>(
-          `/api/v2/projects/${projectId}/work-items?workflow=${slug}` +
+          `/api/v2/projects/${projectId}/work-items?workflow=${slug}&enrich=true` +
             (creativeFilter ? `&creativeId=${encodeURIComponent(creativeFilter)}` : '') +
             (mediaFilter ? `&mediaId=${encodeURIComponent(mediaFilter)}` : ''),
           accessToken
@@ -248,7 +248,7 @@ export function WorkItemListView({
   const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
   const startCreating = () => (opensComposePage ? router.push(composePath) : setCreating(true))
 
-  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; retry?: () => Promise<void> } | null>(null)
+  const [bulkResult, setBulkResult] = useState<{ done: number; failed: number; message?: string; retry?: () => Promise<void> } | null>(null)
   const bulkStatusTriggerRef = useRef<HTMLButtonElement>(null)
   const bulkAssignTriggerRef = useRef<HTMLButtonElement>(null)
 
@@ -268,7 +268,8 @@ export function WorkItemListView({
   // partial failure (so the user can retry just those), and refetches once at the end either way.
   async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failure: string) {
     if (ids.length === 0) {
-      listState.clearSelection()
+      // Nothing ran, so nothing is deselected: a selection hidden by a filter must survive. Say so instead.
+      setBulkResult({ done: 0, failed: 0, message: 'Nothing to change.' })
       return
     }
     listState.setBulkInFlight(true)
@@ -363,7 +364,7 @@ export function WorkItemListView({
       {(creativeFilter || mediaFilter) && (
         <Alert variant="info" className="mb-3">
           <span data-testid="usage-filter">
-            Showing {lowerNoun} that use {creativeFilter ? 'one Creative' : 'one media item'}.
+            Showing {lowerNoun} in every state that use {creativeFilter ? 'one Creative' : 'one media item'}.
           </span>
           <Link prefetch={false} href={workItemListPath(projectId, detailArea, noun)} className="ml-2 underline">
             Show all
@@ -447,7 +448,7 @@ export function WorkItemListView({
       {bulkResult && (
         <Alert variant={bulkResult.failed > 0 ? 'destructive' : 'info'} className="mb-3">
           <span data-testid="bulk-result">
-            {bulkResult.done} done{bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}
+            {bulkResult.message ?? `${bulkResult.done} done${bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}`}
           </span>
           {bulkResult.retry && (
             <Button

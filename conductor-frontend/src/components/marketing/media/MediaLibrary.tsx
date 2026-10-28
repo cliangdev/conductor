@@ -366,7 +366,7 @@ export function MediaLibrary({ projectId }: { projectId: string }) {
                     (item.postCount ?? 0) > 0 &&
                     (postsHref ? (
                       <Link
-                        href={`${postsHref}?mediaId=${item.id}`}
+                        href={`${postsHref}?mediaId=${item.id}&view=all`}
                         data-testid={`media-posts-${item.id}`}
                         className="text-muted-foreground hover:text-foreground hover:underline"
                       >
