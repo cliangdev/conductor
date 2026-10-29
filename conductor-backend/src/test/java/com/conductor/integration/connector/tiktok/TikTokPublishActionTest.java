@@ -76,6 +76,8 @@ class TikTokPublishActionTest {
 
     /** 45 MB: enough that the 10 MB target chunk yields four chunks, the last one oversized. */
     private static final long VIDEO_SIZE = 45L * 1024 * 1024;
+    /** A real 5–10 MB upload (7.6 MB): above the 5 MB floor, below one target chunk. TikTok rejected it as "chunk size is invalid". */
+    private static final long SUB_TARGET_VIDEO_SIZE = 7_927_414L;
 
     private TikTokClient client;
     private AssetRepository assetRepository;
@@ -136,7 +138,7 @@ class TikTokPublishActionTest {
             1_000L,
             TikTokClient.MIN_CHUNK_BYTES,
             TikTokClient.MIN_CHUNK_BYTES + 1,
-            7_927_414L,
+            SUB_TARGET_VIDEO_SIZE,
             9_200_502L,
             TikTokClient.TARGET_CHUNK_BYTES - 1,
             TikTokClient.TARGET_CHUNK_BYTES,
@@ -159,7 +161,7 @@ class TikTokPublishActionTest {
                         .as("chunk size for %d bytes", size)
                         .isBetween(TikTokClient.MIN_CHUNK_BYTES, TikTokClient.MAX_CHUNK_BYTES);
             }
-            if (size < 2 * TikTokClient.TARGET_CHUNK_BYTES) {
+            if (size < TikTokClient.TARGET_CHUNK_BYTES) {
                 assertThat(plan.totalChunkCount()).as("one whole-file chunk for %d bytes", size).isEqualTo(1);
                 assertThat(plan.chunkSize()).as("whole-file chunk for %d bytes", size).isEqualTo(size);
             }
@@ -451,6 +453,32 @@ class TikTokPublishActionTest {
         assertThat(initBody).doesNotContain("PULL_FROM_URL").doesNotContain("video_url");
         assertThat(initBody).contains("\"video_size\":" + VIDEO_SIZE);
         assertThat(initBody).contains("\"total_chunk_count\":4");
+    }
+
+    @Test
+    void wireLevel_videoSmallerThanOneTargetChunk_declaresAChunkSizeEqualToTheFile() throws Exception {
+        when(assetRepository.findById(ASSET_ID))
+                .thenReturn(Optional.of(videoAsset(ASSET_ID, SUB_TARGET_VIDEO_SIZE)));
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID))
+                .thenReturn(List.of(videoAsset(ASSET_ID, SUB_TARGET_VIDEO_SIZE)));
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        List<HttpEntity<?>> sent = new ArrayList<>();
+        stubTikTokHttp(restTemplate, sent, okEnvelope());
+        TikTokPublishAction wired = newAction(new TikTokClient(restTemplate));
+
+        ActionResult result = wired.publish(schedulerInput(), context());
+
+        assertThat(result.success()).isTrue();
+        String initBody = objectMapper.writeValueAsString(sent.get(0).getBody());
+        assertThat(initBody).contains("\"video_size\":" + SUB_TARGET_VIDEO_SIZE);
+        assertThat(initBody).contains("\"chunk_size\":" + SUB_TARGET_VIDEO_SIZE);
+        assertThat(initBody).contains("\"total_chunk_count\":1");
+        List<String> ranges = sent.stream()
+                .map(entity -> entity.getHeaders().getFirst(HttpHeaders.CONTENT_RANGE))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        assertThat(ranges).containsExactly(
+                "bytes 0-" + (SUB_TARGET_VIDEO_SIZE - 1) + "/" + SUB_TARGET_VIDEO_SIZE);
     }
 
     @Test
