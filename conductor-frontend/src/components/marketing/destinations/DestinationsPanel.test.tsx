@@ -234,6 +234,46 @@ describe('DestinationsPanel — picking', () => {
   })
 })
 
+describe('DestinationsPanel — consent after approval', () => {
+  function approvedTikTok(consent: { state: null; given: boolean }, targetState = 'PENDING') {
+    const tt = { ...selection(tiktok, WORK_ITEM), state: targetState }
+    const rows = buildRows({
+      options: [tiktok],
+      selected: [tt],
+      draft: {
+        ...EMPTY_DRAFT,
+        keys: new Set([targetKey('tiktok', 'rexipeio')]),
+        tiktok: { [targetKey('tiktok', 'rexipeio')]: { ...EMPTY_TIKTOK_OPTIONS, privacyLevel: 'PUBLIC_TO_EVERYONE' } },
+      },
+      preflight: null,
+      metrics: null,
+      consent,
+      approvedOrLater: true,
+      mode: 'outcome',
+      assets: [],
+    })
+    return state([tt], { mode: 'outcome', approvedOrLater: true, rows, summary: summarize(rows, 'outcome') })
+  }
+
+  it('lets the creator consent on an approved Post whose TikTok destination is still waiting', async () => {
+    const s = approvedTikTok({ state: null, given: false })
+    renderPanel(s)
+    await userEvent.click(screen.getByRole('button', { name: 'Review & consent' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: /I consent to publishing this post to TikTok/ }))
+    expect(s.actions.setConsent).toHaveBeenCalledWith(true)
+  })
+
+  it('offers no consent control once consent is given, or once the destination is no longer waiting', () => {
+    renderPanel(approvedTikTok({ state: null, given: true }))
+    expect(screen.queryByRole('button', { name: 'Review & consent' })).not.toBeInTheDocument()
+  })
+
+  it('offers none on a destination that already published', () => {
+    renderPanel(approvedTikTok({ state: null, given: false }, 'PUBLISHED'))
+    expect(screen.queryByRole('button', { name: 'Review & consent' })).not.toBeInTheDocument()
+  })
+})
+
 describe('DestinationsPanel — outcome shows only the chosen destinations', () => {
   it('hides unchosen accounts and manual destinations once the post is in review or later', () => {
     const fb = selection(facebook, WORK_ITEM)
