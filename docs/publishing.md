@@ -581,8 +581,9 @@ prompt for the rest, rather than the pull failing outright; and YouTube adds wat
 percentage from the Analytics API (`yt-analytics.readonly`), with the same reconnect-for-the-rest treatment
 for a connection that predates it. Facebook's like count (all reactions, what Facebook displays) needs `pages_read_engagement` and its comment
 count `pages_read_user_content`; its views and reach come from the Page post `/insights` edge (feed posts:
-`post_media_view`, `post_total_media_view_unique`) and the Reel `/video_insights` edge (views only:
-`blue_reels_play_count`, falling back to `fb_reels_total_plays`), which need `read_insights` — a connection
+`post_media_view`, `post_total_media_view_unique`) and the Reel `/video_insights` edge (views are
+`fb_reels_total_plays`, which counts replays as Facebook's own "Views" does, falling back to
+`blue_reels_play_count`; reach is `post_impressions_unique`; watch time is `post_video_view_time`), which need `read_insights` — a connection
 made before it keeps its likes and comments and gets the reconnect prompt for the rest. A count Graph refuses (a connection made before that scope, or an app whose
 permission isn't approved yet) is left a gap — shown as a dash, never 0 — rather than marking the post gone.
 

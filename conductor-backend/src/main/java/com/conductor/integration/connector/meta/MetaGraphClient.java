@@ -465,7 +465,8 @@ public class MetaGraphClient {
      * the read that still produced likes/comments.
      */
     public record PostMetrics(String id, Long views, Long likes, Long comments, Long shares, Long reach,
-                              Long saves, Long totalInteractions, boolean unavailable, boolean insightsForbidden) {}
+                              Long saves, Long totalInteractions, Long watchTimeSeconds, boolean unavailable,
+                              boolean insightsForbidden) {}
 
     /**
      * Whether {@code id} names a Reel video rather than a Page post: a Page post id is always
@@ -504,7 +505,7 @@ public class MetaGraphClient {
                 // mean the post is gone. Only an id that won't read on its own is "no longer on the
                 // platform"; otherwise each count is read by itself and a refused one is left a gap.
                 if (readNodeOrNull(id, "id", pageToken) == null) {
-                    metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, true, false));
+                    metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, null, true, false));
                     continue;
                 }
                 JsonNode reactions = reel ? null : readNodeOrNull(id, "reactions.summary(true).limit(0)", pageToken);
@@ -525,23 +526,27 @@ public class MetaGraphClient {
             }
             Long views;
             Long reach = null;
+            Long watchTimeSeconds = null;
             boolean forbidden;
             if (reel) {
-                InsightValues plays = readInsightValues(id, "video_insights", "blue_reels_play_count", pageToken);
-                views = plays.values().get("blue_reels_play_count");
-                forbidden = plays.forbidden();
-                if (views == null && !forbidden) {
-                    InsightValues total = readInsightValues(id, "video_insights", "fb_reels_total_plays", pageToken);
-                    views = total.values().get("fb_reels_total_plays");
-                    forbidden = total.forbidden();
-                }
+                // fb_reels_total_plays counts replays, as Facebook's own "Views" does; blue_reels_play_count
+                // (no replays) read ~8% low against the Reel's insights page, so it is only the fallback.
+                InsightValues reelInsights = readInsightValues(id, "video_insights", FACEBOOK_REEL_INSIGHTS, pageToken);
+                Map<String, Long> values = reelInsights.values();
+                views = values.get("fb_reels_total_plays") != null
+                        ? values.get("fb_reels_total_plays") : values.get("blue_reels_play_count");
+                reach = values.get("post_impressions_unique");
+                Long viewTimeMs = values.get("post_video_view_time");
+                watchTimeSeconds = viewTimeMs == null ? null : viewTimeMs / 1000;
+                forbidden = reelInsights.forbidden();
             } else {
                 InsightValues insights = readInsightValues(id, "insights", FACEBOOK_POST_INSIGHTS, pageToken);
                 views = insights.values().get("post_media_view");
                 reach = insights.values().get("post_total_media_view_unique");
                 forbidden = insights.forbidden();
             }
-            metrics.add(new PostMetrics(id, views, likes, comments, shares, reach, null, null, false, forbidden));
+            metrics.add(new PostMetrics(id, views, likes, comments, shares, reach, null, null, watchTimeSeconds,
+                    false, forbidden));
         }
         return metrics;
     }
@@ -558,6 +563,14 @@ public class MetaGraphClient {
      * Nov 2025, and a retired metric fails the whole call, so only the {@code *_media_view*} metrics are asked.
      */
     private static final String FACEBOOK_POST_INSIGHTS = "post_media_view,post_total_media_view_unique";
+
+    /**
+     * Reel insights: total plays (with replays, Facebook's "Views"), plays without replays as the fallback,
+     * unique viewers ("Viewers") and total watch time in milliseconds ("Watch time"). One refused metric
+     * fails the call, and {@link #readInsightValues} then retries each on its own.
+     */
+    private static final String FACEBOOK_REEL_INSIGHTS =
+            "fb_reels_total_plays,blue_reels_play_count,post_impressions_unique,post_video_view_time";
 
     /** Insight metric values by name; {@code forbidden} when the edge answered 403 (no {@code read_insights}). */
     private record InsightValues(Map<String, Long> values, boolean forbidden) {
@@ -687,14 +700,14 @@ public class MetaGraphClient {
         for (String id : mediaIds) {
             JsonNode node = readNodeOrNull(id, "id,like_count,comments_count", token);
             if (node == null) {
-                metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, true, false));
+                metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, null, true, false));
                 continue;
             }
             MediaInsights insights = readMediaInsights(id, token);
             metrics.add(new PostMetrics(id, insights.views(),
                     node.path("like_count").isNumber() ? node.path("like_count").asLong() : null,
                     node.path("comments_count").isNumber() ? node.path("comments_count").asLong() : null,
-                    insights.shares(), insights.reach(), insights.saves(), insights.totalInteractions(),
+                    insights.shares(), insights.reach(), insights.saves(), insights.totalInteractions(), null,
                     false, insights.forbidden()));
         }
         return metrics;

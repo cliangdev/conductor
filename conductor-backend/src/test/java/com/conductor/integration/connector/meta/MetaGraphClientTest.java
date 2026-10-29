@@ -265,15 +265,21 @@ class MetaGraphClientTest {
         server.verify();
     }
 
+    /** Facebook's "Views" counts replays: total plays is the views, with viewers and watch time beside it. */
     @Test
-    void readPostMetrics_reel_asksNoSharesField_andReadsViewsFromVideoInsights() {
+    void readPostMetrics_reel_asksNoSharesField_andReadsTotalPlaysViewersAndWatchTime() {
         server.expect(requestTo(allOf(containsString("/v21.0/3056753194668979?fields="),
                         not(containsString("shares")))))
                 .andRespond(withSuccess("{\"id\":\"3056753194668979\","
                         + "\"likes\":{\"summary\":{\"total_count\":1}},"
                         + "\"comments\":{\"summary\":{\"total_count\":0}}}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(containsString("/v21.0/3056753194668979/video_insights?metric=blue_reels_play_count")))
-                .andRespond(withSuccess("{\"data\":[{\"name\":\"blue_reels_play_count\",\"values\":[{\"value\":321}]}]}",
+        server.expect(requestTo(containsString("/v21.0/3056753194668979/video_insights?metric="
+                        + "fb_reels_total_plays,blue_reels_play_count,post_impressions_unique,post_video_view_time")))
+                .andRespond(withSuccess("{\"data\":["
+                        + "{\"name\":\"fb_reels_total_plays\",\"values\":[{\"value\":218}]},"
+                        + "{\"name\":\"blue_reels_play_count\",\"values\":[{\"value\":201}]},"
+                        + "{\"name\":\"post_impressions_unique\",\"values\":[{\"value\":199}]},"
+                        + "{\"name\":\"post_video_view_time\",\"values\":[{\"value\":464000}]}]}",
                         MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics =
@@ -283,24 +289,39 @@ class MetaGraphClientTest {
             assertThat(m.likes()).isEqualTo(1L);
             assertThat(m.comments()).isEqualTo(0L);
             assertThat(m.shares()).isNull();
-            assertThat(m.views()).isEqualTo(321L);
-            assertThat(m.reach()).isNull();
+            assertThat(m.views()).isEqualTo(218L);
+            assertThat(m.reach()).isEqualTo(199L);
+            assertThat(m.watchTimeSeconds()).isEqualTo(464L);
         });
         server.verify();
     }
 
+    /** A retired metric fails the combined call; the per-metric retry still finds plays without replays. */
     @Test
-    void readPostMetrics_reel_fallsBackToTotalPlaysWhenPlayCountGivesNothing() {
+    void readPostMetrics_reel_fallsBackToPlayCountWhenTotalPlaysIsRefused() {
         server.expect(requestTo(containsString("/v21.0/777?fields=")))
                 .andRespond(withSuccess("{\"id\":\"777\"}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(containsString("/v21.0/777/video_insights?metric=blue_reels_play_count")))
-                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(containsString("/v21.0/777/video_insights?metric=fb_reels_total_plays")))
-                .andRespond(withSuccess("{\"data\":[{\"name\":\"fb_reels_total_plays\",\"values\":[{\"value\":9}]}]}",
+        server.expect(requestTo(containsString("/v21.0/777/video_insights?metric=fb_reels_total_plays,")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest()
+                        .body("{\"error\":{\"message\":\"(#100) invalid metric\",\"code\":100}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/video_insights?metric=fb_reels_total_plays")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest()
+                        .body("{\"error\":{\"message\":\"(#100) invalid metric\",\"code\":100}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/video_insights?metric=blue_reels_play_count")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"blue_reels_play_count\",\"values\":[{\"value\":9}]}]}",
                         MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/video_insights?metric=post_impressions_unique")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/video_insights?metric=post_video_view_time")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
 
-        assertThat(client.readPostMetrics(java.util.List.of("777"), "t")).singleElement()
-                .satisfies(m -> assertThat(m.views()).isEqualTo(9L));
+        assertThat(client.readPostMetrics(java.util.List.of("777"), "t")).singleElement().satisfies(m -> {
+            assertThat(m.views()).isEqualTo(9L);
+            assertThat(m.reach()).isNull();
+            assertThat(m.watchTimeSeconds()).isNull();
+        });
         server.verify();
     }
 
