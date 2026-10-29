@@ -171,4 +171,22 @@ describe('CommentableDocument', () => {
     expect(buttons[1]).toHaveAttribute('aria-label', expect.stringContaining('pending'))
     expect(buttons[1].className).toContain('border-dashed')
   })
+
+  it('does not treat an anchored comment (lineNumber 0) as a line comment', () => {
+    const anchored: Comment = {
+      id: 'c9',
+      documentId: 'doc-1',
+      authorId: 'user-1',
+      authorName: 'Alice',
+      content: 'on a quote',
+      lineNumber: 0,
+      anchor: { exact: 'line one' },
+      createdAt: '2024-01-01T00:00:00Z',
+      replies: [],
+    }
+    render(<CommentableDocument {...baseProps} comments={[anchored]} />)
+    const buttons = screen.getByLabelText('comment gutter').querySelectorAll('button')
+    // Every gutter row still offers "add comment"; none shows a comment count.
+    buttons.forEach((b) => expect(b).toHaveAttribute('title', 'Add comment on this line'))
+  })
 })

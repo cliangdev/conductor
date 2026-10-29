@@ -189,6 +189,13 @@ const apiPost = vi.fn(async (url: string, body: Record<string, unknown>, _token?
   return undefined
 })
 const apiPatch = vi.fn().mockResolvedValue(undefined)
+const apiPut = vi.fn(async (url: string, body: { content: string; contentType: string }) => {
+  const filename = decodeURIComponent(url.split('/documents/')[1])
+  const existing = DOCS.find((d) => d.filename === filename)
+  if (existing) Object.assign(existing, { content: body.content, contentType: body.contentType })
+  else DOCS = [...DOCS, { id: `doc-${DOCS.length + 1}`, filename, contentType: body.contentType, content: body.content }]
+  return undefined
+})
 const apiDelete = vi.fn(async (url: string, _token: string) => {
   const userId = url.match(/reviewers\/([^/]+)$/)?.[1]
   if (userId) REVIEWERS = REVIEWERS.filter((r) => r.userId !== userId)
@@ -234,6 +241,7 @@ vi.mock('@/lib/api', () => ({
   },
   apiPost: (...args: Parameters<typeof apiPost>) => apiPost(...args),
   apiPatch: (...args: unknown[]) => apiPatch(...args),
+  apiPut: (...args: Parameters<typeof apiPut>) => apiPut(...args),
   apiDelete: (...args: Parameters<typeof apiDelete>) => apiDelete(...args),
   apiErrorMessage: (_e: unknown, fallback: string) => fallback,
 }))
@@ -974,5 +982,132 @@ describe('a Post on a publishing Workflow', () => {
     expect(await within(actions).findByRole('button', { name: 'Approve' })).toBeInTheDocument()
     expect(within(actions).getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
     expect(await screen.findByText(/Locked while this post is in review/)).toBeInTheDocument()
+  })
+})
+
+describe('HTML documents', () => {
+  const HTML = '<html><body><h1 id="top">Report</h1><p>20 of 26 users</p></body></html>'
+  const ANCHOR = { exact: '20 of 26 users', prefix: 'Report', sectionId: 'top' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetFixtures()
+    failMembers = false
+    failReviews = false
+    holdSecondary = false
+    getUrls.length = 0
+    DOCS = [{ id: 'doc-1', filename: 'prd.html', contentType: 'text/html', content: HTML }]
+  })
+
+  describe('review mode', () => {
+    it('keeps an anchored draft that has no line number when restoring, and posts its anchor on submit', async () => {
+      localStorage.setItem(
+        'wi_review_wi-1_user-1',
+        JSON.stringify({
+          version: 1,
+          active: true,
+          pending: [{ localId: 'p1', documentId: 'doc-1', anchor: ANCHOR, content: 'anchored draft' }],
+        })
+      )
+      await renderView()
+
+      const bar = within(await screen.findByTestId('review-bar'))
+      expect(bar.getByText(/reviewing — 1 pending comment/i)).toBeInTheDocument()
+      expect(toastErrorSpy).not.toHaveBeenCalled()
+      expect(screen.getByText('anchored draft')).toBeInTheDocument()
+
+      await userEvent.click(bar.getByRole('button', { name: 'Approve' }))
+      await waitFor(() => {
+        expect(apiPost).toHaveBeenCalledWith(
+          '/api/v2/projects/proj-1/work-items/wi-1/comments',
+          { documentId: 'doc-1', content: 'anchored draft', anchor: ANCHOR },
+          'token'
+        )
+      })
+    })
+
+    it('still drops a draft that has neither a line nor an anchor', async () => {
+      localStorage.setItem(
+        'wi_review_wi-1_user-1',
+        JSON.stringify({
+          version: 1,
+          active: true,
+          pending: [{ localId: 'p1', documentId: 'doc-1', content: 'nowhere' }],
+        })
+      )
+      await renderView()
+      expect(screen.queryByTestId('review-bar')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('uploading a document', () => {
+    const upload = async (name: string, body = '<p>hi</p>', size?: number) => {
+      const file = new File([body], name)
+      if (size !== undefined) Object.defineProperty(file, 'size', { value: size })
+      fireEvent.change(await screen.findByTestId('document-upload-input'), { target: { files: [file] } })
+    }
+
+    it('sends the content type from the extension and shows the new document', async () => {
+      await renderView()
+      await upload('plan.htm', '<p>plan</p>')
+      await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1))
+      expect(apiPut).toHaveBeenCalledWith(
+        '/api/v2/projects/proj-1/work-items/wi-1/documents/plan.htm',
+        { content: '<p>plan</p>', contentType: 'text/html' },
+        'token'
+      )
+      expect(await screen.findByRole('tab', { name: 'plan.htm' })).toHaveAttribute('aria-selected', 'true')
+
+      await upload('notes.md', '# notes')
+      await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(2))
+      expect(apiPut).toHaveBeenLastCalledWith(
+        '/api/v2/projects/proj-1/work-items/wi-1/documents/notes.md',
+        { content: '# notes', contentType: 'text/markdown' },
+        'token'
+      )
+    })
+
+    it('asks before replacing a document with the same name', async () => {
+      await renderView()
+      await upload('prd.html', '<p>new</p>')
+      const modal = within(await screen.findByTestId('modal'))
+      expect(modal.getByText(/replace prd\.html/i)).toBeInTheDocument()
+      expect(apiPut).not.toHaveBeenCalled()
+
+      await userEvent.click(modal.getByRole('button', { name: 'Cancel' }))
+      expect(apiPut).not.toHaveBeenCalled()
+
+      await upload('prd.html', '<p>new</p>')
+      await userEvent.click(within(await screen.findByTestId('modal')).getByRole('button', { name: 'Replace' }))
+      await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1))
+      expect(apiPut.mock.calls[0][1]).toEqual({ content: '<p>new</p>', contentType: 'text/html' })
+    })
+
+    it('rejects a file over 5 MB with an inline message and sends nothing', async () => {
+      await renderView()
+      await upload('huge.html', 'x', 5 * 1024 * 1024 + 1)
+      expect(await screen.findByText(/over 5 MB/i)).toHaveAttribute('role', 'alert')
+      expect(apiPut).not.toHaveBeenCalled()
+    })
+
+    it('rejects other file types', async () => {
+      await renderView()
+      await upload('photo.png')
+      expect(await screen.findByText(/\.html, \.htm and \.md/)).toHaveAttribute('role', 'alert')
+      expect(apiPut).not.toHaveBeenCalled()
+    })
+
+    it('is not offered to a reviewer', async () => {
+      const original = MEMBERS[0].role
+      MEMBERS[0].role = 'REVIEWER'
+      try {
+        await renderView()
+        await screen.findByRole('tab', { name: 'prd.html' })
+        await new Promise((r) => setTimeout(r, 50)) // let the role read settle
+        expect(screen.queryByTestId('document-upload-input')).not.toBeInTheDocument()
+      } finally {
+        MEMBERS[0].role = original
+      }
+    })
   })
 })

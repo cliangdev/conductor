@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { markPageReady } from '@/lib/perf'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
+import { apiGet, apiPost, apiPut, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -39,7 +39,8 @@ import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewBar } from '@/components/reviews/ReviewBar'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { CommentCount } from '@/components/ui/comment-count'
-import { HtmlViewer } from '@/components/markdown/HtmlViewer'
+import { CommentableHtmlDocument } from '@/components/markdown/CommentableHtmlDocument'
+import { DocumentUploadButton } from '@/components/workitems/DocumentUploadButton'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import { Modal } from '@/components/ui/modal'
@@ -60,7 +61,8 @@ import {
   useWorkflowView,
   workItemListPath,
 } from '@/lib/workflows'
-import type { Comment, PendingCommentDraft } from '@/components/comments/types'
+import type { Comment, PendingCommentDraft, TextQuoteAnchor } from '@/components/comments/types'
+import type { DocumentContentType } from '@/components/workitems/documentUpload'
 import type { DetailDocument, DetailIssue, DetailReview, DetailReviewer } from '@/components/workitems/detailTypes'
 import type { Member } from '@/components/workitems/listTypes'
 import type { Verdict } from '@/components/reviews/verdict'
@@ -104,9 +106,15 @@ function isPendingCommentDraft(v: unknown): v is PendingCommentDraft {
   return (
     typeof d.localId === 'string' &&
     typeof d.documentId === 'string' &&
-    typeof d.lineNumber === 'number' &&
-    typeof d.content === 'string'
+    typeof d.content === 'string' &&
+    (typeof d.lineNumber === 'number' || isTextQuoteAnchor(d.anchor))
   )
+}
+
+function isTextQuoteAnchor(v: unknown): v is TextQuoteAnchor {
+  if (!v || typeof v !== 'object') return false
+  const a = v as Record<string, unknown>
+  return typeof a.exact === 'string' && a.exact.length > 0
 }
 
 function isValidReviewDraft(v: unknown): v is ReviewDraft {
@@ -142,8 +150,12 @@ function dropStaleDrafts(
   const valid = pending.filter((p) => {
     const doc = docsById.get(p.documentId)
     if (!doc) return false
+    // An anchored (HTML) draft carries its own quote and has no line to go stale; the viewer lists it as
+    // unplaced if the text is gone.
+    if (p.anchor) return true
     if (typeof doc.content !== 'string') return true // not loaded — can't check line count, keep it
-    return p.lineNumber >= 1 && p.lineNumber <= doc.content.split('\n').length
+    const line = p.lineNumber
+    return line !== undefined && line >= 1 && line <= doc.content.split('\n').length
   })
   return { valid, droppedCount: pending.length - valid.length }
 }
@@ -283,26 +295,26 @@ export function WorkItemDetailView({
   const workflowSlug = slug
   const workflowView = useWorkflowView(projectId, workflowSlug, accessToken)
 
-  const fetchDocuments = useCallback(async () => {
-    if (!accessToken) return
+  const fetchDocuments = useCallback(async (): Promise<DetailDocument[]> => {
+    if (!accessToken) return []
     const docs = await apiGet<DetailDocument[]>(
       `/api/v2/projects/${projectId}/work-items/${issueId}/documents`,
       accessToken
     )
+    const visible = docs.filter((d) => d.filename !== 'tasks.json')
     // The list carries summaries only (no content); keep any body already fetched for a document.
     setDocuments((prev) => {
       const known = new Map(prev.map((d) => [d.id, d]))
-      return docs
-        .filter((d) => d.filename !== 'tasks.json')
-        .map((d) => (known.get(d.id)?.content !== undefined && d.content === undefined
-          ? { ...d, content: known.get(d.id)!.content }
-          : d))
+      return visible.map((d) => (known.get(d.id)?.content !== undefined && d.content === undefined
+        ? { ...d, content: known.get(d.id)!.content }
+        : d))
     })
     setSelectedDocId((prev) => {
       if (prev) return prev
       const firstMd = docs.find(isMarkdown)
       return firstMd?.id ?? docs[0]?.id ?? null
     })
+    return visible
   }, [accessToken, projectId, issueId])
 
   const fetchComments = useCallback(async () => {
@@ -496,6 +508,33 @@ export function WorkItemDetailView({
       })
   }, [accessToken, projectId, issueId, selectedDoc])
 
+  /** Saves an uploaded file as a document (a same-named one is replaced), then shows it. */
+  async function uploadDocument(filename: string, content: string, contentType: DocumentContentType) {
+    if (!accessToken) return
+    try {
+      await apiPut(
+        `/api/v2/projects/${projectId}/work-items/${issueId}/documents/${encodeURIComponent(filename)}`,
+        { content, contentType },
+        accessToken
+      )
+      const docs = await fetchDocuments()
+      const saved = docs.find((d) => d.filename === filename)
+      if (saved) {
+        // A replaced document's body is stale; drop it so the selected-document effect reads the new one.
+        requestedContentRef.current.delete(saved.id)
+        setDocuments((prev) => prev.map((d) => (d.id === saved.id ? { ...d, content: undefined } : d)))
+        setSelectedDocId(saved.id)
+        setActiveTab(saved.id)
+      }
+      // Comments report `outdated` against the document as it now is.
+      void fetchComments()
+      toastSuccess(`Uploaded ${filename}`)
+    } catch (err) {
+      toastError(apiErrorMessage(err, `Could not upload ${filename}`))
+      throw err
+    }
+  }
+
   function selectDocument(doc: DetailDocument) {
     if (isMarkdown(doc) || isHtml(doc)) {
       setSelectedDocId(doc.id)
@@ -656,8 +695,12 @@ export function WorkItemDetailView({
     if (draftKey) persistReviewDraft(draftKey, true, pendingComments)
   }
 
-  function addPendingComment(documentId: string, lineNumber: number, content: string) {
-    const next = [...pendingComments, { localId: nextPendingId(), documentId, lineNumber, content }]
+  function addPendingComment(
+    documentId: string,
+    where: { lineNumber: number } | { anchor: TextQuoteAnchor },
+    content: string
+  ) {
+    const next = [...pendingComments, { localId: nextPendingId(), documentId, ...where, content }]
     setPendingComments(next)
     if (draftKey) persistReviewDraft(draftKey, reviewMode, next)
   }
@@ -708,7 +751,9 @@ export function WorkItemDetailView({
         toSubmit.map((p) =>
           apiPost(
             `/api/v2/projects/${projectId}/work-items/${issueId}/comments`,
-            { documentId: p.documentId, content: p.content, lineNumber: p.lineNumber },
+            p.anchor
+              ? { documentId: p.documentId, content: p.content, anchor: p.anchor }
+              : { documentId: p.documentId, content: p.content, lineNumber: p.lineNumber },
             accessToken
           )
         )
@@ -832,6 +877,8 @@ export function WorkItemDetailView({
       : undefined
 
   let mainContent: React.ReactNode
+  // An HTML document gets the full width of the reading column: it brings its own layout, plus a comment rail.
+  let htmlDocShown = false
   if (activeTab === 'activity') {
     mainContent = commentsLoading ? (
       <div className="space-y-3" aria-busy="true" aria-label="Loading activity">
@@ -899,7 +946,8 @@ export function WorkItemDetailView({
         }}
         reviewMode={reviewMode}
         pendingComments={pendingComments}
-        onAddPendingComment={(lineNumber, text) => addPendingComment(selectedDoc.id, lineNumber, text)}
+        onAddPendingComment={(lineNumber, text) =>
+          addPendingComment(selectedDoc.id, { lineNumber }, text)}
         onEditPendingComment={editPendingComment}
         onRemovePendingComment={removePendingComment}
       />
@@ -910,7 +958,24 @@ export function WorkItemDetailView({
   } else if (selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content) {
     mainContent = <p className="text-sm text-muted-foreground">Document content is empty.</p>
   } else if (selectedDoc && isHtml(selectedDoc) && selectedDoc.content) {
-    mainContent = <HtmlViewer content={selectedDoc.content} />
+    htmlDocShown = true
+    mainContent = (
+      <CommentableHtmlDocument
+        content={selectedDoc.content}
+        documentId={selectedDoc.id}
+        issueId={issueId}
+        projectId={projectId}
+        comments={comments.filter((c) => c.documentId === selectedDoc.id)}
+        onCommentAdded={fetchComments}
+        token={accessToken!}
+        currentUserId={user?.id ?? ''}
+        reviewMode={reviewMode}
+        pendingComments={pendingComments}
+        onAddPendingComment={(anchor, text) => addPendingComment(selectedDoc.id, { anchor }, text)}
+        onEditPendingComment={editPendingComment}
+        onRemovePendingComment={removePendingComment}
+      />
+    )
   } else if (selectedDoc && isHtml(selectedDoc) && !selectedDoc.content) {
     mainContent = <p className="text-sm text-muted-foreground">Document content is empty.</p>
   } else {
@@ -1048,10 +1113,11 @@ export function WorkItemDetailView({
             Activity, plus a mobile-only Details tab with its own tabpanel/aria-controls), and the
             "Details" tab reveals a second panel rather than swapping the same one, which the primitive
             doesn't model. Revisit if Tabs grows multi-panel support. */}
+        <div className="flex items-stretch mb-4">
         <div
           role="tablist"
           aria-label="Work item content"
-          className="flex items-center gap-1 border-b border-border mb-4 overflow-x-auto overflow-y-hidden"
+          className="flex flex-1 min-w-0 items-center gap-1 border-b border-border overflow-x-auto overflow-y-hidden"
         >
           {showContentTab && (
             <button
@@ -1140,6 +1206,15 @@ export function WorkItemDetailView({
             Details
           </button>
         </div>
+        {userRole !== 'REVIEWER' && !publishing && !documentsLoading && (
+          <div className="flex items-center border-b border-border pl-3 pb-1">
+            <DocumentUploadButton
+              existingFilenames={documents.map((d) => d.filename)}
+              onUpload={uploadDocument}
+            />
+          </div>
+        )}
+        </div>
 
         <div className="flex gap-6 items-start">
           <div
@@ -1148,7 +1223,7 @@ export function WorkItemDetailView({
             aria-labelledby={tabButtonId(contentTabId)}
             className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
           >
-            <div className="max-w-[45rem] mx-auto space-y-6">
+            <div className={cn('mx-auto space-y-6', htmlDocShown ? 'max-w-none' : 'max-w-[45rem]')}>
               {/* Quiet, inline notices for the two loaders that gate which actions show: a role read
                   that silently fell back to REVIEWER, or a reviews list that silently stayed empty,
                   would otherwise hide actions with no visible reason. */}
