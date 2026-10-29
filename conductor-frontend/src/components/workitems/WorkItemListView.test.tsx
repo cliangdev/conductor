@@ -647,14 +647,15 @@ describe('bulk results and selection in every view', () => {
     }
   })
 
-  it('shows Post bulk actions only for publishing workflows', async () => {
+  it('offers no row selection or bulk bar on a publishing workflow', async () => {
     VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
     render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
     await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
+    expect(screen.queryByLabelText('Select Zeta task')).toBeNull()
     act(() => within(rowList()).getAllByRole('link')[0].focus())
     fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
-    expect(await screen.findByRole('button', { name: 'Reschedule' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Retry failed' })).toBeDisabled()
+    expect(screen.queryByText('1 selected')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reschedule' })).toBeNull()
   })
 })
 
@@ -783,28 +784,6 @@ describe('shared-path behaviour that must not change', () => {
     expect(screen.getByRole('link', { name: 'Clear filter' })).toHaveAttribute('href', '/app/projects/proj-1/engineering/posts')
   })
 
-  it('reports skipped posts next to "N done" after a reschedule, so it is not read as all of them', async () => {
-    VIEW = { ...BASE_VIEW, noun: 'Post', assetTypes: ['instagram_post'] }
-    issues = issues.map((i) =>
-      i.id === 'i1' ? { ...i, scheduledFor: new Date(Date.now() + 6 * 86400_000).toISOString(), scheduleTimezone: 'UTC' } : i,
-    )
-    const user = userEvent.setup()
-    render(<WorkItemListView projectId="proj-1" slug="MARKETING" noun="Post" />)
-    await waitFor(() => expect(screen.getAllByText('Zeta task').length).toBeGreaterThan(0))
-    act(() => within(rowList()).getAllByRole('link')[0].focus())
-    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i1 (scheduled)
-    fireEvent.keyDown(document.activeElement as Element, { key: 'j' })
-    fireEvent.keyDown(document.activeElement as Element, { key: 'x' }) // i2 (no date)
-    await user.click(await screen.findByRole('button', { name: 'Reschedule' }))
-    fireEvent.change(screen.getByLabelText('Reschedule mode'), { target: { value: 'shift' } })
-    fireEvent.change(screen.getByLabelText(/Days/), { target: { value: '1' } })
-    await user.click(screen.getAllByRole('button', { name: 'Reschedule' }).at(-1)!)
-
-    expect(await screen.findByTestId('bulk-result')).toHaveTextContent(
-      '1 done; 1 skipped: it has no date to shift, or the new time has already passed',
-    )
-    expect(apiPatch).toHaveBeenCalledTimes(1)
-  })
 
   it('still shows the first-run onboarding for a publishing workflow with no filter and no posts', async () => {
     issues = []
@@ -890,17 +869,13 @@ describe('publishing workflow rows and grid', () => {
     expect(within(rowFor('i1')).queryByTestId('row-schedule')).toBeNull()
   })
 
-  it('switches to the grid, selects a card and shows the bulk bar', async () => {
+  it('switches to the grid, with no selection checkboxes', async () => {
     await renderPosts()
     fireEvent.click(screen.getByTitle('Grid view'))
     expect(screen.getByTestId('work-item-grid')).toBeInTheDocument()
     expect(screen.queryByTestId('work-item-list')).not.toBeInTheDocument()
     expect(localStorage.getItem('wv_mode_proj-1_MARKETING')).toBe('grid')
-
-    fireEvent.click(screen.getByLabelText('Select Zeta task'))
-    expect(await screen.findByText('1 selected')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
-    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Select Zeta task')).toBeNull()
   })
 
   it('offers no grid toggle on a non-publishing workflow', async () => {

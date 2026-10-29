@@ -242,6 +242,9 @@ export function WorkItemListView({
   // A publishing Workflow composes on its own page (caption, media, destinations and schedule laid out
   // like the Post's); everything else keeps the generic title-and-description modal.
   const opensComposePage = workflowDeclaresPublishTargets(workflowView)
+  // Row selection and the bulk bar are off for Posts for now: nobody asked for the Post-specific bulk actions,
+  // and they have not been tried against real data. Other workflows keep selection (status, assign).
+  const canSelect = canEdit && !opensComposePage
   // Grid (thumbnail cards) is for publishing Workflows only; a stored/URL 'grid' elsewhere falls back to list.
   const mode: DisplayMode = rawMode === 'grid' && !opensComposePage ? 'list' : rawMode
   const composePath = `${workItemListPath(projectId, detailArea, noun)}/new`
@@ -256,7 +259,7 @@ export function WorkItemListView({
     view,
     issuesInView,
     workflowView,
-    canEdit,
+    canEdit: canSelect,
     bulkStatusTriggerRef,
     bulkAssignTriggerRef,
   })
@@ -506,8 +509,8 @@ export function WorkItemListView({
           accessToken={accessToken!}
           view={view}
           onStatusChanged={updateIssueStatus}
-          selectedIds={canEdit ? listState.selected : undefined}
-          onToggleSelect={canEdit ? listState.toggleSelect : undefined}
+          selectedIds={canSelect ? listState.selected : undefined}
+          onToggleSelect={canSelect ? listState.toggleSelect : undefined}
         />
       ) : issuesInView.length === 0 ? (
         creativeFilter || mediaFilter ? (
@@ -584,7 +587,7 @@ export function WorkItemListView({
               detailArea={detailArea}
               noun={noun}
               workflowView={workflowView}
-              canEdit={canEdit}
+              canEdit={canSelect}
               selectedIds={listState.selected}
               onToggleSelect={listState.toggleSelect}
             />
@@ -675,7 +678,7 @@ export function WorkItemListView({
                 members={members}
                 canEdit={canEdit}
                 selectedIds={listState.selected}
-                onToggleSelect={listState.toggleSelect}
+                onToggleSelect={canSelect ? listState.toggleSelect : undefined}
                 tabStopId={listState.tabStopId}
                 roundedTop={i === 0}
                 roundedBottom={i === listState.groups.length - 1}
@@ -693,7 +696,7 @@ export function WorkItemListView({
           </>)}
         </>
       )}
-      {canEdit && listState.selected.size > 0 && (
+      {canSelect && listState.selected.size > 0 && (
         <>
         {/* Room under the last row: the bulk bar is fixed to the viewport and would cover it. */}
         <div aria-hidden className="h-20" />
