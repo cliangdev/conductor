@@ -44,8 +44,8 @@ export const COLUMNS: { key: keyof PublishMetricSnapshot; label: string }[] = [
  * What each platform hands out to Conductor. A dash is the platform not reporting it, never a zero, and
  * this is what lets the footnote say so in words. Instagram's views and shares come from the media
  * insights edge (instagram_manage_insights); Facebook's views come from Page post / Reel insights
- * (read_insights). Both scopes are requested by the Meta connection; a connection made before them shows
- * a dash until it is reconnected.
+ * (read_insights). The connection requests instagram_manage_insights; read_insights is pending App Review,
+ * so Facebook views show a dash until a connection holds it.
  */
 export const REPORTED: Record<string, ReadonlySet<keyof PublishMetricSnapshot>> = {
   tiktok: new Set(['views', 'likes', 'comments', 'shares']),

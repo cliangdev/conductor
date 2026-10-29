@@ -93,8 +93,6 @@ class MetaConnectorTest {
                 "pages_show_list", "pages_manage_posts", "pages_read_engagement",
                 // Graph refuses a Page post's comments.summary without it.
                 "pages_read_user_content",
-                // Page post /insights and Reel /video_insights (views, reach).
-                "read_insights",
                 "instagram_basic", "instagram_content_publish", "instagram_manage_insights",
                 // Without it /me/accounts omits Pages a business portfolio owns.
                 "business_management");

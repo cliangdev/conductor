@@ -178,9 +178,9 @@ public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelM
      * "(#10) requires pages_read_user_content" on those, so the Facebook comment count was always a gap.
      * Conductor reads only the count, never comment text.
      *
-     * <p>{@code read_insights} is for a Page post's {@code /insights} and a Reel's {@code /video_insights}
-     * (views and reach). A connection made before it was requested gets a 403 there and keeps its
-     * like/comment counts until the Page is reconnected.
+     * <p>{@code read_insights} (Facebook post and Reel views) is deliberately not requested yet: it needs its
+     * own App Review entry, and a scope the app has not been granted can make the consent dialog refuse
+     * the whole request. The metrics read already asks the insights edges and records a gap until it is.
      */
     @Override
     public List<String> oauthScopes() {
@@ -189,7 +189,6 @@ public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelM
                 "pages_manage_posts",
                 "pages_read_engagement",
                 "pages_read_user_content",
-                "read_insights",
                 "instagram_basic",
                 "instagram_content_publish",
                 "instagram_manage_insights",
