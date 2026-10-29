@@ -80,6 +80,7 @@ public class WorkItemDocumentsController implements WorkItemDocumentsApi {
 
     private static DocumentSummaryResponse toV2Summary(DocumentView v) {
         return new DocumentSummaryResponse(v.id(), v.workItemId(), v.filename(), v.contentType(), v.createdAt())
+                .contentHash(v.contentHash())
                 .storagePath(v.storagePath())
                 .updatedAt(v.updatedAt());
     }
@@ -93,6 +94,7 @@ public class WorkItemDocumentsController implements WorkItemDocumentsApi {
                 v.contentType(),
                 v.createdAt())
                 .content(v.content())
+                .contentHash(v.contentHash())
                 .storagePath(v.storagePath())
                 .storageUrl(v.storageUrl())
                 .storageUrlExpiresAt(v.storageUrlExpiresAt())

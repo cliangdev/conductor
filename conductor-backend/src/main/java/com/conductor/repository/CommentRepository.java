@@ -41,8 +41,8 @@ public interface CommentRepository extends JpaRepository<Comment, String> {
     @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author WHERE c.workItem.id = :workItemId AND c.resolvedAt IS NULL")
     List<Comment> findListByWorkItemIdUnresolved(@Param("workItemId") String workItemId);
 
-    /** (id, filename) pairs for documents, without loading their content. */
-    @Query("SELECT d.id, d.filename FROM Document d WHERE d.id IN :documentIds")
+    /** (id, filename, contentHash) triples for documents, without loading their content. */
+    @Query("SELECT d.id, d.filename, d.contentHash FROM Document d WHERE d.id IN :documentIds")
     List<Object[]> findDocumentFilenames(@Param("documentIds") java.util.Collection<String> documentIds);
 
     /**

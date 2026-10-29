@@ -15,6 +15,7 @@ import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.service.view.CommentAnchor;
 import com.conductor.service.view.CommentReplyView;
 import com.conductor.service.view.CommentWithRepliesView;
 import com.conductor.signal.Signal;
@@ -30,9 +31,16 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Service
 public class CommentService {
+
+    /** A SHA-256 as {@link DocumentContent#sha256Hex} writes it. */
+    private static final Pattern DOCUMENT_HASH = Pattern.compile("[0-9a-f]{64}");
+
+    /** A comment together with whether its document changed since the version it was written against. */
+    public record CommentResult(Comment comment, boolean outdated) {}
 
     private final CommentRepository commentRepository;
     private final CommentReplyRepository commentReplyRepository;
@@ -66,28 +74,57 @@ public class CommentService {
     }
 
     @Transactional
-    public Comment createComment(String projectId, String workItemId, String documentId, String content,
-                                 Integer lineNumber, User caller) {
-        if (lineNumber == null) {
-            throw new BusinessException("lineNumber is required");
-        }
-
+    public CommentResult createComment(String projectId, String workItemId, String documentId, String content,
+                                       Integer lineNumber, CommentAnchor anchor, String documentHash, User caller) {
         verifyMembership(projectId, caller.getId());
+
+        if (documentHash != null && !DOCUMENT_HASH.matcher(documentHash).matches()) {
+            throw new BusinessException("documentHash must be 64 lowercase hex characters");
+        }
 
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         Document document = documentRepository.findByIdAndWorkItemId(documentId, workItemId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found in Work Item"));
 
-        String quotedText = extractLineFromDocument(document, lineNumber);
+        // HTML documents anchor to a text selection; everything else anchors to a markdown line. A request
+        // for the other kind is rejected rather than guessed at, so an old client never silently loses its anchor.
+        boolean html = DocumentContent.isHtml(document);
+        if (html) {
+            if (lineNumber != null) {
+                throw new BusinessException("lineNumber is not supported on HTML documents; send an anchor");
+            }
+            if (anchor == null || anchor.exact() == null || anchor.exact().isEmpty()) {
+                throw new BusinessException("anchor is required on HTML documents");
+            }
+        } else {
+            if (anchor != null) {
+                throw new BusinessException("anchor is only supported on HTML documents; send a lineNumber");
+            }
+            if (lineNumber == null) {
+                throw new BusinessException("lineNumber is required");
+            }
+        }
 
         Comment comment = new Comment();
         comment.setWorkItem(workItem);
         comment.setDocument(document);
         comment.setAuthor(caller);
         comment.setContent(content);
-        comment.setLineNumber(lineNumber);
-        comment.setQuotedText(quotedText);
+        if (html) {
+            // line_number keeps its default of 0; quotedText mirrors the selection so existing readers keep working.
+            comment.setAnchorExact(anchor.exact());
+            comment.setAnchorPrefix(anchor.prefix());
+            comment.setAnchorSuffix(anchor.suffix());
+            comment.setAnchorSectionId(anchor.sectionId());
+            comment.setAnchorSectionTitle(anchor.sectionTitle());
+            comment.setQuotedText(anchor.exact());
+        } else {
+            comment.setLineNumber(lineNumber);
+            comment.setQuotedText(extractLineFromDocument(document, lineNumber));
+        }
+        // The version the reviewer was looking at, when the client says so; otherwise the document as it is now.
+        comment.setDocumentHash(documentHash != null ? documentHash : document.getContentHash());
 
         commentRepository.save(comment);
 
@@ -106,7 +143,8 @@ public class CommentService {
                 ),
                 new SignalOrigin("comment", workItem.getId())));
 
-        return comment;
+        // The document is already loaded here, so no extra query is needed to compare against its current hash.
+        return new CommentResult(comment, comment.isOutdatedAgainst(document.getContentHash()));
     }
 
     String extractLineFromDocument(Document document, int lineNumber) {
@@ -150,9 +188,11 @@ public class CommentService {
                     .add(toCommentReplyView(reply));
         }
         Map<String, String> filenames = new java.util.HashMap<>();
+        Map<String, String> contentHashes = new java.util.HashMap<>();
         for (Object[] row : commentRepository.findDocumentFilenames(
                 comments.stream().map(c -> c.getDocument().getId()).distinct().toList())) {
             filenames.put((String) row[0], (String) row[1]);
+            contentHashes.put((String) row[0], (String) row[2]);
         }
 
         return comments.stream()
@@ -169,6 +209,8 @@ public class CommentService {
                             comment.getLineNumber(),
                             comment.getQuotedText(),
                             comment.isLineStale(),
+                            toAnchor(comment),
+                            comment.isOutdatedAgainst(contentHashes.get(comment.getDocument().getId())),
                             filenames.get(comment.getDocument().getId()),
                             comment.getResolvedAt(),
                             replies);
@@ -210,7 +252,7 @@ public class CommentService {
     }
 
     @Transactional
-    public Comment resolveComment(String projectId, String workItemId, String commentId, User caller) {
+    public CommentResult resolveComment(String projectId, String workItemId, String commentId, User caller) {
         verifyMembership(projectId, caller.getId());
         findWorkItemInProject(projectId, workItemId);
 
@@ -219,7 +261,7 @@ public class CommentService {
         comment.setResolvedBy(caller);
 
         commentRepository.save(comment);
-        return comment;
+        return new CommentResult(comment, isOutdated(comment));
     }
 
     @Transactional
@@ -236,6 +278,31 @@ public class CommentService {
         }
 
         commentRepository.delete(comment);
+    }
+
+    /** The comment's text-selection anchor, or null for a line comment. */
+    public static CommentAnchor toAnchor(Comment comment) {
+        if (comment.getAnchorExact() == null) {
+            return null;
+        }
+        return new CommentAnchor(
+                comment.getAnchorExact(),
+                comment.getAnchorPrefix(),
+                comment.getAnchorSuffix(),
+                comment.getAnchorSectionId(),
+                comment.getAnchorSectionTitle());
+    }
+
+    /**
+     * Whether the document changed after this comment was written. The comment's document is a lazy reference
+     * here, so this reads the current hash on its own (the hash column only, never {@code content}), and not at
+     * all when the comment has no hash; either hash missing reads as not outdated.
+     */
+    private boolean isOutdated(Comment comment) {
+        if (comment.getDocumentHash() == null) {
+            return false;
+        }
+        return comment.isOutdatedAgainst(documentRepository.findContentHashById(comment.getDocument().getId()));
     }
 
     static String buildExcerpt(String content) {

@@ -70,11 +70,14 @@ public class GcpStorageService implements StorageService {
         Exception lastEx = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                BlobInfo blobInfo = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath))
+                BlobInfo.Builder blobInfo = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath))
                         .setContentType(contentType)
-                        .setCacheControl(CACHE_CONTROL)
-                        .build();
-                storage.create(blobInfo, content);
+                        .setCacheControl(CACHE_CONTROL);
+                if (DocumentContent.isHtml(contentType, null)) {
+                    // A signed URL to user-supplied HTML must download, not render on the storage origin.
+                    blobInfo.setContentDisposition("attachment");
+                }
+                storage.create(blobInfo.build(), content);
                 return;
             } catch (Exception e) {
                 lastEx = e;

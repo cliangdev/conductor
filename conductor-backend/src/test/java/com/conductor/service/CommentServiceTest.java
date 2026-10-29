@@ -15,6 +15,7 @@ import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.service.view.CommentAnchor;
 import com.conductor.service.view.CommentReplyView;
 import com.conductor.service.view.CommentWithRepliesView;
 import com.conductor.signal.Signal;
@@ -38,6 +39,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -134,7 +137,7 @@ class CommentServiceTest {
         lenient().when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-2")).thenReturn(true);
         lenient().when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         lenient().when(commentRepository.findDocumentFilenames(org.mockito.ArgumentMatchers.anyCollection()))
-                .thenReturn(java.util.Collections.singletonList(new Object[]{document.getId(), document.getFilename()}));
+                .thenReturn(java.util.Collections.singletonList(new Object[]{document.getId(), document.getFilename(), document.getContentHash()}));
     }
 
     @Test
@@ -151,7 +154,7 @@ class CommentServiceTest {
             return c;
         });
 
-        Comment response = commentService.createComment("proj-1", "issue-1", "doc-1", "Looks good", 2, author);
+        Comment response = commentService.createComment("proj-1", "issue-1", "doc-1", "Looks good", 2, null, null, author).comment();
 
         assertThat(response.getLineNumber()).isEqualTo(2);
         assertThat(response.getContent()).isEqualTo("Looks good");
@@ -172,7 +175,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Needs clarification", 2, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Needs clarification", 2, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -193,7 +196,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on first line", 1, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on first line", 1, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -214,7 +217,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on line 99", 99, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on line 99", 99, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -234,19 +237,387 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment", 1, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment", 1, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
         assertThat(captor.getValue().getQuotedText()).isEqualTo("");
     }
 
+    // --- anchors (HTML documents) ---
+
+    private static final CommentAnchor ANCHOR =
+            new CommentAnchor("20 of 26", "funnel: ", " signed up", "funnel", "Funnel");
+
+    private void givenHtmlDocument(String content) {
+        document.setFilename("prd.html");
+        document.setContentType("text/html");
+        document.setContent(content);
+        document.setContentHash(DocumentContent.sha256Hex(content));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+    }
+
+    private void givenMarkdownDocument(String content) {
+        document.setContent(content);
+        document.setContentHash(DocumentContent.sha256Hex(content));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+    }
+
+    private void givenSaveAssignsIds() {
+        when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
+            Comment c = inv.getArgument(0);
+            if (c.getId() == null) c.setId("new-comment-id");
+            if (c.getCreatedAt() == null) c.setCreatedAt(OffsetDateTime.now());
+            if (c.getUpdatedAt() == null) c.setUpdatedAt(OffsetDateTime.now());
+            return c;
+        });
+    }
+
     @Test
-    void createCommentMissingLineNumberThrowsBusinessException() {
+    void createCommentMissingLineNumberOnMarkdownThrowsBusinessException() {
+        givenMarkdownDocument("# Spec");
+
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Missing lineNumber", null, author))
+                "proj-1", "issue-1", "doc-1", "Missing lineNumber", null, null, null, author))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentWithAnchorOnMarkdownIsRejected() {
+        givenMarkdownDocument("# Spec");
+
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Anchored", null, ANCHOR, null, author))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("anchor");
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentWithBothLineNumberAndAnchorOnMarkdownIsRejected() {
+        givenMarkdownDocument("# Spec");
+
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Both", 1, ANCHOR, null, author))
+                .isInstanceOf(BusinessException.class);
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentWithLineNumberOnHtmlIsRejected() {
+        givenHtmlDocument("<p>20 of 26</p>");
+
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, author))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("lineNumber");
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentWithLineNumberAndAnchorOnHtmlIsRejected() {
+        givenHtmlDocument("<p>20 of 26</p>");
+
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Both", 3, ANCHOR, null, author))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("lineNumber");
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentWithNeitherOnHtmlIsRejected() {
+        givenHtmlDocument("<p>20 of 26</p>");
+
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Nothing", null, null, null, author))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("anchor");
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentOnHtmlDetectedByFilenameWhenContentTypeIsMarkdown() {
+        // A CLI that mislabels mockup.html as text/markdown still gets an HTML document.
+        givenHtmlDocument("<p>20 of 26</p>");
+        document.setContentType("text/markdown");
+        document.setFilename("Mockup.HTM");
+
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, author))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void createCommentWithAnchorOnHtmlStoresAnchorAndQuotesTheSelection() {
+        givenHtmlDocument("<p>20 of 26</p>");
+        givenSaveAssignsIds();
+
+        Comment created = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Check this number", null, ANCHOR, null, author).comment();
+
+        assertThat(created.getQuotedText()).isEqualTo("20 of 26");
+        assertThat(created.getAnchorExact()).isEqualTo("20 of 26");
+        assertThat(created.getAnchorPrefix()).isEqualTo("funnel: ");
+        assertThat(created.getAnchorSuffix()).isEqualTo(" signed up");
+        assertThat(created.getAnchorSectionId()).isEqualTo("funnel");
+        assertThat(created.getAnchorSectionTitle()).isEqualTo("Funnel");
+        assertThat(created.getLineNumber()).isZero();
+        assertThat(created.isOutdatedAgainst(document.getContentHash())).isFalse();
+        assertThat(CommentService.toAnchor(created)).isEqualTo(ANCHOR);
+    }
+
+    @Test
+    void createCommentStampsDocumentHashOnAnchoredComment() {
+        givenHtmlDocument("<p>20 of 26</p>");
+        givenSaveAssignsIds();
+
+        Comment created = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Hash me", null, ANCHOR, null, author).comment();
+
+        assertThat(created.getDocumentHash()).isEqualTo(DocumentContent.sha256Hex("<p>20 of 26</p>"));
+    }
+
+    @Test
+    void createLineCommentStampsDocumentHashAndHasNoAnchor() {
+        givenMarkdownDocument("line one\nline two");
+        givenSaveAssignsIds();
+
+        Comment created = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Line comment", 2, null, null, author).comment();
+
+        assertThat(created.getDocumentHash()).isEqualTo(DocumentContent.sha256Hex("line one\nline two"));
+        assertThat(created.getAnchorExact()).isNull();
+        assertThat(CommentService.toAnchor(created)).isNull();
+        assertThat(created.getQuotedText()).isEqualTo("line two");
+    }
+
+    @Test
+    void createCommentOnDocumentWithoutHashLeavesDocumentHashNull() {
+        document.setContent(null);
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        givenSaveAssignsIds();
+
+        Comment created = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "No content", 1, null, null, author).comment();
+
+        assertThat(created.getDocumentHash()).isNull();
+    }
+
+    // --- outdated ---
+
+    @Test
+    void listCommentsReportsOutdatedWhenDocumentChangedSinceTheComment() {
+        comment.setAnchorExact("20 of 26");
+        comment.setDocumentHash("old-hash");
+        document.setContentHash("new-hash");
+        stubListWithDocumentHash(document.getContentHash());
+
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
+
+        assertThat(results.get(0).outdated()).isTrue();
+        assertThat(results.get(0).anchor().exact()).isEqualTo("20 of 26");
+    }
+
+    @Test
+    void listCommentsReportsNotOutdatedWhenHashesMatch() {
+        comment.setDocumentHash("same");
+        document.setContentHash("same");
+        stubListWithDocumentHash(document.getContentHash());
+
+        assertThat(commentService.listComments("proj-1", "issue-1", null, author).get(0).outdated()).isFalse();
+    }
+
+    @Test
+    void listCommentsReportsNotOutdatedWhenTheCommentHasNoHash() {
+        comment.setDocumentHash(null);
+        document.setContentHash("new-hash");
+        stubListWithDocumentHash(document.getContentHash());
+
+        assertThat(commentService.listComments("proj-1", "issue-1", null, author).get(0).outdated()).isFalse();
+    }
+
+    @Test
+    void listCommentsReportsNotOutdatedWhenTheDocumentHasNoHash() {
+        comment.setDocumentHash("old-hash");
+        document.setContentHash(null);
+        stubListWithDocumentHash(null);
+
+        assertThat(commentService.listComments("proj-1", "issue-1", null, author).get(0).outdated()).isFalse();
+    }
+
+    @Test
+    void listCommentsLoadsDocumentHashesInOneQueryForManyComments() {
+        Comment second = new Comment();
+        second.setId("comment-2");
+        second.setWorkItem(workItem);
+        second.setDocument(document);
+        second.setAuthor(author);
+        second.setContent("Another");
+        second.setDocumentHash("old-hash");
+        comment.setDocumentHash("old-hash");
+        document.setContentHash("new-hash");
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
+        when(commentRepository.findListByWorkItemId("issue-1")).thenReturn(List.of(comment, second));
+        when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
+        when(commentRepository.findDocumentFilenames(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(java.util.Collections.singletonList(
+                        new Object[]{"doc-1", "spec.md", "new-hash"}));
+
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
+
+        assertThat(results).extracting(CommentWithRepliesView::outdated).containsExactly(true, true);
+        verify(commentRepository, times(1)).findDocumentFilenames(org.mockito.ArgumentMatchers.anyCollection());
+    }
+
+    @Test
+    void resolveCommentReportsOutdatedAgainstTheDocumentsCurrentHash() {
+        comment.setDocumentHash("old-hash");
+        when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
+        when(commentRepository.save(any(Comment.class))).thenReturn(comment);
+        when(documentRepository.findContentHashById("doc-1")).thenReturn("new-hash");
+
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isTrue();
+    }
+
+    @Test
+    void resolveCommentSkipsTheHashQueryWhenTheCommentHasNoHash() {
+        comment.setDocumentHash(null);
+        when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
+        when(commentRepository.save(any(Comment.class))).thenReturn(comment);
+
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isFalse();
+        verify(documentRepository, never()).findContentHashById(any());
+    }
+
+    @Test
+    void resolveCommentIsNotOutdatedWhenTheDocumentHasNoHash() {
+        comment.setDocumentHash("old-hash");
+        when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
+        when(commentRepository.save(any(Comment.class))).thenReturn(comment);
+        when(documentRepository.findContentHashById("doc-1")).thenReturn(null);
+
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isFalse();
+    }
+
+    // --- documentHash: the version the reviewer was looking at ---
+
+    private static final String OLD_HASH = DocumentContent.sha256Hex("<p>funnel: 19 of 26 signed up</p>");
+
+    @Test
+    void createCommentWithDocumentHashThatDiffersFromCurrentIsStampedWithItAndOutdated() {
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Stale view", null, ANCHOR, OLD_HASH, author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(OLD_HASH);
+        assertThat(result.outdated()).isTrue();
+    }
+
+    @Test
+    void createCommentWithDocumentHashEqualToCurrentIsNotOutdated() {
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Fresh view", null, ANCHOR, document.getContentHash(), author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(document.getContentHash());
+        assertThat(result.outdated()).isFalse();
+    }
+
+    @Test
+    void createCommentWithoutDocumentHashFallsBackToTheCurrentHash() {
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Old client", null, ANCHOR, null, author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(document.getContentHash());
+        assertThat(result.outdated()).isFalse();
+    }
+
+    @Test
+    void createLineCommentWithDocumentHashStampsIt() {
+        givenMarkdownDocument("line one\nline two");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Line", 2, null, OLD_HASH, author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(OLD_HASH);
+        assertThat(result.outdated()).isTrue();
+    }
+
+    @Test
+    void createCommentWithADocumentHashButADocumentWithoutOneIsNotOutdated() {
+        document.setContent(null);
+        document.setContentHash(null);
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "No content", 1, null, OLD_HASH, author);
+
+        assertThat(result.outdated()).isFalse();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "",
+            "abc",
+            "2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824",   // uppercase
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b982",    // 63 chars
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b98244",  // 65 chars
+            "zcf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",   // non-hex
+            "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"})
+    void createCommentWithAMalformedDocumentHashIsRejected(String malformed) {
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Bad hash", null, ANCHOR, malformed, author))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("documentHash");
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentDoesNotQueryTheDocumentHashSeparately() {
+        // The document is already loaded on the create path, so outdated needs no extra query.
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        commentService.createComment("proj-1", "issue-1", "doc-1", "One query", null, ANCHOR, OLD_HASH, author);
+
+        verify(documentRepository, never()).findContentHashById(any());
+    }
+
+    @Test
+    void lineCommentOnADocumentThatBecameHtmlStillReturnsLineNumberAndNoAnchor() {
+        // markdown -> HTML via upsert: the comment row is untouched, so it keeps its line and has no anchor.
+        comment.setLineNumber(7);
+        comment.setQuotedText("old line");
+        document.setFilename("prd.html");
+        document.setContentType("text/html");
+        stubListWithDocumentHash(document.getContentHash());
+
+        CommentWithRepliesView view = commentService.listComments("proj-1", "issue-1", null, author).get(0);
+
+        assertThat(view.lineNumber()).isEqualTo(7);
+        assertThat(view.quotedText()).isEqualTo("old line");
+        assertThat(view.anchor()).isNull();
+    }
+
+    private void stubListWithDocumentHash(String hash) {
+        when(projectRepository.existsById("proj-1")).thenReturn(true);
+        when(commentRepository.findListByWorkItemId("issue-1")).thenReturn(List.of(comment));
+        when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
+        when(commentRepository.findDocumentFilenames(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(java.util.Collections.singletonList(
+                        new Object[]{document.getId(), document.getFilename(), hash}));
     }
 
     @Test
@@ -301,7 +672,7 @@ class CommentServiceTest {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
         when(commentRepository.save(any(Comment.class))).thenReturn(comment);
 
-        Comment response = commentService.resolveComment("proj-1", "issue-1", "comment-1", author);
+        Comment response = commentService.resolveComment("proj-1", "issue-1", "comment-1", author).comment();
 
         assertThat(comment.getResolvedAt()).isNotNull();
         assertThat(comment.getResolvedBy()).isEqualTo(author);
@@ -490,7 +861,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, null, null, author);
 
         ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(captor.capture());

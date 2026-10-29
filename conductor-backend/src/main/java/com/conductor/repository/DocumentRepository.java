@@ -22,17 +22,23 @@ public interface DocumentRepository extends JpaRepository<Document, String> {
         String getFilename();
         String getContentType();
         String getStoragePath();
+        String getContentHash();
         OffsetDateTime getCreatedAt();
         OffsetDateTime getUpdatedAt();
     }
 
     @Query("""
             select d.id as id, d.workItem.id as workItemId, d.filename as filename, d.contentType as contentType,
-                   d.storagePath as storagePath, d.createdAt as createdAt, d.updatedAt as updatedAt
+                   d.storagePath as storagePath, d.contentHash as contentHash, d.createdAt as createdAt,
+                   d.updatedAt as updatedAt
             from Document d where d.workItem.id = :workItemId order by d.createdAt, d.filename""")
     List<Summary> findSummariesByWorkItemId(@Param("workItemId") String workItemId);
 
     Optional<Document> findByIdAndWorkItemId(String id, String workItemId);
+
+    /** The document's content hash alone (null when unknown); never selects the TEXT body. */
+    @Query("select d.contentHash from Document d where d.id = :id")
+    String findContentHashById(@Param("id") String id);
 
     Optional<Document> findByWorkItemIdAndFilename(String workItemId, String filename);
 }

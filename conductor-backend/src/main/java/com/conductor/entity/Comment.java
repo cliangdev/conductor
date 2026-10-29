@@ -42,6 +42,26 @@ public class Comment {
     @Column(name = "quoted_text", columnDefinition = "TEXT")
     private String quotedText;
 
+    /** Text-selection anchor (HTML documents). Null for line comments. */
+    @Column(name = "anchor_exact", columnDefinition = "TEXT")
+    private String anchorExact;
+
+    @Column(name = "anchor_prefix", columnDefinition = "TEXT")
+    private String anchorPrefix;
+
+    @Column(name = "anchor_suffix", columnDefinition = "TEXT")
+    private String anchorSuffix;
+
+    @Column(name = "anchor_section_id", length = 255)
+    private String anchorSectionId;
+
+    @Column(name = "anchor_section_title", columnDefinition = "TEXT")
+    private String anchorSectionTitle;
+
+    /** The document's content hash when this comment was written; null on comments that predate hashing. */
+    @Column(name = "document_hash", length = 64)
+    private String documentHash;
+
     @Column(name = "line_stale", nullable = false)
     private boolean lineStale = false;
 
@@ -92,6 +112,32 @@ public class Comment {
 
     public String getQuotedText() { return quotedText; }
     public void setQuotedText(String quotedText) { this.quotedText = quotedText; }
+
+    public String getAnchorExact() { return anchorExact; }
+    public void setAnchorExact(String anchorExact) { this.anchorExact = anchorExact; }
+
+    public String getAnchorPrefix() { return anchorPrefix; }
+    public void setAnchorPrefix(String anchorPrefix) { this.anchorPrefix = anchorPrefix; }
+
+    public String getAnchorSuffix() { return anchorSuffix; }
+    public void setAnchorSuffix(String anchorSuffix) { this.anchorSuffix = anchorSuffix; }
+
+    public String getAnchorSectionId() { return anchorSectionId; }
+    public void setAnchorSectionId(String anchorSectionId) { this.anchorSectionId = anchorSectionId; }
+
+    public String getAnchorSectionTitle() { return anchorSectionTitle; }
+    public void setAnchorSectionTitle(String anchorSectionTitle) { this.anchorSectionTitle = anchorSectionTitle; }
+
+    public String getDocumentHash() { return documentHash; }
+    public void setDocumentHash(String documentHash) { this.documentHash = documentHash; }
+
+    /**
+     * True when the document changed after this comment was written. Either hash missing (a comment from before
+     * hashing, or a document without inline content) reads as not outdated: we cannot tell, so we do not claim it.
+     */
+    public boolean isOutdatedAgainst(String currentDocumentHash) {
+        return documentHash != null && currentDocumentHash != null && !documentHash.equals(currentDocumentHash);
+    }
 
     public boolean isLineStale() { return lineStale; }
     public void setLineStale(boolean lineStale) { this.lineStale = lineStale; }

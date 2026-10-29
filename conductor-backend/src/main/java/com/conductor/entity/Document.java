@@ -41,6 +41,10 @@ public class Document {
     @Column(name = "storage_path", columnDefinition = "TEXT")
     private String storagePath;
 
+    /** SHA-256 hex of the UTF-8 {@link #content}; null when the document has no inline content. */
+    @Column(name = "content_hash", length = 64)
+    private String contentHash;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -78,6 +82,9 @@ public class Document {
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
 
     public String getStoragePath() { return storagePath; }
     public void setStoragePath(String storagePath) { this.storagePath = storagePath; }

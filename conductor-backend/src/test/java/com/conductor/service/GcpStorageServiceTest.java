@@ -63,6 +63,34 @@ class GcpStorageServiceTest {
     }
 
     @Test
+    void upload_htmlSetsContentDispositionAttachment() {
+        gcpStorageService.upload("proj/issues/wi/doc/prd.html", "<p>hi</p>".getBytes(), "text/html");
+
+        ArgumentCaptor<BlobInfo> captor = ArgumentCaptor.forClass(BlobInfo.class);
+        verify(storage).create(captor.capture(), any(byte[].class));
+        assertThat(captor.getValue().getContentType()).isEqualTo("text/html");
+        assertThat(captor.getValue().getContentDisposition()).isEqualTo("attachment");
+    }
+
+    @Test
+    void upload_htmlWithCharsetSetsContentDispositionAttachment() {
+        gcpStorageService.upload("proj/issues/wi/doc/prd.html", "<p>hi</p>".getBytes(), "text/html; charset=utf-8");
+
+        ArgumentCaptor<BlobInfo> captor = ArgumentCaptor.forClass(BlobInfo.class);
+        verify(storage).create(captor.capture(), any(byte[].class));
+        assertThat(captor.getValue().getContentDisposition()).isEqualTo("attachment");
+    }
+
+    @Test
+    void upload_nonHtmlLeavesContentDispositionUnset() {
+        gcpStorageService.upload("proj/issues/wi/doc/spec.md", "# hi".getBytes(), "text/markdown");
+
+        ArgumentCaptor<BlobInfo> captor = ArgumentCaptor.forClass(BlobInfo.class);
+        verify(storage).create(captor.capture(), any(byte[].class));
+        assertThat(captor.getValue().getContentDisposition()).isNull();
+    }
+
+    @Test
     void delete_whenStorageThrows_propagatesException() {
         // Contract: a real backend failure must reach the caller so it can keep its stored
         // reference and retry, instead of orphaning the object (see StorageService#delete).
