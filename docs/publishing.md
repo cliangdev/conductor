@@ -582,8 +582,8 @@ percentage from the Analytics API (`yt-analytics.readonly`), with the same recon
 for a connection that predates it. Facebook's like count (all reactions, what Facebook displays) needs `pages_read_engagement` and its comment
 count `pages_read_user_content`; its views and reach come from the Page post `/insights` edge (feed posts:
 `post_media_view`, `post_total_media_view_unique`) and the Reel `/video_insights` edge (views only:
-`blue_reels_play_count`, falling back to `fb_reels_total_plays`), which need `read_insights`. That scope
-is not requested until it has App Review approval, so for now Facebook views are a gap (a dash) and the pull logs a hint. A count Graph refuses (a connection made before that scope, or an app whose
+`blue_reels_play_count`, falling back to `fb_reels_total_plays`), which need `read_insights` — a connection
+made before it keeps its likes and comments and gets the reconnect prompt for the rest. A count Graph refuses (a connection made before that scope, or an app whose
 permission isn't approved yet) is left a gap — shown as a dash, never 0 — rather than marking the post gone.
 
 A second, built-in connector reads that same `post_publish_target_metric` table from the other

@@ -831,7 +831,7 @@ class FacebookPublishActionTest {
 
         assertThat(result.success()).isTrue();
         assertThat(result.message()).isEqualTo(
-                "Facebook views and reach need the read_insights permission, which this connection does not have");
+                "Reconnect Facebook to read views and reach (missing the read_insights permission)");
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
         assertThat(rows).singleElement().satisfies(row -> {

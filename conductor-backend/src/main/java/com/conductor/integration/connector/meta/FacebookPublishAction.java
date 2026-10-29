@@ -189,8 +189,7 @@ class FacebookPublishAction {
      * longer resolves, so one deleted or unreadable post never hides the numbers of the rest. Each row
      * carries likes (all reactions for a feed post), comments, shares (feed posts only), and views/reach
      * from the insights edges. When the insights read is forbidden (a connection that predates
-     * {@code read_insights}, which is not requested yet) the result stays a success with a hint, so the counts
-     * still record.
+     * {@code read_insights}) the result stays a success with a reconnect hint, so the counts still record.
      */
     ActionResult metrics(Map<String, Object> input, ConnectionContext ctx) {
         List<String> postIds = MetaConnector.MetaActions.stringList(input, "post_ids");
@@ -223,7 +222,7 @@ class FacebookPublishAction {
         }
         // Stays a success when insights are forbidden: likes/comments must still be recorded.
         String message = insightsForbidden
-                ? "Facebook views and reach need the read_insights permission, which this connection does not have"
+                ? "Reconnect Facebook to read views and reach (missing the read_insights permission)"
                 : null;
         return new ActionResult(true, message, Map.of("metrics", rows));
     }
