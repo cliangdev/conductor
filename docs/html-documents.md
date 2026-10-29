@@ -37,7 +37,7 @@ A bridge script is added to the document at render time (never stored). It runs 
 | frame to app | `anchored [{id,found,top}]` | Order threads by position; list quotes not found as Unplaced. |
 | frame to app | `open {id}` | A highlight was clicked; focus its thread. |
 | app to frame | `scrollTo {id}` | A thread was clicked; scroll to and flash its highlight. |
-| frame to app | `openLink {href}` | An `http(s)` link was clicked; the app checks the protocol and opens it with `noopener,noreferrer`. |
+| frame to app | `openLink {href}` | An `http(s)`, `mailto:` or `tel:` link was clicked; the app re-parses the URL, allows only those protocols, opens web links with `noopener,noreferrer` and hands `mailto:`/`tel:` to the system. |
 
 `#hash` links scroll inside the frame. Popups from page script (`window.open`) are blocked, so use plain links.
 
