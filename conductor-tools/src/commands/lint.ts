@@ -41,7 +41,16 @@ const HTML_REQUIRED_SECTIONS = [
 ] as const
 const HTML_NONEMPTY_SECTIONS = new Set(['glossary', 'reference-patterns'])
 const HTML_P0_FIELDS = ['What', 'Not', 'Inputs', 'Outputs', 'Invariants'] as const
-const HTML_SCRIPT_HOSTS = new Set(['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'unpkg.com'])
+// Script origins the viewer's CSP allows (script-src). Must stay in sync with the policy in
+// conductor-frontend/src/components/markdown/htmlDocument.ts; docs/html-documents.md is the
+// written source of truth, since the two packages cannot share code.
+const HTML_SCRIPT_ORIGINS = new Set([
+  'https://cdnjs.cloudflare.com',
+  'https://cdn.jsdelivr.net',
+  'https://unpkg.com',
+  'https://cdn.tailwindcss.com',
+  'https://code.jquery.com',
+])
 
 export interface PrdResult {
   errors: string[]
@@ -296,19 +305,24 @@ export function validatePrdHtml(content: string): PrdResult {
   for (const script of root.querySelectorAll('script')) {
     const src = script.getAttribute('src')
     if (src) {
-      let host = ''
+      let origin = ''
       try {
-        host = new URL(src).hostname
+        origin = new URL(src).origin
       } catch {
-        host = ''
+        origin = ''
       }
-      if (!HTML_SCRIPT_HOSTS.has(host)) {
-        warnings.push(`${F}: script src ${src} is not from an allowed CDN (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com)`)
+      if (!HTML_SCRIPT_ORIGINS.has(origin)) {
+        warnings.push(
+          `${F}: script src ${src} is not from an allowed CDN (${[...HTML_SCRIPT_ORIGINS].map(o => o.replace('https://', '')).join(', ')})`
+        )
       }
     }
     const code = script.innerHTML
     if (/window\.claude\b/.test(code)) {
       warnings.push(`${F}: script uses window.claude, which is unavailable in Conductor`)
+    }
+    if (/\bwindow\.open\s*\(/.test(code)) {
+      warnings.push(`${F}: script calls window.open, but the sandbox blocks popups (use a plain https link)`)
     }
     if (/\bfetch\s*\(|XMLHttpRequest/.test(code)) {
       warnings.push(`${F}: script makes network requests, which Conductor blocks (connect-src 'none')`)

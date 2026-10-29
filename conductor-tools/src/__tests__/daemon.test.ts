@@ -352,7 +352,7 @@ describe('syncFile', () => {
   it.each([
     ['mockup.html', 'text/html'],
     ['prd.md', 'text/markdown'],
-    ['data.json', 'application/json'],
+    ['notes.txt', 'text/markdown'],
   ])('labels %s as %s on PUT', async (filename, contentType) => {
     mockFs.readFileSync.mockReturnValue('content')
     const mockFetch = vi.fn().mockResolvedValue({ ok: true })

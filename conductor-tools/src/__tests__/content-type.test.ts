@@ -6,13 +6,13 @@ describe('contentTypeFor', () => {
     ['prd.html', 'text/html'],
     ['page.htm', 'text/html'],
     ['PRD.HTML', 'text/html'],
+    ['mockup.v2.html', 'text/html'],
     ['prd.md', 'text/markdown'],
     ['README.MD', 'text/markdown'],
-    ['tasks.json', 'application/json'],
-    ['notes.txt', 'text/plain'],
-    ['noextension', 'text/plain'],
-    ['archive.tar.gz', 'text/plain'],
-    ['mockup.v2.html', 'text/html'],
+    ['tasks.json', 'text/markdown'],
+    ['notes.txt', 'text/markdown'],
+    ['noextension', 'text/markdown'],
+    ['page.html.bak', 'text/markdown'],
   ])('%s -> %s', (name, expected) => {
     expect(contentTypeFor(name)).toBe(expected)
   })

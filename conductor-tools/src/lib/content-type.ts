@@ -1,16 +1,8 @@
-/** Map a document filename to the MIME type Conductor stores it under (case-insensitive extension match). */
+/**
+ * Map a document filename to the content type Conductor stores it under.
+ * `.html`/`.htm` (case-insensitive) are `text/html`; everything else stays `text/markdown`,
+ * which is what the CLI has always sent and what the web app can display.
+ */
 export function contentTypeFor(filename: string): string {
-  const dot = filename.lastIndexOf('.')
-  const ext = dot >= 0 ? filename.slice(dot).toLowerCase() : ''
-  switch (ext) {
-    case '.html':
-    case '.htm':
-      return 'text/html'
-    case '.md':
-      return 'text/markdown'
-    case '.json':
-      return 'application/json'
-    default:
-      return 'text/plain'
-  }
+  return /\.html?$/i.test(filename) ? 'text/html' : 'text/markdown'
 }

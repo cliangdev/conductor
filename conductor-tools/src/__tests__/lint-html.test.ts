@@ -192,24 +192,40 @@ describe('validatePrdHtml', () => {
     expect(r.errors[0]).toContain('conductor:doc-type')
   })
 
-  it('warns on network use, window.claude and non-allowlisted scripts', async () => {
+  it('warns on network use, window.claude, window.open and non-allowlisted scripts', async () => {
     const { validatePrdHtml } = await lib()
     const r = validatePrdHtml(
       prd({
         extraHead:
-          '<script src="https://evil.example.com/x.js"></script><script>fetch("/x"); window.claude.complete()</script>',
+          '<script src="https://evil.example.com/x.js"></script><script>fetch("/x"); window.claude.complete(); window.open("https://a.example")</script>',
       })
     )
     expect(r.errors).toEqual([])
-    expect(r.warnings.length).toBe(3)
+    expect(r.warnings.length).toBe(4)
+    expect(r.warnings.some(w => w.includes('window.open'))).toBe(true)
   })
 
-  it('accepts a pinned script from an allowed CDN', async () => {
+  it.each([
+    'https://cdnjs.cloudflare.com/ajax/libs/x/1.0.0/x.js',
+    'https://cdn.jsdelivr.net/npm/chart.js@4.4.1',
+    'https://unpkg.com/lib@1.2.3/dist/lib.js',
+    'https://cdn.tailwindcss.com/3.4.1',
+    'https://code.jquery.com/jquery-3.7.1.min.js',
+  ])('accepts a script from the CSP-allowed host %s', async src => {
+    const { validatePrdHtml } = await lib()
+    const r = validatePrdHtml(prd({ extraHead: `<script src="${src}"></script>` }))
+    expect(r.warnings).toEqual([])
+  })
+
+  it('warns on a script from a host outside the CSP list and on non-https', async () => {
     const { validatePrdHtml } = await lib()
     const r = validatePrdHtml(
-      prd({ extraHead: '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>' })
+      prd({
+        extraHead:
+          '<script src="https://cdn.example.com/x.js"></script><script src="http://unpkg.com/x.js"></script>',
+      })
     )
-    expect(r.warnings).toEqual([])
+    expect(r.warnings.length).toBe(2)
   })
 })
 
