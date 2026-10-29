@@ -177,6 +177,10 @@ public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelM
      * {@code comments.summary} (and {@code reactions}); {@code pages_read_engagement} alone gets
      * "(#10) requires pages_read_user_content" on those, so the Facebook comment count was always a gap.
      * Conductor reads only the count, never comment text.
+     *
+     * <p>{@code read_insights} is for a Page post's {@code /insights} and a Reel's {@code /video_insights}
+     * (views and reach). A connection made before it was requested gets a 403 there and keeps its
+     * like/comment counts until the Page is reconnected.
      */
     @Override
     public List<String> oauthScopes() {
@@ -185,6 +189,7 @@ public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelM
                 "pages_manage_posts",
                 "pages_read_engagement",
                 "pages_read_user_content",
+                "read_insights",
                 "instagram_basic",
                 "instagram_content_publish",
                 "instagram_manage_insights",

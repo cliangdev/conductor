@@ -785,6 +785,61 @@ class FacebookPublishActionTest {
         assertThat(result.message()).contains("400");
     }
 
+    // --- post_metrics: reactions, views and reach ---
+
+    private static JsonNode json(String raw) {
+        try {
+            return new ObjectMapper().readTree(raw);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    void metrics_feedPostAndReel_carryViewsAndReachInTheirRows() {
+        onGet("page-1_900?fields=", json("{\"id\":\"page-1_900\",\"shares\":{\"count\":2},"
+                + "\"reactions\":{\"summary\":{\"total_count\":5}},\"comments\":{\"summary\":{\"total_count\":1}}}"));
+        onGet("page-1_900/insights", json("{\"data\":["
+                + "{\"name\":\"post_media_view\",\"values\":[{\"value\":120}]},"
+                + "{\"name\":\"post_total_media_view_unique\",\"values\":[{\"value\":90}]}]}"));
+        onGet("4242?fields=", json("{\"id\":\"4242\",\"likes\":{\"summary\":{\"total_count\":1}},"
+                + "\"comments\":{\"summary\":{\"total_count\":0}}}"));
+        onGet("4242/video_insights", json("{\"data\":[{\"name\":\"blue_reels_play_count\",\"values\":[{\"value\":77}]}]}"));
+
+        ActionResult result = connector.invoke("get_facebook_post_metrics",
+                Map.of("post_ids", List.of("page-1_900", "4242")), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.message()).isNull();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows.get(0)).containsEntry("likes", 5L).containsEntry("comments", 1L)
+                .containsEntry("shares", 2L).containsEntry("views", 120L).containsEntry("reach", 90L);
+        assertThat(rows.get(1)).containsEntry("likes", 1L).containsEntry("views", 77L)
+                .doesNotContainKeys("shares", "reach");
+    }
+
+    @Test
+    void metrics_insightsForbidden_stillReturnsCountsWithAReconnectHint() {
+        onGet("page-1_901?fields=", json("{\"id\":\"page-1_901\",\"shares\":{\"count\":0},"
+                + "\"reactions\":{\"summary\":{\"total_count\":4}},\"comments\":{\"summary\":{\"total_count\":2}}}"));
+        onGetThrow("page-1_901/insights", HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden",
+                new HttpHeaders(), "{\"error\":{\"message\":\"Missing permission\",\"code\":10}}".getBytes(), null));
+
+        ActionResult result = connector.invoke("get_facebook_post_metrics",
+                Map.of("post_ids", List.of("page-1_901")), CTX);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.message()).isEqualTo(
+                "Reconnect Facebook to read views and reach (missing the read_insights permission)");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row).containsEntry("likes", 4L).containsEntry("comments", 2L);
+            assertThat(row).doesNotContainKeys("views", "reach");
+        });
+    }
+
     // --- [auto] The same idempotency key never creates two posts ---
 
     @Test

@@ -191,27 +191,36 @@ class MetaGraphClientTest {
      */
     @Test
     void readPostMetrics_readsEachPost_overTheRealConverters() {
-        server.expect(requestTo(containsString("/v21.0/p1?fields=")))
+        server.expect(requestTo(containsString("/v21.0/pg_p1?fields=")))
                 .andExpect(method(org.springframework.http.HttpMethod.GET))
-                .andRespond(withSuccess("{\"id\":\"p1\",\"shares\":{\"count\":4},"
-                        + "\"likes\":{\"summary\":{\"total_count\":10}},"
+                .andRespond(withSuccess("{\"id\":\"pg_p1\",\"shares\":{\"count\":4},"
+                        + "\"reactions\":{\"summary\":{\"total_count\":10}},"
                         + "\"comments\":{\"summary\":{\"total_count\":2}}}",
                         MediaType.APPLICATION_JSON));
-        server.expect(requestTo(containsString("/v21.0/p2?fields=")))
+        server.expect(requestTo(containsString("/v21.0/pg_p1/insights?metric=post_media_view,post_total_media_view_unique")))
+                .andRespond(withSuccess("{\"data\":["
+                        + "{\"name\":\"post_media_view\",\"values\":[{\"value\":55}]},"
+                        + "{\"name\":\"post_total_media_view_unique\",\"values\":[{\"value\":40}]}]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/pg_p2?fields=")))
                 .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
                         .withBadRequest().body("{\"error\":{\"message\":\"Unsupported get request\",\"code\":100}}")
                         .contentType(MediaType.APPLICATION_JSON));
         // A refused read is only "gone" when the id won't read on its own either.
-        server.expect(requestTo(containsString("/v21.0/p2?fields=id")))
+        server.expect(requestTo(containsString("/v21.0/pg_p2?fields=id")))
                 .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
                         .withBadRequest().body("{\"error\":{\"message\":\"Unsupported get request\",\"code\":100}}")
                         .contentType(MediaType.APPLICATION_JSON));
 
-        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("p1", "p2"), "page-token");
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("pg_p1", "pg_p2"), "page-token");
 
         assertThat(metrics).hasSize(2);
-        assertThat(metrics.get(0).id()).isEqualTo("p1");
+        assertThat(metrics.get(0).id()).isEqualTo("pg_p1");
+        // Likes are the reaction total, not the plain-Like count.
         assertThat(metrics.get(0).likes()).isEqualTo(10L);
+        assertThat(metrics.get(0).views()).isEqualTo(55L);
+        assertThat(metrics.get(0).reach()).isEqualTo(40L);
+        assertThat(metrics.get(0).insightsForbidden()).isFalse();
         assertThat(metrics.get(0).comments()).isEqualTo(2L);
         assertThat(metrics.get(0).shares()).isEqualTo(4L);
         assertThat(metrics.get(0).unavailable()).isFalse();
@@ -231,17 +240,19 @@ class MetaGraphClientTest {
                         .withBadRequest().body(refused).contentType(MediaType.APPLICATION_JSON));
         server.expect(requestTo(containsString("/v21.0/page_1?fields=id")))
                 .andRespond(withSuccess("{\"id\":\"page_1\"}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(containsString("fields=likes.summary")))
+        server.expect(requestTo(containsString("fields=reactions.summary")))
                 .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
                         .withBadRequest().body(refused).contentType(MediaType.APPLICATION_JSON));
-        server.expect(requestTo(containsString("fields=reactions.summary")))
-                .andRespond(withSuccess("{\"id\":\"page_1\",\"reactions\":{\"summary\":{\"total_count\":6}}}",
+        server.expect(requestTo(containsString("fields=likes.summary")))
+                .andRespond(withSuccess("{\"id\":\"page_1\",\"likes\":{\"summary\":{\"total_count\":6}}}",
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(containsString("fields=comments.summary")))
                 .andRespond(withSuccess("{\"id\":\"page_1\",\"comments\":{\"summary\":{\"total_count\":1}}}",
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(containsString("fields=shares")))
                 .andRespond(withSuccess("{\"id\":\"page_1\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/page_1/insights?")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("page_1"), "page-token");
 
@@ -250,6 +261,95 @@ class MetaGraphClientTest {
             assertThat(m.likes()).isEqualTo(6L);
             assertThat(m.comments()).isEqualTo(1L);
             assertThat(m.shares()).isEqualTo(0L);
+        });
+        server.verify();
+    }
+
+    @Test
+    void readPostMetrics_reel_asksNoSharesField_andReadsViewsFromVideoInsights() {
+        server.expect(requestTo(allOf(containsString("/v21.0/3056753194668979?fields="),
+                        not(containsString("shares")))))
+                .andRespond(withSuccess("{\"id\":\"3056753194668979\","
+                        + "\"likes\":{\"summary\":{\"total_count\":1}},"
+                        + "\"comments\":{\"summary\":{\"total_count\":0}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/3056753194668979/video_insights?metric=blue_reels_play_count")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"blue_reels_play_count\",\"values\":[{\"value\":321}]}]}",
+                        MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics =
+                client.readPostMetrics(java.util.List.of("3056753194668979"), "page-token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.likes()).isEqualTo(1L);
+            assertThat(m.comments()).isEqualTo(0L);
+            assertThat(m.shares()).isNull();
+            assertThat(m.views()).isEqualTo(321L);
+            assertThat(m.reach()).isNull();
+        });
+        server.verify();
+    }
+
+    @Test
+    void readPostMetrics_reel_fallsBackToTotalPlaysWhenPlayCountGivesNothing() {
+        server.expect(requestTo(containsString("/v21.0/777?fields=")))
+                .andRespond(withSuccess("{\"id\":\"777\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/777/video_insights?metric=blue_reels_play_count")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/777/video_insights?metric=fb_reels_total_plays")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"fb_reels_total_plays\",\"values\":[{\"value\":9}]}]}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(client.readPostMetrics(java.util.List.of("777"), "t")).singleElement()
+                .satisfies(m -> assertThat(m.views()).isEqualTo(9L));
+        server.verify();
+    }
+
+    @Test
+    void readPostMetrics_insightsForbidden_keepsCountsAndMarksForbidden() {
+        server.expect(requestTo(containsString("/v21.0/pg_f?fields=")))
+                .andRespond(withSuccess("{\"id\":\"pg_f\",\"shares\":{\"count\":1},"
+                        + "\"reactions\":{\"summary\":{\"total_count\":3}},"
+                        + "\"comments\":{\"summary\":{\"total_count\":2}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/pg_f/insights?metric=")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                                org.springframework.http.HttpStatus.FORBIDDEN)
+                        .body("{\"error\":{\"message\":\"Missing permission\",\"code\":10}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+
+        assertThat(client.readPostMetrics(java.util.List.of("pg_f"), "t")).singleElement().satisfies(m -> {
+            assertThat(m.likes()).isEqualTo(3L);
+            assertThat(m.comments()).isEqualTo(2L);
+            assertThat(m.views()).isNull();
+            assertThat(m.reach()).isNull();
+            assertThat(m.unavailable()).isFalse();
+            assertThat(m.insightsForbidden()).isTrue();
+        });
+        server.verify();
+    }
+
+    /** Meta fails the whole insights call when one metric is retired; the other must still be read. */
+    @Test
+    void readPostMetrics_insightsBadRequest_retriesEachMetricOnItsOwn() {
+        server.expect(requestTo(containsString("/v21.0/pg_r?fields=")))
+                .andRespond(withSuccess("{\"id\":\"pg_r\",\"shares\":{\"count\":0},"
+                        + "\"reactions\":{\"summary\":{\"total_count\":1}},"
+                        + "\"comments\":{\"summary\":{\"total_count\":0}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/pg_r/insights?metric=post_media_view,post_total_media_view_unique")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body("{\"error\":{\"message\":\"metric retired\",\"code\":100}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/pg_r/insights?metric=post_media_view")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body("{\"error\":{\"message\":\"metric retired\",\"code\":100}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/pg_r/insights?metric=post_total_media_view_unique")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"post_total_media_view_unique\",\"values\":[{\"value\":12}]}]}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(client.readPostMetrics(java.util.List.of("pg_r"), "t")).singleElement().satisfies(m -> {
+            assertThat(m.views()).isNull();
+            assertThat(m.reach()).isEqualTo(12L);
+            assertThat(m.insightsForbidden()).isFalse();
         });
         server.verify();
     }

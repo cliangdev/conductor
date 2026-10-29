@@ -43,17 +43,18 @@ export const COLUMNS: { key: keyof PublishMetricSnapshot; label: string }[] = [
 /**
  * What each platform hands out to Conductor. A dash is the platform not reporting it, never a zero, and
  * this is what lets the footnote say so in words. Instagram's views and shares come from the media
- * insights edge (instagram_manage_insights), which the Meta connection requests; Facebook's views would
- * need Page insights (read_insights), which it does not.
+ * insights edge (instagram_manage_insights); Facebook's views come from Page post / Reel insights
+ * (read_insights). Both scopes are requested by the Meta connection; a connection made before them shows
+ * a dash until it is reconnected.
  */
 export const REPORTED: Record<string, ReadonlySet<keyof PublishMetricSnapshot>> = {
   tiktok: new Set(['views', 'likes', 'comments', 'shares']),
   youtube: new Set(['views', 'likes', 'comments']),
-  facebook: new Set(['likes', 'comments', 'shares']),
+  facebook: new Set(['views', 'likes', 'comments', 'shares']),
   instagram: new Set(['views', 'likes', 'comments', 'shares']),
 }
 
-/** "Facebook doesn't report views; Instagram doesn't report views or shares." for the platforms present. */
+/** "Youtube doesn't report shares." for the platforms present. */
 export function unreportedNote(platforms: string[]): string | null {
   const parts: string[] = []
   for (const platform of [...new Set(platforms.map((p) => p.toLowerCase()))]) {

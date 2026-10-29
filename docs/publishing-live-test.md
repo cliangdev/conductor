@@ -38,7 +38,7 @@ Keep the workspace to the people doing the test. Every automated destination pub
    just limited to those roles. Going live requires App Review (Advanced Access) for every
    permission Conductor requests.
 4. Scopes Conductor requests: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`,
-   `pages_read_user_content` (Graph refuses a Page post's comment count without it), `instagram_basic`, `instagram_content_publish`, `instagram_manage_insights`, `business_management`
+   `pages_read_user_content` (Graph refuses a Page post's comment count without it), `read_insights` (Facebook views and reach), `instagram_basic`, `instagram_content_publish`, `instagram_manage_insights`, `business_management`
    (needed so Pages owned by a business portfolio appear in the picker). Grant all of them
    at consent; the Page picker after consent lists only Pages the token can see.
 5. If you leave the Page picker without choosing (an error, a closed tab), the connection is stored
@@ -150,7 +150,11 @@ unaudited app must be refused at the gate, naming the allowed levels.
   (10 calls per pull, posts up to 90 days old). To pull now:
   `POST /api/v1/projects/{projectId}/integrations/{connectorId}/feeds/{feedId}/runs`, then read
   `GET /api/v2/projects/{projectId}/work-items/{id}/publish-metrics` or the MCP `get_post_analytics`.
-  Instagram counts likes and comments; Facebook adds shares; TikTok needs the `video.list` scope.
+  Instagram counts likes and comments; Facebook adds shares (feed posts) and reads views and reach
+  (feed posts) or views (Reels) via `read_insights`; TikTok needs the `video.list` scope.
+- Compare the recorded counts for one Facebook feed post and one Reel against what Facebook shows:
+  likes should match the reaction total, and views should be non-null (reach too, for the feed post).
+  A connection made before `read_insights` returns a reconnect hint instead of views.
 
 ## Things that will look like bugs and are not
 
