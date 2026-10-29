@@ -49,6 +49,22 @@ describe('prepareHtmlDocument', () => {
     expect(out).toContain(`<!DOCTYPE html>${CSP}\n<body>`)
   })
 
+  it('skips a BOM before the doctype', () => {
+    expect(prep('﻿<!doctype html><p>x</p>').startsWith(`﻿<!doctype html>${CSP}`)).toBe(true)
+  })
+
+  it('puts the CSP at offset 0 when a leading comment or the doctype never closes', () => {
+    expect(prep('<!-- open <!doctype html>').startsWith(CSP)).toBe(true)
+    expect(prep('<!doctype html').startsWith(CSP)).toBe(true)
+  })
+
+  it('stays fast on a long run of comments', () => {
+    const html = '<!--' + '--><!--'.repeat(50_000) + '<p>x</p>'
+    const t = performance.now()
+    expect(prep(html).startsWith(CSP)).toBe(true)
+    expect(performance.now() - t).toBeLessThan(500)
+  })
+
   it('appends the bridge at the end when there is no </body>', () => {
     const out = prep('<html><head></head><body><p>Hi</p>')
     expect(out.endsWith(`<p>Hi</p>${BRIDGE_TAG}`)).toBe(true)

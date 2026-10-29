@@ -30,10 +30,23 @@ export const HTML_DOCUMENT_CSP = [
 const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${HTML_DOCUMENT_CSP}">`
 
 /**
- * A doctype at the very start of the document (after an optional BOM, whitespace and comments).
- * Only a leading doctype counts: one further down is page content, not the document type.
+ * End offset of a doctype at the very start of the document (after an optional BOM, whitespace and
+ * comments), or 0 when there is none. Only a leading doctype counts: one further down is page content,
+ * not the document type. A linear scan, not a regex, so crafted comment runs can't cause backtracking.
  */
-const LEADING_DOCTYPE = /^\uFEFF?\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>/i
+function leadingDoctypeEnd(html: string): number {
+  let i = html.charCodeAt(0) === 0xfeff ? 1 : 0
+  for (;;) {
+    while (i < html.length && /\s/.test(html[i])) i++
+    if (!html.startsWith('<!--', i)) break
+    const close = html.indexOf('-->', i + 4)
+    if (close === -1) return 0
+    i = close + 3
+  }
+  if (html.slice(i, i + 9).toLowerCase() !== '<!doctype') return 0
+  const end = html.indexOf('>', i + 9)
+  return end === -1 ? 0 : end + 1
+}
 
 /**
  * The policy goes right after the doctype, or at offset 0 without one — before anything else in the
@@ -42,8 +55,7 @@ const LEADING_DOCTYPE = /^\uFEFF?\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>/i
  * `<head>` into the head it implies, so the policy is still the first thing in it.
  */
 function insertCsp(html: string): string {
-  const doctype = LEADING_DOCTYPE.exec(html)
-  const at = doctype ? doctype[0].length : 0
+  const at = leadingDoctypeEnd(html)
   return html.slice(0, at) + CSP_META + html.slice(at)
 }
 
