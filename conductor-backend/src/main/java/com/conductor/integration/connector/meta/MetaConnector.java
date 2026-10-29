@@ -196,6 +196,23 @@ public class MetaConnector implements OAuth2Connector, ActionConnector, ChannelM
                 "business_management");
     }
 
+    /**
+     * What the user actually granted, from {@code /me/permissions}. The user may have declined some of
+     * the requested permissions, and the token response carries no {@code scope}. Any failure yields
+     * empty so the flow falls back to the requested scopes and the authorization still completes.
+     */
+    @Override
+    public Optional<List<String>> grantedScopes(String userAccessToken) {
+        if (userAccessToken == null || userAccessToken.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(graphClient.listGrantedPermissions(userAccessToken));
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
     @Override
     public String authorizationUrl() {
         return "https://www.facebook.com/v21.0/dialog/oauth";

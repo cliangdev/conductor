@@ -6717,6 +6717,14 @@ components:
           format: date-time
           nullable: true
           description: When the connection's own health was last determined.
+        missingScopes:
+          type: array
+          items:
+            type: string
+          description: >
+            OAuth scopes the connector now requests that this connection's recorded grant lacks.
+            Re-authorizing the same account adds them. Empty when none are missing and also when the
+            grant is unknown (connections authorized before scopes were recorded).
         healthMessage:
           type: string
           nullable: true
@@ -6812,6 +6820,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        missingScopes:
+          type: array
+          items:
+            type: string
+          description: >
+            OAuth scopes the connector now requests that this connection's recorded grant lacks.
+            Re-authorizing the same account adds them. Empty when none are missing and also when the
+            grant is unknown (connections authorized before scopes were recorded).
 
     CreateRuntimeTargetRequest:
       type: object

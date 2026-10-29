@@ -136,3 +136,45 @@ describe('ConnectionRow', () => {
     expect(screen.getByText('Connected')).toBeInTheDocument()
   })
 })
+
+describe('ConnectionRow new permissions', () => {
+  it('shows the badge, the scope note and a Reconnect button when scopes are missing', async () => {
+    const onReconnect = vi.fn()
+    renderRow(connection({ missingScopes: ['read_insights', 'business_management'] }), {
+      canMutate: true,
+      onReconnect,
+    })
+
+    expect(screen.getByText('New permissions')).toBeInTheDocument()
+    expect(screen.getByText(/Reconnect to grant: read_insights, business_management/)).toBeInTheDocument()
+    expect(screen.queryByText('Needs reconnect')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+    expect(onReconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows nothing extra when no scopes are missing or the field is absent', () => {
+    renderRow(connection({ missingScopes: [] }), { canMutate: true, onReconnect: vi.fn() })
+    expect(screen.queryByText('New permissions')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Reconnect to grant/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument()
+  })
+
+  it('leaves an UNHEALTHY connection on its error state, with a Reconnect button', async () => {
+    const onReconnect = vi.fn()
+    renderRow(connection({ healthStatus: 'UNHEALTHY', healthMessage: 'Token revoked', missingScopes: ['x'] }), {
+      canMutate: true,
+      onReconnect,
+    })
+
+    expect(screen.getByText('Needs reconnect')).toBeInTheDocument()
+    expect(screen.queryByText('New permissions')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+    expect(onReconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides Reconnect from someone who cannot mutate connections', () => {
+    renderRow(connection({ missingScopes: ['x'] }), { canMutate: false, onReconnect: vi.fn() })
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument()
+  })
+})

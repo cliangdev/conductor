@@ -994,6 +994,7 @@ public class IntegrationController implements IntegrationsApi {
         }
         summary.setConfig(editableConfig(conn));
         summary.setHealthCheckedAt(conn.getHealthCheckedAt());
+        summary.setMissingScopes(oAuthFlowService.missingScopes(conn));
         summary.setHealthMessage(conn.getHealthMessage());
         // The NO_NEW_DATA marker is bookkeeping, not the platform's words; the message is what a person reads.
         summary.setHealthDetail(ConnectionHealthService.NO_NEW_DATA_DETAIL.equals(conn.getHealthDetail())
@@ -1008,7 +1009,8 @@ public class IntegrationController implements IntegrationsApi {
                 .label(conn.getDisplayLabel())
                 .status(conn.getStatus())
                 .authType(conn.getAuthType())
-                .connectedAt(conn.getCreatedAt());
+                .connectedAt(conn.getCreatedAt())
+                .missingScopes(oAuthFlowService.missingScopes(conn));
         if (AuthType.WEBHOOK.name().equals(conn.getAuthType())) {
             resp.setWebhookUrl(webhookUrl(conn.getConnectorId(), conn.getId()));
         }
