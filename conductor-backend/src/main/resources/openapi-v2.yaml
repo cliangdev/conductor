@@ -6145,7 +6145,7 @@ components:
         content:
           type: string
           nullable: true
-          description: Inline content for text/markdown and text/plain; null for binary types
+          description: Inline content for text/markdown, text/plain and text/html; null for binary types
         storagePath:
           type: string
         storageUrl:
@@ -6212,12 +6212,39 @@ components:
           type: string
           default: text/markdown
 
+    TextQuoteAnchor:
+      type: object
+      description: |
+        A W3C TextQuoteSelector: the selected text plus a little surrounding context, and a hint at the
+        nearest section of the page. Used for comments on HTML documents.
+      required:
+        - exact
+      properties:
+        exact:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        prefix:
+          type: string
+          maxLength: 64
+        suffix:
+          type: string
+          maxLength: 64
+        sectionId:
+          type: string
+          maxLength: 255
+        sectionTitle:
+          type: string
+          maxLength: 500
+
     CreateCommentRequest:
       type: object
+      description: |
+        A comment on a document. HTML documents (content type text/html, or a .html/.htm filename) require
+        `anchor` and reject `lineNumber`; every other document requires `lineNumber` and rejects `anchor`.
       required:
         - documentId
         - content
-        - lineNumber
       properties:
         documentId:
           type: string
@@ -6225,6 +6252,8 @@ components:
           type: string
         lineNumber:
           type: integer
+        anchor:
+          $ref: "#/components/schemas/TextQuoteAnchor"
 
     CommentResponse:
       type: object
@@ -6234,6 +6263,7 @@ components:
         - authorId
         - content
         - createdAt
+        - outdated
       properties:
         id:
           type: string
@@ -6247,6 +6277,14 @@ components:
           type: integer
         quotedText:
           type: string
+        anchor:
+          allOf:
+            - $ref: "#/components/schemas/TextQuoteAnchor"
+          nullable: true
+          description: Text-selection anchor; null for line comments.
+        outdated:
+          type: boolean
+          description: True when the document changed after this comment was written. False when either hash is unknown.
         lineStale:
           type: boolean
         resolvedAt:
@@ -6288,6 +6326,7 @@ components:
         - content
         - createdAt
         - replies
+        - outdated
       properties:
         id:
           type: string
@@ -6303,6 +6342,14 @@ components:
           type: integer
         quotedText:
           type: string
+        anchor:
+          allOf:
+            - $ref: "#/components/schemas/TextQuoteAnchor"
+          nullable: true
+          description: Text-selection anchor; null for line comments.
+        outdated:
+          type: boolean
+          description: True when the document changed after this comment was written. False when either hash is unknown.
         lineStale:
           type: boolean
         documentName:

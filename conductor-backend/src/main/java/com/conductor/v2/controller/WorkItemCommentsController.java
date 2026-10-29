@@ -8,7 +8,9 @@ import com.conductor.generated.v2.model.CommentReplyResponse;
 import com.conductor.generated.v2.model.CommentResponse;
 import com.conductor.generated.v2.model.CommentWithRepliesResponse;
 import com.conductor.generated.v2.model.CreateCommentRequest;
+import com.conductor.generated.v2.model.TextQuoteAnchor;
 import com.conductor.service.CommentService;
+import com.conductor.service.view.CommentAnchor;
 import com.conductor.service.view.CommentReplyView;
 import com.conductor.service.view.CommentWithRepliesView;
 import org.springframework.http.ResponseEntity;
@@ -42,8 +44,9 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
                                                                  CreateCommentRequest request) {
         User caller = currentUser();
         Comment comment = commentService.createComment(
-                projectId, workItemId, request.getDocumentId(), request.getContent(), request.getLineNumber(), caller);
-        return ResponseEntity.status(201).body(toV2(comment));
+                projectId, workItemId, request.getDocumentId(), request.getContent(), request.getLineNumber(),
+                toDomain(request.getAnchor()), caller);
+        return ResponseEntity.status(201).body(toV2(comment, commentService.isOutdated(comment)));
     }
 
     @Override
@@ -72,7 +75,7 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
                                                                   String commentId) {
         User caller = currentUser();
         Comment comment = commentService.resolveComment(projectId, workItemId, commentId, caller);
-        return ResponseEntity.ok(toV2(comment));
+        return ResponseEntity.ok(toV2(comment, commentService.isOutdated(comment)));
     }
 
     @Override
@@ -82,13 +85,28 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
         return ResponseEntity.noContent().build();
     }
 
-    private static CommentResponse toV2(Comment comment) {
+    private static CommentAnchor toDomain(TextQuoteAnchor a) {
+        return a == null ? null
+                : new CommentAnchor(a.getExact(), a.getPrefix(), a.getSuffix(), a.getSectionId(), a.getSectionTitle());
+    }
+
+    private static TextQuoteAnchor toV2Anchor(CommentAnchor a) {
+        return a == null ? null
+                : new TextQuoteAnchor(a.exact())
+                        .prefix(a.prefix())
+                        .suffix(a.suffix())
+                        .sectionId(a.sectionId())
+                        .sectionTitle(a.sectionTitle());
+    }
+
+    private static CommentResponse toV2(Comment comment, boolean outdated) {
         return new CommentResponse(
                 comment.getId(), comment.getDocument().getId(), comment.getAuthor().getId(),
-                comment.getContent(), comment.getCreatedAt())
+                comment.getContent(), outdated, comment.getCreatedAt())
                 .lineNumber(comment.getLineNumber())
                 .quotedText(comment.getQuotedText())
                 .lineStale(comment.isLineStale())
+                .anchor(toV2Anchor(CommentService.toAnchor(comment)))
                 .resolvedAt(comment.getResolvedAt());
     }
 
@@ -97,11 +115,12 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
                 .map(WorkItemCommentsController::toV2Reply)
                 .toList();
         return new CommentWithRepliesResponse(
-                v.id(), v.documentId(), v.authorId(), v.content(), v.createdAt(), replies)
+                v.id(), v.documentId(), v.authorId(), v.content(), v.outdated(), v.createdAt(), replies)
                 .authorName(v.authorName())
                 .lineNumber(v.lineNumber())
                 .quotedText(v.quotedText())
                 .lineStale(v.lineStale())
+                .anchor(toV2Anchor(v.anchor()))
                 .documentName(v.documentName())
                 .resolvedAt(v.resolvedAt());
     }

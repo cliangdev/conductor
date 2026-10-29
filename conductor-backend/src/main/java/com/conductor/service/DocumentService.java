@@ -74,6 +74,7 @@ public class DocumentService {
         document.setWorkItem(workItem);
         document.setFilename(filename);
         document.setContent(content);
+        document.setContentHash(DocumentContent.sha256Hex(content));
         document.setContentType(resolvedContentType);
         document.setStoragePath(gcsPath);
 
@@ -118,6 +119,7 @@ public class DocumentService {
                         uploadToGcs(existing.getStoragePath(), content.getBytes(StandardCharsets.UTF_8), contentType);
                     }
                     existing.setContent(content);
+                    existing.setContentHash(DocumentContent.sha256Hex(content));
                     existing.setContentType(contentType);
                     if (content != null) {
                         markStaleComments(existing.getId(), content);
@@ -136,6 +138,7 @@ public class DocumentService {
                     document.setWorkItem(workItem);
                     document.setFilename(filename);
                     document.setContent(content);
+                    document.setContentHash(DocumentContent.sha256Hex(content));
                     document.setContentType(contentType);
                     document.setStoragePath(gcsPath);
                     documentRepository.save(document);
@@ -179,7 +182,8 @@ public class DocumentService {
         int lineCount = newContent.split("\n", -1).length;
         List<com.conductor.entity.Comment> comments = commentRepository.findAllByDocumentId(documentId);
         List<com.conductor.entity.Comment> toUpdate = comments.stream()
-                .filter(c -> !c.isLineStale() && c.getLineNumber() > lineCount)
+                // Anchored (text-selection) comments have no line; the client decides whether their quote survives.
+                .filter(c -> c.getAnchorExact() == null && !c.isLineStale() && c.getLineNumber() > lineCount)
                 .peek(c -> c.setLineStale(true))
                 .toList();
         if (!toUpdate.isEmpty()) {

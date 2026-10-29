@@ -17,6 +17,8 @@ public record CommentWithRepliesView(
         Integer lineNumber,
         String quotedText,
         boolean lineStale,
+        CommentAnchor anchor,
+        boolean outdated,
         String documentName,
         OffsetDateTime resolvedAt,
         List<CommentReplyView> replies) {

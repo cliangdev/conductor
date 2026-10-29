@@ -360,6 +360,114 @@ class DocumentServiceTest {
         verify(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
     }
 
+    // --- content hash and anchored comments ---
+
+    private static final String HELLO_SHA256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+
+    @Test
+    void createDocumentComputesContentHash() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        documentService.createDocument("proj-1", "issue-1", "spec.md", "hello", null);
+
+        ArgumentCaptor<Document> captor = ArgumentCaptor.forClass(Document.class);
+        verify(documentRepository).save(captor.capture());
+        assertThat(captor.getValue().getContentHash()).isEqualTo(HELLO_SHA256);
+    }
+
+    @Test
+    void createDocumentWithoutContentLeavesContentHashNull() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        documentService.createDocument("proj-1", "issue-1", "photo.png", null, "image/png");
+
+        ArgumentCaptor<Document> captor = ArgumentCaptor.forClass(Document.class);
+        verify(documentRepository).save(captor.capture());
+        assertThat(captor.getValue().getContentHash()).isNull();
+    }
+
+    @Test
+    void upsertByFilenameComputesContentHashOnCreate() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", "hello", null);
+
+        ArgumentCaptor<Document> captor = ArgumentCaptor.forClass(Document.class);
+        verify(documentRepository).save(captor.capture());
+        assertThat(captor.getValue().getContentHash()).isEqualTo(HELLO_SHA256);
+    }
+
+    @Test
+    void upsertByFilenameRecomputesContentHashOnUpdate() {
+        testDocument.setContentHash("stale");
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "hello", null);
+
+        assertThat(testDocument.getContentHash()).isEqualTo(HELLO_SHA256);
+    }
+
+    @Test
+    void upsertByFilenameUploadsHtmlWithItsContentType() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "prd.html")).thenReturn(Optional.empty());
+        when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "prd.html", "<p>hi</p>", "text/html");
+
+        verify(gcpStorageService).upload(anyString(), any(byte[].class), eq("text/html"));
+    }
+
+    @Test
+    void upsertByFilenameIgnoresAnchoredCommentsWhenMarkingStale() {
+        // An HTML page can be far shorter than the old line numbers; anchored comments have no line at all.
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        Comment anchored = new Comment();
+        anchored.setLineNumber(0);
+        anchored.setAnchorExact("20 of 26");
+        Comment line = new Comment();
+        line.setLineNumber(5);
+
+        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(anchored, line));
+
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "one line only", null);
+
+        assertThat(anchored.isLineStale()).isFalse();
+        assertThat(line.isLineStale()).isTrue();
+        ArgumentCaptor<List<Comment>> saved = ArgumentCaptor.forClass(List.class);
+        verify(commentRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).containsExactly(line);
+    }
+
+    @Test
+    void upsertSwitchingMarkdownToHtmlLeavesExistingLineCommentsAlone() {
+        // markdown -> HTML: the comment keeps its lineNumber and gains no anchor; line 1 still exists so it is
+        // not marked stale either. (The HTML viewer lists it as unplaced.)
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+        Comment line = new Comment();
+        line.setLineNumber(1);
+        line.setQuotedText("# Original Content");
+        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(line));
+
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "<h1>Original</h1>\n<p>x</p>", "text/html");
+
+        assertThat(testDocument.getContentType()).isEqualTo("text/html");
+        assertThat(line.getLineNumber()).isEqualTo(1);
+        assertThat(line.getAnchorExact()).isNull();
+        assertThat(line.isLineStale()).isFalse();
+    }
+
     // --- delete by filename tests ---
 
     @Test

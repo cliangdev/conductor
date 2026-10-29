@@ -34,5 +34,9 @@ public interface DocumentRepository extends JpaRepository<Document, String> {
 
     Optional<Document> findByIdAndWorkItemId(String id, String workItemId);
 
+    /** The document's content hash alone (null when unknown); never selects the TEXT body. */
+    @Query("select d.contentHash from Document d where d.id = :id")
+    String findContentHashById(@Param("id") String id);
+
     Optional<Document> findByWorkItemIdAndFilename(String workItemId, String filename);
 }
