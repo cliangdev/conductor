@@ -17,7 +17,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * End-to-end proof, against real Postgres (so V166 and the HQL are exercised), of text-selection comment anchors
+ * End-to-end proof, against real Postgres (so V165 and the HQL are exercised), of text-selection comment anchors
  * on HTML documents and the {@code outdated} flag that follows a changed document.
  */
 class HtmlDocumentCommentAnchorsE2ETest extends AbstractE2ETest {
