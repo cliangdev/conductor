@@ -217,6 +217,7 @@ class FacebookPublishAction {
             if (m.comments() != null) row.put("comments", m.comments());
             if (m.shares() != null) row.put("shares", m.shares());
             if (m.reach() != null) row.put("reach", m.reach());
+            if (m.watchTimeSeconds() != null) row.put("watch_time_seconds", m.watchTimeSeconds());
             rows.add(row);
             insightsForbidden = insightsForbidden || m.insightsForbidden();
         }

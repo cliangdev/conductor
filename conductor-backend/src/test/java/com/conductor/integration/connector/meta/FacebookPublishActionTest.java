@@ -804,7 +804,10 @@ class FacebookPublishActionTest {
                 + "{\"name\":\"post_total_media_view_unique\",\"values\":[{\"value\":90}]}]}"));
         onGet("4242?fields=", json("{\"id\":\"4242\",\"likes\":{\"summary\":{\"total_count\":1}},"
                 + "\"comments\":{\"summary\":{\"total_count\":0}}}"));
-        onGet("4242/video_insights", json("{\"data\":[{\"name\":\"blue_reels_play_count\",\"values\":[{\"value\":77}]}]}"));
+        onGet("4242/video_insights", json("{\"data\":["
+                + "{\"name\":\"fb_reels_total_plays\",\"values\":[{\"value\":77}]},"
+                + "{\"name\":\"post_impressions_unique\",\"values\":[{\"value\":70}]},"
+                + "{\"name\":\"post_video_view_time\",\"values\":[{\"value\":61500}]}]}"));
 
         ActionResult result = connector.invoke("get_facebook_post_metrics",
                 Map.of("post_ids", List.of("page-1_900", "4242")), CTX);
@@ -816,7 +819,8 @@ class FacebookPublishActionTest {
         assertThat(rows.get(0)).containsEntry("likes", 5L).containsEntry("comments", 1L)
                 .containsEntry("shares", 2L).containsEntry("views", 120L).containsEntry("reach", 90L);
         assertThat(rows.get(1)).containsEntry("likes", 1L).containsEntry("views", 77L)
-                .doesNotContainKeys("shares", "reach");
+                .containsEntry("reach", 70L).containsEntry("watch_time_seconds", 61L)
+                .doesNotContainKey("shares");
     }
 
     @Test
