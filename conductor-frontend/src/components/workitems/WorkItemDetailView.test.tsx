@@ -113,6 +113,7 @@ interface MockDoc {
   filename: string
   contentType: string
   content?: string
+  contentHash?: string | null
 }
 
 interface MockComment {
@@ -1037,6 +1038,84 @@ describe('HTML documents', () => {
       )
       await renderView()
       expect(screen.queryByTestId('review-bar')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('document kind and version stamping', () => {
+    it('shows PRD.HTML stored as text/markdown in the HTML viewer, and notes.md stored as text/html too', async () => {
+      DOCS = [{ id: 'doc-1', filename: 'PRD.HTML', contentType: 'text/markdown', content: HTML }]
+      const { container, unmount } = await renderView()
+      await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+      expect(screen.queryByLabelText('comment gutter')).not.toBeInTheDocument()
+      unmount()
+
+      DOCS = [{ id: 'doc-1', filename: 'notes.md', contentType: 'text/html; charset=utf-8', content: HTML }]
+      const second = await renderView()
+      await waitFor(() => expect(second.container.querySelector('iframe')).not.toBeNull())
+    })
+
+    it('keeps the hash a draft was written against, even after the document has changed', async () => {
+      DOCS = [{ id: 'doc-1', filename: 'prd.html', contentType: 'text/html', content: HTML, contentHash: 'hash-new' }]
+      localStorage.setItem(
+        'wi_review_wi-1_user-1',
+        JSON.stringify({
+          version: 1,
+          active: true,
+          pending: [
+            { localId: 'p1', documentId: 'doc-1', anchor: ANCHOR, content: 'old draft', documentHash: 'hash-old' },
+          ],
+        })
+      )
+      await renderView()
+      const bar = within(await screen.findByTestId('review-bar'))
+      // The draft survives a reload of the persisted state with its hash intact.
+      expect(JSON.parse(localStorage.getItem('wi_review_wi-1_user-1')!).pending[0].documentHash).toBe('hash-old')
+
+      await userEvent.click(bar.getByRole('button', { name: 'Approve' }))
+      await waitFor(() => {
+        expect(apiPost).toHaveBeenCalledWith(
+          expect.stringContaining('/comments'),
+          { documentId: 'doc-1', content: 'old draft', anchor: ANCHOR, documentHash: 'hash-old' },
+          'token'
+        )
+      })
+    })
+
+    it('stamps a markdown line draft with the displayed version and sends it on submit', async () => {
+      DOCS = [
+        { id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one\nline two', contentHash: 'md-hash' },
+      ]
+      await renderView()
+      await userEvent.click(screen.getByRole('button', { name: /start review/i }))
+      fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
+      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'line draft')
+      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+
+      expect(JSON.parse(localStorage.getItem('wi_review_wi-1_user-1')!).pending[0]).toMatchObject({
+        lineNumber: 1,
+        documentHash: 'md-hash',
+      })
+      await userEvent.click(within(screen.getByTestId('review-bar')).getByRole('button', { name: 'Approve' }))
+      await waitFor(() => {
+        expect(apiPost).toHaveBeenCalledWith(
+          expect.stringContaining('/comments'),
+          { documentId: 'doc-1', content: 'line draft', lineNumber: 1, documentHash: 'md-hash' },
+          'token'
+        )
+      })
+    })
+
+    it('sends no documentHash when the server did not report one', async () => {
+      DOCS = [{ id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one', contentHash: null }]
+      await renderView()
+      await userEvent.click(screen.getByRole('button', { name: /start review/i }))
+      fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
+      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'no hash')
+      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await userEvent.click(within(screen.getByTestId('review-bar')).getByRole('button', { name: 'Approve' }))
+      await waitFor(() => expect(apiPost).toHaveBeenCalledWith(expect.stringContaining('/comments'), expect.anything(), 'token'))
+      const body = apiPost.mock.calls.find((c) => (c[0] as string).includes('/comments'))![1]
+      expect(body).not.toHaveProperty('documentHash')
     })
   })
 

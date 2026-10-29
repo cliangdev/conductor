@@ -3,7 +3,8 @@ import type { TextQuoteAnchor } from '@/components/comments/types'
 /**
  * Messages the bridge script posts from the sandboxed frame to the app. The page's own scripts can
  * post to the app too, so every message is validated here and only ever drives UI state — a comment
- * body is typed in the app, never taken from the frame.
+ * body is typed in the app, never taken from the frame. The only thing a message can make the app do
+ * outside the UI is `openLink`, and `safeLinkUrl` re-checks that before anything opens.
  */
 
 export interface SelectionRect {
@@ -27,6 +28,7 @@ export type BridgeMessage =
   | { type: 'selection-cleared' }
   | { type: 'anchored'; results: AnchorResult[] }
   | { type: 'open'; id: string }
+  | { type: 'openLink'; href: string }
 
 /** An anchor sent to the frame to find and highlight. */
 export interface FrameAnchor {
@@ -36,6 +38,7 @@ export interface FrameAnchor {
   suffix?: string
 }
 
+const MAX_HREF = 2048
 const MAX_EXACT = 2000
 const MAX_CONTEXT = 64
 const MAX_SECTION_ID = 255
@@ -70,6 +73,10 @@ export function parseBridgeMessage(data: unknown): BridgeMessage | null {
       return { type: 'selection-cleared' }
     case 'open':
       return typeof data.id === 'string' && data.id ? { type: 'open', id: data.id } : null
+    case 'openLink':
+      return typeof data.href === 'string' && data.href.length > 0 && data.href.length <= MAX_HREF
+        ? { type: 'openLink', href: data.href }
+        : null
     case 'anchored': {
       if (!Array.isArray(data.results)) return null
       const results: AnchorResult[] = []
@@ -99,4 +106,37 @@ export function parseBridgeMessage(data: unknown): BridgeMessage | null {
     default:
       return null
   }
+}
+
+/** Link protocols the app will open on the frame's behalf. */
+const LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
+
+/**
+ * The URL a link message may open, or null. The frame's page scripts can post any `openLink` they like,
+ * so the app re-parses the href itself and allows only http(s), mailto and tel: never `javascript:`,
+ * `data:`, `blob:` or a relative URL.
+ */
+export function safeLinkUrl(href: string): URL | null {
+  let url: URL
+  try {
+    url = new URL(href)
+  } catch {
+    return null
+  }
+  return LINK_PROTOCOLS.has(url.protocol) ? url : null
+}
+
+/**
+ * Opens a link the frame asked for. http(s) opens in a new tab with no opener and no referrer;
+ * mailto and tel are handed to the system. Returns false, and does nothing, for anything else.
+ */
+export function openFrameLink(href: string): boolean {
+  const url = safeLinkUrl(href)
+  if (!url) return false
+  if (url.protocol === 'http:' || url.protocol === 'https:') {
+    window.open(url.href, '_blank', 'noopener,noreferrer')
+  } else {
+    window.location.assign(url.href)
+  }
+  return true
 }

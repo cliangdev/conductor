@@ -48,6 +48,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { registerPaletteActions } from '@/components/layout/CommandPalette'
 import { openMenuTrigger } from '@/components/workitems/useWorkItemListState'
 import { timeAgo } from '@/lib/format'
+import { isHtmlDocument, isMarkdownDocument } from '@/lib/documentKind'
 import { readPersistedJSON, writePersistedJSON, removePersisted } from '@/lib/persisted'
 import { cn } from '@/lib/utils'
 import {
@@ -68,22 +69,8 @@ import type { Member } from '@/components/workitems/listTypes'
 import type { Verdict } from '@/components/reviews/verdict'
 import type { MemberRole } from '@/types'
 
-function isMarkdown(doc: DetailDocument): boolean {
-  if (doc.filename.endsWith('.html') || doc.filename.endsWith('.htm')) return false
-  return (
-    doc.contentType === 'text/markdown' ||
-    doc.contentType === 'text/plain' ||
-    doc.filename.endsWith('.md')
-  )
-}
-
-function isHtml(doc: DetailDocument): boolean {
-  return (
-    doc.contentType === 'text/html' ||
-    doc.filename.endsWith('.html') ||
-    doc.filename.endsWith('.htm')
-  )
-}
+const isMarkdown = isMarkdownDocument
+const isHtml = isHtmlDocument
 
 // Scoped to both the Work Item and the signed-in user — a shared browser (or a handoff between
 // accounts) must never surface one reviewer's drafted comments to another. No migration/cleanup of
@@ -107,6 +94,7 @@ function isPendingCommentDraft(v: unknown): v is PendingCommentDraft {
     typeof d.localId === 'string' &&
     typeof d.documentId === 'string' &&
     typeof d.content === 'string' &&
+    (d.documentHash === undefined || typeof d.documentHash === 'string') &&
     (typeof d.lineNumber === 'number' || isTextQuoteAnchor(d.anchor))
   )
 }
@@ -305,8 +293,10 @@ export function WorkItemDetailView({
     // The list carries summaries only (no content); keep any body already fetched for a document.
     setDocuments((prev) => {
       const known = new Map(prev.map((d) => [d.id, d]))
+      // The hash travels with the content it describes: a kept body keeps its own hash, so a comment
+      // is stamped with the version the reader was actually looking at.
       return visible.map((d) => (known.get(d.id)?.content !== undefined && d.content === undefined
-        ? { ...d, content: known.get(d.id)!.content }
+        ? { ...d, content: known.get(d.id)!.content, contentHash: known.get(d.id)!.contentHash }
         : d))
     })
     setSelectedDocId((prev) => {
@@ -501,7 +491,11 @@ export function WorkItemDetailView({
       accessToken
     )
       .then((full) => {
-        setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, content: full.content ?? '' } : d)))
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === docId ? { ...d, content: full.content ?? '', contentHash: full.contentHash ?? d.contentHash } : d
+          )
+        )
       })
       .catch(() => {
         requestedContentRef.current.delete(docId)
@@ -522,7 +516,9 @@ export function WorkItemDetailView({
       if (saved) {
         // A replaced document's body is stale; drop it so the selected-document effect reads the new one.
         requestedContentRef.current.delete(saved.id)
-        setDocuments((prev) => prev.map((d) => (d.id === saved.id ? { ...d, content: undefined } : d)))
+        setDocuments((prev) =>
+          prev.map((d) => (d.id === saved.id ? { ...d, content: undefined, contentHash: saved.contentHash } : d))
+        )
         setSelectedDocId(saved.id)
         setActiveTab(saved.id)
       }
@@ -698,9 +694,13 @@ export function WorkItemDetailView({
   function addPendingComment(
     documentId: string,
     where: { lineNumber: number } | { anchor: TextQuoteAnchor },
-    content: string
+    content: string,
+    documentHash?: string
   ) {
-    const next = [...pendingComments, { localId: nextPendingId(), documentId, ...where, content }]
+    const next = [
+      ...pendingComments,
+      { localId: nextPendingId(), documentId, ...where, content, ...(documentHash ? { documentHash } : {}) },
+    ]
     setPendingComments(next)
     if (draftKey) persistReviewDraft(draftKey, reviewMode, next)
   }
@@ -751,9 +751,13 @@ export function WorkItemDetailView({
         toSubmit.map((p) =>
           apiPost(
             `/api/v2/projects/${projectId}/work-items/${issueId}/comments`,
-            p.anchor
-              ? { documentId: p.documentId, content: p.content, anchor: p.anchor }
-              : { documentId: p.documentId, content: p.content, lineNumber: p.lineNumber },
+            {
+              documentId: p.documentId,
+              content: p.content,
+              ...(p.anchor ? { anchor: p.anchor } : { lineNumber: p.lineNumber }),
+              // The version it was written against, even if the document has changed since.
+              ...(p.documentHash ? { documentHash: p.documentHash } : {}),
+            },
             accessToken
           )
         )
@@ -946,8 +950,9 @@ export function WorkItemDetailView({
         }}
         reviewMode={reviewMode}
         pendingComments={pendingComments}
-        onAddPendingComment={(lineNumber, text) =>
-          addPendingComment(selectedDoc.id, { lineNumber }, text)}
+        contentHash={selectedDoc.contentHash}
+        onAddPendingComment={(lineNumber, text, documentHash) =>
+          addPendingComment(selectedDoc.id, { lineNumber }, text, documentHash)}
         onEditPendingComment={editPendingComment}
         onRemovePendingComment={removePendingComment}
       />
@@ -971,7 +976,9 @@ export function WorkItemDetailView({
         currentUserId={user?.id ?? ''}
         reviewMode={reviewMode}
         pendingComments={pendingComments}
-        onAddPendingComment={(anchor, text) => addPendingComment(selectedDoc.id, { anchor }, text)}
+        contentHash={selectedDoc.contentHash}
+        onAddPendingComment={(anchor, text, documentHash) =>
+          addPendingComment(selectedDoc.id, { anchor }, text, documentHash)}
         onEditPendingComment={editPendingComment}
         onRemovePendingComment={removePendingComment}
       />

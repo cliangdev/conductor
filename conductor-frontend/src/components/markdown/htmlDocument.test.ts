@@ -8,33 +8,45 @@ const CSP = `<meta http-equiv="Content-Security-Policy" content="${HTML_DOCUMENT
 const prep = (html: string) => prepareHtmlDocument(html, { bridge: BRIDGE })
 
 describe('prepareHtmlDocument', () => {
-  it('puts the CSP first inside <head> and the bridge before </body>', () => {
+  it('puts the CSP right after the doctype and the bridge before </body>', () => {
     const out = prep('<!doctype html><html><head><title>T</title></head><body><p>Hi</p></body></html>')
     expect(out).toBe(
-      `<!doctype html><html><head>${CSP}<title>T</title></head><body><p>Hi</p>${BRIDGE_TAG}</body></html>`
+      `<!doctype html>${CSP}<html><head><title>T</title></head><body><p>Hi</p>${BRIDGE_TAG}</body></html>`
     )
   })
 
-  it('handles an uppercase <HEAD> with attributes and an uppercase </BODY>', () => {
-    const out = prep('<!DOCTYPE html><HTML><HEAD lang="en" data-x="1"><TITLE>T</TITLE></HEAD><BODY>x</BODY ></HTML>')
-    expect(out).toContain(`<HEAD lang="en" data-x="1">${CSP}<TITLE>`)
+  it('puts the CSP at offset 0 when there is no doctype', () => {
+    expect(prep('<p>Hi</p>')).toBe(`${CSP}<p>Hi</p>${BRIDGE_TAG}`)
+    expect(prep('<html><head></head><body>x</body></html>')).toBe(
+      `${CSP}<html><head></head><body>x${BRIDGE_TAG}</body></html>`
+    )
+  })
+
+  it('puts the policy before a script that comes before <head>', () => {
+    const withDoctype = prep('<!DOCTYPE html><script>steal()</script><head></head><body></body>')
+    expect(withDoctype.indexOf(CSP)).toBeLessThan(withDoctype.indexOf('steal()'))
+    expect(withDoctype.indexOf(CSP)).toBe('<!DOCTYPE html>'.length)
+
+    const bare = prep('<script>steal()</script><head></head><body></body>')
+    expect(bare.startsWith(CSP)).toBe(true)
+  })
+
+  it('does not look for <head>: uppercase, attributes, <header> and commented heads change nothing', () => {
+    const html = '<!DOCTYPE html><!-- <head> --><HTML><HEAD lang="en"><TITLE>T</TITLE></HEAD><BODY><header>H</header>x</BODY ></HTML>'
+    const out = prep(html)
+    expect(out.indexOf(CSP)).toBe('<!DOCTYPE html>'.length)
+    expect(out).toContain('<HEAD lang="en"><TITLE>')
     expect(out).toContain(`x${BRIDGE_TAG}</BODY >`)
   })
 
-  it('does not mistake <header> for <head>', () => {
-    const out = prep('<!doctype html><body><header>H</header></body>')
-    expect(out.indexOf(CSP)).toBe('<!doctype html>'.length)
-    expect(out).toContain('<header>H</header>')
+  it('only counts a doctype at the start of the document', () => {
+    const out = prep('<p>intro</p><script>var d = "<!doctype html>"</script>')
+    expect(out.startsWith(CSP)).toBe(true)
   })
 
-  it('puts the CSP right after the doctype when there is no <head>', () => {
-    const out = prep('<!DOCTYPE html>\n<body><p>Hi</p></body>')
-    expect(out).toBe(`<!DOCTYPE html>${CSP}\n<body><p>Hi</p>${BRIDGE_TAG}</body>`)
-  })
-
-  it('puts the CSP at the very start when there is no doctype either', () => {
-    const out = prep('<p>Hi</p>')
-    expect(out).toBe(`${CSP}<p>Hi</p>${BRIDGE_TAG}`)
+  it('skips leading whitespace and comments before the doctype', () => {
+    const out = prep('\n<!-- generated -->\n<!DOCTYPE html>\n<body></body>')
+    expect(out).toContain(`<!DOCTYPE html>${CSP}\n<body>`)
   })
 
   it('appends the bridge at the end when there is no </body>', () => {
@@ -47,12 +59,6 @@ describe('prepareHtmlDocument', () => {
     expect(out.endsWith(`${BRIDGE_TAG}</body>`)).toBe(true)
     expect(out.match(/window\.__bridge/g)).toHaveLength(1)
     expect(out.indexOf(BRIDGE_TAG)).toBeGreaterThan(out.indexOf('<p>x</p>'))
-  })
-
-  it('ignores a <head> inside a comment', () => {
-    const out = prep('<!doctype html><!-- <head> --><html><head></head><body></body></html>')
-    expect(out).toContain(`<html><head>${CSP}</head>`)
-    expect(out).toContain('<!-- <head> -->')
   })
 
   it('is not confused by $ patterns in the document or the bridge', () => {

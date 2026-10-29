@@ -19,6 +19,8 @@ import { CommentCount } from '@/components/ui/comment-count'
 
 interface Props {
   content: string
+  /** Hash of `content`, sent with a new comment so the server can tell which version it was written against. */
+  contentHash?: string | null
   documentId: string
   issueId: string
   projectId: string
@@ -37,7 +39,7 @@ interface Props {
   reviewMode?: boolean
   /** All of the Work Item's pending drafts — filtered internally to this component's `documentId`. */
   pendingComments?: PendingCommentDraft[]
-  onAddPendingComment?: (lineNumber: number, content: string) => void
+  onAddPendingComment?: (lineNumber: number, content: string, documentHash?: string) => void
   onEditPendingComment?: (localId: string, content: string) => void
   onRemovePendingComment?: (localId: string) => void
   /**
@@ -57,6 +59,7 @@ interface PopoverState {
 
 export function CommentableDocument({
   content,
+  contentHash,
   documentId,
   issueId,
   projectId,
@@ -144,18 +147,23 @@ export function CommentableDocument({
     async (text: string) => {
       if (!popover) return
       if (reviewMode) {
-        onAddPendingComment?.(popover.lineNumber, text)
+        onAddPendingComment?.(popover.lineNumber, text, contentHash ?? undefined)
       } else {
         await apiPost(
           basePath,
-          { documentId, content: text, lineNumber: popover.lineNumber },
+          {
+            documentId,
+            content: text,
+            lineNumber: popover.lineNumber,
+            ...(contentHash ? { documentHash: contentHash } : {}),
+          },
           token
         )
         onCommentAdded()
       }
       setPopover(null)
     },
-    [popover, reviewMode, onAddPendingComment, basePath, documentId, token, onCommentAdded]
+    [popover, reviewMode, onAddPendingComment, contentHash, basePath, documentId, token, onCommentAdded]
   )
 
   return (

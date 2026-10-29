@@ -121,6 +121,25 @@ describe('CommentableDocument', () => {
     )
   })
 
+  it('sends the document hash with a line comment, and omits it when there is none', async () => {
+    const { apiPost } = await import('@/lib/api')
+    vi.mocked(apiPost).mockClear()
+    const { unmount } = render(<CommentableDocument {...baseProps} contentHash="hash-v1" />)
+    fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+    expect(apiPost).toHaveBeenLastCalledWith(
+      expect.stringContaining('/comments'),
+      expect.objectContaining({ lineNumber: 1, documentHash: 'hash-v1' }),
+      'test-token'
+    )
+    unmount()
+
+    render(<CommentableDocument {...baseProps} contentHash={null} />)
+    fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+    expect(vi.mocked(apiPost).mock.lastCall![1]).not.toHaveProperty('documentHash')
+  })
+
   it('does not render selection form', () => {
     render(<CommentableDocument {...baseProps} />)
     expect(screen.queryByText('+ Comment')).not.toBeInTheDocument()

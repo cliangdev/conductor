@@ -1,9 +1,9 @@
 /**
  * Prepares a stored HTML Work Item document for the sandboxed viewer frame.
  *
- * Two things are added at render time and never stored: a Content-Security-Policy `<meta>` that
- * limits what the page can load or send, and the comment bridge script (see `htmlBridge.ts`).
- * The page keeps running its own inline scripts and loading fonts and pinned CDN libraries; it just
+ * Two things are added at render time and never stored: a Content-Security-Policy `<meta>`, placed
+ * before any of the page's own markup, that limits what the page can load or send, and the comment
+ * bridge script (see `htmlBridge.ts`). The page keeps running its own inline scripts and loading fonts and pinned CDN libraries; it just
  * cannot make network requests (`connect-src 'none'`), submit forms, or rebase its URLs.
  */
 
@@ -29,28 +29,22 @@ export const HTML_DOCUMENT_CSP = [
 
 const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${HTML_DOCUMENT_CSP}">`
 
-/** First match of `tag` that is not inside an HTML comment (a commented-out `<head>` is not the head). */
-function findOutsideComments(html: string, tag: RegExp): RegExpExecArray | null {
-  const re = new RegExp(`<!--[\\s\\S]*?-->|${tag.source}`, 'gi')
-  let m: RegExpExecArray | null
-  while ((m = re.exec(html)) !== null) {
-    if (!m[0].startsWith('<!--')) return m
-  }
-  return null
-}
+/**
+ * A doctype at the very start of the document (after an optional BOM, whitespace and comments).
+ * Only a leading doctype counts: one further down is page content, not the document type.
+ */
+const LEADING_DOCTYPE = /^\uFEFF?\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>/i
 
+/**
+ * The policy goes right after the doctype, or at offset 0 without one — before anything else in the
+ * document, whatever it is. It is deliberately not searched for a `<head>`: a `<script>` placed before
+ * `<head>` would run before the policy existed. The parser hoists a `<meta>` found before `<html>` or
+ * `<head>` into the head it implies, so the policy is still the first thing in it.
+ */
 function insertCsp(html: string): string {
-  const head = findOutsideComments(html, /<head(?=[\s/>])[^>]*>/)
-  if (head) {
-    const at = head.index + head[0].length
-    return html.slice(0, at) + CSP_META + html.slice(at)
-  }
-  const doctype = findOutsideComments(html, /<!doctype[^>]*>/)
-  if (doctype) {
-    const at = doctype.index + doctype[0].length
-    return html.slice(0, at) + CSP_META + html.slice(at)
-  }
-  return CSP_META + html
+  const doctype = LEADING_DOCTYPE.exec(html)
+  const at = doctype ? doctype[0].length : 0
+  return html.slice(0, at) + CSP_META + html.slice(at)
 }
 
 function insertBridge(html: string, bridge: string): string {

@@ -28,6 +28,8 @@ export interface DetailDocument {
   filename: string
   contentType: string
   content?: string
+  /** Hash of the stored content; the version a comment is written against. Null on an older server or a binary. */
+  contentHash?: string | null
   storageUrl?: string
   storageUrlExpiresAt?: string
 }

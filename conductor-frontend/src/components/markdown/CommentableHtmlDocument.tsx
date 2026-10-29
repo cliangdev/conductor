@@ -13,6 +13,7 @@ import type { Comment, PendingCommentDraft, TextQuoteAnchor } from '@/components
 import { prepareHtmlDocument } from './htmlDocument'
 import { bridgeSource } from './htmlBridge'
 import {
+  openFrameLink,
   parseBridgeMessage,
   type AnchorResult,
   type FrameAnchor,
@@ -21,6 +22,8 @@ import {
 
 interface Props {
   content: string
+  /** Hash of `content`, sent with a new comment so the server can tell which version it was written against. */
+  contentHash?: string | null
   documentId: string
   issueId: string
   projectId: string
@@ -34,7 +37,7 @@ interface Props {
   reviewMode?: boolean
   /** All of the Work Item's pending drafts — filtered internally to this component's `documentId`. */
   pendingComments?: PendingCommentDraft[]
-  onAddPendingComment?: (anchor: TextQuoteAnchor, content: string) => void
+  onAddPendingComment?: (anchor: TextQuoteAnchor, content: string, documentHash?: string) => void
   onEditPendingComment?: (localId: string, content: string) => void
   onRemovePendingComment?: (localId: string) => void
 }
@@ -61,11 +64,14 @@ function hashContent(s: string): string {
 
 /** An HTML document: sandboxed frame on the left, comment rail on the right (stacked below on narrow screens). */
 export function CommentableHtmlDocument(props: Props) {
-  return <HtmlDocumentFrame key={`${props.documentId}:${hashContent(props.content)}`} {...props} />
+  const { documentId, content } = props
+  const frameKey = useMemo(() => `${documentId}:${hashContent(content)}`, [documentId, content])
+  return <HtmlDocumentFrame key={frameKey} {...props} />
 }
 
 function HtmlDocumentFrame({
   content,
+  contentHash,
   documentId,
   issueId,
   projectId,
@@ -146,8 +152,12 @@ function HtmlDocumentFrame({
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
-      // Only the frame this component rendered; the page inside it can post anything it likes.
+      // Only the frame this component rendered, and only while it is still the sandboxed srcdoc document.
+      // The page inside can post anything it likes, and could navigate itself to another site: the
+      // `contentWindow` object survives that, but the opaque origin ("null") of a sandboxed srcdoc
+      // frame without allow-same-origin does not.
       if (event.source !== iframeRef.current?.contentWindow) return
+      if (event.origin !== 'null') return
       const msg = parseBridgeMessage(event.data)
       if (!msg) return
       switch (msg.type) {
@@ -162,6 +172,9 @@ function HtmlDocumentFrame({
           break
         case 'anchored':
           setPlacement(Object.fromEntries(msg.results.map((r) => [r.id, r])))
+          break
+        case 'openLink':
+          openFrameLink(msg.href)
           break
         case 'open': {
           setActiveId(msg.id)
@@ -226,9 +239,18 @@ function HtmlDocumentFrame({
   async function handleSubmit(text: string) {
     if (!composing) return
     if (reviewMode) {
-      onAddPendingComment?.(composing.anchor, text)
+      onAddPendingComment?.(composing.anchor, text, contentHash ?? undefined)
     } else {
-      await apiPost(basePath, { documentId, content: text, anchor: composing.anchor }, token)
+      await apiPost(
+        basePath,
+        {
+          documentId,
+          content: text,
+          anchor: composing.anchor,
+          ...(contentHash ? { documentHash: contentHash } : {}),
+        },
+        token
+      )
       onCommentAdded()
     }
     setComposing(null)
@@ -310,7 +332,7 @@ function HtmlDocumentFrame({
         <iframe
           ref={iframeRef}
           srcDoc={srcDoc}
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+          sandbox="allow-scripts"
           className="absolute inset-0 h-full w-full border-0"
           title="HTML document preview"
         />

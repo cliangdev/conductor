@@ -58,4 +58,10 @@ export interface PendingCommentDraft {
   /** … HTML drafts to a text quote. A draft has exactly one of the two. */
   anchor?: TextQuoteAnchor
   content: string
+  /**
+   * `contentHash` of the document version this draft was written against, as it was displayed. Kept with
+   * the (persisted) draft so one written against an older version still reports that version when it is
+   * finally submitted, and the server can mark it outdated.
+   */
+  documentHash?: string
 }

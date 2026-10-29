@@ -25,6 +25,11 @@ describe('buildQuote', () => {
     expect(q.suffix).toBe(' e')
   })
 
+  it('reads a quote across a block boundary with one space', () => {
+    const text = 'Goals Ship it today'
+    expect(buildQuote(text, 0, 'Goals Ship it'.length).exact).toBe('Goals Ship it')
+  })
+
   it('caps the quote at 2000 characters', () => {
     const long = 'word '.repeat(1000)
     const q = buildQuote(long, 0, long.length)
@@ -63,6 +68,12 @@ describe('findQuote', () => {
     expect(findQuote('one two three', { exact: 'two\n  three' })).toEqual({ start: 4, end: 13 })
   })
 
+  it('skips matches the caller rejects, and is null when every match is rejected', () => {
+    const text = 'foo bar foo'
+    expect(findQuote(text, { exact: 'foo' }, (start) => start > 0)).toEqual({ start: 8, end: 11 })
+    expect(findQuote(text, { exact: 'foo' }, () => false)).toBeNull()
+  })
+
   it('returns null when the text is not there', () => {
     expect(findQuote('alpha beta', { exact: 'delta', prefix: 'alpha ' })).toBeNull()
     expect(findQuote('alpha beta', { exact: '   ' })).toBeNull()
@@ -93,7 +104,12 @@ describe('bridgeSource', () => {
       // jsdom has no layout: give Range the geometry methods the bridge reads.
       const zero = { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }
       Range.prototype.getBoundingClientRect = () => zero as DOMRect
-      Range.prototype.getClientRects = () => [] as unknown as DOMRectList
+      // A range has a box unless its text sits under an element marked data-hidden (display:none).
+      const box = { ...zero, right: 10, bottom: 10, width: 10, height: 10 }
+      Range.prototype.getClientRects = function (this: Range) {
+        const el = this.startContainer.nodeType === 1 ? (this.startContainer as Element) : this.startContainer.parentElement
+        return (el?.closest('[data-hidden]') ? [] : [box]) as unknown as DOMRectList
+      }
       // jsdom's top-level window is its own parent, so the bridge posts to itself and we listen here.
       new Function(bridgeSource)()
     })
@@ -179,6 +195,92 @@ describe('bridgeSource', () => {
         ['b', false],
         ['c', true],
       ])
+    })
+
+    it('puts a space between adjacent blocks and at <br>, but not between inline elements', async () => {
+      document.body.innerHTML =
+        '<h2>Goals</h2><p>Ship it</p><ul><li>one</li><li>two</li></ul><p>line<br>break and <b>bold</b>text</p>'
+      sendFromParent({
+        type: 'anchors',
+        anchors: [
+          { id: 'blocks', exact: 'Goals Ship it' },
+          { id: 'glued', exact: 'GoalsShip it' },
+          { id: 'items', exact: 'one two' },
+          { id: 'br', exact: 'line break' },
+          { id: 'inline', exact: 'bold' + 'text' },
+        ],
+      })
+      const m = await waitForPost('anchored')
+      const results = m.results as Array<{ id: string; found: boolean }>
+      expect(Object.fromEntries(results.map((r) => [r.id, r.found]))).toEqual({
+        blocks: true,
+        glued: false,
+        items: true,
+        br: true,
+        inline: true,
+      })
+    })
+
+    it('reports a selection across blocks with the block space in the quote', async () => {
+      document.body.innerHTML = '<h2>Goals</h2><p>Ship it today</p>'
+      const a = document.querySelector('h2')!.firstChild as Text
+      const b = document.querySelector('p')!.firstChild as Text
+      const range = document.createRange()
+      range.setStart(a, 0)
+      range.setEnd(b, 'Ship it'.length)
+      window.getSelection()!.addRange(range)
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      const m = await waitForPost('selection')
+      expect(m.exact).toBe('Goals Ship it')
+      expect(m.suffix).toBe(' today')
+    })
+
+    it('anchors to the visible copy of a quote, and reports a quote that only exists hidden as not found', async () => {
+      document.body.innerHTML =
+        '<div data-hidden><p>Revenue is up</p></div><p>Revenue is up</p><div data-hidden><p>Only hidden</p></div>'
+      sendFromParent({
+        type: 'anchors',
+        anchors: [
+          { id: 'both', exact: 'Revenue is up' },
+          { id: 'hiddenOnly', exact: 'Only hidden' },
+        ],
+      })
+      const m = await waitForPost('anchored')
+      const results = m.results as Array<{ id: string; found: boolean }>
+      expect(results.map((r) => [r.id, r.found])).toEqual([
+        ['both', true],
+        ['hiddenOnly', false],
+      ])
+    })
+
+    it('takes over every link click: hash links scroll, web links go to the app, nothing navigates', async () => {
+      document.body.innerHTML = `
+        <h2 id="goals">Goals</h2>
+        <a id="hash" href="#goals">jump</a>
+        <a id="web" href="https://example.com/x" target="_blank">web</a>
+        <a id="mail" href="mailto:a@b.co">mail</a>
+        <a id="rel" href="other.html">rel</a>
+        <a id="js" href="javascript:alert(1)">js</a>`
+      const scrollIntoView = vi.fn()
+      Element.prototype.scrollIntoView = scrollIntoView
+
+      const click = (id: string) => {
+        const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+        document.getElementById(id)!.dispatchEvent(ev)
+        return ev.defaultPrevented
+      }
+
+      expect(click('hash')).toBe(true)
+      expect(scrollIntoView).toHaveBeenCalled()
+
+      expect(click('web')).toBe(true)
+      expect(click('mail')).toBe(true)
+      expect(click('rel')).toBe(true)
+      expect(click('js')).toBe(true)
+      await vi.waitFor(() => {
+        const links = posted.filter((p) => p.type === 'openLink').map((p) => p.href)
+        expect(links).toEqual(['https://example.com/x', 'mailto:a@b.co'])
+      })
     })
 
     it('re-resolves when scripts add text later', async () => {

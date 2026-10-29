@@ -49,10 +49,13 @@ function frameWindow(container: HTMLElement): Window {
   return container.querySelector('iframe')!.contentWindow!
 }
 
-/** Delivers a message to the app as if the frame had posted it. */
-function fromFrame(source: Window | null, data: unknown) {
+/**
+ * Delivers a message to the app as if the frame had posted it. A sandboxed srcdoc frame has the opaque
+ * origin "null", which is what the app requires.
+ */
+function fromFrame(source: Window | null, data: unknown, origin = 'null') {
   act(() => {
-    window.dispatchEvent(new MessageEvent('message', { data, source }))
+    window.dispatchEvent(new MessageEvent('message', { data, source, origin }))
   })
 }
 
@@ -77,7 +80,7 @@ describe('CommentableHtmlDocument', () => {
   it('renders the document in a locked-down frame with the CSP and bridge added', () => {
     const { container } = render(<CommentableHtmlDocument {...baseProps} />)
     const frame = container.querySelector('iframe')!
-    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-popups allow-popups-to-escape-sandbox')
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
     const srcdoc = frame.getAttribute('srcdoc')!
     expect(srcdoc).toContain('Content-Security-Policy')
     expect(srcdoc).toContain('conductor-bridge')
@@ -95,6 +98,73 @@ describe('CommentableHtmlDocument', () => {
     fromFrame(frameWindow(container), bridge({ ...selection, exact: '' }))
     fromFrame(frameWindow(container), bridge({ ...selection, rect: 'nope' }))
     expect(screen.queryByRole('button', { name: 'Comment' })).not.toBeInTheDocument()
+  })
+
+  it('ignores messages from a frame that has navigated away (origin is no longer "null")', () => {
+    const { container } = render(<CommentableHtmlDocument {...baseProps} />)
+    const win = frameWindow(container)
+    // Same contentWindow object, but the page is now some other site.
+    fromFrame(win, bridge(selection), 'https://evil.example')
+    fromFrame(win, bridge(selection), '')
+    expect(screen.queryByRole('button', { name: 'Comment' })).not.toBeInTheDocument()
+
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    fromFrame(win, bridge({ type: 'openLink', href: 'https://example.com' }), 'https://evil.example')
+    expect(open).not.toHaveBeenCalled()
+    open.mockRestore()
+  })
+
+  it('opens an http(s) link the frame asks for in a new tab, and nothing else', () => {
+    const { container } = render(<CommentableHtmlDocument {...baseProps} />)
+    const win = frameWindow(container)
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+
+    fromFrame(win, bridge({ type: 'openLink', href: 'https://example.com/docs?a=1' }))
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledWith('https://example.com/docs?a=1', '_blank', 'noopener,noreferrer')
+
+    fromFrame(win, bridge({ type: 'openLink', href: 'javascript:alert(1)' }))
+    fromFrame(win, bridge({ type: 'openLink', href: 'data:text/html,<b>x</b>' }))
+    fromFrame(win, bridge({ type: 'openLink', href: 'relative/page.html' }))
+    expect(open).toHaveBeenCalledTimes(1)
+    open.mockRestore()
+  })
+
+  it('stamps a new comment with the hash of the document version on screen', async () => {
+    const { container, rerender } = render(
+      <CommentableHtmlDocument {...baseProps} contentHash="hash-v1" />
+    )
+    fromFrame(frameWindow(container), bridge(selection))
+    fireEvent.click(await screen.findByRole('button', { name: 'Comment' }))
+    fireEvent.click(screen.getByText('Submit'))
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1))
+    expect(apiPost.mock.calls[0][1]).toMatchObject({ documentHash: 'hash-v1' })
+
+    // No hash known (older server): the field is left out rather than sent empty.
+    apiPost.mockClear()
+    rerender(<CommentableHtmlDocument {...baseProps} contentHash={null} />)
+    fromFrame(frameWindow(container), bridge(selection))
+    fireEvent.click(await screen.findByRole('button', { name: 'Comment' }))
+    fireEvent.click(screen.getByText('Submit'))
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1))
+    expect(apiPost.mock.calls[0][1]).not.toHaveProperty('documentHash')
+  })
+
+  it('hands the hash to a review-mode draft', async () => {
+    const onAddPendingComment = vi.fn()
+    const { container } = render(
+      <CommentableHtmlDocument
+        {...baseProps}
+        contentHash="hash-v1"
+        reviewMode
+        onAddPendingComment={onAddPendingComment}
+      />
+    )
+    fromFrame(frameWindow(container), bridge(selection))
+    fireEvent.click(await screen.findByRole('button', { name: 'Comment' }))
+    fireEvent.click(screen.getByText('Submit'))
+    await waitFor(() => expect(onAddPendingComment).toHaveBeenCalled())
+    expect(onAddPendingComment).toHaveBeenCalledWith(expect.objectContaining({ exact: '20 of 26' }), 'looks good', 'hash-v1')
   })
 
   it('shows a Comment button for a selection and posts the anchor', async () => {
@@ -153,7 +223,8 @@ describe('CommentableHtmlDocument', () => {
     await waitFor(() => expect(onAddPendingComment).toHaveBeenCalled())
     expect(onAddPendingComment).toHaveBeenCalledWith(
       expect.objectContaining({ exact: '20 of 26', sectionId: 'funnel' }),
-      'looks good'
+      'looks good',
+      undefined
     )
     expect(apiPost).not.toHaveBeenCalled()
   })

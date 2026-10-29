@@ -2,8 +2,12 @@
 /**
  * The comment bridge: a script that is added to an HTML document when it is rendered (never stored)
  * and runs inside the sandboxed frame, after the page's own scripts. It reports text selections to the
- * app, finds and highlights the text existing comments are anchored to, and relays clicks on those
- * highlights — all through `postMessage`. The wire format is in `htmlBridgeProtocol.ts`.
+ * app, finds and highlights the text existing comments are anchored to, relays clicks on those
+ * highlights, and takes over link clicks (the frame is sandboxed with `allow-scripts` only, so it cannot
+ * open windows or navigate) — all through `postMessage`. The wire format is in `htmlBridgeProtocol.ts`.
+ *
+ * Quotes are matched against the page's text with whitespace collapsed and one space at every block
+ * boundary, and only against text that is visible (it has a box and is not `visibility:hidden`).
  *
  * `bridgeSource` is built with `Function.prototype.toString`, so `bridgeMain`, `buildQuote` and
  * `findQuote` must stay self-contained: no imports, no closed-over variables, no helpers the build
@@ -41,11 +45,12 @@ export function buildQuote(text: string, start: number, end: number): QuoteParts
 /**
  * Where a quote sits in `text`. Among all exact matches, the one whose surrounding text agrees most with
  * the stored prefix and suffix wins; with no agreement anywhere, the first match. Null when the exact
- * text is not there at all.
+ * text is not there at all, or when `accept` (given each match's start and end) rejects every match.
  */
 export function findQuote(
   text: string,
-  quote: { exact: string; prefix?: string; suffix?: string }
+  quote: { exact: string; prefix?: string; suffix?: string },
+  accept?: (start: number, end: number) => boolean
 ): { start: number; end: number } | null {
   const exact = (quote.exact || '').replace(/\s+/g, ' ').trim()
   if (!exact) return null
@@ -57,6 +62,9 @@ export function findQuote(
   for (;;) {
     const i = text.indexOf(exact, from)
     if (i < 0) break
+    from = i + 1
+    // A match the caller rejects (text that is not visible) is not a candidate at all.
+    if (accept && !accept(i, i + exact.length)) continue
     let score = 0
     const before = text.slice(Math.max(0, i - prefix.length), i)
     for (let k = 1; k <= before.length && k <= prefix.length; k++) {
@@ -72,7 +80,6 @@ export function findQuote(
       best = i
       bestScore = score
     }
-    from = i + 1
   }
   return best < 0 ? null : { start: best, end: best + exact.length }
 }
@@ -80,6 +87,9 @@ export function findQuote(
 /** Runs inside the frame. Receives the two quote helpers as arguments so it closes over nothing. */
 function bridgeMain(buildQuote: any, findQuote: any): void {
   const SKIP = 'script,style,noscript,template'
+  const BLOCKS =
+    'address,article,aside,blockquote,dd,div,dl,dt,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,' +
+    'header,hr,li,main,nav,ol,p,pre,section,table,tbody,td,th,thead,tr,ul'
   const w: any = window
   let anchors: any[] = []
   let ranges: Record<string, Range> = {}
@@ -103,7 +113,12 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     '::highlight(conductor-comment-active){background-color:rgba(255,159,10,.6);color:inherit}'
   ;(document.head || document.documentElement).appendChild(style)
 
-  /** The visible text under body as one string, whitespace runs collapsed, with a map back to nodes. */
+  /**
+   * The text under body as one string: whitespace runs collapsed to one space, and a space at every
+   * block boundary (and `br`) so "<h2>Goals</h2><p>Ship it</p>" reads "Goals Ship it". Those spaces
+   * belong to no node; the map back to nodes (`fn`/`fo`, one entry per character) holds -1 for them.
+   * Each text node's `chars` lists the flat index of each of its characters, -1 where collapsed away.
+   */
   function flatten(): any {
     const root = document.body || document.documentElement
     const nodes: any[] = []
@@ -112,11 +127,28 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     const parts: string[] = []
     let len = 0
     let lastSpace = true
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    let pendingBreak = false
+    let prevBlock: Element | null = null
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT)
     let n: Node | null
     while ((n = walker.nextNode())) {
+      if (n.nodeType === 1) {
+        if ((n as Element).tagName === 'BR') pendingBreak = true
+        continue
+      }
       const p = n.parentElement
       if (!p || p.closest(SKIP)) continue
+      const block = p.closest(BLOCKS) || root
+      if (prevBlock && block !== prevBlock) pendingBreak = true
+      prevBlock = block
+      if (pendingBreak && !lastSpace) {
+        parts.push(' ')
+        fn.push(-1)
+        fo.push(-1)
+        len++
+        lastSpace = true
+      }
+      pendingBreak = false
       const s = n.nodeValue || ''
       const chars: number[] = []
       const info = { node: n, chars: chars, begin: len, end: 0 }
@@ -142,6 +174,21 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
       nodes.push(info)
     }
     return { text: parts.join(''), nodes: nodes, fn: fn, fo: fo }
+  }
+
+  /** Whether the text of `r` is actually shown: it has a box, and is not `visibility:hidden`. */
+  function isVisible(r: Range): boolean {
+    const rects = r.getClientRects()
+    let shown = false
+    for (let i = 0; i < rects.length; i++) {
+      if (rects[i].width > 0 || rects[i].height > 0) {
+        shown = true
+        break
+      }
+    }
+    if (!shown) return false
+    const el = r.startContainer.nodeType === 1 ? (r.startContainer as Element) : r.startContainer.parentElement
+    return !el || w.getComputedStyle(el).visibility !== 'hidden'
   }
 
   function rangeFor(flat: any, start: number, end: number): Range {
@@ -170,7 +217,11 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     const results: any[] = []
     for (let i = 0; i < anchors.length; i++) {
       const a = anchors[i]
-      const hit = findQuote(flat.text, a)
+      // Only visible text counts: a hidden copy of the quote (a collapsed panel, a print-only block)
+      // must not take the comment, so a quote that is only there hidden is reported not found.
+      const hit = findQuote(flat.text, a, function (s: number, e: number) {
+        return isVisible(rangeFor(flat, s, e))
+      })
       if (hit) {
         const r = rangeFor(flat, hit.start, hit.end)
         found[a.id] = r
@@ -308,12 +359,16 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     flash(id)
   }
 
-  function handleLink(e: MouseEvent, a: Element): boolean {
-    const href = a.getAttribute('href') || ''
-    const target = a.getAttribute('target')
-    if (target && target !== '_self') return true // the browser opens it (allow-popups)
+  /**
+   * The frame is sandboxed with `allow-scripts` only, so it can neither open windows nor navigate
+   * anywhere. Every link click is therefore taken over here: `#hash` links scroll inside the frame;
+   * http(s), mailto and tel links are handed to the app, which checks them and opens them; anything
+   * else is dropped. Nothing is ever left to the browser's default.
+   */
+  function handleLink(e: MouseEvent, a: Element): void {
+    const href = (a.getAttribute('href') || '').trim()
+    e.preventDefault()
     if (href.charAt(0) === '#') {
-      e.preventDefault()
       let id = href.slice(1)
       try {
         id = decodeURIComponent(id)
@@ -323,18 +378,9 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
       const t = id ? document.getElementById(id) || document.getElementsByName(id)[0] : null
       if (t) t.scrollIntoView()
       else if (!id) w.scrollTo(0, 0)
-      return true
+      return
     }
-    if (/^https?:/i.test(href)) {
-      e.preventDefault()
-      w.open(href, '_blank', 'noopener')
-      return true
-    }
-    if (!/^(mailto|tel):/i.test(href)) {
-      // Anything else would navigate the frame away from the document.
-      e.preventDefault()
-    }
-    return true
+    if (/^(https?|mailto|tel):/i.test(href)) post({ type: 'openLink', href: href })
   }
 
   document.addEventListener('mouseup', function () {
@@ -362,7 +408,10 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     if (e.defaultPrevented) return
     const t = e.target as Element | null
     const a = t && t.closest ? t.closest('a[href]') : null
-    if (a && handleLink(e, a)) return
+    if (a) {
+      handleLink(e, a)
+      return
+    }
     const sel = w.getSelection()
     if (sel && !sel.isCollapsed) return
     const id = hitTest(e.clientX, e.clientY)
