@@ -121,6 +121,25 @@ describe('CommentableDocument', () => {
     )
   })
 
+  it('sends the document hash with a line comment, and omits it when there is none', async () => {
+    const { apiPost } = await import('@/lib/api')
+    vi.mocked(apiPost).mockClear()
+    const { unmount } = render(<CommentableDocument {...baseProps} contentHash="hash-v1" />)
+    fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+    expect(apiPost).toHaveBeenLastCalledWith(
+      expect.stringContaining('/comments'),
+      expect.objectContaining({ lineNumber: 1, documentHash: 'hash-v1' }),
+      'test-token'
+    )
+    unmount()
+
+    render(<CommentableDocument {...baseProps} contentHash={null} />)
+    fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+    expect(vi.mocked(apiPost).mock.lastCall![1]).not.toHaveProperty('documentHash')
+  })
+
   it('does not render selection form', () => {
     render(<CommentableDocument {...baseProps} />)
     expect(screen.queryByText('+ Comment')).not.toBeInTheDocument()
@@ -170,5 +189,23 @@ describe('CommentableDocument', () => {
     expect(buttons[0]).toHaveAttribute('aria-label', expect.not.stringContaining('pending'))
     expect(buttons[1]).toHaveAttribute('aria-label', expect.stringContaining('pending'))
     expect(buttons[1].className).toContain('border-dashed')
+  })
+
+  it('does not treat an anchored comment (lineNumber 0) as a line comment', () => {
+    const anchored: Comment = {
+      id: 'c9',
+      documentId: 'doc-1',
+      authorId: 'user-1',
+      authorName: 'Alice',
+      content: 'on a quote',
+      lineNumber: 0,
+      anchor: { exact: 'line one' },
+      createdAt: '2024-01-01T00:00:00Z',
+      replies: [],
+    }
+    render(<CommentableDocument {...baseProps} comments={[anchored]} />)
+    const buttons = screen.getByLabelText('comment gutter').querySelectorAll('button')
+    // Every gutter row still offers "add comment"; none shows a comment count.
+    buttons.forEach((b) => expect(b).toHaveAttribute('title', 'Add comment on this line'))
   })
 })

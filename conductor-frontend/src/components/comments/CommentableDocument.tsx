@@ -4,9 +4,9 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { apiPost } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
-import { Badge } from '@/components/ui/badge'
 import { CommentThread } from './CommentThread'
 import { NewCommentForm } from './NewCommentForm'
+import { PendingCommentRow } from './PendingCommentRow'
 import type { Comment, PendingCommentDraft } from './types'
 import {
   fallbackBox,
@@ -14,11 +14,13 @@ import {
   useSourceLineOffsets,
   type LineBox,
 } from './useSourceLineOffsets'
-import { MessageSquarePlus, PencilIcon, TrashIcon, XIcon } from 'lucide-react'
+import { MessageSquarePlus, XIcon } from 'lucide-react'
 import { CommentCount } from '@/components/ui/comment-count'
 
 interface Props {
   content: string
+  /** Hash of `content`, sent with a new comment so the server can tell which version it was written against. */
+  contentHash?: string | null
   documentId: string
   issueId: string
   projectId: string
@@ -37,7 +39,7 @@ interface Props {
   reviewMode?: boolean
   /** All of the Work Item's pending drafts — filtered internally to this component's `documentId`. */
   pendingComments?: PendingCommentDraft[]
-  onAddPendingComment?: (lineNumber: number, content: string) => void
+  onAddPendingComment?: (lineNumber: number, content: string, documentHash?: string) => void
   onEditPendingComment?: (localId: string, content: string) => void
   onRemovePendingComment?: (localId: string) => void
   /**
@@ -57,6 +59,7 @@ interface PopoverState {
 
 export function CommentableDocument({
   content,
+  contentHash,
   documentId,
   issueId,
   projectId,
@@ -113,13 +116,13 @@ export function CommentableDocument({
 
   const commentsForLine = useCallback(
     (lineNum: number): Comment[] =>
-      comments.filter((c) => c.lineNumber != null && resolveLine(Number(c.lineNumber)) === lineNum),
+      comments.filter((c) => c.lineNumber != null && !c.anchor && resolveLine(Number(c.lineNumber)) === lineNum),
     [comments, resolveLine]
   )
 
   const pendingForLine = useCallback(
     (lineNum: number): PendingCommentDraft[] =>
-      docPending.filter((p) => resolveLine(p.lineNumber) === lineNum),
+      docPending.filter((p) => p.lineNumber != null && resolveLine(p.lineNumber) === lineNum),
     [docPending, resolveLine]
   )
 
@@ -144,18 +147,23 @@ export function CommentableDocument({
     async (text: string) => {
       if (!popover) return
       if (reviewMode) {
-        onAddPendingComment?.(popover.lineNumber, text)
+        onAddPendingComment?.(popover.lineNumber, text, contentHash ?? undefined)
       } else {
         await apiPost(
           basePath,
-          { documentId, content: text, lineNumber: popover.lineNumber },
+          {
+            documentId,
+            content: text,
+            lineNumber: popover.lineNumber,
+            ...(contentHash ? { documentHash: contentHash } : {}),
+          },
           token
         )
         onCommentAdded()
       }
       setPopover(null)
     },
-    [popover, reviewMode, onAddPendingComment, basePath, documentId, token, onCommentAdded]
+    [popover, reviewMode, onAddPendingComment, contentHash, basePath, documentId, token, onCommentAdded]
   )
 
   return (
@@ -313,16 +321,16 @@ export function CommentableDocument({
         </div>
 
         {/* All line comments — mobile accordion (pending drafts aren't editable here; review mode is desktop-only, matching the gutter itself) */}
-        {comments.filter((c) => c.lineNumber != null).length > 0 && (
+        {comments.filter((c) => c.lineNumber != null && !c.anchor).length > 0 && (
           <div className="md:hidden mt-4 border-t border-border pt-4 w-full">
             <details>
               <summary className="text-sm font-medium text-muted-foreground cursor-pointer py-1 select-none">
-                {comments.filter((c) => c.lineNumber != null).length} comment
-                {comments.filter((c) => c.lineNumber != null).length !== 1 ? 's' : ''}
+                {comments.filter((c) => c.lineNumber != null && !c.anchor).length} comment
+                {comments.filter((c) => c.lineNumber != null && !c.anchor).length !== 1 ? 's' : ''}
               </summary>
               <div className="mt-3 space-y-3">
                 {comments
-                  .filter((c) => c.lineNumber != null)
+                  .filter((c) => c.lineNumber != null && !c.anchor)
                   .map((c) => (
                     <CommentThread
                       key={c.id}
@@ -341,64 +349,6 @@ export function CommentableDocument({
         )}
       </div>
     </>
-  )
-}
-
-/** A single held-locally, not-yet-posted comment — editable/deletable until the review is submitted. */
-function PendingCommentRow({
-  draft,
-  editing,
-  onStartEdit,
-  onCancelEdit,
-  onSave,
-  onRemove,
-}: {
-  draft: PendingCommentDraft
-  editing: boolean
-  onStartEdit: () => void
-  onCancelEdit: () => void
-  onSave: (content: string) => void
-  onRemove: () => void
-}) {
-  if (editing) {
-    return (
-      <div className="border border-border rounded p-2 bg-card">
-        <NewCommentForm
-          onSubmit={async (text) => onSave(text)}
-          onCancel={onCancelEdit}
-          size="compact"
-          submitLabel="Save"
-          initialValue={draft.content}
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div className="border border-border rounded p-2 bg-card text-xs">
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <Badge variant="outline" className="text-[10px]">
-          Pending
-        </Badge>
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={onStartEdit}
-            aria-label="Edit pending comment"
-            className="p-0.5 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <PencilIcon className="h-3 w-3" />
-          </button>
-          <button
-            onClick={onRemove}
-            aria-label="Remove pending comment"
-            className="p-0.5 text-destructive hover:text-destructive/80 transition-colors"
-          >
-            <TrashIcon className="h-3 w-3" />
-          </button>
-        </div>
-      </div>
-      <p className="text-foreground whitespace-pre-wrap leading-relaxed">{draft.content}</p>
-    </div>
   )
 }
 
