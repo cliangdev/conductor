@@ -5,10 +5,10 @@ import { DestinationMetrics, DestinationTotals, compactCount, unreportedNote } f
 describe('unreportedNote', () => {
   it('says in words which numbers a platform does not hand out', () => {
     expect(unreportedNote(['tiktok'])).toBeNull()
-    expect(unreportedNote(['facebook'])).toBe("Facebook doesn't report views.")
-    // Instagram's views and shares come from the insights edge the Meta connection is granted.
-    expect(unreportedNote(['instagram', 'facebook', 'instagram'])).toBe("Facebook doesn't report views.")
-    expect(unreportedNote(['instagram'])).toBeNull()
+    expect(unreportedNote(['youtube'])).toBe("Youtube doesn't report shares.")
+    // Views come from the insights edges the Meta connection is granted, for Instagram and Facebook alike.
+    expect(unreportedNote(['instagram', 'youtube', 'instagram'])).toBe("Youtube doesn't report shares.")
+    expect(unreportedNote(['instagram', 'facebook'])).toBeNull()
     expect(unreportedNote(['mastodon'])).toBeNull()
   })
 })

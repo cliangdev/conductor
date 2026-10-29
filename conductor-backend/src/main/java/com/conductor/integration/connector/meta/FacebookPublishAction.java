@@ -184,10 +184,12 @@ class FacebookPublishAction {
     }
 
     /**
-     * Engagement counts for a batch of Page posts — the {@code post_metrics} feed's read. Answers one
-     * {@code metrics} entry per requested id, in order, with {@code unavailable} for an id Graph no longer
-     * resolves — including a Reel id, which does not answer the Page-post insights fields this reads —
-     * so one deleted or unreadable post never hides the numbers of the rest.
+     * Engagement counts for a batch of Page posts and Reels — the {@code post_metrics} feed's read. Answers
+     * one {@code metrics} entry per requested id, in order, with {@code unavailable} for an id Graph no
+     * longer resolves, so one deleted or unreadable post never hides the numbers of the rest. Each row
+     * carries likes (all reactions for a feed post), comments, shares (feed posts only), and views/reach
+     * from the insights edges. When the insights read is forbidden (a connection that predates
+     * {@code read_insights}) the result stays a success with a reconnect hint, so the counts still record.
      */
     ActionResult metrics(Map<String, Object> input, ConnectionContext ctx) {
         List<String> postIds = MetaConnector.MetaActions.stringList(input, "post_ids");
@@ -205,16 +207,24 @@ class FacebookPublishAction {
             return MetaConnector.MetaActions.permanentOrRethrow(e, "Facebook could not read post metrics");
         }
         List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        boolean insightsForbidden = false;
         for (MetaGraphClient.PostMetrics m : read) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("post_id", m.id());
             row.put("unavailable", m.unavailable());
+            if (m.views() != null) row.put("views", m.views());
             if (m.likes() != null) row.put("likes", m.likes());
             if (m.comments() != null) row.put("comments", m.comments());
             if (m.shares() != null) row.put("shares", m.shares());
+            if (m.reach() != null) row.put("reach", m.reach());
             rows.add(row);
+            insightsForbidden = insightsForbidden || m.insightsForbidden();
         }
-        return ActionResult.ok(Map.of("metrics", rows));
+        // Stays a success when insights are forbidden: likes/comments must still be recorded.
+        String message = insightsForbidden
+                ? "Reconnect Facebook to read views and reach (missing the read_insights permission)"
+                : null;
+        return new ActionResult(true, message, Map.of("metrics", rows));
     }
 
     ActionResult get(Map<String, Object> input, ConnectionContext ctx) {
@@ -441,7 +451,7 @@ class FacebookPublishAction {
      * underscore — the same shape {@link #derivedPermalink} already relies on.
      */
     private static boolean isReelId(String id) {
-        return id != null && id.indexOf('_') < 0;
+        return MetaGraphClient.isReelId(id);
     }
 
     /** Graph's answer when a video field is asked of a node that is not a video. */

@@ -456,19 +456,34 @@ public class MetaGraphClient {
 
     /**
      * One published post's counts, as Graph reports them; {@code unavailable} when Graph no longer knows
-     * the id. {@code views}/{@code reach}/{@code saves}/{@code totalInteractions} are populated only for
-     * Instagram media, read from the insights edge ({@link #readMediaMetrics}) — Facebook's read never
-     * sets them. {@code insightsForbidden} is true when the insights read itself came back 403 (a
-     * connection that predates the {@code instagram_manage_insights} scope), so the caller can surface a
-     * reconnect hint without failing the read that still produced likes/comments.
+     * the id. {@code views}/{@code reach} are read from the insights edge for Facebook posts
+     * ({@link #readPostMetrics}: {@code post_media_view} / {@code post_total_media_view_unique}) and Reels
+     * (views only), and {@code views}/{@code reach}/{@code saves}/{@code totalInteractions} for Instagram
+     * media ({@link #readMediaMetrics}). {@code insightsForbidden} is true when the insights read itself
+     * came back 403 (a connection that predates the {@code read_insights} /
+     * {@code instagram_manage_insights} scope), so the caller can surface a reconnect hint without failing
+     * the read that still produced likes/comments.
      */
     public record PostMetrics(String id, Long views, Long likes, Long comments, Long shares, Long reach,
                               Long saves, Long totalInteractions, boolean unavailable, boolean insightsForbidden) {}
 
     /**
-     * Reads the engagement counts of up to fifty Page posts in one call ({@code ?ids=a,b,c}). An id Graph
-     * cannot resolve comes back as an error entry, which is recorded as {@code unavailable} rather than
-     * failing the batch — one deleted post must not hide the counts of the rest.
+     * Whether {@code id} names a Reel video rather than a Page post: a Page post id is always
+     * {@code {page-id}_{post-id}}, while a video id (a Reel's included) is a bare numeric string with no
+     * underscore. The two answer different fields and different insights edges, so every Facebook read
+     * branches on this one check.
+     */
+    static boolean isReelId(String id) {
+        return id != null && id.indexOf('_') < 0;
+    }
+
+    /**
+     * Reads the engagement counts of up to fifty Page posts, one read per post. An id Graph cannot resolve
+     * is recorded as {@code unavailable} rather than failing the batch — one deleted post must not hide the
+     * counts of the rest. Feed posts count all reactions (what Facebook displays; {@code likes} counts only
+     * the plain Like) and read views/reach off {@code /insights}; Reels (bare video ids) have no
+     * {@code shares} field, so it is never asked, and read views off {@code /video_insights}. A 403 on the
+     * insights read keeps the counts and flags {@code insightsForbidden}.
      */
     public List<PostMetrics> readPostMetrics(List<String> postIds, String pageToken) {
         if (postIds == null || postIds.isEmpty()) {
@@ -478,7 +493,12 @@ public class MetaGraphClient {
         // v26+ ("The ids query parameter is deprecated"), and a new app is pinned there from day one.
         List<PostMetrics> metrics = new ArrayList<>();
         for (String id : postIds) {
-            JsonNode node = readNodeOrNull(id, FACEBOOK_POST_COUNT_FIELDS, pageToken);
+            boolean reel = isReelId(id);
+            JsonNode node = readNodeOrNull(id, reel ? FACEBOOK_REEL_COUNT_FIELDS : FACEBOOK_POST_COUNT_FIELDS,
+                    pageToken);
+            Long likes;
+            Long comments;
+            Long shares = null;
             if (node == null) {
                 // Graph refuses the whole read when it refuses any one field, so a refusal here does not
                 // mean the post is gone. Only an id that won't read on its own is "no longer on the
@@ -487,30 +507,133 @@ public class MetaGraphClient {
                     metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, true, false));
                     continue;
                 }
-                JsonNode likes = readNodeOrNull(id, "likes.summary(true).limit(0)", pageToken);
-                if (likes == null) {
-                    likes = readNodeOrNull(id, "reactions.summary(true).limit(0)", pageToken);
+                JsonNode reactions = reel ? null : readNodeOrNull(id, "reactions.summary(true).limit(0)", pageToken);
+                JsonNode plainLikes = reactions != null ? null
+                        : readNodeOrNull(id, "likes.summary(true).limit(0)", pageToken);
+                JsonNode commentsNode = readNodeOrNull(id, "comments.summary(true).limit(0)", pageToken);
+                likes = reactions != null ? summaryCount(reactions.path("reactions"))
+                        : plainLikes != null ? summaryCount(plainLikes.path("likes")) : null;
+                comments = commentsNode == null ? null : summaryCount(commentsNode.path("comments"));
+                if (!reel) {
+                    JsonNode sharesNode = readNodeOrNull(id, "shares", pageToken);
+                    shares = sharesNode == null ? null : sharesCount(sharesNode);
                 }
-                JsonNode comments = readNodeOrNull(id, "comments.summary(true).limit(0)", pageToken);
-                JsonNode shares = readNodeOrNull(id, "shares", pageToken);
-                metrics.add(new PostMetrics(id, null,
-                        likes == null ? null : summaryCount(likes.has("likes") ? likes.path("likes") : likes.path("reactions")),
-                        comments == null ? null : summaryCount(comments.path("comments")),
-                        shares == null ? null : sharesCount(shares),
-                        null, null, null, false, false));
-                continue;
+            } else {
+                likes = summaryCount(node.has("reactions") ? node.path("reactions") : node.path("likes"));
+                comments = summaryCount(node.path("comments"));
+                shares = reel ? null : sharesCount(node);
             }
-            metrics.add(new PostMetrics(id, null,
-                    summaryCount(node.path("likes")),
-                    summaryCount(node.path("comments")),
-                    sharesCount(node),
-                    null, null, null, false, false));
+            Long views;
+            Long reach = null;
+            boolean forbidden;
+            if (reel) {
+                InsightValues plays = readInsightValues(id, "video_insights", "blue_reels_play_count", pageToken);
+                views = plays.values().get("blue_reels_play_count");
+                forbidden = plays.forbidden();
+                if (views == null && !forbidden) {
+                    InsightValues total = readInsightValues(id, "video_insights", "fb_reels_total_plays", pageToken);
+                    views = total.values().get("fb_reels_total_plays");
+                    forbidden = total.forbidden();
+                }
+            } else {
+                InsightValues insights = readInsightValues(id, "insights", FACEBOOK_POST_INSIGHTS, pageToken);
+                views = insights.values().get("post_media_view");
+                reach = insights.values().get("post_total_media_view_unique");
+                forbidden = insights.forbidden();
+            }
+            metrics.add(new PostMetrics(id, views, likes, comments, shares, reach, null, null, false, forbidden));
         }
         return metrics;
     }
 
     private static final String FACEBOOK_POST_COUNT_FIELDS =
-            "id,shares,likes.summary(true).limit(0),comments.summary(true).limit(0)";
+            "id,shares,reactions.summary(true).limit(0),comments.summary(true).limit(0)";
+
+    /** A video node has no {@code shares} field; asking for it fails the whole read, so a Reel never does. */
+    private static final String FACEBOOK_REEL_COUNT_FIELDS =
+            "id,likes.summary(true).limit(0),comments.summary(true).limit(0)";
+
+    /**
+     * Page post insights: views and unique viewers. Meta retired the {@code post_impressions*} family in
+     * Nov 2025, and a retired metric fails the whole call, so only the {@code *_media_view*} metrics are asked.
+     */
+    private static final String FACEBOOK_POST_INSIGHTS = "post_media_view,post_total_media_view_unique";
+
+    /** Insight metric values by name; {@code forbidden} when the edge answered 403 (no {@code read_insights}). */
+    private record InsightValues(Map<String, Long> values, boolean forbidden) {
+        static final InsightValues EMPTY = new InsightValues(Map.of(), false);
+        static final InsightValues FORBIDDEN = new InsightValues(Map.of(), true);
+    }
+
+    /**
+     * Reads {@code /{nodeId}/{edge}?metric=...} ({@code insights} for a Page post, {@code video_insights}
+     * for a Reel) and returns {@code data[].values[0].value} by metric name. Meta fails the whole request
+     * when any one metric is retired or unsupported (a 400), so a multi-metric call that is refused is
+     * retried one metric at a time and keeps whatever answers. A 403 means the connection lacks
+     * {@code read_insights}; any other 4xx leaves a gap. A 5xx/IO failure still propagates.
+     */
+    /**
+     * Graph often answers a missing permission as a 400 rather than a 403, carrying error code 10 or 200
+     * ("(#10) Requires read_insights permission"). Read as forbidden, it gets the reconnect hint instead of
+     * a silent gap, and the per-metric retry is skipped, because every metric would be refused the same way.
+     */
+    private static boolean isPermissionError(HttpClientErrorException e) {
+        JsonNode body;
+        try {
+            body = parseJson(e.getResponseBodyAsString());
+        } catch (IllegalStateException ignored) {
+            return false;
+        }
+        int code = body == null ? 0 : body.path("error").path("code").asInt(0);
+        return code == 10 || code == 200;
+    }
+
+    private InsightValues readInsightValues(String nodeId, String edge, String metricsCsv, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + nodeId + "/" + edge)
+                .queryParam("metric", metricsCsv)
+                .encode().build().toUri());
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+            JsonNode body = parseJson(response.getBody());
+            JsonNode data = body != null && body.path("data").isArray() ? body.path("data") : null;
+            if (data == null) {
+                return InsightValues.EMPTY;
+            }
+            Map<String, Long> byName = new java.util.HashMap<>();
+            for (JsonNode entry : data) {
+                String name = entry.path("name").asText(null);
+                JsonNode values = entry.path("values");
+                if (name == null || !values.isArray() || values.isEmpty()) {
+                    continue;
+                }
+                JsonNode value = values.get(0).path("value");
+                if (value.isNumber()) {
+                    byName.put(name, value.asLong());
+                }
+            }
+            return new InsightValues(byName, false);
+        } catch (HttpClientErrorException e) {
+            int status = e.getStatusCode().value();
+            log.debug("Facebook insights [{}] unavailable for {} {}: {} {}", metricsCsv, edge, nodeId, status,
+                    e.getResponseBodyAsString());
+            if (status == 403 || isPermissionError(e)) {
+                return InsightValues.FORBIDDEN;
+            }
+            if (status == 400 && metricsCsv.indexOf(',') >= 0) {
+                Map<String, Long> merged = new java.util.HashMap<>();
+                for (String metric : metricsCsv.split(",")) {
+                    InsightValues one = readInsightValues(nodeId, edge, metric, token);
+                    if (one.forbidden()) {
+                        return InsightValues.FORBIDDEN;
+                    }
+                    merged.putAll(one.values());
+                }
+                return new InsightValues(merged, false);
+            }
+            return InsightValues.EMPTY;
+        }
+    }
 
     /** A post's share count; a post nobody has shared carries no {@code shares} field at all, read as 0. */
     private static Long sharesCount(JsonNode node) {
