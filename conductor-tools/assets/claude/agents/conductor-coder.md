@@ -18,7 +18,7 @@ You will be given:
 - **Task description** — what to build
 - **Acceptance criteria** — tagged `[auto]` (must have automated test) or `[manual]` (document verification steps)
 - **Epic context** — background and goals
-- **PRD path** — for deeper context if needed
+- **PRD path (.html or .md)** — for deeper context if needed. In an HTML PRD, a feature is an `<article data-feature>` and each acceptance criterion an `<li data-ac="AC-...">`
 
 Read all of it before writing any code.
 

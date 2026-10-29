@@ -1,7 +1,8 @@
 ---
 name: conductor:prd
-description: Create PRDs for Conductor projects through discovery, research, and guided writing
-allowed-tools: mcp__conductor__*, AskUserQuestion, Task, Read, Write, Glob, Grep, WebSearch, Bash
+description: Create PRDs for Conductor projects through discovery, research, and guided writing. Writes an HTML PRD by default (markdown on request), or imports an existing HTML page / claude.ai artifact as a PRD.
+argument-hint: "[import <claude.ai artifact URL or .html path>]"
+allowed-tools: mcp__conductor__*, AskUserQuestion, Task, Read, Write, Glob, Grep, WebSearch, Bash, Artifact
 ---
 
 # /conductor:prd
@@ -10,6 +11,8 @@ You are a PRD creation assistant for the Conductor workflow.
 
 ## Trigger
 This skill runs when the user invokes `/conductor:prd`.
+
+If the argument starts with `import` (`/conductor:prd import <claude.ai artifact URL or .html path>`), skip Phases 1-3 and follow **Import Route** at the end of this file. Otherwise continue with the phases below.
 
 ## Prerequisites Check
 Read `~/.conductor/config.json`. If missing or lacking `localPath`, `projectId`, or `apiKey`, respond:
@@ -98,22 +101,129 @@ Use AskUserQuestion:
 
 ### 3b. Write Full PRD
 
-Write the PRD using the format below. Target 1-2 pages — keep it concise enough to review in under 5 minutes.
+**Format.** Write the PRD as **HTML** (`prd.html`) unless the user asked for markdown, in which case use the markdown fallback (`prd.md`). Both formats carry the same schema-v2 content: seven required sections in a fixed order, stable feature and acceptance-criterion IDs, and a contract block on every P0 feature. Target 1-2 pages — concise enough to review in under 5 minutes.
 
-**Guidelines:**
-- Frontmatter MUST include `schemaVersion: 2`
-- The seven required H2 sections must appear in this exact order: `Problem`, `Glossary`, `Goals`, `Non-Goals`, `Users`, `Reference Patterns`, `Features`
-- If `Glossary` or `Reference Patterns` truly has nothing to add, write `_None._` rather than omitting the section
+**Content guidelines (both formats):**
+- The seven required sections appear in this exact order: Problem, Glossary, Goals, Non-Goals, Users, Reference Patterns, Features. Optional sections (Out of Scope, Open Questions, Supporting Documents) come after.
+- If Glossary or Reference Patterns truly has nothing to add, say so explicitly ("None") rather than omitting the section or leaving it empty
 - Features get stable IDs that restart within each priority: `P0-1`, `P0-2`, ... and `P1-1`, `P1-2`, ...
-- Every P0 feature must include all six bold-prefix lines: `**What**`, `**Not**`, `**Inputs**`, `**Outputs**`, `**Invariants**`, `**Acceptance Criteria**`
-- For P0 features with no exclusions, write `**Not**: _None._` rather than omitting the line; P1 features may omit `Not`
-- Every acceptance criterion line gets a stable ID matching the regex `^AC-P[01]-\d+\.\d+$` (e.g. `AC-P0-1.1`, `AC-P1-2.3`); AC IDs must be unique within the PRD
-- Acceptance criteria should be verifiable: use "Given/When/Then" or measurable thresholds — not vague descriptions like "works correctly"
-- Keep technical implementation details out of the main PRD (they go in `architecture.md`)
-- Keep edge cases out of the main PRD (they go in implementation specs)
-- Leave the Supporting Documents section empty — links will be added when docs are created
+- Every P0 feature carries What, Not, Inputs, Outputs, Invariants and Acceptance Criteria. For a P0 feature with no exclusions, write "None" under Not. P1 features may omit Not, Inputs, Outputs and Invariants
+- Every acceptance criterion gets a stable ID matching `^AC-P[01]-\d+\.\d+$` (e.g. `AC-P0-1.1`), unique within the PRD, with the feature's ID inside it (`AC-P0-3.2` belongs to `P0-3`)
+- Acceptance criteria are verifiable: Given/When/Then or measurable thresholds, not "works correctly"
+- Keep technical implementation details out of the PRD (they go in `architecture.md`) and edge cases out (they go in implementation specs)
+- Leave Supporting Documents empty until documents exist
 
-### PRD Format
+**HTML contract (`prd.html`):**
+- `<head>` has `<title>` and three metas: `conductor:doc-type` = `prd`, `conductor:schema-version` = `2`, `conductor:issue-id` = the Work Item ID
+- Each section is `<section id="{name}" data-prd-section="{name}">` with an `<h2>`; names, in order: `problem`, `glossary`, `goals`, `non-goals`, `users`, `reference-patterns`, `features`, then optional `out-of-scope`, `open-questions`, `supporting-documents`
+- An empty Glossary or Reference Patterns contains exactly `<p><em>None.</em></p>`
+- Each feature is `<article id="P0-1" data-feature="P0-1">` with an `<h3>`, then a `<dl>` whose `<dt>`s are What, Not, Inputs, Outputs, Invariants, then `<ul data-acs>` of `<li data-ac="AC-P0-1.1">…</li>`
+- Self-contained: inline `<style>` and `<script>`, Google Fonts, and CDN scripts only from cdnjs.cloudflare.com, cdn.jsdelivr.net or unpkg.com with a pinned version. No `fetch`/XHR and no `window.claude` calls — Conductor renders the page in a sandbox with no network access. The page needs no script; add one only when it earns its place
+- Escape `<`, `>` and `&` in text. Keep ids stable: reviewers' comments reference the nearest section id
+
+### HTML PRD Template
+
+Keep this structure and token block; adapt the visual style to the product's design language from Phase 2a when the PRD is UI-heavy.
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="conductor:doc-type" content="prd">
+<meta name="conductor:schema-version" content="2">
+<meta name="conductor:issue-id" content="{issueId}">
+<title>{title}</title>
+<style>
+:root{--bg:#fff;--fg:#1a1d21;--muted:#5b6470;--line:#e3e6ea;--card:#f6f7f9;--accent:#2f5bea}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8eaed;--muted:#9aa3ae;--line:#2a2e35;--card:#1c1f25;--accent:#7b9bff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+nav{position:sticky;top:0;z-index:1;display:flex;gap:16px;overflow-x:auto;white-space:nowrap;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:14px}
+nav a{color:var(--muted);text-decoration:none}nav a:hover{color:var(--accent)}
+main{max-width:760px;margin:0 auto;padding:0 16px 64px}
+h1{font-size:2rem;line-height:1.2;margin:32px 0 4px}
+h2{font-size:1.25rem;margin:0 0 12px}
+h3{font-size:1.05rem;margin:0 0 8px}
+.sub{color:var(--muted);margin:0 0 8px}
+section{padding:24px 0;border-top:1px solid var(--line);scroll-margin-top:56px}
+article{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:12px 0}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:0 0 12px}
+dt{color:var(--muted);font-weight:600}dd{margin:0}
+ul[data-acs]{margin:0;padding-left:20px}
+@media (max-width:560px){dl{grid-template-columns:1fr}dd{margin-bottom:6px}}
+</style>
+</head>
+<body>
+<nav>
+<a href="#problem">Problem</a><a href="#glossary">Glossary</a><a href="#goals">Goals</a><a href="#non-goals">Non-Goals</a><a href="#users">Users</a><a href="#reference-patterns">Reference Patterns</a><a href="#features">Features</a>
+</nav>
+<main>
+<h1>{title}</h1>
+<p class="sub">PRD · {issueId}</p>
+
+<section id="problem" data-prd-section="problem"><h2>Problem</h2>
+<p>{2-3 sentences: what hurts, for whom, and how we know}</p></section>
+
+<section id="glossary" data-prd-section="glossary"><h2>Glossary</h2>
+<dl><dt>{Term}</dt><dd>{project-specific definition}</dd></dl>
+<!-- nothing to define: replace the <dl> with <p><em>None.</em></p> --></section>
+
+<section id="goals" data-prd-section="goals"><h2>Goals</h2>
+<ul><li>{Measurable outcome}</li></ul></section>
+
+<section id="non-goals" data-prd-section="non-goals"><h2>Non-Goals</h2>
+<ul><li>{Explicit exclusion}</li></ul></section>
+
+<section id="users" data-prd-section="users"><h2>Users</h2>
+<p>{Target users and their primary needs, 2-4 sentences}</p></section>
+
+<section id="reference-patterns" data-prd-section="reference-patterns"><h2>Reference Patterns</h2>
+<ul><li><strong>{Aspect}</strong>: {existing file or convention to mirror}</li></ul>
+<!-- none apply: replace the <ul> with <p><em>None.</em></p> --></section>
+
+<section id="features" data-prd-section="features"><h2>Features</h2>
+<h3 class="sub">P0: Must Have</h3>
+<article id="P0-1" data-feature="P0-1"><h3>P0-1: {Feature Name}</h3>
+<dl>
+<dt>What</dt><dd>{precise scope in 1 sentence}</dd>
+<dt>Not</dt><dd>{explicit exclusions, or <em>None.</em>}</dd>
+<dt>Inputs</dt><dd>{what triggers this / what data flows in}</dd>
+<dt>Outputs</dt><dd>{artifact, response or state change}</dd>
+<dt>Invariants</dt><dd>{properties that must always hold}</dd>
+</dl>
+<ul data-acs>
+<li data-ac="AC-P0-1.1">{Given/When/Then or measurable threshold}</li>
+<li data-ac="AC-P0-1.2">{testable criterion}</li>
+</ul></article>
+
+<h3 class="sub">P1: Should Have</h3>
+<article id="P1-1" data-feature="P1-1"><h3>P1-1: {Feature Name}</h3>
+<dl><dt>What</dt><dd>{precise scope in 1 sentence}</dd></dl>
+<ul data-acs><li data-ac="AC-P1-1.1">{testable criterion}</li></ul></article>
+</section>
+
+<section id="out-of-scope" data-prd-section="out-of-scope"><h2>Out of Scope</h2>
+<ul><li>{Item explicitly deferred}</li></ul></section>
+
+<section id="open-questions" data-prd-section="open-questions"><h2>Open Questions</h2>
+<ul><li>{unresolved item}</li></ul></section>
+
+<section id="supporting-documents" data-prd-section="supporting-documents"><h2>Supporting Documents</h2>
+<p>Links are added here as supporting documents are created.</p></section>
+</main>
+</body>
+</html>
+```
+
+### Markdown fallback (`prd.md`, only when the user asks for markdown)
+
+Same content rules. Markdown specifics:
+- Frontmatter MUST include `schemaVersion: 2`
+- If `Glossary` or `Reference Patterns` has nothing to add, write `_None._`
+- Every P0 feature includes all six bold-prefix lines: `**What**`, `**Not**`, `**Inputs**`, `**Outputs**`, `**Invariants**`, `**Acceptance Criteria**` (`**Not**: _None._` when nothing is excluded)
+- Each AC line is `- [ ] \`AC-P0-1.1\` …`
 
 ```markdown
 ---
@@ -130,7 +240,6 @@ schemaVersion: 2
 
 ## Glossary
 - **{Term}**: {project-specific definition, distinguishing it from generic usage}
-- **{Term}**: {definition}
 
 (If truly nothing to define, write `_None._`)
 
@@ -140,14 +249,12 @@ schemaVersion: 2
 
 ## Non-Goals
 - {Explicit exclusion 1}
-- {Explicit exclusion 2}
 
 ## Users
 {Target users and their primary needs — 2-4 sentences}
 
 ## Reference Patterns
 - **{Aspect}**: {existing file or convention to mirror, e.g. "follow `src/commands/doctor.ts` — same Commander registration, `--json` output mode, exit codes"}
-- **{Aspect}**: {pattern}
 
 (If truly no reference patterns apply, write `_None._`)
 
@@ -164,15 +271,6 @@ schemaVersion: 2
 - **Acceptance Criteria**:
   - [ ] `AC-P0-1.1` {Given/When/Then or measurable threshold}
   - [ ] `AC-P0-1.2` {testable criterion}
-
-#### P0-2: {Feature Name}
-- **What**: {precise scope in 1 sentence}
-- **Not**: _None._
-- **Inputs**: {inputs}
-- **Outputs**: {outputs}
-- **Invariants**: {invariants}
-- **Acceptance Criteria**:
-  - [ ] `AC-P0-2.1` {testable criterion}
 
 ### P1: Should Have
 
@@ -193,8 +291,19 @@ schemaVersion: 2
 
 ### 3c. Self-Check
 
-Before showing the PRD to the user in Step 3d, run through this checklist mentally and fix any items that fail. Do not skip — this is the gate that keeps schema v2 PRDs deterministic for downstream agents.
+Before showing the PRD to the user in Step 3d, run through the checklist for the format you wrote and fix any item that fails. Do not skip — this is the gate that keeps schema v2 PRDs deterministic for downstream agents. `conductor lint {issueId}` runs the same checks after saving.
 
+**If HTML (`prd.html`):**
+- [ ] `<head>` has `<title>` and the metas `conductor:doc-type` = `prd`, `conductor:schema-version` = `2`, `conductor:issue-id`
+- [ ] Seven `<section id data-prd-section>` elements in order: `problem`, `glossary`, `goals`, `non-goals`, `users`, `reference-patterns`, `features` — each with an `<h2>`
+- [ ] `glossary` and `reference-patterns` hold real entries or exactly `<p><em>None.</em></p>`
+- [ ] Every feature is `<article id="P0-n" data-feature="P0-n">` (numbering restarts per priority) with an `<h3>`
+- [ ] Every P0 feature's `<dl>` has `<dt>`s What, Not, Inputs, Outputs, Invariants, and a `<ul data-acs>` follows (P1 features may omit all but What)
+- [ ] Every criterion is `<li data-ac="AC-P0-1.1">` with an id matching `^AC-P[01]-\d+\.\d+$`
+- [ ] Every AC id is unique, and its feature part matches the enclosing article (`AC-P0-3.2` only inside `P0-3`)
+- [ ] No `fetch`/XHR/`window.claude`; scripts, if any, are inline or pinned from cdnjs.cloudflare.com, cdn.jsdelivr.net or unpkg.com
+
+**If markdown (`prd.md`):**
 - [ ] Frontmatter contains `schemaVersion: 2`
 - [ ] All seven H2 sections are present in this exact order: `Problem`, `Glossary`, `Goals`, `Non-Goals`, `Users`, `Reference Patterns`, `Features`
 - [ ] `Glossary` and `Reference Patterns` are non-empty (either real entries, or the literal text `_None._`)
@@ -225,10 +334,10 @@ Call MCP tools in this exact sequence:
 2. **Create the Work Item**: `create_work_item({workflow, type: "PRD", title, description})`
    - Receive: `{issueId, displayId, localPath}`
 
-3. **Scaffold document**: `scaffold_document({issueId, filename: "prd.md"})`
-   - Receive: `{localPath: ".conductor/issues/{issueId}/prd.md", absolutePath: "/abs/path/to/.conductor/issues/{issueId}/prd.md"}`
+3. **Scaffold document**: `scaffold_document({issueId, filename: "prd.html"})` (or `"prd.md"` when writing markdown). The filename extension sets the content type.
+   - Receive: `{localPath: ".conductor/issues/{issueId}/prd.html", absolutePath: "/abs/path/to/.conductor/issues/{issueId}/prd.html"}`
 
-4. **Write content**: Use the Write tool with the `absolutePath` from step 3 (Write requires absolute paths) to write the full PRD with YAML frontmatter including the `issueId` from step 2.
+4. **Write content**: Use the Write tool with the `absolutePath` from step 3 (Write requires absolute paths) to write the full PRD, with the `issueId` from step 2 in the `conductor:issue-id` meta tag (HTML) or the YAML frontmatter (markdown).
 
 5. **Move to IN_REVIEW** (definition-driven): call `get_available_transitions({issueId})` to confirm `IN_REVIEW` is an available next status from the Workflow's initial status, then `transition_work_item({issueId, toStatus: "IN_REVIEW"})`, signalling the PRD is ready for team review.
 
@@ -246,7 +355,9 @@ Options:
 For each accepted supporting document:
 1. `scaffold_document({issueId, filename: "{doc-filename}"})`
 2. Write the template content (see templates below) using the Write tool with the returned `absolutePath`
-3. **Update the PRD's Supporting Documents section**: Read the saved `prd.md` (use the `absolutePath` returned from step 3 of the main save sequence), replace the placeholder line with a relative link entry (e.g. `- [Architecture](./architecture.md)`), and write it back.
+3. **Update the PRD's Supporting Documents section**: Read the saved PRD file (use the `absolutePath` returned from step 3 of the main save sequence), replace the placeholder line with a relative link entry, and write it back.
+   - HTML PRD: add `<li><a href="./architecture.md">Architecture</a> (architecture.md)</li>` inside a `<ul>` in the `supporting-documents` section. Conductor's HTML viewer does not yet turn `./` links into document tabs, so keep the filename visible as text next to the link.
+   - Markdown PRD: `- [Architecture](./architecture.md)` (the markdown viewer opens it as a tab).
 
 **UI/UX quality bar for wireframes and HTML mocks:**
 Before writing any UI artifact, recall the design language catalogued in Phase 2a. All wireframes and mocks must:
@@ -418,3 +529,22 @@ Write a valid standalone HTML file with inline CSS — no external dependencies.
 - Use the same component vocabulary: if the product uses card containers with subtle shadows, use that here; if it uses bordered panels, do that instead
 - Show at least two states: the default/happy-path view AND one of empty/loading/error
 - Add a small `<!-- note: ... -->` comment for any placeholder or approximation that differs from the real product
+
+## Import Route
+
+`/conductor:prd import <claude.ai artifact URL or .html path>` brings an existing HTML page into Conductor as a PRD. It uses your Claude Code access to the artifact, because Conductor's backend cannot fetch private claude.ai pages.
+
+1. **Read the page.**
+   - A `.html` / `.htm` path: Read the file.
+   - A claude.ai artifact URL (`claude.ai/artifact/{id}` or `claude.ai/code/artifact/{id}`): call the Artifact tool with `action: "read"` and the URL.
+     - If the result is only a summary because the artifact belongs to someone else, **stop**. Say the full page is only readable for artifacts the user owns, and ask them to download the `.html` file and re-run `/conductor:prd import <path>`.
+     - If the result lists declared runtime capabilities (live data, shared state, Claude calls), warn the user: Conductor renders pages in a sandbox with no network and no `window.claude`, so those parts will not work there.
+     - For the user's own artifact the result names a saved file that holds the full page: Read that file.
+2. **Detect whether it already meets the HTML PRD contract**: the `conductor:doc-type` = `prd` meta tag plus `data-prd-section` and `data-ac` markers (Grep the content).
+   - **Meets it**: keep the page verbatim. Skip to step 3 and only set `conductor:issue-id` (adding the meta tag if absent) once the Work Item exists. Run the HTML self-check from 3c and report any failures to the user rather than rewriting their page.
+   - **Does not meet it**: use AskUserQuestion with these options:
+     - "Convert to Conductor PRD (keeps content and styling, adds the structure)" (Recommended) — restructure the page into the seven sections, feature articles and `data-ac` criteria; keep the author's wording, CSS and layout. Do not invent content: put real source material in each section, write "None" where the page has nothing, and draft any missing P0 fields (Not, Inputs, Outputs, Invariants, acceptance criteria) from the page's own content, flagging them for review. Run the 3c self-check, then 3d.
+     - "Attach as-is as a supporting document"
+     - "Cancel" — stop.
+   - **Attach as-is**: ask (AskUserQuestion) which Work Item to attach to — an existing one (`list_work_items`) or a new one (resolve the Workflow and create it as in Phase 4 steps 1-2). Then `scaffold_document({issueId, filename})` with a descriptive `.html` filename that is not `prd.html`, Write the page verbatim to the returned `absolutePath`, and confirm. No status transition.
+3. **Save a PRD** (meets the contract, or converted) with the Phase 4 sequence: resolve the Workflow, `create_work_item` (title from `<title>` or the `<h1>`, description from the Problem section), `scaffold_document({issueId, filename: "prd.html"})`, Write, then the IN_REVIEW transition and confirmation. Offer supporting documents as in Phase 4.

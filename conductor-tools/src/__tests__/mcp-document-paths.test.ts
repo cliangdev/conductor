@@ -19,6 +19,7 @@ vi.mock('../mcp/queue.js', () => ({
 import { scaffoldDocument, writeDocument } from '../mcp/tools/documents.js'
 import { createWorkItem, getWorkItem } from '../mcp/tools/issues.js'
 import { apiPost, apiGet, apiPut } from '../mcp/api.js'
+import { queueChange } from '../mcp/queue.js'
 import type { Config } from '../mcp/config.js'
 
 const mockedApiPost = vi.mocked(apiPost)
@@ -73,6 +74,27 @@ describe('scaffoldDocument absolutePath', () => {
     expect(result['alreadyExists']).toBe(true)
     expect(result['absolutePath']).toBe(filePath)
     expect(mockedApiPost).not.toHaveBeenCalled()
+  })
+
+  it('registers .html documents as text/html and .md as text/markdown', async () => {
+    mockedApiPost.mockResolvedValue({ id: 'doc_h', filename: 'prd.html', issueId })
+
+    await scaffoldDocument({ issueId, filename: 'prd.html' }, baseConfig)
+    await scaffoldDocument({ issueId, filename: 'prd.md' }, baseConfig)
+
+    expect(mockedApiPost.mock.calls[0][1]).toEqual({ filename: 'prd.html', contentType: 'text/html' })
+    expect(mockedApiPost.mock.calls[1][1]).toEqual({ filename: 'prd.md', contentType: 'text/markdown' })
+  })
+
+  it('queues the retry with text/html for an .html file when the backend is down', async () => {
+    mockedApiPost.mockRejectedValueOnce(new Error('network down'))
+
+    await scaffoldDocument({ issueId, filename: 'mockup.html' }, baseConfig)
+
+    expect(vi.mocked(queueChange).mock.calls.at(-1)?.[0].body).toEqual({
+      content: '',
+      contentType: 'text/html',
+    })
   })
 
   it('returns absolutePath even when backend sync fails (queued path)', async () => {
@@ -168,16 +190,39 @@ describe('writeDocument', () => {
     expect(fs.readFileSync(mirroredPath, 'utf8')).toBe('# Hello')
   })
 
-  it('omits contentType from the body when not provided', async () => {
+  it('defaults contentType from the filename when not provided', async () => {
     mockedApiPut.mockResolvedValueOnce({ id: 'doc_2', filename: 'notes.md', issueId })
 
     await writeDocument({ issueId, filename: 'notes.md', content: 'notes' }, baseConfig)
 
     expect(mockedApiPut).toHaveBeenCalledWith(
       `/api/v2/projects/proj_test/work-items/${issueId}/documents/notes.md`,
-      { content: 'notes' },
+      { content: 'notes', contentType: 'text/markdown' },
       baseConfig
     )
+  })
+
+  it('sends text/html for an .html filename when contentType is omitted', async () => {
+    mockedApiPut.mockResolvedValueOnce({ id: 'doc_4', filename: 'prd.html', issueId })
+
+    await writeDocument({ issueId, filename: 'prd.html', content: '<p>hi</p>' }, baseConfig)
+
+    expect(mockedApiPut).toHaveBeenCalledWith(
+      `/api/v2/projects/proj_test/work-items/${issueId}/documents/prd.html`,
+      { content: '<p>hi</p>', contentType: 'text/html' },
+      baseConfig
+    )
+  })
+
+  it('keeps an explicit contentType over the filename default', async () => {
+    mockedApiPut.mockResolvedValueOnce({ id: 'doc_5', filename: 'x.html', issueId })
+
+    await writeDocument(
+      { issueId, filename: 'x.html', content: 'c', contentType: 'text/plain' },
+      baseConfig
+    )
+
+    expect(mockedApiPut.mock.calls[0][1]).toEqual({ content: 'c', contentType: 'text/plain' })
   })
 
   it('succeeds headlessly when there is no local project directory (no localPath configured)', async () => {

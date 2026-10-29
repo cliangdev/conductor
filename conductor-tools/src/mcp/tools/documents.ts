@@ -4,6 +4,7 @@ import { Config } from '../config.js'
 import { apiPost, apiPut, apiDelete } from '../api.js'
 import { deleteDocumentFile, resolveLocalPath, writeDocumentFile } from '../files.js'
 import { queueChange } from '../queue.js'
+import { contentTypeFor } from '../../lib/content-type.js'
 
 interface DocumentResponse {
   id: string
@@ -20,8 +21,10 @@ export async function writeDocument(
   params: { issueId: string; filename: string; content: string; contentType?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  const body: Record<string, unknown> = { content: params.content }
-  if (params.contentType !== undefined) body['contentType'] = params.contentType
+  const body: Record<string, unknown> = {
+    content: params.content,
+    contentType: params.contentType ?? contentTypeFor(params.filename),
+  }
 
   const result = await apiPut<Record<string, unknown>>(
     `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents/${encodeURIComponent(params.filename)}`,
@@ -85,7 +88,7 @@ export async function scaffoldDocument(
   try {
     const result = await apiPost<DocumentResponse>(
       `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents`,
-      { filename: params.filename, contentType: 'text/markdown' },
+      { filename: params.filename, contentType: contentTypeFor(params.filename) },
       config
     )
     documentId = result.id
@@ -93,7 +96,7 @@ export async function scaffoldDocument(
     queueChange({
       method: 'PUT',
       path: `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents/${encodeURIComponent(params.filename)}`,
-      body: { content: '', contentType: 'text/markdown' },
+      body: { content: '', contentType: contentTypeFor(params.filename) },
       timestamp: new Date().toISOString(),
     })
     return {

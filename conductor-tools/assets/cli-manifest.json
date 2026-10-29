@@ -155,7 +155,7 @@
     "slashCommands": [
       {
         "name": "conductor:prd",
-        "description": "Create a PRD for the current project through guided discovery, research, and writing."
+        "description": "Create a PRD for the current project through guided discovery, research, and writing. Writes HTML by default; `import` turns an existing HTML page or claude.ai artifact into a PRD."
       },
       {
         "name": "conductor:implement",
@@ -291,7 +291,7 @@
     },
     {
       "name": "list_work_item_comments",
-      "description": "List comments on a Work Item, optionally filtered by resolved status.",
+      "description": "List comments on a Work Item, optionally filtered by resolved status. HTML-document comments include a text anchor and an outdated flag.",
       "category": "comments",
       "requiredParams": [
         "issueId"

@@ -349,6 +349,24 @@ describe('syncFile', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([
+    ['mockup.html', 'text/html'],
+    ['prd.md', 'text/markdown'],
+    ['data.json', 'application/json'],
+  ])('labels %s as %s on PUT', async (filename, contentType) => {
+    mockFs.readFileSync.mockReturnValue('content')
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', filename)
+    await syncFile(filePath, () => mockConfig)
+
+    const init = mockFetch.mock.calls[0][1] as { body: string }
+    expect(JSON.parse(init.body)).toEqual({ content: 'content', contentType })
+    vi.unstubAllGlobals()
+  })
+
   it('reads file and calls PUT API within expected flow', async () => {
     const fileContent = '# Issue content'
     mockFs.readFileSync.mockReturnValue(fileContent)
