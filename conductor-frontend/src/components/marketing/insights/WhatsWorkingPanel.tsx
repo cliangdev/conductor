@@ -96,6 +96,9 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
 
   const [data, setData] = useState<MarketingInsightsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The server narrows coverage.platforms to the active filter, so keep the unfiltered list to stay
+  // switchable (otherwise picking one platform leaves it as the only option).
+  const [allPlatforms, setAllPlatforms] = useState<string[]>([])
 
   const { entries } = useSidebarWorkNav(projectId, accessToken)
   const postWorkflow = useMemo(
@@ -107,7 +110,10 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
     if (!accessToken) return
     setError(null)
     getMarketingInsights(projectId, accessToken, activeWindow, activePlatform || undefined)
-      .then((res) => setData(res))
+      .then((res) => {
+        setData(res)
+        if (!activePlatform) setAllPlatforms(res.coverage.platforms)
+      })
       .catch((err) => {
         setData(null)
         setError(apiErrorMessage(err, 'Could not load insights — please try again.'))
@@ -149,6 +155,10 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
     return `/app/projects/${projectId}/marketing/creatives/${creative.creativeId}`
   }
 
+  const platformOptions = activePlatform && !allPlatforms.includes(activePlatform)
+    ? [...allPlatforms, activePlatform]
+    : allPlatforms
+
   const windowLabel = activeWindow
   const loading = data === null && !error
 
@@ -168,7 +178,7 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
           onChange={(e) => updateQuery({ platform: e.target.value })}
         >
           <option value="">All platforms</option>
-          {(data?.coverage.platforms ?? []).map((p) => (
+          {platformOptions.map((p) => (
             <option key={p} value={p}>
               {humanizeId(p)}
             </option>

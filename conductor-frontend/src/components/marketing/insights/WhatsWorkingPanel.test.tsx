@@ -212,6 +212,27 @@ describe('WhatsWorkingPanel', () => {
     )
   })
 
+  it('keeps every platform in the dropdown after filtering to one', async () => {
+    // The server narrows coverage.platforms to the active filter; the dropdown must not follow it.
+    const filtered = insightsResponse({ coverage: { platforms: ['tiktok'], notes: [] } })
+    stubApi(() => Promise.resolve(insightsResponse()))
+    const view = renderPanel()
+    await screen.findByText('Top posts')
+
+    searchParams = new URLSearchParams({ platform: 'tiktok' })
+    stubApi(() => Promise.resolve(filtered))
+    view.rerender(<WhatsWorkingPanel projectId="proj-1" />)
+
+    await waitFor(() =>
+      expect(apiGet as Mock).toHaveBeenCalledWith(
+        '/api/v2/projects/proj-1/marketing/insights?window=30d&platform=tiktok',
+        'test-token',
+      ),
+    )
+    const options = Array.from((screen.getByLabelText('Platform') as HTMLSelectElement).options).map((o) => o.value)
+    expect(options).toEqual(['', 'instagram', 'tiktok'])
+  })
+
   it('requests the window and platform already present in the URL on load', async () => {
     searchParams = new URLSearchParams({ window: '7d', platform: 'tiktok' })
     stubApi(() => Promise.resolve(insightsResponse()))
