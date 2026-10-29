@@ -8,6 +8,14 @@ interface CommentReply {
   createdAt: string
 }
 
+export interface CommentAnchor {
+  exact: string
+  prefix?: string
+  suffix?: string
+  sectionId?: string
+  sectionTitle?: string
+}
+
 interface CommentResponse {
   id: string
   issueId: string
@@ -15,6 +23,8 @@ interface CommentResponse {
   documentName: string
   lineNumber: number | null
   quotedText: string | null
+  anchor: CommentAnchor | null
+  outdated: boolean
   lineStale: boolean
   content: string
   authorName: string

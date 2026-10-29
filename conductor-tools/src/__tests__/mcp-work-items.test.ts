@@ -109,6 +109,26 @@ describe('canonical work_item MCP tools target v2', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1/comments', config)
   })
 
+  it('list_work_item_comments passes anchor and outdated through untouched', async () => {
+    const comments = [
+      {
+        id: 'c1',
+        documentName: 'prd.html',
+        lineNumber: null,
+        quotedText: 'twenty of 26',
+        anchor: { exact: 'twenty of 26', prefix: 'about ', suffix: ' users', sectionId: 'problem', sectionTitle: 'Problem' },
+        outdated: true,
+        content: 'Check this number',
+      },
+      { id: 'c2', lineNumber: 4, quotedText: 'x', anchor: null, outdated: false, content: 'md comment' },
+    ]
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(comments)
+
+    const result = await listWorkItemComments({ issueId: 'w1' }, config)
+
+    expect(result).toEqual(comments)
+  })
+
 describe('tags reach the API from MCP', () => {
   beforeEach(() => vi.clearAllMocks())
 

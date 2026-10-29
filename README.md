@@ -10,7 +10,7 @@ The coordination layer for an agentic organization. AI agents do the work — au
 
 ## What's in the platform
 
-- **Work Items & Reviews** — typed work (PRDs, issues, campaigns, anything) with documents, line-level comments, reviewers, and approval gates. Types and statuses come from your workflows, not hardcoded enums.
+- **Work Items & Reviews** — typed work (PRDs, issues, campaigns, anything) with documents (markdown or HTML), line and text-selection comments, reviewers, and approval gates. Types and statuses come from your workflows, not hardcoded enums.
 - **Workflows** — two complementary kinds:
   - *Lifecycle statecharts* define how a Work Item moves through states (draft → review → approved → build), including which agent or human acts at each step.
   - *YAML automation* runs jobs on schedule, webhook, or event triggers — with agent, claude-code, docker, http, and integration action steps, artifacts, secrets, and loops. See [docs/workflows.md](docs/workflows.md).

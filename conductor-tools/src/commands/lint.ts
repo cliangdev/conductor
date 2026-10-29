@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { Command } from 'commander'
+import { parse as parseHtml, HTMLElement, NodeType } from 'node-html-parser'
 import { readConfig } from '../lib/config.js'
 import { lintMermaid } from '../lib/mermaid-lint.js'
 
@@ -25,8 +26,33 @@ const REQUIRED_FEATURE_LINES = [
 
 const AC_LINE_REGEX = /^- \[[ x]\] `AC-P[01]-\d+\.\d+`/
 const AC_ID_IN_LINE = /`(AC-P[01]-\d+\.\d+)`/
+const AC_ID_REGEX = /^AC-P[01]-\d+\.\d+$/
+const FEATURE_ID_REGEX = /^P[01]-\d+$/
 
-interface PrdResult {
+// HTML PRD (schema v2): section ids in required order, with their display names.
+const HTML_REQUIRED_SECTIONS = [
+  ['problem', 'Problem'],
+  ['glossary', 'Glossary'],
+  ['goals', 'Goals'],
+  ['non-goals', 'Non-Goals'],
+  ['users', 'Users'],
+  ['reference-patterns', 'Reference Patterns'],
+  ['features', 'Features'],
+] as const
+const HTML_NONEMPTY_SECTIONS = new Set(['glossary', 'reference-patterns'])
+const HTML_P0_FIELDS = ['What', 'Not', 'Inputs', 'Outputs', 'Invariants'] as const
+// Script origins the viewer's CSP allows (script-src). Must stay in sync with the policy in
+// conductor-frontend/src/components/markdown/htmlDocument.ts; docs/html-documents.md is the
+// written source of truth, since the two packages cannot share code.
+const HTML_SCRIPT_ORIGINS = new Set([
+  'https://cdnjs.cloudflare.com',
+  'https://cdn.jsdelivr.net',
+  'https://unpkg.com',
+  'https://cdn.tailwindcss.com',
+  'https://code.jquery.com',
+])
+
+export interface PrdResult {
   errors: string[]
   warnings: string[]
   acIds: string[]
@@ -42,6 +68,7 @@ interface TasksResult {
 
 interface IssueLintResult {
   issueId: string
+  prdFile: string
   prd: { ok: boolean; errors: string[] }
   tasks: { ok: boolean; errors: string[] }
   mermaid: { ok: boolean; errors: string[]; warnings: string[] }
@@ -151,6 +178,154 @@ export function validatePrd(content: string): PrdResult {
         seen.add(id)
         acIds.push(id)
       }
+    }
+  }
+
+  return { errors, warnings, acIds, isV2: true }
+}
+
+/** Visible text of a node, skipping <script>/<style> and (optionally) <h2> headings. */
+function htmlText(node: { childNodes: unknown[] }, skipH2 = false): string {
+  let out = ''
+  for (const child of node.childNodes as Array<{ nodeType: number; rawText: string }>) {
+    if (child.nodeType === NodeType.TEXT_NODE) {
+      out += ` ${child.rawText}`
+    } else if (child.nodeType === NodeType.ELEMENT_NODE) {
+      const el = child as unknown as HTMLElement
+      const tag = el.tagName.toLowerCase()
+      if (tag === 'script' || tag === 'style' || (skipH2 && tag === 'h2')) continue
+      out += ` ${htmlText(el)}`
+    }
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
+/** Validate an HTML PRD (`prd.html`, schema v2) against the same rules as the markdown validator. */
+export function validatePrdHtml(content: string): PrdResult {
+  const errors: string[] = []
+  const warnings: string[] = []
+  const acIds: string[] = []
+  const F = 'prd.html'
+
+  const root = parseHtml(content)
+  const meta = (name: string): string | undefined =>
+    root.querySelector(`meta[name="${name}"]`)?.getAttribute('content')?.trim()
+
+  if (meta('conductor:schema-version') !== '2') {
+    errors.push(`${F}: missing <meta name="conductor:schema-version" content="2">`)
+    return { errors, warnings, acIds, isV2: false }
+  }
+  if (meta('conductor:doc-type') !== 'prd') {
+    errors.push(`${F}: missing <meta name="conductor:doc-type" content="prd">`)
+  }
+
+  // Sections: present, in order, each with an <h2>.
+  const sections = root.querySelectorAll('section[data-prd-section]')
+  const byName = new Map<string, HTMLElement>()
+  for (const sec of sections) {
+    const name = sec.getAttribute('data-prd-section') ?? ''
+    if (!byName.has(name)) byName.set(name, sec)
+  }
+  for (const [name, label] of HTML_REQUIRED_SECTIONS) {
+    const sec = byName.get(name)
+    if (!sec) {
+      errors.push(`${F}: missing required section: ${label}`)
+      continue
+    }
+    if (!sec.querySelector('h2')) {
+      errors.push(`${F}: section ${label}: missing <h2> heading`)
+    }
+    if (HTML_NONEMPTY_SECTIONS.has(name) && htmlText(sec, true) === '' && !sec.querySelector('img, svg, table')) {
+      errors.push(`${F}: section ${label}: empty — write entries or <p><em>None.</em></p>`)
+    }
+  }
+  const requiredNames: readonly string[] = HTML_REQUIRED_SECTIONS.map(([n]) => n)
+  const seenOrder = sections
+    .map(sec => sec.getAttribute('data-prd-section') ?? '')
+    .filter((n, i, arr) => requiredNames.includes(n) && arr.indexOf(n) === i)
+  const expectedOrder = requiredNames.filter(n => seenOrder.includes(n))
+  if (seenOrder.join('|') !== expectedOrder.join('|')) {
+    errors.push(`${F}: sections out of order: expected ${requiredNames.join(', ')}`)
+  }
+
+  // Features and acceptance criteria.
+  const featuresRoot = byName.get('features') ?? root
+  const seenFeatures = new Set<string>()
+  const seenAcs = new Set<string>()
+  for (const art of featuresRoot.querySelectorAll('article[data-feature]')) {
+    const fid = (art.getAttribute('data-feature') ?? '').trim()
+    if (!FEATURE_ID_REGEX.test(fid)) {
+      errors.push(`${F}: feature ${fid || '?'}: malformed feature id (expected P0-1, P1-2, ...)`)
+      continue
+    }
+    if (seenFeatures.has(fid)) errors.push(`${F}: duplicate feature id: ${fid}`)
+    seenFeatures.add(fid)
+    const priority = fid.slice(0, 2)
+
+    if (!art.querySelector('h3')) errors.push(`${F}: feature ${fid}: missing <h3> heading`)
+
+    if (priority === 'P0') {
+      const fields = new Set(
+        art.querySelectorAll('dt').map(dt => htmlText(dt).replace(/:$/, '').trim().toLowerCase())
+      )
+      for (const field of HTML_P0_FIELDS) {
+        if (!fields.has(field.toLowerCase())) {
+          errors.push(`${F}: feature ${fid}: missing required field: ${field}`)
+        }
+      }
+      if (!art.querySelector('ul[data-acs]')) {
+        errors.push(`${F}: feature ${fid}: missing required field: Acceptance Criteria`)
+      }
+    }
+
+    for (const li of art.querySelectorAll('ul[data-acs] > li')) {
+      if (!li.hasAttribute('data-ac')) {
+        errors.push(`${F}: feature ${fid}: acceptance criterion missing data-ac: ${htmlText(li).slice(0, 60)}`)
+      }
+    }
+    for (const li of art.querySelectorAll('[data-ac]')) {
+      const id = (li.getAttribute('data-ac') ?? '').trim()
+      if (!AC_ID_REGEX.test(id)) {
+        errors.push(`${F}: feature ${fid}: malformed acceptance criterion id: ${id || '(empty)'}`)
+        continue
+      }
+      if (!id.startsWith(`AC-${fid}.`)) {
+        errors.push(`${F}: feature ${fid}: AC ${id} does not belong to this feature`)
+      }
+      if (seenAcs.has(id)) {
+        errors.push(`${F}: duplicate AC id: ${id}`)
+      } else {
+        seenAcs.add(id)
+        acIds.push(id)
+      }
+    }
+  }
+
+  // Self-containment: Conductor renders the page with connect-src 'none'.
+  for (const script of root.querySelectorAll('script')) {
+    const src = script.getAttribute('src')
+    if (src) {
+      let origin = ''
+      try {
+        origin = new URL(src).origin
+      } catch {
+        origin = ''
+      }
+      if (!HTML_SCRIPT_ORIGINS.has(origin)) {
+        warnings.push(
+          `${F}: script src ${src} is not from an allowed CDN (${[...HTML_SCRIPT_ORIGINS].map(o => o.replace('https://', '')).join(', ')})`
+        )
+      }
+    }
+    const code = script.innerHTML
+    if (/window\.claude\b/.test(code)) {
+      warnings.push(`${F}: script uses window.claude, which is unavailable in Conductor`)
+    }
+    if (/\bwindow\.open\s*\(/.test(code)) {
+      warnings.push(`${F}: script calls window.open, but the sandbox blocks popups (use a plain https link)`)
+    }
+    if (/\bfetch\s*\(|XMLHttpRequest/.test(code)) {
+      warnings.push(`${F}: script makes network requests, which Conductor blocks (connect-src 'none')`)
     }
   }
 
@@ -314,7 +489,10 @@ export function validateTasks(content: string, prdAcIds: string[]): TasksResult 
 
 function lintIssue(localPath: string, issueId: string): IssueLintResult {
   const issueDir = path.join(localPath, '.conductor', 'issues', issueId)
-  const prdPath = path.join(issueDir, 'prd.md')
+  const htmlPrdPath = path.join(issueDir, 'prd.html')
+  const useHtml = fs.existsSync(htmlPrdPath)
+  const prdFile = useHtml ? 'prd.html' : 'prd.md'
+  const prdPath = useHtml ? htmlPrdPath : path.join(issueDir, 'prd.md')
   const tasksPath = path.join(issueDir, 'tasks.json')
 
   const prdResult: { ok: boolean; errors: string[] } = { ok: true, errors: [] }
@@ -326,10 +504,10 @@ function lintIssue(localPath: string, issueId: string): IssueLintResult {
 
   if (!fs.existsSync(prdPath)) {
     prdResult.ok = false
-    prdResult.errors.push(`prd.md: file not found at ${prdPath}`)
+    prdResult.errors.push(`${prdFile}: file not found at ${prdPath}`)
   } else {
     const content = String(fs.readFileSync(prdPath, 'utf8'))
-    prdValidation = validatePrd(content)
+    prdValidation = useHtml ? validatePrdHtml(content) : validatePrd(content)
     prdResult.errors = prdValidation.errors
     prdResult.ok = prdValidation.errors.length === 0
     warnings.push(...prdValidation.warnings)
@@ -363,7 +541,7 @@ function lintIssue(localPath: string, issueId: string): IssueLintResult {
   }
 
   tasksResult.ok = tasksResult.errors.length === 0
-  return { issueId, prd: prdResult, tasks: tasksResult, mermaid, warnings }
+  return { issueId, prdFile, prd: prdResult, tasks: tasksResult, mermaid, warnings }
 }
 
 function listLocalIssues(localPath: string): string[] {
@@ -469,13 +647,13 @@ Examples:
         }
 
         if (r.prd.ok && r.prd.errors.length === 0) {
-          if (!r.warnings.some(w => w.startsWith('prd.md:'))) {
-            console.log('✓ prd.md')
+          if (!r.warnings.some(w => w.startsWith(`${r.prdFile}:`))) {
+            console.log(`✓ ${r.prdFile}`)
           }
         } else {
           anyError = true
           for (const e of r.prd.errors) {
-            console.log(e.startsWith('prd.md:') || e.startsWith('coverage:') ? e : `prd.md: ${e}`)
+            console.log(e.startsWith(`${r.prdFile}:`) || e.startsWith('coverage:') ? e : `${r.prdFile}: ${e}`)
           }
         }
 

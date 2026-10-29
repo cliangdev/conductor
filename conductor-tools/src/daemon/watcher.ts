@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
 import { readConfig, Config } from '../lib/config.js'
+import { contentTypeFor } from '../lib/content-type.js'
 import { writeDaemonState, deleteDaemonState } from './state.js'
 import { startPoller } from './poller.js'
 import { RunQueue } from './run-queue.js'
@@ -235,7 +236,7 @@ export async function syncFile(filePath: string, getConfig: () => Config): Promi
     return
   }
   const apiPath = `/api/v2/projects/${projectId}/work-items/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
-  const body = { content, contentType: 'text/markdown' }
+  const body = { content, contentType: contentTypeFor(parsed.filename) }
 
   try {
     await callApi('PUT', apiPath, body, getConfig)

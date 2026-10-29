@@ -58,7 +58,8 @@ Load the PRD if not already in context.
 
 2. **If the PRD is not in context**:
    - Call `get_work_item` with the resolved `issueId` — note the returned `absolutePath` (the issue directory on disk); use it for any subsequent `Read` / `Write` / `Edit` calls in this skill (the `Read`, `Write`, and `Edit` tools require absolute paths)
-   - Read the local file at `{absolutePath}prd.md`
+   - Read the local PRD at `{absolutePath}prd.html` if it exists, otherwise `{absolutePath}prd.md`. Remember which one exists as `prdPath` (the full absolute path) and pass it to coders
+   - Acceptance-criteria IDs: for `prd.html`, take them from the `data-ac` attributes (`<li data-ac="AC-P0-1.1">`; each sits inside the `<article data-feature>` it belongs to); for `prd.md`, use the checkbox regex ``^- \[[ x]\] `AC-P[01]-\d+\.\d+` ``
 
 ---
 
@@ -295,7 +296,7 @@ For each batch, spawn `conductor-coder` subagents in parallel using the Agent to
 ## Context
 - Epic: {epic.id} - {epic.title}
 - Issue: {issue_id} - {issue_title}
-- Full PRD: .conductor/issues/{issue_id}/prd.md (read if more context needed)
+- Full PRD: {prdPath} (prd.html or prd.md, whichever exists; read if more context needed)
 
 ## Workflow
 1. Write tests for each [auto] criterion FIRST
